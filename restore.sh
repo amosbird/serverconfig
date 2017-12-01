@@ -6,6 +6,7 @@ configs=(
     .globalrc
     .clang_complete
     .editorconfig
+    .gdbinit
     .gdbinit.d
     .cgdb
     .docker
