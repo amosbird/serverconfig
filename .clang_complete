@@ -1,0 +1,3 @@
+-DDEBUG
+-std=c++14
+-I/usr/local/include

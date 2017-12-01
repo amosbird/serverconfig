@@ -1,0 +1,37 @@
+;
+; Global Editor Config for Adaptive Labbers
+;
+; This is an ini style configuration. See http://editorconfig.org/ for more information on this file.
+;
+; Top level editor config.
+root = true
+; Always use Unix style new lines with new line ending on every file and trim whitespace
+[*]
+end_of_line = lf
+insert_final_newline = true
+# trim_trailing_whitespace = true
+max_line_length = 100
+indent_size = 4
+indent_style = space
+
+; java google format
+[*.java]
+
+[{*.el,.spacemacs}]
+indent_size = 2
+
+; Python: PEP8 defines 4 spaces for indentation
+[*.py]
+
+; Salt state files, YAML format, 2 spaces
+[*.{sls,yaml,yml}]
+
+[Makefile]
+indent_style = tab
+
+[*.{js,py}]
+charset = utf-8
+
+[lib/**.js]
+
+[{package.json,.travis.yml}]

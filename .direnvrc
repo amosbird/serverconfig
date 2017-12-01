@@ -1,0 +1,11 @@
+export_alias() {
+  alias_dir=$PWD/.direnv/aliases/$(pwd)
+  local name=$1
+  local target="$alias_dir/$name"
+  shift
+  mkdir -p "$alias_dir"
+  PATH_add "$alias_dir"
+  echo "#!/usr/bin/env bash" > "$target"
+  echo "$@ \"\$@\"" >> "$target"
+  chmod +x "$target"
+}
