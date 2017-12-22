@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+gpg --encrypt --recipient 'Amos Bird' $@

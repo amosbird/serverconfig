@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+# Open an org-capture popup frame from the shell. This opens a temporary emacs
+# daemon if emacs isn't already running.
+#
+# Usage: org-capture [key] [message...]
+# Examples:
+#   org-capture n "To the mind that is still, the whole universe surrenders."
+
+set -e
+
+cleanup() {
+    emacsclient --eval '(kill-emacs)'
+}
+
+# If emacs isn't running, we start a temporary daemon, solely for this window.
+daemon=
+if ! pgrep emacs >/dev/null; then
+    emacs --daemon
+    trap cleanup EXIT INT TERM
+    daemon=1
+fi
+
+if [[ $daemon ]]; then
+    emacsclient -n --socket-name="/tmp/emacs$(id -u)/mu4e" -e "(mu4e-compose-new)"
+else
+    # Non-daemon servers flicker a lot if frames are created from terminal, so
+    # we do it internally instead.
+    emacsclient -a "" \
+        -e "(mu4e-compose-new)"
+fi

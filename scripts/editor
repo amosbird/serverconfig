@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+emacsclient -e "(my/create-editor-frame `printf '"%s" ' $@`)"

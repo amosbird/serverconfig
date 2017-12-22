@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+curl -s https://easylist.to/easylist/easylist.txt > /home/amos/.local/share/luakit/adblock/easylist.txt

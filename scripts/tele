@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+workspace=$(i3-msg -t get_workspaces | jq -r 'map(select(.focused))[0].name')
+if pgrep -f telegram > /dev/null
+then
+    if i3-msg -t get_tree | jq  '.nodes[].nodes[].nodes[] | .type == "workspace" and .name =="__i3_scratch" and .floating_nodes[].nodes[].window_properties.class == "TelegramDesktop"' | grep -q true
+    then
+        i3-msg '[class = TelegramDesktop] scratchpad show'
+    elif i3-msg -t get_tree | jq -r --arg v "$workspace" '.nodes[].nodes[].nodes[] | .type == "workspace" and .name == $v and .floating_nodes[].nodes[].window_properties.class == "TelegramDesktop"' | grep -q true
+    then
+        i3-msg '[class = TelegramDesktop] move scratchpad'
+    else
+        i3-msg "[class = TelegramDesktop] move workspace $workspace"
+    fi
+else
+    telegram-desktop
+fi

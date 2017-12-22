@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+docker exec -it --detach-keys "ctrl-\\" `docker ps  | grep dsql | awk '{print $1}'`  bash --rcfile /home/amos/.impalabashrc

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+PIPE=/tmp/gif.pipe
+
+function start() {
+    mkfifo $PIPE
+    TMP_AVI=$(mktemp /tmp/outXXXXXXXXXX.avi)
+    ffcast -s % ffmpeg -y -f x11grab -show_region 1 -framerate 15 \
+        -video_size %s -i %D+%c -codec:v huffyuv                  \
+        -vf crop="iw-mod(iw\\,2):ih-mod(ih\\,2)" $TMP_AVI        \
+    && convert -set delay 10 -layers Optimize $TMP_AVI gif:- | copyq write image/gif - && rm -rf $TMP_AVI
+}
+
+function stop() {
+    [[ -f $SCREENCAST_PIDFILE ]] && { pid=$(cat "$SCREENCAST_PIDFILE"); echo "q" > $PIPE; rm $PIPE; }
+}
+
+# -s for screen region, -w for window
+MODE=${1:--s}
+
+# Output file name
+FILE="$HOME/Captures/`date +%FT%T.gif`"
+
+# Temporary files
+TMPDIR="/tmp"
+TMP_AVI=$(mktemp -u $TMPDIR/gifcast.XXXXXXXXXX.avi)
+TMP_PALETTE=$(mktemp $TMPDIR/gifcast.XXXXXXXXXX.png)
+TMP_PIPE=$(mktemp -u $TMPDIR/gifcast.XXXXXXXXXX.fifo)
+mkfifo $TMP_PIPE
+
+exec 3<> $TMP_PIPE
+
+# Cleanup temporary files at exit
+function at_exit() {
+  rm -f $TMP_AVI
+  rm -f $TMP_PALETTE
+  rm -f $TMP_PIPE
+}
+trap at_exit EXIT
+
+# Stop recording and tray icon
+function tray_cb {
+echo $TMP_PIPE
+  local pipe=$1
+  local cast_pid=$2
+  local capture_pid=`pgrep -P $cast_pid`
+
+  kill $capture_pid
+  echo "quit" > $pipe
+}
+export -f tray_cb
+
+# Start capture
+ffcast -s % ffmpeg -y -f x11grab -show_region 1 -framerate 15 \
+       -video_size %s -i %D+%c -codec:v huffyuv                  \
+       -vf crop="iw-mod(iw\\,2):ih-mod(ih\\,2)" $TMP_AVI  &
+cast_pid=$!
+
+yad --notification \
+  --image media-playback-stop \
+  --command "bash -c 'tray_cb $TMP_PIPE $cast_pid'" \
+  --listen <&3
+
+convert -set delay 10 -layers Optimize $TMP_AVI gif:- | copyq write image/gif - && rm -rf $TMP_AVI

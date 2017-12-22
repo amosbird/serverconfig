@@ -1,0 +1,43 @@
+#!/bin/bash
+# Based on http://tinyurl.com/jmze5lw with some additions
+# Dependencies: detox wmctrl
+
+# In your VM, share the root host location "/" in $DRIVE
+
+VMNAME="w7"
+DRIVE="E:"
+
+# Start vm if not running already
+if [ "$(VBoxManage list runningvms | wc -l)" = 0 ]; then
+    VBoxManage startvm $VMNAME
+    sleep 5s
+fi
+
+# Wait until graphics are available
+until VBoxManage showvminfo $VMNAME | grep '"Graphics Mode": active/running' > /dev/null
+do
+    sleep 0.5s
+done
+
+for FILE in "$@"
+do
+
+    # Set a converted file path
+    if echo "$FILE" | grep '^/' > /dev/null; then
+        TARGETPATH=$FILE
+    else
+        TARGETPATH=$PWD'/'$FILE
+    fi
+    # CLEANPATH=$(detox -vs utf_8 "$TARGETPATH" | tail -1 | sed 's/Scanning: //')
+    WINPATH=$(printf "%s" "$(echo "$DRIVE""$TARGETPATH" | sed 's/\//\\/g')")
+    echo $WINPATH
+
+    # Start application in VirtualBox
+    VBoxManage guestcontrol "$VMNAME" run --no-wait-stdout --no-wait-stderr --exe "cmd.exe" --username "amos" --password "1" -- "cmd" "/c" "$WINPATH" &
+
+    # Change window manager focus to VM
+    wmctrl -a "$VMNAME"
+
+    sleep 0.2
+
+done

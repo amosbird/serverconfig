@@ -13,6 +13,7 @@ configs=(
     .direnvrc
     .clang-format
     .ctags
+    scripts
 )
 
 for config in "${configs[@]}"; do

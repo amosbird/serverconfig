@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+imageUpload () { proxychains pbpst -P https://la.wentropy.com -Sf "${1}" | tail -1 | awk '{print $1".jpg"}' | xclip || errlog; notify-send -a "teiler" "Image Uploaded" "$(xclip -o)"; }

@@ -1,0 +1,25 @@
+#!/bin/bash
+# Dependencies: wmctrl
+
+# In your VM, share the root host location "/" in $drive
+
+vmname="w7"
+
+# Start vm if not running already
+if [ $(VBoxManage list runningvms | wc -l) = 0 ]; then
+    VBoxManage startvm $vmname
+    sleep 5s
+fi
+
+# Wait until graphics are available
+until VBoxManage showvminfo $vmname | grep '"Graphics Mode": active/running' > /dev/null
+do
+    sleep 0.5s
+done
+
+# Start application in VirtualBox
+VBoxManage guestcontrol "$vmname" run --exe "cmd.exe" --username "amos" --password "1" -- cmd /c start "$@" &
+
+# Change window manager focus to VM
+wmctrl -a "$vmname"
+

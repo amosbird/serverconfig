@@ -1,0 +1,42 @@
+#!/usr/bin/env tclsh
+
+package require Expect
+
+set prompt {[$❯#] }
+set keyfile "~/.ssh/id_rsa.pub"
+set needcopy 0
+
+if {![file exists $keyfile]} {
+    # set gid $spawn_id
+    spawn ssh-keygen
+    interact
+    # set spawn_id $gid
+}
+
+spawn ssh $argv
+
+expect {
+    {continue connecting (yes/no)?} {
+        send "yes\r"
+        exp_continue
+    }
+    {[Pp]ass*: } {
+        set needcopy 1
+        interact "\r" {
+            send "\r"
+            exp_continue
+        }
+    }
+    $prompt
+}
+
+if {$needcopy} {
+    set fd [open $keyfile]
+    gets $fd pubkey
+    close $fd
+    send " mkdir -p ~/.ssh\r"
+    expect $prompt
+    send " cat >> ~/.ssh/authorized_keys <<EOF\r$pubkey\rEOF\r"
+    expect $prompt
+}
+interact

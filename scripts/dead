@@ -1,0 +1,2 @@
+#!/bin/bash
+i3-msg -t get_tree | fgrep '"class":"Deadbeef"' > /dev/null && i3-msg -q "[class = "Deadbeef"] kill" || deadbeef

@@ -1,0 +1,7 @@
+#!/usr/bin/env fish
+
+if mailto $argv
+   i3-msg workspace ""
+else
+   notify-send -t "mail" "mu4e" "Bad url!"
+end
