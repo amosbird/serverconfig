@@ -1,0 +1,1 @@
+KERNEL=="serio2", SUBSYSTEM=="serio", DRIVER=="psmouse", ATTR{sensitivity}="210", ATTR{speed}="255"

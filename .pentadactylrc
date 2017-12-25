@@ -1,0 +1,49 @@
+loadplugins '\.(js|penta)$'
+group user
+colorscheme amosbird
+set titlestring="Ergonomized by Amos Bird"
+set hintkeys=hjklasdfgyuiopqwertnmzxcvb
+set strictfocus
+set editor="editor"
+set guioptions='s'
+map -modes=n s tg<Space>
+map -count -modes=c,i,n,t,v <C-c> <Pass>
+map -count -modes=n <C-a> <Pass>
+map -count -modes=n <C-s> ts<Space>
+map -count -modes=n = <count>+
+map -count -modes=n gb <count>:bmarks!<Space>
+map -count -modes=n gh <count>:history!<Space>
+map -count -modes=n h <count>H
+map -count -modes=n l <count>L
+map -count -modes=n <C-,> <count>gT
+map -count -modes=n <C-.> <count>gt
+map -count -modes=n <C-f> <count>]]
+map -count -modes=n <C-b> <count>[[
+
+map -modes=n <C-j> :emenu Tools.Download Status Bar.Toggle Bar<CR>
+map -modes=n <C-k> :emenu Tools.Zotero<CR>
+map -modes=n zs :js Zotero_Browser.scrapeThisPage()<CR>
+map -modes=n zp :js ZoteroPane.addItemFromPage()<CR>
+
+map -count -modes=c,i <C-f> <Right>
+map -count -modes=c,i <C-b> <Left>
+map -count -modes=c,i <C-m> <Enter>
+
+map -count -modes=i <C-j> <Down>
+map -count -modes=i <C-k> <Up>
+
+map -count -modes=c <C-j> <Tab>
+map -count -modes=c <C-k> <S-Tab>
+map -count -modes=c <C-p> <Up>
+map -count -modes=c <C-n> <Down>
+
+map -count -modes=c,i,t <C-v> <Pass>
+map -count -modes=c,i,t <C-x> <Pass>
+map -count -modes=c,i,t <C-z> <Pass>
+set nextpattern='\s*(下一页|下一章|下一张|下一篇|下页|后页)\s*','\bnext\b',^>$,'^(>>|»)$','^(>|»)','(>|»)$','\bmore,'
+set previouspattern='\s*(上一页|上一章|上一张|上一篇|上页|前页)\s*','\bprev|previous\b',^<$,'^(<<|«)$','^(<|«)','(<|«)$,'
+set complete=l
+hi FontFixed -a font: 18px "Ubuntu Mono" !important;
+hi -a Hint font-size: 18px !important;
+
+nmap -ex <C-r> :rehash

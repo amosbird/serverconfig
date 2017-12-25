@@ -1,0 +1,36 @@
+colorscheme solarized_dark
+set titlestring="Ergonomized by Amos Bird"
+nnoremap h H
+nnoremap l L
+noremap <C-j> <C-t>:downloads<Return>
+noremap <esc> :noh<return><esc>
+noremap <C-,> <Esc>gT
+noremap <C-.> <Esc>gt
+noremap <C-f> ]]
+noremap <C-b> [[
+noremap d <C-w>
+noremap s tg<Space>
+noremap <C-s> ts<Space>
+noremap <C-m> <Enter>
+cnoremap <C-f> <Right>
+cnoremap <C-b> <Left>
+cnoremap <C-j> <Tab>
+cnoremap <C-k> <S-Tab>
+cnoremap <C-p> <Up>
+cnoremap <C-n> <Down>
+cnoremap <C-m> <Enter>
+inoremap <C-f> <Right>
+inoremap <C-b> <Left>
+inoremap <C-m> <Enter>
+map zo :emenu Tools.Zotero<CR>
+map zs :js Zotero_Browser.scrapeThisPage()<CR>
+map zp :js ZoteroPane.addItemFromPage()<CR>
+set focuscontent
+set gui=nonavigation
+set scrollbars=false
+set hintchars=hjklasdfgyuiopqwertnmzxcvb
+set status=input,bookmark,history,tabcount,position,ssl
+set ssli=0
+
+set nextpattern='\s*(下一页|下一章|下一张|下一篇|下页|后页)\s*','\bnext\b',^>$,'^(>>|»)$','^(>|»)','(>|»)$','\bmore,'
+set previouspattern='\s*(上一页|上一章|上一张|上一篇|上页|前页)\s*','\bprev|previous\b',^<$,'^(<<|«)$','^(<|«)','(<|«)$,'

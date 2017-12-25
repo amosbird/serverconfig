@@ -1,0 +1,98 @@
+" :actionlist shows all actions
+
+set clipboard+=unnamed
+set surround
+nnoremap Y y$
+noremap <C-j> <Down>
+noremap <C-k> <Up>
+noremap <C-m> <CR>
+
+" ---------------
+" Visual
+" ---------------
+set showmatch   " Show matching brackets.
+set matchtime=2 " How many tenths of a second to blink
+" Show invisible characters
+set list
+
+set listchars=""
+" make tabs visible
+set listchars=tab:▸▸
+" show trailing spaces as dots
+set listchars+=trail:•
+" The character to show in the last column when wrap is off and the line
+" continues beyond the right of the screen
+set listchars+=extends:>
+" The character to show in the last column when wrap is off and the line
+" continues beyond the right of the screen
+set listchars+=precedes:<
+
+" ---------------
+" Window Movement
+" ---------------
+nnoremap <silent> gh :WriteBufferIfNecessary<CR>:wincmd h<CR>
+nnoremap <silent> gj :WriteBufferIfNecessary<CR>:wincmd j<CR>
+nnoremap <silent> gk :WriteBufferIfNecessary<CR>:wincmd k<CR>
+nnoremap <silent> gl :WriteBufferIfNecessary<CR>:wincmd l<CR>
+
+" Press `f` to activate AceJump
+map f :action AceAction<CR>
+" Press `F` to activate Target Mode
+map F :action AceTargetAction<CR>
+" Press `g` to activate Line Mode
+map L :action AceLineAction<CR>
+
+
+inoremap <silent> <C-d> <delete>
+inoremap <silent> <A-k> <C-o>:action EditorDeleteToLineEnd<CR>
+inoremap <silent> <C-u> <C-o>:action EditorDeleteToLineStart<CR>
+inoremap <silent> <A-d> <C-o>:action EditorDeleteToWordEnd<CR>
+inoremap <silent> <A-BS> <C-o>:action EditorDeleteToWordStart<CR>
+inoremap <silent> <A-b> <C-o>:action EditorPreviousWord<CR>
+inoremap <silent> <A-f> <C-o>:action EditorNextWord<CR>
+inoremap <silent> <C-f> <right>
+inoremap <silent> <C-b> <left>
+inoremap <silent> <C-e> <C-o>:action EditorLineEnd<CR>
+inoremap <silent> <C-a> <C-o>:action EditorLineStart<CR>
+inoremap <silent> <A-i> <C-o>:action InsertLiveTemplate<CR>
+
+
+noremap <silent> <A-i> :action Generate<CR>
+noremap <silent> <Space><Space> :action GotoAction<CR>
+noremap <silent> <Space>r :source ~/.ideavimrc<CR>
+noremap <silent> <Space>o :action GotoClass<CR>
+noremap <silent> <Space>f :action GotoFile<CR>
+noremap <silent> <Space>d :action QuickJavaDoc<CR>
+noremap <silent> <Space>k :action FileStructurePopup<CR>
+noremap <silent> <Space>h :action CallHierarchy<CR>
+noremap <silent> <Space>p :action SearchEverywhere<cr>
+noremap <silent> <Space>b :action ToggleLineBreakpoint<cr>
+noremap <silent> ,gd :action GotoDeclaration<cr>
+noremap <silent> ,gg :action GotoImplementation<cr>
+noremap <silent> ,gt :action GotoTest<cr>
+nnoremap f :action AceAction<CR>
+
+
+nnoremap <C-.> :action GotoNextError<cr>
+nnoremap <C-,> :action GotoPreviousError<cr>
+
+nnoremap <silent> ,v v:action EditorSelectWord<CR>
+vnoremap <silent> v :action EditorSelectWord<CR>
+
+"   4 Window Splits
+"
+"   -----------------
+"   g1 | g2 | g3 | g4
+"   -----------------
+nnoremap <silent> g1 :WriteBufferIfNecessary<CR>:wincmd t<CR>
+nnoremap <silent> g2 :WriteBufferIfNecessary<CR>:wincmd t<bar>:wincmd l<CR>
+nnoremap <silent> g3 :WriteBufferIfNecessary<CR>:wincmd t<bar>:wincmd l<bar>
+      \:wincmd l<CR>
+nnoremap <silent> g4 :WriteBufferIfNecessary<CR>:wincmd b<CR>
+
+" Previous Window
+nnoremap <silent> gp :wincmd p<CR>
+" Equal Size Windows
+nnoremap <silent> g= :wincmd =<CR>
+" Swap Windows
+nnoremap <silent> gx :wincmd x<CR>

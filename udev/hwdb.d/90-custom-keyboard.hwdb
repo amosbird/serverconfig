@@ -1,0 +1,3 @@
+evdev:atkbd:dmi:bvn*:bvr*:bd*:svnLENOVO*:pn*:pvrThinkPadT450s*
+  KEYBOARD_KEY_b7=247
+  KEYBOARD_KEY_b8=leftctrl 
