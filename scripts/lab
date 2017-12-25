@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-
-urxvt -title nobida143 -e ssh 143.nobida.cn -t "\
-/home/amos/bin/fish -c 'tmux new -d -s amos';\
-/home/amos/bin/fish -c 'tmux new -d -s emacs emacs';\
-/home/amos/bin/fish -c 'tmux a -t emacs';\
-"

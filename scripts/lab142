@@ -1,6 +1,3 @@
 #!/usr/bin/env bash
 
-urxvt -T nobida142 -e ssh -t 142.nobida.cn "bash -l -c \"\
-fish -c 'tmux new -d -s amos';\
-fish -c 'tmux new -d -s emacs emacs';\
-fish -c 'tmux a -t emacs' \""
+urxvt -T nobida142 -e ssh -t 142.nobida.cn "tmux new -d -s emacs emacs; tmux new-session -A -s amos"
