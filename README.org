@@ -1,0 +1,118 @@
+* bootstrap
+
+timedatectl set-ntp true
+# legacy using dos, modern using gpt
+fdisk /dev/sdX
+mkfs.ext4 /dev/sdX2
+mkfs.vfat -F32 /dev/sdX1
+mount /dev/sdX2 /mnt
+mkdir /mnt/boot
+mount /dev/sdX1 /mnt/boot
+pacstrap /mnt base
+genfstab -U /mnt >> /mnt/etc/fstab
+arch-chroot /mnt
+ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+hwclock --systohc
+pacman -S vim
+
+# uncomment needed locales
+vim /etc/locale.gen
+
+locale-gen
+
+vim /etc/locale.conf
+LANG=en_US.UTF-8
+
+vim /etc/hostname
+myhost
+
+passwd
+
+# legacy
+grub-install --target=i386-pc /dev/sdX
+vim /etc/default/grub
+GRUB_CMDLINE_LINUX_DEFAULT="quiet transparent_hugepage=madvise"
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# efi
+bootctl install
+vim /boot/loader/entries/arch.conf
+title          Arch Linux
+linux          /vmlinuz-linux
+initrd         /initramfs-linux.img
+options        root=UUID=7f653dca-fcb8-49d3-b703-8f6dc033fd03 rw video=DP-4:1920x1080@60 transparent_hugepage=madvise
+
+vim /boot/loader/loader.conf
+timeout 4
+default arch
+
+pacman -S base-devel expac yajl git
+curl -o PKGBUILD https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=cower
+makepkg PKGBUILD --skippgpcheck --install --needed
+curl -o PKGBUILD https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=pacaur
+makepkg PKGBUILD --install --needed
+rm -rf *
+
+useradd -m amos
+passwd amos
+pacman -S sudo
+vim /etc/sudoers/amos
+amos ALL=(ALL) NOPASSWD: ALL
+
+* user
+
+sudo vim /etc/polkit-1/rules.d/49-nopasswd_global.rules
+/* Allow members of the wheel group to execute any actions
+ * without password authentication, similar to "sudo NOPASSWD:"
+ */
+polkit.addRule(function(action, subject) {
+    if (subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
+sudo usermod -aG wheel amos
+
+pacaur -S xorg-xrdb feh i3status i3-gaps i3blocks-gaps-git sddm jq grc net-tools compton arandr xorg-xset dnsutils inxi ipset iprange npm pdnsd rofi tmux ttf-font-awesome ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline termite tcl expect vte-common vte3-ng weechat dunst copyq xclip pandoc llvm clang lxappearance mu fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin gitter ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf desktop-file-utils alsa-lib libmagick6 gnutls mu python-sphinx jansson tup tpkbdctl-git gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura mimi-git rsync dstat pinta sysstat hplip cups samba poco ccache rustup ripgrep fd-rs tokei go fzf direnv redshift poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu zathura-pdf-mupdf zathura-ps
+
+sddm --example-config | sudo tee /etc/sddm.conf
+sudo vim /etc/sddm.conf
+User=amos
+Session=i3.desktop
+systemctl enable sddm
+
+rustup toolchain install nightly
+rustup toolchain default nightly
+cargo install parallel racer
+go get github.com/pranavraja/tldr
+go get github.com/gsamokovarov/jump
+go get github.com/mehrdadrad/mylg
+go get github.com/elves/elvish
+cd ~/go/src/github.com/elves/elvish
+git remote add amos git@github.com:amosbird/elvish
+git fetch amos master
+git checkout -b amos amos/master
+go install
+
+mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Screencasts Music org/todos Documents/pdfs Documents/ppts Documents/docs
+
+M-x all-the-icons-install-fonts
+pacaur -S luacheck
+sudo tpkbdctl -S 255
+sudo tpkbdctl -s 255
+ccache -M 50G
+pkgfile --update
+sudo usermod -aG sys amos
+systemctl enable org.cups.cupsd.service
+
+* trackpoint
+
+If your keyboard is an older model (NOT Compact),  try  tpkbdctl  to control trackpoint sensitivity of the keyboard.
+https://aur.archlinux.org/packages/tpkbdctl-git
+For a newer model,  'ThinkPad Compact USB Keyboard with TrackPoint', there's a fork of tpkbdctl by hiikezoe:
+https://github.com/hiikezoe/tpkbdctl
+For a bluetooth model,  'ThinkPad Compact Bluetooth Keyboard with TrackPoint',  first
+<shell-prompt> grep 'ThinkPad Compact Bluetooth' /sys/class/hidraw/hidraw*/device/uevent | cut -d/ -f5
+and  if you get hidraw7 for example, try
+<shell-prompt> echo -ne '\x18\x02\x09' | sudo dd of=/dev/hidraw7 2>/dev/null
+You can write from  '\x18\x02\x01' to  '\x18\x02\x09'  to set sensitivity.
+https://wiki.archlinux.org/index.php/TrackPoint
