@@ -1,0 +1,74 @@
+mod3+w
+  /home/amos/scripts/restartxcape.sh
+mod3+b
+  /home/amos/scripts/baidupan.sh
+mod3+f
+  /usr/bin/copyq toggle
+mod3+d
+  /usr/bin/copyq disable
+mod3+e
+  /usr/bin/copyq enable
+mod3+d
+  /home/amos/scripts/teiler --quickcopy fullscreen
+mod3+D
+  /home/amos/scripts/teiler --quick fullscreen
+mod3+i
+  /home/amos/scripts/teiler --quickcopy fullscreen
+mod3+I
+  /home/amos/scripts/teiler --quick fullscreen
+mod3+p
+  /home/amos/scripts/teiler --quickcopy area
+mod3+o
+  /home/amos/scripts/teiler --quickcopy orc
+mod3+shift+p
+  /home/amos/scripts/teiler --quick area
+mod3+t
+  /home/amos/scripts/teiler --paste
+mod3+shift+r
+  /home/amos/scripts/teiler --togglecast
+mod3+g
+  /usr/local/bin/fish -c 'url "www.google.com/search?q="'
+mod3+s
+  /usr/local/bin/fish -c 'url "scholar.google.com/scholar?q="'
+super+z
+  /usr/bin/slock
+control+alt+8
+  /home/amos/scripts/showtldr.sh
+control+alt+9
+  /home/amos/scripts/showdict.sh
+control+alt+0
+  /home/amos/scripts/tele
+super+s
+  /usr/bin/urxvt -e /usr/local/bin/fish
+control+alt+s
+  /home/amos/scripts/showshell.sh 2
+control+alt+l
+  /home/amos/scripts/showshell.sh 1
+control+alt+h
+  /home/amos/scripts/showshell.sh 0
+super+Home
+  /usr/bin/xrandr --output eDP1 --primary --mode 1600x900 --pos 0x0 --output DP2-2 --off --output HDMI1 --off
+super+End
+  /usr/bin/xrandr --output eDP1 --off --output HDMI1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0
+super+Insert
+  /usr/bin/xrandr --output eDP1 --off --output DP2-2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0
+super+Delete
+  /usr/bin/lxrandr
+control+alt+r
+  /home/amos/scripts/rofi-runner
+control+alt+o
+  /home/amos/scripts/org-capture
+super+0
+  /usr/bin/pkill -SIGUSR1 sxhkd
+control+F12
+  /usr/bin/systemctl suspend
+control+F10
+  /home/amos/scripts/dunstctl.sh; pkill -SIGRTMIN+11 i3blocks
+control+alt+2
+  /usr/bin/deadbeef --toggle-pause
+control+alt+3
+  /usr/bin/deadbeef --next
+control+alt+4
+  /home/amos/scripts/dead
+control+Eisu_toggle
+  /home/amos/scripts/tun

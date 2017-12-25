@@ -1,0 +1,171 @@
+URxvt.font: xft:Ubuntu Mono:size=14,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1
+URxvt.lineSpace:            0
+URxvt.url-launcher:         vivaldi
+URxvt.matcher.button:       1
+URxvt.matcher.pattern.1:    \\bwww\\.[\\w-]+\\.[\\w./?&@#-]*[\\w/-]
+URxvt.matcher.pattern.2:    \\B(/\\S+?):(\\d+)(?=:|$)
+URxvt.meta8:                false
+URxvt.keysym.M-u:           perl:url-picker
+URxvt.copy_cmd:             xclip
+URxvt.keysym.M-y:           perl:url-yanker
+URxvt.url-picker.launcher:  vivaldi
+URxvt.url-picker.order:     descending
+URxvt.keysym.M-Delete:      perl:matcher:list
+! URxvt.keysym.C-o:           \013
+! URxvt.keysym.C-j:           \033[B
+! URxvt.keysym.C-k:           \033[A
+! iso-level-tab
+URxvt.keysym.C-I:           \033[Z
+! c-]
+! URxvt.keysym.C-S:           \e\[%d;6~S
+URxvt.keysym.C-S:           \033`
+! C-&
+! URxvt.keysym.C-h:           \034
+URxvt.keysym.C-Return:      \030@c\015
+URxvt.keysym.C-J:           \033[1;5B
+URxvt.keysym.C-D:           \033[1;5A
+! C-^
+URxvt.keysym.C-comma:       \036
+! URxvt.keysym.C-comma:       \030@c,
+! C-_
+URxvt.keysym.C-period:      \037
+! URxvt.keysym.C-period:      \030@c.
+URxvt.perl-lib:             /home/amos/.config/urxvt-perls
+URxvt.perl-ext-common:      default,matcher,url-picker,url-yanker,osc-xterm-clipboard,font-size,autocomplete
+URxvt.keysym.M-C-slash:     perl:aAtt:word-complete
+URxvt.keysym.M-comma:       perl:aAtt:fuzzy-complete
+URxvt.keysym.M-quotedbl:    perl:aAtt:undo
+
+! URLs
+URxvt.matcher.rend.0: Uline Bold fg6
+! URxvt.keysym.Control-l: perl:matcher:last
+URxvt.borderless:          true
+! cannot set to -1, which breaks all unicode fonts
+URxvt.letterSpace:         0
+URxvt.clipboard.autocopy:  true
+URxvt.scrollstyle:         plain
+URxvt*scrollBar:           false
+!URxvt.depth:              32
+!URxvt*background:         rgba:0000/0000/0200/c800  !transparent
+URxvt*transparent:         false
+URxvt.fading:              0
+URxvt.inputMethod:         fcitx
+URxvt.preeditType:         OverTheSpot
+URxvt*termName:            xterm-256color
+URxvt*saveLines:           100000
+URxvt*scrollTtyOutput:     false
+URxvt*scrollWithBuffer:    true
+URxvt*scrollTtyKeypress:   true
+URxvt*iso14755:            False
+
+!urxvt*matcher.pattern.1:  (/\\S+\\.pdf)\\b
+!urxvt*matcher.launcher.1: zathura $1
+
+Xft.autohint: 0
+Xft.lcdfilter: lcddefault
+Xft.hintstyle: hintslight
+Xft.hinting: 1
+Xft.antialias: 1
+Xft.rgba: rgb
+
+! emacs
+Emacs.toolBar: 0
+Emacs.menuBar: 0
+Emacs.verticalScrollBars: off
+Emacs.font: Ubuntu Mono 14
+Emacs*useXIM: true
+
+! breeze
+
+URxvt*foreground:   #c5c8c6
+URxvt*background:   #1d1f21
+URxvt*cursorColor:  #d1b217
+
+! black
+URxvt*color0:       #31363b
+URxvt*color8:       #4d4d4d
+
+! red
+URxvt*color1:       #ed2929
+URxvt*color9:       #ed1515
+
+!green
+URxvt*color2:       #21d96d
+URxvt*color10:      #0bd961
+
+!yellow
+URxvt*color3:       #fcc74c
+URxvt*color11:      #fde04b
+
+!blue
+URxvt*color4:       #3daee9
+URxvt*color12:      #3d95e9
+
+!magenta
+URxvt*color5:       #9847b5
+URxvt*color13:      #a94fc9
+
+!cyan
+URxvt*color6:       #1abc9c
+URxvt*color14:      #1cdc9a
+
+!white
+URxvt*color7:       #eff0f1
+URxvt*color15:      #fcfcfc
+
+! These are all possible options, presented with default values.
+! xst will fallback to *.option if st.option is not present.
+! see src/config.h for more information about option meanings.
+
+! These options only take effect on startup.
+st.termname:     st-256color
+! if you do not set shell, precedence is: -e arg, utmp option, SHELL env var, /etc/passwd shell
+st.shell:        /usr/local/bin/fish
+
+! The following options options can be reloaded via USR1 signal.
+st.font:         monospace:pixelsize=18:antialias=true:autohint=true;
+st.borderpx:     0
+! Available cursor values: 2 4 6 7 = █ _ | ☃ ( 1 3 5 are blinking versions)
+st.cursorshape:  2
+st.cursorthickness:  2
+st.cursorblinkstyle: 0
+st.cursorblinkontype: 1
+st.bold_font:    1
+st.xfps:         120
+st.actionfps:    30
+st.chscale:      1.0
+st.cwscale:      1.0
+st.blinktimeout: 800
+st.bellvolume:   100
+! this is a char that is exposed like so: `printf '\033[z'`
+st.prompt_char:  $
+
+! opacity==255 means what terminal will be not transparent, 0 - fully transparent
+st.opacity:      255
+! Defaults taken from base16-twilight colorscheme.
+
+st.foreground:   #c5c8c6
+st.background:   #1d1f21
+st.color0:       #31363b
+st.color1:       #ed2929
+st.color2:       #21d96d
+st.color3:       #fcc74c
+st.color4:       #3daee9
+st.color5:       #9847b5
+st.color6:       #1abc9c
+st.color7:       #eff0f1
+st.color8:       #4d4d4d
+st.color9:       #ed1515
+st.color10:      #0bd961
+st.color11:      #fde04b
+st.color12:      #3d95e9
+st.color13:      #a94fc9
+st.color14:      #1cdc9a
+st.color15:      #fcfcfc
+st.color16:      #cda869
+st.color17:      #d1b217
+st.color18:      #1d1f21
+st.color19:      #d1b217
+st.color20:      #838184
+st.color21:      #d1b217
+st.cursorfg:     #d1b217

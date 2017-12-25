@@ -1,0 +1,123 @@
+rofi.font: monospace 14
+rofi.bw: 1
+rofi.location: 0
+rofi.padding: 5
+rofi.yoffset: 0
+rofi.xoffset: 0
+rofi.fixed-num-lines: true
+rofi.show-icons: false
+rofi.terminal: rofi-sensible-terminal
+rofi.ssh-client: ssh
+rofi.ssh-command: {terminal} -e {ssh-client} {host}
+rofi.run-command: {cmd}
+rofi.run-list-command:
+rofi.run-shell-command: {terminal} -e {cmd}
+rofi.window-command: xkill -id {window}
+rofi.drun-icon-theme:
+rofi.disable-history: false
+rofi.sort: false
+rofi.levenshtein-sort: false
+rofi.case-sensitive: false
+rofi.cycle: true
+rofi.sidebar-mode: false
+rofi.eh: 1
+rofi.auto-select: false
+rofi.parse-hosts: true
+rofi.parse-known-hosts: true
+rofi.combi-modi: window,run
+rofi.matching: normal
+rofi.tokenize: true
+rofi.m: -5
+rofi.line-margin: 2
+rofi.line-padding: 1
+rofi.filter:
+rofi.separator-style: dash
+rofi.hide-scrollbar: false
+rofi.fullscreen: false
+rofi.fake-transparency: false
+rofi.dpi: -1
+rofi.threads: 0
+rofi.scrollbar-width: 8
+rofi.scroll-method: 0
+rofi.fake-background: screenshot
+rofi.window-format: {w}    {i}{c}   {t}
+rofi.click-to-exit: true
+rofi.show-match: true
+rofi.theme: ~/.config/rofi/orange.rasi
+rofi.color-normal:
+rofi.color-urgent:
+rofi.color-active:
+rofi.color-window:
+rofi.plugin-path: /usr/lib/rofi
+rofi.pid: /run/user/1000/rofi.pid
+rofi.display-window:
+rofi.display-windowcd:
+rofi.display-run:
+rofi.display-ssh:
+rofi.display-drun:
+rofi.display-combi:
+rofi.display-keys:
+rofi.kb-primary-paste: Control+V,Shift+Insert
+rofi.kb-secondary-paste: Control+v,Insert
+rofi.kb-clear-line:
+rofi.kb-move-front: Control+a
+rofi.kb-move-end: Control+e
+rofi.kb-move-word-back: Alt+b
+rofi.kb-move-word-forward: Alt+f
+rofi.kb-move-char-back: Left,Control+b
+rofi.kb-move-char-forward: Right,Control+f
+rofi.kb-remove-word-back: Alt+BackSpace,Control+w
+rofi.kb-remove-word-forward: Control+Alt+d
+rofi.kb-remove-char-forward: Delete,Control+d
+rofi.kb-remove-char-back: BackSpace,Control+h
+rofi.kb-remove-to-eol: Control+o
+rofi.kb-remove-to-sol: Control+u
+rofi.kb-accept-entry: Control+m,Return,KP_Enter
+rofi.kb-accept-custom: Control+Return
+rofi.kb-accept-alt: Shift+Return
+rofi.kb-delete-entry: Shift+Delete
+rofi.kb-mode-next: Shift+Right,Control+Tab
+rofi.kb-mode-previous: Shift+Left,Control+ISO_Left_Tab
+rofi.kb-row-left: Control+Page_Up
+rofi.kb-row-right: Control+Page_Down
+rofi.kb-row-up: Control+k
+rofi.kb-row-down: Control+j
+rofi.kb-row-tab: Tab
+rofi.kb-page-prev: Page_Up
+rofi.kb-page-next: Page_Down
+rofi.kb-row-first: Home,KP_Home
+rofi.kb-row-last: End,KP_End
+rofi.kb-row-select: Control+space
+rofi.kb-screenshot: Alt+S
+rofi.kb-toggle-case-sensitivity: grave,dead_grave
+rofi.kb-toggle-sort: Alt+grave
+rofi.kb-cancel: Escape,Control+bracketleft,Control+g
+rofi.kb-custom-1: Alt+1
+rofi.kb-custom-2: Alt+2
+rofi.kb-custom-3: Alt+3
+rofi.kb-custom-4: Alt+4
+rofi.kb-custom-5: Alt+5
+rofi.kb-custom-6: Alt+6
+rofi.kb-custom-7: Alt+7
+rofi.kb-custom-8: Alt+8
+rofi.kb-custom-9: Alt+9
+rofi.kb-custom-10: Alt+0
+rofi.kb-custom-11: Alt+exclam
+rofi.kb-custom-12: Alt+at
+rofi.kb-custom-13: Alt+numbersign
+rofi.kb-custom-14: Alt+dollar
+rofi.kb-custom-15: Alt+percent
+rofi.kb-custom-16: Alt+dead_circumflex
+rofi.kb-custom-17: Alt+ampersand
+rofi.kb-custom-18: Alt+asterisk
+rofi.kb-custom-19: Alt+parenleft
+rofi.kb-select-1: Super+1
+rofi.kb-select-2: Super+2
+rofi.kb-select-3: Super+3
+rofi.kb-select-4: Super+4
+rofi.kb-select-5: Super+5
+rofi.kb-select-6: Super+6
+rofi.kb-select-7: Super+7
+rofi.kb-select-8: Super+8
+rofi.kb-select-9: Super+9
+rofi.kb-select-10: Super+0

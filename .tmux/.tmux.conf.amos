@@ -1,0 +1,105 @@
+set -s history-limit 10000
+set -s set-titles off
+set -s mouse on
+set -s mode-keys vi
+set -s repeat-time 600
+set -s renumber-windows on
+set -s display-panes-time 800
+set -s display-time 1000
+set -s monitor-activity on
+set -s visual-activity off
+
+set -s status-interval 1
+
+# ------ status theme -------------------------------
+set -s message-style "bg=#00346e, fg=#ffffd7"
+
+set -s status-style "bg=#222222, fg=#ffffd7"
+
+set -s status-left "#[bg=#009aff] ❐ #S "
+set -s status-left-length 400
+set -s status-right "#{?client_prefix, #[bg=#778833] PREFIX,}#{?pane_synchronized, #[bg=#008844] SYNC,} #[bg=#009aff] #(whoami)@#h #[bg=#881100] %Y-%m-%d %H:%M "
+set -s status-right-length 600
+
+set -s window-status-format " #I #W#{?window_zoomed_flag, [max],} "
+set -s window-status-current-format " #I #W#{?window_zoomed_flag, [max],} "
+set -s window-status-separator ""
+set -s window-status-current-style "bg=#881100"
+set -s window-status-last-style "fg=#ee4488"
+set -s window-status-activity-style "underscore"
+
+set -s pane-active-border-style "fg=#009aff"
+set -s pane-border-style "fg=#585858"
+set -s pane-border-status top
+set -s pane-border-format "#[bold,fg=#dddddd,bg=#009aff]#{=-40:pane_current_path}"
+
+set -s prefix C-x
+set -s prefix2 C-x
+bind 1 resize-pane -Z
+bind 2 split-window -v -c '#{pane_current_path}'
+bind 3 split-window -h -c '#{pane_current_path}'
+bind C-x send-prefix
+bind C-c detach-client
+bind C-f command-prompt -p find-session 'switch-client -t %%'
+bind r source-file ~/.tmux/.tmux.conf.amos \; display '~/.tmux/.tmux.conf.amos sourced'
+bind c new-window
+bind d kill-pane
+bind k kill-window
+
+bind -Tcopy-mode-vi Escape send -X copy-selection-and-cancel
+bind -Tcopy-mode-vi y send -X copy-selection
+bind -Tcopy-mode-vi q send -X clear-selection
+unbind -Tcopy-mode-vi MouseDragEnd1Pane
+bind -Tcopy-mode-vi TripleClick1Pane send -X select-line
+bind -Tcopy-mode-vi v send-keys -X begin-selection
+# bind -Tcopy-mode-vi M-v send-keys -X halfpage-up
+bind -Tcopy-mode-vi C-v send-keys -X rectangle-toggle
+bind -Tcopy-mode-vi d send-keys -X halfpage-down
+bind -Tcopy-mode-vi u send-keys -X halfpage-up
+bind -Tcopy-mode-vi H resize-pane -L 5
+bind -Tcopy-mode-vi J resize-pane -D 5
+bind -Tcopy-mode-vi K resize-pane -U 5
+bind -Tcopy-mode-vi L resize-pane -R 5
+
+# need to add all needed root table's key bindings
+set -s key-table amos
+bind-key -T amos DoubleClick1Pane copy-mode\; send -X select-word
+bind-key -T amos C-j send-keys Down
+bind-key -T amos C-k send-keys Up
+bind-key -T amos M-1 select-window -t 1
+bind-key -T amos M-2 select-window -t 2
+bind-key -T amos M-3 select-window -t 3
+bind-key -T amos M-4 select-window -t 4
+bind-key -T amos M-5 select-window -t 5
+bind-key -T amos M-6 select-window -t 6
+bind-key -T amos M-7 select-window -t 7
+bind-key -T amos M-8 select-window -t 8
+bind-key -T amos M-9 select-window -t 9
+bind-key -T amos M-h run-shell "fish -c 'set d (tmux display -p \"#{pane_at_left}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -L; else; i3focus left (tmux display -p \"#{pane_tty}\"); end'"
+bind-key -T amos M-j run-shell "fish -c 'set d (tmux display -p \"#{pane_at_bottom}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -D; else; i3focus down (tmux display -p \"#{pane_tty}\"); end'"
+bind-key -T amos M-k run-shell "fish -c 'set d (tmux display -p \"#{pane_at_top}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -U; else; i3focus up (tmux display -p \"#{pane_tty}\"); end'"
+bind-key -T amos M-l run-shell "fish -c 'set d (tmux display -p \"#{pane_at_right}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -R; else; i3focus right (tmux display -p \"#{pane_tty}\"); end'"
+bind-key -T amos C-@ run-shell "fish -c 'i3focus right (tmux display -p \"#{pane_tty}\")'"
+bind-key -T amos M-H swap-pane -s '{left-of}'
+bind-key -T amos M-J swap-pane -s '{down-of}'
+bind-key -T amos M-K swap-pane -s '{up-of}'
+bind-key -T amos M-L swap-pane -s '{right-of}'
+bind-key -T amos MouseDown1Pane   select-pane -t = \; send-keys -M
+bind-key -T amos MouseDown1Status select-window -t =
+bind-key -T amos MouseDown3Pane   if-shell -F -t = "#{mouse_any_flag}" "select-pane -t=\; send-keys -M" "select-pane -mt="
+bind-key -T amos MouseDrag1Pane   if-shell -F -t = "#{mouse_any_flag}" "if -Ft= \"#{pane_in_mode}\" \"copy-mode -M\" \"send-keys -M\"" "copy-mode -M"
+bind-key -T amos MouseDrag1Border resize-pane -M
+bind-key -T amos WheelUpPane      if-shell -F -t = "#{mouse_any_flag}" "send-keys -M" "if -Ft= \"#{pane_in_mode}\" \"send-keys -M\" \"copy-mode -et=\""
+bind-key -T amos WheelUpStatus    previous-window
+bind-key -T amos WheelDownStatus  next-window
+bind-key -T amos C-l send-keys C-l# \; run 'sleep 0.05 && tmux clear-history'
+bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|gdb" &> /dev/null; then tmux send-key M-v; else tmux copy-mode; fi'
+bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
+bind-key -T amos C-v send-key C-v
+
+bind-key -T amos M-enter run-shell 'if env | grep "^T450s" > /dev/null; then i3-msg move to scratchpad, workspace  &> /dev/null; else tmux switch-client -t emacs; fi'
+bind-key -T amos M-0 set synchronize-panes
+bind-key -T amos C-^ previous-window
+bind-key -T amos C-_ next-window
+
+# set-hook 'after-new-window' 'run-shell -b "if [ \#{window_name} == Cluster ]; then tmux set pane-border-status; fi"'

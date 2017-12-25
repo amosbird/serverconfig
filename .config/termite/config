@@ -1,0 +1,66 @@
+[options]
+resize_grip = false
+scroll_on_output = false
+scroll_on_keystroke = true
+audible_bell = false
+visible_bell = false
+mouse_autohide = true
+allow_bold = true
+dynamic_title = true
+urgent_on_bell = true
+clickable_url = true
+font = monospace, 14
+scrollback_lines = 10000
+search_wrap = true
+cursor_blink = off
+cursor_shape = block
+
+[colors]
+
+# special
+foreground      = #c5c8c6
+foreground_bold = #c5c8c6
+cursor          = #b8860b
+background      = #1d1f21
+
+# black
+color0  = #1d1f21
+color8  = #969896
+
+# red
+color1  = #cc6666
+color9  = #cc6666
+
+# green
+color2  = #b5bd68
+color10 = #b5bd68
+
+# yellow
+color3  = #f0c674
+color11 = #f0c674
+
+# blue
+color4  = #81a2be
+color12 = #81a2be
+
+# magenta
+color5  = #b294bb
+color13 = #b294bb
+
+# cyan
+color6  = #8abeb7
+color14 = #8abeb7
+
+# white
+color7  = #c5c8c6
+color15 = #ffffff
+
+[hints]
+foreground = #dcdccc
+background = #575757
+active_foreground = #e68080
+active_background = #3f3f3f
+padding = 2
+border = #3f3f3f
+border_width = 1.0
+roundness = 2.0

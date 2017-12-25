@@ -4929,4 +4929,4 @@ ip r a 223.255.252.0/23 via 10.61.3.254 table cn
 # v2ex.com
 ip r a 23.251.126.133/32 via 10.61.3.254 table cn
 
-ip rule add table cn
+ip rule add table cn pref 30000

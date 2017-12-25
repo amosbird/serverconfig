@@ -1,0 +1,51 @@
+#!/usr/bin/env perl
+
+use MIME::Base64;
+use Encode;
+
+sub on_osc_seq {
+    my ($term, $op, $args) = @_;
+    open(my $fh, '>', '/tmp/testperl');
+    return () unless $op eq 52;
+    my ($clip, $data) = split ';', $args, 2;
+    if ($data eq '?') {
+        my $data_free = $term->selection();
+        Encode::_utf8_off($data_free); # XXX
+        $term->tt_write("\e]52;$clip;".encode_base64($data_free, '')."\a");
+    }
+    elsif ($clip =~ /x/) { # open url
+        my $data_decoded = decode_base64($data);
+        Encode::_utf8_on($data_decoded); # XXX
+        # my $host_name = $term->resource('title');
+        # $data_decoded =~ s/file:\/\/\//http:\/\/172.26.165.60:8866/;
+        $data_decoded =~ s/file:\/\/\//http:\/\/172.26.72.26:8866/;
+        print $fh $data_decoded;
+        $term->exec_async('vivaldi', $data_decoded);
+    }
+    elsif ($clip =~ /y/) { # open url new
+        my $data_decoded = decode_base64($data);
+        Encode::_utf8_on($data_decoded); # XXX
+        # my $host_name = $term->resource('title');
+        # $data_decoded =~ s/file:\/\//http:\/\/172.26.165.60:8866/;
+        $data_decoded =~ s/file:\/\//http:\/\/172.26.72.26:8866/;
+        print $fh $data_decoded;
+        $term->exec_async('vivaldi', 'new', $data_decoded);
+    }
+    elsif ($clip =~ /z/) {  # i3 movements
+        my $data_decoded = decode_base64($data);
+        Encode::_utf8_on($data_decoded); # XXX
+        # my $host_name = $term->resource('title');
+        # $data_decoded =~ s/^\/amos\@$host_name://;
+        print $fh $data_decoded;
+        $term->exec_async('i3-msg', 'focus', $data_decoded);
+    }
+    else {
+        my $data_decoded = decode_base64($data);
+        Encode::_utf8_on($data_decoded); # XXX
+        print $fh $data_decoded;
+        $term->selection($data_decoded, $clip =~ /c/);
+        $term->selection_grab(urxvt::CurrentTime, $clip =~ /c/);
+    }
+    close $fh;
+    ()
+}

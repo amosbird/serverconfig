@@ -1,0 +1,78 @@
+#// main:
+set font "fixedzero normal 9"
+set adjust-open width
+set guioptions
+set n-completion-items 10
+set show-scrollbars false
+set window-title-basename true
+set statusbar-basename true
+set statusbar-v-padding 10
+set statusbar-h-padding 4
+set page-padding 1
+set pages-per-row 1
+set scroll-page-aware true
+set scroll-full-overlap 0.1
+set zoom-min 5
+set zoom-max 1000
+set zoom-step 5
+set selection-clipboard primary
+set page-padding 10
+
+set font                        "monospace normal 14"
+set default-fg                  "#202020" #01
+set default-bg                  "#E0E0E0" #06
+
+set statusbar-fg                "#303030" #02
+set statusbar-bg                "#B0B0B0" #04
+
+set inputbar-bg                 "#303030" # currently not used
+set inputbar-fg                 "#B0B0B0" #02
+
+set notification-error-bg       "#AC4142" #08
+set notification-error-fg       "#E0E0E0" #06
+
+set notification-warning-bg     "#AC4142" #08
+set notification-warning-fg     "#E0E0E0" #06
+
+set highlight-color             "#3375f7" #0A
+set highlight-active-color      "#3375f7" #08
+
+set completion-highlight-fg     "#D0D0D0" #05
+set completion-highlight-bg     "#75B5AA" #0C
+
+set completion-bg               "#D0D0D0" #05
+set completion-fg               "#75B5AA" #0C
+
+set notification-bg             "#90A959" #0B
+set notification-fg             "#F5F5F5" #07
+
+# set recolor-lightcolor          "#E0E0E0" #06
+set recolor-lightcolor          "#FFFFFF" #06
+set recolor-darkcolor           "#303030" #02
+set recolor                     "true"
+
+set highlight-transparency 0.1
+set selection-clipboard clipboard
+
+# setting recolor-keephue true will keep any color your pdf
+# has.  If it is set to false, it will just be shades of
+# gray.  (lol 50 shades of gray)
+set recolor-keephue             "true"
+
+#// keybindings:
+map w adjust_window width
+unmap q
+map <C-w> quit
+map I quit
+map f scroll full-down
+map b scroll full-up
+map d scroll half-down
+map u scroll half-up
+map h scroll full-left
+map l scroll full-right
+map gg goto top scroll page-top
+map <A-h> feedkeys ":exec i3-msg focus left"<Return>
+map <C-Space> feedkeys ":exec i3-msg focus left"<Return>
+map <A-l> feedkeys ":exec i3-msg focus right"<Return>
+map y exec 'sh -c "echo -n $FILE | xclip"'
+map <C-y> exec 'sh -c "echo -n [[file+sys:$FILE][$(xclip -o)]] | xclip"'

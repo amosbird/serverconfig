@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-if ip r | fgrep "default via 10.10.10.1 dev tun0" > /dev/null
+if ip r | fgrep "128.0.0.0/1" > /dev/null
 then
     echo "       VPN        "
 fi

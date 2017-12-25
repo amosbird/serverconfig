@@ -1,0 +1,10 @@
+@binding-set gtk-vi-icon-view {
+    bind "j" { "move-cursor" (display-lines, 1) };               /* selection down */
+    bind "k" { "move-cursor" (display-lines, -1) };              /* selection up */
+    bind "l" { "move-cursor" (logical-positions, 1) };           /* selection right */
+    bind "h" { "move-cursor" (logical-positions, -1) };          /* selection left */
+}
+
+iconview.view {
+    -gtk-key-bindings: gtk-vi-icon-view;
+}
