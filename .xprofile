@@ -1,5 +1,5 @@
 #!/bin/bash
-export T450s=t
+export GUI=t
 export XAPIAN_CJK_NGRAM=1
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export GTK_IM_MODULE=fcitx

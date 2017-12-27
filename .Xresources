@@ -24,6 +24,7 @@ URxvt.keysym.C-S:           \033`
 URxvt.keysym.C-Return:      \030@c\015
 URxvt.keysym.C-J:           \033[1;5B
 URxvt.keysym.C-D:           \033[1;5A
+URxvt.keysym.Shift-Return:  \033[1;5C
 ! C-^
 URxvt.keysym.C-comma:       \036
 ! URxvt.keysym.C-comma:       \030@c,

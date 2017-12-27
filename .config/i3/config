@@ -21,25 +21,19 @@ set $transparent   #00000000
 set $height 34
 set $editor termite
 
-workspace_layout tabbed
+# workspace_layout tabbed
 
 # Constants
 set $mod Mod4
 
 set $ws1 ""
 set $ws2 ""
-for_window [workspace=$ws2] layout splith
 set $ws3 ""
-for_window [workspace=$ws3] layout splith
-# properties of workspace
-# layout
-# popup_during_fullscreen
-# focus_follows_mouse
-# focus_on_window_activation
-# force_focus_wrapping
 
+# for_window [workspace=$ws2] layout splith
+# for_window [workspace=$ws3] layout splith
+# for_window [workspace=$ws4] layout splith
 set $ws4 ""
-for_window [workspace=$ws4] layout splith
 set $ws5 ""
 set $ws6 ""
 set $ws7 ""
@@ -84,7 +78,7 @@ bindsym $mod+Shift+k move up
 bindsym $mod+Shift+l move right
 bindsym $mod+Shift+space floating toggle
 bindsym $mod+f fullscreen toggle
-bindsym $mod+w layout toggle tabbed split
+bindsym $mod+w layout toggle tabbed splith
 
 bindsym $mod+Shift+c reload
 # bindsym $mod+Shift+r [instance="^stardict"] floating enable, [instance="TelegramDesktop"] floating enable, restart

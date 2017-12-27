@@ -119,10 +119,10 @@ end)
 require "viewpdf"
 
 -- Example using xdg-open for opening downloads / showing download folders
-downloads.add_signal("open-file", function (file)
+downloads.add_signal("open-file",
+                     function (file)
                          luakit.spawn(string.format("xdg-open %q", file))
-                         return true
-end)
+                         return true end)
 
 -- Add vimperator-like link hinting & following
 local follow = require "follow"
@@ -275,6 +275,9 @@ local clear_selection = [=[
     window.getSelection().removeAllRanges();
 })();
 ]=]
+
+modes.add_binds({"normal","insert"},
+    { { "<Control-space>", "Switch to other window.", function (w) luakit.spawn("i3-msg focus right") end } })
 
 modes.add_binds("normal",
                 {
