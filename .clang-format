@@ -8,7 +8,8 @@ Language: Cpp
 DerivePointerAlignment: false
 PointerAlignment: Left
 AccessModifierOffset: -4
-ColumnLimit: 100
+ColumnLimit: 120
+Standard: Cpp11
 ---
 Language: JavaScript
 # Use 100 columns for JS.
