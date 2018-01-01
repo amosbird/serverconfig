@@ -132,7 +132,10 @@ follow.pattern_maker = follow.pattern_styles.match_label
 follow.stylesheet = follow.stylesheet .. [[ #luakit_select_overlay .hint_label { opacity: 0.7; font-size: 16px !important; } ]]
 
 -- Add command history
-require "cmdhist"
+local cmdhist = require "cmdhist"
+
+cmdhist.history_prev = "<Control-p>"
+cmdhist.history_next = "<Control-n>"
 
 -- Add search mode & binds
 require "search"
@@ -281,7 +284,7 @@ modes.add_binds({"normal","insert"},
 
 modes.add_binds("normal",
                 {
-                    { "<Escape>", function (w) w:run_cmd(":nohlsearch"); w.view:eval_js(clear_selection, { no_return = true }); end },
+                    { "<Escape>", function (w) w.view:clear_search(); w.view:eval_js(clear_selection, { no_return = true }); end },
                     { "I", "Close current tab (or `[count]` tabs).",
                       function (w, m) for _=1,m.count do w:close_tab() end end, {count=1} },
                     { "<Control-r>", "Undo close tab.", function (w) w:undo_close_tab() end },
