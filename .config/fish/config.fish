@@ -9,7 +9,7 @@ set FZF_HOME $HOME/.fzf
 
 set -x RUST_SRC_PATH /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/src
 set -x FZF_DEFAULT_OPTS "--ansi --multi --bind=ctrl-v:half-page-down,alt-v:half-page-up,ctrl-l:accept"
-set -x GOPATH $HOME/go
+set -x GOPATH /usr/local/go
 set -x CARGO_HOME $HOME/.cargo
 set -x CABAL_HOME $HOME/.cabal
 set -x EDITOR vim
