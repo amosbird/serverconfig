@@ -23,6 +23,8 @@ URxvt.keysym.C-S:           \033`
 ! URxvt.keysym.C-h:           \034
 URxvt.keysym.C-Return:      \030@c\015
 URxvt.keysym.C-J:           \033[1;5B
+URxvt.keysym.M-s:           \033s
+
 URxvt.keysym.C-D:           \033[1;5A
 URxvt.keysym.Shift-Return:  \033[1;5C
 ! C-^
@@ -32,7 +34,7 @@ URxvt.keysym.C-comma:       \036
 URxvt.keysym.C-period:      \037
 ! URxvt.keysym.C-period:      \030@c.
 URxvt.perl-lib:             /home/amos/.config/urxvt-perls
-URxvt.perl-ext-common:      default,matcher,url-picker,url-yanker,osc-xterm-clipboard,font-size,autocomplete
+URxvt.perl-ext-common:      default,matcher,url-picker,url-yanker,osc-xterm-clipboard,autocomplete
 URxvt.keysym.M-C-slash:     perl:aAtt:word-complete
 URxvt.keysym.M-comma:       perl:aAtt:fuzzy-complete
 URxvt.keysym.M-quotedbl:    perl:aAtt:undo
