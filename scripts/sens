@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+echo 25 | sudo tee `fd sensitivity /sys`
