@@ -17,7 +17,7 @@ export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dawt.useSystemAAFontSettings=on -Dswing.aa
 xset s off -dpms
 xset b off
 # pulseaudio -D
-compton --inactive-opacity 0.9 -b
+compton -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 # unclutter -idle 1 -jitter 10 -grab &
 fcitx
