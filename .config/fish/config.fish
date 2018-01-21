@@ -10,7 +10,6 @@ set FZF_HOME $HOME/.fzf
 set -x RUST_SRC_PATH /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/src
 set -x FZF_DEFAULT_OPTS "--ansi --multi --bind=ctrl-v:half-page-down,alt-v:half-page-up,ctrl-l:accept"
 set -x GOPATH $HOME/go
-set -x GOROOT /usr/local/go
 set -x CARGO_HOME $HOME/.cargo
 set -x CABAL_HOME $HOME/.cabal
 set -x EDITOR vim
@@ -60,7 +59,7 @@ end
 # end
 
 # prepend path
-set -U fish_user_paths $HOME/scripts $FZF_HOME/bin $GOPATH/bin $GOROOT/bin $CARGO_HOME/bin $CABAL_HOME/bin $HOME/.local/bin $HOME/bin /usr/local/bin /usr/bin /bin /sbin
+set -U fish_user_paths $HOME/scripts $FZF_HOME/bin $GOPATH/bin $CARGO_HOME/bin $CABAL_HOME/bin $HOME/.local/bin $HOME/bin /usr/local/go/bin /usr/local/bin /usr/bin /bin /sbin
 
 if test -e ~/.local/share/icons-in-terminal/icons.fish
     source ~/.local/share/icons-in-terminal/icons.fish

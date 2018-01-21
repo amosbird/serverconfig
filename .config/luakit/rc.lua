@@ -55,6 +55,8 @@ local binds = require "binds"
 local settings = require "settings"
 require "settings_chrome"
 
+settings.window.search_engines.scholar = "https://scholar.google.com/scholar?q=%s"
+
 ----------------------------------
 -- Optional user script loading --
 ----------------------------------
@@ -134,8 +136,8 @@ follow.stylesheet = follow.stylesheet .. [[ #luakit_select_overlay .hint_label {
 -- Add command history
 local cmdhist = require "cmdhist"
 
-cmdhist.history_prev = "<Control-p>"
-cmdhist.history_next = "<Control-n>"
+cmdhist.history_prev = "<C-p>"
+cmdhist.history_next = "<C-n>"
 
 -- Add search mode & binds
 require "search"
@@ -289,8 +291,11 @@ modes.add_binds("normal",
                       function (w, m) for _=1,m.count do w:close_tab() end end, {count=1} },
                     { "<Control-r>", "Undo close tab.", function (w) w:undo_close_tab() end },
                     { "m", "Create a bookmark.", function (w) luakit.spawn("rofisearch") end },
-                    { "s", "Open a new tab via rofi.", function (w) luakit.spawn("rofisearch") end },
-                    { "t", "Open a new tab via rofi.", function (w) luakit.spawn("rofiopentab") end },
+                    -- { "s", "Open a new tab via rofi.", function (w) luakit.spawn("rofisearch") end },
+                    { "s", "Search via google.", function (w) w:enter_cmd(":tabopen google " ) end },
+                    { "S", "Search via scholar.", function (w) w:enter_cmd(":tabopen scholar " ) end },
+
+                    -- { "t", "Open a new tab via rofi.", function (w) luakit.spawn("rofiopentab") end },
                     { "d", "Scroll half page down.", function (w) w:scroll{ ypagerel =  0.5 } end },
                     { "u", "Scroll half page up.", function (w) w:scroll{ ypagerel = -0.5 } end },
                     { "J", "Go to next tab.", function (w) w:next_tab() end },
