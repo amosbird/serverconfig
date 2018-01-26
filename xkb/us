@@ -27,7 +27,7 @@ xkb_symbols "basic" {
     key <AD08> {	[	  i,	I		]	};
     key <AD09> {	[	  o,	O		]	};
     key <AD10> {	[	  p,	P		]	};
-    key <AD11> {	[ bracketleft,	braceleft	]	};
+    key <AD11> {	[ quotedbl,	braceleft	]	};
     key <AD12> {	[ bracketright,	braceright	]	};
 
     key <AC01> {	[	  a,	A 		,  asciitilde ]	};

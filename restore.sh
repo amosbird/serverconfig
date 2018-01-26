@@ -21,19 +21,19 @@ configs=(
 
 for config in "${configs[@]}"; do
     rm -rf "$HOME/$config"
-    ln -s "$DIR"/"$config" "$HOME"/
+    ln -sf "$DIR"/"$config" "$HOME"/
 done
 
-for dotconfig in `ls .config`; do
-    rm -rf "$HOME/.config/$dotconfig"
-    ln -s "$DIR/.config/$dotconfig" "$HOME/.config/$dotconfig"
+for dotconfig in $DIR/.config/*; do
+    rm -rf "$HOME/.config/$(basename $dotconfig)"
+    ln -sf "$dotconfig" "$HOME/.config/"
 done
 
 rm -rf "$HOME/.tmux"
 rm -rf "$HOME/.tmux.conf"
-ln -s "$DIR/.tmux" $HOME/
-ln -s "$DIR/.tmux/.tmux.conf" $HOME/
+ln -sf "$DIR/.tmux" "$HOME"/
+ln -sf "$DIR/.tmux/.tmux.conf" "$HOME"/
 
-sudo cp -r $DIR/xkb/* /usr/share/X11/xkb/symbols/
+sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
 
 setxkbmap us

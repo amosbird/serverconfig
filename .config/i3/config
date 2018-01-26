@@ -95,7 +95,7 @@ bindsym control+mod1+v workspace $ws2
 bindsym control+mod1+e workspace $ws3
 bindsym control+mod1+d workspace $ws4
 bindsym control+mod1+t workspace $ws4
-bindsym control+mod1+u workspace $ws5
+bindsym control+mod1+g workspace $ws5
 bindsym control+mod1+i workspace $ws6
 bindsym control+mod1+n workspace $ws7
 bindsym control+mod1+w workspace $ws8
@@ -112,7 +112,7 @@ bindsym control+mod1+Shift+v move container to workspace $ws2
 bindsym control+mod1+Shift+e move container to workspace $ws3
 bindsym control+mod1+Shift+d move container to workspace $ws4
 bindsym control+mod1+Shift+t move container to workspace $ws4
-bindsym control+mod1+Shift+u move container to workspace $ws5
+bindsym control+mod1+Shift+g move container to workspace $ws5
 bindsym control+mod1+Shift+i move container to workspace $ws6
 bindsym control+mod1+Shift+n move container to workspace $ws7
 bindsym control+mod1+Shift+w move container to workspace $ws8

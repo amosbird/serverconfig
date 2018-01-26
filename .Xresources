@@ -1,5 +1,9 @@
 URxvt.font: xft:Ubuntu Mono:size=14,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1
+URxvt.italicFont: xft:Ubuntu Mono:size=14,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1
+URxvt.boldItalicFont: xft:Ubuntu Mono:size=14:Bold,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true:Bold,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1:Bold
 URxvt.lineSpace:            0
+! cannot set to -1, which breaks all unicode fonts
+URxvt.letterSpace:          0
 URxvt.url-launcher:         vivaldi
 URxvt.matcher.button:       1
 URxvt.matcher.pattern.1:    \\bwww\\.[\\w-]+\\.[\\w./?&@#-]*[\\w/-]
@@ -53,8 +57,6 @@ URxvt.keysym.M-quotedbl:    perl:aAtt:undo
 URxvt.matcher.rend.0: Uline Bold fg6
 ! URxvt.keysym.Control-l: perl:matcher:last
 URxvt.borderless:          true
-! cannot set to -1, which breaks all unicode fonts
-URxvt.letterSpace:         0
 URxvt.clipboard.autocopy:  true
 URxvt.scrollstyle:         plain
 URxvt*scrollBar:           false
