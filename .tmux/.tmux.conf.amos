@@ -46,7 +46,7 @@ bind c new-window
 bind d kill-pane
 bind k kill-window
 
-bind -Tcopy-mode-vi Escape send -X copy-selection-and-cancel
+bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection
 bind -Tcopy-mode-vi q send -X clear-selection
 unbind -Tcopy-mode-vi MouseDragEnd1Pane
@@ -64,6 +64,7 @@ bind -Tcopy-mode-vi L resize-pane -R 5
 # need to add all needed root table's key bindings
 set -s key-table amos
 bind-key -T amos DoubleClick1Pane copy-mode\; send -X select-word
+bind-key -T amos C-] send-keys Escape
 bind-key -T amos C-j send-keys Down
 bind-key -T amos C-k send-keys Up
 bind-key -T amos M-1 select-window -t 1
@@ -98,7 +99,8 @@ bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/
 bind-key -T amos C-v send-key C-v
 
 bind-key -T amos M-enter run-shell 'if env | grep "^T450s" > /dev/null; then i3-msg move to scratchpad, workspace  &> /dev/null; else tmux switch-client -t emacs; fi'
-bind-key -T amos M-0 set synchronize-panes
+bind-key -T amos M-0 run-shell 'if env | grep "^T450s" > /dev/null; then i3-msg move to scratchpad, workspace  &> /dev/null; else tmux switch-client -t emacs; fi'
+bind-key -T amos M-- set synchronize-panes
 bind-key -T amos C-^ previous-window
 bind-key -T amos C-_ next-window
 
