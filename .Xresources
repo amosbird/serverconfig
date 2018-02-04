@@ -14,16 +14,10 @@ URxvt.copy_cmd:             xclip
 URxvt.keysym.C-M-y:         perl:url-yanker
 URxvt.url-picker.launcher:  vivaldi
 URxvt.url-picker.order:     descending
-! URxvt.keysym.C-o:           \013
-! URxvt.keysym.C-j:           \033[B
-! URxvt.keysym.C-k:           \033[A
 ! iso-level-tab
 URxvt.keysym.C-I:           \033[Z
-! c-]
-! URxvt.keysym.C-S:           \e\[%d;6~S
 URxvt.keysym.C-S:           \033`
-! C-&
-! URxvt.keysym.C-h:           \034
+URxvt.keysym.Escape:        \035
 URxvt.keysym.C-1:           1
 URxvt.keysym.C-2:           2
 URxvt.keysym.C-3:           3
@@ -38,20 +32,15 @@ URxvt.keysym.C-Return:      \030@c\015
 URxvt.keysym.C-J:           \033[1;5B
 URxvt.keysym.M-S-BackSpace: \033[1;5D
 URxvt.keysym.M-s:           \033s
-
 URxvt.keysym.C-D:           \033[1;5A
 URxvt.keysym.Shift-Return:  \033[1;5C
 ! C-^
 URxvt.keysym.C-comma:       \036
-! URxvt.keysym.C-comma:       \030@c,
 ! C-_
 URxvt.keysym.C-period:      \037
-! URxvt.keysym.C-period:      \030@c.
 URxvt.perl-lib:             /home/amos/.config/urxvt-perls
 URxvt.perl-ext-common:      default,matcher,url-picker,url-yanker,osc-xterm-clipboard,autocomplete
-URxvt.keysym.M-C-slash:     perl:aAtt:word-complete
-URxvt.keysym.M-comma:       perl:aAtt:fuzzy-complete
-URxvt.keysym.M-quotedbl:    perl:aAtt:undo
+URxvt.keysym.M-C-n:         perl:aAtt:fuzzy-complete
 
 ! URLs
 URxvt.matcher.rend.0: Uline Bold fg6

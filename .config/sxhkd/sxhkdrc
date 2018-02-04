@@ -56,8 +56,8 @@ super+Delete
   /usr/bin/lxrandr
 control+alt+r
   /home/amos/scripts/rofi-runner
-control+alt+o
-  /home/amos/scripts/org-capture
+# control+alt+o
+#   /home/amos/scripts/org-capture
 super+0
   /usr/bin/pkill -SIGUSR1 sxhkd
 control+F12

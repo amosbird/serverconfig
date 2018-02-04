@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #########################################################################
-# Copyright (C) 2012-2014  Wojciech Siewierski                          #
+# Copyright (C) 2012-2017  Wojciech Siewierski                          #
 #                                                                       #
 # This program is free software: you can redistribute it and/or modify  #
 # it under the terms of the GNU General Public License as published by  #
@@ -95,13 +95,6 @@ sub on_user_command {
             $matcher                = generate_matcher('.*?');
             $char_class_at_end      = '\w';
             $char_class_to_complete = '\S';
-        } elsif ($cmd eq 'amos-complete') {
-            # Fuzzy completion of an completing suffixes, like
-            # completing test=hello from /blah/hello.
-            $char_class_before      = '\s';
-            $matcher                = generate_matcher('\S*');
-            $char_class_at_end      = '\S';
-            $char_class_to_complete = '\S';
         } elsif ($cmd eq 'suffix-complete') {
             # Fuzzy completion of an completing suffixes, like
             # completing test=hello from /blah/hello.
@@ -112,9 +105,9 @@ sub on_user_command {
         } elsif ($cmd eq 'surround-complete') {
             # Completing contents of quotes and braces.
 
-            # Here we are using three named groups: s, b, r for quotes, braces
+            # Here we are using three named groups: s, b, p for quotes, braces
             # and parenthesis.
-            $char_class_before      = '((?<q>["\'])|(?<b>\[)|(?<p>\())';
+            $char_class_before      = '((?<q>["\'`])|(?<b>\[)|(?<p>\())';
 
             $matcher                = generate_matcher('.*?');
 
@@ -240,7 +233,6 @@ sub highlight_match {
                       $self->{highlight} = [$beg_row, $beg_col, $end_row, $end_col];
                       $self->scr_xor_span(@{$self->{highlight}}, urxvt::RS_RVid);
                       $self->{pty_ev_events} = $self->pty_ev_events(urxvt::EV_NONE);
-                      $self->enable(refresh_begin => \&clear_highlight);
                   },
                   key_press => \&conditional_leave);
 }

@@ -284,12 +284,15 @@ local clear_selection = [=[
 modes.add_binds({"normal","insert"},
     { { "<Control-space>", "Switch to other window.", function (w) luakit.spawn("i3-msg focus right") end } })
 
+local keysym = require "keysym"
+
 modes.add_binds("normal",
                 {
-                    { "<Escape>", function (w) w.view:clear_search(); w.view:eval_js(clear_selection, { no_return = true }); end },
+                    { "<Escape>", function (w) w:set_prompt(); w:set_mode(); w.view:clear_search(); w.view:eval_js(clear_selection, { no_return = true }); end },
                     { "I", "Close current tab (or `[count]` tabs).",
                       function (w, m) for _=1,m.count do w:close_tab() end end, {count=1} },
                     { "<Control-r>", "Undo close tab.", function (w) w:undo_close_tab() end },
+                    { "<Mod1-g>", function (w) keysym.send(w, "<Control-k>"); keysym.send(w, "<Control-k>", true) end },
                     { "m", "Create a bookmark.", function (w) luakit.spawn("rofisearch") end },
                     -- { "s", "Open a new tab via rofi.", function (w) luakit.spawn("rofisearch") end },
                     { "s", "Search via google.", function (w) w:enter_cmd(":tabopen google " ) end },
@@ -325,27 +328,31 @@ modes.add_binds("normal",
                       end, {count = 1} },
 })
 
-local keysym = require "keysym"
 local fakekey = [=[
-(function fakekey(el, keyCode)
 {
-    var eventObj = document.createEventObject ?
-        document.createEventObject() : document.createEvent("Events");
+var keyboardEvent = document.createEvent("KeyboardEvent");
+var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? "initKeyboardEvent" : "initKeyEvent";
 
-    if(eventObj.initEvent){
-      eventObj.initEvent("keydown", true, true);
-    }
 
-    eventObj.keyCode = keyCode;
-    eventObj.which = keyCode;
-
-    el.dispatchEvent ? el.dispatchEvent(eventObj) : el.fireEvent("onkeydown", eventObj);
-
-})(document.body, 57)
+keyboardEvent[initMethod](
+                   "keydown", // event type : keydown, keyup, keypress
+                    true, // bubbles
+                    true, // cancelable
+                    window, // viewArg: should be window
+                    false, // ctrlKeyArg
+                    false, // altKeyArg
+                    false, // shiftKeyArg
+                    false, // metaKeyArg
+                    40, // keyCodeArg : unsigned long the virtual key code, else 0
+                    0 // charCodeArgs : unsigned long the Unicode character associated with the depressed key, else 0
+);
+}
 ]=]
+
 modes.add_binds("insert", {
-                    { "<Control-j>", function (w) keysym.send(w, "<Down>") end },
+                    { "<Control-j>", function (w) keysym.send(w, "<Down>"); keysym.send(w, "<Down>", true) end },
                     { "<Control-k>", function (w) keysym.send(w, "<Up>") end },
+                    { "<Mod1-g>", function (w) keysym.send(w, "<Control-k>") end },
                     -- { "<Control-j>", function (w) luakit.spawn("xdotool --clearmodifiers key Down") end },
                     -- { "<Control-k>", function (w) luakit.spawn("xdotool --clearmodifiers key Up") end },
                     -- { "9", function (w) keysym.send(w, "<Down>") end },

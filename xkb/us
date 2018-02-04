@@ -21,7 +21,7 @@ xkb_symbols "basic" {
     key <AD02> {	[	  w,	W		,  slash   ]	};
     key <AD03> {	[	  e,	E		,  braceleft   ]	};
     key <AD04> {	[	  r,	R		,  braceright   ]	};
-    key <AD05> {	[	  t,	T		,  quotedbl   ]	};
+    key <AD05> {	[	  t,	T		]	};
     key <AD06> {	[	  y,	Y		]	};
     key <AD07> {	[	  u,	U		]	};
     key <AD08> {	[	  i,	I		]	};
@@ -34,7 +34,7 @@ xkb_symbols "basic" {
     key <AC02> {	[	  s,	S		,  question   ]	};
     key <AC03> {	[	  d,	D		,  bracketleft   ]	};
     key <AC04> {	[	  f,	F		,  bracketright   ]	};
-    key <AC05> {	[	  g,	G		,  apostrophe   ]	};
+    key <AC05> {	[	  g,	G		]	};
     key <AC06> {	[	  h,	H		]	};
     key <AC07> {	[	  j,	J		]	};
     key <AC08> {	[	  k,	K		]	};
