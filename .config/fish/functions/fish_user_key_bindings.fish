@@ -186,7 +186,7 @@ function fish_user_key_bindings
   end
 
   function open-ranger -d "Open ranger in emacs"
-    if emacsclient -n -eval "(ranger $pwd)" > /dev/null ^&1
+    if emacsclient -n -eval "(+amos/dired-jump $pwd)" > /dev/null ^&1
       if test -z $T450s
         tmux switch-client -t emacs
       else
@@ -237,31 +237,47 @@ function fish_user_key_bindings
     end
   end
 
-  function my-edit-command -d "edit command buffer or tmux buffer"
+  function gdb-commandline -d "execute commandline using tmuxgdb"
     if string match -r '^ *$' (commandline) > /dev/null ^&1
-      vim (tmux capture-pane -S - -E - -p | psub -f)
+      return
     else
+      commandline "tmuxgdb -ex=r -args "(commandline)
+      commandline -f execute
+    end
+  end
+
+  function my-edit-command -d "edit command buffer or tmux buffer"
+    if not string match -r '^ *$' (commandline) > /dev/null ^&1
+      # vim (tmux capture-pane -S - -E - -p | psub -f)
       edit_command_buffer
     end
   end
 
+  function my-edit-tmux -d "edit command buffer or tmux buffer"
+    if string match -r '^ *$' (commandline) > /dev/null ^&1
+      vim (tmux capture-pane -S - -E - -p | psub -f)
+    end
+  end
+
   bind \cs sudo-commandline
-  bind \e` proxy-commandline
+  bind \e` proxy-commandline # Control-Shift-S
+  bind \cq gdb-commandline
   bind \em ls-commandline
   bind \cr fzf-history-token-widget
   bind \ci fzf-complete
-  bind \cg open-magit
+  bind \eG open-magit
   bind \ep updir
   # bind \en fzf-cd-widget
   bind \en elvish-nav
   bind \eg fzf-jump-cd
   bind \eo myprevd
   bind \ei mynextd
-  bind \eu pet-select
+  bind \eR pet-select
   # bind \em fzf-command-go
   bind \cv fzf-select
   bind \er open-ranger
   bind \ee my-edit-command
+  bind \eE my-edit-tmux
 
   # tmux
 

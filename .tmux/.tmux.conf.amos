@@ -94,12 +94,24 @@ bind-key -T amos WheelUpPane      if-shell -F -t = "#{mouse_any_flag}" "send-key
 bind-key -T amos WheelUpStatus    previous-window
 bind-key -T amos WheelDownStatus  next-window
 bind-key -T amos C-l send-keys C-l# \; run 'sleep 0.05 && tmux clear-history'
-bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|gdb" &> /dev/null; then tmux send-key M-v; else tmux copy-mode; fi'
+bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
 bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
+
 bind-key -T amos C-v send-key C-v
 
 bind-key -T amos M-enter run-shell 'if env | grep "^T450s" > /dev/null; then i3-msg move to scratchpad, workspace  &> /dev/null; else tmux switch-client -t emacs; fi'
 bind-key -T amos M-0 run-shell 'if env | grep "^T450s" > /dev/null; then i3-msg move to scratchpad, workspace  &> /dev/null; else tmux switch-client -t emacs; fi'
+bind-key -T amos M-= switch-client -t htop
+
+
+set -s mode-fg colour6
+set -s mode-bg colour0
+
+bind-key -T amos M-u copy-mode\; send -X search-backward ❯
+bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
+
+set -s wrap-search off
+
 bind-key -T amos M-- set synchronize-panes
 bind-key -T amos C-^ previous-window
 bind-key -T amos C-_ next-window
