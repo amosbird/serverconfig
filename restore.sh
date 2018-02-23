@@ -25,7 +25,7 @@ for config in "${configs[@]}"; do
 done
 
 for dotconfig in $DIR/.config/*; do
-    rm -rf "$HOME/.config/$(basename $dotconfig)"
+    rm -rf "$HOME/.config/$(basename "$dotconfig")"
     ln -sf "$dotconfig" "$HOME/.config/"
 done
 

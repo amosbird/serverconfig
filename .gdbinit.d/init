@@ -4,7 +4,7 @@
 set auto-load safe-path /
 
 # prefer Intel assembly syntax
-set disassembly-flavor intel
+set disassembly-flavor att
 
 # GDB dashboard defaults
 dashboard -layout stack expressions threads registers
@@ -32,6 +32,9 @@ end
 define hookpost-frame
   dashboard
 end
+
+# set $dlopen = (void*(*)(char*, int)) dlopen
+# call $dlopen("/home/amos/git/luakit/lualib.so", 1)
 
 # If using the CLI, pagination breaks non-stop.
 set pagination off

@@ -23,7 +23,7 @@ xkb_symbols "pc105" {
     key <NMLK> {	[ Num_Lock 		]	};
 
     key <LFSH> {	[ Shift_L		]	};
-    key <SPCE> {	[ Shift_L		]	};
+    key <SPCE> {	[ space 		]	};
     key <LCTL> {	[ Control_L		]	};
     key <HKTG> {    [ Control_L     ]   };
     key <LWIN> {	[ Super_L		]	};
@@ -34,7 +34,7 @@ xkb_symbols "pc105" {
     key <MENU> {	[ Menu			]	};
 
     // Beginning of modifier mappings.
-    modifier_map Shift  { Shift_L, Shift_R, <SPCE> };
+    modifier_map Shift  { Shift_L, Shift_R };
     modifier_map Lock   { Caps_Lock };
     modifier_map Control{ Control_L, Control_R, <HKTG> };
     modifier_map Mod2   { Num_Lock };

@@ -29,6 +29,22 @@ local window = require "window"
 -- ("$XDG_CONFIG_HOME/luakit/webview.lua" or "/etc/xdg/luakit/webview.lua")
 local webview = require "webview"
 
+local handle = {
+    tg = true,
+    tencent = true,
+    aliim = true,
+    mailto = true,
+    magnet = true,
+}
+webview.add_signal("init", function (view)
+    view:add_signal("navigation-request", function (v, uri)
+                        if handle[lousy.uri.parse(uri).scheme] then
+                            luakit.spawn(string.format("%s %q", "xdg-open", uri))
+                            return false
+                        end
+    end)
+end)
+
 -- Add luakit;//log/ chrome page
 local log_chrome = require "log_chrome"
 
@@ -288,15 +304,26 @@ local keysym = require "keysym"
 
 modes.add_binds("normal",
                 {
-                    { "<Escape>", function (w) w:set_prompt(); w:set_mode(); w.view:clear_search(); w.view:eval_js(clear_selection, { no_return = true }); end },
+                    { "<Escape>", function (w)
+                          w.view:send_key("Escape", {});
+                          w:set_prompt();
+                          w:set_mode();
+                          w.view:clear_search();
+                          w.view:eval_js(clear_selection, { no_return = true });
+                    end },
                     { "I", "Close current tab (or `[count]` tabs).",
                       function (w, m) for _=1,m.count do w:close_tab() end end, {count=1} },
                     { "<Control-r>", "Undo close tab.", function (w) w:undo_close_tab() end },
-                    { "<Mod1-g>", function (w) keysym.send(w, "<Control-k>"); keysym.send(w, "<Control-k>", true) end },
+                    { "<Mod1-g>", function (w) w.view:send_key("k", {"control"}) end },
                     { "m", "Create a bookmark.", function (w) luakit.spawn("rofisearch") end },
                     -- { "s", "Open a new tab via rofi.", function (w) luakit.spawn("rofisearch") end },
                     { "s", "Search via google.", function (w) w:enter_cmd(":tabopen google " ) end },
                     { "S", "Search via scholar.", function (w) w:enter_cmd(":tabopen scholar " ) end },
+                    { "h", "Left.", function (w) w.view:send_key("Left", {}) end },
+                    { "l", "Right.", function (w) w.view:send_key("Right", {}) end },
+                    { "<Space>", "Space.", function (w) w.view:send_key("Space", {}) end },
+                    -- { "j", "Down.", function (w) w.view:send_key("Down", {}) end },
+                    -- { "k", "Up.", function (w) w.view:send_key("Up", {}) end },
 
                     -- { "t", "Open a new tab via rofi.", function (w) luakit.spawn("rofiopentab") end },
                     { "d", "Scroll half page down.", function (w) w:scroll{ ypagerel =  0.5 } end },
@@ -328,31 +355,12 @@ modes.add_binds("normal",
                       end, {count = 1} },
 })
 
-local fakekey = [=[
-{
-var keyboardEvent = document.createEvent("KeyboardEvent");
-var initMethod = typeof keyboardEvent.initKeyboardEvent !== 'undefined' ? "initKeyboardEvent" : "initKeyEvent";
-
-
-keyboardEvent[initMethod](
-                   "keydown", // event type : keydown, keyup, keypress
-                    true, // bubbles
-                    true, // cancelable
-                    window, // viewArg: should be window
-                    false, // ctrlKeyArg
-                    false, // altKeyArg
-                    false, // shiftKeyArg
-                    false, // metaKeyArg
-                    40, // keyCodeArg : unsigned long the virtual key code, else 0
-                    0 // charCodeArgs : unsigned long the Unicode character associated with the depressed key, else 0
-);
-}
-]=]
-
 modes.add_binds("insert", {
-                    { "<Control-j>", function (w) keysym.send(w, "<Down>"); keysym.send(w, "<Down>", true) end },
-                    { "<Control-k>", function (w) keysym.send(w, "<Up>") end },
-                    { "<Mod1-g>", function (w) keysym.send(w, "<Control-k>") end },
+                    -- { "<Control-j>", function (w) keysym.send(w, "<Down>"); keysym.send(w, "<Down>", true) end },
+                    -- { "<Control-k>", function (w) keysym.send(w, "<Up>") end },
+                    { "<Control-j>", function (w) w.view:send_key("Down", {}); w.view:send_key("Down", {}, true) end },
+                    { "<Control-k>", function (w) w.view:send_key("Up", {}); w.view:send_key("Up", {}, true) end },
+                    { "<Mod1-g>", function (w) w.view:send_key("k", {"control"}) end },
                     -- { "<Control-j>", function (w) luakit.spawn("xdotool --clearmodifiers key Down") end },
                     -- { "<Control-k>", function (w) luakit.spawn("xdotool --clearmodifiers key Up") end },
                     -- { "9", function (w) keysym.send(w, "<Down>") end },
@@ -366,7 +374,7 @@ modes.add_binds("insert", {
                     { "<Control-f>", function (w) keysym.send(w, "<Right>") end },
                     { "<Control-i>", function (w) keysym.send(w, "<Tab>") end },
                     { "<Control-o>", function (w) keysym.send(w, "<Shift-End><Delete>") end },
-                    { "<Control-u>", function (w) keysym.send(w, "<BackSpace><Shift-Home><BackSpace>") end },
+                    { "<Control-u>", function (w) keysym.send(w, "<Shift-Home><BackSpace>") end },
                     { "<Control-w>", function (w) keysym.send(w, "<Control-BackSpace>") end },
                     { "<Control-Shift-i>", function (w) keysym.send(w, "<Shift-Tab>") end },
                     { "<Mod1-a>", function (w) keysym.send(w, "<Control-a>") end },
@@ -378,6 +386,20 @@ modes.add_binds("insert", {
 
 modes.remap_binds("passthrough", {{ "<Control-v>", "<Escape>" }})
 modes.remove_binds({"normal", "insert"}, { "<Control-z>" })
+
+modes.add_binds("completion", {
+                    { "<Control-i>", "Select next matching completion item.",
+                      function (w) w.menu:move_down() end },
+                    { "<Control-Shift-i>", "Select previous matching completion item.",
+                      function (w) w.menu:move_up() end },
+})
+
+modes.add_binds("command", {
+                    { "<Control-j>", "Open completion menu.", function (w) w:set_mode("completion") end },
+                    { "<Control-k>", "Open completion menu.", function (w) w:set_mode("completion") end },
+                    { "<Control-i>", "Open completion menu.", function (w) w:set_mode("completion") end },
+                    { "<Control-Shift-i>", "Open completion menu.", function (w) w:set_mode("completion") end },
+})
 
 
 local select = require "select"

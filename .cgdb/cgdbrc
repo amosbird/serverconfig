@@ -4,6 +4,10 @@ set ignorecase
 set tabstop=2
 # set winsplit=src_big
 
+map e :set<Space>nodis<CR>
+map a :set<Space>dis<CR>
+map m :stepi<CR>
+map M :Si<CR>
 map r :run<CR>
 map R :e<CR>
 map c :continue<CR>
