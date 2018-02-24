@@ -241,7 +241,7 @@ function fish_user_key_bindings
     if string match -r '^ *$' (commandline) > /dev/null ^&1
       return
     else
-      commandline "tmuxgdb -ex=r -args "(commandline)
+      commandline "tmuxgdb -ex=start -args "(commandline)
       commandline -f execute
     end
   end
