@@ -95,6 +95,10 @@ local quickmarks = require "quickmarks"
 -- Add session saving/loading support
 local session = require "session"
 
+session.add_signal("save", function (state)
+                       return nil
+end)
+
 -- Add command to list closed tabs & bind to open closed tabs
 local undoclose = require "undoclose"
 

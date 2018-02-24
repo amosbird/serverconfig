@@ -259,6 +259,13 @@ function fish_user_key_bindings
     end
   end
 
+  function delete-suggestion
+      commandline --with-suggestion | read -lz cmd
+      builtin history delete --exact --case-sensitive $cmd
+      builtin history merge
+  end
+
+  bind \eD delete-suggestion
   bind \cs sudo-commandline
   bind \e` proxy-commandline # Control-Shift-S
   bind \cq gdb-commandline
