@@ -39,7 +39,7 @@ xkb_symbols "basic" {
     key <AC07> {	[	  j,	J		]	};
     key <AC08> {	[	  k,	K		]	};
     key <AC09> {	[	  l,	L		]	};
-    key <AC10> {	[ underscore,	minus   ]	};
+    key <AC10> {	[ underscore,	underscore   ]	};
     key <AC11> {	[ apostrophe,	quotedbl	]	};
 
     key <AB01> {	[	  z,	Z 		,  grave      ]	};

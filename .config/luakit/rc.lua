@@ -310,6 +310,7 @@ modes.add_binds("normal",
                 {
                     { "<Escape>", function (w)
                           w.view:send_key("Escape", {});
+                          w.view:send_key("Escape", {}, true);
                           w:set_prompt();
                           w:set_mode();
                           w.view:clear_search();

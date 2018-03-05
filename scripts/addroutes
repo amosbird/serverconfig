@@ -4931,9 +4931,6 @@ ip r a 223.255.252.0/23 via $gw table cn
 # v2ex.com
 ip r a 23.251.126.133/32 via $gw table cn
 
-# la.wentropy.com
-ip r a 168.235.77.108/32 via $gw table cn
-
 # zerotier
 ip r a 188.166.94.177/32 via $gw table cn
 ip r a 154.66.197.33/32 via $gw table cn
@@ -4957,5 +4954,14 @@ ip r a 47.90.50.109/32 via $gw table cn
 
 ip rule add table cn pref 30000
 
-ip r a 0.0.0.0/1 via 172.26.133.192
-ip r a 128.0.0.0/1 via 172.26.133.192
+# ip r a 0.0.0.0/1 via 172.26.133.192
+# ip r a 128.0.0.0/1 via 172.26.133.192
+ip r a 0.0.0.0/1 via 172.26.59.244
+ip r a 128.0.0.0/1 via 172.26.59.244
+
+# la.wentropy.com
+# ip r a 168.235.77.108/32 via $gw table cn
+
+# cl.wentropy.com
+# ip r a 168.235.92.230/32 via $gw table cn
+

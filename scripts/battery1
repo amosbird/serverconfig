@@ -16,55 +16,63 @@ use strict;
 use warnings;
 use utf8;
 
+binmode STDOUT, ":utf8";
+
 my $acpi;
 my $status;
 my $percent;
 my $full_text;
-my $short_text;
-my $bat_number = 2;
 
-# read the first line of the "acpi" command output
-open (ACPI, "acpi -b | grep 'Battery $bat_number' |") or die;
-$acpi = <ACPI>;
-close(ACPI);
+my $split = " | ";
 
-# fail on unexpected output
-if ($acpi !~ /: (\w+), (\d+)%/) {
-	die "$acpi\n";
+print " ";
+for (my $i=0; $i <= 1; $i++) {
+    if ($i > 0) {
+        print $split;
+    }
+    # read the first line of the "acpi" command output
+    open (ACPI, "acpi -b | grep 'Battery $i' |") or die;
+    $acpi = <ACPI>;
+    close(ACPI);
+
+    # fail on unexpected output
+    if ($acpi !~ /: (\w+), (\d+)%/) {
+        die "$acpi\n";
+    }
+
+    $status = $1;
+    $percent = $2;
+    $full_text = "$percent% ";
+
+    if ($status eq 'Discharging') {
+        $full_text .= '';
+    } elsif ($status eq 'Charging') {
+        $full_text .= '';
+    } elsif ($status eq 'Full') {
+        $full_text .= '';
+    } elsif ($status eq 'Unknown') {
+        $full_text .= '';
+    }
+
+    if ($acpi =~ /(\d\d:\d\d):/) {
+        $full_text .= " ($1)";
+    }
+
+    if ($percent < 15) {
+        print " ";
+    } elsif ($percent < 25) {
+        print " ";
+    } elsif ($percent < 50) {
+        print " ";
+    } elsif ($percent < 75) {
+        print " ";
+    } else {
+        print " ";
+    }
+    print "$full_text";
 }
+print " \n";
 
-$status = $1;
-$percent = $2;
-$full_text = "$percent%";
-
-if ($status eq 'Discharging') {
-	$full_text .= '';
-} elsif ($status eq 'Charging') {
-	$full_text .= '';
-} elsif ($status eq 'Unknown') {
-	$full_text .= '';
-}
-
-$short_text = $full_text;
-
-if ($acpi =~ /(\d\d:\d\d):/) {
-	$full_text .= " ($1)";
-}
-
-if ($percent < 15) {
-  print " ";
-} elsif ($percent < 25) {
-  print " ";
-} elsif ($percent < 50) {
-  print " ";
-} elsif ($percent < 75) {
-  print " ";
-} else {
-  print " ";
-}
-print "$full_text\n";
-print "$short_text\n";
-print "#EEEEEE\n";
 if ($percent < 5) {
   exit(33);
 }

@@ -44,15 +44,15 @@ label=/tmp
 border=#fcf6fb
 
 [disk]
-command=$HOME/scripts/disk | sed '1,2s/$/ Remaining/'
+command=$HOME/scripts/disk | sed '1,2s/$/ /'
 interval=60
-label=  
+label=   
 border=#bb32fb
 
-# [output]
-# command=$HOME/scripts/monitor.sh
-# interval=60
-# signal=4
+[battery]
+command=$HOME/scripts/battery1
+interval=10
+border=#326E38
 
 [updates]
 command=$HOME/scripts/updates.sh
@@ -61,7 +61,7 @@ signal=3
 urgent=true
 
 [volume]
-label=    
+label=   
 command=[[ -z "${BLOCK_BUTTON}" ]] || ( [[ "${BLOCK_BUTTON}" == "1" ]] && ((/usr/bin/pavucontrol -t 3 --name "pavucontrol-bar" || true) && $HOME/scripts/volume_control.py signal) || $HOME/scripts/volume_control.py toggle ); $HOME/scripts/volume_control.py i3blocks
 interval=3
 signal=1
@@ -69,13 +69,13 @@ markup=pango
 border=#cc241d
 
 [wireless]
-label=    
+label=   
 command=[[ -z "$(iwgetid -r)" ]] || echo "$(iwgetid -r) "
 interval=2
 border=#98971a
 
 [time]
-label=    
+label=   
 command=echo "`date +'%a %d %b'` <b>`date +'%T'`</b> "; [[ -z "${BLOCK_BUTTON}" ]] || gsimplecal &
 interval=1
 markup=pango

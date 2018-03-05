@@ -47,11 +47,11 @@ control+alt+l
 control+alt+h
   /home/amos/scripts/showshell.sh 0
 super+Home
-  /usr/bin/xrandr --output eDP1 --primary --mode 1600x900 --pos 0x0 --output DP2-2 --off --output HDMI1 --off
+  /usr/bin/xrandr --output eDP1 --primary --mode 1600x900 --pos 0x0 --output DP2-2 --off --output HDMI1 --off ; feh --bg-scale ~/Pictures/river.jpg
 super+End
-  /usr/bin/xrandr --output eDP1 --off --output HDMI1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0
+  /usr/bin/xrandr --output eDP1 --off --output HDMI1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0 ; feh --bg-scale ~/Pictures/river.jpg
 super+Insert
-  /usr/bin/xrandr --output eDP1 --off --output DP2-2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0
+  /usr/bin/xrandr --output eDP1 --off --output DP2-2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 ; feh --bg-scale ~/Pictures/river.jpg
 super+Delete
   /usr/bin/lxrandr
 control+alt+r

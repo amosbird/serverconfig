@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+function finish {
+  tput cnorm
+  # kill -s SIGINT "$pid"
+  kill 0
+}
+
+trap finish INT EXIT
+
+PREFIX=$1
+shift
+"$@" &
+pid=$!
+echo $pid
+tput civis # hide cursor
+DATE_FORMAT="+%H:%M:%S"
+START_TIME=$(date +%s)
+DATE_INPUT="now-${START_TIME}sec"
+while true; do
+    STOPWATCH=$(TZ=UTC date --date "$DATE_INPUT" $DATE_FORMAT)
+    printf "\r\e%s%s\e[0m" "$PREFIX" "$STOPWATCH"
+    sleep 0.2
+done
