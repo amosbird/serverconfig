@@ -28,6 +28,8 @@ set -s window-status-current-style "bg=#881100"
 set -s window-status-last-style "fg=#ee4488"
 set -s window-status-activity-style "underscore"
 
+set -g window-active-style 'bg=#141414'
+
 set -s pane-active-border-style "fg=#009aff"
 set -s pane-border-style "fg=#585858"
 set -s pane-border-status top
