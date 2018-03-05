@@ -7,6 +7,9 @@ set FZF_HOME $HOME/.fzf
 #   set FZF_TMUX 1
 # end
 
+set -x CORES (getconf _NPROCESSORS_ONLN)
+set -x MAKEFLAGS -j$CORES
+
 set -x RUST_SRC_PATH /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/src
 set -x FZF_DEFAULT_OPTS "--ansi --multi --bind=ctrl-v:half-page-down,alt-v:half-page-up,ctrl-l:accept"
 set -x GOPATH /home/amos/go

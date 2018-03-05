@@ -33,6 +33,10 @@ define hookpost-frame
   dashboard
 end
 
+# handle SIGTSTP noprint nostop pass
+# handle SIGQUIT noprint nostop pass
+# handle SIGINT noprint nostop pass
+
 # set $dlopen = (void*(*)(char*, int)) dlopen
 # call $dlopen("/home/amos/git/luakit/lualib.so", 1)
 
