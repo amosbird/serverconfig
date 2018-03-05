@@ -15,10 +15,10 @@ function perfflametmux
         set -l ds (basename -s .data $df).svg
         set -l cols (tput cols)
         set -l rows (tput lines)
-        set -l msg "Start recording process "$_flag_p". Hit Ctrl-C to finish."
+        set -l msg "Start recording process "$_flag_p" ("(ps -p $_flag_p -o comm=)"). Hit Ctrl-C to finish."
         set -l centercol (math \({$cols}-(string length $msg)\)/2)
         set -l centercol2 (math \({$cols}-8\)/2)
-        set -l centerrow (math $rows/2)
+        set -l centerrow (math $rows/2-1)
         tput cup $centerrow $centercol
         set -l msg \e\[1m\e\[92m$msg\e\[0m
         set -l clock \e\[1m\e\[33m(string repeat -n $centercol2 " ")

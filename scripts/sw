@@ -2,10 +2,11 @@
 
 function finish {
   tput cnorm
+  kill -s SIGINT $PID
+  wait $PID
   perf script -i $df | stackcollapse-perf.pl | grep -v cpu_idle | flamegraph.pl > $ds
   fish -c "osc52browser $ds"
-  # kill -s SIGINT "$pid"
-  kill 0
+  exit 0
 }
 
 trap finish INT EXIT
@@ -17,6 +18,7 @@ shift
 ds=$1
 shift
 "$@" &
+PID=$!
 tput civis # hide cursor
 DATE_FORMAT="+%H:%M:%S"
 START_TIME=$(date +%s)
