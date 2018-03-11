@@ -3,7 +3,7 @@ set -s prefix None
 set -s prefix2 None
 set -s status off
 
-set -g window-active-style 'bg=#141414'
+set -s window-active-style 'bg=#141414'
 
 set -s key-table htop
 bind-key -T htop C-] send-keys Escape

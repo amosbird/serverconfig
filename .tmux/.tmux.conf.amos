@@ -1,3 +1,5 @@
+#' -*- mode:conf -*-
+
 set -s history-limit 10000
 set -s set-titles off
 set -s mouse on
@@ -8,14 +10,15 @@ set -s display-panes-time 800
 set -s display-time 1000
 set -s monitor-activity on
 set -s visual-activity off
-
+set -s wrap-search off
 set -s status-interval 1
 
-# ------ status theme -------------------------------
+set -s mode-fg colour6
+set -s mode-bg colour0
+
 set -s message-style "bg=#00346e, fg=#ffffd7"
 
 set -s status-style "bg=#222222, fg=#ffffd7"
-
 set -s status-left "#[bg=#009aff] ❐ #S "
 set -s status-left-length 400
 set -s status-right "#{?client_prefix, #[bg=#778833] PREFIX,}#{?pane_synchronized, #[bg=#008844] SYNC,} #[bg=#009aff] #(whoami)@#h #[bg=#881100] %Y-%m-%d %H:%M "
@@ -27,8 +30,7 @@ set -s window-status-separator ""
 set -s window-status-current-style "bg=#881100"
 set -s window-status-last-style "fg=#ee4488"
 set -s window-status-activity-style "underscore"
-
-set -g window-active-style 'bg=#141414'
+set -s window-active-style 'bg=#141414'
 
 set -s pane-active-border-style "fg=#009aff"
 set -s pane-border-style "fg=#585858"
@@ -42,11 +44,13 @@ bind 2 split-window -v -c '#{pane_current_path}'
 bind 3 split-window -h -c '#{pane_current_path}'
 bind C-x send-prefix
 bind C-c detach-client
-bind C-f command-prompt -p find-session 'switch-client -t %%'
 bind r source-file ~/.tmux/.tmux.conf.amos \; display '~/.tmux/.tmux.conf.amos sourced'
 bind c new-window
 bind d kill-pane
 bind k kill-window
+
+bind o run "tmux run -t emacs \"tmux neww -c '#{pane_current_path}' emacsclient -c -eval '(+amos/dired-jump)'\"; tmux switch-client -t emacs"
+bind g run "if git rev-parse; then exit 0; fi; tmux run -t emacs \"tmux neww -c '#{pane_current_path}' emacsclient -c -eval '(magit-status)'\"; tmux switch-client -t emacs"
 
 bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection
@@ -54,7 +58,6 @@ bind -Tcopy-mode-vi q send -X clear-selection
 unbind -Tcopy-mode-vi MouseDragEnd1Pane
 bind -Tcopy-mode-vi TripleClick1Pane send -X select-line
 bind -Tcopy-mode-vi v send-keys -X begin-selection
-# bind -Tcopy-mode-vi M-v send-keys -X halfpage-up
 bind -Tcopy-mode-vi C-v send-keys -X rectangle-toggle
 bind -Tcopy-mode-vi d send-keys -X halfpage-down
 bind -Tcopy-mode-vi u send-keys -X halfpage-up
@@ -95,7 +98,7 @@ bind-key -T amos MouseDrag1Border resize-pane -M
 bind-key -T amos WheelUpPane      if-shell -F -t = "#{mouse_any_flag}" "send-keys -M" "if -Ft= \"#{pane_in_mode}\" \"send-keys -M\" \"copy-mode -et=\""
 bind-key -T amos WheelUpStatus    previous-window
 bind-key -T amos WheelDownStatus  next-window
-bind-key -T amos C-l send-keys C-l# \; run 'sleep 0.05 && tmux clear-history'
+bind-key -T amos C-l send-keys C-l
 bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
 bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
 
@@ -106,14 +109,8 @@ bind-key -T amos M-0 run-shell 'if env | grep "^T450s" > /dev/null; then i3-msg 
 bind-key -T amos M-= switch-client -t htop
 
 
-set -s mode-fg colour6
-set -s mode-bg colour0
-
 bind-key -T amos M-u copy-mode\; send -X search-backward ❯
 bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
-
-set -s wrap-search off
-
 bind-key -T amos M-- set synchronize-panes
 bind-key -T amos C-^ previous-window
 bind-key -T amos C-_ next-window

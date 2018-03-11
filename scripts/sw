@@ -9,7 +9,7 @@ function finish {
   exit 0
 }
 
-trap finish INT EXIT
+trap finish INT
 
 PREFIX=$1
 shift
