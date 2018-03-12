@@ -1,2 +1,2 @@
-#!/usr/bin/env perl
-use feature qw( say ); say $!=shift;
+#!/usr/bin/env bash
+perl -E "say \$!=$1"

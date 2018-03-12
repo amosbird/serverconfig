@@ -12,7 +12,7 @@ URxvt.meta8:                false
 URxvt.keysym.C-M-u:         perl:url-picker
 URxvt.copy_cmd:             xclip
 URxvt.keysym.C-M-y:         perl:url-yanker
-URxvt.url-picker.launcher:  vivaldi
+URxvt.url-picker.launcher:  luakit
 URxvt.url-picker.order:     descending
 ! iso-level-tab
 URxvt.keysym.C-I:           \033[Z

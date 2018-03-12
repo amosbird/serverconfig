@@ -6,42 +6,29 @@
 
 # /home/amos/softwares/qt59env/bin/python -m qutebrowser --backend webengine "$@"
 
-if [ "$#" -ge 2 ]
-then
-    luakit "$2"
-elif [ "$#" -ge 1 ]
-then
-    luakit "$1"
-else
-    luakit
-fi
-exit 0
+# if [ "$#" -ge 2 ]
+# then
+#     luakit "$2"
+# elif [ "$#" -ge 1 ]
+# then
+#     luakit "$1"
+# else
+#     luakit
+# fi
+# exit 0
 
 exists() { [[ -e $1 ]]; }; shopt -s nullglob
-if exists /run/user/1000/qutebrowser/*
+if ! exists /run/user/1000/qutebrowser/*
 then
-    socket=(/run/user/1000/qutebrowser/*)
-    # printf -v args '"%s", ' "$@"
-    # args=${args%, }
-    # echo '{"args":['"$args"'], "target_arg":"", "protocol_version":1}' | socat - UNIX-CONNECT:"${socket[0]}"
-
-    # ruby -e 'printf "{\"args\":[%s], \"target_arg\":\"\", \"protocol_version\":1}\n", ARGV.map{ |e| e.inspect }.join(", ")' -- "$@" | socat - UNIX-CONNECT:"${socket[0]}"
-
-    if [ "$#" -ge 2 ]
-    then
-        # set -- "${@:1:$(($#-1))}" # remove last argument
-        shift
-        workspace=$(i3-msg -t get_workspaces | jq -r 'map(select(.focused))[0].name')
-        if i3-msg -t get_tree | jq -r --arg v "$workspace" '.nodes[].nodes[].nodes[] | .type == "workspace" and .name == $v and .nodes[].nodes[].window_properties.class=="qutebrowser"' | grep true
-        then
-            i3-msg focus right > /dev/null
-            ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"last-visible\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$@" | socat - UNIX-CONNECT:"${socket[0]}" && exit 0
-        else
-            ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"window\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$@" | socat - UNIX-CONNECT:"${socket[0]}" && exit 0
-        fi
-    else
-        ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$@" | socat - UNIX-CONNECT:"${socket[0]}" && exit 0
-    fi
+    qutebrowser ~/git/serverconfig/dumb.html &
+    while read -r && [[ $REPLY != *ATTRIB\ ipc-* ]]; do :; done < <(inotifywait -m /run/user/1000/qutebrowser)
 fi
-# /home/amos/softwares/qutebrowser/qutebrowser.py --backend webengine "$@"
-/home/amos/softwares/qutebrowser/qutebrowser.py --backend webengine "$@"
+socket=(/run/user/1000/qutebrowser/*)
+workspace=$(i3-msg -t get_workspaces | jq -r 'map(select(.focused))[0].name')
+if i3-msg -t get_tree | jq -r --arg v "$workspace" '.nodes[].nodes[].nodes[] | .type == "workspace" and .name == $v and (.nodes[].window_properties.class=="qutebrowser" or .nodes[].nodes[].window_properties.class=="qutebrowser")' | grep true
+then
+    i3-msg focus right > /dev/null
+    ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"last-focused\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$@" | socat - UNIX-CONNECT:"${socket[0]}" && exit 0
+else
+    ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"window\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$@" | socat - UNIX-CONNECT:"${socket[0]}" && exit 0
+fi

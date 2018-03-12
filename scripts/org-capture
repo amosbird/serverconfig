@@ -15,7 +15,7 @@ cleanup() {
 
 # If emacs isn't running, we start a temporary daemon, solely for this window.
 daemon=
-if ! pgrep emacs >/dev/null; then
+if ! pkill -0 emacs; then
     emacs --daemon
     trap cleanup EXIT INT TERM
     daemon=1

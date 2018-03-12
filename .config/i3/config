@@ -185,6 +185,8 @@ for_window [class="Zotero" title="ZotFile Preferences"] floating enable
 for_window [class="Fcitx-config-gtk3"] floating enable
 for_window [class="Emacs" instance="org-capture"] exec "/home/amos/scripts/showorg.sh", floating enable
 
+for_window [title="^998877665544332211"] move scratchpad
+
 # Focus
 for_window [instance="^urxvt_scratchpad"] move scratchpad
 for_window [instance="^stardict"] move scratchpad
