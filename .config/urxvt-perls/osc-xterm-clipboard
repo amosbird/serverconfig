@@ -20,7 +20,7 @@ sub on_osc_seq {
         # $data_decoded =~ s/file:\/\/\//http:\/\/172.26.165.60:8866/;
         $data_decoded =~ s/file:\/\/\//http:\/\/172.26.72.26:8866/;
         print $fh $data_decoded;
-        $term->exec_async('vivaldi', $data_decoded);
+        $term->exec_async('luakit', $data_decoded);
     }
     elsif ($clip =~ /y/) { # open url new
         my $data_decoded = decode_base64($data);
