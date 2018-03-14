@@ -14,9 +14,16 @@ local handle = {
 }
 local webview = require "webview"
 local lousy = require "lousy"
+local downloads = require "downloads"
+downloads.default_dir = os.getenv("HOME") .. "/Downloads"
 webview.add_signal("init", function (view)
     view:add_signal("navigation-request", function (v, uri)
-                        if handle[lousy.uri.parse(uri).scheme] then
+                        local scheme = lousy.uri.parse(uri).scheme
+                        -- if scheme == "magnet" then
+                        --     downloads.aria2(uri, downloads.default_dir)
+                        --     return false
+                        -- elseif handle[scheme] then
+                        if handle[scheme] then
                             luakit.spawn(string.format("%s %q", "xdg-open", uri))
                             return false
                         end
@@ -36,9 +43,7 @@ local settings = require "settings"
 settings.window.search_engines.scholar = "https://scholar.google.com/scholar?q=%s"
 settings.on["gitter.im"].webview.zoom_level = 100
 
-local downloads = require "downloads"
 -- Set download location
-downloads.default_dir = os.getenv("HOME") .. "/Downloads"
 downloads.pdf_dir = "pdfs"
 downloads.ppt_dir = "ppts"
 downloads.doc_dir = "docs"

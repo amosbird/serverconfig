@@ -1,0 +1,12 @@
+[Unit]
+Description=Aria2c download manager
+After=network.target
+
+[Service]
+Type=simple
+User=amos
+ExecStart=/usr/bin/aria2c --console-log-level=warn --enable-rpc --rpc-listen-all --interface zt0 --rpc-allow-origin-all --save-session /home/amos/.config/aria2/session.lock --input-file /home/amos/.config/aria2/session.lock --conf-path=/home/amos/.config/aria2/aria2.conf
+
+
+[Install]
+WantedBy=multi-user.target
