@@ -8,7 +8,7 @@ function perfflame
         return
     end
 
-    if math "1 <= "$_flag_p > /dev/null ^ /dev/null
+    if test 1 -le $_flag_p > /dev/null 2> /dev/null
         mkdir -p ~/perfdata
         pushd ~/perfdata
         set -l df (mktemp (date '+%Y-%m-%d-%H_%M_%S_')XXX.data)

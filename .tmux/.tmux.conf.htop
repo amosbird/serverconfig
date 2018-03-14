@@ -9,10 +9,10 @@ set -s key-table htop
 bind-key -T htop C-] send-keys Escape
 bind-key -T htop C-j send-keys Down
 bind-key -T htop C-k send-keys Up
-bind-key -T htop M-0 switch-client -l
-bind-key -T htop M-= switch-client -l
+bind-key -T htop M-0 switch-client -l\; send f12
+bind-key -T htop M-= switch-client -l\; send f12
 
-bind-key -T htop M-h run-shell "fish -c 'set d (tmux display -p \"#{pane_at_left}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -L; else; i3focus left (tmux display -p \"#{pane_tty}\"); end'"
-bind-key -T htop M-j run-shell "fish -c 'set d (tmux display -p \"#{pane_at_bottom}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -D; else; i3focus down (tmux display -p \"#{pane_tty}\"); end'"
-bind-key -T htop M-k run-shell "fish -c 'set d (tmux display -p \"#{pane_at_top}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -U; else; i3focus up (tmux display -p \"#{pane_tty}\"); end'"
-bind-key -T htop M-l run-shell "fish -c 'set d (tmux display -p \"#{pane_at_right}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -R; else; i3focus right (tmux display -p \"#{pane_tty}\"); end'"
+bind-key -T htop M-h select-pane -L
+bind-key -T htop M-j select-pane -D
+bind-key -T htop M-k select-pane -U
+bind-key -T htop M-l select-pane -R

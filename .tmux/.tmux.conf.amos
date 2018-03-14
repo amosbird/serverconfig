@@ -68,6 +68,7 @@ bind -Tcopy-mode-vi L resize-pane -R 5
 
 # need to add all needed root table's key bindings
 set -s key-table amos
+bind-key -T amos f12 display
 bind-key -T amos DoubleClick1Pane copy-mode\; send -X select-word
 bind-key -T amos C-] send-keys Escape
 bind-key -T amos C-j send-keys Down
@@ -81,10 +82,10 @@ bind-key -T amos M-6 select-window -t 6
 bind-key -T amos M-7 select-window -t 7
 bind-key -T amos M-8 select-window -t 8
 bind-key -T amos M-9 select-window -t 9
-bind-key -T amos M-h run-shell "fish -c 'set d (tmux display -p \"#{pane_at_left}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -L; else; i3focus left (tmux display -p \"#{pane_tty}\"); end'"
-bind-key -T amos M-j run-shell "fish -c 'set d (tmux display -p \"#{pane_at_bottom}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -D; else; i3focus down (tmux display -p \"#{pane_tty}\"); end'"
-bind-key -T amos M-k run-shell "fish -c 'set d (tmux display -p \"#{pane_at_top}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -U; else; i3focus up (tmux display -p \"#{pane_tty}\"); end'"
-bind-key -T amos M-l run-shell "fish -c 'set d (tmux display -p \"#{pane_at_right}\"); if math \"\$d==0\" > /dev/null ; tmux select-pane -R; else; i3focus right (tmux display -p \"#{pane_tty}\"); end'"
+bind-key -T amos M-h select-pane -L
+bind-key -T amos M-j select-pane -D
+bind-key -T amos M-k select-pane -U
+bind-key -T amos M-l select-pane -R
 bind-key -T amos C-@ run-shell "fish -c 'i3focus right (tmux display -p \"#{pane_tty}\")'"
 bind-key -T amos M-H swap-pane -s '{left-of}'
 bind-key -T amos M-J swap-pane -s '{down-of}'
@@ -104,10 +105,8 @@ bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/
 
 bind-key -T amos C-v send-key C-v
 
-bind-key -T amos M-enter run-shell 'if env | grep "^T450s" > /dev/null; then i3-msg move to scratchpad, workspace  &> /dev/null; else tmux switch-client -t emacs; fi'
-bind-key -T amos M-0 run-shell 'if env | grep "^T450s" > /dev/null; then i3-msg move to scratchpad, workspace  &> /dev/null; else tmux switch-client -t emacs; fi'
+bind-key -T amos M-0 switch-client -t emacs\; send f12
 bind-key -T amos M-= switch-client -t htop
-
 
 bind-key -T amos M-u copy-mode\; send -X search-backward ❯
 bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
