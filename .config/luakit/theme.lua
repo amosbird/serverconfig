@@ -5,8 +5,8 @@
 local theme = {}
 
 -- Default settings
-theme.font = "18px Inconsolata"
--- theme.font = "18px monospace" -- inconsistency of lua w:notify(w.sbar.ebox.height..' '..w.ibar.ebox.height)
+-- theme.font = "18px Inconsolata"
+theme.font = "18px monospace" -- inconsistency of lua w:notify(w.sbar.ebox.height..' '..w.ibar.ebox.height)
 theme.fg   = "#ddd"
 theme.bg   = "#333"
 
