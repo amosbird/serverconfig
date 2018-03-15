@@ -7,9 +7,6 @@ set -s status off
 set -s renumber-windows on
 
 set -s key-table emacs
-# bind-key -T emacs M-0 switch-client -t amos\; run-shell "printf '\ePtmux;\e\e]12;DarkGoldenrod\e\\'"
-# \e[2 q\e\\'
-bind-key -T emacs M-= switch-client -t htop
 
 bind-key -T emacs C-^ previous-window\; send f12
 bind-key -T emacs C-_ next-window\; send f12
