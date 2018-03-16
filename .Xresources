@@ -40,7 +40,7 @@ URxvt.keysym.C-comma:       \036
 URxvt.keysym.C-period:      \037
 URxvt.perl-lib:             /home/amos/.config/urxvt-perls
 URxvt.perl-ext-common:      default,matcher,url-picker,url-yanker,osc-xterm-clipboard,autocomplete
-URxvt.keysym.M-comma:       perl:aAtt:fuzzy-WORD-complete
+URxvt.keysym.C-M-comma:       perl:aAtt:fuzzy-WORD-complete
 ! URxvt.keysym.M-less:        perl:aAtt:line
 
 ! URLs
