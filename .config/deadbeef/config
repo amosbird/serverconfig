@@ -3,7 +3,7 @@ cli_add_playlist_name Default
 cli_add_to_specific_playlist 1
 close_send_to_tray 1
 deadbeef_version 0.7.2
-filechooser.lastdir file:///home/amos/Music/cloudmusic
+filechooser.lastdir file:///home/amos/Music
 gtkui.columns.playlist [{"title":"♫","id":"1","format":"%playstatus%","size":"50","align":"0","color_override":"0","color":"#ff000000"},{"title":"Artist / Album","id":"-1","format":"%artist% - %album%","size":"327","align":"0","color_override":"0","color":"#ff000000"},{"title":"Track No","id":"-1","format":"%tracknumber%","size":"50","align":"1","color_override":"0","color":"#ff000000"},{"title":"Title","id":"-1","format":"%title%","size":"389","align":"0","color_override":"0","color":"#ff000000"},{"title":"Duration","id":"-1","format":"%length%","size":"50","align":"0","color_override":"0","color":"#ff000000"}]
 gtkui.layout.0.6.2 vbox expand="0 1" fill="1 1" homogeneous=0 {hbox expand="0 1 0" fill="1 1 1" homogeneous=0 {playtb {} seekbar {} volumebar {} } tabbed_playlist hideheaders=0 width=1000 {} } 
 gtkui.mmb_delete_playlist 1
@@ -56,20 +56,23 @@ network.proxy.type HTTP
 playback.loop 0
 playback.order 0
 playback.volume 0.0000000
-playlist.current 0
+playlist.current 4
 playlist.cursor.0 268
 playlist.cursor.1 11
 playlist.cursor.2 67
 playlist.cursor.3 0
+playlist.cursor.4 0
 playlist.scroll.0 7195
 playlist.scroll.1 0
 playlist.scroll.2 2606
 playlist.scroll.3 0
+playlist.scroll.4 0
 playlist.scroll.cursorfollowplayback 1
 playlist.tab.00000 cloudmusic
 playlist.tab.00001 research
 playlist.tab.00002 第二季
 playlist.tab.00003 The Piano Guys
+playlist.tab.00004 qqmusic
 prefwin.geometry.h 554
 prefwin.geometry.w 703
 prefwin.geometry.x 608
