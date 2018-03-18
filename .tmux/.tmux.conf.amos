@@ -69,16 +69,16 @@ bind -Tcopy-mode-vi L resize-pane -R 5
 # need to add all needed root table's key bindings
 set -s key-table amos
 
-set -s user-keys[0] "\e[5;30010~"
-set -s user-keys[1] "\e[5;30011~"
-set -s user-keys[2] "\e[5;30012~"
-set -s user-keys[3] "\e[5;30013~"
-set -s user-keys[4] "\e[5;30014~"
-set -s user-keys[5] "\e[5;30015~"
-set -s user-keys[6] "\e[5;30016~"
-set -s user-keys[7] "\e[5;30017~"
-set -s user-keys[8] "\e[5;30018~"
-set -s user-keys[9] "\e[5;30019~"
+set -s user-keys[0] "\e[70~"
+set -s user-keys[1] "\e[71~"
+set -s user-keys[2] "\e[72~"
+set -s user-keys[3] "\e[73~"
+set -s user-keys[4] "\e[74~"
+set -s user-keys[5] "\e[75~"
+set -s user-keys[6] "\e[76~"
+set -s user-keys[7] "\e[77~"
+set -s user-keys[8] "\e[78~"
+set -s user-keys[9] "\e[79~"
 
 # URxvt.keysym.C-Return:      \033[5;30010~
 bind-key -T amos User0 send-keys Enter
