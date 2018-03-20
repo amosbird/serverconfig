@@ -288,16 +288,19 @@ key_bindings:
   - { key: Key0,     mods: Control,       action: ResetFontSize                                    }
   - { key: Key9,     mods: Control,       action: IncreaseFontSize                                 }
   - { key: Subtract, mods: Control,       action: DecreaseFontSize                                 }
-  - { key: Space,    mods: Control,       command: { program: "i3-msg", args: ["focus", "right"] } }
+  # - { key: Space,    mods: Control,       command: { program: "i3-msg", args: ["focus", "right"] } } # needed in insert mode
   - { key: Escape,                        chars: "\x1d"                                            }
   - { key: Return,   mods: Control,       chars: "\x1b[70~"                                        }
-  - { key: Back,     mods: Alt|Shift,     chars: "\x1b[71~"                                        }
-  - { key: Return,   mods: Shift,         chars: "\x1b[72~"                                        }
   - { key: Comma,    mods: Control,       chars: "\x1b[73~"                                        }
   - { key: Period,   mods: Control,       chars: "\x1b[74~"                                        }
-  - { key: S,        mods: Control|Shift, chars: "\x1b[75~"                                        }
-  - { key: D,        mods: Control|Shift, chars: "\x1b[76~"                                        }
-  - { key: J,        mods: Control|Shift, chars: "\x1b[77~"                                        }
+  - { key: S,        mods: Control|Shift, chars: "\x1b[1;2S"                                       }
+  - { key: D,        mods: Control|Shift, chars: "\x1b[15;2~"                                      }
+  - { key: J,        mods: Control|Shift, chars: "\x1b[17;2~"                                      }
+  - { key: Back,     mods: Alt|Shift,     chars: "\x1b[18;2~"                                      }
+  - { key: Return,   mods: Shift,         chars: "\x1b[19;2~"                                      }
+  - { key: F9,       mods: Shift,         chars: "\x1b[20;2~"                                      }
+  - { key: F10,      mods: Shift,         chars: "\x1b[21;2~"                                      }
+  - { key: F11,      mods: Shift,         chars: "\x1b[23;2~"                                      }
   - { key: I,        mods: Control|Shift, chars: "\x1b[Z"                                          }
   - { key: Escape,                        chars: "\x1d"                                            }
   - { key: Key1,     mods: Control,       chars: "1"                                               }
@@ -360,14 +363,6 @@ key_bindings:
   - { key: F1,       mods: Shift,         chars: "\x1b[1;2P"                                       }
   - { key: F2,       mods: Shift,         chars: "\x1b[1;2Q"                                       }
   - { key: F3,       mods: Shift,         chars: "\x1b[1;2R"                                       }
-  - { key: F4,       mods: Shift,         chars: "\x1b[1;2S"                                       }
-  - { key: F5,       mods: Shift,         chars: "\x1b[15;2~"                                      }
-  - { key: F6,       mods: Shift,         chars: "\x1b[17;2~"                                      }
-  - { key: F7,       mods: Shift,         chars: "\x1b[18;2~"                                      }
-  - { key: F8,       mods: Shift,         chars: "\x1b[19;2~"                                      }
-  - { key: F9,       mods: Shift,         chars: "\x1b[20;2~"                                      }
-  - { key: F10,      mods: Shift,         chars: "\x1b[21;2~"                                      }
-  - { key: F11,      mods: Shift,         chars: "\x1b[23;2~"                                      }
   - { key: F12,      mods: Shift,         chars: "\x1b[24;2~"                                      }
   - { key: F1,       mods: Control,       chars: "\x1b[1;5P"                                       }
   - { key: F2,       mods: Control,       chars: "\x1b[1;5Q"                                       }
@@ -393,15 +388,3 @@ key_bindings:
   - { key: F10,      mods: Alt,           chars: "\x1b[21;6~"                                      }
   - { key: F11,      mods: Alt,           chars: "\x1b[23;6~"                                      }
   - { key: F12,      mods: Alt,           chars: "\x1b[24;6~"                                      }
-  - { key: F1,       mods: Super,         chars: "\x1b[1;3P"                                       }
-  - { key: F2,       mods: Super,         chars: "\x1b[1;3Q"                                       }
-  - { key: F3,       mods: Super,         chars: "\x1b[1;3R"                                       }
-  - { key: F4,       mods: Super,         chars: "\x1b[1;3S"                                       }
-  - { key: F5,       mods: Super,         chars: "\x1b[15;3~"                                      }
-  - { key: F6,       mods: Super,         chars: "\x1b[17;3~"                                      }
-  - { key: F7,       mods: Super,         chars: "\x1b[18;3~"                                      }
-  - { key: F8,       mods: Super,         chars: "\x1b[19;3~"                                      }
-  - { key: F9,       mods: Super,         chars: "\x1b[20;3~"                                      }
-  - { key: F10,      mods: Super,         chars: "\x1b[21;3~"                                      }
-  - { key: F11,      mods: Super,         chars: "\x1b[23;3~"                                      }
-  - { key: F12,      mods: Super,         chars: "\x1b[24;3~"                                      }
