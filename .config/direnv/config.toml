@@ -1,0 +1,6 @@
+[whitelist]
+prefix = ["/home/amos/cc/playground"]
+exact = [
+    "/Users/adam/code/bar",
+    "/Users/adam/code/quux/.envrc"
+]
