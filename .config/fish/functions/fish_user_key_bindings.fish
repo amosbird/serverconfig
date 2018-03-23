@@ -2,18 +2,27 @@ function fish_user_key_bindings
     function updir
         cd ..
         commandline -f repaint
+        if count $TMUX > /dev/null
+            tmux refresh-client -S
+        end
         eval (direnv export fish);
     end
 
     function myprevd
-        prevd ^&1 > /dev/null
+        prevd 2>&1 > /dev/null
         commandline -f repaint
+        if count $TMUX > /dev/null
+            tmux refresh-client -S
+        end
         eval (direnv export fish);
     end
 
     function mynextd
-        nextd ^&1 > /dev/null
+        nextd 2>&1 > /dev/null
         commandline -f repaint
+        if count $TMUX > /dev/null
+            tmux refresh-client -S
+        end
         eval (direnv export fish);
     end
 
@@ -34,6 +43,9 @@ function fish_user_key_bindings
             end
         end
         commandline -f repaint
+        if count $TMUX > /dev/null
+            tmux refresh-client -S
+        end
         eval (direnv export fish);
     end
 

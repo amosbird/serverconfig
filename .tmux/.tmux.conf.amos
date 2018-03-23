@@ -140,4 +140,3 @@ bind-key -T amos M-= switch-client -t htop
 bind-key -T amos M-u copy-mode\; send -X search-backward ❯
 bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
 bind-key -T amos M-- set synchronize-panes
-# set-hook 'after-new-window' 'run-shell -b "if [ \#{window_name} == Cluster ]; then tmux set pane-border-status; fi"'
