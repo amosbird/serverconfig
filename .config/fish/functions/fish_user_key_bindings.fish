@@ -9,7 +9,7 @@ function fish_user_key_bindings
     end
 
     function myprevd
-        prevd 2>&1 > /dev/null
+        prevd > /dev/null 2>&1
         commandline -f repaint
         if count $TMUX > /dev/null
             tmux refresh-client -S
@@ -18,7 +18,7 @@ function fish_user_key_bindings
     end
 
     function mynextd
-        nextd 2>&1 > /dev/null
+        nextd > /dev/null 2>&1
         commandline -f repaint
         if count $TMUX > /dev/null
             tmux refresh-client -S
@@ -32,7 +32,7 @@ function fish_user_key_bindings
         begin
             set -lx FZF_DEFAULT_OPTS "+s --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
             eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -l result
-            if string match -r '^ *$' (commandline) > /dev/null ^&1
+            if string match -r '^ *$' (commandline) > /dev/null 2>&1
                 [ "$result" ]
                 and if not cd $result
                     jump clean
@@ -172,40 +172,40 @@ function fish_user_key_bindings
         set -q FZF_TMUX; or set FZF_TMUX 0
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         if [ $FZF_TMUX -eq 1 ]
-            commandline -aj " ^&1 | fzf-tmux -d$FZF_TMUX_HEIGHT"
+            commandline -aj " 2>&1 | fzf-tmux -d$FZF_TMUX_HEIGHT"
         else
-            commandline -aj " ^&1 | fzf"
+            commandline -aj " 2>&1 | fzf"
         end
         commandline -f execute
     end
 
     function last-sudo -d "Execute last command using sudo if current commandline is blank"
-        if string match -r '^ *$' (commandline) > /dev/null ^&1
+        if string match -r '^ *$' (commandline) > /dev/null 2>&1
             commandline -a "sudo $history[1]"
             commandline -f execute
         end
     end
 
     function open-magit -d "Open magit in emacs"
-        emacsclient -n -eval "(+amos/tmux-new-window)" > /dev/null ^&1
-        if emacsclient -n -eval "(magit-status $pwd)" > /dev/null ^&1
+        emacsclient -n -eval "(+amos/tmux-new-window)" > /dev/null 2>&1
+        if emacsclient -n -eval "(magit-status $pwd)" > /dev/null 2>&1
             if test -z $T450s
                 tmux switch-client -t emacs
             else
-                i3-msg '[instance="^urxvt_scratchpad"]' move to scratchpad > /dev/null ^&1
-                i3-msg  workspace  > /dev/null ^&1
+                i3-msg '[instance="^urxvt_scratchpad"]' move to scratchpad > /dev/null 2>&1
+                i3-msg  workspace  > /dev/null 2>&1
             end
         end
     end
 
     function open-ranger -d "Open ranger in emacs"
-        emacsclient -n -eval "(+amos/tmux-new-window)" > /dev/null ^&1
-        if emacsclient -n -eval "(+amos/dired-jump $pwd)" > /dev/null ^&1
+        emacsclient -n -eval "(+amos/tmux-new-window)" > /dev/null 2>&1
+        if emacsclient -n -eval "(+amos/dired-jump $pwd)" > /dev/null 2>&1
             if test -z $T450s
                 tmux switch-client -t emacs
             else
-                i3-msg '[instance="^urxvt_scratchpad"]' move to scratchpad > /dev/null ^&1
-                i3-msg workspace  > /dev/null ^&1
+                i3-msg '[instance="^urxvt_scratchpad"]' move to scratchpad > /dev/null 2>&1
+                i3-msg workspace  > /dev/null 2>&1
             end
         end
     end
@@ -225,7 +225,7 @@ function fish_user_key_bindings
     end
 
     function ls-commandline -d "execute ls"
-        if string match -r '^ *$' (commandline) > /dev/null ^&1
+        if string match -r '^ *$' (commandline) > /dev/null 2>&1
             commandline "ls"
             commandline -f execute
         else
@@ -234,7 +234,7 @@ function fish_user_key_bindings
     end
 
     function proxy-commandline -d "execute commandline using proxychains"
-        if string match -r '^ *$' (commandline) > /dev/null ^&1
+        if string match -r '^ *$' (commandline) > /dev/null 2>&1
             return
         else
             commandline "proxychains "(commandline)
@@ -243,7 +243,7 @@ function fish_user_key_bindings
     end
 
     function sudo-commandline -d "execute commandline using sudo"
-        if string match -r '^ *$' (commandline) > /dev/null ^&1
+        if string match -r '^ *$' (commandline) > /dev/null 2>&1
             return
         else
             commandline "sudo "(commandline)
@@ -252,7 +252,7 @@ function fish_user_key_bindings
     end
 
     function gdb-commandline -d "execute commandline using tmuxgdb"
-        if string match -r '^ *$' (commandline) > /dev/null ^&1
+        if string match -r '^ *$' (commandline) > /dev/null 2>&1
             return
         else
             commandline "tmuxgdb -ex=start -args "(commandline)
@@ -261,14 +261,14 @@ function fish_user_key_bindings
     end
 
     function my-edit-command -d "edit command buffer or tmux buffer"
-        if not string match -r '^ *$' (commandline) > /dev/null ^&1
+        if not string match -r '^ *$' (commandline) > /dev/null 2>&1
             # vim (tmux capture-pane -S - -E - -p | psub -f)
             edit_command_buffer
         end
     end
 
     function my-edit-tmux -d "edit command buffer or tmux buffer"
-        if string match -r '^ *$' (commandline) > /dev/null ^&1
+        if string match -r '^ *$' (commandline) > /dev/null 2>&1
             vim (tmux capture-pane -S - -E - -p | psub -f)
         end
     end
@@ -303,11 +303,11 @@ function fish_user_key_bindings
     # tmux
 
     function select-window --argument-names "n"
-        tmux select-window -t $n > /dev/null ^&1
+        tmux select-window -t $n > /dev/null 2>&1
     end
 
     function select-pane --argument-names "o"
-        tmux select-pane $o  > /dev/null ^&1
+        tmux select-pane $o  > /dev/null 2>&1
     end
 
     bind \e1 'select-window 1'
