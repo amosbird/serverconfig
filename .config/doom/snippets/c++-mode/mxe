@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: max_element
+# key: mxe
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "auto pos = std::max_element(std::begin(${1:container}), std::end($1));")

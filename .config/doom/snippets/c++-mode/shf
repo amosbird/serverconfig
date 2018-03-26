@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: random_shuffle
+# key: shf
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::random_shuffle(std::begin(${1:container}), std::end($1));")

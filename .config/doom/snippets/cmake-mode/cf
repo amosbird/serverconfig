@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: cf
+# key: cf
+# --
+set(CMAKE_EXPORT_COMPILE_COMMANDS 1)

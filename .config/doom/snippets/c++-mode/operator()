@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: operater()
+# key: ()
+# --
+${1:bool} operator()($2) {
+    $0
+}

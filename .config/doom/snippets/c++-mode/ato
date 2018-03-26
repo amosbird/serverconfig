@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: ato
+# key: ato
+# --
+#pragma omp atomic

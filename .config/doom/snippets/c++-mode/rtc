@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: rotate_copy
+# key: rtc
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::rotate_copy(std::begin(${1:container}), std::begin($2), std::end($1), std::begin($3));")

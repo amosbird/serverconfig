@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: cout
+# key: cout
+# type: command
+# --
+(+amos/add-include "iostream")
+(yas-expand-snippet "std::cout << ${1:\"string\"} << std::endl;")

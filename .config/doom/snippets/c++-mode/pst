@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: partial_sort
+# key: pst
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::partial_sort(std::begin(${1:start}), std::begin($1) + ${2:n}, std::end($1));")

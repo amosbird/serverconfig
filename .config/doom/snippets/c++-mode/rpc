@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: replace_copy
+# key: rpc
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::replace_copy(std::begin(${1:src}), std::end($1), std::begin(${2:dst}), ${3:old}, ${4:new});")

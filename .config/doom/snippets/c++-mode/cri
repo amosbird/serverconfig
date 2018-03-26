@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: cri
+# key: cri
+# --
+#pragma omp critical

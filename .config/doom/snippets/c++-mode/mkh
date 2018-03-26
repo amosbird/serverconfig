@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: make_heap
+# key: mkh
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::make_heap(std::begin(${1:container}), std::end($1));")

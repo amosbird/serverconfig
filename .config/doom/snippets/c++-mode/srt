@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: sort
+# key: srt
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::sort(std::begin(${1:container}), std::end($1));")

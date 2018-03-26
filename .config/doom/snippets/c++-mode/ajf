@@ -1,0 +1,10 @@
+# -*- mode: snippet -*-
+# name: adjacent_find
+# key: ajf
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "auto pos = std::adjacent_find(std::begin(${1:container}), std::end($1));
+if (pos != std::end($1)) {
+    $2
+}")

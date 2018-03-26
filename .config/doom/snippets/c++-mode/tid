@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: tid
+# key: tid
+# type: command
+# --
+(+amos/add-include "omp.h")
+(yas-expand-snippet "omp_get_thread_num();")

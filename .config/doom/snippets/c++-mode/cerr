@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: cerr
+# key: cerr
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::cerr << ${1:\"string\"} << std::endl;")

@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: count
+# key: cnt
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "auto n = std::count(std::begin(${1:container}), std::end($1), $2);")

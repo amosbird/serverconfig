@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: replace
+# key: rpl
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::replace(std::begin(${1:container}), std::end($1), ${2:old}, ${3:new});")

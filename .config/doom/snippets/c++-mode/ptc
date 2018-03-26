@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: partition_copy
+# key: ptc
+# --
+std::partition_copy(std::begin(${1:src}), std::end($1), std::begin(${2:true}), std::begin(${3:false}), []($4) {
+    $5
+});

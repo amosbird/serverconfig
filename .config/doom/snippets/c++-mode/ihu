@@ -1,0 +1,10 @@
+# -*- mode: snippet -*-
+# name: is_heap_until
+# key: ihu
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "auto pos = std::is_heap_until(std::begin(${1:container}), std::end($1));")
+if (pos != std::end($1)) {
+    $2
+}

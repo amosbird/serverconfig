@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: test
+# key: test
+# --
+TEST_F(${1:SnippetTest}, $2) {
+    $0
+}

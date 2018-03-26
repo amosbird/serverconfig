@@ -1,0 +1,11 @@
+function `(file-name-base buffer-file-name)`
+    # set -l options -x 'f,F' -x 'F,s' 'h/help' 'f/file' 'F/fifo' 's/suffix=' 'T-testing'
+    # argparse -n psub --max-args=0 $options -- $argv
+    argparse -n `(file-name-base buffer-file-name)` 'h/help' -- $argv
+    or return
+    if set -q _flag_h
+        echo 'Usage: `(file-name-base buffer-file-name)` [-h|--help] ...'
+        return
+    end
+    $0
+end

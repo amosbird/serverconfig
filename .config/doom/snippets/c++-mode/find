@@ -1,0 +1,10 @@
+# -*- mode: snippet -*-
+# name: find
+# key: find
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "auto pos = std::find(std::begin(${1:haystack}), std::end($1), $2);")
+if (pos != std::end($1)) {
+    $3
+}

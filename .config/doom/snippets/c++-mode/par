@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: par
+# key: par
+# --
+#pragma omp parallel

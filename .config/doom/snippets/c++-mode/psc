@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: partial_sort_copy
+# key: psc
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::partial_sort_copy(std::begin(${1:src}), std::end($1), std::begin(${2:dst}), std::end($2));")

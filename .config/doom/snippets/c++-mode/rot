@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: rotate
+# key: rot
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::rotate(std::begin(${1:container}), std::begin($1) + ${2:n}, std::end($1));")

@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: tn
+# key: tn
+# type: command
+# --
+(+amos/add-include "omp.h")
+(yas-expand-snippet "omp_get_num_threads();")

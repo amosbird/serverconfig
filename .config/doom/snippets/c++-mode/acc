@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: accumulate
+# key: acc
+# type: command
+# --
+(+amos/add-include "numeric")
+(yas-expand-snippet "auto ${3:sum} = std::accumulate(std::begin(${1:container}), std::end($1), ${2:0});")

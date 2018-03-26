@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: cin
+# key: cin
+# type: command
+# --
+(+amos/add-include "iostream")
+(yas-expand-snippet "std::cin >> ${1:val};")

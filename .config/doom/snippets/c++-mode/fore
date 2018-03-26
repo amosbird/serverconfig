@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: fore
+# key: fore
+# --
+for (auto & ${1:elem} : ${2:container}) {
+    $0
+}

@@ -34,6 +34,8 @@ rm -rf "$HOME/.tmux.conf"
 ln -sf "$DIR/.tmux" "$HOME"/
 ln -sf "$DIR/.tmux/.tmux.conf" "$HOME"/
 
+ln -sf "$DIR/init.el" "$HOME"/.emacs.d/
+
 sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
 
 setxkbmap us

@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: merge
+# key: mer
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::merge(std::begin(${1:src1}), std::end($1), std::begin(${2:src2}), std::end($2), std::begin(${3:dst}));")

@@ -1,0 +1,10 @@
+# -*- mode: snippet -*-
+# name: find_end
+# key: fne
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "auto pos = std::find_end(std::begin(${1:haystack}), std::end($1), std::begin(${2:needle}), std::end($2));")
+if (pos != std::end($1)) {
+    $3
+}

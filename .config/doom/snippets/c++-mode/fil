@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: fill
+# key: fil
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "std::fill(std::begin(${1:container}), std::end($1), $2);")
