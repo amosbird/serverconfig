@@ -16,6 +16,7 @@ configs=(
     .gitconfig
     .Xresources
     .xprofile
+    .bashrc
     scripts
 )
 
