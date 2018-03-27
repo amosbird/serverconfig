@@ -32,10 +32,8 @@
 (doom! :feature
        popup
        eval
-       (evil +everywhere)
-       (lookup
-        +devdocs
-        +docsets)
+       evil
+       lookup
        snippets
        spellcheck
        syntax-checker

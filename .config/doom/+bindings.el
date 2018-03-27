@@ -1,7 +1,7 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; -*-
 
 (map!
- :g "<f12>"          (lambda! (evil-refresh-cursor) (realign-windows)) ; also used to refresh terminal frames
+ :g "<f12>"          (lambda! (evil-refresh-cursor) (realign-windows) (+amos/update-tmux-modeline)) ; also used to refresh terminal frames
  :g "M-x"            #'execute-extended-command
  :g "<f1>"           (lambda! (text-scale-set 0))
  :g "<f2>"           (lambda! (text-scale-increase 0.5))
@@ -254,6 +254,18 @@
 
  (:after dired
    :map dired-mode-map
+   :n "SPC" nil
+   :n "G"   nil
+   :n "g"   nil
+   :n "e"   nil
+   :n "v"   nil
+   :n "b"   nil
+   :n "n"   nil
+   :n "N"   nil
+   :n "y"   nil
+   :n "C-o" nil
+   :n "C-i" nil
+   :n "q"   #'quit-window
    :n "C-f" #'dired-omit-mode
    :n "C-i" #'peep-dired-toggle
    :n "C-v" #'peep-dired-scroll-page-down
@@ -276,6 +288,7 @@
    :n "p"   #'dired-ranger-paste
    :n "r"   #'dired-ranger-move
    :n "y"   (lambda! (dired-ranger-copy nil))
+   :n "RET" #'dired-open-file
    :n "l"   #'dired-open-file)
 
  (:after evil-magit
