@@ -40,6 +40,8 @@ window.add_signal("build", function (w)
 end)
 
 local settings = require "settings"
+settings.window.search_engines.default = "https://cn.bing.com/search?q=%s"
+settings.window.search_engines.bing = "https://cn.bing.com/search?q=%s"
 settings.window.search_engines.scholar = "https://scholar.google.com/scholar?q=%s"
 settings.on["gitter.im"].webview.zoom_level = 100
 
@@ -195,7 +197,7 @@ modes.add_binds("normal",
                     { "I", "Close current tab (or `[count]` tabs).",
                       function (w, m) for _=1,m.count do w:close_tab() end end, {count=1} },
                     { "<Control-r>", "Undo close tab.", function (w) w:undo_close_tab() end },
-                    { "m", "Create a bookmark.", function (w) luakit.spawn("rofisearch") end },
+                    -- { "m", "Create a bookmark.", function (w) luakit.spawn("rofisearch") end },
                     -- { "s", "Open a new tab via rofi.", function (w) luakit.spawn("rofisearch") end },
                     { "s", "Search via google.", function (w) w:enter_cmd(":tabopen google " ) end },
                     { "S", "Search via scholar.", function (w) w:enter_cmd(":tabopen scholar " ) end },

@@ -6,27 +6,15 @@ export GTK_IM_MODULE=fcitx
 export XMODIFIERS=@im=fcitx
 export QT_IM_MODULE=fcitx
 export QT_QPA_PLATFORMTHEME=gtk2
-# export DE=kde
-# export KDE_FULL_SESSION=true
-# export KDE_SESSION_VERSION=5
-# export XDG_CURRENT_DESKTOP=KDE
 export AWT_TOOLKIT=XToolkit
 export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel"
 /home/amos/scripts/restartxcape.sh
-# xset dpms force on
 xset s off -dpms
 xset b off
-# pulseaudio -D
 compton -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
-# unclutter -idle 1 -jitter 10 -grab &
 fcitx
 fish -c sxhkd &
 fish -c copyq &
 deadbeaf &
 thunar --daemon &
-#export GTK_IM_MODULE=ibus
-#export XMODIFIERS=@im=ibus
-#export QT_IM_MODULE=ibus
-#ibus-daemon -d -x
-#LC_CTYPE=zh_CN.UTF-8 emacs --daemon
