@@ -1,7 +1,6 @@
 ;;; private/amos/config.el -*- lexical-binding: t; -*-
 
-(when (featurep! :feature evil)
-  (load! +bindings))
+(load! +bindings)
 (load! keycast)
 
 (defvar +amos-dir (file-name-directory load-file-name))
@@ -2018,21 +2017,21 @@ representation of `NUMBER' is smaller."
 (defun +amos/yank-buffer-filename ()
   "Copy the current buffer's path to the kill ring."
   (interactive)
-  (if-let (filename (or buffer-file-name (bound-and-true-p list-buffers-directory)))
+  (if-let* ((filename (or buffer-file-name (bound-and-true-p list-buffers-directory))))
       (message (kill-new (abbreviate-file-name filename)))
     (error "Couldn't find filename in current buffer")))
 
 (defun +amos/yank-buffer-filename-nondir ()
   "Copy the current buffer's filename to the kill ring."
   (interactive)
-  (if-let (filename (or buffer-file-name (bound-and-true-p list-buffers-directory)))
+  (if-let* ((filename (or buffer-file-name (bound-and-true-p list-buffers-directory))))
       (message (kill-new (file-name-nondirectory filename)))
     (error "Couldn't find filename in current buffer")))
 
 (defun +amos/yank-buffer-filename-with-line-position ()
   "Copy the current buffer's filename with line number to the kill ring."
   (interactive)
-  (if-let (filename (or buffer-file-name (bound-and-true-p list-buffers-directory)))
+  (if-let* ((filename (or buffer-file-name (bound-and-true-p list-buffers-directory))))
       (message (kill-new (concat "b " filename ":" (number-to-string (line-number-at-pos)))))
     (error "Couldn't find filename in current buffer")))
 

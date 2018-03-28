@@ -49,7 +49,7 @@
        doom-quit
        hl-todo
        nav-flash
-       unicode
+       unicode ;; for mu4e
 
        :tools
        dired
@@ -72,7 +72,6 @@
         +babel
         +capture
         +export
-        +present
         +publish)
        python
        rust

@@ -3,6 +3,10 @@
 (setq doom-line-numbers-style 'relative)
 ;; fix start-process xdg-open
 (setq rocess-connection-type nil)
+(setq package-archives
+      '(("gnu"   . "http://elpa.emacs-china.org/gnu/")
+        ("melpa" . "http://elpa.emacs-china.org/melpa/")
+        ("org"   . "http://elpa.emacs-china.org/org/")))
 (setq TeX-view-program-selection '((output-pdf "Zathura") (output-html "xdg-open")))
 (setq auto-revert-interval 0.3)
 (setq auto-revert-verbose nil)
@@ -170,18 +174,9 @@
   (define-key minibuffer-local-map "\C-p" #'previous-line-or-history-element)
   (define-key minibuffer-local-map "\C-n" #'next-line-or-history-element))
 
-(remove-hook! 'doom-popup-mode-hook #'doom|hide-modeline-in-popup)
-(advice-add #'nlinum-mode :override #'ignore)
-(advice-add #'doom-hide-modeline-mode :override #'ignore)
-(advice-add #'fringe-mode :override #'ignore)
 (advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
 (advice-add #'recenter-top-bottom :override #'recenter)
 (advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))
-(def-package-hook! git-gutter-fringe :disable)
-(def-package-hook! smerge-mode :disable)
-(def-package-hook! solaire-mode :disable)
-(def-package-hook! stripe-buffer :disable)
-(def-package-hook! visual-fill-column :disable)
 
 (def-package-hook! nav-flash
   :pre-init
@@ -233,3 +228,8 @@
   (server-start))
 ;; disable this fucking stupid feature by masking
 (provide 'smartparens-lua)
+
+(doom!
+ :private
+ amos-cc
+ amos-email)

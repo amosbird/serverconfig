@@ -4,6 +4,7 @@
 (package! evil-numbers :disable t)
 (package! git-gutter-fringe :disable t)
 (package! smerge-mode :disable t)
+(package! solaire-mode :disable t)
 (package! stripe-buffer :disable t)
 (package! vi-tilde-fringe :disable t)
 (package! visual-fill-column :disable t)
