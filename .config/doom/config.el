@@ -1245,6 +1245,8 @@ The selected history element will be inserted into the minibuffer."
   (add-to-list 'xref-prompt-for-identifier 'xref-find-references :append))
 
 (def-package! lsp-mode
+  :init
+  (setq lsp-enable-eldoc nil)
   :config
   (require 'lsp-imenu)
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
