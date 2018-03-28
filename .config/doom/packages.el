@@ -31,6 +31,7 @@
 (package! link-hint)
 (package! lispyville)
 (package! lsp-mode)
+(package! lsp-ui)
 (package! magit-svn)
 (package! move-text)
 (package! narrow-reindent)

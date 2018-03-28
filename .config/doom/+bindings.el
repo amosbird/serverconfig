@@ -36,7 +36,7 @@
  :n "M-e"            #'counsel-dash-at-point
  :n "M-i"            #'yasdcv-translate-at-point
  :v "M-i"            #'+amos/evil-visual-insert-snippet
- :n "M-o"            #'evil-open-folds
+ :n "M-o"            #'lsp-ui-sideline-mode
  :n "M-O"            #'evil-close-folds
  :n "M-h"            #'evil-window-left
  :n "M-j"            #'evil-window-down

@@ -8,3 +8,4 @@ fishd.*
 .cgdb/readline_history.txt
 .gdb_history
 .config/direnv/allow
+.elc

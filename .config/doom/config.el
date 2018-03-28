@@ -1249,6 +1249,8 @@ The selected history element will be inserted into the minibuffer."
   (require 'lsp-imenu)
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
 
+(def-package! lsp-ui)
+
 (evil-define-command evil-wipeout-buffer (buffer &optional bang)
   "Deletes a buffer. Also clears related jump marks.
 All windows currently showing this buffer will be closed except

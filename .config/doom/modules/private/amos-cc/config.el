@@ -151,7 +151,7 @@
               (shell-command-to-string "(cd /usr/local/include ; find . -type f ; cd /usr/include ; find -L ./sys -type f) | sed 's=^./=='")))
             :action #'+amos/add-include))
 
-(add-hook! (c-mode c++-mode) (flycheck-mode +1))
+(add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1))
 
 (def-package! cquery
   :after lsp-mode
