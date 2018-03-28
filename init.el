@@ -38,6 +38,7 @@
        spellcheck
        syntax-checker
        version-control
+       ;; workspaces
 
        :completion
        company
@@ -79,3 +80,4 @@
 
        :config
        (private +xdg))
+(put 'list-timers 'disabled nil)

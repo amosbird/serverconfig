@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+includes=$(g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print "\"-I"$0"\""}' | paste -sd ",")
+
+for i in $cquery_include_dirs
+do
+    includes="${includes},\"-I$i\""
+done
+
+exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt "--init={\"extraClangArguments\":[$includes]}" "$@"

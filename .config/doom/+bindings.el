@@ -36,6 +36,8 @@
  :n "M-e"            #'counsel-dash-at-point
  :n "M-i"            #'yasdcv-translate-at-point
  :v "M-i"            #'+amos/evil-visual-insert-snippet
+ :n "M-o"            #'evil-open-folds
+ :n "M-O"            #'evil-close-folds
  :n "M-h"            #'evil-window-left
  :n "M-j"            #'evil-window-down
  :n "M-k"            #'evil-window-up
@@ -93,8 +95,7 @@
  :n "g@"             #'+evil:macro-on-all-lines
  :n "gx"             #'evil-exchange
  :n "gf"             #'+amos/evil-find-file-at-point-with-line
- :m "gd"             #'+lookup/definition
- :m "gh"             #'+lookup/documentation
+ :n "gd"             #'+lookup/definition
  :n "go"             #'+amos/evil-insert-line-below
  :n "gO"             #'+amos/evil-insert-line-above
  :n "gp"             #'+evil/reselect-paste
@@ -110,6 +111,7 @@
    :g "1"       #'zygospore-toggle-delete-other-windows
    :g "e"       #'pp-eval-last-sexp
    :g "d"       #'+amos/direnv-reload
+   :g "a"       #'direnv-edit
    :g "C-r"     #'+amos/replace-last-sexp
    :i "C-l"     #'+company/whole-lines
    :i "C-k"     #'+company/dict-or-keywords
@@ -254,17 +256,17 @@
 
  (:after dired
    :map dired-mode-map
-   :n "SPC" nil
-   :n "G"   nil
-   :n "g"   nil
-   :n "e"   nil
-   :n "v"   nil
-   :n "b"   nil
-   :n "n"   nil
-   :n "N"   nil
-   :n "y"   nil
-   :n "C-o" nil
-   :n "C-i" nil
+   "SPC" nil
+   "G"   nil
+   "g"   nil
+   "e"   nil
+   "v"   nil
+   "b"   nil
+   "n"   nil
+   "N"   nil
+   "y"   nil
+   "C-o" nil
+   "C-i" nil
    :n "q"   #'quit-window
    :n "C-f" #'dired-omit-mode
    :n "C-i" #'peep-dired-toggle
@@ -340,17 +342,32 @@
  ;; yasnippet
  (:after yasnippet
    :map yas-keymap
-   "C-e"           #'+snippets/goto-end-of-field
-   "C-a"           #'+snippets/goto-start-of-field
-   "<M-backspace>" #'+snippets/delete-to-start-of-field
    "C-l"           #'yas-next-field
-   [escape]        #'evil-normal-state
-   [backspace]     #'+snippets/delete-backward-char
-   [delete]        #'+snippets/delete-forward-char-or-field
 
    :map yas-minor-mode-map
-   :i "C-l" yas-maybe-expand
-   :v "<tab>" #'+snippets/expand-on-region)
+   :i "C-l" yas-maybe-expand)
+
+ (:after cquery
+   (:map cquery-tree-mode-map
+     :m "C-i"      #'cquery-tree-toggle-expand
+     :n "c"        #'cquery-tree-toggle-calling
+     :n "f"        #'cquery-tree-press
+     :n "h"        #'cquery-tree-collapse-or-select-parent
+     :n "j"        #'cquery-tree-next-line
+     :n "k"        #'cquery-tree-prev-line
+     :n "J"        #'cquery-tree-next-sibling
+     :n "K"        #'cquery-tree-prev-sibling
+     :n "l"        #'cquery-tree-expand-or-set-root
+     :n "oh"       #'cquery-tree-press-and-horizontal-split
+     :n "ov"       #'cquery-tree-press-and-vertical-split
+     :n "oo"       #'cquery-tree-press-and-switch
+     :n "q"        #'cquery-tree-quit
+     :n "<escape>" #'cquery-tree-quit
+     :n "Q"        #'quit-window
+     :n "yy"       #'cquery-tree-yank-path
+     :n "RET"      #'cquery-tree-press-and-switch
+     :n "<left>"   #'cquery-tree-collapse-or-select-parent
+     :n "<right>"  #'cquery-tree-expand-or-set-root))
 
  (:after debug
    ;; For elisp debugging
@@ -363,47 +380,47 @@
 
  (:after compile
    :map compilation-mode-map
-   "SPC" nil)
+   "SPC" nil
+   "0" nil
+   "g" nil)
 
  (:after edebug
    :map edebug-mode-map
-   "SPC"      nil
-   "h"        nil
-   "s"        #'edebug-step-mode
-   "n"        #'edebug-next-mode
-   "g"        #'edebug-go-mode
-   "G"        #'edebug-Go-nonstop-mode
-   "t"        #'edebug-trace-mode
-   "T"        #'edebug-Trace-fast-mode
-   "c"        #'edebug-continue-mode
-   "C"        #'edebug-Continue-fast-mode
-   "f"        #'edebug-forward-sexp
-   "N"        #'edebug-goto-here
-   "I"        #'edebug-instrument-callee
-   "i"        #'edebug-step-in
-   "o"        #'edebug-step-out
-   "q"        #'top-level
-   "Q"        #'edebug-top-level-nonstop
-   "a"        #'abort-recursive-edit
-   "S"        #'edebug-stop
-   "b"        #'edebug-set-breakpoint
-   "u"        #'edebug-unset-breakpoint
-   "B"        #'edebug-next-breakpoint
-   "x"        #'edebug-set-conditional-breakpoint
-   "X"        #'edebug-set-global-break-condition
-   "r"        #'edebug-previous-result
-   "e"        #'edebug-eval-expression
-   "\C-x\C-e" #'edebug-eval-last-sexp
-   "E"        #'edebug-visit-eval-list
-   "w"        #'edebug-where
-   "v"        #'edebug-view-outside ;; maybe obsolete??
-   "p"        #'edebug-bounce-point
-   "P"        #'edebug-view-outside ;; same as v
-   "W"        #'edebug-toggle-save-windows
-   "?"        #'edebug-help
-   "d"        #'edebug-backtrace
-   "-"        #'negative-argument
-   "="        #'edebug-temp-display-freq-count)
+   :gn "s"        #'edebug-step-mode
+   :gn "n"        #'edebug-next-mode
+   :gn "g"        #'edebug-go-mode
+   :gn "G"        #'edebug-Go-nonstop-mode
+   :gn "t"        #'edebug-trace-mode
+   :gn "T"        #'edebug-Trace-fast-mode
+   :gn "c"        #'edebug-continue-mode
+   :gn "C"        #'edebug-Continue-fast-mode
+   :gn "f"        #'edebug-forward-sexp
+   :gn "N"        #'edebug-goto-here
+   :gn "I"        #'edebug-instrument-callee
+   :gn "i"        #'edebug-step-in
+   :gn "o"        #'edebug-step-out
+   :gn "q"        #'top-level
+   :gn "Q"        #'edebug-top-level-nonstop
+   :gn "a"        #'abort-recursive-edit
+   :gn "S"        #'edebug-stop
+   :gn "b"        #'edebug-set-breakpoint
+   :gn "u"        #'edebug-unset-breakpoint
+   :gn "B"        #'edebug-next-breakpoint
+   :gn "x"        #'edebug-set-conditional-breakpoint
+   :gn "X"        #'edebug-set-global-break-condition
+   :gn "r"        #'edebug-previous-result
+   :gn "e"        #'edebug-eval-expression
+   :gn "C-x C-e" #'edebug-eval-last-sexp
+   :gn "E"        #'edebug-visit-eval-list
+   :gn "w"        #'edebug-where
+   :gn "v"        #'edebug-view-outside ;; maybe obsolete??
+   :gn "p"        #'edebug-bounce-point
+   :gn "P"        #'edebug-view-outside ;; same as v
+   :gn "W"        #'edebug-toggle-save-windows
+   :gn "?"        #'edebug-help
+   :gn "d"        #'edebug-backtrace
+   :gn "-"        #'negative-argument
+   :gn "="        #'edebug-temp-display-freq-count)
 
  (:after org
    :map org-mode-map
@@ -487,9 +504,9 @@
  :textobj "J" #'evil-indent-plus-i-indent-up-down #'evil-indent-plus-a-indent-up-down)
 
 (after! company
-	(bind-keys :map company-active-map
-		   :filter (company-explicit-action-p)
-		   ("C-i" . company-complete-selection)))
+  (bind-keys :map company-active-map
+             :filter (company-explicit-action-p)
+             ("C-i" . company-complete-selection)))
 
 (bind-keys :map emacs-lisp-mode-map
            ("C-x e" . macrostep-expand)

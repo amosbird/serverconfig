@@ -9,11 +9,7 @@
          (equal (file-name-extension buffer-file-name) "h")
          (or (file-exists-p (expand-file-name
                              (concat (file-name-sans-extension buffer-file-name)
-                                     ".cpp")))
-             (when-let (file (car-safe (projectile-get-other-files
-                                        buffer-file-name
-                                        (projectile-current-project-files))))
-               (equal (file-name-extension file) "cpp")))))
+                                     ".cpp"))))))
 
   (defun +cc-objc-header-file-p ()
     (and buffer-file-name
@@ -37,14 +33,10 @@
           "<" nil
           :i ">"        #'+cc/autoclose->-maybe
           :n "C-e"      #'+amos/maybe-add-end-of-statement
-          "C-c i"       #'+amos/ivy-add-include)
-
-        (:after lsp-ui-peek
-          :map lsp-ui-peek-mode-map
-          "M-j" #'lsp-ui-peek--select-next-file
-          "M-k" #'lsp-ui-peek--select-prev-file
-          "C-j" #'lsp-ui-peek--select-next
-          "C-k" #'lsp-ui-peek--select-prev))
+          :n "gh"       #'cquery-call-hierarchy
+          :n "gt"       #'cquery-member-hierarchy
+          :n "ge"       #'cquery-inheritance-hierarchy
+          "C-c i"       #'+amos/ivy-add-include))
 
   ;;; Style/formatting
   ;; C/C++ style settings
@@ -78,7 +70,6 @@
   ;; ...and leave it to smartparens
   (after! smartparen
     (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
-      ;; (sp-local-pair "<" ">" :when '(+cc-sp-point-is-template-p +cc-sp-point-after-include-p))
       (sp-local-pair "/*" "*/" :post-handlers '(("||\n[i]" "RET") ("| " "SPC")))
       ;; Doxygen blocks
       (sp-local-pair "/**" "*/" :post-handlers '(("||\n[i]" "RET") ("||\n[i]" "SPC")))
@@ -153,7 +144,45 @@
   (interactive)
   (ivy-read "Include: "
             (append
+             (if-let ((includes (getenv "CC_INCLUDE_LIST")))
+                 (split-string  includes ","))
              +amos/default-include-headers
              (split-string
-              (shell-command-to-string "(cd /usr/local/include ; find . -type f ; cd /usr/include ; find ./sys -type f) | sed 's=^./=='")))
+              (shell-command-to-string "(cd /usr/local/include ; find . -type f ; cd /usr/include ; find -L ./sys -type f) | sed 's=^./=='")))
             :action #'+amos/add-include))
+
+(add-hook! (c-mode c++-mode) (flycheck-mode +1))
+
+(def-package! cquery
+  :after lsp-mode
+  :config
+  (let ((include-path (split-string (shell-command-to-string "g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | rg '^ /usr' | sed -n '1!p' | paste -sd ' '"))))
+    (setq cquery-extra-args (cons "--log-file=/tmp/cq.log" include-path)))
+  (setq
+   cquery-cache-dir "/home/amos/.cache/.cquery_cached_index"
+   cquery-sem-highlight-method 'font-lock)
+   ;; cquery-executable "/home/amos/git/cquery/build/release/bin/cquery"
+   ;; cquery-extra-init-params
+   ;; '(:client
+   ;;   (:snippetSupport t)
+   ;;   :index
+   ;;   (:comments 0)
+   ;;   (:whitelist
+   ;;    ("./dbms" "./libs"))
+   ;;   (:blacklist
+   ;;    ("/home/amos/git/ClickHouse/.*")))
+   ;; cquery-project-root-matchers
+   ;; '(cquery-project-roots-matcher ".cquery" projectile-project-root "compile_commands.json")
+
+  (add-hook 'c-mode-common-hook #'cquery//enable))
+
+(defun cquery//enable ()
+  (condition-case nil
+      (lsp-cquery-enable)
+    (user-error nil)))
+
+(set!
+  :lookup '(c-mode c++-mode)
+  :definition #'xref-find-definitions
+  :references #'xref-find-references
+  :documentation #'counsel-dash-at-point)

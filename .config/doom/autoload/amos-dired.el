@@ -5,6 +5,7 @@
 (require 'files)
 (require 'tramp)
 (require 'dired)
+(require 'dired-x)
 (require 'cl-macs)
 
 (defun +dired|sort-directories-first ()

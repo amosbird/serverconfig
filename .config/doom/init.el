@@ -1,4 +1,6 @@
 ;;;  -*- lexical-binding: t; -*-
+
+
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
 (setq doom-line-numbers-style 'relative)
 ;; fix start-process xdg-open
@@ -17,6 +19,8 @@
 (setq browse-url-chrome-program (expand-file-name "~/scripts/vivaldi"))
 (setq browse-url-firefox-program "luakit")
 (setq browse-url-mailto-function 'mu4e~compose-browse-url-mail)
+(setq company-auto-complete t)
+(setq company-idle-delay 0)
 (setq dired-omit-verbose nil)
 (setq dired-open-extensions
       '(("pdf" . "xdg-open")
@@ -36,6 +40,7 @@
         ("torrent" . "xdg-open")))
 (setq dired-open-find-file-function #'+amos/find-file)
 (setq dired-recursive-copies 'always)
+(setq dired-recursive-deletes 'always)
 (setq evil-cjk-emacs-word-boundary t)
 (setq evil-esc-delay 0.001)
 (setq evil-ex-substitute-global t)
@@ -174,6 +179,9 @@
   (define-key minibuffer-local-map "\C-p" #'previous-line-or-history-element)
   (define-key minibuffer-local-map "\C-n" #'next-line-or-history-element))
 
+(add-hook! 'minibuffer-setup-hook (setq truncate-lines t))
+
+(advice-add #'evil-escape-mode :override #'ignore)
 (advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
 (advice-add #'recenter-top-bottom :override #'recenter)
 (advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))

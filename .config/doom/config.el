@@ -193,7 +193,7 @@
     :group 'narrow-reindent)
   (global-narrow-reindent-mode +1))
 
-(when (string= (getenv "GUI") "t")
+(when (and (not (getenv "TMUX")) (string= (getenv "GUI") "t"))
   (require 'fcitx)
   (fcitx-aggressive-setup))
 
@@ -756,36 +756,6 @@ With a prefix ARG, invalidate the cache first."
 
 (advice-add #'projectile-cache-files-find-file-hook :override #'ignore)
 
-;; (defun ivy-xref-make-collection (xrefs)
-;;   "Transform XREFS into a collection for display via `ivy-read'."
-;;   (let ((collection nil))
-;;     (dolist (xref xrefs)
-;;       (with-slots (summary location) xref
-;;         (let ((line (xref-location-line location))
-;;               (file (xref-location-group location))
-;;               (candidate nil))
-;;           (setq candidate (concat
-;;                            ;; use file name only
-;;                            (car (reverse (split-string file "\\/")))
-;;                            (when (string= "integer" (type-of line))
-;;                              (concat ":" (int-to-string line) ": "))
-;;                            ;; (propertize summary 'font-lock-face 'font-lock-string-face)))
-;;                            summary))
-;;           (push `(,candidate . ,location) collection))))
-;;     collection))
-;; (defun ivy-xref-select (candidate)
-;;   "Select CANDIDATE."
-;;   (let* ((marker (xref-location-marker (cdr candidate)))
-;;          (buf (marker-buffer marker))
-;;          (offset (marker-position marker)))
-;;       (switch-to-buffer buf)
-;;       (goto-char offset)))
-
-;; (defun +amos/ivy-xref-show-xrefs (xrefs _alist)
-;;   (ivy-read "xref: " (ivy-xref-make-collection xrefs)
-;;             :require-match t
-;;             :action #'ivy-xref-select))
-
 (defvar switch-buffer-functions
   nil
   "A list of functions to be called when the current buffer has been changed.
@@ -849,7 +819,7 @@ This function should be hooked to `buffer-list-update-hook'."
   (put 'cc-flags 'safe-local-variable #'stringp)
   (put 'cc-links 'safe-local-variable #'stringp)
   (dolist (x '(cc-playground-exec cc-playground-debug cc-playground-exec-test cc-playground-bench))
-    (advice-add x :before #'evil-force-normal-state))
+    (advice-add x :before #'evil-normal-state))
   :bind (:map cc-playground-mode-map
           ("<f8>" . cc-playground-rm)
           ("C-c r" . cc-playground-add-or-modify-tag)
@@ -1109,7 +1079,8 @@ The selected history element will be inserted into the minibuffer."
   (require 'company)
   (if (/= (point)
           (save-excursion
-            (end-of-thing 'symbol)
+            (if (bounds-of-thing-at-point 'symbol)
+                (end-of-thing 'symbol))
             (point)))
       (save-excursion (insert " ")))
   (when (and (company-manual-begin)
@@ -1278,59 +1249,6 @@ The selected history element will be inserted into the minibuffer."
   (require 'lsp-imenu)
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
 
-(add-hook! (c-mode c++-mode) (flycheck-mode +1))
-
-(def-package! cquery
-  :after lsp-mode
-  :config
-  (setq
-   cquery-cache-dir "/home/amos/.cache/.cquery_cached_index"
-   cquery-executable "/home/amos/git/cquery/build/release/bin/cquery"
-   cquery-extra-args '("--log-file=/tmp/cq.log")
-   cquery-extra-init-params
-   '(:client
-     (:snippetSupport t)
-     :index
-     (:comments 0)
-     (:whitelist
-      ("./dbms" "./libs"))
-     (:blacklist
-      ("/home/amos/git/ClickHouse/.*")))
-   cquery-project-root-matchers
-   '(cquery-project-roots-matcher ".cquery" projectile-project-root "compile_commands.json")
-   cquery-sem-highlight-method 'overlay)
-
-  (add-hook 'c-mode-common-hook #'cquery//enable))
-
-(defun cquery//enable ()
-  (condition-case nil
-      (lsp-cquery-enable)
-    (user-error nil)))
-
-(set!
-  :lookup '(c-mode c++-mode)
-  :definition #'xref-find-definitions
-  :references #'xref-find-references
-  :documentation #'counsel-dash-at-point)
-
-;; lsp-ui-peek-find-{definitions,references}
-;; (lsp-ui-peek-jump-backward)
-;; (lsp-ui-peek-jump-forward)
-;; (cquery-xref-find-custom "$cquery/base")
-;; (cquery-xref-find-custom "$cquery/callers")
-;; (cquery-xref-find-custom "$cquery/derived")
-;; (cquery-xref-find-custom "$cquery/vars")
-
-;; (defun cquery/base () (interactive) (lsp-ui-peek-find-custom 'base "$cquery/base"))
-;; (defun cquery/callers () (interactive) (lsp-ui-peek-find-custom 'callers "$cquery/callers"))
-;; (defun cquery/derived () (interactive) (lsp-ui-peek-find-custom 'derived "$cquery/derived"))
-;; (defun cquery/vars () (interactive) (lsp-ui-peek-find-custom 'vars "$cquery/vars"))
-(defun cquery/base () (interactive) (cquery-xref-find-custom "$cquery/base"))
-(defun cquery/callers () (interactive) (cquery-xref-find-custom "$cquery/callers"))
-(defun cquery/callerHierarchy () (interactive) (cquery-xref-find-custom "$cquery/callerHierarchy"))
-(defun cquery/derived () (interactive) (cquery-xref-find-custom "$cquery/derived"))
-(defun cquery/vars () (interactive) (cquery-xref-find-custom "$cquery/vars"))
-
 (evil-define-command evil-wipeout-buffer (buffer &optional bang)
   "Deletes a buffer. Also clears related jump marks.
 All windows currently showing this buffer will be closed except
@@ -1457,8 +1375,24 @@ current buffer's, reload dir-locals."
 (def-modeline-segment! host +amos--hostname)
 
 (def-modeline! main
-  (matches " " buffer-info "  %l:%c %p  " selection-info keycast tmux)
-  (host "  " buffer-encoding major-mode vcs flycheck))
+  (matches " " buffer-info "  %l:%c %p  " selection-info tmux)
+  (tmux "  " host "  " buffer-encoding major-mode vcs flycheck))
+
+(def-modeline! minimal
+  (matches " " buffer-info tmux)
+  (tmux "  " host "  " media-info major-mode))
+
+(def-modeline! special
+  (matches " " buffer-info-simple "  %l:%c %p  " selection-info tmux)
+  (tmux "  " host "  " buffer-encoding major-mode flycheck))
+
+(def-modeline! project
+  (buffer-default-directory tmux)
+  (tmux "  " host "  " major-mode))
+
+(def-modeline! media
+  (" %b  " " %b  " tmux)
+  (tmux "  " host "  " media-info major-mode))
 
 (defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.
@@ -1480,7 +1414,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (unless (string= (getenv "GUI") "t")
   (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
 
-(defun ivy-xref-make-collection (xrefs)
+(defun +amos/ivy-xref-make-collection (xrefs)
   "Transform XREFS into a collection for display via `ivy-read'."
   (let ((collection nil))
     (dolist (xref xrefs)
@@ -1488,6 +1422,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
         (let ((line (xref-location-line location))
               (file (xref-location-group location))
               (candidate nil))
+          (set-text-properties 0 (length summary) nil summary)
           (setq candidate (concat
                            ;; use file name only
                            (car (reverse (split-string file "\\/")))
@@ -1517,7 +1452,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
       (let ((xref-pos (point))
             (xref-buffer (current-buffer))
             (success nil))
-        (ivy-read "Find XRefs: " (ivy-xref-make-collection xrefs)
+        (ivy-read "Find XRefs: " (+amos/ivy-xref-make-collection xrefs)
                   :unwind (lambda ()
                             (unless success
                               (switch-to-buffer xref-buffer)
@@ -1548,7 +1483,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
      cmd
      '(("f" switch-to-buffer-other-frame "other frame")))))
 
-(add-hook! 'doom-init-ui-hook
+(add-hook! 'after-make-frame-functions
   (set-face-background 'vertical-border "#282c34"))
 
 (defun +amos/redisplay-and-recenter ()
@@ -1691,6 +1626,7 @@ representation of `NUMBER' is smaller."
 (def-package! direnv
   :config
   (direnv-mode))
+(add-hook! 'after-save-hook (if (string= (file-name-nondirectory buffer-file-name) ".envrc") (direnv-update-environment)))
 
 (defun +amos/direnv-reload ()
   (interactive)
@@ -1933,13 +1869,55 @@ representation of `NUMBER' is smaller."
   '()
   '((quit) (select . t)))
 
-(evil-escape-mode -1)
-(setq evil-kill-on-visual-paste nil)
-(defun +amos*evil-visual-paste (orig-fun &rest args)
-  (let (interprogram-cut-function
-        (kill-ring nil))
-    (apply orig-fun args)))
-(advice-add #'evil-visual-paste :around #'+amos*evil-visual-paste)
+(evil-define-command +amos*evil-visual-paste (count &optional register)
+  "Paste over Visual selection."
+  :suppress-operator t
+  (interactive "P<x>")
+  ;; evil-visual-paste is typically called from evil-paste-before or
+  ;; evil-paste-after, but we have to mark that the paste was from
+  ;; visual state
+  (setq this-command 'evil-visual-paste)
+  (let* ((text (if register
+                   (evil-get-register register)
+                 (current-kill 0)))
+         (yank-handler (car-safe (get-text-property
+                                  0 'yank-handler text)))
+         new-kill
+         paste-eob)
+    (evil-with-undo
+      (let* ((kill-ring (list (current-kill 0)))
+             (kill-ring-yank-pointer kill-ring))
+        (when (evil-visual-state-p)
+          (evil-visual-rotate 'upper-left)
+          ;; if we replace the last buffer line that does not end in a
+          ;; newline, we use `evil-paste-after' because `evil-delete'
+          ;; will move point to the line above
+          (when (and (= evil-visual-end (point-max))
+                     (/= (char-before (point-max)) ?\n))
+            (setq paste-eob t))
+          (evil-delete evil-visual-beginning evil-visual-end
+                       (evil-visual-type) ?_)
+          (when (and (eq yank-handler #'evil-yank-line-handler)
+                     (not (eq (evil-visual-type) 'line))
+                     (not (= evil-visual-end (point-max))))
+            (insert "\n"))
+          (evil-normal-state)
+          (setq new-kill (current-kill 0))
+          (current-kill 1))
+        (if paste-eob
+            (evil-paste-after count register)
+          (evil-paste-before count register)))
+      (when evil-kill-on-visual-paste
+        (kill-new new-kill))
+      ;; mark the last paste as visual-paste
+      (setq evil-last-paste
+            (list (nth 0 evil-last-paste)
+                  (nth 1 evil-last-paste)
+                  (nth 2 evil-last-paste)
+                  (nth 3 evil-last-paste)
+                  (nth 4 evil-last-paste)
+                  t)))))
+(advice-add #'evil-visual-paste :override #'+amos*evil-visual-paste)
 
 (defun +amos*+lookup-set-jump (orig-fun &rest args)
   (evil-set-jump)
@@ -2116,24 +2094,28 @@ the current state and point position."
   (interactive)
   (shell-command! (format "tmux select-window -t %d; tmux send f12" num)))
 
+(defun +amos/tmux-run-command (&optional func)
+  (+amos/update-tmux-modeline)
+  (if func (ignore-errors (funcall func))))
+
 (defun +amos/tmux-new-window (&optional func)
   "New window if inside tmux."
   (interactive)
   (if (functionp func)
-      (shell-command! (format "tmux new-window emacsclient -t -eval '(%s)'" (symbol-name func)))
-    (shell-command! "tmux new-window emacsclient -t")))
+      (shell-command! (format "tmux new-window emacsclient -t -c -eval \"(+amos/tmux-run-command '%s)\";" (symbol-name func)))
+    (shell-command! "tmux new-window emacsclient -t -c -eval '(+amos/tmux-run-command)';")))
 
 (defun +amos/find-file-other-frame (filename &optional wildcards)
   "Open file if inside tmux."
   (interactive
    (find-file-read-args "Find file in other frame: "
                         (confirm-nonexistent-file-or-buffer)))
-  (shell-command! (format "tmux new-window emacsclient -t -eval '(find-file \"%s\" \"%s\")'" filename wildcards)))
+  (shell-command! (format "tmux new-window emacsclient -t -eval '(find-file \"%s\" \"%s\")'; tmux send f12" filename wildcards)))
 
 (defun +amos/switch-to-buffer-other-frame (buffer-or-name &optional norecord)
   (interactive
    (list (read-buffer-to-switch "Switch to buffer in other frame: ")))
-  (shell-command! (format "tmux new-window emacsclient -t -eval '(switch-to-buffer \"%s\" %s)'" buffer-or-name norecord)))
+  (shell-command! (format "tmux new-window emacsclient -t -eval '(switch-to-buffer \"%s\" %s)'; tmux send f12" buffer-or-name norecord)))
 
 (defun +amos/tmux-fork-window ()
   "Detach if inside tmux."
@@ -2172,3 +2154,5 @@ the current state and point position."
   (interactive)
   (save-some-buffers nil t)
   (kill-emacs))
+
+(setq xref-after-jump-hook nil)
