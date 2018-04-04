@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 
+# if [[ -z "${cquery_include_dirs}" ]]; then
+#     exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt "$@"
+# fi
+
 includes=$(g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print "\"-I"$0"\""}' | paste -sd ",")
 
+blacklist="\"/tmp\""
 for i in $cquery_include_dirs
 do
-    includes="${includes},\"-I$i\""
+    includes="${includes}, \"-I$i\""
 done
 
-exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt "--init={\"extraClangArguments\":[$includes]}" "$@"
+for i in $cquery_blacklist
+do
+    blacklist="${blacklist}, \"$i\""
+done
+
+exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++17\", $includes]}" "$@"

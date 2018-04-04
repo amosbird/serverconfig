@@ -1,5 +1,57 @@
 ;;;  -*- lexical-binding: t; -*-
 
+(doom! :feature
+       popup
+       eval
+       evil
+       lookup
+       snippets
+       spellcheck
+       syntax-checker
+       version-control
+       ;; workspaces
+
+       :completion
+       company
+       ivy
+
+       :ui
+       doom
+       doom-modeline
+       doom-quit
+       hl-todo
+       nav-flash
+       unicode ;; for mu4e
+
+       :tools
+       dired
+       electric-indent
+       imenu
+       make
+       magit
+       rotate-text
+
+       :lang
+       assembly
+       data
+       emacs-lisp
+       go
+       latex
+       lua
+       markdown
+       (org
+        +attach
+        +babel
+        +capture
+        +export
+        +publish)
+       python
+       rust
+       sh
+
+       :private
+       amos-cc
+       amos-email)
 
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
 (setq doom-line-numbers-style 'relative)
@@ -135,6 +187,7 @@
 (setq org-ref-pdf-directory "~/Papers/")
 (setq org-src-block-faces '(("c++" default)))
 (setq org-src-tab-acts-natively t)
+(setq org-startup-folded nil)
 (setq org-twbs-text-markup-alist
       '((bold . "<b>%s</b>")
         (code . "<code>%s</code>")
@@ -171,6 +224,7 @@
 (setq visible-cursor nil)
 (setq warning-suppress-types '((yasnippet backquote-change)))
 (setq ws-butler-keep-whitespace-before-point nil)
+(setq xref-after-jump-hook nil)
 (setq yas-triggers-in-field nil)
 (setq yasdcv-sdcv-command "sdcv --non-interactive --utf8-output --utf8-input \"%word\"")
 (setq yasdcv-sdcv-dicts '(("jianminghy" "简明汉英词典" "powerword2007" t)))
@@ -203,31 +257,14 @@
     (modify-category-entry (cons ?a ?z) ?u)
     (make-variable-buffer-local 'evil-cjk-word-separating-categories)
     (add-hook 'subword-mode-hook (lambda! (if subword-mode (push '(?u . ?U) evil-cjk-word-separating-categories)
-                                        (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories)))))))
-
-(def-package-hook! company
-  :post-config
-  (require 'company-tng)
-  (push 'company-tng-frontend company-frontends)
-  (defvar-local company-fci-mode-on-p nil)
-  (defun company-turn-off-fci (&rest ignore)
-    (when (boundp 'fci-mode)
-      (setq company-fci-mode-on-p fci-mode)
-      (when fci-mode (fci-mode -1))))
-  (defun company-maybe-turn-on-fci (&rest ignore)
-    (when company-fci-mode-on-p (fci-mode 1)))
-  (add-hook 'company-completion-started-hook 'company-turn-off-fci)
-  (add-hook 'company-completion-finished-hook 'company-maybe-turn-on-fci)
-  (add-hook 'company-completion-cancelled-hook 'company-maybe-turn-on-fci)
-  t)
+                                       (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories)))))))
 
 (def-package-hook! magit
   :post-config
   (setq
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect t
-   magit-revision-show-gravatars '("^Author:     " . "^Commit:     "))
-  t)
+   magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")))
 
 (require 'server)
 (setq server-name (getenv "EMACS_SERVER_NAME"))
@@ -236,8 +273,3 @@
   (server-start))
 ;; disable this fucking stupid feature by masking
 (provide 'smartparens-lua)
-
-(doom!
- :private
- amos-cc
- amos-email)

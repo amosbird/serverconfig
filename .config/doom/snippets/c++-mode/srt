@@ -1,6 +1,6 @@
 # -*- mode: snippet -*-
 # name: sort
-# key: srt
+# key: sort
 # type: command
 # --
 (+amos/add-include "algorithm")

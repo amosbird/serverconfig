@@ -1,7 +1,6 @@
 ;;; private/amos/config.el -*- lexical-binding: t; -*-
 
 (load! +bindings)
-(load! keycast)
 
 (defvar +amos-dir (file-name-directory load-file-name))
 (defvar +amos-snippets-dir (expand-file-name "snippets/" +amos-dir))
@@ -1372,31 +1371,56 @@ current buffer's, reload dir-locals."
               (highlight-string (shell-command-to-string "printf ' %d ' $(tmux display-message -p '#I')")))
           (string-match highlight-string full-string)
           (add-face-text-property (match-beginning 0) (match-end 0) '(:background "darkred") nil full-string)
-          full-string)))
+          full-string))
+  (force-mode-line-update))
 (def-modeline-segment! tmux +amos--tmux-modeline)
 
 (defvar +amos--hostname (propertize system-name 'face '(:weight bold :foreground "#51afef")))
 (def-modeline-segment! host +amos--hostname)
 
+(defface keycast-key
+  '((t (:weight bold
+        :height 1.2
+        :background "#d5cfbf"
+        :foreground "#000000"
+	:box (:line-width -3 :style released-button))))
+  "When Keycast mode is enabled, face used for the key in the mode line."
+  :group 'keycast)
+
+(defface keycast-command '((t (:weight bold)))
+  "When Keycast mode is enabled, face used for the command in the mode line."
+  :group 'keycast)
+
+(defvar keycast--this-command nil)
+(defvar keycast--this-command-keys nil)
+
+(defun keycast-mode-line-update ()
+  "Update mode line with current `this-command' and `this-command-keys'."
+  ;; Remember these values because the mode line update won't actually
+  ;; happen until we return to the command loop and by that time these
+  ;; values have been reset to nil.
+  (setq keycast--this-command-keys (this-command-keys))
+  (setq keycast--this-command this-command))
+
+(add-hook 'pre-command-hook 'keycast-mode-line-update t)
+
+(def-modeline-segment! keycast
+  (let* ((key (ignore-errors
+                (key-description keycast--this-command-keys)))
+         (cmd keycast--this-command))
+    (and key cmd
+         (concat
+          (make-string 10 ?\s)
+          (propertize (let ((pad (max 2 (- 5 (length key)))))
+                        (concat (make-string (ceiling pad 2) ?\s) key
+                                (make-string (floor   pad 2) ?\s)))
+                      'face 'keycast-key)
+          (format " %s" (propertize (symbol-name cmd)
+                                    'face 'keycast-command))))))
+
 (def-modeline! main
-  (matches " " buffer-info "  %l:%c %p  " selection-info tmux)
+  (matches " " buffer-info "  %l:%c %p  " selection-info tmux keycast)
   (tmux "  " host "  " buffer-encoding major-mode vcs flycheck))
-
-(def-modeline! minimal
-  (matches " " buffer-info tmux)
-  (tmux "  " host "  " media-info major-mode))
-
-(def-modeline! special
-  (matches " " buffer-info-simple "  %l:%c %p  " selection-info tmux)
-  (tmux "  " host "  " buffer-encoding major-mode flycheck))
-
-(def-modeline! project
-  (buffer-default-directory tmux)
-  (tmux "  " host "  " major-mode))
-
-(def-modeline! media
-  (" %b  " " %b  " tmux)
-  (tmux "  " host "  " media-info major-mode))
 
 (defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.
@@ -1426,7 +1450,6 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
         (let ((line (xref-location-line location))
               (file (xref-location-group location))
               (candidate nil))
-          (set-text-properties 0 (length summary) nil summary)
           (setq candidate (concat
                            ;; use file name only
                            (car (reverse (split-string file "\\/")))
@@ -1487,6 +1510,8 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
      cmd
      '(("f" switch-to-buffer-other-frame "other frame")))))
 
+(add-hook! 'doom-init-theme-hook
+          (set-face-background 'vertical-border "#282c34"))
 (add-hook! 'after-make-frame-functions
   (set-face-background 'vertical-border "#282c34"))
 
@@ -1833,43 +1858,45 @@ representation of `NUMBER' is smaller."
         (side . right)
         (size . 0.5)
         (reusable-frames . visible)))
-(+popup-define "^ \\*"
+(map-put +popup-default-parameters 'modeline t)
+(advice-add #'hide-mode-line-mode :override #'ignore)
+(set! :popup "^ \\*"
   '( (size . +popup-shrink-to-fit))
   '())
-(+popup-define "^\\*"
+(set! :popup "^\\*"
   '((slot . 1) (vslot . -1))
   '((select . t)))
-(+popup-define "^\\*Completions"
+(set! :popup "^\\*Completions"
   '()
   '((transient . 0)))
-(+popup-define "^\\*Compil\\(ation\\|e-Log\\)"
+(set! :popup "^\\*Compil\\(ation\\|e-Log\\)"
   '()
-  '((transient . 0) (quit . t)))
-(+popup-define "^\\*\\(?:scratch\\|Messages\\)"
+  '((select . t) (transient . 0) (quit . t)))
+(set! :popup "^\\*\\(?:scratch\\|Messages\\)"
   '()
   '((transient)))
-(+popup-define "^\\*doom \\(?:term\\|eshell\\)"
+(set! :popup "^\\*doom \\(?:term\\|eshell\\)"
   '()
   '((quit) (transient . 0)))
-(+popup-define "^\\*doom:"
+(set! :popup "^\\*doom:"
   '()
   '((select . t) (modeline . t) (quit) (transient . t)))
-(+popup-define "^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)"
+(set! :popup "^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)"
   '()
   '((transient . 0) (select . ignore)))
-(+popup-define "^\\*[Hh]elp"
+(set! :popup "^\\*[Hh]elp"
   '()
   '((select . t)))
-(+popup-define "^\\*\\(?:Agenda Com\\|Calendar\\|Org \\(?:Links\\|Export Dispatcher\\|Select\\)\\)"
+(set! :popup "^\\*\\(?:Agenda Com\\|Calendar\\|Org \\(?:Links\\|Export Dispatcher\\|Select\\)\\)"
   '((size . +popup-shrink-to-fit))
   '((transient . 0)))
-(+popup-define "^\\*Org Agenda"
+(set! :popup "^\\*Org Agenda"
   '()
   '((select . t) (transient)))
-(+popup-define "^\\*Org Src"
+(set! :popup "^\\*Org Src"
   '()
   '((quit) (select . t)))
-(+popup-define "^CAPTURE.*\\.org$"
+(set! :popup "^CAPTURE.*\\.org$"
   '()
   '((quit) (select . t)))
 
@@ -2159,4 +2186,74 @@ the current state and point position."
   (save-some-buffers nil t)
   (kill-emacs))
 
-(setq xref-after-jump-hook nil)
+(defun +amos*lsp--xref-make-item (filename location)
+  "Return a xref-item from a LOCATION in FILENAME."
+  (let* ((range (gethash "range" location))
+         (pos-start (gethash "start" range))
+         (pos-end (gethash "end" range))
+         (line (lsp--extract-line-from-buffer pos-start))
+         (start (gethash "character" pos-start))
+         (end (gethash "character" pos-end))
+         (len (length line)))
+    (add-face-text-property (max (min start len) 0)
+                            (max (min end len) 0)
+                            'ivy-minibuffer-match-face-2 t line)
+    ;; LINE is nil when FILENAME is not being current visited by any buffer.
+    (xref-make (or line filename)
+               (xref-make-file-location filename
+                                        (1+ (gethash "line" pos-start))
+                                        (gethash "character" pos-start)))))
+(advice-add #'lsp--xref-make-item :override #'+amos*lsp--xref-make-item)
+
+(defun +amos*xref--collect-matches-1 (regexp file line line-beg line-end syntax-needed)
+  (let (matches)
+    (when syntax-needed
+      (syntax-propertize line-end))
+    ;; FIXME: This results in several lines with the same
+    ;; summary. Solve with composite pattern?
+    (while (and
+            ;; REGEXP might match an empty string.  Or line.
+            (or (null matches)
+                (> (point) line-beg))
+            (re-search-forward regexp line-end t))
+      (let* ((beg-column (- (match-beginning 0) line-beg))
+             (end-column (- (match-end 0) line-beg))
+             (loc (xref-make-file-location file line beg-column))
+             (summary (buffer-substring-no-properties line-beg line-end)))
+        (add-face-text-property beg-column end-column 'ivy-minibuffer-match-face-2
+                                t summary)
+        (push (xref-make-match summary loc (- end-column beg-column))
+              matches)))
+    (nreverse matches)))
+
+(advice-add #'xref--collect-matches-1 :override #'+amos*xref--collect-matches-1)
+
+(defun comp-buffer-name (maj-mode)
+  (concat "*" (downcase maj-mode) " " default-directory "*"))
+(setq compilation-buffer-name-function #'comp-buffer-name)
+
+(require 'company)
+(setq company-idle-delay 0.3
+      company-auto-complete t
+      company-tooltip-limit 14
+      company-dabbrev-downcase nil
+      company-dabbrev-ignore-case nil
+      company-dabbrev-code-other-buffers t
+      company-tooltip-align-annotations t
+      company-require-match 'never
+      company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
+      company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
+      company-transformers nil)
+(require 'company-tng)
+(defvar-local company-fci-mode-on-p nil)
+(defun company-turn-off-fci (&rest ignore)
+  (when (boundp 'fci-mode)
+    (setq company-fci-mode-on-p fci-mode)
+    (when fci-mode (fci-mode -1))))
+(defun company-maybe-turn-on-fci (&rest ignore)
+  (when company-fci-mode-on-p (fci-mode 1)))
+(add-hook 'company-completion-started-hook   #'company-turn-off-fci)
+(add-hook 'company-completion-finished-hook  #'company-maybe-turn-on-fci)
+(add-hook 'company-completion-cancelled-hook #'company-maybe-turn-on-fci)
+
+(setq-default company-frontends (append '(company-tng-frontend) company-frontends))

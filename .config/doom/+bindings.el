@@ -1,5 +1,4 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; -*-
-
 (map!
  :g "<f12>"          (lambda! (evil-refresh-cursor) (realign-windows) (+amos/update-tmux-modeline)) ; also used to refresh terminal frames
  :g "M-x"            #'execute-extended-command
@@ -230,6 +229,8 @@
    "C-s"        #'company-filter-candidates
    "C-SPC"      #'company-complete-common
    "C-h"        #'company-quickhelp-manual-begin
+   "<"          nil
+   ">"          nil
    "C-w"        nil
    "RET"        nil
    "SPC"        nil
@@ -295,14 +296,13 @@
 
  (:after evil-magit
    :map (magit-status-mode-map magit-revision-mode-map)
+   "SPC" nil
    :n "C-j" nil
    :n [tab] #'magit-section-toggle
    :n "C-k" nil)
 
  (:after evil-multiedit
    :map evil-multiedit-state-map
-   "M-d" #'evil-multiedit-match-and-next
-   "M-D" #'evil-multiedit-match-and-prev
    "RET" #'evil-multiedit-toggle-or-restrict-region
    :map (evil-multiedit-state-map evil-multiedit-insert-state-map)
    "C-n" #'evil-multiedit-next
@@ -422,6 +422,10 @@
    :gn "-"        #'negative-argument
    :gn "="        #'edebug-temp-display-freq-count)
 
+ (:after magit-status
+   :map magit-status-mode-map
+   :n " " nil)
+
  (:after org
    :map org-mode-map
    :n "RET"       #'org-open-at-point
@@ -506,6 +510,8 @@
 (after! company
   (bind-keys :map company-active-map
              :filter (company-explicit-action-p)
+             ("<" . nil)
+             (">" . nil)
              ("C-i" . company-complete-selection)))
 
 (bind-keys :map emacs-lisp-mode-map

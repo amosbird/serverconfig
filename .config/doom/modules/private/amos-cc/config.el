@@ -62,10 +62,10 @@
   ;;; Keybindings
   ;; Completely disable electric keys because it interferes with smartparens and
   ;; custom bindings. We'll do this ourselves.
-  (setq c-tab-always-indent t
-        c-electric-flag nil)
-  (dolist (key '("#" "{" "}" "/" "*" ";" "," ":" "(" ")"))
-    (define-key c-mode-base-map key nil))
+  ;; (setq c-tab-always-indent t
+  ;;       c-electric-flag nil)
+  ;; (dolist (key '("#" "{" "}" "/" "*" ";" "," ":" "(" ")"))
+  ;;   (define-key c-mode-base-map key nil))
 
   ;; ...and leave it to smartparens
   (after! smartparen
@@ -155,29 +155,23 @@
 
 (def-package! cquery
   :after lsp-mode
-  :config
-  (let ((include-path (split-string (shell-command-to-string "g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | rg '^ /usr' | sed -n '1!p' | paste -sd ' '"))))
-    (setq cquery-extra-args (cons "--log-file=/tmp/cq.log" include-path)))
+  :init
   (setq
-   cquery-cache-dir "/home/amos/.cache/.cquery_cached_index"
-   cquery-sem-highlight-method 'font-lock)
-   ;; cquery-executable "/home/amos/git/cquery/build/release/bin/cquery"
-   ;; cquery-extra-init-params
-   ;; '(:client
-   ;;   (:snippetSupport t)
-   ;;   :index
-   ;;   (:comments 0)
-   ;;   (:whitelist
-   ;;    ("./dbms" "./libs"))
-   ;;   (:blacklist
-   ;;    ("/home/amos/git/ClickHouse/.*")))
-   ;; cquery-project-root-matchers
-   ;; '(cquery-project-roots-matcher ".cquery" projectile-project-root "compile_commands.json")
-
+   cquery-project-root-matchers
+   '(cquery-project-roots-matcher ".cquery" projectile-project-root "compile_commands.json")
+   cquery-sem-highlight-method 'overlay
+   cquery-extra-init-params
+   '(:client
+     (:snippetSupport t)
+     :index
+     (:comments 0)))
   (add-hook 'c-mode-common-hook #'cquery//enable))
 
 (defun cquery//enable ()
+  (direnv-update-environment)
+  (lsp-cquery-enable)
   (condition-case nil
+      (direnv-update-environment)
       (lsp-cquery-enable)
     (user-error nil)))
 
@@ -186,3 +180,19 @@
   :definition #'xref-find-definitions
   :references #'xref-find-references
   :documentation #'counsel-dash-at-point)
+
+
+(defun +amos*lsp--position-to-point (params)
+  "Convert Position object in PARAMS to a point."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char 1)
+      ;; The next line calculs the point from the LSP position.
+      ;; We use `goto-char' to ensure that we return a point inside the buffer
+      ;; to avoid out of range error
+      (goto-char (+ (line-beginning-position (1+ (gethash "line" params)))
+                    (gethash "character" params)))
+      (point))))
+
+(advice-add #'lsp--position-to-point :override #'+amos*lsp--position-to-point)
