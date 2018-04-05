@@ -9,8 +9,8 @@ set -s key-table htop
 bind-key -T htop C-] send-keys Escape
 bind-key -T htop C-j send-keys Down
 bind-key -T htop C-k send-keys Up
-bind-key -T htop M-0 switch-client -l\; send f12
-bind-key -T htop M-= switch-client -l\; send f12
+bind-key -T htop M-0 switch-client -l
+bind-key -T htop M-= switch-client -l
 
 bind-key -T htop M-h select-pane -L
 bind-key -T htop M-j select-pane -D

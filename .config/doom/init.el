@@ -9,7 +9,7 @@
        spellcheck
        syntax-checker
        version-control
-       ;; workspaces
+       workspaces
 
        :completion
        company
@@ -57,10 +57,10 @@
 (setq doom-line-numbers-style 'relative)
 ;; fix start-process xdg-open
 (setq rocess-connection-type nil)
-(setq package-archives
-      '(("gnu"   . "http://elpa.emacs-china.org/gnu/")
-        ("melpa" . "http://elpa.emacs-china.org/melpa/")
-        ("org"   . "http://elpa.emacs-china.org/org/")))
+;; (setq package-archives
+;;       '(("gnu"   . "http://elpa.emacs-china.org/gnu/")
+;;         ("melpa" . "http://elpa.emacs-china.org/melpa/")
+;;         ("org"   . "http://elpa.emacs-china.org/org/")))
 (setq TeX-view-program-selection '((output-pdf "Zathura") (output-html "xdg-open")))
 (setq auto-revert-interval 0.3)
 (setq auto-revert-verbose nil)

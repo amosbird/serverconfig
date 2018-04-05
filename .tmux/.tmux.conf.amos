@@ -69,35 +69,24 @@ bind -Tcopy-mode-vi L resize-pane -R 5
 # need to add all needed root table's key bindings
 set -s key-table amos
 
-set -s user-keys[0] "\e[70~"
-set -s user-keys[1] "\e[71~"
-set -s user-keys[2] "\e[72~"
-set -s user-keys[3] "\e[73~"
-set -s user-keys[4] "\e[74~"
-set -s user-keys[5] "\e[75~"
-set -s user-keys[6] "\e[76~"
-set -s user-keys[7] "\e[77~"
-set -s user-keys[8] "\e[78~"
-set -s user-keys[9] "\e[79~"
-
 # URxvt.keysym.C-Return:      \033[5;30010~
 bind-key -T amos User0 send-keys Enter
-# URxvt.keysym.M-S-BackSpace: \033[5;30011~
-bind-key -T amos User1 send-keys BSpace
-# URxvt.keysym.Shift-Return:  \033[5;30012~
-bind-key -T amos User2 send-keys Enter
-# URxvt.keysym.C-comma:       \033[5;30013~
-bind-key -T amos User3 previous-window
-# URxvt.keysym.C-period:      \033[5;30014~
-bind-key -T amos User4 next-window
 # URxvt.keysym.C-S:           \033[5;30015~
-bind-key -T amos User5 send-keys C-s
+bind-key -T amos User1 send-keys C-s
 # URxvt.keysym.C-D:           \033[5;30016~
-bind-key -T amos User6 send-keys C-d
+bind-key -T amos User2 send-keys C-d
 # URxvt.keysym.C-J:           \033[5;30017~
-bind-key -T amos User7 send-keys C-j
+bind-key -T amos User3 send-keys C-j
+# URxvt.keysym.M-S-BackSpace: \033[5;30011~
+bind-key -T amos User4 send-keys BSpace
+# URxvt.keysym.Shift-Return:  \033[5;30012~
+bind-key -T amos User5 send-keys Enter
+# URxvt.keysym.C-comma:       \033[5;30013~
+bind-key -T amos User6 previous-window
+# URxvt.keysym.C-period:      \033[5;30014~
+bind-key -T amos User7 next-window
 
-bind-key -T amos f12 display
+# bind-key -T amos f12 display
 bind-key -T amos DoubleClick1Pane copy-mode\; send -X select-word
 bind-key -T amos C-] send-keys Escape
 bind-key -T amos C-j send-keys Down
@@ -134,6 +123,7 @@ bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/
 
 bind-key -T amos C-v send-key C-v
 
+# bind-key -T amos M-0 switch-client -t emacs\; send f12
 bind-key -T amos M-0 switch-client -t emacs\; send f12
 bind-key -T amos M-= switch-client -t htop
 

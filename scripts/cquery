@@ -17,4 +17,4 @@ do
     blacklist="${blacklist}, \"$i\""
 done
 
-exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++17\", $includes]}" "$@"
+exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"

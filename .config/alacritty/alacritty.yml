@@ -291,15 +291,13 @@ key_bindings:
   # - { key: Space,    mods: Control,       command: { program: "i3-msg", args: ["focus", "right"] } } # needed in insert mode
   - { key: Escape,                        chars: "\x1d"                                            }
   - { key: Return,   mods: Control,       chars: "\x1b[70~"                                        }
-  - { key: Comma,    mods: Control,       chars: "\x1b[73~"                                        }
-  - { key: Period,   mods: Control,       chars: "\x1b[74~"                                        }
   - { key: S,        mods: Control|Shift, chars: "\x1b[1;2S"                                       }
   - { key: D,        mods: Control|Shift, chars: "\x1b[15;2~"                                      }
   - { key: J,        mods: Control|Shift, chars: "\x1b[17;2~"                                      }
   - { key: Back,     mods: Alt|Shift,     chars: "\x1b[18;2~"                                      }
   - { key: Return,   mods: Shift,         chars: "\x1b[19;2~"                                      }
-  - { key: F9,       mods: Shift,         chars: "\x1b[20;2~"                                      }
-  - { key: F10,      mods: Shift,         chars: "\x1b[21;2~"                                      }
+  - { key: Comma,    mods: Control,       chars: "\x1b[20;2~"                                      }
+  - { key: Period,   mods: Control,       chars: "\x1b[21;2~"                                      }
   - { key: F11,      mods: Shift,         chars: "\x1b[23;2~"                                      }
   - { key: I,        mods: Control|Shift, chars: "\x1b[Z"                                          }
   - { key: Escape,                        chars: "\x1d"                                            }

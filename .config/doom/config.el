@@ -1228,15 +1228,15 @@ The selected history element will be inserted into the minibuffer."
 (def-package! subword
   :commands subword-forward subword-backward)
 
-(def-package! company-lsp
-  :after company
-  :init
-  ;; Language servers have better idea filtering and sorting,
-  ;; don't filter results on the client side.
-  (setq company-transformers nil
-        company-lsp-async t
-        company-lsp-cache-candidates nil)
-  (push 'company-lsp company-backends))
+;; (def-package! company-lsp
+;;   :after company
+;;   :init
+;;   ;; Language servers have better idea filtering and sorting,
+;;   ;; don't filter results on the client side.
+;;   (setq company-transformers nil
+;;         company-lsp-async t
+;;         company-lsp-cache-candidates nil)
+;;   (push 'company-lsp company-backends))
 
 (after! xref
   (add-to-list 'xref-prompt-for-identifier '+lookup/definition :append)
@@ -1371,9 +1371,23 @@ current buffer's, reload dir-locals."
               (highlight-string (shell-command-to-string "printf ' %d ' $(tmux display-message -p '#I')")))
           (string-match highlight-string full-string)
           (add-face-text-property (match-beginning 0) (match-end 0) '(:background "darkred") nil full-string)
-          full-string))
-  (force-mode-line-update))
+          full-string)))
 (def-modeline-segment! tmux +amos--tmux-modeline)
+
+(defun +amos-workspace-tabline (&optional names)
+  (let ((names (or names (+workspace-list-names)))
+        (current-name (+workspace-current-name)))
+    (mapconcat
+     #'identity
+     (cl-loop for name in names
+              for i to (length names)
+              collect
+              (propertize (format " %d " (1+ i) name)
+                          'face (if (equal current-name name)
+                                    '+workspace-tab-selected-face
+                                  '+workspace-tab-face)))
+     (propertize "|" 'face '+workspace-tab-face))))
+(def-modeline-segment! frame (+amos-workspace-tabline))
 
 (defvar +amos--hostname (propertize system-name 'face '(:weight bold :foreground "#51afef")))
 (def-modeline-segment! host +amos--hostname)
@@ -1408,19 +1422,43 @@ current buffer's, reload dir-locals."
   (let* ((key (ignore-errors
                 (key-description keycast--this-command-keys)))
          (cmd keycast--this-command))
-    (and key cmd
-         (concat
-          (make-string 10 ?\s)
-          (propertize (let ((pad (max 2 (- 5 (length key)))))
-                        (concat (make-string (ceiling pad 2) ?\s) key
-                                (make-string (floor   pad 2) ?\s)))
-                      'face 'keycast-key)
-          (format " %s" (propertize (symbol-name cmd)
-                                    'face 'keycast-command))))))
+    (or
+     (and key cmd
+          (concat
+           (make-string 10 ?\s)
+           (propertize (let ((pad (max 2 (- 5 (length key)))))
+                         (concat (make-string (ceiling pad 2) ?\s) key
+                                 (make-string (floor   pad 2) ?\s)))
+                       'face 'keycast-key)
+           (format " %s" (propertize (if (symbolp cmd) (symbol-name cmd) "No Key")
+                                     'face 'keycast-command)))))))
+
+(def-modeline-segment! prefix
+  "Display only the current buffer's name, but with fontification."
+  (if (< (length (buffer-name)) 20) (make-string 10 ?\ ) ""))
+
+(def-modeline-segment! amos-buffer-info
+  "Combined information about the current buffer, including the current working
+directory, the file name, and its state (modified, read-only or non-existent)."
+          (if buffer-file-name
+              (+doom-modeline-buffer-file-name)
+            "%b"))
+
+(def-modeline-segment! amos-matches
+  "Displays: 1. the currently recording macro, 2. A current/total for the
+current search term (with anzu), 3. The number of substitutions being conducted
+with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
+  (let ((meta (concat (+doom-modeline--macro-recording)
+                      (+doom-modeline--anzu)
+                      (+doom-modeline--evil-substitute)
+                      (+doom-modeline--iedit))))
+    (concat (if (not buffer-file-name) (make-string 20 ?\ ))
+     (or (and (not (equal meta "")) meta)
+         (if buffer-file-name " %I " " X ")))))
 
 (def-modeline! main
-  (matches " " buffer-info "  %l:%c %p  " selection-info tmux keycast)
-  (tmux "  " host "  " buffer-encoding major-mode vcs flycheck))
+  (" " amos-matches " " amos-buffer-info "  %l:%c %p  " selection-info frame)
+  (keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
 
 (defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.
@@ -1860,6 +1898,10 @@ representation of `NUMBER' is smaller."
         (reusable-frames . visible)))
 (map-put +popup-default-parameters 'modeline t)
 (advice-add #'hide-mode-line-mode :override #'ignore)
+(advice-add #'+workspace-message :override #'ignore)
+(advice-add #'+workspace-error :override #'ignore)
+(advice-add #'+workspace/display :override #'ignore)
+
 (set! :popup "^ \\*"
   '( (size . +popup-shrink-to-fit))
   '())
@@ -2233,7 +2275,7 @@ the current state and point position."
 (setq compilation-buffer-name-function #'comp-buffer-name)
 
 (require 'company)
-(setq company-idle-delay 0.3
+(setq-default company-idle-delay 0.3
       company-auto-complete t
       company-tooltip-limit 14
       company-dabbrev-downcase nil
@@ -2242,6 +2284,7 @@ the current state and point position."
       company-tooltip-align-annotations t
       company-require-match 'never
       company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
+      company-frontends (append '(company-tng-frontend) company-frontends)
       company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
       company-transformers nil)
 (require 'company-tng)
@@ -2255,5 +2298,3 @@ the current state and point position."
 (add-hook 'company-completion-started-hook   #'company-turn-off-fci)
 (add-hook 'company-completion-finished-hook  #'company-maybe-turn-on-fci)
 (add-hook 'company-completion-cancelled-hook #'company-maybe-turn-on-fci)
-
-(setq-default company-frontends (append '(company-tng-frontend) company-frontends))

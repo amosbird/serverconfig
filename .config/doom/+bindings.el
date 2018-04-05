@@ -1,10 +1,89 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; -*-
+
+;;;###autoload
+(defun +amos/workspace-switch-to (index)
+  "Switch to a workspace at a given INDEX. A negative number will start from the
+end of the workspace list."
+  (interactive
+   (list (or current-prefix-arg
+             (completing-read "Switch to workspace: " (+workspace-list-names)))))
+  (when (and (stringp index)
+             (string-match-p "^[0-9]+$" index))
+    (setq index (string-to-number index)))
+  (condition-case ex
+      (let ((names (+workspace-list-names))
+            (old-name (+workspace-current-name)))
+        (cond ((numberp index)
+               (let ((dest (nth index names)))
+                 (unless dest
+                   (error "No workspace at #%s" (1+ index)))
+                 (+workspace-switch dest)))
+              ((stringp index)
+               (unless (member index names)
+                 (error "No workspace named %s" index))
+               (+workspace-switch index))
+              (t
+               (error "Not a valid index: %s" index)))
+        (unless (called-interactively-p 'interactive)
+          (if (equal (+workspace-current-name) old-name)
+              (+workspace-message (format "Already in %s" old-name) 'warn)
+            (+workspace/display))))
+    ('error (+workspace-error (cadr ex) t))))
+
+
+
+(defun +workspace/switch-to-1 () (interactive) (+workspace/switch-to 0))
+(defun +workspace/switch-to-2 () (interactive) (+workspace/switch-to 1))
+(defun +workspace/switch-to-3 () (interactive) (+workspace/switch-to 2))
+(defun +workspace/switch-to-4 () (interactive) (+workspace/switch-to 3))
+(defun +workspace/switch-to-5 () (interactive) (+workspace/switch-to 4))
+(defun +workspace/switch-to-6 () (interactive) (+workspace/switch-to 5))
+(defun +workspace/switch-to-7 () (interactive) (+workspace/switch-to 6))
+(defun +workspace/switch-to-8 () (interactive) (+workspace/switch-to 7))
+(defun +workspace/switch-to-9 () (interactive) (+workspace/switch-to 8))
+
+;;;###autoload
+(defun +default/easymotion ()
+  "TODO"
+  (interactive)
+  (let ((prefix (this-command-keys)))
+    (map! :m prefix nil)
+    (evilem-default-keybindings prefix)
+    (let ((map evilem-map))
+      (define-key map "n" (evilem-create #'evil-ex-search-next))
+      (define-key map "N" (evilem-create #'evil-ex-search-previous))
+      (define-key map "s"
+        (evilem-create #'evil-snipe-repeat
+                       :pre-hook (save-excursion (call-interactively #'evil-snipe-s))
+                       :bind ((evil-snipe-scope 'buffer)
+                              (evil-snipe-enable-highlight)
+                              (evil-snipe-enable-incremental-highlight))))
+      (define-key map "S"
+        (evilem-create #'evil-snipe-repeat-reverse
+                       :pre-hook (save-excursion (call-interactively #'evil-snipe-s))
+                       :bind ((evil-snipe-scope 'buffer)
+                              (evil-snipe-enable-highlight)
+                              (evil-snipe-enable-incremental-highlight))))
+      (set-transient-map map)
+      (which-key-reload-key-sequence prefix))))
+
 (map!
- :g "<f12>"          (lambda! (evil-refresh-cursor) (realign-windows) (+amos/update-tmux-modeline)) ; also used to refresh terminal frames
+ :g "<f12>"          (lambda (&rest _) (interactive) (evil-refresh-cursor) (realign-windows) (+amos/update-tmux-modeline)) ; also used to refresh terminal frames
  :g "M-x"            #'execute-extended-command
  :g "<f1>"           (lambda! (text-scale-set 0))
  :g "<f2>"           (lambda! (text-scale-increase 0.5))
  :g "<f3>"           (lambda! (text-scale-decrease 0.5))
+ :g "M-1"            #'+workspace/switch-to-1
+ :g "M-2"            #'+workspace/switch-to-2
+ :g "M-3"            #'+workspace/switch-to-3
+ :g "M-4"            #'+workspace/switch-to-4
+ :g "M-5"            #'+workspace/switch-to-5
+ :g "M-6"            #'+workspace/switch-to-6
+ :g "M-7"            #'+workspace/switch-to-7
+ :g "M-8"            #'+workspace/switch-to-8
+ :g "M-9"            #'+workspace/switch-to-9
+ :g "<f9>"           #'+workspace/switch-left
+ :g "<f10>"          #'+workspace/switch-right
  :g "M-w"            #'evil-wipeout-buffer
  :n "M-m"            #'evil-switch-to-windows-last-buffer
  :n "M-a"            #'+amos/mark-whole-buffer
@@ -104,6 +183,7 @@
  :m "gy"             #'evil-commentary-yank
  :m "gc"             #'evil-commentary
  :m "gl"             #'evil-commentary-line
+ :m "gs"             #'+default/easymotion
  :n ",,"             #'+amos/projectile-find-other-file
 
  (:prefix "C-x"
@@ -112,16 +192,14 @@
    :g "d"       #'+amos/direnv-reload
    :g "a"       #'direnv-edit
    :g "C-r"     #'+amos/replace-last-sexp
-   :i "C-l"     #'+company/whole-lines
-   :i "C-k"     #'+company/dict-or-keywords
    :i "C-f"     #'company-files
    :i "C-n"     #'company-dabbrev-code
    :i "C-p"     #'+company/dabbrev-code-previous
    :g "u"       #'link-hint-open-link
-   :g "c"       #'+amos/tmux-new-window
-   :g "k"       #'+amos/tmux-kill-window
+   :g "c"       #'+workspace/new
+   :g "k"       #'+workspace/delete
    :g "o"       #'+amos/tmux-fork-window
-   :g "r"       #'+amos/tmux-source
+   :gnemv "r"   #'+amos/tmux-source
    :g "C-c"     #'+amos/tmux-detach
    :g "p"       #'doom/other-popup)
 
@@ -129,7 +207,7 @@
    "C-SPC" #'easy-hugo)
 
  (:prefix "SPC"
-   :desc "Switch buffer"                   :nv "SPC" #'ivy-switch-buffer
+   :desc "Switch buffer"                   :nv "SPC" #'persp-switch-to-buffer
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
    :desc "Find file in project (no cache)" :nv ">"   (lambda! (projectile-invalidate-cache nil) (projectile-find-file))
    :desc "Find recent file"                :nv ","   #'counsel-recentf
@@ -182,7 +260,7 @@
    (:desc "notes" :prefix "n"
      :desc "Rust playground"               :nv "r" #'rust-playground
      :desc "Go playground"                 :nv "g" #'go-playground
-     :desc "C++ playground"                :nv "c" (lambda! (+amos/tmux-new-window 'cc-playground))
+     :desc "C++ playground"                :nv "c" (lambda! (+workspace/new) (cc-playground))
      :desc "C++ playground"                :nv "l" #'cc-playground-find-snippet
      :desc "Elisp playground"              :nv "e" #'+amos/new-empty-elisp-buffer
      :desc "Browse script"                 :nv "s" #'+amos/browse-script
