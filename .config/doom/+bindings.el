@@ -68,7 +68,7 @@ end of the workspace list."
       (which-key-reload-key-sequence prefix))))
 
 (map!
- :g "<f12>"          (lambda (&rest _) (interactive) (evil-refresh-cursor) (realign-windows) (+amos/update-tmux-modeline)) ; also used to refresh terminal frames
+ :g "<f12>"          (lambda! (evil-refresh-cursor) (realign-windows)) ; also used to refresh terminal frames
  :g "M-x"            #'execute-extended-command
  :g "<f1>"           (lambda! (text-scale-set 0))
  :g "<f2>"           (lambda! (text-scale-increase 0.5))
@@ -82,8 +82,8 @@ end of the workspace list."
  :g "M-7"            #'+workspace/switch-to-7
  :g "M-8"            #'+workspace/switch-to-8
  :g "M-9"            #'+workspace/switch-to-9
- :g "<f9>"           #'+workspace/switch-left
- :g "<f10>"          #'+workspace/switch-right
+ :g "S-<f9>"         #'+workspace/switch-left
+ :g "S-<f10>"        #'+workspace/switch-right
  :g "M-w"            #'evil-wipeout-buffer
  :n "M-m"            #'evil-switch-to-windows-last-buffer
  :n "M-a"            #'+amos/mark-whole-buffer
@@ -106,7 +106,7 @@ end of the workspace list."
  :ni "M-D"           (lambda! (+amos/forward-delete-word t))
  :ni [M-backspace]   #'+amos/backward-delete-word
  :ni [134217855]     #'+amos/backward-delete-word ; M-DEL
- :ni "<f7>"          (lambda! (+amos/backward-delete-word t))
+ :ni "S-<f7>"        (lambda! (+amos/backward-delete-word t))
  :i "DEL"            #'+amos/backward-delete-char
  :i "C-w"            #'+amos/backward-delete-word
  :i "M-r"            #'sp-slurp-hybrid-sexp
@@ -124,9 +124,9 @@ end of the workspace list."
  :n "C-f"            #'counsel-file-jump
  :n "C-l"            #'+amos/redisplay-and-recenter
  :n "C-s"            #'swiper
- :n "<f4>"           #'counsel-projectile-rg
+ :n "S-<f4>"         #'counsel-projectile-rg
  :n "C-S-s"          #'counsel-projectile-rg
- :n "<f5>"           #'+amos/counsel-rg-cur-dir
+ :n "S-<f5>"         #'+amos/counsel-rg-cur-dir
  :n "C-S-d"          #'+amos/counsel-rg-cur-dir
  :n "C-y"            #'+amos/yank-buffer-filename-with-line-position
  :i "C-y"            (lambda! (let ((kill-ring my-kill-ring)) (yank)))

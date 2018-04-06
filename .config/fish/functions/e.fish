@@ -21,5 +21,5 @@ function e --argument-names 'file'
     return 1
   end
   tmux switch-client -t emacs
-  emacsclient -n $file
+  emacsclient -n -eval "(progn (+workspace/new) (find-file \"$file\"))" > /dev/null
 end

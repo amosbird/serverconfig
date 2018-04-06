@@ -69,24 +69,25 @@ bind -Tcopy-mode-vi L resize-pane -R 5
 # need to add all needed root table's key bindings
 set -s key-table amos
 
+set -s user-keys[0] "\e[70~"
 # URxvt.keysym.C-Return:      \033[5;30010~
 bind-key -T amos User0 send-keys Enter
 # URxvt.keysym.C-S:           \033[5;30015~
-bind-key -T amos User1 send-keys C-s
+bind-key -T amos S-F4 send-keys C-s
 # URxvt.keysym.C-D:           \033[5;30016~
-bind-key -T amos User2 send-keys C-d
+bind-key -T amos S-F5 send-keys C-d
 # URxvt.keysym.C-J:           \033[5;30017~
-bind-key -T amos User3 send-keys C-j
+bind-key -T amos S-F6 send-keys C-j
 # URxvt.keysym.M-S-BackSpace: \033[5;30011~
-bind-key -T amos User4 send-keys BSpace
+bind-key -T amos S-F7 send-keys M-BSpace
 # URxvt.keysym.Shift-Return:  \033[5;30012~
-bind-key -T amos User5 send-keys Enter
+bind-key -T amos S-F8 send-keys Enter
 # URxvt.keysym.C-comma:       \033[5;30013~
-bind-key -T amos User6 previous-window
+bind-key -T amos S-F9 previous-window
 # URxvt.keysym.C-period:      \033[5;30014~
-bind-key -T amos User7 next-window
+bind-key -T amos S-F10 next-window
 
-# bind-key -T amos f12 display
+bind-key -T amos f12 display
 bind-key -T amos DoubleClick1Pane copy-mode\; send -X select-word
 bind-key -T amos C-] send-keys Escape
 bind-key -T amos C-j send-keys Down
@@ -123,7 +124,6 @@ bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/
 
 bind-key -T amos C-v send-key C-v
 
-# bind-key -T amos M-0 switch-client -t emacs\; send f12
 bind-key -T amos M-0 switch-client -t emacs\; send f12
 bind-key -T amos M-= switch-client -t htop
 

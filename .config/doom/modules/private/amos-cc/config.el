@@ -153,26 +153,48 @@
 
 (add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1))
 
-(def-package! cquery
+;; (def-package! cquery
+;;   :after lsp-mode
+;;   :init
+;;   (setq
+;;    cquery-project-root-matchers
+;;    '(cquery-project-roots-matcher ".cquery" projectile-project-root "compile_commands.json")
+;;    cquery-sem-highlight-method 'overlay
+;;    cquery-extra-init-params
+;;    '(:client
+;;      (:snippetSupport t)
+;;      :index
+;;      (:comments 0)))
+;;   (add-hook 'c-mode-common-hook #'cquery//enable))
+
+;; (defun cquery//enable ()
+;;   (direnv-update-environment)
+;;   (lsp-cquery-enable)
+;;   (condition-case nil
+;;       (direnv-update-environment)
+;;       (lsp-cquery-enable)
+;;     (user-error nil)))
+
+(def-package! ccls
   :after lsp-mode
   :init
   (setq
-   cquery-project-root-matchers
-   '(cquery-project-roots-matcher ".cquery" projectile-project-root "compile_commands.json")
-   cquery-sem-highlight-method 'overlay
-   cquery-extra-init-params
+   ccls-project-root-matchers
+   '(ccls-project-roots-matcher ".ccls" projectile-project-root "compile_commands.json")
+   ccls-sem-highlight-method 'overlay
+   ccls-extra-init-params
    '(:client
      (:snippetSupport t)
      :index
      (:comments 0)))
-  (add-hook 'c-mode-common-hook #'cquery//enable))
+  (add-hook 'c-mode-common-hook #'ccls//enable))
 
-(defun cquery//enable ()
+(defun ccls//enable ()
   (direnv-update-environment)
-  (lsp-cquery-enable)
+  (lsp-ccls-enable)
   (condition-case nil
       (direnv-update-environment)
-      (lsp-cquery-enable)
+      (lsp-ccls-enable)
     (user-error nil)))
 
 (set!

@@ -7,3 +7,4 @@
 (package! disaster)
 (package! clang-format)
 (package! opencl-mode)
+(package! ccls :recipe (:fetcher github :repo "MaskRay/emacs-ccls"))
