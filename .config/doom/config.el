@@ -925,76 +925,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
       (delete-char 1)
       (insert chr))))
 
-(def-hydra! +amos@perf-stat (:color blue :hint nil)
-  "
-# CPU counter statistics for the specified command:
-_a_:perf stat command
-
-# Detailed CPU counter statistics (includes extras) for the specified command:
-_b_:perf stat -d command
-
-# CPU counter statistics for the specified PID, until Ctrl-C:
-_c_:perf stat -p PID
-
-# CPU counter statistics for the entire system, for 5 seconds:
-_d_:perf stat -a sleep 5
-
-# Various basic CPU statistics, system wide, for 10 seconds:
-_e_:perf stat -e cycles,instructions,cache-references,cache-misses,bus-cycles -a sleep 10
-
-# Various CPU level 1 data cache statistics for the specified command:
-_f_:perf stat -e L1-dcache-loads,L1-dcache-load-misses,L1-dcache-stores command
-
-# Various CPU data TLB statistics for the specified command:
-_g_:perf stat -e dTLB-loads,dTLB-load-misses,dTLB-prefetch-misses command
-
-# Various CPU last level cache statistics for the specified command:
-_h_:perf stat -e LLC-loads,LLC-load-misses,LLC-stores,LLC-prefetches command
-
-# Using raw PMC counters, eg, unhalted core cycles:
-_i_:perf stat -e r003c -a sleep 5
-
-# PMCs: cycles and frontend stalls via raw specification
-_j_:perf stat -e cycles -e cpu/event=0x0e,umask=0x01,inv,cmask=0x01/ -a sleep 5
-
-# Count syscalls per-second system-wide (this should be in /proc)
-_k_:perf stat -e rawsyscalls:sysenter -I 1000 -a
-
-# Count system calls by type for the specified PID, until Ctrl-C
-_l_:perf stat -e 'syscalls:sysenter*' -p PID
-
-# Count system calls by type for the entire system, for 5 seconds
-_m_:perf stat -e 'syscalls:sysenter*' -a sleep 5
-
-# Count scheduler events for the specified PID, for 10 seconds
-_o_:perf stat -e 'sched:*' -p PID sleep 10
-
-# Count ext4 events for the entire system, for 10 seconds
-_p_:perf stat -e 'ext4:*' -a sleep 10
-
-# Count block device I/O events for the entire system, for 10 seconds
-_q_:perf stat -e 'block:*' -a sleep 10"
-
-  ;; TODO
-  ("a" kurecolor-decrease-brightness-by-step)
-  ("b" kurecolor-decrease-brightness-by-step)
-  ("c" kurecolor-decrease-brightness-by-step)
-  ("d" kurecolor-decrease-brightness-by-step)
-  ("e" kurecolor-decrease-brightness-by-step)
-  ("f" kurecolor-decrease-brightness-by-step)
-  ("g" kurecolor-decrease-brightness-by-step)
-  ("h" kurecolor-decrease-brightness-by-step)
-  ("i" kurecolor-decrease-brightness-by-step)
-  ("j" kurecolor-decrease-brightness-by-step)
-  ("k" kurecolor-decrease-brightness-by-step)
-  ("l" kurecolor-decrease-brightness-by-step)
-  ("m" kurecolor-decrease-brightness-by-step)
-  ("n" kurecolor-decrease-brightness-by-step)
-  ("o" kurecolor-decrease-brightness-by-step)
-  ("p" kurecolor-decrease-brightness-by-step)
-  ("q" kurecolor-increase-brightness-by-step)
-  ("r" kurecolor-decrease-saturation-by-step))
-
 (defun +amos/replace-last-sexp ()
   (interactive)
   (let ((value (eval (preceding-sexp))))
@@ -1890,45 +1820,20 @@ representation of `NUMBER' is smaller."
 (advice-add #'+workspace-error :override #'ignore)
 (advice-add #'+workspace/display :override #'ignore)
 
-(set! :popup "^ \\*"
-  '( (size . +popup-shrink-to-fit))
-  '())
-(set! :popup "^\\*"
-  '((slot . 1) (vslot . -1))
-  '((select . t)))
-(set! :popup "^\\*Completions"
-  '()
-  '((transient . 0)))
-(set! :popup "^\\*Compil\\(ation\\|e-Log\\)"
-  '()
-  '((select . t) (transient . 0) (quit . t)))
-(set! :popup "^\\*\\(?:scratch\\|Messages\\)"
-  '()
-  '((transient)))
-(set! :popup "^\\*doom \\(?:term\\|eshell\\)"
-  '()
-  '((quit) (transient . 0)))
-(set! :popup "^\\*doom:"
-  '()
-  '((select . t) (modeline . t) (quit) (transient . t)))
-(set! :popup "^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)"
-  '()
-  '((transient . 0) (select . ignore)))
-(set! :popup "^\\*[Hh]elp"
-  '()
-  '((select . t)))
-(set! :popup "^\\*\\(?:Agenda Com\\|Calendar\\|Org \\(?:Links\\|Export Dispatcher\\|Select\\)\\)"
-  '((size . +popup-shrink-to-fit))
-  '((transient . 0)))
-(set! :popup "^\\*Org Agenda"
-  '()
-  '((select . t) (transient)))
-(set! :popup "^\\*Org Src"
-  '()
-  '((quit) (select . t)))
-(set! :popup "^CAPTURE.*\\.org$"
-  '()
-  '((quit) (select . t)))
+(set! :popups
+  ("^ \\*" '( (size . +popup-shrink-to-fit)))
+  ("^\\*" '((slot . 1) (vslot . -1)) '((select . t)))
+  ("^\\*Completions" '() '((transient . 0)))
+  ("^\\*Compil\\(ation\\|e-Log\\)" '() '((select . t) (transient . 0) (quit . t)))
+  ("^\\*\\(?:scratch\\|Messages\\)" '() '((transient)))
+  ("^\\*doom \\(?:term\\|eshell\\)" '() '((quit) (transient . 0)))
+  ("^\\*doom:" '() '((select . t) (modeline . t) (quit) (transient . t)))
+  ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)" '() '((transient . 0) (select . ignore)))
+  ("^\\*[Hh]elp" '() '((select . t)))
+  ("^\\*\\(?:Agenda Com\\|Calendar\\|Org \\(?:Links\\|Export Dispatcher\\|Select\\)\\)" '((size . +popup-shrink-to-fit)) '((transient . 0)))
+  ("^\\*Org Agenda" '() '((select . t) (transient)))
+  ("^\\*Org Src" '() '((quit) (select . t)))
+  ("^CAPTURE.*\\.org$" '() '((quit) (select . t))))
 
 (evil-define-command +amos*evil-visual-paste (count &optional register)
   "Paste over Visual selection."

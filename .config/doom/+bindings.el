@@ -68,23 +68,23 @@ end of the workspace list."
       (which-key-reload-key-sequence prefix))))
 
 (map!
- :g "<f12>"          (lambda! (evil-refresh-cursor) (realign-windows)) ; also used to refresh terminal frames
- :g "M-x"            #'execute-extended-command
- :g "<f1>"           (lambda! (text-scale-set 0))
- :g "<f2>"           (lambda! (text-scale-increase 0.5))
- :g "<f3>"           (lambda! (text-scale-decrease 0.5))
- :g "M-1"            #'+workspace/switch-to-1
- :g "M-2"            #'+workspace/switch-to-2
- :g "M-3"            #'+workspace/switch-to-3
- :g "M-4"            #'+workspace/switch-to-4
- :g "M-5"            #'+workspace/switch-to-5
- :g "M-6"            #'+workspace/switch-to-6
- :g "M-7"            #'+workspace/switch-to-7
- :g "M-8"            #'+workspace/switch-to-8
- :g "M-9"            #'+workspace/switch-to-9
- :g "S-<f9>"         #'+workspace/switch-left
- :g "S-<f10>"        #'+workspace/switch-right
- :g "M-w"            #'evil-wipeout-buffer
+ :gn "<f12>"         (lambda! (evil-refresh-cursor) (realign-windows)) ; also used to refresh terminal frames
+ :gn "M-x"           #'execute-extended-command
+ :gn "<f1>"          (lambda! (text-scale-set 0))
+ :gn "<f2>"          (lambda! (text-scale-increase 0.5))
+ :gn "<f3>"          (lambda! (text-scale-decrease 0.5))
+ :gn "M-1"           #'+workspace/switch-to-1
+ :gn "M-2"           #'+workspace/switch-to-2
+ :gn "M-3"           #'+workspace/switch-to-3
+ :gn "M-4"           #'+workspace/switch-to-4
+ :gn "M-5"           #'+workspace/switch-to-5
+ :gn "M-6"           #'+workspace/switch-to-6
+ :gn "M-7"           #'+workspace/switch-to-7
+ :gn "M-8"           #'+workspace/switch-to-8
+ :gn "M-9"           #'+workspace/switch-to-9
+ :gn "S-<f9>"        #'+workspace/switch-left
+ :gn "S-<f10>"       #'+workspace/switch-right
+ :gn "M-w"           #'evil-wipeout-buffer
  :n "M-m"            #'evil-switch-to-windows-last-buffer
  :n "M-a"            #'+amos/mark-whole-buffer
  :n "M-g"            #'+amos/counsel-jumpdir-function
