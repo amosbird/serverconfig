@@ -73,6 +73,7 @@
 (setq browse-url-mailto-function 'mu4e~compose-browse-url-mail)
 (setq company-auto-complete t)
 (setq company-idle-delay 0)
+(setq dired-create-destination-dirs 'always)
 (setq dired-omit-verbose nil)
 (setq dired-open-extensions
       '(("pdf" . "xdg-open")

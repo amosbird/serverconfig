@@ -40,7 +40,7 @@ window.add_signal("build", function (w)
 end)
 
 local settings = require "settings"
-settings.window.search_engines.default = "https://cn.bing.com/search?q=%s"
+settings.window.search_engines.default = "https://google.com/search?q=%s"
 settings.window.search_engines.bing = "https://cn.bing.com/search?q=%s"
 settings.window.search_engines.scholar = "https://scholar.google.com/scholar?q=%s"
 settings.on["gitter.im"].webview.zoom_level = 100

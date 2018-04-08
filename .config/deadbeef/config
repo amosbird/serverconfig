@@ -9,7 +9,7 @@ gtkui.layout.0.6.2 vbox expand="0 1" fill="1 1" homogeneous=0 {hbox expand="0 1 
 gtkui.mmb_delete_playlist 1
 gtkui.name_playlist_from_folder 1
 gtkui.statusbar.visible 1
-gtkui.tabscroll 473
+gtkui.tabscroll 0
 gtkui.titlebar_playing_tf %artist% - %title% - DeaDBeeF-%_deadbeef_version%
 gtkui.titlebar_stopped_tf DeaDBeeF-%_deadbeef_version%
 gui_plugin GTK2
@@ -56,7 +56,7 @@ network.proxy.type HTTP
 playback.loop 0
 playback.order 0
 playback.volume 0.0000000
-playlist.current 4
+playlist.current 1
 playlist.cursor.0 268
 playlist.cursor.1 11
 playlist.cursor.2 67
