@@ -518,7 +518,7 @@ end of the workspace list."
    :n  "gj"       #'evil-next-visual-line
    :n  "gk"       #'evil-previous-visual-line
    :n "M-a"       #'+amos/mark-whole-buffer
-   :g "C-c e"     #'+amos/org-babel-edit
+   :g "C-c e"     #'org-edit-special
    :g "C-c C-j"   #'counsel-org-goto
    :g "C-c C-S-l" #'+org/remove-link)
 

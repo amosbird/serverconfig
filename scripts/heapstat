@@ -1,0 +1,45 @@
+#!/bin/sh
+
+statusname="/proc/$1/status"
+smapsname="/proc/$1/smaps"
+
+echo "===================== $(date +'%s %c') ====================="
+
+awk '
+$1 == "MemFree:" { free = $2; next }
+$1 == "Cached:"  { cached = $2; next }
+
+END {
+    printf "===MEMINFO (free,cached):  %8d  %8d\n", free, cached
+}
+' /proc/meminfo
+
+awk '
+$1 == "VmRSS:" { rss = $2; next }
+$1 == "VmHWM:" { hwm = $2; next }
+
+END {
+    printf "===STATUS      (rss,hwm):  %8d  %8d\n", rss, hwm
+}
+' $statusname
+
+awk '
+NF == 6 {
+    if ($NF == "[heap]") obj = "h"
+    else obj = ""
+    next
+}
+
+NF == 5 { obj = "a"; next }
+
+obj != "" && $1 == "Rss:" {
+    rss[obj] += $2
+    next
+}
+
+END {
+    printf "===HEAP      (anon,heap):  %8d  %8d\n", rss["a"], rss["h"]
+}
+' $smapsname
+
+echo "===END"

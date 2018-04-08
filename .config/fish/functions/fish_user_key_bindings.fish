@@ -300,6 +300,8 @@ function fish_user_key_bindings
     bind \ee my-edit-command
     bind \eE my-edit-tmux
 
+    bind \e, history-token-search-forward
+
     # tmux
 
     function select-window --argument-names "n"

@@ -1281,18 +1281,6 @@ for the last window in each frame."
     (find-file full-name)
     (evil-initialize-state 'insert)))
 
-(with-eval-after-load 'org-src
-  (defun +amos/org-babel-edit (arg)
-    "Edit the source block at point in a popup.
-
-If ARG is non-nil (universal argument), use the current window."
-    (interactive "P")
-    (if arg
-        (call-interactively #'org-edit-special)
-      (with-popup-rules! (("^\\*Org Src" :regexp t :size 0.5 :select t :align 'right :noesc t))
-                         (call-interactively #'org-edit-special))))
-  (add-hook 'org-src-mode-hook
-            'editorconfig-mode-apply t))
 
 (defvar zygospore-spore-formation-register-name
   "zygospore-windows-time-machine"
