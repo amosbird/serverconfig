@@ -2170,6 +2170,7 @@ the current state and point position."
 (setq compilation-buffer-name-function #'comp-buffer-name)
 
 (require 'company)
+(require 'company-tng)
 (setq-default company-idle-delay 0.3
       company-auto-complete t
       company-tooltip-limit 14
@@ -2182,7 +2183,6 @@ the current state and point position."
       company-frontends (append '(company-tng-frontend) company-frontends)
       company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
       company-transformers nil)
-(require 'company-tng)
 (defvar-local company-fci-mode-on-p nil)
 (defun company-turn-off-fci (&rest ignore)
   (when (boundp 'fci-mode)
@@ -2247,3 +2247,12 @@ the current state and point position."
         (when (eq 1 (length (get-buffer-window-list buffer nil t)))
           (kill-buffer buffer))))))
 (add-to-list 'delete-frame-functions #'+amos|maybe-delete-frame-buffer)
+
+(defun +amos*flycheck-next-error-function (n reset)
+  (-if-let* ((pos (flycheck-next-error-pos n reset))
+             (err (get-char-property pos 'flycheck-error))
+             (filename (flycheck-error-filename err))
+             (dummy (string= buffer-file-name filename)))
+      (flycheck-jump-to-error err)
+    (user-error "No more Flycheck errors")))
+(advice-add #'flycheck-next-error-function :override #'+amos*flycheck-next-error-function)

@@ -18,7 +18,7 @@
  :gn "S-<f9>"        #'+amos/workspace-switch-left
  :gn "S-<f10>"       #'+amos/workspace-switch-right
  :gn "M-w"           #'evil-wipeout-buffer
- :n "M-m"            #'evil-switch-to-windows-last-buffer
+ :gniv "M-m"         #'evil-switch-to-windows-last-buffer
  :n "M-a"            #'+amos/mark-whole-buffer
  :n "M-g"            #'+amos/counsel-jumpdir-function
  :i "M-i"            #'yas-insert-snippet
@@ -66,6 +66,8 @@
  :m "C-w"            #'bury-buffer
  :i "C-a"            #'evil-beginning-of-line
  :n "C-a"            #'evil-numbers/inc-at-pt
+ :n "M-s"            (lambda! () (evil-ex "%s/"))
+ :v "M-s"            (lambda! () (evil-ex "'<,'>s/"))
  :v "C-a"            #'+amos/ca
  :v "g C-a"          #'+amos/gca
  :i [remap newline]  #'newline-and-indent

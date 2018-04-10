@@ -181,21 +181,34 @@
   (setq
    ccls-project-root-matchers
    '(ccls-project-roots-matcher ".ccls" projectile-project-root "compile_commands.json")
-   ccls-sem-highlight-method 'overlay
-   ccls-extra-init-params
-   '(:client
-     (:snippetSupport t)
-     :index
-     (:comments 0)))
+   ccls-sem-highlight-method 'overlay)
+  (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
   (add-hook 'c-mode-common-hook #'ccls//enable))
 
 (defun ccls//enable ()
   (direnv-update-environment)
   (lsp-ccls-enable)
-  (condition-case nil
-      (direnv-update-environment)
-      (lsp-ccls-enable)
-    (user-error nil)))
+  (setq-local flycheck-checker 'lsp-ui)
+  (lsp-ui-flycheck-add-mode major-mode)
+  (add-to-list 'flycheck-checkers 'lsp-ui))
+
+;; (defvar lsp-ui-flycheck--stale-diagnostics nil)
+
+;; (defun lsp-ui-flycheck-enable (_)
+;;   "Enable flycheck integration for the current buffer."
+;;   (setq-local flycheck-check-syntax-automatically nil)
+;;   (setq-local flycheck-checker 'lsp-ui)
+;;   (lsp-ui-flycheck-add-mode major-mode)
+;;   (add-to-list 'flycheck-checkers 'lsp-ui)
+;;   (run-with-idle-timer 0.2 t
+;;                        (lambda () (when (and lsp-ui-flycheck--stale-diagnostics flycheck-mode)
+;;                                     (flycheck-buffer)
+;;                                     (setq lsp-ui-flycheck--stale-diagnostics nil))))
+;;   (add-hook 'lsp-after-diagnostics-hook (lambda ()
+;;                                           (setq lsp-ui-flycheck--stale-diagnostics t)
+;;                                           ;; (when flycheck-mode
+;;                                           ;;   (flycheck-buffer))
+;;                                           )))
 
 (set!
   :lookup '(c-mode c++-mode)

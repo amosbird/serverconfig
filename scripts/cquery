@@ -17,7 +17,7 @@ do
     blacklist="${blacklist}, \"$i\""
 done
 
-exec ~/git/ccls/rel/ccls --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++1z\", $includes]}" "$@"
+exec ~/git/ccls/rel/ccls --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"
 # exec /home/amos/git/cquery/test/cquery-v20180302-x86_64-unknown-linux-gnu/bin/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"

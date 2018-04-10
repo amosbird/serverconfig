@@ -39,19 +39,17 @@
        latex
        lua
        markdown
-       (org
-        +attach
-        +babel
-        +capture
-        +export
-        +publish)
        python
        rust
        sh
 
        :private
        amos-cc
+       amos-org
        amos-email)
+
+(after! flycheck
+  (push 'lsp-ui flycheck-checkers))
 
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
 (setq doom-line-numbers-style 'relative)
