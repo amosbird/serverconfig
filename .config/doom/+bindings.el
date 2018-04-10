@@ -1,89 +1,22 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; -*-
 
-;;;###autoload
-(defun +amos/workspace-switch-to (index)
-  "Switch to a workspace at a given INDEX. A negative number will start from the
-end of the workspace list."
-  (interactive
-   (list (or current-prefix-arg
-             (completing-read "Switch to workspace: " (+workspace-list-names)))))
-  (when (and (stringp index)
-             (string-match-p "^[0-9]+$" index))
-    (setq index (string-to-number index)))
-  (condition-case ex
-      (let ((names (+workspace-list-names))
-            (old-name (+workspace-current-name)))
-        (cond ((numberp index)
-               (let ((dest (nth index names)))
-                 (unless dest
-                   (error "No workspace at #%s" (1+ index)))
-                 (+workspace-switch dest)))
-              ((stringp index)
-               (unless (member index names)
-                 (error "No workspace named %s" index))
-               (+workspace-switch index))
-              (t
-               (error "Not a valid index: %s" index)))
-        (unless (called-interactively-p 'interactive)
-          (if (equal (+workspace-current-name) old-name)
-              (+workspace-message (format "Already in %s" old-name) 'warn)
-            (+workspace/display))))
-    ('error (+workspace-error (cadr ex) t))))
-
-
-
-(defun +workspace/switch-to-1 () (interactive) (+workspace/switch-to 0))
-(defun +workspace/switch-to-2 () (interactive) (+workspace/switch-to 1))
-(defun +workspace/switch-to-3 () (interactive) (+workspace/switch-to 2))
-(defun +workspace/switch-to-4 () (interactive) (+workspace/switch-to 3))
-(defun +workspace/switch-to-5 () (interactive) (+workspace/switch-to 4))
-(defun +workspace/switch-to-6 () (interactive) (+workspace/switch-to 5))
-(defun +workspace/switch-to-7 () (interactive) (+workspace/switch-to 6))
-(defun +workspace/switch-to-8 () (interactive) (+workspace/switch-to 7))
-(defun +workspace/switch-to-9 () (interactive) (+workspace/switch-to 8))
-
-;;;###autoload
-(defun +default/easymotion ()
-  "TODO"
-  (interactive)
-  (let ((prefix (this-command-keys)))
-    (map! :m prefix nil)
-    (evilem-default-keybindings prefix)
-    (let ((map evilem-map))
-      (define-key map "n" (evilem-create #'evil-ex-search-next))
-      (define-key map "N" (evilem-create #'evil-ex-search-previous))
-      (define-key map "s"
-        (evilem-create #'evil-snipe-repeat
-                       :pre-hook (save-excursion (call-interactively #'evil-snipe-s))
-                       :bind ((evil-snipe-scope 'buffer)
-                              (evil-snipe-enable-highlight)
-                              (evil-snipe-enable-incremental-highlight))))
-      (define-key map "S"
-        (evilem-create #'evil-snipe-repeat-reverse
-                       :pre-hook (save-excursion (call-interactively #'evil-snipe-s))
-                       :bind ((evil-snipe-scope 'buffer)
-                              (evil-snipe-enable-highlight)
-                              (evil-snipe-enable-incremental-highlight))))
-      (set-transient-map map)
-      (which-key-reload-key-sequence prefix))))
-
 (map!
  :gn "<f12>"         (lambda! (evil-refresh-cursor) (realign-windows)) ; also used to refresh terminal frames
  :gn "M-x"           #'execute-extended-command
  :gn "<f1>"          (lambda! (text-scale-set 0))
  :gn "<f2>"          (lambda! (text-scale-increase 0.5))
  :gn "<f3>"          (lambda! (text-scale-decrease 0.5))
- :gn "M-1"           #'+workspace/switch-to-1
- :gn "M-2"           #'+workspace/switch-to-2
- :gn "M-3"           #'+workspace/switch-to-3
- :gn "M-4"           #'+workspace/switch-to-4
- :gn "M-5"           #'+workspace/switch-to-5
- :gn "M-6"           #'+workspace/switch-to-6
- :gn "M-7"           #'+workspace/switch-to-7
- :gn "M-8"           #'+workspace/switch-to-8
- :gn "M-9"           #'+workspace/switch-to-9
- :gn "S-<f9>"        #'+workspace/switch-left
- :gn "S-<f10>"       #'+workspace/switch-right
+ :gn "M-1"           #'+amos/workspace-switch-to-1
+ :gn "M-2"           #'+amos/workspace-switch-to-2
+ :gn "M-3"           #'+amos/workspace-switch-to-3
+ :gn "M-4"           #'+amos/workspace-switch-to-4
+ :gn "M-5"           #'+amos/workspace-switch-to-5
+ :gn "M-6"           #'+amos/workspace-switch-to-6
+ :gn "M-7"           #'+amos/workspace-switch-to-7
+ :gn "M-8"           #'+amos/workspace-switch-to-8
+ :gn "M-9"           #'+amos/workspace-switch-to-9
+ :gn "S-<f9>"        #'+amos/workspace-switch-left
+ :gn "S-<f10>"       #'+amos/workspace-switch-right
  :gn "M-w"           #'evil-wipeout-buffer
  :n "M-m"            #'evil-switch-to-windows-last-buffer
  :n "M-a"            #'+amos/mark-whole-buffer
@@ -115,7 +48,6 @@ end of the workspace list."
  :n "M-i"            #'yasdcv-translate-at-point
  :v "M-i"            #'+amos/evil-visual-insert-snippet
  :n "M-o"            #'lsp-ui-sideline-mode
- :n "M-O"            #'evil-close-folds
  :n "M-h"            #'evil-window-left
  :n "M-j"            #'evil-window-down
  :n "M-k"            #'evil-window-up
@@ -196,8 +128,8 @@ end of the workspace list."
    :i "C-n"     #'company-dabbrev-code
    :i "C-p"     #'+company/dabbrev-code-previous
    :g "u"       #'link-hint-open-link
-   :g "c"       #'+workspace/new
-   :g "k"       #'+workspace/delete
+   :g "c"       #'+amos/workspace-new
+   :g "k"       #'+amos/workspace-delete
    :g "o"       #'+amos/tmux-fork-window
    :gnemv "r"   #'+amos/tmux-source
    :g "C-c"     #'+amos/tmux-detach
@@ -260,7 +192,7 @@ end of the workspace list."
    (:desc "notes" :prefix "n"
      :desc "Rust playground"               :nv "r" #'rust-playground
      :desc "Go playground"                 :nv "g" #'go-playground
-     :desc "C++ playground"                :nv "c" (lambda! (+workspace/new) (cc-playground))
+     :desc "C++ playground"                :nv "c" (lambda! (+amos/workspace-new) (cc-playground))
      :desc "C++ playground"                :nv "l" #'cc-playground-find-snippet
      :desc "Elisp playground"              :nv "e" #'+amos/new-empty-elisp-buffer
      :desc "Browse script"                 :nv "s" #'+amos/browse-script

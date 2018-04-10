@@ -9,7 +9,7 @@
        spellcheck
        syntax-checker
        version-control
-       workspaces
+       ;; workspaces
 
        :completion
        company

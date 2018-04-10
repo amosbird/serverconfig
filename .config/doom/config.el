@@ -1292,23 +1292,25 @@ current buffer's, reload dir-locals."
           full-string)))
 (def-modeline-segment! tmux +amos--tmux-modeline)
 
-(defun +amos-workspace-tabline (&optional names)
-  (let ((names (or names (+workspace-list-names)))
-        (current-name (+workspace-current-name)))
-    (mapconcat
-     #'identity
-     (cl-loop for name in names
-              for i to (length names)
-              collect
-              (propertize (format " %d " (1+ i) name)
-                          'face (if (equal current-name name)
-                                    '+workspace-tab-selected-face
-                                  '+workspace-tab-face)))
-     (propertize "|" 'face '+workspace-tab-face))))
-(def-modeline-segment! frame (+amos-workspace-tabline))
-
 (defvar +amos--hostname (propertize system-name 'face '(:weight bold :foreground "#51afef")))
 (def-modeline-segment! host +amos--hostname)
+
+(defface +amos-workspace-tab-selected-face '((t (:inherit 'highlight))) ".")
+(defface +amos-workspace-tab-face '((t (:inherit 'default))) ".")
+(defun +amos-frame-modeline (&optional names)
+  (let ((frames +amos--frame-list)
+        (current-frame (selected-frame)))
+    (mapconcat
+     #'identity
+     (cl-loop for frame in frames
+              for i to (length frames)
+              collect
+              (propertize (format " %d " (1+ i) frame)
+                          'face (if (eq current-frame frame)
+                                    '+amos-workspace-tab-selected-face
+                                  '+amos-workspace-tab-face)))
+     (propertize "|" 'face '+amos-workspace-tab-face))))
+(def-modeline-segment! frame (+amos-frame-modeline))
 
 (defface keycast-key
   '((t (:weight bold
@@ -2191,3 +2193,57 @@ the current state and point position."
 (add-hook 'company-completion-started-hook   #'company-turn-off-fci)
 (add-hook 'company-completion-finished-hook  #'company-maybe-turn-on-fci)
 (add-hook 'company-completion-cancelled-hook #'company-maybe-turn-on-fci)
+
+(defsubst +amos--is-frame-daemons-frame (f)
+  (and (daemonp) (eq f terminal-frame)))
+
+(defun +amos--frame-list-without-daemon ()
+  "Return a list of frames without the daemon's frame."
+  (if (daemonp)
+      (filtered-frame-list
+       #'(lambda (f) (not (+amos--is-frame-daemons-frame f))))
+    (frame-list)))
+
+(setq +amos--frame-list (reverse (+amos--frame-list-without-daemon)))
+
+(defun +amos/workspace-new ()
+  (interactive)
+  (make-frame-command)
+  (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
+
+(defun +amos/workspace-delete ()
+  (interactive)
+  (delete-frame)
+  (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
+
+(defun +amos/workspace-switch-to (index)
+  (interactive)
+  (when (< index (length +amos--frame-list))
+    (let ((frame (nth index +amos--frame-list)))
+    (select-frame frame)
+    (raise-frame frame))))
+
+(defun +amos/workspace-switch-to-1 () (interactive) (+amos/workspace-switch-to 0))
+(defun +amos/workspace-switch-to-2 () (interactive) (+amos/workspace-switch-to 1))
+(defun +amos/workspace-switch-to-3 () (interactive) (+amos/workspace-switch-to 2))
+(defun +amos/workspace-switch-to-4 () (interactive) (+amos/workspace-switch-to 3))
+(defun +amos/workspace-switch-to-5 () (interactive) (+amos/workspace-switch-to 4))
+(defun +amos/workspace-switch-to-6 () (interactive) (+amos/workspace-switch-to 5))
+(defun +amos/workspace-switch-to-7 () (interactive) (+amos/workspace-switch-to 6))
+(defun +amos/workspace-switch-to-8 () (interactive) (+amos/workspace-switch-to 7))
+(defun +amos/workspace-switch-to-9 () (interactive) (+amos/workspace-switch-to 8))
+(defun +amos-workspace-cycle (off)
+  (let* ((n (length +amos--frame-list))
+         (index (-elem-index (selected-frame) +amos--frame-list))
+         (i (% (+ off index n) n)))
+  (+amos/workspace-switch-to i)))
+(defun +amos/workspace-switch-left ()  (interactive) (+amos-workspace-cycle -1))
+(defun +amos/workspace-switch-right () (interactive) (+amos-workspace-cycle +1))
+
+(defun +amos|maybe-delete-frame-buffer (frame)
+  (let ((windows (window-list frame)))
+    (dolist (window windows)
+      (let ((buffer (window-buffer (car windows))))
+        (when (eq 1 (length (get-buffer-window-list buffer nil t)))
+          (kill-buffer buffer))))))
+(add-to-list 'delete-frame-functions #'+amos|maybe-delete-frame-buffer)
