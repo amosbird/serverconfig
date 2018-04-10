@@ -158,7 +158,7 @@
 (remove-hook! 'kill-emacs-query-functions #'doom-quit-p)
 (remove-hook! 'doom-post-init-hook #'blink-cursor-mode)
 ;; (remove-hook! 'doom-init-ui-hook #'show-paren-mode)
-(add-hook! 'doom-post-init-hook (realign-mode) (blink-cursor-mode -1) (setq-default truncate-lines nil) )
+(add-hook! 'doom-post-init-hook (realign-mode) (blink-cursor-mode -1) (setq-default truncate-lines nil))
 
 (let ((evil-cursors '(("normal" "#b8860b" box)
                       ("insert" "#66cd00" bar)
@@ -1158,16 +1158,6 @@ The selected history element will be inserted into the minibuffer."
 (def-package! subword
   :commands subword-forward subword-backward)
 
-;; (def-package! company-lsp
-;;   :after company
-;;   :init
-;;   ;; Language servers have better idea filtering and sorting,
-;;   ;; don't filter results on the client side.
-;;   (setq company-transformers nil
-;;         company-lsp-async t
-;;         company-lsp-cache-candidates nil)
-;;   (push 'company-lsp company-backends))
-
 (after! xref
   (add-to-list 'xref-prompt-for-identifier '+lookup/definition :append)
   (add-to-list 'xref-prompt-for-identifier '+lookup/references :append)
@@ -1300,16 +1290,18 @@ current buffer's, reload dir-locals."
 (defun +amos-frame-modeline (&optional names)
   (let ((frames +amos--frame-list)
         (current-frame (selected-frame)))
-    (mapconcat
-     #'identity
-     (cl-loop for frame in frames
-              for i to (length frames)
-              collect
-              (propertize (format " %d " (1+ i) frame)
-                          'face (if (eq current-frame frame)
-                                    '+amos-workspace-tab-selected-face
-                                  '+amos-workspace-tab-face)))
-     (propertize "|" 'face '+amos-workspace-tab-face))))
+    (concat (propertize "|" 'face '+amos-workspace-tab-face)
+            (mapconcat
+             #'identity
+             (cl-loop for frame in frames
+                      for i to (length frames)
+                      collect
+                      (propertize (format " %d " (1+ i) frame)
+                                  'face (if (eq current-frame frame)
+                                            '+amos-workspace-tab-selected-face
+                                          '+amos-workspace-tab-face)))
+             (propertize "|" 'face '+amos-workspace-tab-face))
+            (propertize "|" 'face '+amos-workspace-tab-face))))
 (def-modeline-segment! frame (+amos-frame-modeline))
 
 (defface keycast-key
@@ -1826,7 +1818,7 @@ representation of `NUMBER' is smaller."
   ("^ \\*" '( (size . +popup-shrink-to-fit)))
   ("^\\*" '((slot . 1) (vslot . -1)) '((select . t)))
   ("^\\*Completions" '() '((transient . 0)))
-  ("^\\*Compil\\(ation\\|e-Log\\)" '() '((select . t) (transient . 0) (quit . t)))
+  ("^\\*Compil\\(ation\\|e-Log\\)" '((pop-up-frames . nil)) '((select . t) (transient . 0) (quit . t)))
   ("^\\*\\(?:scratch\\|Messages\\)" '() '((transient)))
   ("^\\*doom \\(?:term\\|eshell\\)" '() '((quit) (transient . 0)))
   ("^\\*doom:" '() '((select . t) (modeline . t) (quit) (transient . t)))
@@ -2171,18 +2163,23 @@ the current state and point position."
 
 (require 'company)
 (require 'company-tng)
+(require 'company-lsp)
+
 (setq-default company-idle-delay 0.3
-      company-auto-complete t
-      company-tooltip-limit 14
-      company-dabbrev-downcase nil
-      company-dabbrev-ignore-case nil
-      company-dabbrev-code-other-buffers t
-      company-tooltip-align-annotations t
-      company-require-match 'never
-      company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
-      company-frontends (append '(company-tng-frontend) company-frontends)
-      company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
-      company-transformers nil)
+              company-auto-complete t
+              company-tooltip-limit 14
+              company-dabbrev-downcase nil
+              company-dabbrev-ignore-case nil
+              company-dabbrev-code-other-buffers t
+              company-tooltip-align-annotations t
+              company-require-match 'never
+              company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
+              company-frontends (append '(company-tng-frontend) company-frontends)
+              company-backends '(company-lsp company-capf company-dabbrev company-ispell company-yasnippet)
+              company-transformers nil
+              company-lsp-async t
+              company-lsp-cache-candidates nil)
+
 (defvar-local company-fci-mode-on-p nil)
 (defun company-turn-off-fci (&rest ignore)
   (when (boundp 'fci-mode)
@@ -2211,17 +2208,25 @@ the current state and point position."
   (make-frame-command)
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
 
+(setq +amos-tmux-need-switch nil)
 (defun +amos/workspace-delete ()
   (interactive)
   (delete-frame)
-  (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
+  (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon)))
+  (+doom-modeline|set-selected-window)
+  (realign-windows)
+  (when +amos-tmux-need-switch
+      (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
+      (setq +amos-tmux-need-switch nil)))
 
 (defun +amos/workspace-switch-to (index)
   (interactive)
   (when (< index (length +amos--frame-list))
     (let ((frame (nth index +amos--frame-list)))
-    (select-frame frame)
-    (raise-frame frame))))
+      (select-frame frame)
+      (raise-frame frame)
+      (setq +amos-tmux-need-switch nil)
+      (realign-windows))))
 
 (defun +amos/workspace-switch-to-1 () (interactive) (+amos/workspace-switch-to 0))
 (defun +amos/workspace-switch-to-2 () (interactive) (+amos/workspace-switch-to 1))
@@ -2256,3 +2261,8 @@ the current state and point position."
       (flycheck-jump-to-error err)
     (user-error "No more Flycheck errors")))
 (advice-add #'flycheck-next-error-function :override #'+amos*flycheck-next-error-function)
+
+;; only reuse current frame's popup
+(defadvice +popup-display-buffer (around +amos*popup-display-buffer activate)
+  (doom-with-advice (get-window-with-predicate (lambda (orig-fun f &rest _) (funcall orig-fun f)))
+      ad-do-it))

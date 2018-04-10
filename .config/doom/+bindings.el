@@ -524,7 +524,8 @@
              :filter (company-explicit-action-p)
              ("<" . nil)
              (">" . nil)
-             ("C-i" . company-complete-selection)))
+             ("C-i" . company-complete-selection)
+             ("C-h" . company-quickhelp-manual-begin)))
 
 (bind-keys :map emacs-lisp-mode-map
            ("C-x e" . macrostep-expand)

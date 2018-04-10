@@ -4,6 +4,8 @@
 #     exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt "$@"
 # fi
 
+export CCLS_TRACEME=1
+
 includes=$(g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print $0}' | xargs realpath -s | awk '{print "\"-I"$0"\""}' | paste -sd ",")
 
 blacklist="\"/tmp\""
@@ -17,7 +19,8 @@ do
     blacklist="${blacklist}, \"$i\""
 done
 
-exec ~/git/ccls/rel/ccls --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++1z\", $includes]}" "$@"
+# exec ~/git/ccls/rel/ccls --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++1z\", $includes]}" "$@"
+exec ~/git/ccls/dbg/ccls --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"
 # exec /home/amos/git/cquery/test/cquery-v20180302-x86_64-unknown-linux-gnu/bin/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"

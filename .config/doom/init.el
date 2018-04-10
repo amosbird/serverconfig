@@ -54,7 +54,7 @@
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
 (setq doom-line-numbers-style 'relative)
 ;; fix start-process xdg-open
-(setq rocess-connection-type nil)
+(setq process-connection-type nil)
 ;; (setq package-archives
 ;;       '(("gnu"   . "http://elpa.emacs-china.org/gnu/")
 ;;         ("melpa" . "http://elpa.emacs-china.org/melpa/")
@@ -232,7 +232,7 @@
   (define-key minibuffer-local-map "\C-p" #'previous-line-or-history-element)
   (define-key minibuffer-local-map "\C-n" #'next-line-or-history-element))
 
-(add-hook! 'minibuffer-setup-hook (setq truncate-lines t))
+;; (add-hook! 'minibuffer-setup-hook (setq truncate-lines t))
 
 (advice-add #'evil-escape-mode :override #'ignore)
 (advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)

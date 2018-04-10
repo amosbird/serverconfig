@@ -187,7 +187,7 @@ function fish_user_key_bindings
     end
 
     function open-magit -d "Open magit in emacs"
-        emacsclient -n -eval "(+amos/workspace-new)" > /dev/null 2>&1
+        emacsclient -n -eval "(progn (+amos/workspace-new) (setq +amos-tmux-need-switch t))" > /dev/null 2>&1
         if emacsclient -n -eval "(magit-status $pwd)" > /dev/null 2>&1
             if test -z $T450s
                 tmux switch-client -t emacs
@@ -199,7 +199,7 @@ function fish_user_key_bindings
     end
 
     function open-ranger -d "Open ranger in emacs"
-        emacsclient -n -eval "(+amos/workspace-new)" > /dev/null 2>&1
+        emacsclient -n -eval "(progn (+amos/workspace-new) (setq +amos-tmux-need-switch t))" > /dev/null 2>&1
         if emacsclient -n -eval "(+amos/dired-jump $pwd)" > /dev/null 2>&1
             if test -z $T450s
                 tmux switch-client -t emacs
