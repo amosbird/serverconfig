@@ -20,6 +20,7 @@ function e --argument-names 'file'
     echo "Usage: $_ <filename>"
     return 1
   end
+  set file (realpath $file)
   tmux switch-client -t emacs
-  emacsclient -n -eval "(progn (+workspace/new) (find-file \"$file\"))" > /dev/null
+  emacsclient -n -eval "(progn (+amos/workspace-new) (setq +amos-tmux-need-switch t) (find-file \"$file\"))" > /dev/null
 end

@@ -285,8 +285,33 @@ If called with `universal-argument' (C-u), ask for username.
   (interactive)
   (scroll-other-window -30))
 
+(defun peep-display-buffer-use-some-window (buffer alist)
+  (let* ((not-this-window (cdr (assq 'inhibit-same-window alist)))
+         (frame (or (window--frame-usable-p (selected-frame))
+                    (window--frame-usable-p (last-nonminibuffer-frame))))
+         (window
+          ;; Reuse an existing window.
+          (or (get-lru-window frame nil not-this-window)
+              (get-largest-window frame nil not-this-window)))
+         (quit-restore (and (window-live-p window)
+                            (window-parameter window 'quit-restore)))
+         (quad (nth 1 quit-restore)))
+    (when (window-live-p window)
+      ;; If the window was used by `display-buffer' before, try to
+      ;; resize it to its old height but don't signal an error.
+      (when (and (listp quad)
+                 (integerp (nth 3 quad))
+                 (> (nth 3 quad) (window-total-height window)))
+        (condition-case nil
+            (window-resize window (- (nth 3 quad) (window-total-height window)))
+          (error nil)))
+      (prog1
+	        (window--display-buffer buffer window 'reuse alist)
+	      (window--even-window-sizes window)
+	      (unless (cdr (assq 'inhibit-switch-frame alist))
+	        (window--maybe-raise-frame (window-frame window)))))))
+
 (defun peep-dired-display-file-other-window ()
-  ;; (remove-hook 'post-command-hook #'peep-dired-display-file-other-window)
   (if (eq (buffer-local-value 'major-mode (window-buffer peep-dired-window)) 'dired-mode)
       (when (eq major-mode 'dired-mode)
         (let ((entry-name (dired-file-name-at-point)))
@@ -296,12 +321,14 @@ If called with `universal-argument' (C-u), ask for username.
                         (> (nth 7 (file-attributes entry-name))
                            peep-dired-max-size))
               (remove-hook 'find-file-hook #'recentf-track-opened-file)
-              (let ((buffer (find-file-noselect entry-name)))
+              (let ((buffer (find-file-noselect entry-name))
+                    display-buffer-alist)
                 (add-to-list 'peep-dired-peeped-buffers buffer)
                 (display-buffer buffer
-                                '((display-buffer-use-some-window display-buffer-pop-up-window)
-                                  (inhibit-switch-frame . t)
-                                  (inhibit-same-window . t))))
+                                    '((peep-display-buffer-use-some-window display-buffer-pop-up-window)
+                                      (inhibit-switch-frame . t)
+                                      (inhibit-same-window . t)))
+                )
               (add-hook 'find-file-hook #'recentf-track-opened-file)))))
     (peep-dired-disable)))
 
@@ -315,7 +342,6 @@ If called with `universal-argument' (C-u), ask for username.
   (remove-hook 'post-command-hook #'peep-dired-display-file-other-window)
   (setq peep-dired-window nil)
   (delete-other-windows)
-  ;; (jump-to-register :peep_dired_before)
   (when peep-dired-cleanup-on-disable
     (mapc (lambda (b) (unless (eq b (current-buffer)) (kill-buffer-if-not-modified b))) peep-dired-peeped-buffers))
   (setq peep-dired-peeped-buffers ()))
@@ -323,57 +349,11 @@ If called with `universal-argument' (C-u), ask for username.
 (defun peep-dired-enable ()
   (unless (string= major-mode "dired-mode")
     (error "Run it from dired buffer"))
-  ;; (window-configuration-to-register :peep_dired_before)
   (setq peep-dired-window (selected-window))
-  ;; (peep-dired-display-file-other-window)
   (add-hook 'post-command-hook #'peep-dired-display-file-other-window 'append))
-
-(after! evil-snipe
-  (push 'dired-mode evil-snipe-disabled-modes))
 
 ;;;###autoload
 (defun peep-dired-toggle ()
   (interactive)
   (if peep-dired-window (peep-dired-disable)
     (peep-dired-enable)))
-
-(after! dired-x
-  (setq dired-omit-files
-        (concat dired-omit-files "\\|\\.directory$"))
-  (add-hook! 'dired-mode-hook
-    (let ((inhibit-message t))
-      (toggle-truncate-lines +1)
-      (dired-omit-mode)
-      (+amos-store-jump-history))))
-
-(define-advice dired-revert (:after (&rest _) +amos*dired-revert)
-  "Call `recenter' after `dired-revert'."
-  (condition-case nil
-      (recenter)
-    (error nil)))
-
-(def-package! dired-open
-  :after dired
-  :config
-  (push #'+amos/dired-open-callgrind dired-open-functions))
-
-(def-package! dired-quick-sort
-  :after dired
-  :config
-  (dired-quick-sort-setup))
-
-(after! wdired (evil-set-initial-state 'wdired-mode 'normal))
-(defun +amos/dired-open-callgrind ()
-  "Open callgrind files according to its name."
-  (interactive)
-  (let ((file (ignore-errors (dired-get-file-for-visit)))
-        process)
-    (when (and file
-               (not (file-directory-p file)))
-      (when (string-match-p "$[cachegrind|callgrind].out" file)
-        (setq process (dired-open--start-process file "kcachegrind"))))
-    process))
-
-(defadvice dired-clean-up-after-deletion (around +amos*dired-clean-up-after-deletion activate)
-  (doom-with-advice (y-or-n-p (lambda (&rest _) t))
-      ad-do-it))

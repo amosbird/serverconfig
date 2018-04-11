@@ -180,7 +180,7 @@
   :init
   (setq
    ccls-project-root-matchers
-   '(ccls-project-roots-matcher ".ccls" projectile-project-root "compile_commands.json")
+   '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
    ccls-sem-highlight-method 'overlay)
   (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
   (add-hook 'c-mode-common-hook #'ccls//enable))

@@ -141,7 +141,7 @@
    "C-SPC" #'easy-hugo)
 
  (:prefix "SPC"
-   :desc "Switch buffer"                   :nv "SPC" #'persp-switch-to-buffer
+   :desc "Switch buffer"                   :nv "SPC" #'switch-to-buffer
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
    :desc "Find file in project (no cache)" :nv ">"   (lambda! (projectile-invalidate-cache nil) (projectile-find-file))
    :desc "Find recent file"                :nv ","   #'counsel-recentf
@@ -161,7 +161,6 @@
      :desc "Open project editorconfig"     :nv "c" #'editorconfig-find-current-editorconfig
      :desc "Delete current file"           :nv "D" #'+evil:delete-this-file
      :desc "Browse emacs.d"                :nv "E" #'doom/sudo-this-file
-     :desc "Recent files"                  :nv "r" #'recentf-open-files
      :desc "Recent project files"          :nv "R" #'+amos/rename-current-buffer-file
      :desc "Yank filename"                 :nv "y" #'+amos/yank-buffer-filename
      :desc "Yank filename"                 :nv "Y" #'+amos/yank-buffer-filename-nondir)
@@ -206,8 +205,6 @@
    (:desc "open" :prefix "o"
      :desc "Default browser"               :nv "b" #'browse-url-of-file
      :desc "Dired"                         :nv "d" #'+amos/dired-jump
-     :desc "REPL"                          :nv "r" #'+eval/open-repl
-     :desc "APP: elfeed"                   :nv "E" #'=rss
      :desc "APP: email"                    :nv "m" #'=email
      :desc "APP: regex"                    :nv "X" #'=regex)
 
@@ -305,6 +302,13 @@
    :n "y"   (lambda! (dired-ranger-copy nil))
    :n "RET" #'dired-open-file
    :n "l"   #'dired-open-file)
+
+ (:map emacs-lisp-mode-map
+   "C-x e"      #'macrostep-expand
+   "#"          #'endless/sharp
+   "M-r"        #'+eval/buffer
+   "M-R"        #'+eval/region-and-replace
+   :ni "M-j"    #'eval-defun)
 
  (:after evil-magit
    :map (magit-status-mode-map magit-revision-mode-map)
@@ -526,9 +530,3 @@
              (">" . nil)
              ("C-i" . company-complete-selection)
              ("C-h" . company-quickhelp-manual-begin)))
-
-(bind-keys :map emacs-lisp-mode-map
-           ("C-x e" . macrostep-expand)
-           ("#"     . endless/sharp)
-           ("M-r"   . +eval/buffer)
-           ("M-R"   . +eval/region-and-replace))

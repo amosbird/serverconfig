@@ -1463,7 +1463,8 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (add-hook! 'doom-init-theme-hook
           (set-face-background 'vertical-border "#282c34"))
 (add-hook! 'after-make-frame-functions
-  (set-face-background 'vertical-border "#282c34"))
+  (set-face-background 'vertical-border "#282c34")
+  (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
 
 (defun +amos/redisplay-and-recenter ()
   (interactive)
@@ -2041,52 +2042,31 @@ the current state and point position."
   (interactive)
   (shell-command! "tmux detach-client"))
 
-(defun +amos/tmux-switch-window (&optional next)
-  "Switch window if inside tmux."
-  (interactive)
-  ;; (push (selected-frame) last-frame)
-  (if next
-      (shell-command! (format "tmux next-window; tmux send f12"))
-    (shell-command! (format "tmux previous-window; tmux send f12"))))
-
-(defun +amos/tmux-select-window (num)
-  "Select window if inside tmux."
-  (interactive)
-  (shell-command! (format "tmux select-window -t %d; tmux send f12" num)))
-
-(defun +amos/tmux-run-command (&optional func)
-  (+amos/update-tmux-modeline)
-  (if func (ignore-errors (funcall func))))
-
-(defun +amos/tmux-new-window (&optional func)
-  "New window if inside tmux."
-  (interactive)
-  (if (functionp func)
-      (shell-command! (format "tmux new-window emacsclient -t -c -eval \"(+amos/tmux-run-command '%s)\";" (symbol-name func)))
-    (shell-command! "tmux new-window emacsclient -t -c -eval '(+amos/tmux-run-command)';")))
-
 (defun +amos/find-file-other-frame (filename &optional wildcards)
   "Open file if inside tmux."
   (interactive
    (find-file-read-args "Find file in other frame: "
                         (confirm-nonexistent-file-or-buffer)))
-  (shell-command! (format "tmux new-window emacsclient -t -eval '(find-file \"%s\" \"%s\")'; tmux send f12" filename wildcards)))
+  (+amos/workspace-new)
+  (find-file filename wildcards))
 
 (defun +amos/switch-to-buffer-other-frame (buffer-or-name &optional norecord)
   (interactive
    (list (read-buffer-to-switch "Switch to buffer in other frame: ")))
-  (shell-command! (format "tmux new-window emacsclient -t -eval '(switch-to-buffer \"%s\" %s)'; tmux send f12" buffer-or-name norecord)))
+  (+amos/workspace-new)
+  (switch-to-buffer buffer-or-name norecord))
+
+;; (defun +amos/tmux-fork-window ()
+;;   "Detach if inside tmux."
+;;   (interactive)
+;;   (+amos-store-jump-history)
+;;   (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory)))
 
 (defun +amos/tmux-fork-window ()
   "Detach if inside tmux."
   (interactive)
   (+amos-store-jump-history)
-  (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory)))
-
-(defun +amos/tmux-kill-window ()
-  "Kill tmux window if inside tmux."
-  (interactive)
-  (shell-command! "tmux send -t $(tmux display -pt'{last}' '#{pane_id}') f12; tmux kill-window"))
+  (shell-command! "tmux split -h"))
 
 (defun +amos/tmux-source ()
   "Source tmux config if inside tmux."
@@ -2166,7 +2146,7 @@ the current state and point position."
 (require 'company-lsp)
 
 (setq-default company-idle-delay 0.3
-              company-auto-complete t
+              company-auto-complete nil
               company-tooltip-limit 14
               company-dabbrev-downcase nil
               company-dabbrev-ignore-case nil
@@ -2201,14 +2181,14 @@ the current state and point position."
        #'(lambda (f) (not (+amos--is-frame-daemons-frame f))))
     (frame-list)))
 
-(setq +amos--frame-list (reverse (+amos--frame-list-without-daemon)))
-
 (defun +amos/workspace-new ()
   (interactive)
   (make-frame-command)
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
 
 (setq +amos-tmux-need-switch nil)
+
+;; TODO ring lru
 (defun +amos/workspace-delete ()
   (interactive)
   (delete-frame)
@@ -2266,3 +2246,47 @@ the current state and point position."
 (defadvice +popup-display-buffer (around +amos*popup-display-buffer activate)
   (doom-with-advice (get-window-with-predicate (lambda (orig-fun f &rest _) (funcall orig-fun f)))
       ad-do-it))
+
+(def-package! dired-open
+  :after dired
+  :config
+  (push #'+amos/dired-open-callgrind dired-open-functions))
+
+(def-package! dired-quick-sort
+  :after dired
+  :config
+  (dired-quick-sort-setup))
+
+(after! dired-x
+  (setq dired-omit-files
+        (concat dired-omit-files "\\|\\.directory$"))
+  (add-hook! 'dired-mode-hook
+    (let ((inhibit-message t))
+      (toggle-truncate-lines +1)
+      (dired-omit-mode)
+      (+amos-store-jump-history))))
+
+(define-advice dired-revert (:after (&rest _) +amos*dired-revert)
+  "Call `recenter' after `dired-revert'."
+  (condition-case nil
+      (recenter)
+    (error nil)))
+
+(after! wdired (evil-set-initial-state 'wdired-mode 'normal))
+(defun +amos/dired-open-callgrind ()
+  "Open callgrind files according to its name."
+  (interactive)
+  (let ((file (ignore-errors (dired-get-file-for-visit)))
+        process)
+    (when (and file
+               (not (file-directory-p file)))
+      (when (string-match-p "$[cachegrind|callgrind].out" file)
+        (setq process (dired-open--start-process file "kcachegrind"))))
+    process))
+
+(defadvice dired-clean-up-after-deletion (around +amos*dired-clean-up-after-deletion activate)
+  (doom-with-advice (y-or-n-p (lambda (&rest _) t))
+      ad-do-it))
+
+(after! evil-snipe
+  (push 'dired-mode evil-snipe-disabled-modes))
