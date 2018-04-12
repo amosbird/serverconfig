@@ -8,6 +8,10 @@ Language: Cpp
 DerivePointerAlignment: false
 PointerAlignment: Left
 AccessModifierOffset: -4
+AlignConsecutiveAssignments: false
+AlignOperands:   false
+BreakBeforeBinaryOperators: All
+BreakBeforeTernaryOperators: true
 ColumnLimit: 120
 Standard: Cpp11
 ---

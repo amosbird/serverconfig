@@ -100,7 +100,7 @@
 (after! yasnippet
   (add-hook! 'yas-minor-mode-hook (yas-activate-extra-mode 'fundamental-mode))
   (setq yas-snippet-dirs
-        (append (list '+amos-snippets-dir)
+        (append (list '+amos-snippets-dir '+file-templates-dir)
                 (delq 'yas-installed-snippets-dir yas-snippet-dirs))))
 
 (after! cus-edit (evil-set-initial-state 'Custom-mode 'normal))
@@ -1667,9 +1667,6 @@ representation of `NUMBER' is smaller."
   (setq auto-insert-query nil  ; Don't prompt before insertion
         auto-insert-alist nil) ; Tabula rasa
 
-  (after! yasnippet
-    (push '+file-templates-dir yas-snippet-dirs))
-
   ;; load autoinsert as late as possible
   (defun +file-templates|init ()
     (and (not buffer-read-only)
@@ -1811,9 +1808,6 @@ representation of `NUMBER' is smaller."
         (reusable-frames . visible)))
 (map-put +popup-default-parameters 'modeline t)
 (advice-add #'hide-mode-line-mode :override #'ignore)
-(advice-add #'+workspace-message :override #'ignore)
-(advice-add #'+workspace-error :override #'ignore)
-(advice-add #'+workspace/display :override #'ignore)
 
 (set! :popups
   ("^ \\*" '( (size . +popup-shrink-to-fit)))
@@ -1952,7 +1946,6 @@ representation of `NUMBER' is smaller."
 
 (advice-add #'evil--jumps-jump :override #'+amos*evil--jumps-jump)
 
-
 (defun +amos/yank-buffer-filename ()
   "Copy the current buffer's path to the kill ring."
   (interactive)
@@ -1999,32 +1992,28 @@ the current state and point position."
       (narrow-reindent-widen)
       (recenter))))
 
-(defun +amos/copy-without-useless-indent-and-newline2 ()
-  (let ((inhibit-message t))
-    (when (evil-visual-state-p)
-      (call-interactively #'narrow-reindent-to-region)
-      (goto-char (point-max))
-      (backward-char)
-      (end-of-line)
-      (let ((text (filter-buffer-substring (point-min) (point))))
-        (evil-set-register ?y text))
-      (call-interactively #'narrow-reindent-widen)
-      (recenter))))
-
 (defun +amos/evil-visual-insert-snippet ()
   (interactive)
   (let ((start (region-beginning))
-        (end (region-end)))
-    (+amos/copy-without-useless-indent-and-newline2)
+        (end (region-end))
+        (register 121))
     (setq yas--condition-cache-timestamp (current-time))
-    (let* ((yas-wrap-around-region 121)
+    (let* ((yas-wrap-around-region register)
            (templates (yas--all-templates (yas--get-snippet-tables)))
            (yas--current-template (and templates
                                        (or (and (cl-rest templates) ;; more than one template for same key
                                                 (yas--prompt-for-template templates))
                                            (car templates))))
-           (_ (evil-substitute start end 'line ?_))
+           (_ (evil-substitute start end 'line register))
            (where (cons (point) (point))))
+      (with-temp-buffer
+        (evil-paste-from-register register)
+        (indent-region (point-min) (point-max))
+        (goto-char (point-max))
+        (backward-char)
+        (end-of-line)
+        (let ((text (filter-buffer-substring (point-min) (point))))
+          (evil-set-register ?y text)))
       (if yas--current-template
           (progn
             (yas-expand-snippet (yas--template-content yas--current-template)
@@ -2290,3 +2279,8 @@ the current state and point position."
 
 (after! evil-snipe
   (push 'dired-mode evil-snipe-disabled-modes))
+
+(defun +amos*c-determine-limit (orig-fun &rest args)
+  (setf (car args) 5000)
+  (apply orig-fun args))
+(advice-add #'c-determine-limit :around #'+amos*c-determine-limit)

@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: unique
+# key: uni
+# type: command
+# --
+(+amos/add-include "algorithm")
+(yas-expand-snippet "auto pos = std::unique(std::begin(${1:container}), std::end($1));")

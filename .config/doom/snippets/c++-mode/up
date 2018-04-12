@@ -1,6 +1,6 @@
 # -*- mode: snippet -*-
 # name: upper
-# key: upp
+# key: up
 # type: command
 # --
 (+amos/add-include "algorithm")

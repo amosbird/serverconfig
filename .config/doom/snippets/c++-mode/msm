@@ -4,9 +4,9 @@
 # type: command
 # --
 (+amos/add-include "algorithm")
-(yas-expand-snippet "auto values = std::mismatch(std::begin(${1:container}), std::end($1), std::begin($1));")
+(yas-expand-snippet "auto values = std::mismatch(std::begin(${1:container}), std::end($1), std::begin($1));
 if (values.first == std::end($1)) {
-    $2
-} else {
+    $0
+}${2: else {
     $3
-}
+}}")

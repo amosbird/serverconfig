@@ -1,22 +1,29 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; -*-
 
+(require 'general)
+(general-override-mode)
+
+(general-define-key
+ :keymaps 'override
+ :states '(normal insert visual emacs)
+ "<f12>"         (lambda! (evil-refresh-cursor) (realign-windows))
+ "M-x"           #'execute-extended-command
+ "<f1>"          (lambda! (text-scale-set 0))
+ "<f2>"          (lambda! (text-scale-increase 0.5))
+ "<f3>"          (lambda! (text-scale-decrease 0.5))
+ "M-1"           #'+amos/workspace-switch-to-1
+ "M-2"           #'+amos/workspace-switch-to-2
+ "M-3"           #'+amos/workspace-switch-to-3
+ "M-4"           #'+amos/workspace-switch-to-4
+ "M-5"           #'+amos/workspace-switch-to-5
+ "M-6"           #'+amos/workspace-switch-to-6
+ "M-7"           #'+amos/workspace-switch-to-7
+ "M-8"           #'+amos/workspace-switch-to-8
+ "M-9"           #'+amos/workspace-switch-to-9
+ "S-<f9>"        #'+amos/workspace-switch-left
+ "S-<f10>"       #'+amos/workspace-switch-right)
+
 (map!
- :gn "<f12>"         (lambda! (evil-refresh-cursor) (realign-windows)) ; also used to refresh terminal frames
- :gn "M-x"           #'execute-extended-command
- :gn "<f1>"          (lambda! (text-scale-set 0))
- :gn "<f2>"          (lambda! (text-scale-increase 0.5))
- :gn "<f3>"          (lambda! (text-scale-decrease 0.5))
- :gn "M-1"           #'+amos/workspace-switch-to-1
- :gn "M-2"           #'+amos/workspace-switch-to-2
- :gn "M-3"           #'+amos/workspace-switch-to-3
- :gn "M-4"           #'+amos/workspace-switch-to-4
- :gn "M-5"           #'+amos/workspace-switch-to-5
- :gn "M-6"           #'+amos/workspace-switch-to-6
- :gn "M-7"           #'+amos/workspace-switch-to-7
- :gn "M-8"           #'+amos/workspace-switch-to-8
- :gn "M-9"           #'+amos/workspace-switch-to-9
- :gn "S-<f9>"        #'+amos/workspace-switch-left
- :gn "S-<f10>"       #'+amos/workspace-switch-right
  :gn "M-w"           #'evil-wipeout-buffer
  :gniv "M-m"         #'evil-switch-to-windows-last-buffer
  :n "M-a"            #'+amos/mark-whole-buffer
@@ -56,17 +63,18 @@
  :n "C-f"            #'counsel-file-jump
  :n "C-l"            #'+amos/redisplay-and-recenter
  :n "C-s"            #'swiper
- :n "S-<f4>"         #'counsel-projectile-rg
- :n "C-S-s"          #'counsel-projectile-rg
- :n "S-<f5>"         #'+amos/counsel-rg-cur-dir
- :n "C-S-d"          #'+amos/counsel-rg-cur-dir
+ :n "S-<f4>"         #'counsel-projectile-rg ;; terminal
+ :n "C-S-s"          #'counsel-projectile-rg ;; gui
+ :n "S-<f5>"         #'+amos/counsel-rg-cur-dir ;; terminal
+ :n "C-S-d"          #'+amos/counsel-rg-cur-dir ;; gui
  :n "C-y"            #'+amos/yank-buffer-filename-with-line-position
  :i "C-y"            (lambda! (let ((kill-ring my-kill-ring)) (yank)))
  :i "M-y"            (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
  :m "C-w"            #'bury-buffer
  :i "C-a"            #'evil-beginning-of-line
  :n "C-a"            #'evil-numbers/inc-at-pt
- :n "M-s"            (lambda! () (evil-ex "%s/"))
+ :n "M-s"            (lambda! () (evil-ex "s/"))
+ :n "M-S"            (lambda! () (evil-ex "%s/"))
  :v "M-s"            (lambda! () (evil-ex "'<,'>s/"))
  :v "C-a"            #'+amos/ca
  :v "g C-a"          #'+amos/gca

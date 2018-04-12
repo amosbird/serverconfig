@@ -1,6 +1,7 @@
 # -*- mode: snippet -*-
 # name: vector
 # key: vec
+# type: command
 # --
-`(setq --cpp-ns (if (search "using namespace std;" (buffer-string)) "" "std::"))
---cpp-ns`vector<${1:int}> ${2:var}${3:(${4:10}, $1($5))};`(progn (makunbound '--cpp-ns) "")`
+(+amos/add-include "vector")
+(yas-expand-snippet (format "%svector<${1:int}> ${2:var}${3:(${4:10}, $1($5))};" (if (search "using namespace std;" (buffer-string)) "" "std::")))

@@ -1,5 +1,7 @@
 # -*- mode: snippet -*-
-# name: trm
-# key: trm
+# name: trim
+# key: trim
+# type: command
 # --
-${1:container}.erase($1.find_last_not_of(" \t\n\r") + 1);
+(+amos/add-include "algorithm")
+(yas-expand-snippet "${1:container}.erase($1.find_last_not_of(\" \t\n\r\") + 1);")
