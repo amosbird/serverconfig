@@ -55,10 +55,10 @@
  :n "M-i"            #'yasdcv-translate-at-point
  :v "M-i"            #'+amos/evil-visual-insert-snippet
  :n "M-o"            #'lsp-ui-sideline-mode
- :n "M-h"            #'evil-window-left
- :n "M-j"            #'evil-window-down
- :n "M-k"            #'evil-window-up
- :n "M-l"            #'evil-window-right
+ :genvi "M-h"        #'evil-window-left
+ :genvi "M-j"        #'evil-window-down
+ :genvi "M-k"        #'evil-window-up
+ :genvi "M-l"        #'evil-window-right
  :n "C-p"            #'+amos/counsel-projectile-switch-project
  :n "C-f"            #'counsel-file-jump
  :n "C-l"            #'+amos/redisplay-and-recenter
@@ -256,10 +256,18 @@
    [backtab]    nil
 
    :map company-search-map
+   "SPC"        (lambda!
+                 (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
+                 (company-complete-selection)
+                 (insert " "))
+   "C-i"        #'company-complete-selection
    "C-j"        #'company-search-repeat-forward
    "C-k"        #'company-search-repeat-backward
    "C-s"        (lambda! (company-search-abort) (company-filter-candidates))
-   [escape]     #'company-search-abort)
+   [escape]     (lambda!
+                 (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
+                 (company-complete-selection)
+                 (evil-normal-state 1)))
 
  (:after swiper
    :map swiper-map
@@ -316,7 +324,8 @@
    "#"          #'endless/sharp
    "M-r"        #'+eval/buffer
    "M-R"        #'+eval/region-and-replace
-   :ni "M-j"    #'eval-defun)
+   :ni "M-U"    #'+amos/replace-defun
+   :ni "M-u"    #'eval-defun)
 
  (:after evil-magit
    :map (magit-status-mode-map magit-revision-mode-map)

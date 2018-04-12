@@ -820,7 +820,8 @@ This function should be hooked to `buffer-list-update-hook'."
   (dolist (x '(cc-playground-exec cc-playground-debug cc-playground-exec-test cc-playground-bench))
     (advice-add x :before #'evil-normal-state))
   :bind (:map cc-playground-mode-map
-          ("<f8>" . cc-playground-rm)
+          ("<f8>" . cc-playground-rm) ; terminal
+          ("S-RET" . cc-playground-rm) ; gui
           ("C-c r" . cc-playground-add-or-modify-tag)
           ("C-c b" . cc-playground-bench)
           ("C-c d" . cc-playground-debug)
@@ -931,25 +932,30 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     (kill-sexp -1)
     (insert (format "%S" value))))
 
-(defun +amos/new-empty-elisp-buffer ()
-  "Create a new empty buffer.
-New buffer will be named “untitled” or “untitled<2>”, “untitled<3>”, etc.
-
-It returns the buffer (for elisp programing).
-
-URL `http://ergoemacs.org/emacs/emacs_new_empty_buffer.html'
-Version 2017-11-01"
+(defun +amos/replace-defun ()
   (interactive)
-  (let ((buf (generate-new-buffer "untitled")))
+  (evil-normal-state 1)
+  (narrow-to-defun)
+  (goto-char (point-max))
+  (let ((value (eval (preceding-sexp))))
+    (kill-sexp -1)
+    (insert (format "%S\n" value)))
+  (widen)
+  (backward-char))
+
+(defun +amos/new-empty-elisp-buffer ()
+  (interactive)
+  (let ((buf (generate-new-buffer "*new*")))
+    (+amos/workspace-new)
     (switch-to-buffer buf)
+    (make-local-variable 'kill-buffer-hook)
+    (add-hook 'kill-buffer-hook #'+amos/workspace-delete)
     (emacs-lisp-mode)
+    (evil-insert-state 1)
     (setq buffer-offer-save t)
     buf))
 
-
 (defun +amos/ivy-complete-dir ()
-  "Enter a recursive `ivy-read' session using the current history.
-The selected history element will be inserted into the minibuffer."
   (interactive)
   (let ((enable-recursive-minibuffers t)
         (history (+amos--get-all-jump-dirs))
@@ -1306,10 +1312,10 @@ current buffer's, reload dir-locals."
 
 (defface keycast-key
   '((t (:weight bold
-        :height 1.2
-        :background "#d5cfbf"
-        :foreground "#000000"
-	:box (:line-width -3 :style released-button))))
+                :height 1.2
+                :background "#d5cfbf"
+                :foreground "#000000"
+                :box (:line-width -3 :style released-button))))
   "When Keycast mode is enabled, face used for the key in the mode line."
   :group 'keycast)
 
@@ -1352,9 +1358,9 @@ current buffer's, reload dir-locals."
 (def-modeline-segment! amos-buffer-info
   "Combined information about the current buffer, including the current working
 directory, the file name, and its state (modified, read-only or non-existent)."
-          (if buffer-file-name
-              (+doom-modeline-buffer-file-name)
-            "%b"))
+  (if buffer-file-name
+      (+doom-modeline-buffer-file-name)
+    "%b"))
 
 (def-modeline-segment! amos-matches
   "Displays: 1. the currently recording macro, 2. A current/total for the
@@ -1365,8 +1371,8 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
                       (+doom-modeline--evil-substitute)
                       (+doom-modeline--iedit))))
     (concat (if (not buffer-file-name) (make-string 20 ?\ ))
-     (or (and (not (equal meta "")) meta)
-         (if buffer-file-name " %I " " X ")))))
+            (or (and (not (equal meta "")) meta)
+                (if buffer-file-name " %I " " X ")))))
 
 (def-modeline! main
   (" " amos-matches " " amos-buffer-info "  %l:%c %p  " selection-info frame)
@@ -1403,9 +1409,9 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
           (setq candidate (concat
                            ;; use file name only
                            (car (reverse (split-string file "\\/")))
-                                  (when (string= "integer" (type-of line))
-                                    (concat ":" (int-to-string line) ": "))
-                                  summary))
+                           (when (string= "integer" (type-of line))
+                             (concat ":" (int-to-string line) ": "))
+                           summary))
           (push `(,candidate . ,location) collection))))
     (nreverse collection)))
 
@@ -1461,7 +1467,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
      '(("f" switch-to-buffer-other-frame "other frame")))))
 
 (add-hook! 'doom-init-theme-hook
-          (set-face-background 'vertical-border "#282c34"))
+  (set-face-background 'vertical-border "#282c34"))
 (add-hook! 'after-make-frame-functions
   (set-face-background 'vertical-border "#282c34")
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
@@ -2147,7 +2153,8 @@ the current state and point position."
               company-backends '(company-lsp company-capf company-dabbrev company-ispell company-yasnippet)
               company-transformers nil
               company-lsp-async t
-              company-lsp-cache-candidates nil)
+              company-lsp-cache-candidates nil
+              company-search-regexp-function 'company-search-flex-regexp)
 
 (defvar-local company-fci-mode-on-p nil)
 (defun company-turn-off-fci (&rest ignore)
@@ -2185,8 +2192,8 @@ the current state and point position."
   (+doom-modeline|set-selected-window)
   (realign-windows)
   (when +amos-tmux-need-switch
-      (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
-      (setq +amos-tmux-need-switch nil)))
+    (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
+    (setq +amos-tmux-need-switch nil)))
 
 (defun +amos/workspace-switch-to (index)
   (interactive)
@@ -2210,7 +2217,7 @@ the current state and point position."
   (let* ((n (length +amos--frame-list))
          (index (-elem-index (selected-frame) +amos--frame-list))
          (i (% (+ off index n) n)))
-  (+amos/workspace-switch-to i)))
+    (+amos/workspace-switch-to i)))
 (defun +amos/workspace-switch-left ()  (interactive) (+amos-workspace-cycle -1))
 (defun +amos/workspace-switch-right () (interactive) (+amos-workspace-cycle +1))
 
