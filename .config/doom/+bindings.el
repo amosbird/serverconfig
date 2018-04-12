@@ -271,11 +271,13 @@
 
  (:after swiper
    :map swiper-map
-   "C-c o"    #'+ivy/wgrep-occur)
+   "C-c o"    #'+ivy/wgrep-occur
+   "C-c C-o"  #'+ivy/wgrep-occur)
 
  (:after counsel
    :map counsel-ag-map
    "C-c o"    #'+ivy/wgrep-occur
+   "C-c C-o"  #'+ivy/wgrep-occur
    "C-i"      #'ivy-call
    "C-SPC"    #'counsel-git-grep-recenter
    "M-RET"    (+ivy-do-action! #'+ivy-git-grep-other-window-action))
@@ -443,7 +445,7 @@
    :gn "X"        #'edebug-set-global-break-condition
    :gn "r"        #'edebug-previous-result
    :gn "e"        #'edebug-eval-expression
-   :gn "C-x C-e" #'edebug-eval-last-sexp
+   :gn "C-x C-e"  #'edebug-eval-last-sexp
    :gn "E"        #'edebug-visit-eval-list
    :gn "w"        #'edebug-where
    :gn "v"        #'edebug-view-outside ;; maybe obsolete??

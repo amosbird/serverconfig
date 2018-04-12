@@ -1818,6 +1818,7 @@ representation of `NUMBER' is smaller."
 (set! :popups
   ("^ \\*" '( (size . +popup-shrink-to-fit)))
   ("^\\*" '((slot . 1) (vslot . -1)) '((select . t)))
+  ("^\\*ivy-occur" '((size . 0.5)) '((select . t)))
   ("^\\*Completions" '() '((transient . 0)))
   ("^\\*Compil\\(ation\\|e-Log\\)" '((pop-up-frames . nil)) '((select . t) (transient . 0) (quit . t)))
   ("^\\*\\(?:scratch\\|Messages\\)" '() '((transient)))
