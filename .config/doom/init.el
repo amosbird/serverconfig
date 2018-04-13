@@ -242,7 +242,6 @@
 (def-package-hook! nav-flash
   :pre-init
   (advice-add #'windmove-do-window-select :after #'+nav-flash/blink-cursor)
-  (advice-add #'recenter :after #'+nav-flash/blink-cursor)
   (after! evil
     (advice-add #'evil--jumps-jump :after (lambda (&rest _) (recenter)))
     (advice-add #'evil-switch-to-windows-last-buffer :after (lambda (&rest _) (recenter))))

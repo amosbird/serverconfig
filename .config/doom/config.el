@@ -423,7 +423,7 @@ Skip buffers that match `ivy-ignore-buffers'."
        (unless (eq old-buffer new-buffer)
          ;; The buffer of a previously existing window has changed or
          ;; a new window has been added to this frame.
-         (recenter)
+         (+amos/recenter)
          (setf (window-parameter window 'my-last-buffer) new-buffer))))))
 (add-hook! 'window-configuration-change-hook #'+amos|update-window-buffer-list)
 
@@ -1427,11 +1427,10 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
             (let* ((marker (xref-location-marker location))
                    (buf (marker-buffer marker)))
               (evil-set-jump)
-              (if (not (eq buf (current-buffer)))
-                  (switch-to-buffer buf))
+              (switch-to-buffer buf)
               (goto-char marker)
               (evil-set-jump)
-              (recenter))))
+              (+amos/recenter))))
       (let ((xref-pos (point))
             (xref-buffer (current-buffer))
             (success nil))
@@ -1440,17 +1439,16 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
                             (unless success
                               (switch-to-buffer xref-buffer)
                               (goto-char xref-pos)
-                              (recenter)))
+                              (+amos/recenter)))
                   :action (lambda (x)
                             (let ((location (cdr x)))
                               (let* ((marker (xref-location-marker location))
                                      (buf (marker-buffer marker)))
                                 (evil-set-jump)
-                                (if (not (eq buf xref-buffer))
-                                    (switch-to-buffer buf))
+                                (switch-to-buffer buf)
                                 (with-ivy-window
                                   (goto-char marker)
-                                  (recenter)
+                                  (+amos/recenter)
                                   (evil-set-jump))
                                 (unless (eq 'ivy-call this-command)
                                   (setq success t))))))))))
@@ -1475,7 +1473,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (defun +amos/redisplay-and-recenter ()
   (interactive)
   (redraw-display)
-  (recenter))
+  (+amos/recenter))
 
 (defun +amos/evil-find-file-at-point-with-line ()
   (interactive)
@@ -1885,7 +1883,7 @@ representation of `NUMBER' is smaller."
   (evil-set-jump)
   (apply orig-fun args)
   (condition-case nil
-      (recenter)
+      (+amos/recenter)
     (error nil)))
 (advice-add #'+lookup/definition :around #'+amos*+lookup-set-jump)
 (advice-add #'+lookup/references :around #'+amos*+lookup-set-jump)
@@ -1997,7 +1995,7 @@ the current state and point position."
       (end-of-line)
       (call-interactively #'copy-region-as-kill)
       (narrow-reindent-widen)
-      (recenter))))
+      (+amos/recenter))))
 
 (defun +amos/evil-visual-insert-snippet ()
   (interactive)
@@ -2266,7 +2264,7 @@ the current state and point position."
 (define-advice dired-revert (:after (&rest _) +amos*dired-revert)
   "Call `recenter' after `dired-revert'."
   (condition-case nil
-      (recenter)
+      (+amos/recenter)
     (error nil)))
 
 (after! wdired (evil-set-initial-state 'wdired-mode 'normal))
@@ -2292,3 +2290,8 @@ the current state and point position."
   (setf (car args) 5000)
   (apply orig-fun args))
 (advice-add #'c-determine-limit :around #'+amos*c-determine-limit)
+
+(defun +amos/recenter ()
+  (interactive)
+  (recenter)
+  (+nav-flash/blink-cursor))

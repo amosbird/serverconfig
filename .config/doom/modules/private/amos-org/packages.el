@@ -7,6 +7,7 @@
 ;; orgmode.org.
 (package! evil-org :recipe (:fetcher github :repo "Somelauw/evil-org-mode"))
 (package! org-bullets :recipe (:fetcher github :repo "amosbird/org-bullets"))
+(package! org-projectile)
 (package! toc-org)
 (package! ox-hugo)
 (package! ox-twbs)

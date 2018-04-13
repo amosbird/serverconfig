@@ -204,6 +204,7 @@
      :desc "C++ playground"                :nv "c" (lambda! (+amos/workspace-new) (cc-playground))
      :desc "C++ playground"                :nv "l" #'cc-playground-find-snippet
      :desc "Elisp playground"              :nv "e" #'+amos/new-empty-elisp-buffer
+     :desc "Open projectile todo"          :nv "t" #'+amos/projectile-todo
      :desc "Browse script"                 :nv "s" #'+amos/browse-script
      :desc "Browse org"                    :nv "o" #'+amos/browse-org
      :desc "Browse note"                   :nv "n" #'+amos/browse-note
@@ -460,24 +461,6 @@
  (:after magit-status
    :map magit-status-mode-map
    :n " " nil)
-
- (:after org
-   :map org-mode-map
-   :n "RET"       #'org-open-at-point
-   :n "M-h"       #'evil-window-left
-   :n "M-j"       #'evil-window-down
-   :n "M-k"       #'evil-window-up
-   :n "M-l"       #'evil-window-right
-   :n "C-j"       #'org-metadown
-   :n "C-k"       #'org-metaup
-   :i "C-d"       #'delete-char
-   :i "DEL"       #'org-delete-backward-char
-   :n  "gj"       #'evil-next-visual-line
-   :n  "gk"       #'evil-previous-visual-line
-   :n "M-a"       #'+amos/mark-whole-buffer
-   :g "C-c e"     #'org-edit-special
-   :g "C-c C-j"   #'counsel-org-goto
-   :g "C-c C-S-l" #'+org/remove-link)
 
  (:after profiler
    :map profiler-report-mode-map

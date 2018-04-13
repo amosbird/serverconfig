@@ -28,13 +28,33 @@
   :commands org-bullets-mode
   :init (add-hook 'org-mode-hook #'org-bullets-mode))
 
-
-
 (def-package! evil-org
   :after org
   :config
   (add-hook! org-mode (evil-org-mode))
-  (evil-org-set-key-theme '(navigation textobjects)))
+  (evil-org-set-key-theme '(navigation textobjects))
+  (map! (:map (evil-org-mode-map)
+   "<f8>"             #'+amos/insert-todo-header
+   :gniv [S-return]   #'+amos/insert-todo-header
+   :gniv [C-return]   #'+amos/insert-header
+   :gniv [M-return]   #'+amos/org-meta-return
+   :gniv "M-RET"      #'+amos/org-meta-return
+   :gniv "C-t"        #'org-todo
+   :n "RET"           #'org-open-at-point
+   :n "M-h"           #'evil-window-left
+   :n "M-j"           #'evil-window-down
+   :n "M-k"           #'evil-window-up
+   :n "M-l"           #'evil-window-right
+   :n "C-j"           #'org-metadown
+   :n "C-k"           #'org-metaup
+   :i "C-d"           #'delete-char
+   :i "DEL"           #'org-delete-backward-char
+   :n  "gj"           #'evil-next-visual-line
+   :n  "gk"           #'evil-previous-visual-line
+   :n "M-a"           #'+amos/mark-whole-buffer
+   :g "C-c e"         #'org-edit-special
+   :g "C-c C-j"       #'counsel-org-goto
+   :g "C-c C-S-l"     #'+org/remove-link)))
 
 ;;
 ;; Hooks & bootstraps
@@ -111,9 +131,9 @@
    org-startup-indented t
    org-startup-with-inline-images nil
    org-tags-column 0
-   org-todo-keywords '((sequence "[ ](t)" "[-](p)" "[?](m)" "|" "[X](d)")
-                       (sequence "TODO(T)" "|" "DONE(D)")
-                       (sequence "IDEA(i)" "NEXT(n)" "ACTIVE(a)" "WAITING(w)" "LATER(l)" "|" "CANCELLED(c)"))
+   ;; org-todo-keywords '((sequence "[ ](t)" "[-](p)" "[?](m)" "|" "[X](d)")
+   ;;                     (sequence "TODO(T)" "|" "DONE(D)")
+   ;;                     (sequence "IDEA(i)" "NEXT(n)" "ACTIVE(a)" "WAITING(w)" "LATER(l)" "|" "CANCELLED(c)"))
    org-use-sub-superscripts '{}
    outline-blank-line t
 
@@ -214,6 +234,27 @@ between the two."
 (def-package! ox-hugo
   :after ox)
 
+(def-package! org-projectile
+  :after org
+  :config
+  (org-projectile-per-project)
+  (setq org-projectile-per-project-filepath "TODO.org")
+  (setq org-agenda-files (append org-agenda-files (org-projectile-todo-files)))
+  (defun +amos/projectile-todo ()
+    (interactive)
+    (let ((project
+    (if (projectile-project-p)
+        (projectile-project-name)
+      (projectile-completing-read
+       "Select which project's TODOs you would like to go to:"
+       (occ-get-categories org-projectile-strategy)))))
+      (let ((marker (occ-get-capture-marker (make-instance 'occ-context
+                                                           :category project
+                                                           :template org-projectile-capture-template
+                                                           :strategy org-projectile-strategy
+                                                           :options nil))))
+        (switch-to-buffer (marker-buffer marker))))))
+
 (after! ox
   (add-to-list 'org-export-filter-final-output-functions
                '+org-export|clear-single-linebreak-in-cjk-string))
@@ -258,8 +299,7 @@ or org-mode (when in the body)."
 (advice-add #'org~mu4e-mime-switch-headers-or-body :override #'+org*mu4e-mime-switch-headers-or-body)
 
 (defadvice org-open-file (around +org*org-open-file activate)
-  (require 'cl)
-  (flet ((start-process-shell-command (cmd &rest _) (shell-command cmd)))
+  (doom-with-advice (start-process-shell-command (lambda (cmd &rest _) (shell-command cmd)))
     ad-do-it))
 
 (require 'org)
@@ -343,3 +383,52 @@ key to automatically delete list prefixes."
     (ad-deactivate 'org-delete-backward-char))))
 
 (add-hook! org-mode (org-autolist-mode))
+
+(defun +amos/list-todo ()
+  (interactive)
+  (setq org-agenda-files
+        (-distinct (-non-nil
+                    (delq nil (mapcar (lambda (file) (if (file-exists-p file) file)) org-agenda-files)))))
+  (org-todo-list))
+
+(defun +amos/insert-todo-header ()
+  (interactive)
+  (evil-insert nil)
+  (end-of-visual-line)
+  (org-insert-todo-heading '(16) t)
+  (newline)
+  (backward-char))
+
+(defun +amos/insert-header ()
+  (interactive)
+  (evil-insert nil)
+  (end-of-visual-line)
+  (let ((suffix (if (org-get-todo-state) "TODO " "")))
+    (org-insert-heading-after-current)
+    (insert suffix)))
+
+(defun +amos/org-meta-return (&optional arg)
+  (interactive "P")
+  (org-check-before-invisible-edit 'insert)
+  (evil-insert nil)
+  (or (run-hook-with-args-until-success 'org-metareturn-hook)
+      (call-interactively (cond (arg #'org-insert-heading)
+                                ((org-at-table-p) #'org-table-wrap-region)
+                                ((org-in-item-p) (lambda! (if (or (org-at-item-checkbox-p)
+                                                             (save-excursion
+                                                               (previous-line)
+                                                               (org-at-item-checkbox-p)))
+                                                         (org-insert-item 'checkbox)
+                                                       (org-insert-item))))
+                                ((org-get-todo-state) #'org-insert-todo-heading)
+                                (t #'org-insert-heading))))
+  (save-excursion
+    (next-line)
+    (beginning-of-line)
+    (unless (looking-at "[[:space:]]*$")
+      (previous-line)
+      (end-of-line)
+      (newline))))
+
+(advice-add #'org-previous-visible-heading :before #'evil-set-jump)
+(advice-add #'outline-up-heading :before #'evil-set-jump)

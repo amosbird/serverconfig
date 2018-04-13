@@ -1,21 +1,27 @@
 #+TITLE: TODO
 
-* <2018-04-13 Fri>
+*  TODO <2018-04-13 Fri>
 
-- [ ] ivy-occur
+** TODO ivy-occur
 
-  - [ ] swiper
+- [ ] swiper
 
-  - [ ] popup window
+- [ ] popup window
 
-- [ ] edebug
+** TODO edebug
 
-  - [ ] keymap
+- [ ] keymap
 
-  - [ ] centering window
+- [ ] centering window
 
-- [ ] clang-format
+** TODO clang-format
 
-  - [ ] https://stackoverflow.com/questions/49801080/how-can-i-make-clang-format-packing-method-chain
+- [ ] https://stackoverflow.com/questions/49801080/how-can-i-make-clang-format-packing-method-chain
 
-  - [ ] inner namespace indentation
+- [ ] inner namespace indentation
+
+** DONE org project todo
+
+** DONE org todo edit
+
+** TODO org agenda
