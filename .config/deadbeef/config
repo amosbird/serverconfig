@@ -48,8 +48,8 @@ ignore_archives 1
 junk.enable_cp1251_detection 1
 mainwin.geometry.h 600
 mainwin.geometry.w 1000
-mainwin.geometry.x 460
-mainwin.geometry.y 257
+mainwin.geometry.x 300
+mainwin.geometry.y 167
 network.http_user_agent deadbeef
 network.proxy.port 8080
 network.proxy.type HTTP

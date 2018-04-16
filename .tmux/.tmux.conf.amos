@@ -61,6 +61,7 @@ bind -Tcopy-mode-vi v send-keys -X begin-selection
 bind -Tcopy-mode-vi C-v send-keys -X rectangle-toggle
 bind -Tcopy-mode-vi d send-keys -X halfpage-down
 bind -Tcopy-mode-vi u send-keys -X halfpage-up
+bind -Tcopy-mode-vi M-v send-keys -X halfpage-up
 bind -Tcopy-mode-vi H resize-pane -L 5
 bind -Tcopy-mode-vi J resize-pane -D 5
 bind -Tcopy-mode-vi K resize-pane -U 5
@@ -122,7 +123,7 @@ bind-key -T amos C-l send-keys C-l
 bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
 bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
 
-bind-key -T amos C-v send-key C-v
+# bind-key -T amos C-v send-key C-v
 
 bind-key -T amos M-0 switch-client -t emacs\; send f12
 bind-key -T amos M-= switch-client -t htop

@@ -11,6 +11,7 @@
  "<f1>"          (lambda! (text-scale-set 0))
  "<f2>"          (lambda! (text-scale-increase 0.5))
  "<f3>"          (lambda! (text-scale-decrease 0.5))
+ "S-<insert>"    (lambda! (insert-for-yank (gui-get-primary-selection)))
  "M-1"           #'+amos/workspace-switch-to-1
  "M-2"           #'+amos/workspace-switch-to-2
  "M-3"           #'+amos/workspace-switch-to-3

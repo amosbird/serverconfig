@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
+netctl stop-all
 sudo netctl switch-to "$1"

@@ -1311,7 +1311,7 @@ current buffer's, reload dir-locals."
 
 (defface keycast-key
   '((t (:weight bold
-                :height 1.2
+                :height 1.0
                 :background "#d5cfbf"
                 :foreground "#000000"
                 :box (:line-width -3 :style released-button))))
@@ -2415,3 +2415,8 @@ the current state and point position."
   (evil-backward-char))
 
 (def-package! syntactic-close)
+
+(defun +amos*remove-git-index-lock ()
+  (ignore-errors
+    (delete-file ".git/index.lock")))
+(advice-add +amos*remove-git-index-lock :before #'magit-refresh)
