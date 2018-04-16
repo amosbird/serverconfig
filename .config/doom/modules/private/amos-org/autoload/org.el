@@ -257,7 +257,10 @@ wrong places)."
 (defun +org/toggle-checkbox ()
   "Toggle the presence of a checkbox in the current item."
   (interactive)
-  (org-toggle-checkbox '(4)))
+  (let ((op (point)))
+    (org-toggle-checkbox '(4))
+    (if (= op (point))
+        (goto-char (min (line-end-position) (+ op 4))))))
 
 ;;;###autoload
 (defun +org/toggle-fold ()

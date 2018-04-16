@@ -328,7 +328,9 @@ The insertion will be repeated COUNT times."
   (lsp-ccls-enable)
   (setq-local flycheck-checker 'lsp-ui)
   (lsp-ui-flycheck-add-mode major-mode)
-  (add-to-list 'flycheck-checkers 'lsp-ui))
+  (add-to-list 'flycheck-checkers 'lsp-ui)
+  (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
+    (setq flycheck-checkers (delq c flycheck-checkers))))
 
 ;; (defvar lsp-ui-flycheck--stale-diagnostics nil)
 

@@ -166,7 +166,7 @@
                       ("replace" "#cd6600" hbar)
                       ("visual" "#808080" hbar)
                       ("motion" "#cd96cd" box)
-                      ("lisp" "#ff6eb4" box)
+                      ("lisp" "#ff6eb4" bar)
                       ("iedit" "#ff3030" box)
                       ("iedit-insert" "#ff3030" bar))))
   (cl-loop for (state color cursor) in evil-cursors
@@ -934,7 +934,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (defun +amos/replace-defun ()
   (interactive)
-  (evil-normal-state 1)
   (narrow-to-defun)
   (goto-char (point-max))
   (let ((value (eval (preceding-sexp))))
@@ -1623,43 +1622,37 @@ representation of `NUMBER' is smaller."
 (def-setting! :eos (modes &rest plist)
   `(dolist (mode (doom-enlist ,modes))
      (push (cons mode (list ,@plist)) +amos-end-of-statement-regex)))
-(set! :eos '(c-mode c++-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]"))
+(set! :eos '(c-mode c++-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
 (set! :eos '(emacs-lisp-mode) :regex-char "[ \t\r\n\v\f]")
 
-(defun +amos/maybe-add-end-of-statement ()
+(defun +amos/maybe-add-end-of-statement (&optional move)
   (interactive)
-  (save-excursion
-    (let (s e)
-      (beginning-of-line)
-      (setq s (point))
-      (end-of-line)
-      (setq e (point))
-      (when-let* ((plist (cdr (assq major-mode +amos-end-of-statement-regex))))
-        (when-let* ((regex-char (doom-enlist (plist-get plist :regex-char))))
-          (if (looking-back (car regex-char))
-              (delete-trailing-whitespace s e)
-            (when-let* ((char (nth 1 regex-char)))
-              (unless (looking-back char 1)
-                (insert ?\;)))))))))
+  (if (and move (not (eolp))) (end-of-line)
+    (let ((p (save-excursion
+               (let (s e)
+                 (back-to-indentation)
+                 (setq s (point))
+                 (end-of-line)
+                 (setq e (point))
+                 (when-let* ((plist (cdr (assq major-mode +amos-end-of-statement-regex))))
+                   (when-let* ((regex-char (doom-enlist (plist-get plist :regex-char))))
+                     (if (looking-back (car regex-char))
+                         (delete-trailing-whitespace s e)
+                       (when-let* ((chars (nth 1 regex-char))
+                                   (char (nth 2 regex-char)))
+                         (if (looking-back chars 1)
+                             (if move (funcall-interactively (key-binding (kbd "RET"))))
+                           (insert char))))))
+                 (point)))))
+      (if move (goto-char p)))))
+
+(defun +amos/smart-eol-insert ()
+  (interactive)
+  (+amos/maybe-add-end-of-statement t))
 
 (defun +amos/mark-whole-buffer ()
   (interactive)
   (evil-visual-line (point-min) (point-max)))
-
-(defun +amos/smart-eol-insert ()
-  (interactive)
-  (when (eolp)
-    (save-excursion
-      (let (s e)
-        (beginning-of-line)
-        (setq s (point))
-        (end-of-line)
-        (setq e (point))
-        (delete-trailing-whitespace s e)))
-    (if (looking-back ";" 1)
-        (funcall-interactively (key-binding (kbd "RET")))
-      (insert ?\;)))
-  (end-of-line))
 
 (defvar +file-templates-dir
   (expand-file-name "templates/" +amos-dir)
@@ -2286,6 +2279,7 @@ the current state and point position."
 (after! evil-snipe
   (push 'dired-mode evil-snipe-disabled-modes))
 
+;; fix constructor list
 (defun +amos*c-determine-limit (orig-fun &rest args)
   (setf (car args) 5000)
   (apply orig-fun args))
@@ -2295,3 +2289,124 @@ the current state and point position."
   (interactive)
   (recenter)
   (+nav-flash/blink-cursor))
+
+(evil-define-state lisp
+  "Lisp state.
+ Used to navigate lisp code and manipulate the sexp tree."
+  :tag " <L> "
+  :cursor (bar . 2)
+  ;; force smartparens mode
+  (if (evil-lisp-state-p) (smartparens-mode)))
+
+(set-keymap-parent evil-lisp-state-map evil-insert-state-map)
+
+(general-define-key
+ :states 'lisp
+ "<escape>"       (lambda! (evil-normal-state) (unless (bolp) (backward-char)))
+ "M-RET"          #'lisp-state-toggle-lisp-state
+ "M-U"            #'+amos/replace-defun
+ "M-u"            #'eval-defun
+ "C-a"            #'sp-beginning-of-sexp
+ "C-e"            #'sp-end-of-sexp
+ "C-n"            #'sp-down-sexp
+ "C-p"            #'sp-up-sexp
+ "M-n"            #'sp-backward-down-sexp
+ "M-p"            #'sp-backward-up-sexp
+ "M-f"            #'sp-forward-sexp
+ "M-b"            #'sp-backward-sexp
+ "M-,"            #'sp-backward-unwrap-sexp
+ "M-."            #'sp-unwrap-sexp
+ "M-r"            #'sp-forward-slurp-sexp
+ "M-R"            #'sp-forward-barf-sexp
+ "M-t"            #'sp-transpose-sexp
+ "C-t"            #'sp-transpose-hybrid-sexp
+ "M-d"            #'sp-kill-sexp
+ "C-o"            #'sp-kill-hybrid-sexp
+ "M-<backspace>"  #'sp-backward-kill-sexp
+ "M-w"            #'sp-copy-sexp
+ "M-("            #'wrap-with-parens
+ "M-{"            #'wrap-with-braces
+ "M-'"            #'wrap-with-single-quotes
+ "M-\""           #'wrap-with-double-quotes
+ "M-_"            #'wrap-with-underscores
+ "M-`"            #'wrap-with-back-quotes)
+
+(defun lisp-state-toggle-lisp-state ()
+  "Toggle the lisp state."
+  (interactive)
+  (if (eq 'lisp evil-state)
+      (progn
+        (message "state: lisp -> insert")
+        (evil-insert-state))
+    (message "state: %s -> lisp" evil-state)
+    (evil-lisp-state)))
+
+(defun lisp-state-wrap (&optional arg)
+  "Wrap a symbol with parenthesis."
+  (interactive "P")
+  (sp-wrap-with-pair "("))
+
+(defun evil-lisp-state-next-paren (&optional closing)
+  "Go to the next/previous closing/opening parenthesis/bracket/brace."
+  (if closing
+      (let ((curr (point)))
+        (forward-char)
+        (unless (eq curr (search-forward-regexp "[])}]"))
+          (backward-char)))
+    (search-backward-regexp "[[({]")))
+
+(defun lisp-state-prev-opening-paren ()
+  "Go to the next closing parenthesis."
+  (interactive)
+  (evil-lisp-state-next-paren))
+
+(defun lisp-state-next-closing-paren ()
+  "Go to the next closing parenthesis."
+  (interactive)
+  (evil-lisp-state-next-paren 'closing))
+
+(defun lisp-state-forward-symbol (&optional arg)
+  "Go to the beginning of the next symbol."
+  (interactive "P")
+  (let ((n (if (char-equal (char-after) ?\() 1 2)))
+    (sp-forward-symbol (+ (if arg arg 0) n))
+    (sp-backward-symbol)))
+
+(defun lisp-state-insert-sexp-after ()
+  "Insert sexp after the current one."
+  (interactive)
+  (let ((sp-navigate-consider-symbols nil))
+    (if (char-equal (char-after) ?\() (forward-char))
+    (sp-up-sexp)
+    (evil-insert-state)
+    (sp-newline)
+    (sp-insert-pair "(")))
+
+(defun lisp-state-insert-sexp-before ()
+  "Insert sexp before the current one."
+  (interactive)
+  (let ((sp-navigate-consider-symbols nil))
+    (if (char-equal (char-after) ?\() (forward-char))
+    (sp-backward-sexp)
+    (evil-insert-state)
+    (sp-newline)
+    (evil-previous-visual-line)
+    (evil-end-of-line)
+    (insert " ")
+    (sp-insert-pair "(")
+    (indent-for-tab-command)))
+
+(defun lisp-state-eval-sexp-end-of-line ()
+  "Evaluate the last sexp at the end of the current line."
+  (interactive)
+  (save-excursion
+    (end-of-line)
+    (eval-last-sexp nil)))
+
+(defun lisp-state-beginning-of-sexp (&optional arg)
+  "Go to the beginning of current s-exp"
+  (interactive "P")
+  (sp-beginning-of-sexp)
+  (evil-backward-char))
+
+(def-package! syntactic-close)

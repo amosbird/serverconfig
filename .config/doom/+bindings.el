@@ -204,6 +204,7 @@
      :desc "C++ playground"                :nv "c" (lambda! (+amos/workspace-new) (cc-playground))
      :desc "C++ playground"                :nv "l" #'cc-playground-find-snippet
      :desc "Elisp playground"              :nv "e" #'+amos/new-empty-elisp-buffer
+     :desc "Open org agenda"               :nv "a" #'+amos/list-todo
      :desc "Open projectile todo"          :nv "t" #'+amos/projectile-todo
      :desc "Browse script"                 :nv "s" #'+amos/browse-script
      :desc "Browse org"                    :nv "o" #'+amos/browse-org
@@ -325,8 +326,9 @@
  (:map emacs-lisp-mode-map
    "C-x e"      #'macrostep-expand
    "#"          #'endless/sharp
-   "M-r"        #'+eval/buffer
-   "M-R"        #'+eval/region-and-replace
+   :n "M-r"     #'+eval/buffer
+   :n "M-R"     #'+eval/region-and-replace
+   :i "M-RET"   #'lisp-state-toggle-lisp-state
    :ni "M-U"    #'+amos/replace-defun
    :ni "M-u"    #'eval-defun)
 

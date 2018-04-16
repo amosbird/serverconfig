@@ -33,13 +33,22 @@
   :config
   (add-hook! org-mode (evil-org-mode))
   (evil-org-set-key-theme '(navigation textobjects))
+
+  (after! org-agenda
+    (setq-default
+     org-agenda-dim-blocked-tasks nil
+     org-agenda-inhibit-startup t
+     org-agenda-skip-unavailable-files t)
+    (require 'evil-org-agenda)
+    (evil-org-agenda-set-keys))
+
   (map! (:map (evil-org-mode-map)
    "<f8>"             #'+amos/insert-todo-header
    :gniv [S-return]   #'+amos/insert-todo-header
    :gniv [C-return]   #'+amos/insert-header
    :gniv [M-return]   #'+amos/org-meta-return
    :gniv "M-RET"      #'+amos/org-meta-return
-   :gniv "C-t"        #'org-todo
+   :gniv "C-t"        #'+amos/org-todo
    :n "RET"           #'org-open-at-point
    :n "M-h"           #'evil-window-left
    :n "M-j"           #'evil-window-down
@@ -85,7 +94,6 @@
 (defun +org|init ()
   "Run once, when org is first loaded."
   (+org-init-ui)
-  (+org-init-keybinds)
   (+org-hacks))
 
 ;;
@@ -152,11 +160,6 @@
             (featurep! :completion helm))
     (setq-default org-completion-use-ido nil
                   org-outline-path-complete-in-steps nil)))
-
-(defun +org-init-keybinds ()
-  "Sets up org-mode and evil keybindings. Tries to fix the idiosyncrasies
-between the two."
-  )
 
 ;;
 (defun +org-hacks ()
@@ -239,21 +242,23 @@ between the two."
   :config
   (org-projectile-per-project)
   (setq org-projectile-per-project-filepath "TODO.org")
-  (setq org-agenda-files (append org-agenda-files (org-projectile-todo-files)))
-  (defun +amos/projectile-todo ()
-    (interactive)
-    (let ((project
-    (if (projectile-project-p)
-        (projectile-project-name)
-      (projectile-completing-read
-       "Select which project's TODOs you would like to go to:"
-       (occ-get-categories org-projectile-strategy)))))
-      (let ((marker (occ-get-capture-marker (make-instance 'occ-context
-                                                           :category project
-                                                           :template org-projectile-capture-template
-                                                           :strategy org-projectile-strategy
-                                                           :options nil))))
-        (switch-to-buffer (marker-buffer marker))))))
+  (setq org-agenda-files (append org-agenda-files (org-projectile-todo-files))))
+
+(defun +amos/projectile-todo ()
+  (interactive)
+  (require 'org)
+  (let ((project
+         (if (projectile-project-p)
+             (projectile-project-name)
+           (projectile-completing-read
+            "Select which project's TODOs you would like to go to:"
+            (occ-get-categories org-projectile-strategy)))))
+    (let ((marker (occ-get-capture-marker (make-instance 'occ-context
+                                                         :category project
+                                                         :template org-projectile-capture-template
+                                                         :strategy org-projectile-strategy
+                                                         :options nil))))
+      (switch-to-buffer (marker-buffer marker)))))
 
 (after! ox
   (add-to-list 'org-export-filter-final-output-functions
@@ -299,11 +304,8 @@ or org-mode (when in the body)."
 (advice-add #'org~mu4e-mime-switch-headers-or-body :override #'+org*mu4e-mime-switch-headers-or-body)
 
 (defadvice org-open-file (around +org*org-open-file activate)
-  (doom-with-advice (start-process-shell-command (lambda (cmd &rest _) (shell-command cmd)))
+  (doom-with-advice (start-process-shell-command (lambda (orig_func cmd &rest _) (shell-command cmd)))
     ad-do-it))
-
-(require 'org)
-(require 'org-element)
 
 (defun org-autolist-beginning-of-item-after-bullet ()
   "Returns the position before the first character after the
@@ -386,18 +388,17 @@ key to automatically delete list prefixes."
 
 (defun +amos/list-todo ()
   (interactive)
+  (require 'org)
   (setq org-agenda-files
         (-distinct (-non-nil
-                    (delq nil (mapcar (lambda (file) (if (file-exists-p file) file)) org-agenda-files)))))
+                    (delq nil (mapcar (lambda (file) (if (and (stringp file) (file-exists-p file)) file)) org-agenda-files)))))
   (org-todo-list))
 
 (defun +amos/insert-todo-header ()
   (interactive)
   (evil-insert nil)
-  (end-of-visual-line)
-  (org-insert-todo-heading '(16) t)
-  (newline)
-  (backward-char))
+  (goto-char (point-max))
+  (org-insert-heading '(16) t t))
 
 (defun +amos/insert-header ()
   (interactive)
@@ -414,10 +415,9 @@ key to automatically delete list prefixes."
   (or (run-hook-with-args-until-success 'org-metareturn-hook)
       (call-interactively (cond (arg #'org-insert-heading)
                                 ((org-at-table-p) #'org-table-wrap-region)
-                                ((org-in-item-p) (lambda! (if (or (org-at-item-checkbox-p)
-                                                             (save-excursion
-                                                               (previous-line)
-                                                               (org-at-item-checkbox-p)))
+                                ((org-in-item-p) (lambda! (org-beginning-of-item)
+                                                     (end-of-line)
+                                                     (if (org-at-item-checkbox-p)
                                                          (org-insert-item 'checkbox)
                                                        (org-insert-item))))
                                 ((org-get-todo-state) #'org-insert-todo-heading)
@@ -432,3 +432,18 @@ key to automatically delete list prefixes."
 
 (advice-add #'org-previous-visible-heading :before #'evil-set-jump)
 (advice-add #'outline-up-heading :before #'evil-set-jump)
+
+(after! recentf
+    ;; Don't clobber recentf with agenda files
+    (defun +org-is-agenda-file (filename)
+      (cl-find (file-truename filename) org-agenda-files
+               :key #'file-truename
+               :test #'equal))
+    (push #'+org-is-agenda-file recentf-exclude))
+
+(defun +amos/org-todo ()
+  (interactive)
+  (cond
+   ((org-at-item-checkbox-p) (+org/toggle-checkbox))
+   ((org-at-item-p) (+org/toggle-checkbox))
+   (t (org-todo))))

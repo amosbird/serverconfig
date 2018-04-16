@@ -41,6 +41,7 @@
 (package! pdf-tools)
 (package! rust-playground)
 (package! sdcv)
+(package! syntactic-close)
 (package! unfill)
 (package! ws-butler)
 (package! yapfify)

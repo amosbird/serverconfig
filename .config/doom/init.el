@@ -51,6 +51,7 @@
 (after! flycheck
   (push 'lsp-ui flycheck-checkers))
 
+(setq +amos--frame-list "")
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
 (setq doom-line-numbers-style 'relative)
 ;; fix start-process xdg-open
