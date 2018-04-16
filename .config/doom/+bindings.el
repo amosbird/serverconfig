@@ -21,7 +21,11 @@
  "M-8"           #'+amos/workspace-switch-to-8
  "M-9"           #'+amos/workspace-switch-to-9
  "S-<f9>"        #'+amos/workspace-switch-left
- "S-<f10>"       #'+amos/workspace-switch-right)
+ "S-<f10>"       #'+amos/workspace-switch-right
+ "C-,"           #'+amos/workspace-switch-left
+ "C-."           #'+amos/workspace-switch-right
+ "C-<comma>"     #'+amos/workspace-switch-left
+ "C-<period>"    #'+amos/workspace-switch-right)
 
 (map!
  :gn "M-w"           #'evil-wipeout-buffer

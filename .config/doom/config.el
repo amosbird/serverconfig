@@ -2171,7 +2171,8 @@ the current state and point position."
 
 (defun +amos/workspace-new ()
   (interactive)
-  (make-frame-command)
+  (make-frame-invisible)
+  (select-frame (make-frame))
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
 
 (setq +amos-tmux-need-switch nil)
@@ -2179,7 +2180,10 @@ the current state and point position."
 ;; TODO ring lru
 (defun +amos/workspace-delete ()
   (interactive)
-  (delete-frame)
+  (let ((f (selected-frame)))
+    (select-frame (previous-frame))
+    (delete-frame f)
+    (make-frame-visible))
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon)))
   (+doom-modeline|set-selected-window)
   (realign-windows)
@@ -2191,6 +2195,7 @@ the current state and point position."
   (interactive)
   (when (< index (length +amos--frame-list))
     (let ((frame (nth index +amos--frame-list)))
+      (make-frame-invisible)
       (select-frame frame)
       (raise-frame frame)
       (setq +amos-tmux-need-switch nil)

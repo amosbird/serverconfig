@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-# urxvt -name mail -e terminal-mail
-# emacsclient --alternate-editor='' --no-wait --create-frame --frame-parameters='(quote (name . "mail-frame"))' --display $DISPLAY -e '(with-selected-frame (cdr (assoc "mail-frame" (make-frame-names-alist))) (mu4e))'
 export EMACS_SERVER_NAME=mu4e
-emacsclient -a '' -s $EMACS_SERVER_NAME -n -c --frame-parameters='(quote (name . "mail-frame"))' --display $DISPLAY -e "(mu4e)"
+export LC_CTYPE=zh_CN.UTF-8
+emacsclient -a '' -s $EMACS_SERVER_NAME -n -c --frame-parameters='(quote (name . "mail-frame"))' --display "$DISPLAY" -e "(mu4e)"

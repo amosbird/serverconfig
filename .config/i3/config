@@ -141,6 +141,7 @@ assign [class="Emacs" title="mail-frame"] $ws2
 for_window [class="Emacs" title="mail-frame"] focus
 assign [class="Emacs" instance="editor-frame"] $ws3
 for_window [class="Emacs" instance="editor-frame"] focus
+for_window [class="Emacs"] move left
 assign [class="URxvt" instance="workspace"] $ws3
 for_window [class="URxvt" instance="workspace"] focus
 assign [class="URxvt" title="nobida*"] $ws4
