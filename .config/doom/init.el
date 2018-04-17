@@ -48,10 +48,7 @@
        amos-org
        amos-email)
 
-(after! flycheck
-  (push 'lsp-ui flycheck-checkers))
-
-(setq +amos--frame-list "")
+(setq +amos--frame-list "---")
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
 (setq doom-line-numbers-style 'relative)
 ;; fix start-process xdg-open
@@ -97,6 +94,7 @@
 (setq evil-esc-delay 0.001)
 (setq evil-ex-substitute-global t)
 (setq evil-kill-on-visual-paste nil)
+(setq evil-mc-cursor-overlay-priority 10000)
 (setq evil-shift-round nil)
 (setq evil-shift-width 4)
 (setq evil-snipe-auto-scroll nil)
@@ -215,7 +213,7 @@
 (setq sp-escape-quotes-after-insert nil)
 (setq split-height-threshold nil)
 (setq split-width-threshold 0)
-(setq swiper-include-line-number-in-search t)
+;; (setq swiper-include-line-number-in-search t) ;; TODO it breaks wgrep occur
 (setq tab-always-indent t)
 (setq undo-tree-auto-save-history t)
 (setq undo-tree-history-directory-alist '((".*" . "~/.emacs.d/undo-files")))

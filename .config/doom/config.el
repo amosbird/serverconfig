@@ -168,6 +168,8 @@
                       ("motion" "#cd96cd" box)
                       ("lisp" "#ff6eb4" bar)
                       ("iedit" "#ff3030" box)
+                      ("multiedit" "#ff3030" box)
+                      ("multiedit-insert" "#ff3030" bar)
                       ("iedit-insert" "#ff3030" bar))))
   (cl-loop for (state color cursor) in evil-cursors
            do (set (intern (format "evil-%s-state-cursor" state)) (list color cursor))))
@@ -950,7 +952,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     (make-local-variable 'kill-buffer-hook)
     (add-hook 'kill-buffer-hook #'+amos/workspace-delete)
     (emacs-lisp-mode)
-    (evil-insert-state 1)
+    (evil-insert-state)
     (setq buffer-offer-save t)
     buf))
 
@@ -1047,10 +1049,20 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     (unless empty-line-p
       (indent-according-to-mode))))
 
+(defun +amos-insert-state-p ()
+  (require 'evil-multiedit)
+  (or (evil-insert-state-p) (evil-multiedit-insert-state-p)))
+
+(defun +amos-insert-state ()
+  (require 'evil-multiedit)
+  (if (evil-multiedit-state-p)
+      (evil-multiedit-insert-state)
+    (evil-insert-state)))
+
 (evil-define-command +amos/forward-delete-word (&optional subword);
   (evil-signal-at-bob-or-eob 1)
-  (unless (or (evil-insert-state-p) (active-minibuffer-window))
-    (evil-insert-state 1))
+  (unless (or (+amos-insert-state-p) (active-minibuffer-window))
+    (+amos-insert-state))
   (if subword (subword-mode +1))
   (mkr! (kill-region (point)
                      (max
@@ -1066,8 +1078,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (evil-define-command +amos/backward-delete-word (&optional subword)
   (evil-signal-at-bob-or-eob -1)
-  (unless (or (eolp) (evil-insert-state-p) (active-minibuffer-window))
-    (evil-insert-state 1)
+  (unless (or (eolp) (+amos-insert-state-p) (active-minibuffer-window))
+    (+amos-insert-state)
     (forward-char))
   (if subword (subword-mode +1))
   (mkr! (kill-region (point)
@@ -1085,8 +1097,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (evil-define-command +amos/backward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob -1)
   (if subword (subword-mode +1))
-  (unless (or (eolp) (evil-insert-state-p) (active-minibuffer-window))
-    (evil-insert-state 1)
+  (unless (or (eolp) (+amos-insert-state-p) (active-minibuffer-window))
+    (+amos-insert-state)
     (forward-char))
   (if (looking-back "[ \t\r\n\v\f]")
       (progn
@@ -1098,8 +1110,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (evil-define-command +amos/forward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob 1)
   (if subword (subword-mode +1))
-  (unless (or (active-minibuffer-window) (evil-insert-state-p))
-    (evil-insert-state 1))
+  (unless (or (active-minibuffer-window) (+amos-insert-state-p))
+    (+amos-insert-state))
   (if (looking-at "[ \t\r\n\v\f]")
       (progn
         (re-search-forward "[^ \t\r\n\v\f]")
@@ -2290,7 +2302,7 @@ the current state and point position."
   (apply orig-fun args))
 (advice-add #'c-determine-limit :around #'+amos*c-determine-limit)
 
-(defun +amos/recenter ()
+(defun +amos/recenter (&rest _)
   (interactive)
   (recenter)
   (+nav-flash/blink-cursor))
@@ -2420,3 +2432,36 @@ the current state and point position."
   (ignore-errors
     (delete-file ".git/index.lock")))
 (advice-add +amos*remove-git-index-lock :before #'magit-refresh)
+
+(after! iedit
+  (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
+
+(advice-add #'evil-multiedit--cycle :after #'+amos/recenter)
+(advice-add #'evil-multiedit-match-and-next :after #'+amos/recenter)
+
+(evil-define-motion +amos/evil-goto-line (count)
+  "Go to the first non-blank character of line COUNT.
+By default the last line."
+  :jump t
+  :type line
+  (if (null count)
+      (with-no-warnings (end-of-buffer))
+    (goto-char (point-min))
+    (forward-line (1- count)))
+  (evil-first-non-blank)
+  (+amos/recenter))
+
+(defun +amos/company-search-abort ()
+  (interactive)
+  (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
+  (company-complete-selection)
+  (call-interactively (key-binding (this-command-keys))))
+
+(defun ediff-copy-both-to-C ()
+  (interactive)
+  (ediff-copy-diff ediff-current-difference nil 'C nil
+                   (concat
+                    (ediff-get-region-contents ediff-current-difference 'A ediff-control-buffer)
+                    (ediff-get-region-contents ediff-current-difference 'B ediff-control-buffer))))
+(defun add-d-to-ediff-mode-map () (define-key ediff-mode-map "d" 'ediff-copy-both-to-C))
+(add-hook 'ediff-keymap-setup-hook 'add-d-to-ediff-mode-map)

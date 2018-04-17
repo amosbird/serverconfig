@@ -28,9 +28,19 @@
  "C-<comma>"     #'+amos/workspace-switch-left
  "C-<period>"    #'+amos/workspace-switch-right)
 
+(defun anzu-to-multiedit ()
+  (interactive)
+  (+evil|disable-highlights)
+  (evil-multiedit-ex-match (point-min) (point-max) nil (car evil-ex-search-pattern)))
+
 (map!
  :gn "M-w"           #'evil-wipeout-buffer
  :gniv "M-m"         #'evil-switch-to-windows-last-buffer
+ :n "%"              #'anzu-to-multiedit
+ ;; :n "#"              #'evil-multiedit-match-all
+ :n "R"              #'evil-multiedit-match-all
+ :nv "G"             #'+amos/evil-goto-line
+ :n "M-RET"          (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
  :n "M-a"            #'+amos/mark-whole-buffer
  :n "M-g"            #'+amos/counsel-jumpdir-function
  :i "M-i"            #'yas-insert-snippet
@@ -38,6 +48,8 @@
  :n "M-."            #'flycheck-next-error
  :n "M-p"            #'evil-multiedit-match-symbol-and-prev
  :n "M-n"            #'evil-multiedit-match-symbol-and-next
+ :v "M-p"            #'evil-multiedit-match-and-prev
+ :v "M-n"            #'evil-multiedit-match-and-next
  :i "M-n"            #'next-line
  :i "M-p"            #'previous-line
  :m "N"              #'evil-ex-search-previous
@@ -96,6 +108,7 @@
  :n "C-k"            #'move-text-up
  :n "C-SPC"          #'+amos/other-window
  :i "C-SPC"          #'+amos/complete
+ :i "C-s"            (lambda! (+amos/complete) (company-filter-candidates))
  :i "C-j"            #'company-dabbrev-code
  :v "R"              #'evil-multiedit-match-all
  :n "!"              #'rotate-text
@@ -154,7 +167,7 @@
    "C-SPC" #'easy-hugo)
 
  (:prefix "SPC"
-   :desc "Switch buffer"                   :nv "SPC" #'switch-to-buffer
+   :desc "Toggle mc"                       :nv "SPC" (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
    :desc "Find file in project (no cache)" :nv ">"   (lambda! (projectile-invalidate-cache nil) (projectile-find-file))
    :desc "Find recent file"                :nv ","   #'counsel-recentf
@@ -255,6 +268,10 @@
    "C-h"        #'company-quickhelp-manual-begin
    "<"          nil
    ">"          nil
+   "("          nil
+   ")"          nil
+   "{"          nil
+   "}"          nil
    "C-w"        nil
    "RET"        nil
    "SPC"        nil
@@ -263,18 +280,15 @@
    [backtab]    nil
 
    :map company-search-map
-   "SPC"        (lambda!
-                 (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
-                 (company-complete-selection)
-                 (insert " "))
    "C-i"        #'company-complete-selection
    "C-j"        #'company-search-repeat-forward
    "C-k"        #'company-search-repeat-backward
    "C-s"        (lambda! (company-search-abort) (company-filter-candidates))
-   [escape]     (lambda!
-                 (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
-                 (company-complete-selection)
-                 (evil-normal-state 1)))
+   "SPC"        #'+amos/company-search-abort
+   "("          #'+amos/company-search-abort
+   ")"          #'+amos/company-search-abort
+   "C-e"        #'+amos/company-search-abort
+   [escape]     #'+amos/company-search-abort)
 
  (:after swiper
    :map swiper-map
@@ -347,9 +361,21 @@
  (:after evil-multiedit
    :map evil-multiedit-state-map
    "RET" #'evil-multiedit-toggle-or-restrict-region
-   :map (evil-multiedit-state-map evil-multiedit-insert-state-map)
+   "j"   #'evil-multiedit-next
+   "k"   #'evil-multiedit-prev
+   "C-f" #'iedit-show/hide-unmatched-lines
+   :map (evil-multiedit-state-map iedit-mode-occurrence-keymap)
+   "#"   #'iedit-number-occurrences
+   "$"   (lambda! (evil-multiedit--goto-overlay-end) (backward-char))
+   "M-p" #'evil-multiedit-match-and-prev
+   "M-n" #'evil-multiedit-match-and-next
+   "C-j" #'evil-multiedit-next
+   "C-k" #'evil-multiedit-prev
    "C-n" #'evil-multiedit-next
-   "C-p" #'evil-multiedit-prev)
+   "C-p" #'evil-multiedit-prev
+   :map evil-multiedit-insert-state-map
+   "C-e" #'evil-multiedit--end-of-line
+   "C-a" #'evil-multiedit--beginning-of-line)
 
  ;; ivy
  (:after ivy
@@ -411,6 +437,28 @@
      :n "RET"      #'cquery-tree-press-and-switch
      :n "<left>"   #'cquery-tree-collapse-or-select-parent
      :n "<right>"  #'cquery-tree-expand-or-set-root))
+
+ (:after ccls
+   (:map ccls-tree-mode-map
+     :m "C-i"      #'ccls-tree-toggle-expand
+     :n "c"        #'ccls-tree-toggle-calling
+     :n "f"        #'ccls-tree-press
+     :n "h"        #'ccls-tree-collapse-or-select-parent
+     :n "j"        #'ccls-tree-next-line
+     :n "k"        #'ccls-tree-prev-line
+     :n "J"        #'ccls-tree-next-sibling
+     :n "K"        #'ccls-tree-prev-sibling
+     :n "l"        #'ccls-tree-expand-or-set-root
+     :n "oh"       #'ccls-tree-press-and-horizontal-split
+     :n "ov"       #'ccls-tree-press-and-vertical-split
+     :n "oo"       #'ccls-tree-press-and-switch
+     :n "q"        #'ccls-tree-quit
+     :n "<escape>" #'ccls-tree-quit
+     :n "Q"        #'quit-window
+     :n "yy"       #'ccls-tree-yank-path
+     :n "RET"      #'ccls-tree-press-and-switch
+     :n "<left>"   #'ccls-tree-collapse-or-select-parent
+     :n "<right>"  #'ccls-tree-expand-or-set-root))
 
  (:after debug
    ;; For elisp debugging
@@ -539,3 +587,9 @@
              (">" . nil)
              ("C-i" . company-complete-selection)
              ("C-h" . company-quickhelp-manual-begin)))
+
+;; TODO
+(general-define-key
+ :definer 'minor-mode
+ :states '(visual)
+ "#" #'evil-multiedit-match-all)

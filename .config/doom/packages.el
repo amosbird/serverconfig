@@ -1,6 +1,7 @@
 ;; -*- no-byte-compile: t; -*-
 
 (package! centered-window-mode :disable t)
+(package! evil-matchit :disable t)
 (package! evil-numbers :disable t)
 (package! git-gutter-fringe :disable t)
 (package! smerge-mode :disable t)
