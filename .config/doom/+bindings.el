@@ -41,6 +41,7 @@
  :n "R"              #'evil-multiedit-match-all
  :nv "G"             #'+amos/evil-goto-line
  :n "M-RET"          (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
+ :i "M-RET"          #'+amos-close-block
  :n "M-a"            #'+amos/mark-whole-buffer
  :n "M-g"            #'+amos/counsel-jumpdir-function
  :i "M-i"            #'yas-insert-snippet
@@ -347,7 +348,7 @@
    "#"          #'endless/sharp
    :n "M-r"     #'+eval/buffer
    :n "M-R"     #'+eval/region-and-replace
-   :i "M-RET"   #'lisp-state-toggle-lisp-state
+   ;; :i "M-RET"   #'lisp-state-toggle-lisp-state
    :ni "M-U"    #'+amos/replace-defun
    :ni "M-u"    #'eval-defun)
 

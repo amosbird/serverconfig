@@ -1384,10 +1384,12 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
     (concat (if (not buffer-file-name) (make-string 20 ?\ ))
             (or (and (not (equal meta "")) meta)
                 (if buffer-file-name " %I " " X ")))))
+(def-modeline-segment! amos-evil-state
+  (evil-state-property evil-state :name))
 
 (def-modeline! main
   (" " amos-matches " " amos-buffer-info "  %l:%c %p  " selection-info frame)
-  (keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
+  (amos-evil-state " " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
 
 (defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.
@@ -2428,10 +2430,10 @@ the current state and point position."
 
 (def-package! syntactic-close)
 
-(defun +amos*remove-git-index-lock ()
+(defun +amos*remove-git-index-lock (&rest _)
   (ignore-errors
     (delete-file ".git/index.lock")))
-(advice-add +amos*remove-git-index-lock :before #'magit-refresh)
+(advice-add #'magit-refresh :before #'+amos*remove-git-index-lock)
 
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
@@ -2465,3 +2467,8 @@ By default the last line."
                     (ediff-get-region-contents ediff-current-difference 'B ediff-control-buffer))))
 (defun add-d-to-ediff-mode-map () (define-key ediff-mode-map "d" 'ediff-copy-both-to-C))
 (add-hook 'ediff-keymap-setup-hook 'add-d-to-ediff-mode-map)
+
+(defun +amos-close-block ()
+  (interactive)
+  (evil-with-state 'insert
+    (syntactic-close)))
