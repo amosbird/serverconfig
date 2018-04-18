@@ -274,8 +274,8 @@
   (add-hook! java-mode (setq-local helm-dash-docsets '("Java")))
   (add-hook! rust-mode (setq-local helm-dash-docsets '("Rust")))
   (add-hook! lua-mode (setq-local helm-dash-docsets '("Lua_5.1")))
-  (add-hook! c-mode (setq-local helm-dash-docsets '("C")))
-  (add-hook! c++-mode (setq-local helm-dash-docsets '("C++" "Boost")))
+  (add-hook! c-mode (setq-local helm-dash-docsets '("C" "Linux_Man_Pages")))
+  (add-hook! c++-mode (setq-local helm-dash-docsets '("C" "C++" "Linux_Man_Pages" "Boost")))
   (add-hook! python-mode (setq-local helm-dash-docsets '("Python_3" "Python_2")))
   (add-hook! emacs-lisp-mode (setq-local helm-dash-docsets '("Emacs_Lisp"))))
 
@@ -1389,7 +1389,7 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
 
 (def-modeline! main
   (" " amos-matches " " amos-buffer-info "  %l:%c %p  " selection-info frame)
-  (amos-evil-state " " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
+  (keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
 
 (defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.

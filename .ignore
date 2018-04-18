@@ -15,6 +15,7 @@
 !.gitignore
 !.globalrc
 !.ideavimrc
+!.inputrc
 !.pentadactylrc
 !.projectile
 !.vimperatorrc
