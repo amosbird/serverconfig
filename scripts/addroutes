@@ -2,7 +2,7 @@
 
 (( UID == 0 )) || exec sudo "$0" "$@" || exit
 
-gw=$(ip r g 5.5.5.5 | cut -d" " -f3)
+gw=$(ip r g 223.5.5.5 | cut -d" " -f3)
 
 ip r a 1.0.1.0/24 via $gw table cn
 ip r a 1.0.2.0/23 via $gw table cn

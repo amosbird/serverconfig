@@ -33,7 +33,7 @@ mod3+s
 super+z
   /usr/bin/slock
 control+alt+8
-  /home/amos/scripts/showtldr.sh
+  /home/amos/scripts/rofidownloads
 control+alt+9
   /home/amos/scripts/showdict.sh
 control+alt+0

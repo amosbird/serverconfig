@@ -17,4 +17,4 @@ fcitx
 fish -c sxhkd &
 fish -c copyq &
 deadbeaf &
-thunar --daemon &
+# thunar --daemon &
