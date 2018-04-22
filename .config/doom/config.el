@@ -1189,27 +1189,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (def-package! lsp-ui)
 
-(evil-define-command evil-wipeout-buffer (buffer &optional bang)
-  "Deletes a buffer. Also clears related jump marks.
-All windows currently showing this buffer will be closed except
-for the last window in each frame."
-  (interactive "<b><!>")
-  (let* ((ring (make-ring evil-jumps-max-length))
-         (jump-struct (evil--jumps-get-current))
-         (idx (evil-jumps-struct-idx jump-struct))
-         (i 0))
-    (cl-loop for jump in (ring-elements (evil--jumps-get-window-jump-list))
-             do (let* ((file-name (cadr jump)))
-                  (if (or (string= file-name (buffer-file-name))
-                          (string-match-p evil--jumps-buffer-targets (buffer-name)))
-                      (if (<= i idx) (setq idx (1- idx)))
-                    ;; else
-                    (ring-insert ring jump)
-                    (setq i (1+ i)))))
-    (setf (evil-jumps-struct-ring jump-struct) ring)
-    (setf (evil-jumps-struct-idx jump-struct) idx))
-  (evil-delete-buffer buffer bang))
-
 (defun +amos/create-fish-function (name)
   (interactive "sNew function's name: ")
   (let ((full-name (expand-file-name (concat name ".fish") "/home/amos/.config/fish/functions/")))
@@ -1288,17 +1267,6 @@ current buffer's, reload dir-locals."
                         'my-reload-dir-locals-for-all-buffer-in-this-directory))))
 
 (advice-remove #'counsel-ag-function #'+ivy*counsel-ag-function)
-
-(defvar +amos--tmux-modeline "")
-(defun +amos/update-tmux-modeline ()
-  (interactive)
-  (setq +amos--tmux-modeline
-        (let ((full-string (shell-command-to-string "tmux list-windows | awk -F: 'BEGIN{printf \"|\"} {printf \" %d |\", $1}'"))
-              (highlight-string (shell-command-to-string "printf ' %d ' $(tmux display-message -p '#I')")))
-          (string-match highlight-string full-string)
-          (add-face-text-property (match-beginning 0) (match-end 0) '(:background "darkred") nil full-string)
-          full-string)))
-(def-modeline-segment! tmux +amos--tmux-modeline)
 
 (defvar +amos--hostname (propertize system-name 'face '(:weight bold :foreground "#51afef")))
 (def-modeline-segment! host +amos--hostname)
@@ -1927,7 +1895,6 @@ representation of `NUMBER' is smaller."
 
 (defun +amos*evil--jumps-jump (idx shift)
   (let ((target-list (evil--jumps-get-window-jump-list)))
-    (setq idx (+ idx shift))
     (let* ((current-file-name (or (buffer-file-name) (buffer-name)))
            (size (ring-length target-list)))
       (while (and (< idx size) (>= idx 0)
@@ -1936,6 +1903,16 @@ representation of `NUMBER' is smaller."
                                                    (cadr place)))))
         (setq size (- size 1))
         (ring-remove target-list idx))
+      ;; jump back to the idx line first, if already on the same line, shift
+      (let* ((place (ring-ref target-list idx))
+             (pos (car place))
+             (target-file-name (cadr place)))
+        (if (and (equal target-file-name current-file-name)
+                 (save-excursion
+                   (let* ((a (progn (end-of-line) (point)))
+                          (b (progn (goto-char pos) (end-of-line) (point))))
+                     (= a b))))
+            (setq idx (+ idx shift))))
       (when (and (< idx size) (>= idx 0))
         ;; actual jump
         (run-hooks 'evil-jumps-pre-jump-hook)
