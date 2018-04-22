@@ -2457,3 +2457,23 @@ By default the last line."
            if (or (get-file-buffer name)
                   (string= (buffer-name buffer) name))
            collect buffer))
+
+(defun +amos/close-current-buffer (&optional wipe kill)
+  (interactive)
+  (if wipe
+      (let* ((ring (make-ring evil-jumps-max-length))
+             (jump-struct (evil--jumps-get-current))
+             (idx (evil-jumps-struct-idx jump-struct))
+             (target-list (evil-jumps-struct-ring jump-struct))
+             (size (ring-length target-list))
+             (i 0))
+        (cl-loop for target in (ring-elements target-list)
+                 do (let* ((file-name (cadr target)))
+                      (if (string= file-name (or buffer-file-name (buffer-name)))
+                          (if (<= i idx) (setq idx (- idx 1)))
+                        ;; else
+                        (ring-insert-at-beginning ring target)
+                        (setq i (+ i 1)))))
+        (setf (evil-jumps-struct-ring jump-struct) ring)
+        (setf (evil-jumps-struct-idx jump-struct) idx)))
+  (or (and kill (kill-current-buffer)) (bury-buffer)))

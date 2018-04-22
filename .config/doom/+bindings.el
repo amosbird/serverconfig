@@ -35,7 +35,9 @@
   (evil-multiedit-ex-match (point-min) (point-max) nil (car evil-ex-search-pattern)))
 
 (map!
- :gn "M-w"           (lambda! (or (kill-current-buffer) (bury-buffer)))
+ :gn "M-W"           (lambda! (+amos/close-current-buffer t t)) ;; wipe and kill
+ :gn "M-w"           (lambda! (+amos/close-current-buffer t)) ;; wipe
+ :gn "C-w"           #'+amos/close-current-buffer ;; bury
  :gniv "M-m"         #'evil-switch-to-windows-last-buffer
  :n "%"              #'anzu-to-multiedit
  :n "R"              #'evil-multiedit-match-all
@@ -88,7 +90,6 @@
  :n "C-y"            #'+amos/yank-buffer-filename-with-line-position
  :i "C-y"            (lambda! (let ((kill-ring my-kill-ring)) (yank)))
  :i "M-y"            (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
- :m "C-w"            #'bury-buffer
  :i "C-a"            #'evil-beginning-of-line
  :n "C-a"            #'evil-numbers/inc-at-pt
  :n "M-s"            (lambda! () (evil-ex "s/"))
