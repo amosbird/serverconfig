@@ -210,6 +210,7 @@
 (setq shell-file-name "/bin/bash")
 (setq show-paren-priority -50)
 (setq show-trailing-whitespace t)
+(setq-default sp-autoskip-closing-pair nil)
 (setq sp-escape-quotes-after-insert nil)
 (setq split-height-threshold nil)
 (setq split-width-threshold 0)

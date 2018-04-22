@@ -1258,6 +1258,7 @@ it will restore the window configuration to prior to full-framing."
 
 (defun save-buffer-maybe ()
   (when (and (buffer-file-name)
+             (not defining-kbd-macro)
              (buffer-modified-p))
     (save-buffer)))
 (add-hook 'doom-escape-hook #'save-buffer-maybe)
@@ -1926,21 +1927,15 @@ representation of `NUMBER' is smaller."
 
 (defun +amos*evil--jumps-jump (idx shift)
   (let ((target-list (evil--jumps-get-window-jump-list)))
+    (setq idx (+ idx shift))
     (let* ((current-file-name (or (buffer-file-name) (buffer-name)))
            (size (ring-length target-list)))
-      (let* ((place (ring-ref target-list idx))
-             (pos (car place))
-             (file-name (cadr place)))
-        (unless (and (string= (if buffer-file-name
-                                  buffer-file-name
-                                (buffer-name))
-                              file-name)
-                     (save-excursion
-                       (let ((a (progn (end-of-line) (point)))
-                             (b (progn (goto-char pos) (end-of-line) (point))))
-                         (= a b))))
-          (setq shift 0)))
-      (setq idx (+ idx shift))
+      (while (and (< idx size) (>= idx 0)
+                  (not (+amos-get-buffer-by-name (let* ((place (ring-ref target-list idx))
+                                                        (pos (car place)))
+                                                   (cadr place)))))
+        (setq size (- size 1))
+        (ring-remove target-list idx))
       (when (and (< idx size) (>= idx 0))
         ;; actual jump
         (run-hooks 'evil-jumps-pre-jump-hook)
@@ -2057,17 +2052,17 @@ the current state and point position."
   (+amos/workspace-new)
   (switch-to-buffer buffer-or-name norecord))
 
-;; (defun +amos/tmux-fork-window ()
-;;   "Detach if inside tmux."
-;;   (interactive)
-;;   (+amos-store-jump-history)
-;;   (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory)))
-
 (defun +amos/tmux-fork-window ()
   "Detach if inside tmux."
   (interactive)
   (+amos-store-jump-history)
-  (shell-command! "tmux split -h"))
+  (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory)))
+
+;; (defun +amos/tmux-fork-window ()
+;;   "Detach if inside tmux."
+;;   (interactive)
+;;   (+amos-store-jump-history)
+;;   (shell-command! "tmux split -h"))
 
 (defun +amos/tmux-source ()
   "Source tmux config if inside tmux."
@@ -2453,6 +2448,13 @@ By default the last line."
   (evil-first-non-blank)
   (+amos/recenter))
 
+(defun +amos/company-abort ()
+  (interactive)
+  (if company-selection-changed
+      (+amos/company-search-abort)
+    (company-abort)
+    (call-interactively (key-binding (this-command-keys)))))
+
 (defun +amos/company-search-abort ()
   (interactive)
   (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
@@ -2468,7 +2470,13 @@ By default the last line."
 (defun add-d-to-ediff-mode-map () (define-key ediff-mode-map "d" 'ediff-copy-both-to-C))
 (add-hook 'ediff-keymap-setup-hook 'add-d-to-ediff-mode-map)
 
-(defun +amos-close-block ()
+(defun +amos/close-block ()
   (interactive)
   (evil-with-state 'insert
     (syntactic-close)))
+
+(defun +amos-get-buffer-by-name (name)
+  (cl-loop for buffer in (buffer-list)
+           if (or (get-file-buffer name)
+                  (string= (buffer-name buffer) name))
+           collect buffer))

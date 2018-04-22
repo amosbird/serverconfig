@@ -7,6 +7,7 @@
  :keymaps 'override
  :states '(normal insert visual emacs)
  "<f12>"         (lambda! (evil-refresh-cursor) (realign-windows))
+ "<f11>"         (lambda! (message (format "idx = %d, size = %d" (evil-jumps-struct-idx (evil--jumps-get-current)) (ring-length (evil--jumps-get-window-jump-list)))))
  "M-x"           #'execute-extended-command
  "<f1>"          (lambda! (text-scale-set 0))
  "<f2>"          (lambda! (text-scale-increase 0.5))
@@ -34,14 +35,13 @@
   (evil-multiedit-ex-match (point-min) (point-max) nil (car evil-ex-search-pattern)))
 
 (map!
- :gn "M-w"           #'evil-wipeout-buffer
+ :gn "M-w"           (lambda! (or (kill-current-buffer) (bury-buffer)))
  :gniv "M-m"         #'evil-switch-to-windows-last-buffer
  :n "%"              #'anzu-to-multiedit
- ;; :n "#"              #'evil-multiedit-match-all
  :n "R"              #'evil-multiedit-match-all
  :nv "G"             #'+amos/evil-goto-line
  :n "M-RET"          (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
- :i "M-RET"          #'+amos-close-block
+ :i "M-RET"          #'+amos/close-block
  :n "M-a"            #'+amos/mark-whole-buffer
  :n "M-g"            #'+amos/counsel-jumpdir-function
  :i "M-i"            #'yas-insert-snippet
@@ -278,7 +278,7 @@
    "SPC"        nil
    [return]     nil
    [tab]        nil
-   [backtab]    nil
+   [escape]     #'+amos/company-abort
 
    :map company-search-map
    "C-i"        #'company-complete-selection
