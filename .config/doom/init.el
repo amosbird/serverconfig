@@ -62,6 +62,7 @@
 (setq auto-revert-verbose nil)
 (setq auto-save-visited-interval 5)
 (setq auto-save-visited-mode nil)
+(setq avy-timeout-seconds 0.3)
 (setq bibtex-completion-browser-function 'browser-url-chromium)
 (setq bibtex-completion-pdf-open-function (lambda (fpath) (call-process "zathura" nil 0 nil fpath)))
 (setq browse-url-chrome-program (expand-file-name "~/scripts/vivaldi"))
@@ -210,7 +211,7 @@
 (setq shell-file-name "/bin/bash")
 (setq show-paren-priority -50)
 (setq show-trailing-whitespace t)
-(setq-default sp-autoskip-closing-pair nil)
+(setq-default sp-autoskip-closing-pair t)
 (setq sp-escape-quotes-after-insert nil)
 (setq split-height-threshold nil)
 (setq split-width-threshold 0)
@@ -227,17 +228,6 @@
 (setq yas-triggers-in-field nil)
 (setq yasdcv-sdcv-command "sdcv --non-interactive --utf8-output --utf8-input \"%word\"")
 (setq yasdcv-sdcv-dicts '(("jianminghy" "简明汉英词典" "powerword2007" t)))
-
-(add-hook! 'eval-expression-minibuffer-setup-hook
-  (define-key minibuffer-local-map "\C-p" #'previous-line-or-history-element)
-  (define-key minibuffer-local-map "\C-n" #'next-line-or-history-element))
-
-;; (add-hook! 'minibuffer-setup-hook (setq truncate-lines t))
-
-(advice-add #'evil-escape-mode :override #'ignore)
-(advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
-(advice-add #'recenter-top-bottom :override #'recenter)
-(advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))
 
 (def-package-hook! nav-flash
   :pre-init
@@ -263,6 +253,11 @@
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect t
    magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")))
+
+(def-package-hook! evil-magit
+  :pre-config
+  (setq evil-magit-state 'normal)
+  nil)
 
 (require 'server)
 (setq server-name (getenv "EMACS_SERVER_NAME"))

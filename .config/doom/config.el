@@ -359,11 +359,6 @@
                    (apply ,advice ,orig-sym args))))
        ,@body)))
 
-(defun +amos*ivy-call (orig-fun &rest args)
-  (doom-with-advice (evil-set-jump (lambda (&optional _)))
-      (apply orig-fun args)))
-(advice-add #'ivy-call :around #'+amos*ivy-call)
-
 (defadvice edebug-pop-to-buffer (around +amos*edebug-pop-to-buffer activate)
   (doom-with-advice (split-window (lambda (orig-fun window) (funcall orig-fun window nil 'right)))
       ad-do-it))
@@ -1358,7 +1353,7 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
 
 (def-modeline! main
   (" " amos-matches " " amos-buffer-info "  %l:%c %p  " selection-info frame)
-  (keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
+  (" " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
 
 (defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.
@@ -1865,44 +1860,40 @@ representation of `NUMBER' is smaller."
 (advice-add #'+lookup/references :around #'+amos*+lookup-set-jump)
 
 (defun +amos*evil--jumps-push ()
-  "Pushes the current cursor/file position to the jump list."
-  (let ((target-list (evil--jumps-get-window-jump-list)))
-    (let ((file-name (buffer-file-name))
-          (buffer-name (buffer-name))
-          (current-pos (point-marker))
-          (first-pos nil)
-          (first-file-name nil)
-          (excluded nil))
-      (when (and (not file-name)
-                 (string-match-p evil--jumps-buffer-targets buffer-name))
-        (setq file-name buffer-name))
-      (when file-name
-        (dolist (pattern evil-jumps-ignored-file-patterns)
-          (when (string-match-p pattern file-name)
-            (setq excluded t)))
-        (unless excluded
-          (unless (ring-empty-p target-list)
-            (setq first-pos (car (ring-ref target-list 0)))
-            (setq first-file-name (car (cdr (ring-ref target-list 0)))))
-          (unless (and (equal first-file-name file-name)
-                       (save-excursion
-                         (let ((a (progn (goto-char first-pos) (end-of-line) (point)))
-                               (b (progn (goto-char current-pos) (end-of-line) (point))))
-                           (= a b))))
-            (ring-insert target-list `(,current-pos ,file-name))))))))
+  (+amos-clean-evil-jump-list)
+  (unless (eq this-command 'ivy-call)
+    (let ((target-list (evil--jumps-get-window-jump-list)))
+      (let ((file-name (buffer-file-name))
+            (buffer-name (buffer-name))
+            (current-pos (point-marker))
+            (first-pos nil)
+            (first-file-name nil)
+            (excluded nil))
+        (when (and (not file-name)
+                   (string-match-p evil--jumps-buffer-targets buffer-name))
+          (setq file-name buffer-name))
+        (when file-name
+          (dolist (pattern evil-jumps-ignored-file-patterns)
+            (when (string-match-p pattern file-name)
+              (setq excluded t)))
+          (unless excluded
+            (unless (ring-empty-p target-list)
+              (setq first-pos (car (ring-ref target-list 0)))
+              (setq first-file-name (car (cdr (ring-ref target-list 0)))))
+            (unless (and (equal first-file-name file-name)
+                         (save-excursion
+                           (let ((a (progn (goto-char first-pos) (end-of-line) (point)))
+                                 (b (progn (goto-char current-pos) (end-of-line) (point))))
+                             (= a b))))
+              (ring-insert target-list `(,current-pos ,file-name)))))))))
 
 (advice-add #'evil--jumps-push :override #'+amos*evil--jumps-push)
 
 (defun +amos*evil--jumps-jump (idx shift)
+  (+amos-clean-evil-jump-list)
   (let ((target-list (evil--jumps-get-window-jump-list)))
     (let* ((current-file-name (or (buffer-file-name) (buffer-name)))
            (size (ring-length target-list)))
-      (while (and (< idx size) (>= idx 0)
-                  (not (+amos-get-buffer-by-name (let* ((place (ring-ref target-list idx))
-                                                        (pos (car place)))
-                                                   (cadr place)))))
-        (setq size (- size 1))
-        (ring-remove target-list idx))
       ;; jump back to the idx line first, if already on the same line, shift
       (let* ((place (ring-ref target-list idx))
              (pos (car place))
@@ -2452,28 +2443,56 @@ By default the last line."
   (evil-with-state 'insert
     (syntactic-close)))
 
+;; TODO useless?
 (defun +amos-get-buffer-by-name (name)
   (cl-loop for buffer in (buffer-list)
            if (or (get-file-buffer name)
                   (string= (buffer-name buffer) name))
            collect buffer))
 
-(defun +amos/close-current-buffer (&optional wipe kill)
-  (interactive)
-  (if wipe
-      (let* ((ring (make-ring evil-jumps-max-length))
-             (jump-struct (evil--jumps-get-current))
-             (idx (evil-jumps-struct-idx jump-struct))
-             (target-list (evil-jumps-struct-ring jump-struct))
-             (size (ring-length target-list))
-             (i 0))
+(advice-add #'evil--jumps-savehist-load :override #'ignore)
+(defun +amos-clean-evil-jump-list (&optional buffer)
+  (let* ((ring (make-ring evil-jumps-max-length))
+         (jump-struct (evil--jumps-get-current))
+         (idx (evil-jumps-struct-idx jump-struct))
+         (target-list (evil-jumps-struct-ring jump-struct))
+         (size (ring-length target-list))
+         (i 0))
         (cl-loop for target in (ring-elements target-list)
-                 do (let* ((file-name (cadr target)))
-                      (if (string= file-name (or buffer-file-name (buffer-name)))
+                 do (let* ((marker (car target))
+                           (file-name (cadr target)))
+                      (if (or (not (markerp marker))
+                              (not (marker-buffer marker))
+                              (and buffer
+                                   (string= file-name (or buffer-file-name (buffer-name buffer)))))
                           (if (<= i idx) (setq idx (- idx 1)))
                         ;; else
                         (ring-insert-at-beginning ring target)
                         (setq i (+ i 1)))))
         (setf (evil-jumps-struct-ring jump-struct) ring)
         (setf (evil-jumps-struct-idx jump-struct) idx)))
+
+(defun +amos/close-current-buffer (&optional wipe kill)
+  (interactive)
+  (if wipe
+      (+amos-clean-evil-jump-list (current-buffer)))
   (or (and kill (kill-current-buffer)) (bury-buffer)))
+
+(defun +amos*undo-tree (orig-fun &rest args)
+  (if (and (not defining-kbd-macro)
+           (not executing-kbd-macro))
+      (apply orig-fun args)
+    (message "cannot use undo when recording/executing a macro!")))
+(advice-add #'undo-tree-undo :around #'+amos*undo-tree)
+(advice-add #'undo-tree-redo :around #'+amos*undo-tree)
+
+(add-hook! 'eval-expression-minibuffer-setup-hook
+  (define-key minibuffer-local-map "\C-p" #'previous-line-or-history-element)
+  (define-key minibuffer-local-map "\C-n" #'next-line-or-history-element))
+
+;; (add-hook! 'minibuffer-setup-hook (setq truncate-lines t)) ;; TODO breaks ivy minibuffer
+
+(advice-add #'evil-escape-mode :override #'ignore)
+(advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
+(advice-add #'recenter-top-bottom :override #'recenter)
+(advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))

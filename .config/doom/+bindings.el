@@ -80,7 +80,7 @@
  :genvi "M-k"        #'evil-window-up
  :genvi "M-l"        #'evil-window-right
  :n "C-p"            #'+amos/counsel-projectile-switch-project
- :n "C-f"            #'counsel-file-jump
+ :n "C-f"            (lambda! (require 'avy) (evil-avy-goto-char-timer))
  :n "C-l"            #'+amos/redisplay-and-recenter
  :n "C-s"            #'swiper
  :n "S-<f4>"         #'counsel-projectile-rg ;; terminal
@@ -100,7 +100,8 @@
  :i [remap newline]  #'newline-and-indent
  :n "C-e"            #'+amos/maybe-add-end-of-statement
  :i "C-e"            #'+amos/smart-eol-insert
- :i "M-e"            #'+amos/smart-eol-insert
+ :i "M-e"            #'smart-forward
+ :i "M-a"            #'smart-backward
  :i "C-u"            #'+amos/backward-kill-to-bol-and-indent
  :i "C-o"            #'+amos/kill-line
  :i "C-n"            #'next-line
@@ -145,7 +146,10 @@
  :m "gy"             #'evil-commentary-yank
  :m "gc"             #'evil-commentary
  :m "gl"             #'evil-commentary-line
- :m "gs"             #'+default/easymotion
+ :m "gs"             (lambda! (evil-goto-mark ?s))
+ :m "gb"             (lambda! (evil-goto-mark ?b))
+ :m "gm"             (lambda! (evil-goto-mark ?m))
+ :m "g."             #'goto-last-change
  :n ",,"             #'+amos/projectile-find-other-file
 
  (:prefix "C-x"
@@ -196,6 +200,7 @@
    (:desc "git" :prefix "g"
      :desc "Git status"                    :nv "s" #'magit-status
      :desc "Git blame"                     :nv "b" #'magit-blame
+     :desc "Git timemachine"               :nv "t" #'git-timemachine
      :desc "Git revert hunk"               :nv "r" #'git-gutter:revert-hunk
      :desc "Git revert buffer"             :nv "R" #'vc-revert)
 
@@ -260,7 +265,6 @@
    "C-v"        #'company-next-page
    "M-v"        #'company-previous-page
    "C-j"        #'company-select-next
-   "C-o"        #'company-search-kill-others
    "C-k"        #'company-select-previous
    "C-h"        #'company-quickhelp-manual-begin
    "C-S-h"      #'company-show-doc-buffer
@@ -514,6 +518,28 @@
    :gn "d"        #'edebug-backtrace
    :gn "-"        #'negative-argument
    :gn "="        #'edebug-temp-display-freq-count)
+
+ (:after git-timemachine
+   :map git-timemachine-mode-map
+   :n "C-k" #'git-timemachine-show-previous-revision
+   :n "C-j" #'git-timemachine-show-next-revision
+   :n "w"   #'git-timemachine-kill-abbreviated-revision
+   :n "W"   #'git-timemachine-kill-revision
+   :n "o"   #'git-timemachine-show-revision-fuzzy
+   :n "q"   #'git-timemachine-quit
+   :n "gb"  #'git-timemachine-blame)
+
+
+ (:after magit-blame
+   :map magit-blame-read-only-mode-map
+   "SPC" nil
+   :gn [return]  #'magit-show-commit
+   :gn "k" #'magit-blame-previous-chunk
+   :gn "K" #'magit-blame-previous-chunk-same-commit
+   :gn "j" #'magit-blame-next-chunk
+   :gn "J" #'magit-blame-next-chunk-same-commit
+   :gn "i" #'magit-blame-toggle-headings
+   :gn "q" #'magit-blame-quit)
 
  (:after magit-status
    :map magit-status-mode-map
