@@ -29,128 +29,130 @@
  "C-<comma>"     #'+amos/workspace-switch-left
  "C-<period>"    #'+amos/workspace-switch-right)
 
+
 (defun anzu-to-multiedit ()
   (interactive)
   (+evil|disable-highlights)
   (evil-multiedit-ex-match (point-min) (point-max) nil (car evil-ex-search-pattern)))
 
 (map!
- :gn "M-W"           (lambda! (+amos/close-current-buffer t t)) ;; wipe and kill
- :gn "M-w"           (lambda! (+amos/close-current-buffer t)) ;; wipe
- :gn "C-w"           #'+amos/close-current-buffer ;; bury
- :gniv "M-m"         #'evil-switch-to-windows-last-buffer
- :n "%"              #'anzu-to-multiedit
- :n "R"              #'evil-multiedit-match-all
- :nv "G"             #'+amos/evil-goto-line
- :n "M-RET"          (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
- :i "M-RET"          #'+amos/close-block
- :n "M-a"            #'+amos/mark-whole-buffer
- :n "M-g"            #'+amos/counsel-jumpdir-function
- :i "M-i"            #'yas-insert-snippet
- :n "M-,"            #'flycheck-previous-error
- :n "M-."            #'flycheck-next-error
- :n "M-p"            #'evil-multiedit-match-symbol-and-prev
- :n "M-n"            #'evil-multiedit-match-symbol-and-next
- :v "M-p"            #'evil-multiedit-match-and-prev
- :v "M-n"            #'evil-multiedit-match-and-next
- :i "M-n"            #'next-line
- :i "M-p"            #'previous-line
- :m "N"              #'evil-ex-search-previous
- :m "E"              #'+amos/evil-forward-subword-end
- :m "B"              #'+amos/evil-backward-subword-begin
- :ni "M-b"           #'+amos/backward-word-insert
- :ni "M-B"           (lambda! (+amos/backward-word-insert t))
- :ni "M-f"           #'+amos/forward-word-insert
- :ni "M-F"           (lambda! (+amos/forward-word-insert t))
- :ni "M-d"           #'+amos/forward-delete-word
- :ni "M-D"           (lambda! (+amos/forward-delete-word t))
- :ni [M-backspace]   #'+amos/backward-delete-word
- :ni [134217855]     #'+amos/backward-delete-word ; M-DEL
- :ni "S-<f7>"        (lambda! (+amos/backward-delete-word t))
- :i "DEL"            #'+amos/backward-delete-char
- :i "C-w"            #'+amos/backward-delete-word
- :i "M-r"            #'sp-slurp-hybrid-sexp
- :i "M-R"            #'sp-forward-barf-sexp
- :n "M-e"            #'counsel-dash-at-point
- :n "M-i"            #'yasdcv-translate-at-point
- :v "M-i"            #'+amos/evil-visual-insert-snippet
- :n "M-o"            #'lsp-ui-sideline-mode
- :genvi "M-h"        #'evil-window-left
- :genvi "M-j"        #'evil-window-down
- :genvi "M-k"        #'evil-window-up
- :genvi "M-l"        #'evil-window-right
- :n "C-p"            #'+amos/counsel-projectile-switch-project
- :n "C-f"            (lambda! (require 'avy) (evil-avy-goto-char-timer))
- :n "C-l"            #'+amos/redisplay-and-recenter
- :n "C-s"            #'swiper
- :n "S-<f4>"         #'counsel-projectile-rg ;; terminal
- :n "C-S-s"          #'counsel-projectile-rg ;; gui
- :n "S-<f5>"         #'+amos/counsel-rg-cur-dir ;; terminal
- :n "C-S-d"          #'+amos/counsel-rg-cur-dir ;; gui
- :n "C-y"            #'+amos/yank-buffer-filename-with-line-position
- :i "C-y"            (lambda! (let ((kill-ring my-kill-ring)) (yank)))
- :i "M-y"            (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
- :i "C-a"            #'evil-beginning-of-line
- :n "C-a"            #'evil-numbers/inc-at-pt
- :n "M-s"            (lambda! () (evil-ex "s/"))
- :n "M-S"            (lambda! () (evil-ex "%s/"))
- :v "M-s"            (lambda! () (evil-ex "'<,'>s/"))
- :v "C-a"            #'+amos/ca
- :v "g C-a"          #'+amos/gca
- :i [remap newline]  #'newline-and-indent
- :n "C-e"            #'+amos/maybe-add-end-of-statement
- :i "C-e"            #'+amos/smart-eol-insert
- :i "M-e"            #'smart-forward
- :i "M-a"            #'smart-backward
- :i "C-u"            #'+amos/backward-kill-to-bol-and-indent
- :i "C-o"            #'+amos/kill-line
- :i "C-n"            #'next-line
- :i "C-p"            #'previous-line
- :i "C-d"            #'+amos/delete-char
- :n "C-j"            #'move-text-down
- :n "C-k"            #'move-text-up
- :n "C-SPC"          #'+amos/other-window
- :i "C-SPC"          #'+amos/complete
- :i "C-s"            (lambda! (+amos/complete) (company-filter-candidates))
- :i "C-j"            #'company-dabbrev-code
- :v "R"              #'evil-multiedit-match-all
- :n "!"              #'rotate-text
- :v "H"              #'+amos/align-repeat-left
- :v "L"              #'+amos/align-repeat-right
- :v "u"              #'undo-tree-undo
- :v "C-r"            #'undo-tree-redo
- :n "s"              #'evil-substitute
- :n "S"              #'evil-change-whole-line
- :v "s"              #'evil-surround-region
- :v "S"              #'evil-substitute
- :o "s"              #'evil-surround-edit
- :v "v"              #'er/expand-region
- :v "V"              #'er/contract-region
- :n "p"              #'+amos@paste/evil-paste-after
- :n "P"              #'+amos@paste/evil-paste-before
- :m "("              #'+amos/smart-jumper-backward
- :m ")"              #'+amos/smart-jumper-forward
- :v "<"              #'+evil/visual-dedent
- :v ">"              #'+evil/visual-indent
- :v "@"              #'+evil:macro-on-all-lines
- :n "g@"             #'+evil:macro-on-all-lines
- :n "gx"             #'evil-exchange
- :n "gf"             #'+amos/evil-find-file-at-point-with-line
- :n "gd"             #'+lookup/definition
- :n "go"             #'+amos/evil-insert-line-below
- :n "gO"             #'+amos/evil-insert-line-above
- :n "gp"             #'+evil/reselect-paste
- :n "gr"             #'+lookup/references
- :n "gR"             #'cquery/callers
- :v "gR"             #'+eval:replace-region
- :m "gy"             #'evil-commentary-yank
- :m "gc"             #'evil-commentary
- :m "gl"             #'evil-commentary-line
- :m "gs"             (lambda! (evil-goto-mark ?s))
- :m "gb"             (lambda! (evil-goto-mark ?b))
- :m "gm"             (lambda! (evil-goto-mark ?m))
- :m "g."             #'goto-last-change
- :n ",,"             #'+amos/projectile-find-other-file
+ :gn "M-W"                   (lambda! (+amos/close-current-buffer t t)) ;; wipe and kill
+ :gn "M-w"                   (lambda! (+amos/close-current-buffer t)) ;; wipe
+ :gn "C-w"                   #'+amos/close-current-buffer ;; bury
+ :gniv "M-m"                 #'evil-switch-to-windows-last-buffer
+ :n "%"                      #'anzu-to-multiedit
+ :n "R"                      #'evil-multiedit-match-all
+ :nv "G"                     #'+amos/evil-goto-line
+ :n "M-RET"                  (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
+ :i "M-RET"                  #'+amos/close-block
+ :n "M-a"                    #'+amos/mark-whole-buffer
+ :n "M-g"                    #'+amos/counsel-jumpdir-function
+ :i "M-i"                    #'yas-insert-snippet
+ :n "M-,"                    #'flycheck-previous-error
+ :n "M-."                    #'flycheck-next-error
+ :n "M-p"                    #'evil-multiedit-match-symbol-and-prev
+ :n "M-n"                    #'evil-multiedit-match-symbol-and-next
+ :v "M-p"                    #'evil-multiedit-match-and-prev
+ :v "M-n"                    #'evil-multiedit-match-and-next
+ :i "M-n"                    #'next-line
+ :i "M-p"                    #'previous-line
+ :m "N"                      #'evil-ex-search-previous
+ :m "E"                      #'+amos/evil-forward-subword-end
+ :m "B"                      #'+amos/evil-backward-subword-begin
+ :ni "M-b"                   #'+amos/backward-word-insert
+ :ni "M-B"                   (lambda! (+amos/backward-word-insert t))
+ :ni "M-f"                   #'+amos/forward-word-insert
+ :ni "M-F"                   (lambda! (+amos/forward-word-insert t))
+ :ni "M-d"                   #'+amos/forward-delete-word
+ :ni "M-D"                   (lambda! (+amos/forward-delete-word t))
+ :ni [M-backspace]           #'+amos/backward-delete-word
+ :ni [134217855]             #'+amos/backward-delete-word ; M-DEL
+ :ni "S-<f7>"                (lambda! (+amos/backward-delete-word t))
+ :ni "M-S-<backspace>"       (lambda! (+amos/backward-delete-word t))
+ :i "DEL"                    #'+amos/backward-delete-char
+ :i "C-w"                    #'+amos/backward-delete-word
+ :i "M-r"                    #'sp-slurp-hybrid-sexp
+ :i "M-R"                    #'sp-forward-barf-sexp
+ :n "M-e"                    #'counsel-dash-at-point
+ :n "M-i"                    #'yasdcv-translate-at-point
+ :v "M-i"                    #'+amos/evil-visual-insert-snippet
+ :n "M-o"                    #'lsp-ui-sideline-mode
+ :genvi "M-h"                #'evil-window-left
+ :genvi "M-j"                #'evil-window-down
+ :genvi "M-k"                #'evil-window-up
+ :genvi "M-l"                #'evil-window-right
+ :n "C-p"                    #'+amos/counsel-projectile-switch-project
+ :nv "C-f"                   #'evil-+amos/avy-goto-char-timer
+ :n "C-l"                    #'+amos/redisplay-and-recenter
+ :n "C-s"                    #'swiper
+ :n "S-<f4>"                 #'counsel-projectile-rg ;; terminal
+ :n "C-S-s"                  #'counsel-projectile-rg ;; gui
+ :n "S-<f5>"                 #'+amos/counsel-rg-cur-dir ;; terminal
+ :n "C-S-d"                  #'+amos/counsel-rg-cur-dir ;; gui
+ :n "C-y"                    #'+amos/yank-buffer-filename-with-line-position
+ :i "C-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank)))
+ :i "M-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
+ :i "C-a"                    #'evil-beginning-of-line
+ :n "C-a"                    #'evil-numbers/inc-at-pt
+ :n "M-s"                    (lambda! () (evil-ex "s/"))
+ :n "M-S"                    (lambda! () (evil-ex "%s/"))
+ :v "M-s"                    (lambda! () (evil-ex "'<,'>s/"))
+ :v "C-a"                    #'+amos/ca
+ :v "g C-a"                  #'+amos/gca
+ :i [remap newline]          #'newline-and-indent
+ :n "C-e"                    #'+amos/maybe-add-end-of-statement
+ :i "C-e"                    #'+amos/smart-eol-insert
+ :i "M-e"                    #'smart-forward
+ :i "M-a"                    #'smart-backward
+ :i "C-u"                    #'+amos/backward-kill-to-bol-and-indent
+ :i "C-o"                    #'+amos/kill-line
+ :i "C-n"                    #'next-line
+ :i "C-p"                    #'previous-line
+ :i "C-d"                    #'+amos/delete-char
+ :n "C-j"                    #'move-text-down
+ :n "C-k"                    #'move-text-up
+ :n "C-SPC"                  #'+amos/other-window
+ :i "C-SPC"                  #'+amos/complete
+ :i "C-s"                    (lambda! (+amos/complete) (company-filter-candidates))
+ :i "C-j"                    #'company-dabbrev-code
+ :v "R"                      #'evil-multiedit-match-all
+ :n "!"                      #'rotate-text
+ :v "H"                      #'+amos/align-repeat-left
+ :v "L"                      #'+amos/align-repeat-right
+ :v "u"                      #'undo-tree-undo
+ :v "C-r"                    #'undo-tree-redo
+ :n "s"                      #'evil-substitute
+ :n "S"                      #'evil-change-whole-line
+ :v "s"                      #'evil-surround-region
+ :v "S"                      #'evil-substitute
+ :o "s"                      #'evil-surround-edit
+ :v "v"                      #'er/expand-region
+ :v "V"                      #'er/contract-region
+ :n "p"                      #'+amos@paste/evil-paste-after
+ :n "P"                      #'+amos@paste/evil-paste-before
+ :m "("                      #'+amos/smart-jumper-backward
+ :m ")"                      #'+amos/smart-jumper-forward
+ :v "<"                      #'+evil/visual-dedent
+ :v ">"                      #'+evil/visual-indent
+ :v "@"                      #'+evil:macro-on-all-lines
+ :n "g@"                     #'+evil:macro-on-all-lines
+ :n "gx"                     #'evil-exchange
+ :n "gf"                     #'+amos/evil-find-file-at-point-with-line
+ :n "gd"                     #'+lookup/definition
+ :n "go"                     #'+amos/evil-insert-line-below
+ :n "gO"                     #'+amos/evil-insert-line-above
+ :n "gp"                     #'+evil/reselect-paste
+ :n "gr"                     #'+lookup/references
+ :n "gR"                     #'cquery/callers
+ :v "gR"                     #'+eval:replace-region
+ :m "gy"                     #'evil-commentary-yank
+ :m "gc"                     #'evil-commentary
+ :m "gl"                     #'evil-commentary-line
+ :m "gs"                     (lambda! (evil-goto-mark ?s))
+ :m "gb"                     (lambda! (evil-goto-mark ?b))
+ :m "gm"                     (lambda! (evil-goto-mark ?m))
+ :m "g."                     #'goto-last-change
+ :n ",,"                     #'+amos/projectile-find-other-file
 
  (:prefix "C-x"
    :g "1"       #'zygospore-toggle-delete-other-windows

@@ -2496,3 +2496,23 @@ By default the last line."
 (advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
 (advice-add #'recenter-top-bottom :override #'recenter)
 (advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))
+
+
+(defun +amos/avy-goto-char-timer (&optional arg)
+  "Read one or many consecutive chars and jump to the first one.
+The window scope is determined by `avy-all-windows' (ARG negates it)."
+  (interactive "P")
+  (require 'avy)
+  (let (block)
+    (when (eq 'block evil-visual-selection)
+      (evil-visual-char)
+      (setq block t))
+    (let ((avy-all-windows (if arg
+                               (not avy-all-windows)
+                             avy-all-windows)))
+      (avy-with avy-goto-char-timer
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
+    (if block (evil-visual-block))))
+(evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
