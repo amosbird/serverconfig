@@ -291,46 +291,42 @@ The insertion will be repeated COUNT times."
 
 (add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1))
 
-;; (def-package! cquery
-;;   :after lsp-mode
-;;   :init
-;;   (setq
-;;    cquery-project-root-matchers
-;;    '(cquery-project-roots-matcher ".cquery" projectile-project-root "compile_commands.json")
-;;    cquery-sem-highlight-method 'overlay
-;;    cquery-extra-init-params
-;;    '(:client
-;;      (:snippetSupport t)
-;;      :index
-;;      (:comments 0)))
-;;   (add-hook 'c-mode-common-hook #'cquery//enable))
-
-;; (defun cquery//enable ()
-;;   (direnv-update-environment)
-;;   (lsp-cquery-enable)
-;;   (condition-case nil
-;;       (direnv-update-environment)
-;;       (lsp-cquery-enable)
-;;     (user-error nil)))
-
-(def-package! ccls
+(def-package! cquery
   :after lsp-mode
   :init
   (setq
-   ccls-project-root-matchers
-   '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
-   ccls-sem-highlight-method 'overlay)
-  (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
-  (add-hook 'c-mode-common-hook #'ccls//enable))
+   cquery-project-root-matchers
+   '(cquery-project-roots-matcher ".cquery" ".cquery" projectile-project-root "compile_commands.json")
+   cquery-sem-highlight-method 'overlay)
+  (add-hook 'c-mode-common-hook #'cquery//enable))
 
-(defun ccls//enable ()
+(defun cquery//enable ()
   (direnv-update-environment)
-  (lsp-ccls-enable)
+  (lsp-cquery-enable)
   (setq-local flycheck-checker 'lsp-ui)
   (lsp-ui-flycheck-add-mode major-mode)
   (add-to-list 'flycheck-checkers 'lsp-ui)
   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
     (setq flycheck-checkers (delq c flycheck-checkers))))
+
+;; (def-package! ccls
+;;   :after lsp-mode
+;;   :init
+;;   (setq
+;;    ccls-project-root-matchers
+;;    '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
+;;    ccls-sem-highlight-method 'overlay)
+;;   (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
+;;   (add-hook 'c-mode-common-hook #'ccls//enable))
+
+;; (defun ccls//enable ()
+;;   (direnv-update-environment)
+;;   (lsp-ccls-enable)
+;;   (setq-local flycheck-checker 'lsp-ui)
+;;   (lsp-ui-flycheck-add-mode major-mode)
+;;   (add-to-list 'flycheck-checkers 'lsp-ui)
+;;   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
+;;     (setq flycheck-checkers (delq c flycheck-checkers))))
 
 ;; (defvar lsp-ui-flycheck--stale-diagnostics nil)
 

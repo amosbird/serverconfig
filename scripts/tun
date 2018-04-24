@@ -17,7 +17,7 @@
 
 (( UID == 0 )) || exec sudo "$0" "$@" || exit
 
-if ip r | rg -q '128.0.0.0/1'
+if ip r | grep -q '128.0.0.0/1'
 then
     ip r d 0.0.0.0/1
     ip r d 128.0.0.0/1

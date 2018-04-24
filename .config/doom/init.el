@@ -254,11 +254,6 @@
    magit-display-buffer-noselect t
    magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")))
 
-(def-package-hook! evil-magit
-  :pre-config
-  (setq evil-magit-state 'normal)
-  nil)
-
 (require 'server)
 (setq server-name (getenv "EMACS_SERVER_NAME"))
 (if (not server-name) (setq server-name "server"))
