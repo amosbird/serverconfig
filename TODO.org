@@ -23,3 +23,13 @@
 ** DONE org todo edit
 
 ** TODO org agenda
+
+* TODO <2018-04-27 Fri>
+
+** TODO init set face
+
+** TODO sp-backward-kill-sexp doesn't delete #
+
+** TODO sp-auto-insert should work everywhere
+
+** TODO design @:

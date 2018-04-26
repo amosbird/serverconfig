@@ -151,6 +151,8 @@
  :m "gs"                     (lambda! (evil-goto-mark ?s))
  :m "gb"                     (lambda! (evil-goto-mark ?b))
  :m "gm"                     (lambda! (evil-goto-mark ?m))
+ :m "g<"                     (lambda! (evil-goto-mark ?<))
+ :m "g>"                     (lambda! (evil-goto-mark ?>))
  :m "g."                     #'goto-last-change
  :n ",,"                     #'+amos/projectile-find-other-file
 
@@ -368,7 +370,9 @@
 
  (:after evil-multiedit
    :map evil-multiedit-state-map
-   "RET" #'evil-multiedit-toggle-or-restrict-region
+   [backspace] (lambda! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
+   "DEL" (lambda! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
+   "RET" (lambda! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-next))
    "j"   #'evil-multiedit-next
    "k"   #'evil-multiedit-prev
    "C-f" #'iedit-show/hide-unmatched-lines
@@ -620,9 +624,3 @@
              (">" . nil)
              ("C-i" . company-complete-selection)
              ("C-h" . company-quickhelp-manual-begin)))
-
-;; TODO
-(general-define-key
- :definer 'minor-mode
- :states '(visual)
- "#" #'evil-multiedit-match-all)
