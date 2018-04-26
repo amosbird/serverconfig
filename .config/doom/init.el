@@ -48,6 +48,7 @@
        amos-org
        amos-email)
 
+(setq all-the-icons-scale-factor 1.0)
 (setq +amos--frame-list "---")
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
 ;; (setq display-line-numbers nil)

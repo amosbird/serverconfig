@@ -139,8 +139,8 @@ assign [class="URxvt" instance="mail"] $ws2
 for_window [class="URxvt" instance="mail"] focus
 assign [class="Emacs" title="mail-frame"] $ws2
 for_window [class="Emacs" title="mail-frame"] focus
-assign [class="Emacs" instance="editor-frame"] $ws3
-for_window [class="Emacs" instance="editor-frame"] focus
+assign [class="Emacs" title="[^mail-frame]"] $ws3
+for_window [class="Emacs" title="[^mail-frame]"] focus
 for_window [class="Emacs"] move left
 assign [class="URxvt" instance="workspace"] $ws3
 for_window [class="URxvt" instance="workspace"] focus

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+print_recent_db() {
+    sqlite3 "$1" 'select distinct a.path from files a order by time desc'
+}
+
+files() {
+    print_recent_db "$HOME/.recent.db"
+}
+
+path="$(files | rofi -p 'recent files > ' -dmenu)"
+xdg-open "$path"

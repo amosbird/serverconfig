@@ -53,7 +53,7 @@ mainwin.geometry.y 257
 network.http_user_agent deadbeef
 network.proxy.port 8080
 network.proxy.type HTTP
-playback.loop 2
+playback.loop 0
 playback.order 0
 playback.volume 0.0000000
 playlist.current 4

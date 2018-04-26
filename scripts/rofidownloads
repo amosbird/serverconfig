@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 print_luakit_db() {
-    sqlite3 "$1" 'select a.path from downloads a order by finish_time desc'
+    sqlite3 "$1" 'select distinct a.destination from downloads a order by finished_time desc'
 }
 
 downloads() {
