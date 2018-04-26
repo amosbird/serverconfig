@@ -521,6 +521,9 @@
    :gn "-"        #'negative-argument
    :gn "="        #'edebug-temp-display-freq-count)
 
+ (:map emacs-lisp-mode-map
+   :i "M-o"       #'lisp-state-toggle-lisp-state)
+
  (:after git-timemachine
    :map git-timemachine-mode-map
    :n "C-k" #'git-timemachine-show-previous-revision

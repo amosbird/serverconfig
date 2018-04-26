@@ -126,6 +126,7 @@ bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/
 # bind-key -T amos C-v send-key C-v
 
 bind-key -T amos M-0 switch-client -t emacs\; send f12
+# bind-key -T amos M-0 switch-client -t emacs
 bind-key -T amos M-= switch-client -t htop
 
 bind-key -T amos M-u copy-mode\; send -X search-backward ❯

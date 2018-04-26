@@ -17,7 +17,6 @@
 
        :ui
        doom
-       doom-modeline
        doom-quit
        hl-todo
        nav-flash
@@ -44,13 +43,15 @@
        sh
 
        :private
+       amos-modeline
        amos-cc
        amos-org
        amos-email)
 
 (setq +amos--frame-list "---")
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
-(setq doom-line-numbers-style 'relative)
+;; (setq display-line-numbers nil)
+(setq doom-line-numbers-style nil)
 ;; fix start-process xdg-open
 (setq process-connection-type nil)
 ;; (setq package-archives

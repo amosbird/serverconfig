@@ -297,7 +297,7 @@ The insertion will be repeated COUNT times."
   (setq
    cquery-project-root-matchers
    '(cquery-project-roots-matcher ".cquery" ".cquery" projectile-project-root "compile_commands.json")
-   cquery-sem-highlight-method 'overlay)
+   cquery-sem-highlight-method 'font-lock)
   (add-hook 'c-mode-common-hook #'cquery//enable))
 
 (defun cquery//enable ()

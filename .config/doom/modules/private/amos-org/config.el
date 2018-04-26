@@ -323,68 +323,32 @@ This function uses the same logic as `org-beginning-of-line' when
 
 (defun org-autolist-at-empty-item-description-p ()
   "Is point at an *empty* description list item?"
-  (message "evaluating...")
-  (org-list-at-regexp-after-bullet-p "\\(\\s-*\\)::\\(\\s-*$\\)"))
+  (org-list-at-regexp-after-bullet-p "[ \t\r\n\v\f]"))
 
-(defadvice org-return (around org-autolist-return)
+(defun +amos*org-return (ofun &rest args)
   "Wraps the org-return function to allow the Return key to
 automatically insert new list items."
   (if (and (org-at-item-p)
+           (eolp)
            (not
             (and org-return-follows-link
                  (eq 'org-link (get-text-property (point) 'face)))))
-      (if (and (eolp)
-               (<= (point) (org-autolist-beginning-of-item-after-bullet)))
-          (condition-case nil
-              (call-interactively 'org-outdent-item)
-            ('error (delete-region (line-beginning-position)
-                                   (line-end-position))))
-        (cond
-         ((org-at-item-checkbox-p)
-          (org-insert-todo-heading nil))
-         ((and (org-at-item-description-p)
-               (> (point) (org-autolist-beginning-of-item-after-bullet))
-               (< (point) (line-end-position)))
-          (newline))
-         (t
-          (org-meta-return))))
-    ad-do-it))
+          (org-meta-return)
+    (apply ofun args)))
+(advice-add #'org-return :around #'+amos*org-return)
 
-(defadvice org-delete-backward-char (around org-autolist-delete-backward-char)
+(defun +amos*org-delete-backward-char (ofun &rest args)
   "Wraps the org-delete-backward-char function to allow the Backspace
 key to automatically delete list prefixes."
-  (if (and (org-at-item-p)
-           (<= (point) (org-autolist-beginning-of-item-after-bullet)))
-      (progn
-          (goto-char (org-autolist-beginning-of-item-after-bullet))
-          (cond
-           ((= 1 (line-number-at-pos))
-            (delete-region (point) (line-beginning-position)))
-           ((org-autolist-at-empty-item-description-p)
-            (delete-region (line-end-position)
-                           (save-excursion (forward-line -2)
-                                           (line-end-position))))
-           (t
-            (delete-region (point)
-                           (save-excursion (forward-line -2)
-                                           (line-end-position))))))
-    ad-do-it))
-
-;;;###autoload
-(define-minor-mode org-autolist-mode
-  "Enables improved list management in org-mode."
-  nil " Autolist" nil
-  (cond
-   ;; If enabling org-autolist-mode, then add our advice functions.
-   (org-autolist-mode
-    (ad-activate 'org-return)
-    (ad-activate 'org-delete-backward-char))
-   ;; Be sure to clean up after ourselves when org-autolist-mode gets disabled.
-   (t
-    (ad-deactivate 'org-return)
-    (ad-deactivate 'org-delete-backward-char))))
-
-(add-hook! org-mode (org-autolist-mode))
+  (if (and (eq major-mode 'org-mode)
+           (org-at-item-p)
+           (org-autolist-at-empty-item-description-p))
+      (delete-region (line-end-position)
+                     (save-excursion (back-to-indentation)
+                                     (point)))
+    (apply ofun args)))
+(advice-add #'org-delete-backward-char :around #'+amos*org-delete-backward-char)
+(advice-add #'+amos/backward-delete-word :around #'+amos*org-delete-backward-char)
 
 (defun +amos/list-todo ()
   (interactive)

@@ -935,7 +935,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (goto-char (point-max))
   (let ((value (eval (preceding-sexp))))
     (kill-sexp -1)
-    (insert (format "%S\n" value)))
+    (insert (format "%s" value)))
   (widen)
   (backward-char))
 
@@ -948,7 +948,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     (add-hook 'kill-buffer-hook #'+amos/workspace-delete)
     (emacs-lisp-mode)
     (evil-insert-state)
-    (setq buffer-offer-save t)
+    (setq buffer-offer-save nil)
     buf))
 
 (defun +amos/ivy-complete-dir ()
@@ -1347,13 +1347,18 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
                       (+doom-modeline--iedit))))
     (concat (if (not buffer-file-name) (make-string 20 ?\ ))
             (or (and (not (equal meta "")) meta)
-                (if buffer-file-name " %I " " X ")))))
+                (if buffer-file-name (format-mode-line " %I " nil (selected-window) (current-buffer)) " X ")))))
 (def-modeline-segment! amos-evil-state
   (evil-state-property evil-state :name))
 
+(def-modeline-segment! amos-lcp
+  (format-mode-line "%l:%c %p" nil (selected-window) (current-buffer)))
+
 (def-modeline! main
-  (" " amos-matches " " amos-buffer-info "  %l:%c %p  " selection-info frame)
+  (" " amos-matches " " amos-buffer-info "  " amos-lcp "  " selection-info frame)
   (" " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
+
+;; (setq-default header-line-format mode-line-format)
 
 (defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.
@@ -2285,7 +2290,7 @@ the current state and point position."
 (general-define-key
  :states 'lisp
  "<escape>"       (lambda! (evil-normal-state) (unless (bolp) (backward-char)))
- "M-RET"          #'lisp-state-toggle-lisp-state
+ "M-o"            #'lisp-state-toggle-lisp-state
  "M-U"            #'+amos/replace-defun
  "M-u"            #'eval-defun
  "C-a"            #'sp-beginning-of-sexp
@@ -2304,7 +2309,8 @@ the current state and point position."
  "C-t"            #'sp-transpose-hybrid-sexp
  "M-d"            #'sp-kill-sexp
  "C-o"            #'sp-kill-hybrid-sexp
- "M-<backspace>"  #'sp-backward-kill-sexp
+ [M-backspace]    #'sp-backward-kill-sexp
+ [134217855]      #'sp-backward-kill-sexp ; M-DEL
  "M-w"            #'sp-copy-sexp
  "M-("            #'wrap-with-parens
  "M-{"            #'wrap-with-braces
@@ -2496,7 +2502,6 @@ By default the last line."
 (advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
 (advice-add #'recenter-top-bottom :override #'recenter)
 (advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))
-
 
 (defun +amos/avy-goto-char-timer (&optional arg)
   "Read one or many consecutive chars and jump to the first one.
