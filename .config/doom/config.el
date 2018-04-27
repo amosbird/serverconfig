@@ -158,7 +158,10 @@
 (remove-hook! 'kill-emacs-query-functions #'doom-quit-p)
 (remove-hook! 'doom-post-init-hook #'blink-cursor-mode)
 ;; (remove-hook! 'doom-init-ui-hook #'show-paren-mode)
-(add-hook! 'doom-post-init-hook (realign-mode) (blink-cursor-mode -1) (setq-default truncate-lines nil))
+(add-hook! 'doom-post-init-hook
+  (realign-mode)
+  (blink-cursor-mode -1)
+  (setq-default truncate-lines nil))
 
 (let ((evil-cursors '(("normal" "#b8860b" box)
                       ("insert" "#66cd00" bar)
@@ -2735,3 +2738,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
              evil-ex-substitute-nreplaced
              (if (/= evil-ex-substitute-nreplaced 1) "s" ""))
     (evil-first-non-blank)))
+
+(add-hook! 'doom-load-theme-hook
+  (set-face-attribute 'mode-line-inactive nil
+                      :underline t
+                      :background (face-background 'default)))

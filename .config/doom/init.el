@@ -231,10 +231,6 @@
 (setq yasdcv-sdcv-command "sdcv --non-interactive --utf8-output --utf8-input \"%word\"")
 (setq yasdcv-sdcv-dicts '(("jianminghy" "简明汉英词典" "powerword2007" t)))
 
-(set-face-attribute 'mode-line-inactive nil
-                    :underline "#ffffff"
-                    :background (face-background 'default))
-
 (def-package-hook! nav-flash
   :pre-init
   (advice-add #'windmove-do-window-select :after #'+nav-flash/blink-cursor)
