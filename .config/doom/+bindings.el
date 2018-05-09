@@ -6,6 +6,13 @@
 (general-define-key
  :keymaps 'override
  :states '(normal insert visual emacs)
+ "C-h d"         (lambda!
+                  (xref-find-definitions
+                   (let* ((backend (xref-find-backend)))
+                     (completing-read "Find definitions of: "
+                                      (xref-backend-identifier-completion-table backend)
+                                      nil nil nil
+                                      'xref--read-identifier-history nil))))
  "<f12>"         (lambda! (evil-refresh-cursor) (realign-windows))
  "<f11>"         (lambda! (message (format "idx = %d, size = %d" (evil-jumps-struct-idx (evil--jumps-get-current)) (ring-length (evil--jumps-get-window-jump-list)))))
  "M-x"           #'execute-extended-command

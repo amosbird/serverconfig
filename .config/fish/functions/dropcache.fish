@@ -7,5 +7,5 @@ function dropcache
         echo 'Usage: dropcache [-h|--help] ...'
         return
     end
-    echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null
+    echo 1 | sudo tee /proc/sys/vm/drop_caches > /dev/null
 end

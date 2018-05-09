@@ -679,7 +679,7 @@ Returns \"\" to not break --no-window-system."
 directory, the file name, and its state (modified, read-only or non-existent)."
   (if buffer-file-name
       (+doom-modeline-buffer-file-name)
-    (format-mode-line "%b" nil (selected-window) (current-buffer))))
+    (buffer-name)))
 
 (def-modeline-segment! amos-matches
   "Displays: 1. the currently recording macro, 2. A current/total for the
@@ -691,15 +691,19 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
                       (+doom-modeline--iedit))))
     (concat (if (not buffer-file-name) (make-string 20 ?\ ))
             (or (and (not (equal meta "")) meta)
-                (if buffer-file-name (format-mode-line " %I " nil (selected-window) (current-buffer)) " X ")))))
+                ;; " %I "))))
+                (format-mode-line " %I " nil (selected-window) (current-buffer))))))
+
 (def-modeline-segment! amos-evil-state
   (evil-state-property evil-state :name))
 
 (def-modeline-segment! amos-lcp
-  (format-mode-line "%l:%c %p" nil (selected-window) (current-buffer)))
+  ""
+  ;; " %l:%c %p ")
+  (format-mode-line " %l:%c %p " nil (selected-window) (current-buffer)))
 
 (def-modeline! main
-  (" " amos-matches " " amos-buffer-info "  " amos-lcp "  " selection-info frame)
+  (" " amos-matches " " amos-buffer-info amos-lcp selection-info frame)
   (" " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
 
 (def-modeline! minimal
@@ -775,20 +779,5 @@ DEFAULT is non-nil, set the default mode-line for all buffers."
 
 (add-hook 'image-mode-hook #'+doom-modeline|set-media-modeline)
 (add-hook 'circe-mode-hook #'+doom-modeline|set-special-modeline)
-
-;; TODO Refactor me
-(defvar +doom-modeline-remap-face-cookie nil)
-(defun +doom-modeline|focus ()
-  (require 'face-remap)
-  (when +doom-modeline-remap-face-cookie
-    (face-remap-remove-relative +doom-modeline-remap-face-cookie)))
-
-(defun +doom-modeline|unfocus ()
-  (require 'face-remap)
-  (setq +doom-modeline-remap-face-cookie (face-remap-add-relative 'mode-line 'mode-line-inactive)))
-
-(add-hook 'focus-in-hook #'+doom-modeline|focus)
-(add-hook 'focus-out-hook #'+doom-modeline|unfocus)
-
 ;;
 ;; (add-hook 'doom-big-font-mode-hook #'+doom-modeline|resize-for-big-font)

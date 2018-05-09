@@ -21,8 +21,8 @@
     (current-column)))
 (put :hint 'lisp-indent-function 'special-indent-fn)
 (put :color 'lisp-indent-function 'defun)
-(put :pre   'lisp-indent-function 'defun)
-(put :post  'lisp-indent-function 'defun)
+(put :pre 'lisp-indent-function 'defun)
+(put :post 'lisp-indent-function 'defun)
 
 (after! evil-multiedit
   (setq evil-multiedit-follow-matches t))
@@ -1048,7 +1048,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (defun +amos-insert-state-p ()
   (require 'evil-multiedit)
-  (or (evil-insert-state-p) (evil-multiedit-insert-state-p)))
+  (or (evil-insert-state-p) (evil-multiedit-insert-state-p) (active-minibuffer-window)))
 
 (defun +amos-insert-state ()
   (require 'evil-multiedit)
@@ -1058,7 +1058,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (evil-define-command +amos/forward-delete-word (&optional subword);
   (evil-signal-at-bob-or-eob 1)
-  (unless (or (+amos-insert-state-p) (active-minibuffer-window))
+  (unless (+amos-insert-state-p)
     (+amos-insert-state))
   (if subword (subword-mode +1))
   (mkr! (kill-region (point)
@@ -1075,7 +1075,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (evil-define-command +amos/backward-delete-word (&optional subword)
   (evil-signal-at-bob-or-eob -1)
-  (unless (or (eolp) (+amos-insert-state-p) (active-minibuffer-window))
+  (unless (or (eolp) (+amos-insert-state-p))
     (+amos-insert-state)
     (forward-char))
   (if subword (subword-mode +1))
@@ -1094,7 +1094,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (evil-define-command +amos/backward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob -1)
   (if subword (subword-mode +1))
-  (unless (or (eolp) (+amos-insert-state-p) (active-minibuffer-window))
+  (unless (or (eolp) (+amos-insert-state-p))
     (+amos-insert-state)
     (forward-char))
   (if (looking-back "[ \t\r\n\v\f]")
@@ -1107,7 +1107,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (evil-define-command +amos/forward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob 1)
   (if subword (subword-mode +1))
-  (unless (or (active-minibuffer-window) (+amos-insert-state-p))
+  (unless (+amos-insert-state-p)
     (+amos-insert-state))
   (if (looking-at "[ \t\r\n\v\f]")
       (progn
@@ -1179,7 +1179,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (def-package! lsp-mode
   :init
-  (setq lsp-enable-eldoc nil)
+  (setq lsp-enable-eldoc nil
+        lsp-enable-indentation nil)
   :config
   (require 'lsp-imenu)
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
@@ -2086,7 +2087,8 @@ the current state and point position."
       (select-frame frame)
       (raise-frame frame)
       (setq +amos-tmux-need-switch nil)
-      (realign-windows))))
+      (realign-windows)
+      (recenter))))
 
 (defun +amos/workspace-switch-to-1 () (interactive) (+amos/workspace-switch-to 0))
 (defun +amos/workspace-switch-to-2 () (interactive) (+amos/workspace-switch-to 1))
@@ -2447,8 +2449,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (advice-add #'lua-calculate-indentation-override
             :around #'rgc-lua-calculate-indentation-override)
 
-
-
 (defun lua-find-matching-token-in-line (found-token found-pos token-type &optional direction)
   (let ((line (line-number-at-pos))
         ;; If we are on a middle token, go backwards. If it is a middle-or-open,
@@ -2739,7 +2739,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
              (if (/= evil-ex-substitute-nreplaced 1) "s" ""))
     (evil-first-non-blank)))
 
-(add-hook! 'doom-load-theme-hook
-  (set-face-attribute 'mode-line-inactive nil
-                      :underline t
-                      :background (face-background 'default)))
+;; (add-hook! 'doom-load-theme-hook
+;;   (set-face-attribute 'mode-line-inactive nil
+;;                       :underline t
+;;                       :background (face-background 'default)))
+
+(global-page-break-lines-mode +1)

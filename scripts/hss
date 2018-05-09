@@ -34,7 +34,9 @@ if {$needcopy} {
     set fd [open $keyfile]
     gets $fd pubkey
     close $fd
-    send " mkdir -p ~/.ssh\r"
+    send " mkdir -m 700 -p ~/.ssh\r"
+    expect $prompt
+    send " (umask 077 && touch ~/.ssh/authorized_keys)\r"
     expect $prompt
     send " cat >> ~/.ssh/authorized_keys <<EOF\r$pubkey\rEOF\r"
     expect $prompt

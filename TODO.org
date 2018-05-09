@@ -26,7 +26,7 @@
 
 * TODO <2018-04-27 Fri>
 
-** TODO init set face
+** DONE init set face
 
 ** TODO sp-backward-kill-sexp doesn't delete #
 
