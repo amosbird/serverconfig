@@ -76,9 +76,10 @@ The insertion will be repeated COUNT times."
           :i ">"        #'+cc/autoclose->-maybe
           :i "RET"      #'+amos-append-comment-line
           :n "C-e"      #'+amos/maybe-add-end-of-statement
-          :n "gh"       #'cquery-call-hierarchy
           :n "o"        #'+amos-evil-open-below
           :n "O"        #'+amos-evil-open-above
+          :n "gh"       #'cquery-call-hierarchy
+          :n "gR"       #'cquery/callers
           :n "gt"       #'cquery-member-hierarchy
           :n "ge"       #'cquery-inheritance-hierarchy
           "C-c i"       #'+amos/ivy-add-include))
@@ -291,42 +292,46 @@ The insertion will be repeated COUNT times."
 
 (add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1))
 
-(def-package! cquery
-  :after lsp-mode
-  :init
-  (setq
-   cquery-project-root-matchers
-   '(cquery-project-roots-matcher ".cquery" ".cquery" projectile-project-root "compile_commands.json")
-   cquery-sem-highlight-method nil)
-  (add-hook 'c-mode-common-hook #'cquery//enable))
-
-(defun cquery//enable ()
-  (direnv-update-environment)
-  (lsp-cquery-enable)
-  (setq-local flycheck-checker 'lsp-ui)
-  (lsp-ui-flycheck-add-mode major-mode)
-  (add-to-list 'flycheck-checkers 'lsp-ui)
-  (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
-    (setq flycheck-checkers (delq c flycheck-checkers))))
-
-;; (def-package! ccls
+;; (def-package! cquery
 ;;   :after lsp-mode
 ;;   :init
 ;;   (setq
-;;    ccls-project-root-matchers
-;;    '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
-;;    ccls-sem-highlight-method 'overlay)
-;;   (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
-;;   (add-hook 'c-mode-common-hook #'ccls//enable))
+;;    cquery-project-root-matchers
+;;    '(cquery-project-roots-matcher ".cquery" ".cquery" projectile-project-root "compile_commands.json")
+;;    cquery-sem-highlight-method nil)
+;;   (add-hook 'c-mode-common-hook #'cquery//enable))
 
-;; (defun ccls//enable ()
+;; (defun cquery//enable ()
 ;;   (direnv-update-environment)
-;;   (lsp-ccls-enable)
+;;   (lsp-cquery-enable)
 ;;   (setq-local flycheck-checker 'lsp-ui)
 ;;   (lsp-ui-flycheck-add-mode major-mode)
 ;;   (add-to-list 'flycheck-checkers 'lsp-ui)
 ;;   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
 ;;     (setq flycheck-checkers (delq c flycheck-checkers))))
+
+(def-package! ccls
+  :after lsp-mode
+  :init
+  (setq
+   ccls-project-root-matchers
+   '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
+   ccls-sem-highlight-method nil)
+  (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
+  (defalias 'cquery-call-hierarchy           'ccls-call-hierarchy)
+  (defalias 'cquery/callers                  'ccls/callers)
+  (defalias 'cquery-member-hierarchy         'ccls-member-hierarchy)
+  (defalias 'cquery-inheritance-hierarchy    'ccls-inheritance-hierarchy)
+  (add-hook 'c-mode-common-hook #'ccls//enable))
+
+(defun ccls//enable ()
+  (direnv-update-environment)
+  (lsp-ccls-enable)
+  (setq-local flycheck-checker 'lsp-ui)
+  (lsp-ui-flycheck-add-mode major-mode)
+  (add-to-list 'flycheck-checkers 'lsp-ui)
+  (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
+    (setq flycheck-checkers (delq c flycheck-checkers))))
 
 ;; (defvar lsp-ui-flycheck--stale-diagnostics nil)
 

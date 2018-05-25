@@ -4,9 +4,9 @@
 #     exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt "$@"
 # fi
 
-# export CCLS_TRACEME=1
+# export CCLS_TRACEME=s
 
-includes=$(g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print $0}' | xargs realpath -s | awk '{print "\"-I"$0"\""}' | paste -sd ",")
+includes=$(g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print $0}' | xargs realpath -s | awk '{print "\"-isystem "$0"\""}' | paste -sd ",")
 
 blacklist="\"/tmp\""
 for i in $cquery_include_dirs
@@ -19,7 +19,8 @@ do
     blacklist="${blacklist}, \"$i\""
 done
 
-exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fno-delayed-template-parsing\", \"-std=c++1z\", $includes]}" "$@"
+# exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fno-delayed-template-parsing\", \"-std=c++1z\", $includes]}" "$@"
+exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.ccls_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"completion\": {\"includeBlacklist\": [\"llvm\", \"QT\", \"c++/7.3.0\", \"polly\", \"clang\"]},  \"extraClangArguments\": [\"-fno-delayed-template-parsing\", \"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/ccls/dbg/ccls --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"

@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: forr
+# key: forr
+# --
+for (auto ${1:i} = $2; $1--) {
+    $0
+}

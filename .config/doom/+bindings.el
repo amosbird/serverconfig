@@ -36,18 +36,12 @@
  "C-<comma>"     #'+amos/workspace-switch-left
  "C-<period>"    #'+amos/workspace-switch-right)
 
-
-(defun anzu-to-multiedit ()
-  (interactive)
-  (+evil|disable-highlights)
-  (evil-multiedit-ex-match (point-min) (point-max) nil (car evil-ex-search-pattern)))
-
 (map!
  :gn "M-W"                   (lambda! (+amos/close-current-buffer t t)) ;; wipe and kill
  :gn "M-w"                   (lambda! (+amos/close-current-buffer t)) ;; wipe
  :gn "C-w"                   #'+amos/close-current-buffer ;; bury
  :gniv "M-m"                 #'evil-switch-to-windows-last-buffer
- :n "%"                      #'anzu-to-multiedit
+ :n "%"                      #'anzu-multiedit
  :n "R"                      #'evil-multiedit-match-all
  :nv "G"                     #'+amos/evil-goto-line
  :n "M-RET"                  (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
@@ -84,6 +78,7 @@
  :n "M-i"                    #'yasdcv-translate-at-point
  :v "M-i"                    #'+amos/evil-visual-insert-snippet
  :n "M-o"                    #'lsp-ui-sideline-mode
+ :n "M-v"                    #'+amos/lsp-ui-imenu
  :genvi "M-h"                #'evil-window-left
  :genvi "M-j"                #'evil-window-down
  :genvi "M-k"                #'evil-window-up
@@ -150,7 +145,6 @@
  :n "gO"                     #'+amos/evil-insert-line-above
  :n "gp"                     #'+evil/reselect-paste
  :n "gr"                     #'+lookup/references
- :n "gR"                     #'cquery/callers
  :v "gR"                     #'+eval:replace-region
  :m "gy"                     #'evil-commentary-yank
  :m "gc"                     #'evil-commentary
@@ -169,7 +163,7 @@
    :g "d"       #'+amos/direnv-reload
    :g "a"       #'direnv-edit
    :g "C-r"     #'+amos/replace-last-sexp
-   :i "C-f"     #'company-files
+   :i "C-f"     #'amos-company-files
    :i "C-n"     #'company-dabbrev-code
    :i "C-p"     #'+company/dabbrev-code-previous
    :g "u"       #'link-hint-open-link
@@ -375,6 +369,16 @@
    :n [tab] #'magit-section-toggle
    :n "C-k" nil)
 
+ (:after lsp-ui-imenu
+   :map lsp-ui-imenu-mode-map
+   :n "q" 'lsp-ui-imenu--kill
+   :n "<escape>" 'lsp-ui-imenu--kill
+   :n "M-v" 'lsp-ui-imenu--kill
+   :n "l" 'lsp-ui-imenu--next-kind
+   :n "h" 'lsp-ui-imenu--prev-kind
+   :n "C-i" 'lsp-ui-imenu--view
+   :n "RET" 'lsp-ui-imenu--visit)
+
  (:after evil-multiedit
    :map evil-multiedit-state-map
    [backspace] (lambda! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
@@ -383,9 +387,9 @@
    "j"   #'evil-multiedit-next
    "k"   #'evil-multiedit-prev
    "C-f" #'iedit-show/hide-unmatched-lines
-   :map (evil-multiedit-state-map iedit-mode-occurrence-keymap)
    "#"   #'iedit-number-occurrences
    "$"   (lambda! (evil-multiedit--goto-overlay-end) (backward-char))
+   :map (evil-multiedit-state-map iedit-mode-occurrence-keymap)
    "M-p" #'evil-multiedit-match-and-prev
    "M-n" #'evil-multiedit-match-and-next
    "C-j" #'evil-multiedit-next

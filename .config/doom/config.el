@@ -85,10 +85,19 @@
 
 (after! evil-mc
   (nconc evil-mc-known-commands
-         '((+amos:evil-delete-backward-symbol . ((:default . evil-mc-execute-default-call)))
-           (+amos:evil-delete-word . ((:default . evil-mc-execute-default-call)))
+         '((+amos/forward-delete-word . ((:default . evil-mc-execute-default-call)))
+           (+amos/smart-eol-insert . ((:default . evil-mc-execute-default-call)))
+           (+amos/backward-delete-word . ((:default . evil-mc-execute-default-call)))
+           (+amos/delete-char . ((:default . evil-mc-execute-default-call)))
+           (+amos/backward-delete-char . ((:default . evil-mc-execute-default-call)))
+           (+amos/kill-line . ((:default . evil-mc-execute-default-call)))
+           (+amos/backward-kill-to-bol-and-indent . ((:default . evil-mc-execute-default-call)))
            (+amos/replace-last-sexp . ((:default . evil-mc-execute-default-call)))
-           (+amos:evil-backward-symbol-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))))
+           (+amos/backward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+           (+amos/forward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+           (+amos/evil-backward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+           (+amos/evil-forward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+           (+amos/evil-forward-subword-end . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))))
 
   ;; if I'm in insert mode, chances are I want cursors to resume
   (add-hook! 'evil-mc-before-cursors-created
@@ -1040,11 +1049,11 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (mkr! (kill-region (point) (point-at-eol))))
 
 (evil-define-command +amos/backward-kill-to-bol-and-indent ()
-  (let ((empty-line-p (save-excursion (beginning-of-line)
-                                      (looking-at-p "[ \t]*$"))))
-    (mkr! (kill-region (point-at-bol) (point)))
-    (unless empty-line-p
-      (indent-according-to-mode))))
+  (let* ((x (save-excursion (doom/backward-to-bol-or-indent)))
+         (y (point))
+         (a (min x y))
+         (b (max x y)))
+    (mkr! (kill-region a b))))
 
 (defun +amos-insert-state-p ()
   (require 'evil-multiedit)
@@ -1055,6 +1064,16 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (if (evil-multiedit-state-p)
       (evil-multiedit-insert-state)
     (evil-insert-state)))
+
+(defmacro +amos-subword-move! (command)
+  `(evil-define-command ,(intern (concat "+amos/" (s-replace "word" "subword" (symbol-name command)))) (&rest args)
+     (subword-mode +1)
+     (,command args)
+     (subword-mode -1)))
+
+(+amos-subword-move! evil-forward-word-end)
+(+amos-subword-move! evil-forward-word-begin)
+(+amos-subword-move! evil-backward-word-begin)
 
 (evil-define-command +amos/forward-delete-word (&optional subword);
   (evil-signal-at-bob-or-eob 1)
@@ -2745,3 +2764,59 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 ;;                       :background (face-background 'default)))
 
 (global-page-break-lines-mode +1)
+
+(defun anzu-multiedit (&optional symbol)
+  (interactive (list evil-symbol-word-search))
+  (let ((string (evil-find-thing t (if symbol 'symbol 'word))))
+    (if (null string)
+        (user-error "No word under point")
+      (let* ((regex (if nil ;; unbounded
+                        (regexp-quote string)
+                      (format (if symbol "\\_<%s\\_>" "\\<%s\\>")
+                              (regexp-quote string))))
+             (search-pattern (evil-ex-make-search-pattern regex)))
+        (evil-multiedit-ex-match (point-min) (point-max) nil (car search-pattern))))))
+
+(defun +amos/lsp-ui-imenu nil
+  (interactive)
+  (setq lsp-ui-imenu--origin (current-buffer))
+  (imenu--make-index-alist)
+  (let ((list imenu--index-alist))
+    (with-current-buffer (get-buffer-create "*lsp-ui-imenu*")
+      (let* ((padding (or (and (eq lsp-ui-imenu-kind-position 'top) 1)
+                          (--> (-filter 'imenu--subalist-p list)
+                               (--map (length (car it)) it)
+                               (-max (or it '(1))))))
+             (grouped-by-subs (-partition-by 'imenu--subalist-p list))
+             (color-index 0)
+             buffer-read-only)
+        (remove-overlays)
+        (erase-buffer)
+        (lsp-ui-imenu--put-separator)
+        (dolist (group grouped-by-subs)
+          (if (imenu--subalist-p (car group))
+              (dolist (kind group)
+                (-let* (((title . entries) kind))
+                  (lsp-ui-imenu--put-kind title padding color-index)
+                  (--each-indexed entries
+                    (insert (lsp-ui-imenu--make-line title it-index padding it color-index)))
+                  (lsp-ui-imenu--put-separator)
+                  (setq color-index (1+ color-index))))
+            (--each-indexed group
+              (insert (lsp-ui-imenu--make-line " " it-index padding it color-index)))
+            (lsp-ui-imenu--put-separator)
+            (setq color-index (1+ color-index))))
+        (lsp-ui-imenu-mode)
+        (setq mode-line-format '(:eval (lsp-ui-imenu--win-separator)))
+        (goto-char 1)
+        (add-hook 'post-command-hook 'lsp-ui-imenu--post-command nil t)
+        ))
+    (let ((win (display-buffer-in-side-window (get-buffer "*lsp-ui-imenu*") '((side . right))))
+          (fit-window-to-buffer-horizontally t))
+      (set-window-margins win 1)
+      (select-window win)
+      (set-window-start win 1)
+      (set-window-dedicated-p win t)
+      (let ((fit-window-to-buffer-horizontally 'only))
+        (fit-window-to-buffer win))
+      (window-resize win 20 t))))

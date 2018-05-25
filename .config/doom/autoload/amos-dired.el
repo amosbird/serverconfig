@@ -1,4 +1,4 @@
-;;; private/amos/autoload/amos-dired.el -*- lexical-binding: t; -*-
+;;; amos-dired.el -*- lexical-binding: t; -*-
 
 (require 'ring)
 (require 'cl-seq)
@@ -327,8 +327,7 @@ If called with `universal-argument' (C-u), ask for username.
                 (display-buffer buffer
                                     '((peep-display-buffer-use-some-window display-buffer-pop-up-window)
                                       (inhibit-switch-frame . t)
-                                      (inhibit-same-window . t)))
-                )
+                                      (inhibit-same-window . t))))
               (add-hook 'find-file-hook #'recentf-track-opened-file)))))
     (peep-dired-disable)))
 

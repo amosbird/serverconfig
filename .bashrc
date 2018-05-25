@@ -5,6 +5,7 @@ if [ -f /etc/bashrc ]; then
         . /etc/bashrc
 fi
 
+umask 022
 export PATH=/usr/local/bin:$PATH
 # Uncomment the following line if you don't like systemctl's auto-paging feature:
 # export SYSTEMD_PAGER=
