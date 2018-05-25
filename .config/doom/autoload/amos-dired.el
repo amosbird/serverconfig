@@ -356,3 +356,10 @@ If called with `universal-argument' (C-u), ask for username.
   (interactive)
   (if peep-dired-window (peep-dired-disable)
     (peep-dired-enable)))
+
+(defun +amos*dired-open-file (o &rest args)
+  (let ((buf (current-buffer)))
+    (apply o args)
+    (unless (eq (current-buffer) buf)
+      (bury-buffer buf))))
+(advice-add #'dired-open-file :around #'+amos*dired-open-file)

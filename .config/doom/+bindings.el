@@ -40,7 +40,7 @@
  :gn "M-W"                   (lambda! (+amos/close-current-buffer t t)) ;; wipe and kill
  :gn "M-w"                   (lambda! (+amos/close-current-buffer t)) ;; wipe
  :gn "C-w"                   #'+amos/close-current-buffer ;; bury
- :gniv "M-m"                 #'evil-switch-to-windows-last-buffer
+ :gniv "M-m"                 (lambda! (switch-to-buffer (other-buffer)))
  :n "%"                      #'anzu-multiedit
  :n "R"                      #'evil-multiedit-match-all
  :nv "G"                     #'+amos/evil-goto-line
@@ -77,7 +77,7 @@
  :n "M-e"                    #'counsel-dash-at-point
  :n "M-i"                    #'yasdcv-translate-at-point
  :v "M-i"                    #'+amos/evil-visual-insert-snippet
- :n "M-o"                    #'lsp-ui-sideline-mode
+ :n "M-o"                    #'+amos/dired-jump
  :n "M-v"                    #'+amos/lsp-ui-imenu
  :genvi "M-h"                #'evil-window-left
  :genvi "M-j"                #'evil-window-down
@@ -327,15 +327,15 @@
    "y"   nil
    "C-o" nil
    "C-i" nil
+   :n "<escape>"   #'quit-window
    :n "q"   #'quit-window
+   :n "M-o" #'quit-window
    :n "C-f" #'dired-omit-mode
    :n "C-i" #'peep-dired-toggle
    :n "C-v" #'peep-dired-scroll-page-down
    :n "E"   #'wdired-change-to-wdired-mode
    :n "I"   #'dired-kill-subdir
-   :n "M-i" #'+amos/next-history
    :n "M-n" #'+amos/counsel-jumpfile-function
-   :n "M-o" #'+amos/prev-history
    :n "M-v" #'peep-dired-scroll-page-up
    :n "S"   #'hydra-dired-quick-sort/body
    :n "S"   #'hydra-dired-quick-sort/body
