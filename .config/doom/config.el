@@ -2079,7 +2079,7 @@ the current state and point position."
 (defun +amos/workspace-new ()
   (interactive)
   (make-frame-invisible)
-  (select-frame (make-frame))
+  (select-frame (make-frame `((name . ,(frame-parameter nil 'name)))))
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
 
 (setq +amos-tmux-need-switch nil)

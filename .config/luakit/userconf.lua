@@ -62,6 +62,19 @@ downloads.add_signal("download-location", function (uri, file)
     end
 end)
 
+-- downloads.add_signal("download::status", function(dl)
+--     if dl.mime_type == "application/pdf" and dl.status == "finished" then
+--         downloads.do_open(dl)
+--     end
+-- end)
+
+-- downloads.add_signal("open-file", function (file, mime_type)
+--     if mime_type == "application/pdf" then
+--         luakit.spawn(string.format("xdg-open %q", file))
+--         return true
+--     end
+-- end)
+
 local follow = require "follow"
 follow.pattern_maker = follow.pattern_styles.match_label
 follow.stylesheet = follow.stylesheet ..

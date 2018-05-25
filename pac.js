@@ -1,5 +1,4 @@
-var la = 'SOCKS5 172.26.133.192:1080';
-var ssr = 'SOCKS5 172.26.100.36:1080';
+var ssr = 'socks5 127.0.0.1:1080';
 var ict = 'DIRECT';
 
 var rules = [
