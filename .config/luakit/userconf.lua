@@ -40,6 +40,7 @@ local settings = require "settings"
 settings.window.search_engines.default = "https://google.com/search?q=%s"
 settings.window.search_engines.bing = "https://cn.bing.com/search?q=%s"
 settings.window.search_engines.scholar = "https://scholar.google.com/scholar?q=%s"
+settings.window.search_engines.github = "https://github.com/search?q=%s"
 settings.on["gitter.im"].webview.zoom_level = 100
 
 -- Set download location
@@ -167,7 +168,21 @@ local keysym = require "keysym"
 local modes = require "modes"
 
 modes.add_binds({"normal","insert"},
-    { { "<Control-space>", "Switch to other window.", function (_) luakit.spawn("i3-msg focus right") end } })
+   { { "<Control-space>", "Switch to other window.", function (_) luakit.spawn("i3-msg focus right") end } })
+
+modes.add_binds("all", {
+   { "<Escape>", function (w)
+      if not w:is_mode("passthrough") then
+         -- w.view:send_key("Escape", {});
+         -- w.view:send_key("Escape", {}, true);
+         w.view:clear_search();
+         w.view:eval_js(clear_selection, { no_return = true });
+         w:set_prompt();
+         w:set_mode()
+      end
+      return not w:is_mode("passthrough")
+  end}
+})
 
 modes.add_binds("normal", {
     { "^f$", function (w)
@@ -187,17 +202,6 @@ modes.add_binds("normal", {
         })
         luakit.spawn("fcitx-remote -c")
     end},
-    { "<Escape>", function (w)
-        if not w:is_mode("passthrough") then
-            -- w.view:send_key("Escape", {});
-            -- w.view:send_key("Escape", {}, true);
-            w:set_prompt();
-            w:set_mode()
-            w.view:clear_search();
-            w.view:eval_js(clear_selection, { no_return = true });
-        end
-        return not w:is_mode("passthrough")
-    end },
     { "h", "Left.", function (w) w.view:send_key("Left", {}) end },
     { "l", "Right.", function (w) w.view:send_key("Right", {}) end },
     { "I", "Close current tab (or `[count]` tabs).",
@@ -205,6 +209,7 @@ modes.add_binds("normal", {
     { "<Control-r>", "Undo close tab.", function (w) w:undo_close_tab() end },
     { "s", "Search via google.", function (w) w:enter_cmd(":tabopen google " ) end },
     { "S", "Search via scholar.", function (w) w:enter_cmd(":tabopen scholar " ) end },
+    { "gs", "Search via github.", function (w) w:enter_cmd(":tabopen github " ) end },
     { "d", "Scroll half page down.", function (w) w:scroll{ ypagerel =  0.5 } end },
     { "u", "Scroll half page up.", function (w) w:scroll{ ypagerel = -0.5 } end },
     { "J", "Go to next tab.", function (w) w:next_tab() end },

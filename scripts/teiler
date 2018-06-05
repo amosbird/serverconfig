@@ -315,7 +315,7 @@ elif [[ $1 == "--quickcopy" ]]; then
         lang=$(echo -e "chi_sim\neng\nchi_sim+eng" | roficmd -p "Lang > ")
         if [[ $lang == "" ]]; then exit 1; fi;
         maimCmd nodelay area "${filename}" && cd "${img_path}" && copyq write image/png - application/x-copyq-item-notes "[[file:${img_path}/${filename}]]\n${img_path}/${filename}"< "${filename}"&& copyq select 0
-        tesseract "${filename}" stdout -l "$lang" | xonsh -c 'print(sys.stdin.read().strip())' | copyq add - && copyq select 0
+        tesseract "${filename}" stdout -l "$lang" | sed 'H;1h;$!d;g;s/^[[:space:]]*//;s/[[:space:]]*$//' | head -c-1 | xclip -i
     elif [[ $2 == "fullscreen" ]]; then maimCmd delay fullscreen "${filename}" && cd "${img_path}" && copyq write image/png - application/x-copyq-item-notes "[[file:${img_path}/${filename}]]\n${img_path}/${filename}"< "${filename}"&& copyq select 0
     elif [[ $2 == "all" ]]; then maimCmd nodelay fullscreenAll "${filename}" && cd "${img_path}" && copyq write image/png - < "${filename}"&& copyq select 0
     fi

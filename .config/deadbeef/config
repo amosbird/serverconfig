@@ -3,13 +3,13 @@ cli_add_playlist_name Default
 cli_add_to_specific_playlist 1
 close_send_to_tray 1
 deadbeef_version 0.7.2
-filechooser.lastdir file:///home/amos/Music
+filechooser.lastdir file:///home/amos/Downloads
 gtkui.columns.playlist [{"title":"♫","id":"1","format":"%playstatus%","size":"50","align":"0","color_override":"0","color":"#ff000000"},{"title":"Artist / Album","id":"-1","format":"%artist% - %album%","size":"327","align":"0","color_override":"0","color":"#ff000000"},{"title":"Track No","id":"-1","format":"%tracknumber%","size":"50","align":"1","color_override":"0","color":"#ff000000"},{"title":"Title","id":"-1","format":"%title%","size":"389","align":"0","color_override":"0","color":"#ff000000"},{"title":"Duration","id":"-1","format":"%length%","size":"50","align":"0","color_override":"0","color":"#ff000000"}]
 gtkui.layout.0.6.2 vbox expand="0 1" fill="1 1" homogeneous=0 {hbox expand="0 1 0" fill="1 1 1" homogeneous=0 {playtb {} seekbar {} volumebar {} } tabbed_playlist hideheaders=0 width=1000 {} } 
 gtkui.mmb_delete_playlist 1
 gtkui.name_playlist_from_folder 1
 gtkui.statusbar.visible 1
-gtkui.tabscroll 193
+gtkui.tabscroll 0
 gtkui.titlebar_playing_tf %artist% - %title% - DeaDBeeF-%_deadbeef_version%
 gtkui.titlebar_stopped_tf DeaDBeeF-%_deadbeef_version%
 gui_plugin GTK2
@@ -62,17 +62,20 @@ playlist.cursor.1 85
 playlist.cursor.2 67
 playlist.cursor.3 0
 playlist.cursor.4 10
+playlist.cursor.5 9
 playlist.scroll.0 7195
 playlist.scroll.1 2015
 playlist.scroll.2 2606
 playlist.scroll.3 0
 playlist.scroll.4 0
+playlist.scroll.5 0
 playlist.scroll.cursorfollowplayback 1
 playlist.tab.00000 cloudmusic
 playlist.tab.00001 research
 playlist.tab.00002 第二季
 playlist.tab.00003 The Piano Guys
 playlist.tab.00004 qqmusic
+playlist.tab.00005 Hamilton
 prefwin.geometry.h 554
 prefwin.geometry.w 703
 prefwin.geometry.x 608
@@ -80,7 +83,7 @@ prefwin.geometry.y 263
 replaygain_mode 0
 replaygain_scale 1
 resume.paused 0
-resume.playlist 4
-resume.position 31.788253
-resume.track 10
+resume.playlist 5
+resume.position 27.121021
+resume.track 9
 streamer.8_to_16 1

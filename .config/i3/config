@@ -129,7 +129,8 @@ for_window [window_type=normal] border pixel 0
 # Program Workspaces
 assign [class="Firefox"] $ws1
 assign [class="Vivaldi*"] $ws1
-# assign [class="qutebrowser*"] $ws1
+assign [class="Luakit"] $ws1
+for_window [class="Luakit"] focus
 for_window [class="Firefox"] focus
 for_window [class="Vivaldi*"] focus
 for_window [class="qutebrowser*"] focus

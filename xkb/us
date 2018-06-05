@@ -15,13 +15,13 @@ xkb_symbols "basic" {
     key <AE09> {	[	  9,	plus       	]	};
     key <AE10> {	[	  0,	equal   	]	};
     key <AE11> {	[     minus,	exclam	]	};
-    key <AE12> {	[     equal,	plus		]	};
+    key <AE12> {	[     equal,	plus	]	};
 
     key <AD01> {	[	  q,	Q 		,  period     ]	};
     key <AD02> {	[	  w,	W		,  slash   ]	};
     key <AD03> {	[	  e,	E		,  braceleft   ]	};
     key <AD04> {	[	  r,	R		,  braceright   ]	};
-    key <AD05> {	[	  t,	T		]	};
+    key <AD05> {	[	  t,	T		,  { Y, E, S, space, T, H, I, S, space, I, S, space, D, O, G }]	};
     key <AD06> {	[	  y,	Y		]	};
     key <AD07> {	[	  u,	U		]	};
     key <AD08> {	[	  i,	I		]	};

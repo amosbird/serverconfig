@@ -16,7 +16,7 @@ c.aliases = {'q': 'quit', 'w': 'session-save', 'wq': 'quit --save'}
 # required to exactly match the requested domain. Local domains are
 # always exempt from hostblocking.
 # Type: List of String
-c.content.host_blocking.whitelist = ['piwik.org', 'avgle.com']
+c.content.host_blocking.whitelist = ['piwik.org']
 
 # How to behave when the last tab is closed.
 # Type: String

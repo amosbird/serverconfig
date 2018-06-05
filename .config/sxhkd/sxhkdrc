@@ -8,6 +8,10 @@ mod3+d
   /usr/bin/copyq disable
 mod3+e
   /usr/bin/copyq enable
+mod3+1
+  sleep 0.1 && fcitx-remote -w 127.0.0.1
+mod3+2
+  sleep 0.1 && fcitx-remote -w amosbird@gmail.com
 mod3+d
   /home/amos/scripts/teiler --quickcopy fullscreen
 mod3+D

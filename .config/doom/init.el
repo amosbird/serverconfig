@@ -204,8 +204,7 @@
 (setq projectile-require-project-root t)
 (setq projectile-sort-order 'recentf)
 (setq query-replace-skip-read-only t)
-(setq recentf-exclude '("^/tmp/" "^/ssh:" "\\.?ido\\.last$" "\\.revive$" "/TAGS$" "^/var/folders/.+$" "^/home/amos/Mail/" "^/home/amos/.emacs.d/.local/"))
-(setq recentf-max-saved-items 10000)
+(setq recentf-exclude '("^/tmp/" "^/ssh:" "\\.?ido\\.last$" "\\.revive$" "/TAGS$" "^/var/.+$" "^/home/amos/Mail/" "^/home/amos/\\.emacs\\.d/\\.local/"))
 (setq reftex-default-bibliography '("~/zotero.bib"))
 (setq require-final-newline t)
 (setq save-interprogram-paste-before-kill t)
@@ -254,6 +253,9 @@
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect t
    magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")))
+
+(after! recentf
+  (setq recentf-max-saved-items 10000))
 
 (require 'server)
 (setq server-name (getenv "EMACS_SERVER_NAME"))

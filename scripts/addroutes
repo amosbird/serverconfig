@@ -4990,27 +4990,27 @@ ip r a 168.235.97.16/32 via $gw table cn
 
 # github
 
-# ip r a 192.30.252.0/22 via $gw table cn
-# ip r a 185.199.108.0/22 via $gw table cn
-# ip r a 140.82.112.0/22 via $gw table cn
-# ip r a 192.30.252.0/22 via $gw table cn
-# ip r a 185.199.108.0/22 via $gw table cn
-# ip r a 140.82.112.0/20 via $gw table cn
-# ip r a 13.229.188.59/32 via $gw table cn
-# ip r a 13.250.177.223/32 via $gw table cn
-# ip r a 18.194.104.89/32 via $gw table cn
-# ip r a 18.195.85.27/32 via $gw table cn
-# ip r a 35.159.8.160/32 via $gw table cn
-# ip r a 52.74.223.119/32 via $gw table cn
-# ip r a 192.30.252.153/32 via $gw table cn
-# ip r a 192.30.252.154/32 via $gw table cn
-# ip r a 185.199.108.153/32 via $gw table cn
-# ip r a 185.199.109.153/32 via $gw table cn
-# ip r a 185.199.110.153/32 via $gw table cn
-# ip r a 185.199.111.153/32 via $gw table cn
-# ip r a 54.87.5.173/32 via $gw table cn
-# ip r a 54.166.52.62/32 via $gw table cn
-# ip r a 23.20.92.3/32 via $gw table cn
+ip r a 192.30.252.0/22 via $gw table cn
+ip r a 185.199.108.0/22 via $gw table cn
+ip r a 140.82.112.0/22 via $gw table cn
+ip r a 192.30.252.0/22 via $gw table cn
+ip r a 185.199.108.0/22 via $gw table cn
+ip r a 140.82.112.0/20 via $gw table cn
+ip r a 13.229.188.59/32 via $gw table cn
+ip r a 13.250.177.223/32 via $gw table cn
+ip r a 18.194.104.89/32 via $gw table cn
+ip r a 18.195.85.27/32 via $gw table cn
+ip r a 35.159.8.160/32 via $gw table cn
+ip r a 52.74.223.119/32 via $gw table cn
+ip r a 192.30.252.153/32 via $gw table cn
+ip r a 192.30.252.154/32 via $gw table cn
+ip r a 185.199.108.153/32 via $gw table cn
+ip r a 185.199.109.153/32 via $gw table cn
+ip r a 185.199.110.153/32 via $gw table cn
+ip r a 185.199.111.153/32 via $gw table cn
+ip r a 54.87.5.173/32 via $gw table cn
+ip r a 54.166.52.62/32 via $gw table cn
+ip r a 23.20.92.3/32 via $gw table cn
 
 
 # azure
@@ -5020,8 +5020,8 @@ ip r a 13.75.109.155/32 via $gw table cn
 
 ip rule add table cn pref 30000
 
-# ip r a 0.0.0.0/1 via 172.26.133.192
-# ip r a 128.0.0.0/1 via 172.26.133.192
+ip r a 0.0.0.0/1 via 172.26.133.192
+ip r a 128.0.0.0/1 via 172.26.133.192
 # ip r a 0.0.0.0/1 via 172.26.189.83
 # ip r a 128.0.0.0/1 via 172.26.189.83
 # ip r a 0.0.0.0/1 via 172.26.59.244
