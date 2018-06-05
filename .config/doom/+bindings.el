@@ -327,7 +327,6 @@
    "y"   nil
    "C-o" nil
    "C-i" nil
-   :n "<escape>"   #'quit-window
    :n "q"   #'quit-window
    :n "M-o" #'quit-window
    :n "C-f" #'dired-omit-mode

@@ -1024,10 +1024,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
             (if (bounds-of-thing-at-point 'symbol)
                 (end-of-thing 'symbol))
             (point)))
-      (save-excursion (insert " ")))
-  (when (and (company-manual-begin)
-             (= company-candidates-length 1))
-    (company-complete-common)))
+      (save-excursion (insert " "))))
 
 (defvar my-kill-ring nil)
 (defmacro mkr! (&rest body)
