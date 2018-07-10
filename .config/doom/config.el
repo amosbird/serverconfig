@@ -161,6 +161,7 @@
 (def-package! realign-mode
   :commands realign-mode realign-windows
   :config
+  (add-hook! 'realign-hooks #'recenter)
   (defun amos-special-window-p (window)
     (let* ((buffer (window-buffer window))
            (buffname (string-trim (buffer-name buffer))))
@@ -1373,7 +1374,8 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
      cmd
      '(("f" switch-to-buffer-other-frame "other frame")))))
 
-(add-hook! 'doom-init-theme-hook
+;; vertical bar
+(add-hook! 'doom-load-theme-hook
   (set-face-background 'vertical-border "#282c34"))
 (add-hook! 'after-make-frame-functions
   (set-face-background 'vertical-border "#282c34")
@@ -1718,6 +1720,8 @@ representation of `NUMBER' is smaller."
 
 ;; ("^\\*Compil\\(ation\\|e-Log\\)" '((pop-up-frames . nil)) :select t :ttl 0 :quit t)
 
+(defun first-non-dired-buffer () (loop for b in (buffer-list) if (not (with-current-buffer b (derived-mode-p 'dired-mode))) return b))
+
 (set-popup-rules!
   '(("^\\*"  :slot 1 :vslot -1 :select t)
     ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit))
@@ -1732,9 +1736,9 @@ representation of `NUMBER' is smaller."
     ("^\\*doom \\(?:term\\|eshell\\)"
      :size 0.25 :vslot -10 :select t :quit nil :ttl 0)
     ("^\\*doom:"
-     :vslot -20 :size 0.35 :size bottom :autosave t :select t :modeline t :quit nil)
+     :vslot -20 :size 0.35 :autosave t :select t :modeline t :quit nil)
     ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)"
-     :size +popup-shrink-to-fit :ttl 0 :select ignore)
+     :size +popup-shrink-to-fit :side right :ttl 0 :select ignore)
     ("^\\*Customize"
      :slot 2 :side right :select t :quit t)
     ("^ \\*undo-tree\\*"
@@ -1745,8 +1749,11 @@ representation of `NUMBER' is smaller."
     ;; `Info-mode'
     ("^\\*info\\*$"
      :slot 2 :vslot 2 :size 0.45 :select t)
+
+    ("^\\(?:\\*magit\\|magit:\\)" :ignore t)
+
     ("^\\*ivy-occur"
-     :side right :size 0.5 :select t))
+     :side right :size 0.9 :select t))
   '(("^\\*Backtrace" :vslot 99 :size 0.4 :quit nil)))
 
 (evil-define-command +amos*evil-visual-paste (count &optional register)
@@ -2837,3 +2844,5 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (let ((fit-window-to-buffer-horizontally 'only))
         (fit-window-to-buffer win))
       (window-resize win 20 t))))
+
+(def-package! color-moccur)

@@ -77,7 +77,8 @@
  :n "M-e"                    #'counsel-dash-at-point
  :n "M-i"                    #'yasdcv-translate-at-point
  :v "M-i"                    #'+amos/evil-visual-insert-snippet
- :n "M-o"                    #'+amos/dired-jump
+ ;; :n "M-o"                    #'+amos/dired-jump
+ :ni "M-o"                   #'downcase-word
  :n "M-v"                    #'+amos/lsp-ui-imenu
  :genvi "M-h"                #'evil-window-left
  :genvi "M-j"                #'evil-window-down
@@ -178,7 +179,8 @@
    "C-SPC" #'easy-hugo)
 
  (:prefix "SPC"
-   :desc "Toggle mc"                       :nv "SPC" (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
+   ;; :desc "Toggle mc"                       :nv "SPC" (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
+   :desc "Toggle mc"                       :nv "SPC" #'+amos/dired-jump
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
    :desc "Find file in project (no cache)" :nv ">"   (lambda! (projectile-invalidate-cache nil) (projectile-find-file))
    :desc "Find recent file"                :nv ","   #'counsel-recentf
@@ -346,6 +348,7 @@
    "C-o" nil
    "C-i" nil
    :n "q"   #'quit-window
+   :n "SPC SPC" #'quit-window
    :n "M-o" #'quit-window
    :n "C-f" #'dired-omit-mode
    :n "C-i" #'peep-dired-toggle

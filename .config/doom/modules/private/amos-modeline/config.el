@@ -691,16 +691,16 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
                       (+doom-modeline--iedit))))
     (concat (if (not buffer-file-name) (make-string 20 ?\ ))
             (or (and (not (equal meta "")) meta)
-                ;; " %I "))))
-                (format-mode-line " %I " nil (selected-window) (current-buffer))))))
+                " %I "))))
+                ;; (format-mode-line " %I " nil (selected-window) (current-buffer))))))
 
 (def-modeline-segment! amos-evil-state
   (evil-state-property evil-state :name))
 
 (def-modeline-segment! amos-lcp
   ""
-  ;; " %l:%c %p ")
-  (format-mode-line " %l:%c %p " nil (selected-window) (current-buffer)))
+  " %l:%c %p ")
+  ;; (format-mode-line " %l:%c %p " nil (selected-window) (current-buffer)))
 
 (def-modeline! main
   (" " amos-matches " " amos-buffer-info amos-lcp selection-info frame)

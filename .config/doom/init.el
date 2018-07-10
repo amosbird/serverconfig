@@ -73,7 +73,7 @@
 (setq browse-url-chrome-program (expand-file-name "~/scripts/vivaldi"))
 (setq browse-url-firefox-program "luakit")
 (setq browse-url-mailto-function 'mu4e~compose-browse-url-mail)
-(setq company-auto-complete t)
+(setq company-auto-complete nil)
 (setq company-idle-delay 0)
 (setq dired-create-destination-dirs 'always)
 (setq dired-omit-verbose nil)
@@ -221,6 +221,7 @@
 (setq split-width-threshold 0)
 ;; (setq swiper-include-line-number-in-search t) ;; TODO it breaks wgrep occur
 (setq tab-always-indent t)
+(setq truncate-partial-width-windows nil)
 (setq undo-tree-auto-save-history t)
 (setq undo-tree-history-directory-alist '((".*" . "~/.emacs.d/undo-files")))
 (setq user-full-name "Amos Bird")
@@ -251,8 +252,7 @@
     (add-hook 'subword-mode-hook (lambda! (if subword-mode (push '(?u . ?U) evil-cjk-word-separating-categories)
                                        (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories)))))))
 
-(def-package-hook! magit
-  :post-config
+(after! magit
   (setq
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect t
