@@ -15,9 +15,9 @@ dashboard stack -style compact True
 dashboard stack -style limit 3
 dashboard threads -style skip-running True
 set opaque-type-resolution off
+set history filename ~/.gdb_history
 set history save on
 set history remove-duplicates 5000
-set history filename ~/.gdb_history
 
 # useful auto-redraw hooks
 

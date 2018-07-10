@@ -23,6 +23,9 @@ set -x USE_GOLD_LINKER true
 set -x DIRENV_LOG_FORMAT ""
 set -x UID (id -u)
 
+set -e LS_COLORS
+alias l=exa
+
 status --is-interactive;
 and function __jump_add --on-variable PWD
   status --is-command-substitution; and return

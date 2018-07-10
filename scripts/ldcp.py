@@ -30,6 +30,7 @@ def collect(roots):
             if '=>' in args:
                 pos = args.index('=>')
                 arg = args[pos + 1]
+                print(arg)
                 recur(arg)
 
             recur(args[0])

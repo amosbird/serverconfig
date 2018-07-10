@@ -84,7 +84,7 @@
  :genvi "M-k"                #'evil-window-up
  :genvi "M-l"                #'evil-window-right
  :n "C-p"                    #'+amos/counsel-projectile-switch-project
- :nv "C-f"                   #'evil-+amos/avy-goto-char-timer
+ :nv "C-f"                   #'+amos/avy-goto-char-timer
  :n "C-l"                    #'+amos/redisplay-and-recenter
  :n "C-s"                    #'swiper
  :n "S-<f4>"                 #'counsel-projectile-rg ;; terminal
@@ -264,6 +264,24 @@
      :desc "Fullscreen"                    :nv "f" #'doom/toggle-fullscreen
      :desc "Indent guides"                 :nv "i" #'highlight-indentation-mode
      :desc "Indent guides (column)"        :nv "I" #'highlight-indentation-current-column-mode))
+
+ :m "gs" #'+evil/easymotion  ; lazy-load `evil-easymotion'
+ (:after evil-easymotion
+   :map evilem-map
+   "a" (evilem-create #'evil-forward-arg)
+   "A" (evilem-create #'evil-backward-arg)
+   "n" (evilem-create #'evil-ex-search-next)
+   "N" (evilem-create #'evil-ex-search-previous)
+   "s" (evilem-create #'evil-snipe-repeat
+                      :pre-hook (save-excursion (call-interactively #'evil-snipe-s))
+                      :bind ((evil-snipe-scope 'buffer)
+                             (evil-snipe-enable-highlight)
+                             (evil-snipe-enable-incremental-highlight)))
+   "S" (evilem-create #'evil-snipe-repeat-reverse
+                      :pre-hook (save-excursion (call-interactively #'evil-snipe-s))
+                      :bind ((evil-snipe-scope 'buffer)
+                             (evil-snipe-enable-highlight)
+                             (evil-snipe-enable-incremental-highlight))))
 
  (:after company
    :map company-active-map
@@ -573,6 +591,9 @@
    :g "n" #'evil-snipe-repeat
    :g "j" #'evil-snipe-repeat
    :g "k" #'evil-snipe-repeat-reverse
+   :g "SPC" #'evil-snipe-repeat
+   :g "DEL" #'evil-snipe-repeat-reverse
+   :g [backspace] #'evil-snipe-repeat-reverse
    :g "N" #'evil-snipe-repeat-reverse
    :g "p" #'evil-snipe-repeat-reverse)
 

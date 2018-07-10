@@ -17,6 +17,7 @@ configs=(
     .Xresources
     .xprofile
     .bashrc
+    .bash_profile
     scripts
 )
 

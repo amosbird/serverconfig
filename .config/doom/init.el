@@ -1,15 +1,13 @@
 ;;;  -*- lexical-binding: t; -*-
 
 (doom! :feature
-       popup
        eval
-       evil
+       ;;evil
+       (evil +everywhere)
        lookup
        snippets
        spellcheck
        syntax-checker
-       version-control
-       ;; workspaces
 
        :completion
        company
@@ -21,14 +19,21 @@
        hl-todo
        nav-flash
        unicode ;; for mu4e
+       popup
+
+       :editor
+       rotate-text
+
+       :emacs
+       dired
+       ediff
+       electric
+       imenu
+       vc
 
        :tools
-       dired
-       electric-indent
-       imenu
        make
        magit
-       rotate-text
 
        :lang
        assembly
@@ -41,7 +46,6 @@
        python
        rust
        sh
-
        :private
        amos-modeline
        amos-cc

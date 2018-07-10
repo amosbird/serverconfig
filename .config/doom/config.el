@@ -1,6 +1,11 @@
 ;;; private/amos/config.el -*- lexical-binding: t; -*-
 
-(load! +bindings)
+(load! "+bindings")
+
+(defun +amos/recenter (&rest _)
+  (interactive)
+  (recenter)
+  (+nav-flash/blink-cursor))
 
 (defvar +amos-dir (file-name-directory load-file-name))
 (defvar +amos-snippets-dir (expand-file-name "snippets/" +amos-dir))
@@ -116,7 +121,7 @@
 (after! ivy (evil-set-initial-state 'ivy-occur-grep-mode 'normal))
 (after! compile (evil-set-initial-state 'compilation-mode 'normal))
 
-(def-hydra! +amos@paste (:hint nil)
+(defhydra +amos@paste (:hint nil)
   "Paste"
   ("0" evil-digit-argument-or-evil-beginning-of-line "bol" :exit t)
   ("C-j" evil-paste-pop "Next Paste")
@@ -916,7 +921,7 @@ When GREEDY is non-nil, join words in a greedy way."
   ;; | amaranth | :foreign-keys warn         | persist w    |
   ;; | teal     | :foreign-keys warn :exit t | transient w  |
   ;; | pink     | :foreign-keys run          | nested       |
-  (def-hydra! +rgb@kurecolor (:color red :hint nil)
+  (defhydra +rgb@kurecolor (:color red :hint nil)
     "
 Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     ("w" kurecolor-decrease-brightness-by-step)
@@ -1711,21 +1716,38 @@ representation of `NUMBER' is smaller."
 (map-put +popup-default-parameters 'modeline t)
 (advice-add #'hide-mode-line-mode :override #'ignore)
 
-(set! :popups
-  ("^ \\*" '( (size . +popup-shrink-to-fit)))
-  ("^\\*" '((slot . 1) (vslot . -1)) '((select . t)))
-  ("^\\*ivy-occur" '((size . 0.5)) '((select . t)))
-  ("^\\*Completions" '() '((transient . 0)))
-  ("^\\*Compil\\(ation\\|e-Log\\)" '((pop-up-frames . nil)) '((select . t) (transient . 0) (quit . t)))
-  ("^\\*\\(?:scratch\\|Messages\\)" '() '((transient)))
-  ("^\\*doom \\(?:term\\|eshell\\)" '() '((quit) (transient . 0)))
-  ("^\\*doom:" '() '((select . t) (modeline . t) (quit) (transient . t)))
-  ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)" '() '((transient . 0) (select . ignore)))
-  ("^\\*[Hh]elp" '() '((select . t)))
-  ("^\\*\\(?:Agenda Com\\|Calendar\\|Org \\(?:Links\\|Export Dispatcher\\|Select\\)\\)" '((size . +popup-shrink-to-fit)) '((transient . 0)))
-  ("^\\*Org Agenda" '() '((select . t) (transient)))
-  ("^\\*Org Src" '() '((quit) (select . t)))
-  ("^CAPTURE.*\\.org$" '() '((quit) (select . t))))
+;; ("^\\*Compil\\(ation\\|e-Log\\)" '((pop-up-frames . nil)) :select t :ttl 0 :quit t)
+
+(set-popup-rules!
+  '(("^\\*"  :slot 1 :vslot -1 :select t)
+    ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit))
+  '(("^\\*Completions"
+     :slot -1 :vslot -2 :ttl 0)
+    ("^\\*Compil\\(?:ation\\|e-Log\\)"
+     :side right :size 0.5 :select t :ttl 0 :quit t)
+    ("^\\*\\(?:scratch\\|Messages\\)"
+     :autosave t :ttl nil)
+    ("^\\*Man "
+     :size 0.45 :vslot -6 :ttl 0 :quit t :select t)
+    ("^\\*doom \\(?:term\\|eshell\\)"
+     :size 0.25 :vslot -10 :select t :quit nil :ttl 0)
+    ("^\\*doom:"
+     :vslot -20 :size 0.35 :size bottom :autosave t :select t :modeline t :quit nil)
+    ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)"
+     :size +popup-shrink-to-fit :ttl 0 :select ignore)
+    ("^\\*Customize"
+     :slot 2 :side right :select t :quit t)
+    ("^ \\*undo-tree\\*"
+     :slot 2 :side left :size 20 :select t :quit t)
+    ;; `help-mode', `helpful-mode'
+    ("^\\*[Hh]elp"
+     :slot 2 :vslot 2 :size 0.35 :select t)
+    ;; `Info-mode'
+    ("^\\*info\\*$"
+     :slot 2 :vslot 2 :size 0.45 :select t)
+    ("^\\*ivy-occur"
+     :side right :size 0.5 :select t))
+  '(("^\\*Backtrace" :vslot 99 :size 0.4 :quit nil)))
 
 (evil-define-command +amos*evil-visual-paste (count &optional register)
   "Paste over Visual selection."
@@ -2198,11 +2220,6 @@ the current state and point position."
   (apply orig-fun args))
 (advice-add #'c-determine-limit :around #'+amos*c-determine-limit)
 
-(defun +amos/recenter (&rest _)
-  (interactive)
-  (recenter)
-  (+nav-flash/blink-cursor))
-
 (evil-define-state lisp
   "Lisp state.
  Used to navigate lisp code and manipulate the sexp tree."
@@ -2446,7 +2463,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
          (avy--read-candidates)
          (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
-(evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
+;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
 (defun lua-busted-fuckups-fix ()
   (save-excursion
