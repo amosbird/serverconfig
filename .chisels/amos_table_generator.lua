@@ -178,16 +178,90 @@ function on_event()
 	return true
 end
 
+local function print_sorted_table(stable, ts_s, ts_ns, timedelta, viz_info)
+	local sorted_grtable = pairs_top_by_val(stable, viz_info.top_number, function(t,a,b) return t[b] < t[a] end)
+
+	if viz_info.output_format == "json" then
+		local jdata = {}
+		local j = 1
+
+		for k,v in sorted_grtable do
+			local vals = split(k, "\001\001")
+			vals[#vals + 1] = v
+			jdata[j] = vals
+			j = j + 1
+		end
+
+		local jinfo = {}
+
+		for i, keyname in ipairs(viz_info.key_fld) do
+			jinfo[i] = {name = keyname, desc = viz_info.key_desc[i], is_key = true}
+		end
+		jinfo[3] = {name = viz_info.value_fld, desc = viz_info.value_desc, is_key = false}
+
+		local res = {ts = sysdig.make_ts(ts_s, ts_ns), data = jdata, info = jinfo}
+
+		local str = json.encode(res, { indent = true })
+		print(str)
+	else
+		-- Same size to extend each string
+		local EXTEND_STRING_SIZE = 20
+		local header = extend_string(viz_info.value_desc, EXTEND_STRING_SIZE)
+
+		for i, fldname in ipairs(viz_info.key_desc) do
+			header = header .. extend_string(fldname, EXTEND_STRING_SIZE)
+		end
+
+		local padding = "                                                                  "
+
+		print(padding .. "                 ----------------------------------------")
+		print(padding .. "                 |   aggregate over last " .. math.floor(0.5 + timedelta / 1000000000) .. " second(s).   |")
+		print(padding .. "                 ----------------------------------------")
+		print()
+		print(padding .. header)
+		print(padding .. "--------------------------------------------------------------------------------")
+
+		for k,v in sorted_grtable do
+			local keystr = ""
+
+			local singlekeys = split(k, "\001\001")
+
+			for i, singlekey in ipairs(singlekeys) do
+				if i < #singlekeys then
+					keystr = keystr .. extend_string(string.sub(singlekey, 0, EXTEND_STRING_SIZE), EXTEND_STRING_SIZE)
+				else
+					keystr = keystr .. singlekey
+				end
+			end
+
+			if viz_info.value_units == "none" then
+				print(padding .. extend_string(tostring(v), EXTEND_STRING_SIZE) .. keystr)
+			elseif viz_info.value_units == "bytes" then
+				print(padding .. extend_string(format_bytes(v), EXTEND_STRING_SIZE) .. keystr)
+			elseif viz_info.value_units == "time" then
+				print(padding .. extend_string(format_time_interval(v), EXTEND_STRING_SIZE) .. keystr)
+			elseif viz_info.value_units == "timepct" then
+				if timedelta > 0 then
+					pctstr = string.format("%.2f%%", v / timedelta * 100)
+				else
+					pctstr = "0.00%"
+				end
+
+				print(padding .. extend_string(pctstr, EXTEND_STRING_SIZE) .. keystr)
+			end
+		end
+	end
+end
+
 -- Periodic timeout callback
 function on_interval(ts_s, ts_ns, delta)
-	chisel.set_interval_s(5)
+	chisel.set_interval_s(3)
 	if vizinfo.output_format ~= "json" then
 		terminal.clearscreen()
 		terminal.moveto(0, 0)
 	end
 
-	-- print_sorted_table(grtable, ts_s, 0, delta, vizinfo)
-	print_sorted_table(grtable, ts_s, 0, 5, vizinfo) -- print aggregate instead
+	print_sorted_table(grtable, ts_s, 0, delta, vizinfo)
 
 	-- Clear the table
 	grtable = {}
