@@ -18,6 +18,7 @@ configs=(
     .xprofile
     .bashrc
     .bash_profile
+    .chisels
     scripts
 )
 

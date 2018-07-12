@@ -23,7 +23,7 @@
   (setq-default c-basic-offset tab-width)
 
   :config
-  (set! :electric '(c-mode c++-mode objc-mode java-mode)
+  (set-electric! '(c-mode c++-mode objc-mode java-mode)
     :chars '(?{ ?\n ?}))
 
   (defun +amos-append-comment-line ()
@@ -219,8 +219,7 @@ The insertion will be repeated COUNT times."
   (("/CMakeLists\\.txt\\'" . cmake-mode)
    ("\\.cmake\\'" . cmake-mode)))
 
-(set!
-  :rotate 'c++-mode
+(set-rotate-patterns! 'c++-mode
   :symbols '(("public" "protected" "private")
              ("class" "struct")))
 
@@ -351,8 +350,7 @@ The insertion will be repeated COUNT times."
 ;;                                           ;;   (flycheck-buffer))
 ;;                                           )))
 
-(set!
-  :lookup '(c-mode c++-mode)
+(set-lookup-handlers! '(c-mode c++-mode)
   :definition #'xref-find-definitions
   :references #'xref-find-references
   :documentation #'counsel-dash-at-point)

@@ -1,3 +1,4 @@
+stty -ixon
 set fish_color_command --bold
 set fish_greeting
 set FISH_CLIPBOARD_CMD cat

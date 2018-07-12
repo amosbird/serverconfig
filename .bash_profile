@@ -5,6 +5,8 @@ if [ -f ~/.bashrc ]; then
     . ~/.bashrc
 fi
 
+stty -ixon
+
 # User specific environment and startup programs
 
 export LD_RUN_PATH=/usr/local/lib64:/usr/local/lib

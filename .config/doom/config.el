@@ -172,6 +172,7 @@
 (setq recenter-redisplay nil)
 (remove-hook! 'kill-emacs-query-functions #'doom-quit-p)
 (remove-hook! 'doom-post-init-hook #'blink-cursor-mode)
+(remove-hook! 'doom-real-buffer-functions #'doom-dired-buffer-p)
 ;; (remove-hook! 'doom-init-ui-hook #'show-paren-mode)
 (add-hook! 'doom-post-init-hook
   (realign-mode)
