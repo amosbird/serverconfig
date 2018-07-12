@@ -178,6 +178,15 @@ function on_event()
 	return true
 end
 
+local tsize = require "tsize"
+
+local r, c = tsize.tsize()
+c = (c - 40) / 2 - 12
+local padding = string.rep(" ", c)
+local function print_c(s)
+	print(padding .. s)
+end
+
 local function print_sorted_table(stable, ts_s, ts_ns, timedelta, viz_info)
 	local sorted_grtable = pairs_top_by_val(stable, viz_info.top_number, function(t,a,b) return t[b] < t[a] end)
 
@@ -205,21 +214,19 @@ local function print_sorted_table(stable, ts_s, ts_ns, timedelta, viz_info)
 		print(str)
 	else
 		-- Same size to extend each string
-		local EXTEND_STRING_SIZE = 20
+		local EXTEND_STRING_SIZE = 12
 		local header = extend_string(viz_info.value_desc, EXTEND_STRING_SIZE)
 
 		for i, fldname in ipairs(viz_info.key_desc) do
 			header = header .. extend_string(fldname, EXTEND_STRING_SIZE)
 		end
 
-		local padding = "                                                                  "
-
-		print(padding .. "                 ----------------------------------------")
-		print(padding .. "                 |   aggregate over last " .. math.floor(0.5 + timedelta / 1000000000) .. " second(s).   |")
-		print(padding .. "                 ----------------------------------------")
+		print_c("            ----------------------------------------")
+		print_c("            |   aggregate over last " .. math.floor(0.5 + timedelta / 1000000000) .. " second(s).   |")
+		print_c("            ----------------------------------------")
 		print()
-		print(padding .. header)
-		print(padding .. "--------------------------------------------------------------------------------")
+		print_c(header)
+		print_c("--------------------------------------------------------------------------------")
 
 		for k,v in sorted_grtable do
 			local keystr = ""
@@ -235,11 +242,11 @@ local function print_sorted_table(stable, ts_s, ts_ns, timedelta, viz_info)
 			end
 
 			if viz_info.value_units == "none" then
-				print(padding .. extend_string(tostring(v), EXTEND_STRING_SIZE) .. keystr)
+				print_c(extend_string(tostring(v), EXTEND_STRING_SIZE) .. keystr)
 			elseif viz_info.value_units == "bytes" then
-				print(padding .. extend_string(format_bytes(v), EXTEND_STRING_SIZE) .. keystr)
+				print_c(extend_string(format_bytes(v), EXTEND_STRING_SIZE) .. keystr)
 			elseif viz_info.value_units == "time" then
-				print(padding .. extend_string(format_time_interval(v), EXTEND_STRING_SIZE) .. keystr)
+				print_c(extend_string(format_time_interval(v), EXTEND_STRING_SIZE) .. keystr)
 			elseif viz_info.value_units == "timepct" then
 				if timedelta > 0 then
 					pctstr = string.format("%.2f%%", v / timedelta * 100)
@@ -247,7 +254,7 @@ local function print_sorted_table(stable, ts_s, ts_ns, timedelta, viz_info)
 					pctstr = "0.00%"
 				end
 
-				print(padding .. extend_string(pctstr, EXTEND_STRING_SIZE) .. keystr)
+				print_c(extend_string(pctstr, EXTEND_STRING_SIZE) .. keystr)
 			end
 		end
 	end

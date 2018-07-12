@@ -180,7 +180,8 @@
 
  (:prefix "SPC"
    ;; :desc "Toggle mc"                       :nv "SPC" (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
-   :desc "Toggle mc"                       :nv "SPC" #'+amos/dired-jump
+   ;; :desc "Toggle mc"                       :nv "SPC" #'+amos/dired-jump
+   :desc "Toggle mc"                       :nv "SPC" #'counsel-find-file
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
    :desc "Find file in project (no cache)" :nv ">"   (lambda! (projectile-invalidate-cache nil) (projectile-find-file))
    :desc "Find recent file"                :nv ","   #'counsel-recentf
@@ -244,11 +245,7 @@
      :desc "Browse mode notes"             :nv "m" #'+org/browse-notes-for-major-mode
      :desc "Browse project notes"          :nv "p" #'+org/browse-notes-for-project)
 
-   (:desc "open" :prefix "o"
-     :desc "Default browser"               :nv "b" #'browse-url-of-file
-     :desc "Dired"                         :nv "d" #'+amos/dired-jump
-     :desc "APP: email"                    :nv "m" #'=email
-     :desc "APP: regex"                    :nv "X" #'=regex)
+   :desc "Dired"                           :nv "o" #'+amos/dired-jump
 
    (:desc "quit" :prefix "q"
      :desc "Quit"                          :nv "q" #'+amos/prompt-kill-emacs)
@@ -348,7 +345,7 @@
    "C-o" nil
    "C-i" nil
    :n "q"   #'quit-window
-   :n "SPC SPC" #'quit-window
+   :n "SPC o" #'quit-window
    :n "M-o" #'quit-window
    :n "C-f" #'dired-omit-mode
    :n "C-i" #'peep-dired-toggle
