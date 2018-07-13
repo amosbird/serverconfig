@@ -2895,6 +2895,23 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   (evil-refresh-cursor)
   (realign-windows))
 
+(defun find-file--line-number (orig-fun filename &optional wildcards)
+  "Turn files like file.cpp:14 into file.cpp and going to the 14-th line."
+  (save-match-data
+    (let* ((matched (string-match "^\\(.*\\):\\([0-9]+\\):?$" filename))
+           (line-number (and matched
+                             (match-string 2 filename)
+                             (string-to-number (match-string 2 filename))))
+           (filename (if matched (match-string 1 filename) filename)))
+      (apply orig-fun (list filename wildcards))
+      (when line-number
+        ;; goto-line is for interactive use
+        (goto-char (point-min))
+        (forward-line (1- line-number))
+        (+amos/recenter)))))
+
+(advice-add 'find-file :around #'find-file--line-number)
+
 (mapc #'evil-declare-change-repeat
       '(company-complete-mouse
         ;; +amos/maybe-add-end-of-statement

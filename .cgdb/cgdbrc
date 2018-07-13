@@ -18,6 +18,7 @@ map n :next<CR>
 map N :N<CR>
 map s :step<CR>
 map S :S<CR>
+map <C-f> :switch<CR>
 map <C-r> :refresh<CR>
 map <C-o> :up<CR>
 map <C-i> :down<CR>
