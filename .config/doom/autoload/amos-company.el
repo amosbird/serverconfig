@@ -33,8 +33,9 @@
 (defvar amos-company-files--regexps
   (let* ((root (if (eq system-type 'windows-nt)
                    "[a-zA-Z]:/"
-                 "/"))
+                 "."))
          (begin (concat "\\(?:\\.\\{1,2\\}/\\|~/\\|" root "\\)")))
+         ;; (begin ""))
     (list (concat "\"\\(" begin "[^\"\n]*\\)")
           (concat "\'\\(" begin "[^\'\n]*\\)")
           (concat "\\(?:[ \t=]\\|^\\)\\(" begin "[^ \t\n]*\\)"))))
@@ -45,12 +46,22 @@
   (let (file dir)
     (and (cl-dolist (regexp amos-company-files--regexps)
            (when (setq file (company-grab-line regexp 1))
+             (unless (or (string-prefix-p "./" file)
+                         (string-prefix-p "../" file)
+                         (string-prefix-p "/" file))
+               (setq file (list file)))
              (cl-return file)))
-         (amos-company-files--connected-p file)
-         (setq dir (file-name-directory file))
-         (not (string-match "//" dir))
-         (file-exists-p dir)
-         file)))
+         (if (listp file)
+             (and
+              (setq dir (file-name-directory (concat "./" (car file))))
+              (file-exists-p dir)
+              file)
+           (and
+            (amos-company-files--connected-p file)
+            (setq dir (file-name-directory file))
+            (not (string-match "//" dir))
+            (file-exists-p dir)
+            file)))))
 
 (defun amos-company-files--connected-p (file)
   (or (not (file-remote-p file))
@@ -65,7 +76,12 @@
 (defvar amos-company-files--completion-cache nil)
 
 (defun amos-company-files--complete (prefix)
-  (let* ((dir (file-name-directory prefix))
+  (let* ((relative
+          (not (or (string-prefix-p "./" prefix)
+                      (string-prefix-p "../" prefix)
+                      (string-prefix-p "/" prefix))))
+         (dir (if relative (file-name-directory (concat "./" prefix))
+                (file-name-directory prefix)))
          (file (file-name-nondirectory prefix))
          (key (list file
                     (expand-file-name dir)
@@ -75,7 +91,7 @@
       (let* ((candidates (mapcar (lambda (f) (concat dir f))
                                  (amos-company-files--directory-files dir file))))
         (setq amos-company-files--completion-cache (cons key candidates))))
-    (all-completions prefix
+    (all-completions (if relative (concat "./" prefix) prefix)
                      (cdr amos-company-files--completion-cache))))
 
 (defun amos-company-file--keys-match-p (new old)
