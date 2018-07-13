@@ -13,13 +13,13 @@
                                       (xref-backend-identifier-completion-table backend)
                                       nil nil nil
                                       'xref--read-identifier-history nil))))
- "<f12>"         (lambda! (evil-refresh-cursor) (realign-windows))
- "<f11>"         (lambda! (message (format "idx = %d, size = %d" (evil-jumps-struct-idx (evil--jumps-get-current)) (ring-length (evil--jumps-get-window-jump-list)))))
+ "<f12>"         #'+amos/reset-cursor
+ "<f11>"         #'+amos/dump-evil-jump-list
  "M-x"           #'execute-extended-command
- "<f1>"          (lambda! (text-scale-set 0))
- "<f2>"          (lambda! (text-scale-increase 0.5))
- "<f3>"          (lambda! (text-scale-decrease 0.5))
- "S-<insert>"    (lambda! (insert-for-yank (gui-get-primary-selection)))
+ "<f1>"          #'+amos/reset-zoom
+ "<f2>"          #'+amos/increase-zoom
+ "<f3>"          #'+amos/decrease-zoom
+ "S-<insert>"    #'+amos/paste-from-gui
  "M-1"           #'+amos/workspace-switch-to-1
  "M-2"           #'+amos/workspace-switch-to-2
  "M-3"           #'+amos/workspace-switch-to-3
@@ -37,14 +37,14 @@
  "C-<period>"    #'+amos/workspace-switch-right)
 
 (map!
- :gn "M-W"                   (lambda! (+amos/close-current-buffer t t)) ;; wipe and kill
- :gn "M-w"                   (lambda! (+amos/close-current-buffer t)) ;; wipe
+ :gn "M-W"                   #'+amos/kill-current-buffer
+ :gn "M-w"                   #'+amos/wipe-current-buffer
  :gn "C-w"                   #'+amos/close-current-buffer ;; bury
- :gniv "M-m"                 (lambda! (switch-to-buffer (other-buffer)))
+ :gniv "M-m"                 #'+amos/switch-buffer
  :n "%"                      #'anzu-multiedit
  :n "R"                      #'evil-multiedit-match-all
  :nv "G"                     #'+amos/evil-goto-line
- :n "M-RET"                  (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
+ :n "M-RET"                  #'+amos/toggle-mc
  :i "M-RET"                  #'+amos/close-block
  :n "M-a"                    #'+amos/mark-whole-buffer
  :n "M-g"                    #'+amos/counsel-jumpdir-function
@@ -61,15 +61,15 @@
  :m "E"                      #'+amos/evil-forward-subword-end
  :m "B"                      #'+amos/evil-backward-subword-begin
  :ni "M-b"                   #'+amos/backward-word-insert
- :ni "M-B"                   (lambda! (+amos/backward-word-insert t))
+ :ni "M-B"                   #'+amos/backward-subword-insert
  :ni "M-f"                   #'+amos/forward-word-insert
- :ni "M-F"                   (lambda! (+amos/forward-word-insert t))
+ :ni "M-F"                   #'+amos/forward-subword-insert
  :ni "M-d"                   #'+amos/forward-delete-word
- :ni "M-D"                   (lambda! (+amos/forward-delete-word t))
+ :ni "M-D"                   #'+amos/forward-delete-subword
  :ni [M-backspace]           #'+amos/backward-delete-word
  :ni [134217855]             #'+amos/backward-delete-word ; M-DEL
- :ni "S-<f7>"                (lambda! (+amos/backward-delete-word t))
- :ni "M-S-<backspace>"       (lambda! (+amos/backward-delete-word t))
+ :ni "S-<f7>"                #'+amos/backward-delete-subword
+ :ni "M-S-<backspace>"       #'+amos/backward-delete-subword
  :i "DEL"                    #'+amos/backward-delete-char
  :i "C-w"                    #'+amos/backward-delete-word
  :i "M-r"                    #'sp-slurp-hybrid-sexp
@@ -97,9 +97,9 @@
  :i "M-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
  :i "C-a"                    #'evil-beginning-of-line
  :n "C-a"                    #'evil-numbers/inc-at-pt
- :n "M-s"                    (lambda! () (evil-ex "s/"))
- :n "M-S"                    (lambda! () (evil-ex "%s/"))
- :v "M-s"                    (lambda! () (evil-ex "'<,'>s/"))
+ :n "M-s"                    #'+amos/line-substitute
+ :n "M-S"                    #'+amos/all-substitute
+ :v "M-s"                    #'+amos/region-substitute
  :v "C-a"                    #'+amos/ca
  :v "g C-a"                  #'+amos/gca
  :i [remap newline]          #'newline-and-indent
@@ -116,7 +116,7 @@
  :n "C-k"                    #'move-text-up
  :n "C-SPC"                  #'+amos/other-window
  :i "C-SPC"                  #'+amos/complete
- :i "C-s"                    (lambda! (+amos/complete) (company-filter-candidates))
+ :i "C-s"                    #'+amos/complete-filter
  :i "C-j"                    #'company-dabbrev-code
  :v "R"                      #'evil-multiedit-match-all
  :n "!"                      #'rotate-text
@@ -179,13 +179,13 @@
    "C-SPC" #'easy-hugo)
 
  (:prefix "SPC"
-   ;; :desc "Toggle mc"                       :nv "SPC" (lambda! (evil-mc-make-cursor-here) (evil-mc-pause-cursors))
+   :desc "Toggle mc"                       :nv "m"   #'+amos/toggle-mc
    ;; :desc "Toggle mc"                       :nv "SPC" #'+amos/dired-jump
    :desc "Toggle mc"                       :nv "SPC" #'counsel-find-file
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
-   :desc "Find file in project (no cache)" :nv ">"   (lambda! (projectile-invalidate-cache nil) (projectile-find-file))
+   :desc "Find file in project (no cache)" :nv ">"   #'+amos/projectile-find-file-no-cache
    :desc "Find recent file"                :nv ","   #'counsel-recentf
-   :desc "Find recent file (no cache)"     :nv "<"   (lambda! (recentf-cleanup) (counsel-recentf))
+   :desc "Find recent file (no cache)"     :nv "<"   #'+amos/counsel-recentf-no-cache
    :desc "Shell command"                   :nv "e"   #'shell-command
    :desc "Blink cursor line"               :nv "DEL" #'doom/open-scratch-buffer
    :desc "Elisp command"                   :nv "RET" #'eval-expression
@@ -430,16 +430,16 @@
    "C-u"    #'+amos/backward-kill-to-bol-and-indent
    "C-w"    #'ivy-yank-word
    "C-y"    (lambda! (let ((kill-ring my-kill-ring)) (yank)))
-   "M-B"    (lambda! (+amos/backward-word-insert t))
-   "M-D"    (lambda! (+amos/forward-delete-word t))
-   "M-F"    (lambda! (+amos/forward-word-insert t))
+   "M-y"    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
    "M-b"    #'+amos/backward-word-insert
    "M-d"    #'+amos/forward-delete-word
    "M-f"    #'+amos/forward-word-insert
+   "M-B"    #'+amos/backward-subword-insert
+   "M-D"    #'+amos/forward-delete-subword
+   "M-F"    #'+amos/forward-subword-insert
    "M-g"    #'+amos/ivy-complete-dir
    "M-j"    #'ivy-immediate-done
    "M-r"    #'ivy-toggle-fuzzy
-   "M-y"    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
    "M-z"    #'undo
    "TAB"    #'ivy-call
    [escape] #'keyboard-escape-quit
@@ -626,11 +626,11 @@
    "C-r"         #'evil-paste-from-register
    "C-a"         #'move-beginning-of-line
    "M-b"         #'+amos/backward-word-insert
-   "M-B"         (lambda! (+amos/backward-word-insert t))
-   "M-f"         #'+amos/forward-word-insert
-   "M-F"         (lambda! (+amos/forward-word-insert t))
    "M-d"         #'+amos/forward-delete-word
-   "M-D"         (lambda! (+amos/forward-delete-word t))
+   "M-f"         #'+amos/forward-word-insert
+   "M-B"         #'+amos/backward-subword-insert
+   "M-D"         #'+amos/forward-delete-subword
+   "M-F"         #'+amos/forward-subword-insert
    "DEL"         #'+amos/backward-delete-char
    [M-backspace] #'+amos/backward-delete-word
    [134217855]   #'+amos/backward-delete-word ; M-DEL

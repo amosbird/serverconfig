@@ -91,8 +91,12 @@
 (after! evil-mc
   (nconc evil-mc-known-commands
          '((+amos/forward-delete-word . ((:default . evil-mc-execute-default-call)))
+           (evil-repeat . ((:default . evil-mc-execute-default-call)))
            (+amos/smart-eol-insert . ((:default . evil-mc-execute-default-call)))
+           (+amos/forward-delete-word . ((:default . evil-mc-execute-default-call)))
            (+amos/backward-delete-word . ((:default . evil-mc-execute-default-call)))
+           (+amos/forward-delete-subword . ((:default . evil-mc-execute-default-call)))
+           (+amos/backward-delete-subword . ((:default . evil-mc-execute-default-call)))
            (+amos/delete-char . ((:default . evil-mc-execute-default-call)))
            (+amos/backward-delete-char . ((:default . evil-mc-execute-default-call)))
            (+amos/kill-line . ((:default . evil-mc-execute-default-call)))
@@ -100,6 +104,8 @@
            (+amos/replace-last-sexp . ((:default . evil-mc-execute-default-call)))
            (+amos/backward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
            (+amos/forward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+           (+amos/backward-subword-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+           (+amos/forward-subword-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
            (+amos/evil-backward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
            (+amos/evil-forward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
            (+amos/evil-forward-subword-end . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))))
@@ -161,7 +167,7 @@
 (def-package! realign-mode
   :commands realign-mode realign-windows
   :config
-  (add-hook! 'realign-hooks #'recenter)
+  ;; (add-hook! 'realign-hooks #'recenter)
   (defun amos-special-window-p (window)
     (let* ((buffer (window-buffer window))
            (buffname (string-trim (buffer-name buffer))))
@@ -649,17 +655,6 @@ using a visual block/rectangle selection."
 (after! evil-surround
   (setq-default evil-surround-pairs-alist (append '((?` . ("`" . "`")) (?~ . ("~" . "~"))) evil-surround-pairs-alist)))
 
-(defun +amos/counsel-projectile-switch-project ()
-  (interactive)
-  (require 'counsel-projectile)
-  (ivy-read (projectile-prepend-project-name "Switch to project: ")
-            projectile-known-projects
-            :preselect (and (projectile-project-p)
-                            (abbreviate-file-name (projectile-project-root)))
-            :action #'+amos/find-file
-            :require-match t
-            :caller #'+amos/counsel-projectile-switch-project))
-
 (def-package! gitattributes-mode
   :defer t)
 
@@ -680,31 +675,6 @@ using a visual block/rectangle selection."
 
 (def-package! adoc-mode
   :mode "\\.adoc$")
-
-(defun +amos/toggle-window-split ()
-  (interactive)
-  (if (= (count-windows) 2)
-      (let* ((this-win-buffer (window-buffer))
-             (next-win-buffer (window-buffer (next-window)))
-             (this-win-edges (window-edges (selected-window)))
-             (next-win-edges (window-edges (next-window)))
-             (this-win-2nd (not (and (<= (car this-win-edges)
-                                         (car next-win-edges))
-                                     (<= (cadr this-win-edges)
-                                         (cadr next-win-edges)))))
-             (splitter
-              (if (= (car this-win-edges)
-                     (car (window-edges (next-window))))
-                  'split-window-horizontally
-                'split-window-vertically)))
-        (delete-other-windows)
-        (let ((first-win (selected-window)))
-          (funcall splitter)
-          (if this-win-2nd (other-window 1))
-          (set-window-buffer (selected-window) this-win-buffer)
-          (set-window-buffer (next-window) next-win-buffer)
-          (select-window first-win)
-          (if this-win-2nd (other-window 1))))))
 
 (defun +amos*ivy-rich-switch-buffer-pad (str len &optional left)
   "Improved version of `ivy-rich-switch-buffer-pad' that truncates long inputs."
@@ -734,6 +704,17 @@ using a visual block/rectangle selection."
         (with-current-buffer b  ; go back to the current buffer, before-save-hook is now buffer-local
           (let ((before-save-hook (remove 'delete-trailing-whitespace before-save-hook)))
             (save-buffer)))))))
+
+(defun +amos/counsel-projectile-switch-project ()
+  (interactive)
+  (require 'counsel-projectile)
+  (ivy-read (projectile-prepend-project-name "Switch to project: ")
+            projectile-known-projects
+            :preselect (and (projectile-project-p)
+                            (abbreviate-file-name (projectile-project-root)))
+            :action #'+amos/find-file
+            :require-match t
+            :caller #'+amos/counsel-projectile-switch-project))
 
 (defun +amos/projectile-current-project-files ()
   "Return a list of files for the current project."
@@ -934,22 +915,19 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     ("E" kurecolor-increase-hue-by-step)
     ("q" nil "cancel" :color blue)))
 
-(defun ab-char-inc ()
-  (interactive)
+(evil-define-command ab-char-inc ()
   (save-excursion
     (let ((chr  (1+ (char-after))))
       (unless (characterp chr) (error "Cannot increment char by one"))
       (delete-char 1)
       (insert chr))))
 
-(defun +amos/replace-last-sexp ()
-  (interactive)
+(evil-define-command +amos/replace-last-sexp ()
   (let ((value (eval (preceding-sexp))))
     (kill-sexp -1)
     (insert (format "%S" value))))
 
-(defun +amos/replace-defun ()
-  (interactive)
+(evil-define-command +amos/replace-defun ()
   (narrow-to-defun)
   (goto-char (point-max))
   (let ((value (eval (preceding-sexp))))
@@ -958,8 +936,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (widen)
   (backward-char))
 
-(defun +amos/new-empty-elisp-buffer ()
-  (interactive)
+(evil-define-command +amos/new-empty-elisp-buffer ()
   (let ((buf (generate-new-buffer "*new*")))
     (+amos/workspace-new)
     (switch-to-buffer buf)
@@ -970,8 +947,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     (setq buffer-offer-save nil)
     buf))
 
-(defun +amos/ivy-complete-dir ()
-  (interactive)
+(evil-define-command +amos/ivy-complete-dir ()
   (let ((enable-recursive-minibuffers t)
         (history (+amos--get-all-jump-dirs))
         (old-last ivy-last)
@@ -985,14 +961,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                         (delete-minibuffer-contents)
                         (insert (substring-no-properties x))
                         (ivy--cd-maybe)))))
-
-(defun +amos/smart-jumper-backward ()
-  (interactive)
-  (+amos/smart-jumper t))
-
-(defun +amos/smart-jumper-forward ()
-  (interactive)
-  (+amos/smart-jumper))
 
 (defun +amos/smart-jumper (&optional f)
   (unless (or (eq last-command '+amos/smart-jumper-backward)
@@ -1022,8 +990,13 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
       (if delim (goto-char delim)))
     (if (< 0 dir) (backward-char))))
 
-(defun +amos/complete ()
-  (interactive)
+(evil-define-command +amos/smart-jumper-backward ()
+  (+amos/smart-jumper t))
+
+(evil-define-command +amos/smart-jumper-forward ()
+  (+amos/smart-jumper))
+
+(evil-define-command +amos/complete ()
   (require 'thingatpt)
   (require 'company)
   (if (/= (point)
@@ -1033,6 +1006,10 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
             (point)))
       (save-excursion (insert " "))))
 
+(evil-define-command +amos/complete-filter ()
+  (+amos/complete)
+  (company-filter-candidates))
+
 (defvar my-kill-ring nil)
 (defmacro mkr! (&rest body)
   `(let (interprogram-cut-function
@@ -1040,16 +1017,13 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
      ,@body
      (setq my-kill-ring kill-ring)))
 
-(defun +amos/delete-char()
-  (interactive)
+(evil-define-command +amos/delete-char()
   (mkr! (delete-char 1 1)))
 
-(defun +amos/backward-delete-char()
-  (interactive)
+(evil-define-command +amos/backward-delete-char()
   (mkr! (backward-delete-char-untabify 1 1)))
 
-(defun +amos/kill-line ()
-  (interactive)
+(evil-define-command +amos/kill-line ()
   (mkr! (kill-region (point) (point-at-eol))))
 
 (evil-define-command +amos/backward-kill-to-bol-and-indent ()
@@ -1069,17 +1043,18 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
       (evil-multiedit-insert-state)
     (evil-insert-state)))
 
-(defmacro +amos-subword-move! (command)
-  `(evil-define-command ,(intern (concat "+amos/" (s-replace "word" "subword" (symbol-name command)))) (&rest args)
+(defmacro +amos-subword-move! (type command)
+  `(evil-define-motion ,(intern (concat "+amos/" (s-replace "word" "subword" (symbol-name command)))) (count &optional bigword)
+     :type ,type
      (subword-mode +1)
-     (,command args)
+     (,command count bigword)
      (subword-mode -1)))
 
-(+amos-subword-move! evil-forward-word-end)
-(+amos-subword-move! evil-forward-word-begin)
-(+amos-subword-move! evil-backward-word-begin)
+(+amos-subword-move! inclusive evil-forward-word-end)
+(+amos-subword-move! exclusive evil-forward-word-begin)
+(+amos-subword-move! exclusive evil-backward-word-begin)
 
-(evil-define-command +amos/forward-delete-word (&optional subword);
+(evil-define-command +amos/forward-delete-word (&optional subword)
   (evil-signal-at-bob-or-eob 1)
   (unless (+amos-insert-state-p)
     (+amos-insert-state))
@@ -1095,6 +1070,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                         (point))
                       (line-beginning-position))))
   (if subword (subword-mode -1)))
+(evil-define-command +amos/forward-delete-subword ()
+  (+amos/forward-delete-word t))
 
 (evil-define-command +amos/backward-delete-word (&optional subword)
   (evil-signal-at-bob-or-eob -1)
@@ -1113,6 +1090,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                         (point))
                       (line-end-position))))
   (if subword (subword-mode -1)))
+(evil-define-command +amos/backward-delete-subword ()
+  ( +amos/backward-delete-word t))
 
 (evil-define-command +amos/backward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob -1)
@@ -1126,6 +1105,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
         (forward-char))
     (forward-thing 'evil-word -1))
   (if subword (subword-mode -1)))
+(evil-define-command +amos/backward-subword-insert ()
+  (+amos/backward-word-insert t))
 
 (evil-define-command +amos/forward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob 1)
@@ -1138,6 +1119,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
         (backward-char))
     (forward-thing 'evil-word 1))
   (if subword (subword-mode -1)))
+(evil-define-command +amos/forward-subword-insert ()
+  (+amos/forward-word-insert t))
 
 (defun +amos*subword-backward-internal ()
   (if superword-mode
@@ -1257,6 +1240,7 @@ it will restore the window configuration to prior to full-framing."
     (zygospore-delete-other-window)))
 
 (defun save-buffer-maybe ()
+  (interactive)
   (when (and (buffer-file-name)
              (not defining-kbd-macro)
              (buffer-modified-p))
@@ -2847,3 +2831,172 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (window-resize win 20 t))))
 
 (def-package! color-moccur)
+
+(defun +amos/toggle-mc ()
+  (interactive)
+  (evil-mc-make-cursor-here)
+  (evil-mc-pause-cursors))
+
+(defun +amos/wipe-current-buffer ()
+  (interactive)
+  (+amos/close-current-buffer t) ;; wipe
+  )
+
+(defun +amos/kill-current-buffer ()
+  (interactive)
+  (+amos/close-current-buffer t t) ;; wipe and kill
+  )
+
+(defun +amos/switch-buffer ()
+  (interactive)
+  (switch-to-buffer (other-buffer)))
+
+(defmacro +amos-evil-ex! (name command)
+  `(evil-define-command ,(intern (concat "+amos/" (symbol-name name))) ()
+     (evil-ex ,command)))
+(+amos-evil-ex! line-substitute "s/")
+(+amos-evil-ex! all-substitute "%s/")
+(+amos-evil-ex! region-substitute "'<,'>s/")
+
+(defun +amos/projectile-find-file-no-cache ()
+  (interactive)
+  (projectile-invalidate-cache nil)
+  (projectile-find-file))
+
+(defun +amos/counsel-recentf-no-cache ()
+  (interactive)
+  (recentf-cleanup)
+  (counsel-recentf))
+
+(defun +amos/reset-zoom ()
+  (interactive)
+  (text-scale-set 0))
+
+(defun +amos/increase-zoom ()
+  (interactive)
+  (text-scale-increase 0.5))
+
+(defun +amos/decrease-zoom ()
+  (interactive)
+  (text-scale-decrease 0.0))
+
+(defun +amos/paste-from-gui ()
+  (interactive)
+  (insert-for-yank (gui-get-primary-selection)))
+
+(defun +amos/dump-evil-jump-list ()
+  (interactive)
+  (message (format "idx = %d, size = %d"
+                   (evil-jumps-struct-idx (evil--jumps-get-current))
+                   (ring-length (evil--jumps-get-window-jump-list)))))
+
+(defun +amos/reset-cursor ()
+  (interactive)
+  (evil-refresh-cursor)
+  (realign-windows))
+
+(mapc #'evil-declare-change-repeat
+      '(company-complete-mouse
+        ;; +amos/maybe-add-end-of-statement
+        +amos/company-abort
+        amos-company-files
+        company-complete-selection
+        company-complete-common))
+
+(mapc #'evil-declare-ignore-repeat
+      '(
+        +amos/align-repeat-left
+        +amos/align-repeat-right
+        +amos/all-substitute
+        +amos/avy-goto-char-timer
+        +amos/counsel-projectile-switch-project
+        +amos/counsel-recentf-no-cache
+        +amos/counsel-rg-cur-dir
+        +amos/decrease-zoom
+        +amos/dired-jump
+        +amos/direnv-reload
+        +amos/dump-evil-jump-list
+        +amos/increase-zoom
+        +amos/kill-current-buffer
+        +amos/line-substitute
+        +amos/lsp-ui-imenu
+        +amos/maybe-add-end-of-statement
+        +amos/other-window
+        +amos/paste-from-gui
+        +amos/projectile-find-file-no-cache
+        +amos/projectile-find-other-file
+        +amos/redisplay-and-recenter
+        +amos/region-substitute
+        +amos/rename-current-buffer-file
+        +amos/replace-defun
+        +amos/replace-last-sexp
+        +amos/reset-cursor
+        +amos/reset-zoom
+        +amos/smart-jumper-backward
+        +amos/smart-jumper-forward
+        +amos/switch-buffer
+        +amos/tmux-detach
+        +amos/tmux-fork-window
+        +amos/tmux-source
+        +amos/toggle-mc
+        +amos/wipe-current-buffer
+        +amos/workspace-delete
+        +amos/workspace-new
+        +amos/workspace-switch-left
+        +amos/workspace-switch-right
+        +amos/workspace-switch-to-1
+        +amos/workspace-switch-to-2
+        +amos/workspace-switch-to-3
+        +amos/workspace-switch-to-4
+        +amos/workspace-switch-to-5
+        +amos/workspace-switch-to-6
+        +amos/workspace-switch-to-7
+        +amos/workspace-switch-to-8
+        +amos/workspace-switch-to-9
+        +amos/yank-buffer-filename
+        +amos/yank-buffer-filename-nondir
+        +amos/yank-buffer-filename-with-line-position
+        +eval/buffer
+        +eval/region-and-replace
+        +evil:delete-this-file
+        company-select-next-or-abort
+        company-select-previous
+        counsel-dash-at-point
+        counsel-find-file
+        counsel-grep-or-swiper
+        counsel-projectile-rg
+        counsel-recentf
+        direnv-edit
+        doom/sudo-this-file
+        doom/toggle-fullscreen
+        easy-hugo
+        editorconfig-find-current-editorconfig
+        eval-defun
+        evil-commentary-line
+        evil-multiedit-match-all
+        execute-extended-command
+        find-file
+        flycheck-mode
+        git-gutter:next-hunk
+        git-gutter:previous-hunk
+        git-gutter:revert-hunk
+        git-timemachine
+        highlight-indentation-current-column-mode
+        highlight-indentation-mode
+        ivy-resume
+        magit-blame
+        magit-status
+        pp-eval-last-sexp
+        rainbow-mode
+        rotate-text
+        save-buffer
+        save-buffer-maybe
+        switch-to-buffer
+        toggle-truncate-lines
+        undo-tree-redo
+        undo-tree-undo
+        vc-revert
+        whitespace-mode
+        yasdcv-translate-at-point
+        zygospore-toggle-delete-other-windows
+        ))

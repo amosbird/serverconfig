@@ -74,7 +74,7 @@
     (unless (amos-company-file--keys-match-p key (car amos-company-files--completion-cache))
       (let* ((candidates (mapcar (lambda (f) (concat dir f))
                                  (amos-company-files--directory-files dir file))))
-        (setq amos-company-files--completion-cache candidates)))
+        (setq amos-company-files--completion-cache (cons key candidates))))
     (all-completions prefix
                      (cdr amos-company-files--completion-cache))))
 
