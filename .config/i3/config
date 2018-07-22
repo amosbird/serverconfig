@@ -102,9 +102,6 @@ bindsym control+mod1+w workspace $ws8
 bindsym control+mod1+c workspace $ws0
 bindsym control+mod1+p workspace $wsp
 
-bindsym control+mod1+comma focus left
-bindsym control+mod1+period focus right
-
 #  bindsym mod1+space workspace back_and_forth
 
 bindsym control+mod1+Shift+f move container to workspace $ws1
@@ -168,6 +165,8 @@ assign [class="URxvt" title="ranger"] $ws7
 for_window [class="URxvt" title="ranger"] focus
 assign [ title="^pdfpc.*" window_role="presentation" ] $wsp
 
+for_window [class="xfreerdp"] floating disable
+
 # Floating
 for_window [class="Lxappearance"] floating enable
 for_window [class="dolphin"] floating enable
@@ -192,6 +191,7 @@ for_window [title="^998877665544332211"] move scratchpad
 # Focus
 for_window [instance="^urxvt_scratchpad"] move scratchpad
 for_window [instance="^stardict"] move scratchpad
+for_window [instance="^musicbox"] move scratchpad
 for_window [instance="^tldr"] move scratchpad
 for_window [instance="TelegramDesktop"] move scratchpad
 

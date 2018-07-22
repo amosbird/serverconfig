@@ -1,0 +1,28 @@
+#!/bin/bash
+# Based on http://tinyurl.com/jmze5lw with some additions
+# Dependencies: detox wmctrl
+
+# In your VM, share the root host location "/" in $DRIVE
+
+DRIVE="\\\\tsclient\\home"
+
+for FILE in "$@"
+do
+    # Set a converted file path
+    if echo "$FILE" | grep '^/' > /dev/null; then
+        TARGETPATH=$FILE
+    else
+        TARGETPATH=$PWD'/'$FILE
+    fi
+
+    if [[ $TARGETPATH == /home/amos/* ]]
+    then
+        TARGETPATH=${TARGETPATH#/home/amos}
+        WINPATH=$(printf "%s" "$(echo "$DRIVE""$TARGETPATH" | sed 's/\//\\/g')")
+        echo $WINPATH
+        winrmctrl.py $WINPATH
+    else
+        echo 'can only open files under /home/amos'
+        exit 1
+    fi
+done

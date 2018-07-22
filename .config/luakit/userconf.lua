@@ -1,4 +1,9 @@
 -- luacheck: read globals luakit
+
+
+local proxy = require "proxy"
+proxy.set_active()
+
 require "vertical_tabs"
 require "follow_selected"
 
@@ -170,6 +175,7 @@ local modes = require "modes"
 modes.add_binds({"normal","insert"},
    { { "<Control-space>", "Switch to other window.", function (_) luakit.spawn("i3-msg focus right") end } })
 
+modes.remove_binds({"normal", "insert"}, { "<Mod1-0>" })
 modes.add_binds("all", {
    { "<Escape>", function (w)
       if not w:is_mode("passthrough") then
@@ -181,7 +187,9 @@ modes.add_binds("all", {
          w:set_mode()
       end
       return not w:is_mode("passthrough")
-  end}
+  end},
+  { "<Mod1-0>", "Enter `passthrough` mode, ignores all luakit keybindings.",
+     function (w) w:set_mode("passthrough") end }
 })
 
 modes.add_binds("normal", {
@@ -215,8 +223,6 @@ modes.add_binds("normal", {
     { "J", "Go to next tab.", function (w) w:next_tab() end },
     { "K", "Go to previous tab.", function (w) w:prev_tab() end },
     { "D", "none.", function (_) end },
-    { "<Control-v>", "Enter `passthrough` mode, ignores all luakit keybindings.",
-        function (w) w:set_mode("passthrough") end },
     { "<Control-f>", "Open the next page in the current tab.",
         function (w) w.view:eval_js(go_next, { no_return = true }) end },
     { "<Control-b>", "Open the previous page in the current tab.",
@@ -267,8 +273,7 @@ modes.add_binds("insert", {
     { "<Mod1-BackSpace>", function (w) keysym.send(w, "<Control-BackSpace>") end },
 })
 
-modes.remap_binds("passthrough", {{ "<Control-v>", "<Escape>" }})
-modes.remove_binds({"normal", "insert"}, { "<Control-z>" })
+modes.remap_binds("passthrough", {{ "<Mod1-0>", "<Escape>" }})
 
 modes.add_binds("completion", {
     { "<Control-i>", "Select next matching completion item.",
@@ -286,7 +291,8 @@ modes.add_binds("command", {
 
 local select = require "select"
 select.label_maker = function (s)
-    return s.interleave("fdsrewvcxg", "jkluionmhb")
+   -- return s.charset("weruiosdfjlkghcvn")
+   return s.interleave("fdsrewvcxg", "jkluionmhb")
 end
 
 window.add_signal("init", function (w)

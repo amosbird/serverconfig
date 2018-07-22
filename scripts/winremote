@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+xfreerdp +aero +menu-anims +window-drag /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /microphone /sound /video /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amos /p:$(gpg -d ~/passwords/win.gpg) /v:172.26.172.81:3389

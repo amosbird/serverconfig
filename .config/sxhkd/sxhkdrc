@@ -68,11 +68,21 @@ control+F12
   /usr/bin/systemctl suspend
 control+F10
   /home/amos/scripts/dunstctl.sh; pkill -SIGRTMIN+11 i3blocks
+# control+alt+2
+#   /usr/bin/deadbeef --toggle-pause
+# control+alt+3
+#   /usr/bin/deadbeef --prev
+# control+alt+4
+#   /home/amos/scripts/dead
 control+alt+2
-  /usr/bin/deadbeef --toggle-pause
+  /home/amos/scripts/musicboxctrl.py c
 control+alt+3
-  /usr/bin/deadbeef --next
+  /home/amos/scripts/musicboxctrl.py n
 control+alt+4
-  /home/amos/scripts/dead
-control+Eisu_toggle
-  /home/amos/scripts/tun
+  /home/amos/scripts/showmusicbox.sh
+control+alt+comma
+  /home/amos/scripts/musicboxctrl.py ,
+control+alt+period
+  /home/amos/scripts/musicboxctrl.py .
+# control+Eisu_toggle
+#   /home/amos/scripts/tun

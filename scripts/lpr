@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+paps | /usr/bin/lpr "$@"

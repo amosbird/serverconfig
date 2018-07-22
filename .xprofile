@@ -15,7 +15,7 @@ xset b off
 compton -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 fcitx
-fish -c sxhkd &
+fish -c sxhkd > /home/amos/sxhkd.log &
 fish -c copyq &
 deadbeaf &
 # thunar --daemon &

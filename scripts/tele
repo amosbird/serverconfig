@@ -13,5 +13,5 @@ then
         i3-msg "[class = TelegramDesktop] move workspace $workspace"
     fi
 else
-    telegram-desktop
+    env FONTCONFIG_FILE=~/.config/tgfonts.conf telegram-desktop
 fi

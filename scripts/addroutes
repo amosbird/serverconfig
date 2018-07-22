@@ -6,7 +6,6 @@ ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
 gw=$(ip r g 223.5.5.5 | cut -d" " -f3)
 
-function cnroutes {
 ip -batch - <<EOF
     r a 1.0.1.0/24 via $gw table cn
     r a 1.0.2.0/23 via $gw table cn
@@ -4926,7 +4925,6 @@ ip -batch - <<EOF
     r a 223.255.236.0/22 via $gw table cn
     r a 223.255.252.0/23 via $gw table cn
 EOF
-}
 
 # extra non-cn routes
 
@@ -5016,7 +5014,6 @@ ip r a 23.20.92.3/32 via $gw table cn
 # azure
 ip r a 13.75.109.155/32 via $gw table cn
 
-#chroutes
 
 ip rule add table cn pref 30000
 
