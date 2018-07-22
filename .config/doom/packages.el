@@ -4,6 +4,7 @@
 (package! evil-matchit :disable t)
 (package! evil-numbers :disable t)
 (package! git-gutter-fringe :disable t)
+(package! magit-todos :disable t)
 (package! smerge-mode :disable t)
 (package! solaire-mode :disable t)
 (package! stripe-buffer :disable t)

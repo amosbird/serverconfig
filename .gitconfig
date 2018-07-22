@@ -3,3 +3,5 @@
 	email = amosbird@gmail.com
 [pull]
 	rebase = true
+[color]
+	ui = auto

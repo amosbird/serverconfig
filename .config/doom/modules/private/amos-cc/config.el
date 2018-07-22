@@ -290,6 +290,7 @@ The insertion will be repeated COUNT times."
             :action #'+amos/add-include))
 
 (add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1))
+(add-hook! 'c++-mode-hook #'modern-c++-font-lock-mode)
 
 ;; (def-package! cquery
 ;;   :after lsp-mode
@@ -315,6 +316,8 @@ The insertion will be repeated COUNT times."
   (setq
    ccls-project-root-matchers
    '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
+   ;; ccls-sem-highlight-method 'font-lock)
+   ;; ccls-sem-highlight-method 'overlay)
    ccls-sem-highlight-method nil)
   (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
   (defalias 'cquery-call-hierarchy           'ccls-call-hierarchy)

@@ -18,6 +18,7 @@ set opaque-type-resolution off
 set history filename ~/.gdb_history
 set history save on
 set history remove-duplicates 5000
+set auto-solib-add off
 
 # useful auto-redraw hooks
 

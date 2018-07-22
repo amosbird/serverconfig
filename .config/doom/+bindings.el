@@ -311,7 +311,7 @@
    "C-i"        #'company-complete-selection
    "C-j"        #'company-search-repeat-forward
    "C-k"        #'company-search-repeat-backward
-   "C-s"        (lambda! (company-search-abort) (company-filter-candidates))
+   "C-s"        (lambda! (company-complete-common) (company-filter-candidates))
    "SPC"        #'+amos/company-search-abort
    "("          #'+amos/company-search-abort
    ")"          #'+amos/company-search-abort

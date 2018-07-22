@@ -1091,7 +1091,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                       (line-end-position))))
   (if subword (subword-mode -1)))
 (evil-define-command +amos/backward-delete-subword ()
-  ( +amos/backward-delete-word t))
+  (+amos/backward-delete-word t))
 
 (evil-define-command +amos/backward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob -1)
@@ -1122,14 +1122,37 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (evil-define-command +amos/forward-subword-insert ()
   (+amos/forward-word-insert t))
 
+(defun +amos*subword-forward-internal ()
+  (if superword-mode
+      (forward-symbol 1)
+    (if (and
+         (save-excursion
+           (let ((case-fold-search nil))
+             (with-syntax-table (make-syntax-table (syntax-table))
+               (modify-syntax-entry ?_ "_") ;; added
+               (re-search-forward subword-forward-regexp nil t))))
+         (> (match-end 0) (point)))
+        (goto-char
+         (cond
+          ((and (< 1 (- (match-end 2) (match-beginning 2)))
+                ;; If we have an all-caps word with no following lower-case or
+                ;; non-word letter, don't leave the last char (bug#13758).
+                (not (and (null (match-beginning 3))
+                          (eq (match-end 2) (match-end 1)))))
+           (1- (match-end 2)))
+          (t
+           (match-end 0))))
+      (forward-word 1))))
+(advice-add #'subword-forward-internal :override #'+amos*subword-forward-internal)
+
 (defun +amos*subword-backward-internal ()
   (if superword-mode
       (forward-symbol -1)
     (if (save-excursion
           (let ((case-fold-search nil))
             (with-syntax-table (make-syntax-table (syntax-table))
-              (modify-syntax-entry ?_ "_")
-              (re-search-backward "\\(\\(\\W\\|[[:lower:][:digit:]]\\)\\([[:upper:]]+\\W*\\)\\|\\W\\w+\\)" nil t))))
+              (modify-syntax-entry ?_ "_") ;;  added
+              (re-search-backward subword-backward-regexp nil t))))
         (goto-char
          (cond
           ((and (match-end 3)
@@ -2911,6 +2934,10 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         (+amos/recenter)))))
 
 (advice-add 'find-file :around #'find-file--line-number)
+
+(add-hook! 'minibuffer-setup-hook
+  (setq-local truncate-lines t)
+  (setq-local inhibit-message t))
 
 (mapc #'evil-declare-change-repeat
       '(company-complete-mouse
