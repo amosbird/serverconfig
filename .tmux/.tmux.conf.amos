@@ -88,6 +88,8 @@ bind-key -T amos S-F9 previous-window
 # URxvt.keysym.C-period:      \033[5;30014~
 bind-key -T amos S-F10 next-window
 
+bind-key -T amos S-F12 send-keys C-]
+
 bind-key -T amos f12 display
 bind-key -T amos DoubleClick1Pane copy-mode\; send -X select-word
 bind-key -T amos C-] send-keys Escape

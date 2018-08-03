@@ -133,8 +133,8 @@
  :v "V"                      #'er/contract-region
  :n "p"                      #'+amos@paste/evil-paste-after
  :n "P"                      #'+amos@paste/evil-paste-before
- :m "("                      #'+amos/smart-jumper-backward
- :m ")"                      #'+amos/smart-jumper-forward
+ :n "("                      #'+amos/smart-jumper-backward
+ :n ")"                      #'+amos/smart-jumper-forward
  :v "<"                      #'+evil/visual-dedent
  :v ">"                      #'+evil/visual-indent
  :v "@"                      #'+evil:macro-on-all-lines
@@ -509,11 +509,20 @@
    :n "n"   #'debugger-step-through
    :n "c"   #'debugger-continue)
 
- (:after compile
-   :map compilation-mode-map
-   "SPC" nil
-   "0" nil
-   "g" nil)
+ ;; (:after compile
+ ;;   :map compilation-mode-map
+ ;;   "SPC" nil
+ ;;   "0" nil
+ ;;   "1" nil
+ ;;   "2" nil
+ ;;   "3" nil
+ ;;   "4" nil
+ ;;   "5" nil
+ ;;   "6" nil
+ ;;   "7" nil
+ ;;   "8" nil
+ ;;   "9" nil
+ ;;   "g" nil)
 
  (:after edebug
    :map edebug-mode-map

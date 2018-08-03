@@ -39,7 +39,7 @@ and function __direnv_export_eval --on-event fish_prompt;
 end
 
 # prepend path
-set -U fish_user_paths $HOME/scripts $FZF_HOME/bin $GOPATH/bin $CARGO_HOME/bin $CABAL_HOME/bin $HOME/.local/bin $HOME/bin /usr/local/bin /usr/local/go/bin /usr/bin /bin /sbin /usr/sbin
+set -U fish_user_paths $HOME/scripts $FZF_HOME/bin $GOPATH/bin $HOME/pyenv/bin $CARGO_HOME/bin $CABAL_HOME/bin $HOME/.local/bin $HOME/bin /usr/local/bin /usr/local/go/bin /usr/bin /bin /sbin /usr/sbin
 
 if test -e ~/.local/share/icons-in-terminal/icons.fish
     source ~/.local/share/icons-in-terminal/icons.fish

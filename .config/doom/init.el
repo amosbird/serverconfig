@@ -2,7 +2,6 @@
 
 (doom! :feature
        eval
-       ;;evil
        (evil +everywhere)
        lookup
        snippets
@@ -16,6 +15,7 @@
        :ui
        doom
        doom-quit
+       doom-modeline
        hl-todo
        nav-flash
        unicode ;; for mu4e
@@ -234,6 +234,7 @@
 (setq yas-triggers-in-field nil)
 (setq yasdcv-sdcv-command "sdcv --non-interactive --utf8-output --utf8-input \"%word\"")
 (setq yasdcv-sdcv-dicts '(("jianminghy" "简明汉英词典" "powerword2007" t)))
+(setq +latex-bibtex-file "~/Papers/references.bib")
 
 (def-package-hook! nav-flash
   :pre-init

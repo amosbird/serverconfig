@@ -212,7 +212,7 @@ The insertion will be repeated COUNT times."
   (after! smartparens
     (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
       (sp-local-pair "/*" "*/" :post-handlers '(("||\n[i]" "RET") ("| " "SPC") (" ||\n[i]" "*"))))))
-      ;; Doxygen blocks
+;; Doxygen blocks
 
 (def-package! cmake-mode
   :mode
@@ -319,6 +319,85 @@ The insertion will be repeated COUNT times."
    ;; ccls-sem-highlight-method 'font-lock)
    ;; ccls-sem-highlight-method 'overlay)
    ccls-sem-highlight-method nil)
+
+  (defun +amos-lsp-find-custom (kind request &optional param)
+    (let* ((input (symbol-at-point))
+           (xrefs
+            (-some->> (lsp--send-request (lsp--make-request
+                                          request
+                                          (or param (lsp--text-document-position-params))))
+                      ;; Language servers may return a single LOCATION instead of a sequence of them.
+                      (lsp-ui-peek--to-sequence)
+                      (lsp--locations-to-xref-items)
+                      (-filter 'identity))))
+           (unless xrefs
+             (user-error "No %s found for: %s" (symbol-name kind) input))
+           (+amos-ivy-xref xrefs kind)))
+
+  (defun ccls/inheritances (&optional base)
+    (interactive)
+    (ccls--ccls-buffer-check)
+    (let* ((input (symbol-at-point))
+           (xrefs
+            (-some->> (lsp--send-request (lsp--make-request "$ccls/inheritanceHierarchy"
+                                                            `(:textDocument (:uri ,(concat lsp--uri-file-prefix buffer-file-name))
+                                                              :position ,(lsp--cur-position)
+                                                              :derived ,(not base)
+                                                              :qualified ,(if ccls-inheritance-hierarchy-qualified t :json-false)
+                                                              :levels 10
+                                                              :flat t)))
+                      (lsp-ui-peek--to-sequence)
+                      (lsp--locations-to-xref-items)
+                      (-filter 'identity))))
+      (unless xrefs
+        (user-error "No inheritances found for: %s" input))
+      (+amos-ivy-xref xrefs 'inheritances)))
+
+  (defun ccls/base () (interactive) (+amos-lsp-find-custom 'base "$ccls/base"))
+  (defun ccls/callers () (interactive) (+amos-lsp-find-custom 'callers "$ccls/callers"))
+  (defun ccls/vars (kind) (+amos-lsp-find-custom 'vars "$ccls/vars" (plist-put (lsp--text-document-position-params) :kind kind)))
+  (defun ccls/random () (interactive) (+amos-lsp-find-custom 'random "$ccls/random"))
+
+  ;; References w/ Role::Address bit (e.g. variables explicitly being taken addresses)
+  (defun ccls/references-address ()
+    (interactive)
+    (+amos-lsp-find-custom
+     'address "textDocument/references"
+     (plist-put (lsp--text-document-position-params) :context
+                '(:role 128))))
+
+  ;; References w/ Role::Dynamic bit (macro expansions)
+  (defun ccls/references-macro ()
+    (interactive)
+    (+amos-lsp-find-custom
+     'address "textDocument/references"
+     (plist-put (lsp--text-document-position-params) :context
+                '(:role 64))))
+
+  ;; References w/o Role::Call bit (e.g. where functions are taken addresses)
+  (defun ccls/references-not-call ()
+    (interactive)
+    (+amos-lsp-find-custom
+     'address "textDocument/references"
+     (plist-put (lsp--text-document-position-params) :context
+                '(:excludeRole 32))))
+
+  ;; References w/ Role::Read
+  (defun ccls/references-read ()
+    (interactive)
+    (+amos-lsp-find-custom
+     'read "textDocument/references"
+     (plist-put (lsp--text-document-position-params) :context
+                '(:role 8))))
+
+  ;; References w/ Role::Write
+  (defun ccls/references-write ()
+    (interactive)
+    (+amos-lsp-find-custom
+     'write "textDocument/references"
+     (plist-put (lsp--text-document-position-params) :context
+                '(:role 16))))
+
   (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
   (defalias 'cquery-call-hierarchy           'ccls-call-hierarchy)
   (defalias 'cquery/callers                  'ccls/callers)

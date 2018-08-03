@@ -1333,43 +1333,47 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
           (push `(,candidate . ,location) collection))))
     (nreverse collection)))
 
+(defun +amos-ivy-xref (xrefs kind)
+  (if (= 1 (length xrefs))
+      (dolist (xref xrefs)
+        (with-slots (summary location) xref
+          (let* ((marker (xref-location-marker location))
+                 (buf (marker-buffer marker)))
+            (evil-set-jump)
+            (switch-to-buffer buf)
+            (goto-char marker)
+            (evil-set-jump)
+            (+amos/recenter))))
+    (let ((xref-pos (point))
+          (xref-buffer (current-buffer))
+          (success nil))
+      (ivy-read (concat "Find " (symbol-name kind) ":") (+amos/ivy-xref-make-collection xrefs)
+                :unwind (lambda ()
+                          (unless success
+                            (switch-to-buffer xref-buffer)
+                            (goto-char xref-pos)
+                            (+amos/recenter)))
+                :action (lambda (x)
+                          (let ((location (cdr x)))
+                            (let* ((marker (xref-location-marker location))
+                                   (buf (marker-buffer marker)))
+                              (evil-set-jump)
+                              (switch-to-buffer buf)
+                              (with-ivy-window
+                                (goto-char marker)
+                                (+amos/recenter)
+                                (evil-set-jump))
+                              (unless (eq 'ivy-call this-command)
+                                (setq success t)))))))))
+
 (defun +amos*xref--find-xrefs (input kind arg display-action)
   (let ((xrefs (funcall (intern (format "xref-backend-%s" kind))
                         (xref-find-backend)
                         arg)))
     (unless xrefs
       (user-error "No %s found for: %s" (symbol-name kind) input))
-    (if (= 1 (length xrefs))
-        (dolist (xref xrefs)
-          (with-slots (summary location) xref
-            (let* ((marker (xref-location-marker location))
-                   (buf (marker-buffer marker)))
-              (evil-set-jump)
-              (switch-to-buffer buf)
-              (goto-char marker)
-              (evil-set-jump)
-              (+amos/recenter))))
-      (let ((xref-pos (point))
-            (xref-buffer (current-buffer))
-            (success nil))
-        (ivy-read "Find XRefs: " (+amos/ivy-xref-make-collection xrefs)
-                  :unwind (lambda ()
-                            (unless success
-                              (switch-to-buffer xref-buffer)
-                              (goto-char xref-pos)
-                              (+amos/recenter)))
-                  :action (lambda (x)
-                            (let ((location (cdr x)))
-                              (let* ((marker (xref-location-marker location))
-                                     (buf (marker-buffer marker)))
-                                (evil-set-jump)
-                                (switch-to-buffer buf)
-                                (with-ivy-window
-                                  (goto-char marker)
-                                  (+amos/recenter)
-                                  (evil-set-jump))
-                                (unless (eq 'ivy-call this-command)
-                                  (setq success t))))))))))
+    (+amos-ivy-xref xrefs kind)))
+
 (advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
 
 (after! ivy
@@ -2068,6 +2072,11 @@ the current state and point position."
 (defun comp-buffer-name (maj-mode)
   (concat "*" (downcase maj-mode) " " default-directory "*"))
 (setq compilation-buffer-name-function #'comp-buffer-name)
+(defun +amos/normalize-compilation-buffer (buffer msg)
+  (interactive)
+  (with-current-buffer buffer
+    (evil-normal-state)))
+(add-hook! 'compilation-finish-functions #'+amos/normalize-compilation-buffer)
 
 (require 'company)
 (require 'company-tng)
@@ -2864,13 +2873,13 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos/wipe-current-buffer ()
   (interactive)
-  (+amos/close-current-buffer t) ;; wipe
-  )
+  ;; wipe
+  (+amos/close-current-buffer t))
 
 (defun +amos/kill-current-buffer ()
   (interactive)
-  (+amos/close-current-buffer t t) ;; wipe and kill
-  )
+  ;; wipe and kill
+  (+amos/close-current-buffer t t))
 
 (defun +amos/switch-buffer ()
   (interactive)
