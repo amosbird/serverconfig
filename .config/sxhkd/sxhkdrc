@@ -3,11 +3,11 @@ mod3+w
 mod3+b
   /home/amos/scripts/baidupan.sh
 mod3+f
-  /usr/bin/copyq toggle
+  copyq toggle
 mod3+d
-  /usr/bin/copyq disable
+  copyq disable
 mod3+e
-  /usr/bin/copyq enable
+  copyq enable
 mod3+1
   sleep 0.1 && fcitx-remote -w 127.0.0.1
 mod3+2
@@ -31,11 +31,11 @@ mod3+t
 mod3+shift+r
   /home/amos/scripts/teiler --togglecast
 mod3+g
-  /usr/local/bin/fish -c 'url "www.google.com/search?q="'
+  fish -c 'url "www.google.com/search?q="'
 mod3+s
-  /usr/local/bin/fish -c 'url "scholar.google.com/scholar?q="'
+  fish -c 'url "scholar.google.com/scholar?q="'
 super+z
-  /usr/bin/slock
+  slock
 control+alt+8
   /home/amos/scripts/rofidownloads
 control+alt+9
@@ -43,7 +43,7 @@ control+alt+9
 control+alt+0
   /home/amos/scripts/tele
 super+s
-  /usr/bin/urxvt -e /usr/local/bin/fish
+  alacritty -e /usr/local/bin/fish
 control+alt+s
   /home/amos/scripts/showshell.sh 2
 control+alt+l
@@ -74,15 +74,15 @@ control+F10
 #   /usr/bin/deadbeef --prev
 # control+alt+4
 #   /home/amos/scripts/dead
-control+alt+2
-  /home/amos/scripts/musicboxctrl.py c
-control+alt+3
-  /home/amos/scripts/musicboxctrl.py n
-control+alt+4
-  /home/amos/scripts/showmusicbox.sh
-control+alt+comma
-  /home/amos/scripts/musicboxctrl.py ,
-control+alt+period
-  /home/amos/scripts/musicboxctrl.py .
+# control+alt+2
+#   /home/amos/scripts/musicboxctrl.py c
+# control+alt+3
+#   /home/amos/scripts/musicboxctrl.py n
+# control+alt+4
+#   /home/amos/scripts/showmusicbox.sh
+# control+alt+comma
+#   /home/amos/scripts/musicboxctrl.py ,
+# control+alt+period
+#   /home/amos/scripts/musicboxctrl.py .
 # control+Eisu_toggle
 #   /home/amos/scripts/tun

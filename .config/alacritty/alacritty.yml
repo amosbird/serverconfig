@@ -288,6 +288,7 @@ key_bindings:
   - { key: F1,                            action: ResetFontSize                                    }
   - { key: F2,                            action: IncreaseFontSize                                 }
   - { key: F3,                            action: DecreaseFontSize                                 }
+  - { key: RBracket, mods: Control,       chars: "\x1b[24;2~"                                      }
   - { key: Escape,                        chars: "\x1d"                                            }
   - { key: Return,   mods: Control,       chars: "\x1b[70~"                                        }
   - { key: S,        mods: Control|Shift, chars: "\x1b[1;2S"                                       }
@@ -353,7 +354,6 @@ key_bindings:
   - { key: F1,       mods: Shift,         chars: "\x1b[1;2P"                                       }
   - { key: F2,       mods: Shift,         chars: "\x1b[1;2Q"                                       }
   - { key: F3,       mods: Shift,         chars: "\x1b[1;2R"                                       }
-  - { key: F12,      mods: Shift,         chars: "\x1b[24;2~"                                      }
   - { key: F1,       mods: Control,       chars: "\x1b[1;5P"                                       }
   - { key: F2,       mods: Control,       chars: "\x1b[1;5Q"                                       }
   - { key: F3,       mods: Control,       chars: "\x1b[1;5R"                                       }

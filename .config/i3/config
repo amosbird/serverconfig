@@ -61,8 +61,6 @@ bindsym $mod+k focus up
 bindsym $mod+l focus right
 bindsym control+mod1+k focus mode_toggle focus left
 bindsym control+mod1+j focus mode_toggle focus right
-# bindsym control+Left exec --no-startup-id "xdotool keyup Shift_L Shift_R Control_L Control_R Meta_L Meta_R Alt_L Alt_R Super_L Super_R Hyper_L Hyper_R ISO_Level2_Latch ISO_Level3_Shift ISO_Level3_Latch ISO_Level3_Lock ISO_Level5_Shift ISO_Level5_Latch ISO_Level5_Lock" focus mode_toggle focus left
-# bindsym mod1+Right exec --no-startup-id "xdotool keyup Shift_L Shift_R Control_L Control_R Meta_L Meta_R Alt_L Alt_R Super_L Super_R Hyper_L Hyper_R ISO_Level2_Latch ISO_Level3_Shift ISO_Level3_Latch ISO_Level3_Lock ISO_Level5_Shift ISO_Level5_Latch ISO_Level5_Lock" focus mode_toggle focus right
 bindsym control+F2 exec "/usr/bin/pulseaudio-ctl down 3"
 bindsym control+F3 exec "/usr/bin/pulseaudio-ctl up 3"
 bindsym control+F1 exec "/usr/bin/pulseaudio-ctl mute"
@@ -81,11 +79,8 @@ bindsym $mod+f fullscreen toggle
 bindsym $mod+w layout toggle tabbed splith
 
 bindsym $mod+Shift+c reload
-# bindsym $mod+Shift+r [instance="^stardict"] floating enable, [instance="TelegramDesktop"] floating enable, restart
 bindsym $mod+Shift+r restart
-
 bindsym $mod+Shift+e exec "i3-nagbar -t warning -m 'You pressed the exit shortcut. Do you really want to exit i3? This will end your X session.' -b 'Yes, exit i3' 'i3-msg exit'"
-
 bindsym --release Caps_Lock exec pkill -SIGRTMIN+11 i3blocks
 
 
@@ -148,6 +143,8 @@ assign [class="st" title="nobida*"] $ws4
 for_window [class="st" title="nobida*"] focus
 # assign [class="URxvt" title="ubuntu"] $ws5
 # for_window [class="URxvt" title="ubuntu"] focus
+assign [class="netease-cloud-music"] $wsp
+for_window [class="netease-cloud-music"] focus
 assign [class="Foxit Reader"] $ws5
 for_window [class="Foxit Reader"] focus
 assign [class="jetbrains-idea"] $ws6

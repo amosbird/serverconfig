@@ -6,6 +6,8 @@ then
     if i3-msg -t get_tree | jq  '.nodes[].nodes[].nodes[] | .type == "workspace" and .name =="__i3_scratch" and .floating_nodes[].nodes[].window_properties.class == "TelegramDesktop"' | grep -q true
     then
         i3-msg '[class = TelegramDesktop] scratchpad show'
+        i3-msg focus mode_toggle
+        i3-msg focus mode_toggle
     elif i3-msg -t get_tree | jq -r --arg v "$workspace" '.nodes[].nodes[].nodes[] | .type == "workspace" and .name == $v and .floating_nodes[].nodes[].window_properties.class == "TelegramDesktop"' | grep -q true
     then
         i3-msg '[class = TelegramDesktop] move scratchpad'

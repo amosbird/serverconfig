@@ -16,6 +16,7 @@ workspace=$(i3-msg -t get_workspaces | jq -r 'map(select(.focused))[0].name')
 
 if [[ "$1" -eq 0 ]]
 then
+    # dock
     i3-msg '[instance="^urxvt_scratchpad"]' move container to workspace "", floating disable, workspace "", border none
 else
     if [ "$workspace"  = "" ]
@@ -27,7 +28,10 @@ else
     then
         i3-msg '[instance="^urxvt_scratchpad"]' scratchpad show
     else
-        i3-msg '[instance="^urxvt_scratchpad"]' move to scratchpad, scratchpad show, border pixel 5
+        # undock, pop up
+        i3-msg '[instance="^urxvt_scratchpad"]' move to scratchpad, focus, border pixel 5
+        i3-msg focus mode_toggle
+        i3-msg focus mode_toggle
         if [[ "$1"  -eq  1 ]]
         then
             i3-msg '[con_id="__focused__" instance="^urxvt_scratchpad"]' move position $((width + 7)) 42, resize set $width $height

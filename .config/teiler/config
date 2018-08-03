@@ -40,6 +40,7 @@ encoder=ffmpeg
 # You can create your own profiles, but changes to existing profiles
 # will be overwritten on startup
 profile="webm-noaudio-amos"
+# profile="mp4-noaudio"
 
 # hotkeys
 upload="Alt+1"

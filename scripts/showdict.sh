@@ -16,5 +16,7 @@ y=30
 width=$((width/2))
 height=$((height - 60))
 
+i3-msg focus mode_toggle
+i3-msg focus mode_toggle
 i3-msg "[con_id=\"__focused__\" instance=\"^stardict\"] move position $x $y"
 i3-msg "[con_id=\"__focused__\" instance=\"^stardict\"] resize set $width $height"
