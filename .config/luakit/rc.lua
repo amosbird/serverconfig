@@ -346,4 +346,5 @@ modes.add_binds("command", {
     { "<Control-Shift-i>", "Open completion menu.", function (w) w:set_mode("completion") end },
 })
 
-window.new()
+local w = window.new()
+w.ibar.input.css = "border: 0; margin-left: 300px; transition: 0.0s ease-in-out;"

@@ -91,7 +91,7 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
 
 (def-modeline! 'main
   '(" " amos-matches " " amos-buffer-info amos-lcp selection-info frame)
-  '(" " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
+  '(" " keycast "  " host "  " buffer-encoding major-mode vcs))
 
 (defun +amos-buffer-file-name ()
 "~/Projects/FOSS/emacs/lisp/comint.el => ~/P/F/emacs/l/comint.el"
