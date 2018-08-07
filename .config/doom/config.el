@@ -1571,6 +1571,24 @@ representation of `NUMBER' is smaller."
                  (point)))))
       (if move (goto-char p)))))
 
+(defun +amos/insert-eol-and-return (&optional move)
+  (interactive)
+  (let (s e)
+    (end-of-line)
+    (back-to-indentation)
+    (setq s (point))
+    (end-of-line)
+    (setq e (point))
+    (when-let* ((plist (cdr (assq major-mode +amos-end-of-statement-regex))))
+      (when-let* ((regex-char (doom-enlist (plist-get plist :regex-char))))
+        (if (looking-back (car regex-char))
+            (delete-trailing-whitespace s e)
+          (when-let* ((chars (nth 1 regex-char))
+                      (char (nth 2 regex-char)))
+            (unless (looking-back chars 1)
+              (insert char))
+            (funcall-interactively (key-binding (kbd "RET")))))))))
+
 (defun +amos/smart-eol-insert ()
   (interactive)
   (+amos/maybe-add-end-of-statement t))
@@ -2916,7 +2934,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos/switch-buffer ()
   (interactive)
-  (switch-to-buffer (other-buffer)))
+  (switch-to-buffer (other-buffer (current-buffer) t)))
 
 (defmacro +amos-evil-ex! (name command)
   `(evil-define-command ,(intern (concat "+amos/" (symbol-name name))) ()
