@@ -76,6 +76,10 @@
 (setq browse-url-mailto-function 'mu4e~compose-browse-url-mail)
 (setq company-auto-complete nil)
 (setq company-idle-delay 0)
+(setq company-dabbrev-ignore-case t)
+(setq company-dabbrev-code-ignore-case t)
+(setq company-dabbrev-other-buffers t)
+(setq company-dabbrev-ignore-buffers (lambda (buffer) (not (projectile-project-buffer-p buffer (projectile-project-root)))))
 (setq dired-create-destination-dirs 'always)
 (setq dired-omit-verbose nil)
 (setq dired-open-extensions

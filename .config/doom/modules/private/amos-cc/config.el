@@ -291,6 +291,9 @@ The insertion will be repeated COUNT times."
 
 (add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1))
 (add-hook! 'c++-mode-hook #'modern-c++-font-lock-mode)
+(set-company-backend!
+  '(c-mode c++-mode objc-mode)
+  'company-dabbrev-code)
 
 ;; (def-package! cquery
 ;;   :after lsp-mode

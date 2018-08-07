@@ -1004,7 +1004,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
             (if (bounds-of-thing-at-point 'symbol)
                 (end-of-thing 'symbol))
             (point)))
-      (save-excursion (insert " "))))
+      (save-excursion (insert " ")))
+  (company-complete))
 
 (evil-define-command +amos/complete-filter ()
   (+amos/complete)
