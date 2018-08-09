@@ -1378,6 +1378,32 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
 
 (after! ivy
+
+  ;;;###autoload
+  (defun amos-recentf ()
+    "Find a file on `recentf-list'."
+    (interactive)
+    (require 'recentf)
+    (recentf-mode)
+    (ivy-read "Recentf: " (mapcar #'substring-no-properties recentf-list)
+              :action (lambda (f)
+                        (with-ivy-window
+                          (find-file f)))
+              :sort t
+              :caller 'counsel-recentf))
+  (ivy-set-actions
+   'amos-recentf
+   '(("j" find-file-other-window "other window")
+     ("f" find-file-other-frame "other frame")
+     ("x" counsel-find-file-extern "open externally")))
+
+  (defun amos-recentf-sort-function (a b)
+    (let ((project-root (doom-project-root)))
+      (or (file-in-directory-p a project-root) (not (file-in-directory-p b project-root)))))
+
+  (add-to-list 'ivy-sort-functions-alist '(counsel-recentf . amos-recentf-sort-function))
+
+
   (dolist (cmd '(counsel-find-file +amos/counsel-projectile-switch-project))
     (ivy-add-actions
      cmd

@@ -414,6 +414,7 @@ The insertion will be repeated COUNT times."
   (setq-local flycheck-checker 'lsp-ui)
   (lsp-ui-flycheck-add-mode major-mode)
   (add-to-list 'flycheck-checkers 'lsp-ui)
+  (setq lsp-ui-flycheck-live-reporting nil)
   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
     (setq flycheck-checkers (delq c flycheck-checkers))))
 
