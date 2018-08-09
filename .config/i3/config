@@ -186,7 +186,7 @@ for_window [class="Emacs" instance="org-capture"] exec "/home/amos/scripts/showo
 for_window [title="^998877665544332211"] move scratchpad
 
 # Focus
-for_window [instance="^urxvt_scratchpad"] move scratchpad
+for_window [title="^urxvt_scratchpad"] move scratchpad
 for_window [instance="^stardict"] move scratchpad
 for_window [instance="^musicbox"] move scratchpad
 for_window [instance="^tldr"] move scratchpad
