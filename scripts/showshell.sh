@@ -4,7 +4,7 @@ if pgrep -f urxvt_scratchpad;
 then
     :
 else
-    sakura -t urxvt_scratchpad -e fish -c "tmux new -A -s amos" &
+    sakura -t urxvt_scratchpad -e tmux new -A -s amos &
     sleep 0.25 # i3 issue
 fi
 

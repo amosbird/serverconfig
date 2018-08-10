@@ -66,6 +66,7 @@ bind -Tcopy-mode-vi H resize-pane -L 5
 bind -Tcopy-mode-vi J resize-pane -D 5
 bind -Tcopy-mode-vi K resize-pane -U 5
 bind -Tcopy-mode-vi L resize-pane -R 5
+bind -Tcopy-mode-vi C-g send -X cancel
 
 # need to add all needed root table's key bindings
 set -s key-table amos
