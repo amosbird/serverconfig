@@ -1,7 +1,7 @@
 mod3+w
-  /home/amos/scripts/restartxcape.sh
+  restartxcape.sh
 mod3+b
-  /home/amos/scripts/baidupan.sh
+  baidupan.sh
 mod3+f
   copyq toggle
 mod3+d
@@ -13,76 +13,143 @@ mod3+1
 mod3+2
   sleep 0.1 && fcitx-remote -w amosbird@gmail.com
 mod3+d
-  /home/amos/scripts/teiler --quickcopy fullscreen
+  teiler --quickcopy fullscreen
 mod3+D
-  /home/amos/scripts/teiler --quick fullscreen
+  teiler --quick fullscreen
 mod3+i
-  /home/amos/scripts/teiler --quickcopy fullscreen
+  teiler --quickcopy fullscreen
 mod3+I
-  /home/amos/scripts/teiler --quick fullscreen
+  teiler --quick fullscreen
 mod3+p
-  /home/amos/scripts/teiler --quickcopy area
+  teiler --quickcopy area
 mod3+o
-  /home/amos/scripts/teiler --quickcopy orc
+  teiler --quickcopy orc
 mod3+shift+p
-  /home/amos/scripts/teiler --quick area
+  teiler --quick area
 mod3+t
-  /home/amos/scripts/teiler --paste
+  teiler --paste
 mod3+shift+r
-  /home/amos/scripts/teiler --togglecast
+  teiler --togglecast
 mod3+g
   fish -c 'url "www.google.com/search?q="'
 mod3+s
   fish -c 'url "scholar.google.com/scholar?q="'
 super+z
   slock
-control+alt+8
-  /home/amos/scripts/rofidownloads
-control+alt+9
-  /home/amos/scripts/showdict.sh
-control+alt+0
-  /home/amos/scripts/tele
+super+q
+  bspc node -c
+ctrl+alt+8
+  rofidownloads
+ctrl+alt+9
+  showdict.sh
+ctrl+alt+0
+  tele
 super+s
-  alacritty -e /usr/local/bin/fish
-control+alt+s
-  /home/amos/scripts/showshell.sh 2
-control+alt+l
-  /home/amos/scripts/showshell.sh 1
-control+alt+h
-  /home/amos/scripts/showshell.sh 0
+  sakura -e /usr/local/bin/fish
+ctrl+alt+s
+  showshell.sh 2
+ctrl+alt+l
+  showshell.sh 1
+ctrl+alt+h
+  showshell.sh 0
 super+Home
-  /usr/bin/xrandr --output eDP1 --primary --mode 1600x900 --pos 0x0 --output DP2-2 --off --output HDMI1 --off ; feh --bg-scale ~/Pictures/river.jpg
+  xrandr --output VIRTUAL1 --off --output eDP1 --mode 1600x900 --pos 0x0 --rotate normal --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
+  bspc monitor eDP1 -f -g 1600x900+0+0; \
+  bspc monitor eDP1 -d w e d f v n u i o p c h; \
+  setbg.sh
 super+End
-  /usr/bin/xrandr --output eDP1 --off --output HDMI1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0 ; feh --bg-scale ~/Pictures/river.jpg
+  xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0 --rotate normal --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
+  bspc monitor DP2-2 -f -g 1920x1080+0+0; \
+  bspc monitor DP2-2 -d w e d f v n u i o p c h; \
+  setbg.sh
 super+Insert
-  /usr/bin/xrandr --output eDP1 --off --output DP2-2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 ; feh --bg-scale ~/Pictures/river.jpg
+  xrandr --output eDP1 --off --output DP2-2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 ; feh --bg-scale ~/Pictures/river.jpg
 super+Delete
-  /usr/bin/lxrandr
-control+alt+r
-  /home/amos/scripts/rofi-runner
-# control+alt+o
-#   /home/amos/scripts/org-capture
+  lxrandr
+ctrl+alt+r
+  rofi-runner
+# ctrl+alt+o
+#   org-capture
 super+0
-  /usr/bin/pkill -SIGUSR1 sxhkd
-control+F12
-  /usr/bin/systemctl suspend
-control+F10
-  /home/amos/scripts/dunstctl.sh; pkill -SIGRTMIN+11 i3blocks
-# control+alt+2
+  pkill -SIGUSR1 sxhkd
+ctrl+F12
+  systemctl suspend
+ctrl+F10
+  dunstctl.sh; pkill -SIGRTMIN+11 i3blocks
+# ctrl+alt+2
 #   /usr/bin/deadbeef --toggle-pause
-# control+alt+3
+# ctrl+alt+3
 #   /usr/bin/deadbeef --prev
-# control+alt+4
-#   /home/amos/scripts/dead
-# control+alt+2
-#   /home/amos/scripts/musicboxctrl.py c
-# control+alt+3
-#   /home/amos/scripts/musicboxctrl.py n
-# control+alt+4
-#   /home/amos/scripts/showmusicbox.sh
-# control+alt+comma
-#   /home/amos/scripts/musicboxctrl.py ,
-# control+alt+period
-#   /home/amos/scripts/musicboxctrl.py .
-# control+Eisu_toggle
-#   /home/amos/scripts/tun
+# ctrl+alt+4
+#   dead
+# ctrl+alt+2
+#   musicboxctrl.py c
+# ctrl+alt+3
+#   musicboxctrl.py n
+# ctrl+alt+4
+#   showmusicbox.sh
+# ctrl+alt+comma
+#   musicboxctrl.py ,
+# ctrl+alt+period
+#   musicboxctrl.py .
+# ctrl+Eisu_toggle
+#   tun
+
+ctrl + alt + {j, k}
+  bspc node -f 'last.floating.local' || bspc node -f {next,prev}.local
+
+# Toggle fullscreen of window
+super + f
+	bspc node --state \~fullscreen
+
+# Toggle monocle of desktop
+super + w
+  bspc desktop --layout next
+
+# float toggle
+super + i
+	bspc query --nodes -n focused.tiled && state=floating || state=tiled; \
+	bspc node --state \~$state
+
+# move desktop
+super + {Up,Down,Left,Right}
+	bspc desktop -m {north,south,west,east} -f
+
+# Focus/swap windows by direction
+super + {_,shift + }{h,j,k,l}
+	bspc node --{focus,swap} {west,south,north,east}
+
+# Focus/move window to the biggest space
+super + {_,shift + }m
+	bspc node --{focus,swap} biggest
+
+ctrl + alt + shift + {w,e,d,f,v,n,u,i,o,p,c}
+	bspc node --to-desktop {w,e,d,f,v,n,u,i,o,p,c}
+
+ctrl + alt + {w,e,d,f,v,n,u,i,o,p,c}
+	bspc desktop --focus {w,e,d,f,v,n,u,i,o,p,c}
+
+# Focus left/right occupied desktop, used to find missing node
+ctrl + alt + {Left,Right}
+	bspc desktop --focus {prev,next}.occupied
+
+ctrl + F1
+  pulseaudio-ctl mute
+ctrl + F2
+  pulseaudio-ctl down 3
+ctrl + F3
+  pulseaudio-ctl up 3
+XF86AudioLowerVolume
+  pulseaudio-ctl down 3
+XF86AudioRaiseVolume
+  pulseaudio-ctl up 3
+XF86AudioMute
+  pulseaudio-ctl mute
+XF86MonBrightnessDown
+  xbacklight -5
+XF86MonBrightnessUp
+  xbacklight +5
+super + r
+  bspc node --state pseudo_tiled; \
+  sleep 0.1; \
+  bspc node --state tiled

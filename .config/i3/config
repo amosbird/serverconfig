@@ -201,45 +201,39 @@ client.focused_inactive  $black     $black      $darkwhite      #1d2021  #1d2021
 client.urgent            $darkyellow    $darkred    #282828      $darkred    $darkred
 client.background        #282828
 
-bar {
-#    verbose yes
-    status_command i3blocks
-    i3bar_command i3bar -t
-    position top
-    font pango:monospace, FontAwesome 14
-    strip_workspace_numbers yes
-    separator_symbol "■"
-    bindsym button4 nop
-    bindsym button5 nop
-    # tray_output eDP1
-    # tray_output LVDS-0
-    tray_padding 5
-    height $height
-    colors {
-        statusline         $black
-        background         $transparent
-        separator          $transparent
+# bar {
+#     status_command i3blocks
+#     i3bar_command i3bar -t
+#     position top
+#     font pango:monospace, FontAwesome 14
+#     strip_workspace_numbers yes
+#     separator_symbol "■"
+#     bindsym button4 nop
+#     bindsym button5 nop
+#     # tray_output eDP1
+#     # tray_output LVDS-0
+#     tray_padding 5
+#     height $height
+#     colors {
+#         statusline         $black
+#         background         $transparent
+#         separator          $transparent
 
-#                          BORDER       BACKGROUND   TEXT
-        focused_workspace  $transparent $transparent $grey
-        inactive_workspace $transparent $transparent $black
-        active_workspace   $transparent $transparent $black
-        urgent_workspace   $darkred     $darkred     $transparent
-        binding_mode       $darkred     $darkred     $transparent
-    }
-}
+# #                          BORDER       BACKGROUND   TEXT
+#         focused_workspace  $transparent $transparent $grey
+#         inactive_workspace $transparent $transparent $black
+#         active_workspace   $transparent $transparent $black
+#         urgent_workspace   $darkred     $darkred     $transparent
+#         binding_mode       $darkred     $darkred     $transparent
+#     }
+# }
 # exec_always --no-startup-id $HOME/.config/polybar/launch.sh
 
 # bg picture
 # exec_always --no-startup-id feh --bg-scale ~/dotfiles/wallpaper.jpg
-exec_always --no-startup-id feh --bg-scale ~/Pictures/river.jpg
 # exec_always --no-startup-id feh --bg-scale ~/Pictures/railroad.jpg
+exec_always --no-startup-id feh --bg-scale ~/Pictures/river.jpg
 exec_always --no-startup-id test -f ~/.Xresources && xrdb -merge ~/.Xresources && pkill -SIGUSR1 compton
-
-set $default_gaps_inner 4
-set $default_gaps_outer 4
-gaps inner $default_gaps_inner
-gaps outer $default_gaps_outer
 
 # workspace $ws1 gaps inner 0
 # workspace $ws1 gaps outer 0
@@ -259,104 +253,109 @@ floating_maximum_size -1 x -1
 set $mode_resize resize
 bindsym $mod+c mode "$mode_resize"
 mode "$mode_resize" {
-bindsym h resize shrink width 10 px or 1 ppt
-bindsym j resize grow height 10 px or 1 ppt
-bindsym k resize shrink height 10 px or 1 ppt
-bindsym l resize grow width 10 px or 1 ppt
+    bindsym h resize shrink width 10 px or 1 ppt
+    bindsym j resize grow height 10 px or 1 ppt
+    bindsym k resize shrink height 10 px or 1 ppt
+    bindsym l resize grow width 10 px or 1 ppt
 
-bindsym Shift+h resize shrink width 20 px or 5 ppt
-bindsym Shift+j resize grow height 20 px or 5 ppt
-bindsym Shift+k resize shrink height 20 px or 5 ppt
-bindsym Shift+l resize grow width 20 px or 5 ppt
+    bindsym Shift+h resize shrink width 20 px or 5 ppt
+    bindsym Shift+j resize grow height 20 px or 5 ppt
+    bindsym Shift+k resize shrink height 20 px or 5 ppt
+    bindsym Shift+l resize grow width 20 px or 5 ppt
 
-bindsym s mode "default", exec --no-startup-id $HOME/scripts/slopsize.sh
+    bindsym s mode "default", exec --no-startup-id $HOME/scripts/slopsize.sh
 
-bindsym 1 mode "default", resize set 1000 600
-bindsym 2 mode "default", resize set 1500 600
-bindsym 3 mode "default", resize set 1200 1000
+    bindsym 1 mode "default", resize set 1000 600
+    bindsym 2 mode "default", resize set 1500 600
+    bindsym 3 mode "default", resize set 1200 1000
 
-bindsym Return mode "default"
-bindsym Escape mode "default"
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
 }
 
 set $mode_power power
 bindsym $mod+p mode "$mode_power"
-mode "$mode_power" {
-bindsym l      mode "default", exec --no-startup-id $HOME/scripts/i3exit lock
-bindsym e      mode "default", exec --no-startup-id $HOME/scripts/i3exit logout
-bindsym s      mode "default", exec --no-startup-id $HOME/scripts/i3exit suspend
-bindsym h      mode "default", exec --no-startup-id $HOME/scripts/i3exit hibernate
-bindsym r      mode "default", exec --no-startup-id $HOME/scripts/i3exit reboot
-bindsym p      mode "default", exec --no-startup-id $HOME/scripts/i3exit shutdown
+    mode "$mode_power" {
+    bindsym l      mode "default", exec --no-startup-id $HOME/scripts/i3exit lock
+    bindsym e      mode "default", exec --no-startup-id $HOME/scripts/i3exit logout
+    bindsym s      mode "default", exec --no-startup-id $HOME/scripts/i3exit suspend
+    bindsym h      mode "default", exec --no-startup-id $HOME/scripts/i3exit hibernate
+    bindsym r      mode "default", exec --no-startup-id $HOME/scripts/i3exit reboot
+    bindsym p      mode "default", exec --no-startup-id $HOME/scripts/i3exit shutdown
 
-bindsym Return mode "default"
-bindsym Escape mode "default"
-}
-
-set $mode_gaps gaps
-set $mode_gaps_outer outer gaps
-set $mode_gaps_inner inner gaps
-bindsym $mod+g mode "$mode_gaps"
-mode "$mode_gaps" {
-bindsym o      mode "$mode_gaps_outer"
-bindsym i      mode "$mode_gaps_inner"
-
-bindsym 0      mode "default", exec --no-startup-id i3-msg "gaps inner current set 0" && i3-msg "gaps outer current set 0"
-bindsym d      mode "default", exec --no-startup-id i3-msg "gaps inner current set $default_gaps_inner" && i3-msg "gaps outer current set $default_gaps_outer"
-
-bindsym Return mode "default"
-bindsym Escape mode "default"
-}
-
-mode "$mode_gaps_inner" {
-bindsym k  gaps inner current plus 5
-bindsym j  gaps inner current minus 5
-bindsym 0     mode "default", gaps inner current set 0
-bindsym d     mode "default", gaps inner current set $default_gaps_inner
-
-bindsym Shift+k  gaps inner all plus 5
-bindsym Shift+j  gaps inner all minus 5
-bindsym Shift+0     mode "default", gaps inner all set 0
-bindsym Shift+d     mode "default", gaps inner all set $default_gaps_inner
-
-bindsym Return mode "default"
-bindsym Escape mode "default"
-}
-
-mode "$mode_gaps_outer" {
-bindsym k  gaps outer current plus 5
-bindsym j  gaps outer current minus 5
-bindsym 0     mode "default", gaps outer current set 0
-bindsym d     mode "default", gaps outer current set $default_gaps_outer
-
-bindsym Shift+k  gaps outer all plus 5
-bindsym Shift+j  gaps outer all minus 5
-bindsym Shift+0     mode "default", gaps outer all set 0
-bindsym Shift+d     mode "default", gaps outer all set $default_gaps_outer
-
-bindsym Return mode "default"
-bindsym Escape mode "default"
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
 }
 
 set $mode_brightness brightness
 bindsym $mod+b mode "$mode_brightness"
 mode "$mode_brightness" {
-bindsym k  exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -inc 10
-bindsym j  exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -dec 10
-bindsym Shift+k  exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -inc 1
-bindsym Shift+j  exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -dec 1
+    bindsym k  exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -inc 10
+    bindsym j  exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -dec 10
+    bindsym Shift+k  exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -inc 1
+    bindsym Shift+j  exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -dec 1
 
-bindsym 0     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 100
-bindsym 1     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 10
-bindsym 2     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 20
-bindsym 3     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 30
-bindsym 4     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 40
-bindsym 5     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 50
-bindsym 6     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 60
-bindsym 7     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 70
-bindsym 8     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 80
-bindsym 9     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 90
+    bindsym 0     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 100
+    bindsym 1     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 10
+    bindsym 2     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 20
+    bindsym 3     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 30
+    bindsym 4     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 40
+    bindsym 5     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 50
+    bindsym 6     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 60
+    bindsym 7     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 70
+    bindsym 8     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 80
+    bindsym 9     mode "default", exec --no-startup-id ${HOME}/scripts/backlight.sh -time 50 -set 90
 
-bindsym Return mode "default"
-bindsym Escape mode "default"
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
 }
+
+# set $default_gaps_inner 4
+# set $default_gaps_outer 4
+# gaps inner $default_gaps_inner
+# gaps outer $default_gaps_outer
+
+# set $mode_gaps gaps
+# set $mode_gaps_outer outer gaps
+# set $mode_gaps_inner inner gaps
+# bindsym $mod+g mode "$mode_gaps"
+# mode "$mode_gaps" {
+#     bindsym o      mode "$mode_gaps_outer"
+#     bindsym i      mode "$mode_gaps_inner"
+
+#     bindsym 0      mode "default", exec --no-startup-id i3-msg "gaps inner current set 0" && i3-msg "gaps outer current set 0"
+#     bindsym d      mode "default", exec --no-startup-id i3-msg "gaps inner current set $default_gaps_inner" && i3-msg "gaps outer current set $default_gaps_outer"
+
+#     bindsym Return mode "default"
+#     bindsym Escape mode "default"
+# }
+
+# mode "$mode_gaps_inner" {
+#     bindsym k  gaps inner current plus 5
+#     bindsym j  gaps inner current minus 5
+#     bindsym 0     mode "default", gaps inner current set 0
+#     bindsym d     mode "default", gaps inner current set $default_gaps_inner
+
+#     bindsym Shift+k  gaps inner all plus 5
+#     bindsym Shift+j  gaps inner all minus 5
+#     bindsym Shift+0     mode "default", gaps inner all set 0
+#     bindsym Shift+d     mode "default", gaps inner all set $default_gaps_inner
+
+#     bindsym Return mode "default"
+#     bindsym Escape mode "default"
+# }
+
+# mode "$mode_gaps_outer" {
+#     bindsym k  gaps outer current plus 5
+#     bindsym j  gaps outer current minus 5
+#     bindsym 0     mode "default", gaps outer current set 0
+#     bindsym d     mode "default", gaps outer current set $default_gaps_outer
+
+#     bindsym Shift+k  gaps outer all plus 5
+#     bindsym Shift+j  gaps outer all minus 5
+#     bindsym Shift+0     mode "default", gaps outer all set 0
+#     bindsym Shift+d     mode "default", gaps outer all set $default_gaps_outer
+
+#     bindsym Return mode "default"
+#     bindsym Escape mode "default"
+# }

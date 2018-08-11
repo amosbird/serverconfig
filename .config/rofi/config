@@ -24,7 +24,7 @@ rofi.eh: 1
 rofi.auto-select: false
 rofi.parse-hosts: true
 rofi.parse-known-hosts: true
-rofi.combi-modi: window,run
+rofi.combi-modi: run
 rofi.matching: normal
 rofi.tokenize: true
 rofi.m: -5

@@ -1,0 +1,53 @@
+#!/usr/local/bin/fish
+
+bspc monitor DP2-2 -d w e d f v n u i o p c h
+
+bspc config border_width         0
+bspc config window_gap           6
+
+bspc config split_ratio          0.52
+bspc config split_dir east
+bspc config borderless_monocle   true
+bspc config gapless_monocle      false
+
+bspc config focus_follows_pointer false
+bspc config pointer_follows_focus false
+
+bspc config pointer_modifier mod3  # wait for control fix
+bspc config pointer_action1 move
+
+bspc rule -a "*" split_dir=east
+bspc rule -a copyq state=floating
+
+bspc rule -a Screenkey manage=off
+bspc rule -a netease-cloud-music desktop=p follow=on
+bspc rule -a xfreerdp desktop=w follow=on
+bspc rule -a Luakit desktop=f follow=on
+bspc rule -a Conky desktop=u
+bspc config external_rules_command /home/amos/scripts/external_rules.sh
+
+stalonetray --window-type normal -i 32 --sticky false --window-strut none &
+conky
+
+setbg.sh
+
+# Program Workspaces
+
+# Floating
+# for_window [class="Lxappearance"] floating enable
+# for_window [class="dolphin"] floating enable
+# for_window [class="Pcmanfm"] floating enable
+# for_window [class="copyq"] floating enable
+# for_window [class="feh"] floating enable
+# for_window [class="GoldenDict"] floating enable
+# for_window [class="Seahorse"] floating enable
+# for_window [class="Pavucontrol"] floating enable
+# for_window [class="Telegram"] floating enable
+# for_window [class="Deadbeef"] floating enable
+# for_window [class="Pinentry"] floating enable
+# for_window [class="Zotero" title="Zotero Preferences"] floating enable
+# for_window [class="Zotero" title="Advanced Search"] floating enable
+# for_window [class="Zotero" title="Update"] floating enable
+# for_window [class="Zotero" title="ZotFile Preferences"] floating enable
+# for_window [class="Fcitx-config-gtk3"] floating enable
+# for_window [class="Emacs" instance="org-capture"] exec "/home/amos/scripts/showorg.sh", floating enable

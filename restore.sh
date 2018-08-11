@@ -10,6 +10,7 @@ configs=(
     .gdbinit.d
     .cgdb
     .docker
+    .jelly-conky
     .direnvrc
     .clang-format
     .ctags

@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
-winfocus &
-rofi -levenshtein-sort -combi-modi run,ssh -modi combi -show combi >> ~/rofi.log 2>> ~/rofi.log
+rofi -levenshtein-sort -show run >> ~/rofi.log 2>> ~/rofi.log
+# rofi -no-config -show run >> ~/rofi.log 2>> ~/rofi.log

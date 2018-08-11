@@ -1,6 +1,11 @@
 #!/usr/bin/env fish
 
-if mailto $argv
+set addr $argv
+if not string match -q 'mailto:*' -- $addr
+    set addr "mailto:"$addr
+end
+
+if mailto $addr
    i3-msg workspace ""
 else
    notify-send -t "mail" "mu4e" "Bad url!"

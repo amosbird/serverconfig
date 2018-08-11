@@ -5,39 +5,50 @@ then
     :
 else
     sakura -t urxvt_scratchpad -e tmux new -A -s amos &
-    sleep 0.25 # i3 issue
+    sleep 0.5 # i3 issue
 fi
 
-{ read -r width; read -r height; } < <(i3-msg -t get_workspaces | jq -r 'map(select(.focused))[0].rect["width","height"]')
-width=$((width/2 - 7))
-height=$((height-20))
-
-workspace=$(i3-msg -t get_workspaces | jq -r 'map(select(.focused))[0].name')
-
+id=$(cat /tmp/urxvt_scratchpad);
+workspace=$(bspc query -D -d focused --names)
 if [[ "$1" -eq 0 ]]
 then
-    # dock
-    i3-msg '[title="^urxvt_scratchpad"]' move container to workspace "", floating disable, workspace "", border none
+    bspc desktop --focus h
+    bspc node $id --to-desktop h
+    bspc node $id -g hidden=off -f -t tiled
 else
-    if [ "$workspace"  = "" ]
+    if [ "$workspace" = h ]
     then
         exit 0
     fi
+    # if bspc query -N -n focused | grep $(bspc query -N -n $id)
+    # then
+    #     bspc node $id -g hidden=on
+    # fi
 
-    if i3-msg -t get_tree | jq -r --arg v "$workspace" '.nodes[].nodes[].nodes[] | .type == "workspace" and .name == $v and .floating_nodes[].nodes[].window_properties.title=="urxvt_scratchpad"' | grep -q true
+    wh=($(xdpyinfo | grep dimensions | sed -r 's/^[^0-9]*([0-9]+x[0-9]+).*$/\1/' | awk -Fx '{print $1" "$2}'))
+    w=${wh[0]}
+    h=${wh[1]}
+    w=$((w/2 - 7))
+    h=$((h - 20))
+    y=7
+
+    if bspc query -N -d focused | grep -q $(bspc query -N -n $id)
     then
-        i3-msg '[title="^urxvt_scratchpad"]' scratchpad show
+        bspc node $id -g hidden
     else
-        # undock, pop up
-        i3-msg '[title="^urxvt_scratchpad"]' move to scratchpad, focus, border pixel 5
-        i3-msg focus mode_toggle
-        i3-msg focus mode_toggle
-        if [[ "$1"  -eq  1 ]]
-        then
-            i3-msg '[con_id="__focused__" title="^urxvt_scratchpad"]' move position $((width + 7)) 42, resize set $width $height
-        elif [[ "$1" -eq 2 ]]
-        then
-            i3-msg '[con_id="__focused__" title="^urxvt_scratchpad"]' move position 2 42, resize set $width $height
-        fi
+        bspc node $id -t floating
+        bspc node $id -g hidden=off
+        bspc node $id --to-desktop $workspace
     fi
+
+    if [[ "$1" -eq  1 ]]
+    then
+        x=$((w + 7))
+    elif [[ "$1" -eq 2 ]]
+    then
+        x=2
+    fi
+    xdo move -x $x -y $y $id
+    xdo resize -w $w -h $h $id
+    bspc node $id -f
 fi

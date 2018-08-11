@@ -2,4 +2,4 @@
 
 export EMACS_SERVER_NAME=mu4e
 export LC_CTYPE=zh_CN.UTF-8
-emacsclient -a '' -s $EMACS_SERVER_NAME -n -c --frame-parameters='(quote (name . "mail-frame"))' --display "$DISPLAY" -e "(mu4e)"
+emacs --eval "(mu4e)" --debug-init

@@ -99,9 +99,13 @@ settings.window.search_engines.scholar = "https://scholar.google.com/scholar?q=%
 settings.window.search_engines.github = "https://github.com/search?q=%s"
 
 -- Set download location
-downloads.pdf_dir = "pdfs"
-downloads.ppt_dir = "ppts"
-downloads.doc_dir = "docs"
+downloads.pdf_dir = "/Documents/pdfs/"
+downloads.ppt_dir = "/Documents/ppts/"
+downloads.doc_dir = "/Documents/docs/"
+downloads.jpg_dir = "/Pictures/Screenshots/"
+downloads.jpeg_dir = "/Pictures/Screenshots/"
+downloads.jfif_dir = "/Pictures/Screenshots/"
+downloads.png_dir = "/Pictures/Screenshots/"
 downloads.add_signal("download-location", function (uri, file)
     if not file or file == "" then
         file = (string.match(uri, "/([^/]+)$")
@@ -114,15 +118,23 @@ downloads.add_signal("download-location", function (uri, file)
     if ext == "pptx" then ext = "ppt" end
     if not ext or not downloads[ext .. "_dir"]
     then return downloads.default_dir .. "/" .. file
-    else return os.getenv("HOME") .. "/Documents/" .. downloads[ext .. "_dir"] .. "/" .. file
+    else return os.getenv("HOME") .. downloads[ext .. "_dir"] .. file
     end
 end)
 
--- downloads.add_signal("download::status", function(dl)
---     if dl.mime_type == "application/pdf" and dl.status == "finished" then
---         downloads.do_open(dl)
---     end
--- end)
+local function starts_with(str, start)
+   return str:sub(1, #start) == start
+end
+
+downloads.add_signal("download::status", function(dl)
+   if dl.mime_type and starts_with(dl.mime_type, "image") and dl.status == "finished" then
+      luakit.spawn(string.format("bash -c 'copyq write image/png - application/x-copyq-item-notes %q %s",
+         string.format("[[file:%s]]\\n%s", dl.destination, dl.destination), "< " .. dl.destination .. " && copyq select 0'"))
+   elseif dl.status == "finished" then
+      luakit.spawn(string.format("bash -c 'xclip /dev/stdin < <(echo -n %s)'", dl.destination, dl.destination))
+      luakit.spawn("notify-send download-finished " .. dl.destination)
+   end
+end)
 
 -- downloads.add_signal("open-file", function (file, mime_type)
 --     if mime_type == "application/pdf" then

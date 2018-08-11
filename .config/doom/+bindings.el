@@ -410,8 +410,6 @@
    :map (evil-multiedit-state-map iedit-mode-occurrence-keymap)
    "M-p" #'evil-multiedit-match-and-prev
    "M-n" #'evil-multiedit-match-and-next
-   "C-j" #'evil-multiedit-next
-   "C-k" #'evil-multiedit-prev
    "C-n" #'evil-multiedit-next
    "C-p" #'evil-multiedit-prev
    :map evil-multiedit-insert-state-map

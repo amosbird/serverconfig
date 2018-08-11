@@ -4,19 +4,18 @@ if pgrep -f  'sdcv'
 then
     :
 else
-    urxvt -name stardict -e dict.sh &
-    sleep 0.25
+    sakura -t stardict -e dict.sh &
+    sleep 0.5
 fi
 
-i3-msg '[instance="^stardict"] scratchpad show'
-
-{ read -r width; read -r height; } < <(i3-msg -t get_workspaces | jq -r 'map(select(.focused))[0].rect["width","height"]')
-x=$((width/4))
+id=$(cat /tmp/stardict)
+bspc node $id -g hidden -f
+wh=($(xdpyinfo | grep dimensions | sed -r 's/^[^0-9]*([0-9]+x[0-9]+).*$/\1/' | awk -Fx '{print $1" "$2}'))
+w=${wh[0]}
+h=${wh[1]}
+x=$((w/4))
 y=30
-width=$((width/2))
-height=$((height - 60))
-
-i3-msg focus mode_toggle
-i3-msg focus mode_toggle
-i3-msg "[con_id=\"__focused__\" instance=\"^stardict\"] move position $x $y"
-i3-msg "[con_id=\"__focused__\" instance=\"^stardict\"] resize set $width $height"
+w=$((w/2))
+h=$((h - 60))
+xdo move -x $x -y $y $id
+xdo resize -w $w -h $h $id
