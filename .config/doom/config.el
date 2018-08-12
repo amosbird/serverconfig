@@ -305,6 +305,8 @@
   (add-hook! python-mode (setq-local helm-dash-docsets '("Python_3" "Python_2")))
   (add-hook! emacs-lisp-mode (setq-local helm-dash-docsets '("Emacs_Lisp"))))
 
+(setq-hook! 'lua-mode-hook flycheck-highlighting-mode 'lines)
+
 (defun advice-browse-url (ofun &rest candidate)
   (if (boundp 'amos-browse)
       (apply 'browse-url-firefox candidate)
