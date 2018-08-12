@@ -379,7 +379,7 @@
    :n "M-R"     #'+eval/region-and-replace
    ;; :i "M-RET"   #'lisp-state-toggle-lisp-state
    :ni "M-U"    #'+amos/replace-defun
-   :ni "M-u"    #'eval-defun)
+   :ni "C-x C-e"    #'eval-defun)
 
  (:after evil-magit
    :map magit-mode-map
