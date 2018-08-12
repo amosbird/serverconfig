@@ -291,8 +291,12 @@ function fish_user_key_bindings
     # bind \em fzf-command-go
     bind \cv fzf-select
     bind \er open-ranger
-    bind \ee my-edit-command
-    bind \eE my-edit-tmux
+    bind \eE my-edit-command
+    function nop
+    end
+    bind \ee nop
+
+    # bind \eE my-edit-tmux
 
     bind \e, history-token-search-forward
 
