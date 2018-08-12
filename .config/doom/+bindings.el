@@ -170,6 +170,7 @@
    :i "C-p"     #'+company/dabbrev-code-previous
    :g "u"       #'link-hint-open-link
    :g "c"       #'+amos/workspace-new
+   :g "C"       #'+amos/workspace-new-scratch
    :g "k"       #'+amos/workspace-delete
    :g "o"       #'+amos/tmux-fork-window
    :gnemv "r"   #'+amos/tmux-source
@@ -381,8 +382,11 @@
    :ni "M-u"    #'eval-defun)
 
  (:after evil-magit
+   :map magit-mode-map
+   :n "<escape>" nil
    :map (magit-status-mode-map magit-revision-mode-map)
    "SPC" nil
+   :n "z" #'magit-stash-popup
    :n "C-j" nil
    :n [tab] #'magit-section-toggle
    :n "C-k" nil)

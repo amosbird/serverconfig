@@ -7,21 +7,16 @@ title=$(xtitle "$wid")
 case "$class" in
     stalonetray)
         echo $wid > /tmp/stalonetray
-        wh=($(xdpyinfo | grep dimensions | sed -r 's/^[^0-9]*([0-9]+x[0-9]+).*$/\1/' | awk -Fx '{print $1" "$2}'))
-        w=${wh[0]}
-        h=${wh[1]}
-        x=$((w/2 - 80))
-        y=300
-        w=0
-        h=0
-        xdo move -x $x -y $y $wid
-        xdo resize -w $w -h $h $wid
-        echo "desktop=u"
+        setbg.sh reset_tray
+        echo "desktop=u layer=below"
         ;;
     qutebrowser)
         case "$title" in
             qbdaemon*)
                 echo "hidden = on"
+                ;;
+            *)
+                echo "split_dir=east"
                 ;;
         esac
         ;;
@@ -42,9 +37,21 @@ case "$class" in
         esac
         ;;
     Termite)
-        case "$instance" in
+        case "$title" in
             weechat)
                 echo "desktop=c follow=on"
+                ;;
+            201.nobida.cn*)
+                echo "desktop=d follow=on"
+                ;;
+            urxvt_scratchpad)
+                echo $wid > /tmp/urxvt_scratchpad
+                echo "state=floating hidden=on"
+                ;;
+            stardict)
+                echo $wid > /tmp/stardict
+                echo "sticky=on state=floating hidden=on"
+                compton-trans -w "$wid" 70
                 ;;
         esac
         ;;

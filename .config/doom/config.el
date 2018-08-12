@@ -172,6 +172,7 @@
     (let* ((buffer (window-buffer window))
            (buffname (string-trim (buffer-name buffer))))
       (or (equal buffname "*doom*")
+          (equal buffname "*flycheck-posframe-buffer*")
           (equal (with-current-buffer buffer major-mode) 'pdf-view-mode))))
   (push #'amos-special-window-p realign-ignore-window-predicates))
 
@@ -1796,8 +1797,7 @@ representation of `NUMBER' is smaller."
      :vslot -20 :size 0.35 :autosave t :select t :modeline t :quit nil)
     ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)"
      :size +popup-shrink-to-fit :side right :ttl 0 :select ignore)
-    ("^\\*Customize"
-     :slot 2 :side right :select t :quit t)
+    ("^\\*Customize" :ignore t)
     ("^ \\*undo-tree\\*"
      :slot 2 :side left :size 20 :select t :quit t)
     ;; `help-mode', `helpful-mode'
@@ -2033,6 +2033,10 @@ the current state and point position."
   (+amos/workspace-new)
   (switch-to-buffer buffer-or-name norecord))
 
+(defun +amos/workspace-new-scratch ()
+  (interactive)
+  (+amos/switch-to-buffer-other-frame "*scratch"))
+
 (defun +amos/tmux-fork-window ()
   "Detach if inside tmux."
   (interactive)
@@ -2168,10 +2172,10 @@ the current state and point position."
   (interactive)
   (let ((name (frame-parameter nil 'name))
         (oframe (selected-frame)))
+    (make-frame-invisible oframe t)
     (select-frame (if (s-starts-with? "F" name)
                       (make-frame)
-                    (make-frame `((name . ,name)))))
-    (make-frame-invisible oframe t))
+                    (make-frame `((name . ,name))))))
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
 
 (setq +amos-tmux-need-switch nil)
@@ -2179,10 +2183,11 @@ the current state and point position."
 ;; TODO ring lru
 (defun +amos/workspace-delete ()
   (interactive)
-  (let ((f (selected-frame)))
-    (select-frame (previous-frame))
-    (make-frame-visible)
-    (delete-frame f))
+  (let ((f (selected-frame))
+        (of (previous-frame)))
+    (delete-frame f)
+    (select-frame of)
+    (raise-frame of))
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon)))
   (+doom-modeline|set-selected-window)
   (realign-windows)
@@ -2195,9 +2200,9 @@ the current state and point position."
   (when (< index (length +amos--frame-list))
     (let ((frame (nth index +amos--frame-list))
           (oframe (selected-frame)))
+      (make-frame-invisible oframe t)
       (select-frame frame)
       (raise-frame frame)
-      (make-frame-invisible oframe t)
       (setq +amos-tmux-need-switch nil)
       (realign-windows)
       (recenter))))
@@ -2487,8 +2492,8 @@ By default the last line."
                    (concat
                     (ediff-get-region-contents ediff-current-difference 'A ediff-control-buffer)
                     (ediff-get-region-contents ediff-current-difference 'B ediff-control-buffer))))
-(defun add-d-to-ediff-mode-map () (define-key ediff-mode-map "d" 'ediff-copy-both-to-C))
-(add-hook 'ediff-keymap-setup-hook 'add-d-to-ediff-mode-map)
+(defun add-c-to-ediff-mode-map () (define-key ediff-mode-map "c" 'ediff-copy-both-to-C))
+(add-hook 'ediff-keymap-setup-hook 'add-c-to-ediff-mode-map)
 
 (defun +amos/close-block ()
   (interactive)

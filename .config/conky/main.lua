@@ -55,12 +55,18 @@ function conky_setup(  )
 	-- reading the variables
 	local nex = 0;
 	-- dimensions
-	_,nex,width = string.find(output,"WIDTH%s*=%s*(.-)%s*;", nex);
-	_,nex,height = string.find(output,"HEIGHT%s*=%s*(.-)%s*;", nex);
+	width, height = string.match("1980x1080", "(%d+)x(%d+)")
+
 	-- network
-	_,nex,interface = string.find(output, "NETWORK%s*=%s*(.-)%s*;",nex);
+	local file = io.popen("ip r g 180.76.76.76 | awk 'NR==1{print $5;exit}'");
+	interface = file:read("*a");
+	io.close(file);
+
 	-- cpu
-	_,nex,no_of_cores = string.find(output, "NO_OF_CORES%s*=%s*(.-)%s*;",nex);
+	local file = io.popen("nproc --all");
+	no_of_cores = tonumber(file:read("*a"));
+	io.close(file);
+
 	-- color style
 	_,nex,color = string.find(output, "COLOR%s*=%s*(.-)%s*;",nex);
 	-- gmail
@@ -70,9 +76,7 @@ function conky_setup(  )
 	start = 1;
 
 	-- checking for internet connection
-	local file = io.popen("ip r | grep -c '^0\.0\.0\.0'");
-	internet = tonumber(file:read("*a"));
-	io.close(file);
+	internet = 0
 
 end
 
@@ -105,7 +109,7 @@ function conky_main(  )
 	local text = "";
 
 	-- few co-ordinates
-	local centerx = width/2 - 40;
+	local centerx = width/2 - 60;
 	local centery = height/2 + 40;
 
 	-- getting the path of the conky
@@ -1007,7 +1011,7 @@ function conky_main(  )
 	cairo_set_font_size(cr, item_font_size);
 
 	-- name text
-	text = "SPOTIFY";
+	text = "ICONS";
 	cairo_text_extents(cr, text, extents)
 	cairo_move_to(cr, item_centerx - extents.width/2, item_centery - item_radius - 10);
 	cairo_show_text(cr, text);

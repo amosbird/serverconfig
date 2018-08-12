@@ -4,7 +4,7 @@ if pgrep -f  'sdcv'
 then
     :
 else
-    sakura -t stardict -e dict.sh &
+    termite -t stardict -e dict.sh &
     sleep 0.5
 fi
 

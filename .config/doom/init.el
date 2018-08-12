@@ -6,7 +6,7 @@
        lookup
        snippets
        spellcheck
-       syntax-checker
+       (syntax-checker +childframe)
 
        :completion
        company
@@ -115,6 +115,7 @@
 (setq find-file-visit-truename t)
 (setq flycheck-check-syntax-automatically '(save mode-enabled))
 (setq flycheck-pos-tip-mode nil)
+(setq flycheck-indication-mode nil)
 (setq fringes-outside-margins t)
 (setq global-auto-revert-non-file-buffers t)
 (setq helm-bibtex-bibliography '("~/zotero.bib"))
@@ -266,6 +267,8 @@
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect t
    magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")))
+(after! evil-magit
+  (setq evil-magit-use-z-for-folds nil))
 
 (after! recentf
   (setq recentf-max-saved-items 10000))
@@ -277,3 +280,4 @@
   (server-start))
 ;; disable this fucking stupid feature by masking
 (provide 'smartparens-lua)
+(provide 'evil-collection-mu4e)

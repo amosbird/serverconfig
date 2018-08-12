@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+mans() {
+    man -k . | awk '{ if (match($2,/\((.*)\)/,m)) print m[1]" "$1}'
+}
+
+path="$(mans | rofi -p 'man pages > ' -dmenu)"
+m $path

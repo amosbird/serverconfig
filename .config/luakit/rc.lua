@@ -314,6 +314,11 @@ modes.add_binds("normal", {
         if not uri then w:notify("No primary selection...") return end
         for _ = 1, m.count do w:new_tab(w:search_open(uri)) end
     end, {count = 1}},
+    { "<Shift-Insert>", function (w, _, m)
+        local uri = luakit.selection.primary
+        if not uri then w:notify("No primary selection...") return end
+        for _ = 1, m.count do w:new_tab(w:search_open(uri)) end
+    end, {count = 1}},
     { "gd", [[Open <luakit://downloads> in new tab.]],
         function (w) w:new_tab(downloads_chrome.chrome_page) end },
 })

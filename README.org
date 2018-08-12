@@ -104,6 +104,9 @@ pkgfile --update
 sudo usermod -aG sys amos
 systemctl enable org.cups.cupsd.service
 
+trizen -S conky-lua xsensors vnstat stalonetray xdo bspwm gtk-doc intltool xtitle vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git
+
+
 * trackpoint
 
 If your keyboard is an older model (NOT Compact),  try  tpkbdctl  to control trackpoint sensitivity of the keyboard.

@@ -4,7 +4,7 @@ if pgrep -f urxvt_scratchpad;
 then
     :
 else
-    sakura -t urxvt_scratchpad -e tmux new -A -s amos &
+    termite -t urxvt_scratchpad -e "tmux new -A -s amos" &
     sleep 0.5 # i3 issue
 fi
 
@@ -29,8 +29,8 @@ else
     w=${wh[0]}
     h=${wh[1]}
     w=$((w/2 - 7))
-    h=$((h - 20))
-    y=7
+    h=$((h - 12))
+    y=6
 
     if bspc query -N -d focused | grep -q $(bspc query -N -n $id)
     then

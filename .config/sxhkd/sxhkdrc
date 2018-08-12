@@ -45,7 +45,7 @@ ctrl+alt+9
 ctrl+alt+0
   tele
 super+s
-  sakura -e /usr/local/bin/fish
+  termite -e fish
 ctrl+alt+s
   showshell.sh 2
 ctrl+alt+l
@@ -153,3 +153,8 @@ super + r
   bspc node --state pseudo_tiled; \
   sleep 0.1; \
   bspc node --state tiled
+
+ctrl+Eisu_toggle
+  trackpointspeed
+ctrl+alt+m
+  rofiman
