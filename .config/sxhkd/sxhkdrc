@@ -4,10 +4,6 @@ mod3+b
   baidupan.sh
 mod3+f
   copyq toggle
-mod3+d
-  copyq disable
-mod3+e
-  copyq enable
 mod3+1
   sleep 0.1 && fcitx-remote -w 127.0.0.1
 mod3+2
@@ -39,7 +35,7 @@ super+z
 super+q
   bspc node -c
 ctrl+alt+8
-  rofidownloads
+  rofiman
 ctrl+alt+9
   showdict.sh
 ctrl+alt+0
@@ -156,5 +152,10 @@ super + r
 
 ctrl+Eisu_toggle
   trackpointspeed
-ctrl+alt+m
-  rofiman
+mod3 + e
+  xdg-open "$(xclip -o)"
+
+# mod3+d
+#   copyq disable
+# mod3+e
+#   copyq enable
