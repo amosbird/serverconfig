@@ -9,3 +9,12 @@ fishd.*
 .gdb_history
 .config/direnv/allow
 .elc
+.copyq_s
+*.dat
+.config/fcitx/dbus
+.config/fcitx/rime/sync
+.config/fcitx/rime/trash
+.config/fcitx/rime/luna_pinyin.userdb
+.config/fcitx/rime/luna_pinyin.userdb.old
+.config/fcitx/rime/build
+.config/fcitx/clipboard
