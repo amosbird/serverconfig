@@ -1,0 +1,19 @@
+patch:
+  'punctuator/import_preset': alternative
+  'key_binder/import_preset': alternative
+  "translator/preedit_format": {}
+  switches:
+    - name: ascii_mode
+      reset: 0
+      states: [ 中文, 西文 ]
+    - name: full_shape
+      states: [ 半角, 全角 ]
+    - name: simplification
+      reset: 1
+      states: [ 漢字, 汉字 ]
+    - name: ascii_punct
+      states: [ 。，, ．， ]
+
+  translator:
+    dictionary: luna_pinyin.extended
+    enable_charset_filter: true

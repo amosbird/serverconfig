@@ -1,0 +1,125 @@
+###中文输入法下也使用英文标点2013/8/14 yxj
+###有些用戶習慣在中文裏使用ASCII標點，那麼與其一個一個覆寫，不如 整套都換掉 。
+###取得這份設定檔—— Rime 別樣設定，使用西文標點(一个gist：https://gist.github.com/lotem/2334409) 在用戶資料夾保存爲 alternative.yaml ；
+###再將輸入方案中的「導入 default 設定」通過打 patch 替換爲「導入 alternative 設定」
+###刚刚遇到一个问题，因为教程里面说需要这前两行，所以就直接粘贴了，但是发现模糊音失效了，找到原因是[只能有一个patch：，因为上面已经有了，所以就下面就不要了，注意缩进,两个英文空格]
+###又加入了一行代码['key_binder/import_preset': alternative]作用是让[ ]可以翻页,如果一开始就用 [ 上翻页的会连高亮的字加[都一起上屏「比如你好[ 」就会这样了,哈哈
+###patch:
+##'punctuator/import_preset': alternative
+##'key_binder/import_preset': alternative
+######
+
+###佛振在贴吧的解答:
+###三步设定新标点：
+###一、取得此设定档 alternative.yaml，保存到Rime用户目录
+###https://gist.github.com/2334409
+###二、在用户目录新建一个 X.custom.yaml 文件，X替换为常用的输入方案标识，如 luna_pinyin；
+###写入文件内容 patch: 'punctuator/import_preset': alternative
+###三、重新部署生效。
+###如此设定后，按F4从【方案选单】裏选择「半角→全角」切换两种标点
+
+# Rime alternative settings
+# encoding: utf-8
+#
+# difference from default settings:
+# 1. ascii-style punctuation in half-shape mode
+# 2. [ ] as paging keys
+#
+# save this file as:
+# (Linux)   ~/.config/ibus/rime/alternative.yaml
+# (Mac OS)  ~/Library/Rime/alternative.yaml
+# (Windows) "%APPDATA%\Rime\alternative.yaml"
+#
+# edit <SCHEMA_ID>.custom.yaml:
+# >> patch:
+# >>   'punctuator/import_preset': alternative
+# >>   'key_binder/import_preset': alternative
+#
+# for detailed explanation, refer to:
+# http://code.google.com/p/rimeime/wiki/CustomizationGuide#%E4%BD%BF%E7%94%A8%E5%85%A8%E5%A5%97%E8%A5%BF%E6%96%87%E6%A8%99%E9%BB%9E
+
+config_version: "0.3"
+
+punctuator:
+  full_shape:
+    " " : { commit: "　" }
+    "," : { commit: ， }
+    "." : { commit: 。 }
+    "<" : [ 《, 〈, «, ‹ ]
+    ">" : [ 》, 〉, », › ]
+    "/" : [ 、, ／, "/", ÷ ]
+    "?" : { commit: ？ }
+    ";" : { commit: ； }
+    ":" : ：
+    "'" : { pair: [ "‘", "’" ] }
+    "\"" : { pair: [ "“", "”" ] }
+    "\\" : [ 、, ＼, "\\" ]
+    "|" : [ ・, ｜, "|", "§", "¦" ]
+    "`" : [ ｀, "`" ]
+    "~" : [ 〜, "~", ～, 〰 ]
+    "!" : { commit: ！ }
+    "@" : [ ＠, "@", ☯ ]
+    "#" : [ ＃, "#", ⌘ ]
+    "%" : [ ％, "%", "°", "℃" ]
+    "$" : [ ￥, "$", "€", "£", "¥", "¢", "¤" ]
+    "^" : { commit: …… }
+    "&" : [ ＆, "&" ]
+    "*" : [ ＊, "*", ・, ×, ※, ❂, · ]
+    "(" : （
+    ")" : ）
+    "-" : [ －, "-" ]
+    "_" : ——
+    "+" : [ ＋, "+" ]
+    "=" : [ ＝, "=" ]
+    "[" : [ 「, 【, 〔, ［ ]
+    "]" : [ 」, 】, 〕, ］ ]
+    "{" : [ 『, 〖, ｛ ]
+    "}" : [ 』, 〗, ｝ ]
+  half_shape:
+    "*" : "*"
+    "_" : "_"
+    "," : { commit: ， }
+    "." : { commit: 。 }
+    "<" : "<"
+    ">" : ">"
+    "/" : "/"
+    "?" : { commit: ？ }
+    ";" : { commit: ； }
+    ":" : ：
+    "'" : "'"
+    "\"" : "\""
+    "\\" : { commit: 、}
+    "|" : "|"
+    "`" : "`"
+    "~" : "~"
+    "!" : { commit: ！ }
+    "@" : "@"
+    "#" : "#"
+    "%" : "%"
+    "$" : "$"
+    "^" : "^"
+    "&" : "&"
+    "*" : "*"
+    "(" : "("
+    ")" : ")"
+    "-" : "-"
+    "_" : "_"
+    "+" : "+"
+    "=" : "="
+    "[" : "["
+    "]" : "]"
+    "{" : "{"
+    "}" : "}"
+
+key_binder:
+  bindings:
+    # commonly used paging keys
+    - { when: composing, accept: ISO_Left_Tab, send: Page_Up }
+    - { when: composing, accept: Shift+Tab, send: Page_Up }
+    - { when: composing, accept: Tab, send: Page_Down }
+    - { when: has_menu, accept: minus, send: Page_Up }
+    - { when: has_menu, accept: equal, send: Page_Down }
+    - { when: paging, accept: comma, send: Page_Up }
+    - { when: has_menu, accept: period, send: Page_Down }
+    - { when: paging, accept: bracketleft, send: Page_Up }
+    - { when: has_menu, accept: bracketright, send: Page_Down }
