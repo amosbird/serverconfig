@@ -51,12 +51,12 @@ ctrl+alt+h
 super+Home
   xrandr --output VIRTUAL1 --off --output eDP1 --mode 1600x900 --pos 0x0 --rotate normal --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
   bspc monitor eDP1 -f -g 1600x900+0+0; \
-  bspc monitor eDP1 -d w e d f v n u i o p c h; \
+  bspc monitor eDP1 -d w e d f v n i o p c h; \
   setbg.sh
 super+End
   xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0 --rotate normal --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
   bspc monitor DP2-2 -f -g 1920x1080+0+0; \
-  bspc monitor DP2-2 -d w e d f v n u i o p c h; \
+  bspc monitor DP2-2 -d w e d f v n i o p c h; \
   setbg.sh
 super+Insert
   xrandr --output eDP1 --off --output DP2-2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 ; feh --bg-scale ~/Pictures/river.jpg
@@ -119,11 +119,11 @@ super + {_,shift + }{h,j,k,l}
 super + {_,shift + }m
 	bspc node --{focus,swap} biggest
 
-ctrl + alt + shift + {w,e,d,f,v,n,u,i,o,p,c}
-	bspc node --to-desktop {w,e,d,f,v,n,u,i,o,p,c}
+ctrl + alt + shift + {w,e,d,f,v,n,i,o,p,c}
+	bspc node --to-desktop {w,e,d,f,v,n,i,o,p,c}
 
-ctrl + alt + {w,e,d,f,v,n,u,i,o,p,c}
-	bspc desktop --focus {w,e,d,f,v,n,u,i,o,p,c}
+ctrl + alt + {w,e,d,f,v,n,i,o,p,c}
+	bspc desktop --focus {w,e,d,f,v,n,i,o,p,c}
 
 # Focus left/right occupied desktop, used to find missing node
 ctrl + alt + {Left,Right}

@@ -2555,6 +2555,21 @@ By default the last line."
 (advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
 (advice-add #'recenter-top-bottom :override #'recenter)
 (advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))
+(advice-add #'magit-blame--update-margin :override #'ignore)
+
+(defun +amos/avy-goto-url()
+  "Use avy to go to an URL in the buffer."
+  (interactive)
+  (require 'avy)
+  (avy--generic-jump "https?://" nil 'pre))
+
+(defun +amos/avy-open-url ()
+  "Use avy to select an URL in the buffer and open it."
+  (interactive)
+  (require 'avy)
+  (save-excursion
+    (if (+amos/avy-goto-url)
+        (browse-url-at-point))))
 
 (defun +amos/avy-goto-char-timer (&optional arg)
   "Read one or many consecutive chars and jump to the first one.

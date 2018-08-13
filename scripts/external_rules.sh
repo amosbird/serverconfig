@@ -5,10 +5,15 @@ class=$2
 instance=$3
 title=$(xtitle "$wid")
 case "$class" in
+    Conky)
+        echo $wid > /tmp/conky
+        setbg.sh reset_conky
+        echo "desktop=n layer=below state=floating"
+        ;;
     stalonetray)
         echo $wid > /tmp/stalonetray
         setbg.sh reset_tray
-        echo "desktop=u layer=below"
+        echo "desktop=n layer=normal"
         ;;
     qutebrowser)
         case "$title" in

@@ -1,3 +1,42 @@
+* Archlinux-ng
+
+** browser
+
+[[file:assets/browser.png]]
+
+** editor
+
+[[file:assets/editor.png]]
+
+** terminal
+
+[[file:assets/terminal.png]]
+
+** monitor
+
+[[file:assets/monitor.png]]
+
+** profiler
+
+[[file:assets/profiler.png]]
+
+** debugger
+
+[[file:assets/debugger.png]]
+
+** manual
+
+[[file:assets/manual.png]]
+
+** clipboard
+
+[[file:assets/clipboard.png]]
+
+** dashboard
+
+[[file:assets/dashboard.png]]
+
+
 * bootstrap
 
 timedatectl set-ntp true
@@ -47,11 +86,9 @@ timeout 4
 default arch
 
 pacman -S base-devel expac yajl git
-curl -o PKGBUILD https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=cower
-makepkg PKGBUILD --skippgpcheck --install --needed
-curl -o PKGBUILD https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=pacaur
-makepkg PKGBUILD --install --needed
-rm -rf *
+git clone https://aur.archlinux.org/trizen-git.git
+cd trizen-git
+makepkg -si
 
 useradd -m amos
 passwd amos
@@ -70,67 +107,97 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     }
 });
-sudo usermod -aG wheel amos
+sudo usermod -aG wheel sys amos
 
-pacaur -S xorg-xrdb feh i3status i3-gaps i3blocks-gaps-git sddm jq grc net-tools compton arandr xorg-xset dnsutils inxi ipset iprange npm pdnsd rofi tmux ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline termite tcl expect vte-common vte3-ng weechat dunst copyq xclip pandoc llvm clang lxappearance mu-git fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin gitter ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf desktop-file-utils alsa-lib libmagick6 gnutls mu python-sphinx jansson tup tpkbdctl-git gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura-git mimi-git rsync dstat pinta sysstat hplip cups samba poco ccache rustup ripgrep fd-rs tokei go fzf direnv redshift poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu-git zathura-pdf-mupdf-git zathura-ps-git ttf-ms-fonts gnome-themes-standard qutebrowser socat inotify-tools
+** packages
 
-sddm --example-config | sudo tee /etc/sddm.conf
-sudo vim /etc/sddm.conf
-User=amos
-Session=i3.desktop
-systemctl enable sddm
+trizen -S xorg-xrdb feh bspwm sddm jq grc net-tools compton arandr xorg-xset dnsutils npm pdnsd rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline tcl expect weechat dunst copyq xclip pandoc llvm clang lxappearance mu-git fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura-git mimi-git rsync dstat pinta sysstat hplip cups samba ccache rustup ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu-git zathura-pdf-mupdf-git zathura-ps-git ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel rust-racer luakit conky-lua xsensors vnstat stalonetray xdo bspwm gtk-doc intltool xtitle vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake emacs-git
 
-rustup toolchain install nightly
-rustup toolchain default nightly
-cargo install parallel racer
-go get github.com/pranavraja/tldr
+** builds
+
+mkdir ~/git && cd ~/git
+
+*** config
+
+git clone git@github.com:amosbird/serverconfig
+sh ~/git/serverconfig/restore.sh
+
+*** reptyr
+
+git clone git@github.com:amosbird/reptyr
+cd reptyr && sudo make install
+
+*** cgdb
+
+git clone git@github.com:amosbird/cgdb
+cd cgdb && ./autogen.sh && ./configure && make && sudo make install
+
+*** tmux
+
+git clone git@github.com:amosbird/tmux
+cd tmux && sh autogen.sh && ./configure && make && sudo make install
+
+*** fish-shell
+
+git clone git@github.com:amosbird/fish-shell
+cd fish-shell && mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make && sudo make install
+
+*** libvte
+
+git clone git@github.com:amosbird/libvte
+cd libvte && ./autogen.sh && ./configure && make && sudo make install
+
+*** termite
+
+git clone --recursive git@github.com:amosbird/termite
+cd termite && sudo make install
+
+*** htop-vim
+
+git clone git@github.com:amosbird/htop-vim
+cd htop-vim && ./autogen.sh && ./configure && make && sudo make install
+
+*** qutebrowser
+
+git clone git@github.com:amosbird/qutebrowser
+
+*** xcape
+
+git clone git@github.com:amosbird/xcape
+cd xcape && sudo make install
+
+*** fcitx
+
+git clone git@github.com:amosbird/fcitx
+cd fcitx/pkg
+makepkg -si
+
+*** go related
+
 go get github.com/gsamokovarov/jump
-go get github.com/mehrdadrad/mylg
-go get github.com/elves/elvish
+go get -d github.com/elves/elvish
 cd ~/go/src/github.com/elves/elvish
 git remote add amos git@github.com:amosbird/elvish
 git fetch amos master
 git checkout -b amos amos/master
 go install
 
-mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Screencasts Music org/todos Documents/pdfs Documents/ppts Documents/docs
+** emacs
 
-M-x all-the-icons-install-fonts
-pacaur -S luacheck
-sudo tpkbdctl -S 255
-sudo tpkbdctl -s 255
+git clone https://github.com/hlissner/doom-emacs -b develop ~/.emacs.d
+cd ~/.emacs.d && make quickstart
+
+** post
+
+sddm --example-config | sudo tee /etc/sddm.conf
+sudo vim /etc/sddm.conf
+User=amos
+Session=bspwm.desktop
+systemctl enable sddm
+
+mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Screencasts Music Books org/todos Documents/pdfs Documents/ppts Documents/docs
+
+open emacs and do M-x all-the-icons-install-fonts
 ccache -M 50G
 pkgfile --update
-sudo usermod -aG sys amos
 systemctl enable org.cups.cupsd.service
-
-trizen -S conky-lua xsensors vnstat stalonetray xdo bspwm gtk-doc intltool xtitle vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git
-
-
-* trackpoint
-
-If your keyboard is an older model (NOT Compact),  try  tpkbdctl  to control trackpoint sensitivity of the keyboard.
-https://aur.archlinux.org/packages/tpkbdctl-git
-For a newer model,  'ThinkPad Compact USB Keyboard with TrackPoint', there's a fork of tpkbdctl by hiikezoe:
-https://github.com/hiikezoe/tpkbdctl
-For a bluetooth model,  'ThinkPad Compact Bluetooth Keyboard with TrackPoint',  first
-<shell-prompt> grep 'ThinkPad Compact Bluetooth' /sys/class/hidraw/hidraw*/device/uevent | cut -d/ -f5
-and  if you get hidraw7 for example, try
-<shell-prompt> echo -ne '\x18\x02\x09' | sudo dd of=/dev/hidraw7 2>/dev/null
-You can write from  '\x18\x02\x01' to  '\x18\x02\x09'  to set sensitivity.
-https://wiki.archlinux.org/index.php/TrackPoint
-
-// disable middle button but retain scrolling
-xmodmap -e "pointer = 1 25 3 4 5 6 7 8 9" e.g. in your xinitrc
-
-Extract from /etc/X11/xorg.conf on an X31:
-   Section "InputDevice"
-       Identifier "TPPS/2 IBM TrackPoint"
-       Driver     "evdev"
-       Option     "Device" "/dev/input/by-path/platform-i8042-serio-1-event-mouse"
-       Option     "GrabDevice" "False"
-       Option     "EmulateWheel" "true" #Enable wheel emulation for the Trackpoint
-       Option     "EmulateWheelButton" "25" #Use the middle button for the emulation
-       Option     "XAxisMapping" "6 7" #Map trackpoint X axis to X axis of emulated wheel
-       Option     "YAxisMapping" "4 5" #Map trackpoint Y axis to Y axis of emulated wheel
-   EndSection

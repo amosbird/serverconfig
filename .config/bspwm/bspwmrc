@@ -24,7 +24,7 @@ bspc rule -a Arandr sticky=on state=floating
 bspc rule -a netease-cloud-music desktop=p follow=on
 bspc rule -a xfreerdp desktop=w follow=on
 bspc rule -a Luakit desktop=f follow=on
-bspc rule -a Conky desktop=u state=floating
+bspc rule -a Skype desktop=o state=tiled
 bspc config external_rules_command /home/amos/scripts/external_rules.sh
 
 stalonetray --window-type normal -i 32 --sticky false --window-strut none &

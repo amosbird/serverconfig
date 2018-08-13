@@ -97,6 +97,23 @@ settings.window.search_engines.default = "https://google.com/search?q=%s"
 settings.window.search_engines.bing = "https://cn.bing.com/search?q=%s"
 settings.window.search_engines.scholar = "https://scholar.google.com/scholar?q=%s"
 settings.window.search_engines.github = "https://github.com/search?q=%s"
+settings.window.search_engines.book = "http://b-ok.xyz/s/?q=%s"
+require "lousy.widget.tablist"
+settings.tablist.always_visible=true
+settings.webview.allow_universal_access_from_file_urls=true
+settings.undoclose.max_saved_tabs=10
+settings.webview.allow_file_access_from_file_urls=false
+settings.session.always_save=false
+settings.vertical_tabs.sidebar_width=300
+settings.webview.enable_accelerated_2d_canvas=true
+settings.webview.javascript_can_access_clipboard=false
+settings.webview.enable_dns_prefetching=true
+settings.window.home_page="https://github.com/"
+settings.window.act_on_synthetic_keys=false
+settings.completion.history.order="last_visit"
+settings.webview.enable_webgl=true
+settings.webview.enable_fullscreen=false
+settings.webview.zoom_level=100
 
 -- Set download location
 downloads.pdf_dir = "/Documents/pdfs/"
@@ -131,7 +148,7 @@ downloads.add_signal("download::status", function(dl)
       luakit.spawn(string.format("bash -c 'copyq write image/png - application/x-copyq-item-notes %q %s",
          string.format("[[file:%s]]\\n%s", dl.destination, dl.destination), "< " .. dl.destination .. " && copyq select 0'"))
    elseif dl.status == "finished" then
-      luakit.spawn(string.format("bash -c 'xclip /dev/stdin < <(echo -n %s)'", dl.destination, dl.destination))
+      luakit.spawn(string.format("bash -c 'xclip /dev/stdin < <(echo -n %q)'", dl.destination, dl.destination))
       luakit.spawn("notify-send download-finished " .. dl.destination)
    end
 end)
@@ -242,7 +259,11 @@ local modes = require "modes"
 local binds = require "binds"
 local keysym = require "keysym"
 modes.add_binds({"normal","insert"},
-   { { "<Control-space>", "Switch to other window.", function (_) luakit.spawn("i3-msg focus right") end } })
+   {
+      { "<Control-space>", "Switch to other window.", function (_) luakit.spawn("i3-msg focus right") end },
+      { "<Mod1-a>", function (w) w.view:send_key("a", {"ctrl"}) end }
+   }
+)
 
 modes.remove_binds({"normal", "insert"}, { "<Mod1-0>" })
 modes.add_binds("all", {
@@ -287,6 +308,7 @@ modes.add_binds("normal", {
     { "s", "Search via google.", function (w) w:enter_cmd(":tabopen google " ) end },
     { "S", "Search via scholar.", function (w) w:enter_cmd(":tabopen scholar " ) end },
     { "gs", "Search via github.", function (w) w:enter_cmd(":tabopen github " ) end },
+    { "gb", "Search via book.", function (w) w:enter_cmd(":tabopen book " ) end },
     { "d", "Scroll half page down.", function (w) w:scroll{ ypagerel =  0.5 } end },
     { "u", "Scroll half page up.", function (w) w:scroll{ ypagerel = -0.5 } end },
     { "J", "Go to next tab.", function (w) w:next_tab() end },
@@ -340,7 +362,6 @@ modes.add_binds("insert", {
     end},
     { "<Control-w>", function (w) keysym.send(w, "<Control-BackSpace>") end },
     { "<Control-Shift-i>", function (w) keysym.send(w, "<Shift-Tab>") end },
-    { "<Mod1-a>", function (w) keysym.send(w, "<Control-a>") end },
     { "<Mod1-b>", function (w) keysym.send(w, "<Control-Left>") end },
     { "<Mod1-d>", function (w) keysym.send(w, "<Control-Delete>") end },
     { "<Mod1-f>", function (w) keysym.send(w, "<Control-Right>") end },

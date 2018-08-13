@@ -181,6 +181,7 @@
         (underline . "<span class=\"underline\">%s</span>")
         (verbatim . "<code>%s</code>")))
 (setq org-hugo-default-section-directory "post")
+(setq org-image-actual-width '(400))
 (setq org-latex-compiler "xelatex")
 (setq org-latex-custom-lang-environments nil)
 (setq org-latex-tables-booktabs t)

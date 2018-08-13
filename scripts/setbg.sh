@@ -11,9 +11,15 @@ function reset_tray {
     xdo move -x $x -y $y $wid
 }
 
+function reset_conky {
+    wid=$(cat /tmp/conky)
+    xdo move -x 0 -y 0 $wid
+}
+
 if (( $# == 0 ))
 then
     reset_tray
+    reset_conky
     feh --bg-scale ~/git/serverconfig/black.jpg
 else
     $1

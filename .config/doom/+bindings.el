@@ -16,9 +16,10 @@
  "<f12>"         #'+amos/reset-cursor
  "<f11>"         #'+amos/dump-evil-jump-list
  "M-x"           #'execute-extended-command
+ "C-M-u"         #'+amos/avy-open-url
  "<f1>"          #'+amos/reset-zoom
- "<f2>"          #'+amos/increase-zoom
- "<f3>"          #'+amos/decrease-zoom
+ "<f2>"          #'+amos/decrease-zoom
+ "<f3>"          #'+amos/increase-zoom
  "S-<insert>"    #'+amos/paste-from-gui
  "M-1"           #'+amos/workspace-switch-to-1
  "M-2"           #'+amos/workspace-switch-to-2
@@ -379,7 +380,7 @@
    :n "M-R"     #'+eval/region-and-replace
    ;; :i "M-RET"   #'lisp-state-toggle-lisp-state
    :ni "M-U"    #'+amos/replace-defun
-   :ni "C-x C-e"    #'eval-defun)
+   :ni "M-u"    #'eval-defun)
 
  (:after evil-magit
    :map magit-mode-map
