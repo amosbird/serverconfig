@@ -1,4 +1,4 @@
-* Archlinux-ng
+* Archlinux Zero
 
 ** browser
 
@@ -43,6 +43,7 @@
 
 * bootstrap
 
+#+BEGIN_SRC bash
 timedatectl set-ntp true
 # legacy using dos, modern using gpt
 fdisk /dev/sdX
@@ -99,9 +100,11 @@ passwd amos
 pacman -S sudo
 vim /etc/sudoers/amos
 amos ALL=(ALL) NOPASSWD: ALL
+#+END_SRC
 
 * user
 
+#+BEGIN_SRC bash
 sudo vim /etc/polkit-1/rules.d/49-nopasswd_global.rules
 /* Allow members of the wheel group to execute any actions
  * without password authentication, similar to "sudo NOPASSWD:"
@@ -112,72 +115,100 @@ polkit.addRule(function(action, subject) {
     }
 });
 sudo usermod -aG wheel sys amos
+#+END_SRC
 
 ** packages
 
+#+BEGIN_SRC bash
 trizen -S xorg-xrdb feh bspwm sddm jq grc net-tools compton arandr xorg-xset dnsutils npm pdnsd rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline tcl expect weechat dunst copyq xclip pandoc llvm clang lxappearance mu-git fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura-git mimi-git rsync dstat pinta sysstat hplip cups samba ccache rustup ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu-git zathura-pdf-mupdf-git zathura-ps-git ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel rust-racer luakit conky-lua xsensors vnstat stalonetray xdo bspwm gtk-doc intltool xtitle vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake emacs-git
+#+END_SRC
 
 ** builds
 
+#+BEGIN_SRC bash
 mkdir ~/git && cd ~/git
+#+END_SRC
 
 *** config
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/serverconfig
 sh ~/git/serverconfig/restore.sh
+#+END_SRC
 
 *** reptyr
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/reptyr
 cd reptyr && sudo make install
+#+END_SRC
 
 *** cgdb
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/cgdb
 cd cgdb && ./autogen.sh && ./configure && make && sudo make install
+#+END_SRC
 
 *** tmux
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/tmux
 cd tmux && sh autogen.sh && ./configure && make && sudo make install
+#+END_SRC
 
 *** fish-shell
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/fish-shell
 cd fish-shell && mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make && sudo make install
+#+END_SRC
 
 *** libvte
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/libvte
 cd libvte && ./autogen.sh && ./configure && make && sudo make install
+#+END_SRC
 
 *** termite
 
+#+BEGIN_SRC bash
 git clone --recursive git@github.com:amosbird/termite
 cd termite && sudo make install
+#+END_SRC
 
 *** htop-vim
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/htop-vim
 cd htop-vim && ./autogen.sh && ./configure && make && sudo make install
+#+END_SRC
 
 *** qutebrowser
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/qutebrowser
+#+END_SRC
 
 *** xcape
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/xcape
 cd xcape && sudo make install
+#+END_SRC
 
 *** fcitx
 
+#+BEGIN_SRC bash
 git clone git@github.com:amosbird/fcitx
 cd fcitx/pkg
 makepkg -si
+#+END_SRC
 
 *** go related
 
+#+BEGIN_SRC bash
 go get github.com/gsamokovarov/jump
 go get -d github.com/elves/elvish
 cd ~/go/src/github.com/elves/elvish
@@ -185,14 +216,18 @@ git remote add amos git@github.com:amosbird/elvish
 git fetch amos master
 git checkout -b amos amos/master
 go install
+#+END_SRC
 
 ** emacs
 
+#+BEGIN_SRC bash
 git clone https://github.com/hlissner/doom-emacs -b develop ~/.emacs.d
 cd ~/.emacs.d && make quickstart
+#+END_SRC
 
 ** post
 
+#+BEGIN_SRC bash
 sddm --example-config | sudo tee /etc/sddm.conf
 sudo vim /etc/sddm.conf
 User=amos
@@ -205,3 +240,4 @@ open emacs and do M-x all-the-icons-install-fonts
 ccache -M 50G
 pkgfile --update
 systemctl enable org.cups.cupsd.service
+#+END_SRC
