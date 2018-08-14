@@ -237,8 +237,14 @@ function fish_user_key_bindings
     end
 
     function sudo-commandline -d "execute commandline using sudo"
-        if string match -r '^ *$' (commandline) > /dev/null 2>&1
+        if string match -q -r '^ *$' (commandline)
             return
+        else if string match -q -r '^sudo ' (commandline)
+            commandline -f execute
+        else if string match -q -r '^e ' (commandline)
+            set -l cmd (commandline)
+            commandline (string replace -r '^e ' 'E ' -- $cmd)
+            commandline -f execute
         else
             commandline "sudo "(commandline)
             commandline -f execute

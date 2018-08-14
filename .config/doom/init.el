@@ -271,6 +271,8 @@
 (after! evil-magit
   (setq evil-magit-use-z-for-folds nil))
 
+(after! org (setq org-image-actual-width '(400)))
+
 (after! recentf
   (setq recentf-max-saved-items 10000))
 

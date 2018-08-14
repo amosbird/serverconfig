@@ -144,7 +144,10 @@ local function starts_with(str, start)
 end
 
 downloads.add_signal("download::status", function(dl)
-   if dl.mime_type and starts_with(dl.mime_type, "image") and dl.status == "finished" then
+   if dl.mime_type and starts_with(dl.mime_type, "image/j") and dl.status == "finished" then
+      luakit.spawn(string.format("bash -c 'copyq write image/jpeg - application/x-copyq-item-notes %q %s",
+         string.format("[[file:%s]]\\n%s", dl.destination, dl.destination), "< " .. dl.destination .. " && copyq select 0'"))
+   elseif dl.mime_type and starts_with(dl.mime_type, "image/p") and dl.status == "finished" then
       luakit.spawn(string.format("bash -c 'copyq write image/png - application/x-copyq-item-notes %q %s",
          string.format("[[file:%s]]\\n%s", dl.destination, dl.destination), "< " .. dl.destination .. " && copyq select 0'"))
    elseif dl.status == "finished" then
@@ -261,7 +264,7 @@ local keysym = require "keysym"
 modes.add_binds({"normal","insert"},
    {
       { "<Control-space>", "Switch to other window.", function (_) luakit.spawn("i3-msg focus right") end },
-      { "<Mod1-a>", function (w) w.view:send_key("a", {"ctrl"}) end }
+      { "<Mod1-a>", function (w) w.view:send_key("a", {"control"}) end }
    }
 )
 
