@@ -5,10 +5,14 @@ then
     :
 else
     termite -t urxvt_scratchpad -e "tmux new -A -s amos" &
-    sleep 0.5 # i3 issue
 fi
 
 id=$(cat /tmp/urxvt_scratchpad);
+if [ -z $id ]
+then
+    exit 0
+fi
+
 workspace=$(bspc query -D -d focused --names)
 if [[ "$1" -eq 0 ]]
 then

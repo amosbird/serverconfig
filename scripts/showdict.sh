@@ -9,6 +9,11 @@ else
 fi
 
 id=$(cat /tmp/stardict)
+if [ -z $id ]
+then
+    exit 0
+fi
+
 bspc node $id -g hidden -f
 wh=($(xdpyinfo | grep dimensions | sed -r 's/^[^0-9]*([0-9]+x[0-9]+).*$/\1/' | awk -Fx '{print $1" "$2}'))
 w=${wh[0]}

@@ -18,3 +18,5 @@ fishd.*
 .config/fcitx/rime/luna_pinyin.userdb.old
 .config/fcitx/rime/build
 .config/fcitx/clipboard
+.config/fcitx/rime/user.yaml
+.config/fcitx/profile
