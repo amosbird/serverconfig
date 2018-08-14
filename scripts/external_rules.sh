@@ -7,13 +7,13 @@ title=$(xtitle "$wid")
 case "$class" in
     Conky)
         echo $wid > /tmp/conky
-        setbg.sh reset_conky
-        echo "desktop=n layer=below state=floating"
+        # setbg.sh reset_conky
+        echo "desktop=n state=fullscreen"
         ;;
     stalonetray)
         echo $wid > /tmp/stalonetray
         setbg.sh reset_tray
-        echo "desktop=n layer=normal"
+        echo "desktop=n layer=above"
         ;;
     qutebrowser)
         case "$title" in

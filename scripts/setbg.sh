@@ -19,7 +19,7 @@ function reset_conky {
 if (( $# == 0 ))
 then
     reset_tray
-    reset_conky
+    # reset_conky
     feh --bg-scale ~/git/serverconfig/black.jpg
 else
     $1

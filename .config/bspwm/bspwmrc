@@ -21,6 +21,7 @@ bspc rule -a copyq state=floating
 
 bspc rule -a Screenkey manage=off
 bspc rule -a Arandr sticky=on state=floating
+bspc rule -a Deadbeef state=floating
 bspc rule -a Zathura state=tiled
 bspc rule -a netease-cloud-music desktop=p follow=on
 bspc rule -a xfreerdp desktop=w follow=on

@@ -36,6 +36,10 @@
 
 [[file:assets/dashboard.png]]
 
+** dictionary
+
+[[file:assets/dictionary.png]]
+
 ** keyboard
 
 [[file:assets/keyboard.png]]

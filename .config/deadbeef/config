@@ -4,8 +4,8 @@ cli_add_to_specific_playlist 1
 close_send_to_tray 1
 deadbeef_version 0.7.2
 filechooser.lastdir file:///home/amos/Music/CloudMusic
-gtkui.columns.playlist [{"title":"♫","id":"1","format":"%playstatus%","size":"50","align":"0","color_override":"0","color":"#ff000000"},{"title":"Artist / Album","id":"-1","format":"%artist% - %album%","size":"327","align":"0","color_override":"0","color":"#ff000000"},{"title":"Track No","id":"-1","format":"%tracknumber%","size":"50","align":"1","color_override":"0","color":"#ff000000"},{"title":"Title","id":"-1","format":"%title%","size":"389","align":"0","color_override":"0","color":"#ff000000"},{"title":"Duration","id":"-1","format":"%length%","size":"50","align":"0","color_override":"0","color":"#ff000000"}]
-gtkui.layout.0.6.2 vbox expand="0 1" fill="1 1" homogeneous=0 {hbox expand="0 1 0" fill="1 1 1" homogeneous=0 {playtb {} seekbar {} volumebar {} } tabbed_playlist hideheaders=0 width=1000 {} } 
+gtkui.columns.playlist [{"title":"♫","id":"1","format":"%playstatus%","size":"50","align":"0","color_override":"0","color":"#ff000000"},{"title":"Artist / Album","id":"-1","format":"%artist% - %album%","size":"365","align":"0","color_override":"0","color":"#ff000000"},{"title":"Track No","id":"-1","format":"%tracknumber%","size":"127","align":"1","color_override":"0","color":"#ff000000"},{"title":"Title","id":"-1","format":"%title%","size":"229","align":"0","color_override":"0","color":"#ff000000"},{"title":"Duration","id":"-1","format":"%length%","size":"88","align":"0","color_override":"0","color":"#ff000000"}]
+gtkui.layout.0.6.2 vbox expand="0 1" fill="1 1" homogeneous=0 {hbox expand="0 1 0" fill="1 1 1" homogeneous=0 {playtb {} seekbar {} volumebar {} } tabbed_playlist hideheaders=0 width=854 {} } 
 gtkui.mmb_delete_playlist 1
 gtkui.name_playlist_from_folder 1
 gtkui.statusbar.visible 1
@@ -46,23 +46,23 @@ hotkey.key32 "Ctrl k" 0 0 toggle_stop_after_album
 hotkeys_created 1
 ignore_archives 1
 junk.enable_cp1251_detection 1
-mainwin.geometry.h 600
-mainwin.geometry.w 1000
-mainwin.geometry.x 460
-mainwin.geometry.y 257
+mainwin.geometry.h 473
+mainwin.geometry.w 956
+mainwin.geometry.x 474
+mainwin.geometry.y 347
 network.http_user_agent deadbeef
 network.proxy.port 8080
 network.proxy.type HTTP
 playback.loop 2
 playback.order 0
 playback.volume 0.0000000
-playlist.current 1
+playlist.current 5
 playlist.cursor.0 257
 playlist.cursor.1 105
 playlist.cursor.2 95
 playlist.cursor.3 6
 playlist.cursor.4 20
-playlist.cursor.5 1
+playlist.cursor.5 0
 playlist.scroll.0 7195
 playlist.scroll.1 2834
 playlist.scroll.2 2606
@@ -76,6 +76,7 @@ playlist.tab.00001 research
 playlist.tab.00002 第二季
 playlist.tab.00003 Hamilton
 playlist.tab.00004 qqmusic
+playlist.tab.00005 Default
 prefwin.geometry.h 554
 prefwin.geometry.w 703
 prefwin.geometry.x 608
@@ -83,7 +84,7 @@ prefwin.geometry.y 263
 replaygain_mode 0
 replaygain_scale 1
 resume.paused 0
-resume.playlist 1
-resume.position 70.820060
-resume.track 105
+resume.playlist 5
+resume.position 13.885586
+resume.track 0
 streamer.8_to_16 1
