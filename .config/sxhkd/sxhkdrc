@@ -145,10 +145,10 @@ XF86MonBrightnessDown
   xbacklight -5
 XF86MonBrightnessUp
   xbacklight +5
-super + r
-  bspc node --state pseudo_tiled; \
-  sleep 0.1; \
-  bspc node --state tiled
+# super + r
+#   bspc node --state pseudo_tiled; \
+#   sleep 0.1; \
+#   bspc node --state tiled
 
 ctrl+Eisu_toggle
   trackpointspeed
