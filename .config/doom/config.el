@@ -2460,6 +2460,30 @@ the current state and point position."
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
+(after! subword
+  (progn
+    (define-category ?U "Uppercase")
+    (define-category ?u "Lowercase")
+    (modify-category-entry (cons ?A ?Z) ?U)
+    (modify-category-entry (cons ?a ?z) ?u)
+    (make-variable-buffer-local 'evil-cjk-word-separating-categories)
+    (add-hook 'subword-mode-hook (lambda! (if subword-mode (push '(?u . ?U) evil-cjk-word-separating-categories)
+                                       (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories)))))))
+
+(after! magit
+  (setq
+   magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
+   magit-display-buffer-noselect t
+   magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")))
+
+(after! evil-magit
+  (setq evil-magit-use-z-for-folds nil))
+
+(after! org (setq org-image-actual-width '(400)))
+
+(after! recentf
+  (setq recentf-max-saved-items 10000))
+
 (advice-add #'evil-multiedit--cycle :after #'+amos/recenter)
 (advice-add #'evil-multiedit-match-and-next :after #'+amos/recenter)
 

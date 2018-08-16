@@ -137,7 +137,6 @@
 (setq ivy-virtual-abbreviate 'full)
 (setq lsp-response-timeout 5)
 (setq lsp-ui-peek-force-fontify t)
-(setq magit-display-buffer-function 'magit-display-buffer-fullframe-status-v1)
 (setq nav-flash-delay 0.3)
 (setq org-M-RET-may-split-line '((default)))
 (setq org-agenda-files '("~/org/todo.org"))
@@ -252,29 +251,6 @@
     (advice-add #'evil--jumps-jump :after (lambda (&rest _) (recenter)))
     (advice-add #'evil-switch-to-windows-last-buffer :after (lambda (&rest _) (recenter))))
   nil)
-
-(after! subword
-  (progn
-    (define-category ?U "Uppercase")
-    (define-category ?u "Lowercase")
-    (modify-category-entry (cons ?A ?Z) ?U)
-    (modify-category-entry (cons ?a ?z) ?u)
-    (make-variable-buffer-local 'evil-cjk-word-separating-categories)
-    (add-hook 'subword-mode-hook (lambda! (if subword-mode (push '(?u . ?U) evil-cjk-word-separating-categories)
-                                       (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories)))))))
-
-(after! magit
-  (setq
-   magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
-   magit-display-buffer-noselect t
-   magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")))
-(after! evil-magit
-  (setq evil-magit-use-z-for-folds nil))
-
-(after! org (setq org-image-actual-width '(400)))
-
-(after! recentf
-  (setq recentf-max-saved-items 10000))
 
 (require 'server)
 (setq server-name (getenv "EMACS_SERVER_NAME"))
