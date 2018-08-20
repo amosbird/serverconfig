@@ -8,7 +8,7 @@ function mailto -d "Mail to url" --argument-names 'url'
         emacsclient -s $EMACS_SERVER_NAME -n --display $DISPLAY -e "(browse-url-mail \"$url\")"
     end
     if _mailto $argv
-        i3-msg workspace ""
+        bspc desktop --focus v
     else
         notify-send -t "mail" "mu4e" "Bad url!"
     end

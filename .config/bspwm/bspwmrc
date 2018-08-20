@@ -3,7 +3,7 @@
 bspc monitor (bspc query -M | head) -d w e d f v n u i o p c h
 
 bspc config border_width         0
-bspc config window_gap           6
+bspc config window_gap           0
 
 bspc config split_ratio          0.52
 bspc config split_dir east
@@ -26,7 +26,7 @@ bspc rule -a Zathura state=tiled
 bspc rule -a netease-cloud-music desktop=p follow=on
 bspc rule -a xfreerdp desktop=w follow=on
 bspc rule -a Luakit desktop=f follow=on
-bspc rule -a Skype desktop=o state=tiled
+bspc rule -a Skype desktop=o state=fullscreen
 bspc config external_rules_command /home/amos/scripts/external_rules.sh
 
 stalonetray --window-type normal -i 32 --sticky false --window-strut none &

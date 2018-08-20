@@ -1567,7 +1567,7 @@ representation of `NUMBER' is smaller."
 
 (defun +amos/direnv-reload ()
   (interactive)
-  (shell-command! "/home/amos/go/bin/direnv allow")
+  (shell-command! "direnv allow")
   (direnv-update-environment)
   (kill-buffer " *direnv*")
   (direnv-mode +1))

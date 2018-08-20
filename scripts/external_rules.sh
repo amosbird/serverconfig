@@ -8,7 +8,7 @@ case "$class" in
     Conky)
         echo $wid > /tmp/conky
         # setbg.sh reset_conky
-        echo "desktop=n state=fullscreen"
+        echo "desktop=n"
         ;;
     stalonetray)
         echo $wid > /tmp/stalonetray
