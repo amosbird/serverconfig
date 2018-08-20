@@ -4,16 +4,17 @@
 #     exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt "$@"
 # fi
 
-# export CCLS_TRACEME=s
+# export CCLS_TRACEME=1
+# export CCLS_CRASH_RECOVERY=0
 
-includes=$(g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print $0}' | xargs realpath -s | awk '{print "\"-isystem "$0"\""}' | paste -sd ",")
+includes=$(g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print $0}' | xargs realpath -s | awk '{print "\"-isystem"$0"\""}' | paste -sd ",")
 
-blacklist="\"/tmp\""
 for i in $cquery_include_dirs
 do
     includes="${includes}, \"-I$i\""
 done
 
+blacklist="\"/tmp\""
 for i in $cquery_blacklist
 do
     blacklist="${blacklist}, \"$i\""
@@ -27,7 +28,7 @@ fi
 
 # exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fno-delayed-template-parsing\", \"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt
-exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$suffix --init="{\"cacheDirectory\": \"/home/amos/.cache/.ccls_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"reparseForDependency\": 1, \"comments\": 0, \"blacklist\": [$blacklist]}, \"diagnostics\": {\"frequencyMs\": 3000}, \"completion\": {\"includeBlacklist\": [\"llvm\", \"QT\", \"c++/7.3.0\", \"polly\", \"clang\"]},  \"extraClangArguments\": [\"-fno-delayed-template-parsing\", \"-std=c++1z\", $includes]}" "$@"
+exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$suffix --init="{\"cacheDirectory\": \"/home/amos/.cache/.ccls_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"reparseForDependency\": 2, \"comments\": 0, \"blacklist\": [$blacklist]}, \"diagnostics\": {\"frequencyMs\": -1, \"onType\": false}, \"completion\": {\"includeWhitelist\": [], \"includeBlacklist\": [\"(x86_64-redhat-linux|x86_64-pc-linux-gnu)/(32|bits|tr1|tr2|profile|ext|debug)/\", \"^/usr/(local/)?include/c\\\\+\\\\+/[0-9\\\\.]+/(bits|tr1|tr2|profile|ext|debug)/\", \"^/usr/(local/)?include/c\\\\+\\\\+/v1/\", \"^/usr/(local/)?include/(?!c\\\\+\\\\+).+\"]}, \"clang\": {\"extraArgs\": [\"-std=c++1z\", $includes]}}" "$@"
 # exec ~/git/ccls/dbg/ccls --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"comments\": 0, \"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"
 # exec ~/git/cquery/rel/cquery --log-file=/tmp/cq.txt --init="{\"cacheDirectory\": \"/home/amos/.cache/.cquery_cached_index\", \"index\": {\"blacklist\": [$blacklist]}, \"extraClangArguments\": [\"-fspell-check\", \"-std=c++1z\", $includes]}" "$@"

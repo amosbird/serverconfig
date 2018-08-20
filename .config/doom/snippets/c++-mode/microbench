@@ -3,7 +3,7 @@
 # key: mb
 # type: command
 # --
-(+amos/add-include "abmb.h")
-(yas-expand-snippet (concat "std::cout << ab::mb<" (yas/choose-value '("std::chrono::milliseconds" "std::chrono::seconds" "std::chrono::microseconds" "std::chrono::nanoseconds")) ", ${1:1}, ${2:1}>([&]() {
+(+amos/add-include "ccutils/microbench.hpp")
+(yas-expand-snippet (concat "std::cout << ccutils::microbench<" (yas/choose-value '("std::chrono::milliseconds" "std::chrono::seconds" "std::chrono::microseconds" "std::chrono::nanoseconds")) ", ${1:1}, ${2:1}>([&]() {
         $0
 }) << endl;"))

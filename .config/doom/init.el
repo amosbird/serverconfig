@@ -113,7 +113,6 @@
 (setq evil-snipe-scope 'visible)
 (setq explicit-shell-file-name "/bin/bash")
 (setq find-file-visit-truename t)
-(setq flycheck-check-syntax-automatically '(save mode-enabled))
 (setq flycheck-pos-tip-mode nil)
 (setq flycheck-indication-mode nil)
 (setq fringes-outside-margins t)

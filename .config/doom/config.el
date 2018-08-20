@@ -754,6 +754,7 @@ With a prefix ARG, invalidate the cache first."
             :caller #'+amos/projectile-find-file))
 
 (advice-add #'projectile-cache-files-find-file-hook :override #'ignore)
+(add-hook! 'projectile-mode-hook (ad-deactivate 'delete-file))
 
 (defvar switch-buffer-functions
   nil
@@ -943,8 +944,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (let ((buf (generate-new-buffer "*new*")))
     (+amos/workspace-new)
     (switch-to-buffer buf)
-    (make-local-variable 'kill-buffer-hook)
-    (add-hook 'kill-buffer-hook #'+amos/workspace-delete)
     (emacs-lisp-mode)
     (evil-insert-state)
     (setq buffer-offer-save nil)
@@ -2181,33 +2180,38 @@ the current state and point position."
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
 
 (setq +amos-tmux-need-switch nil)
+(setq +amos-frame-stack nil)
+(add-hook 'after-make-frame-functions (lambda (f) (if (frame-visible-p f) (push f +amos-frame-stack))))
 
-;; TODO ring lru
 (defun +amos/workspace-delete ()
   (interactive)
-  (let ((f (selected-frame))
-        (of (previous-frame)))
-    (delete-frame f)
-    (select-frame of)
-    (raise-frame of))
+  (let ((f (selected-frame)))
+    (setq +amos-frame-stack (-remove (lambda (e) (eq f e)) +amos-frame-stack))
+    (if +amos-tmux-need-switch
+        (if +amos-frame-stack
+            (+amos/workspace-switch-to-frame (car +amos-frame-stack)))
+      (+amos-workspace-cycle -1))
+    (delete-frame f))
   (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon)))
-  (+doom-modeline|set-selected-window)
-  (realign-windows)
   (when +amos-tmux-need-switch
     (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
     (setq +amos-tmux-need-switch nil)))
 
+(defun +amos/workspace-switch-to-frame (frame)
+  (setq +amos-tmux-need-switch nil)
+  (let ((oframe (selected-frame)))
+    (make-frame-invisible oframe t)
+    (select-frame frame)
+    (raise-frame frame)
+    (push frame +amos-frame-stack)
+    (realign-windows)
+    (recenter)))
+
 (defun +amos/workspace-switch-to (index)
   (interactive)
   (when (< index (length +amos--frame-list))
-    (let ((frame (nth index +amos--frame-list))
-          (oframe (selected-frame)))
-      (make-frame-invisible oframe t)
-      (select-frame frame)
-      (raise-frame frame)
-      (setq +amos-tmux-need-switch nil)
-      (realign-windows)
-      (recenter))))
+    (let ((frame (nth index +amos--frame-list)))
+      (+amos/workspace-switch-to-frame frame))))
 
 (defun +amos/workspace-switch-to-1 () (interactive) (+amos/workspace-switch-to 0))
 (defun +amos/workspace-switch-to-2 () (interactive) (+amos/workspace-switch-to 1))
@@ -2483,6 +2487,9 @@ the current state and point position."
 
 (after! recentf
   (setq recentf-max-saved-items 10000))
+
+(after! flycheck
+  (setq flycheck-check-syntax-automatically '(save mode-enabled)))
 
 (advice-add #'evil-multiedit--cycle :after #'+amos/recenter)
 (advice-add #'evil-multiedit-match-and-next :after #'+amos/recenter)

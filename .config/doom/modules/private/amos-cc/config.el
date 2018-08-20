@@ -78,11 +78,12 @@ The insertion will be repeated COUNT times."
           :n "C-e"      #'+amos/maybe-add-end-of-statement
           :n "o"        #'+amos-evil-open-below
           :n "O"        #'+amos-evil-open-above
-          :n "gh"       #'cquery-call-hierarchy
-          :n "gR"       #'cquery/callers
+          :n "gh"       #'ccls-call-hierarchy
+          :n "gR"       #'ccls/callers
           :n "gt"       #'cquery-member-hierarchy
-          :n "ge"       #'cquery-inheritance-hierarchy
-          "C-c i"       #'+amos/ivy-add-include))
+          :n "ge"       #'lsp-execute-code-action
+          "C-c i"       #'ccls/includes
+          "C-c I"       (lambda! (ccls/includes t))))
 
   ;;; Style/formatting
   ;; C/C++ style settings
@@ -236,34 +237,6 @@ The insertion will be repeated COUNT times."
 (def-package! clang-format
   :commands clang-format-buffer clang-format)
 
-(defvar +amos/default-include-headers
-  '("algorithm" "any" "array" "atomic" "bitset" "cassert" "ccomplex" "cctype" "cerrno"
-    "cfenv" "cfloat" "chrono" "cinttypes" "ciso646" "climits" "clocale" "cmath" "codecvt"
-    "complex" "complex.h" "condition_variable" "csetjmp" "csignal" "cstdalign" "cstdarg"
-    "cstdbool" "cstddef" "cstdint" "cstdio" "cstdlib" "cstring" "ctgmath" "ctime" "cuchar"
-    "cwchar" "cwctype" "cxxabi.h" "deque" "exception" "fenv.h" "forward_list" "fstream"
-    "functional" "future" "initializer_list" "iomanip" "ios" "iosfwd" "iostream" "istream"
-    "iterator" "limits" "list" "locale" "map" "math.h" "memory" "mutex" "new" "numeric"
-    "optional" "ostream" "queue" "random" "ratio" "regex" "scoped_allocator" "set"
-    "shared_mutex" "sstream" "stack" "stdexcept" "stdlib.h" "streambuf" "string" "string_view"
-    "system_error" "tgmath.h" "thread" "tuple" "type_traits" "typeindex" "typeinfo" "unordered_map"
-    "unordered_set" "utility" "valarray" "variant" "vector" "auto_ptr.h" "backward_warning.h"
-    "binders.h" "hash_fun.h" "hash_map" "hash_set" "hashtable.h" "strstream" "adxintrin.h"
-    "altivec.h" "ammintrin.h" "arm_acle.h" "arm_neon.h" "armintr.h" "avx2intrin.h" "avx512bwintrin.h"
-    "avx512cdintrin.h" "avx512dqintrin.h" "avx512erintrin.h" "avx512fintrin.h" "avx512ifmaintrin.h"
-    "avx512ifmavlintrin.h" "avx512pfintrin.h" "avx512vbmiintrin.h" "avx512vbmivlintrin.h"
-    "avx512vlbwintrin.h" "avx512vlcdintrin.h" "avx512vldqintrin.h" "avx512vlintrin.h" "avx512vpopcntdqintrin.h"
-    "avxintrin.h" "bmi2intrin.h" "bmiintrin.h" "clflushoptintrin.h" "clzerointrin.h" "cpuid.h"
-    "cuda_wrappers" "emmintrin.h" "f16cintrin.h" "fcntl.h" "float.h" "fma4intrin.h" "fmaintrin.h" "fxsrintrin.h"
-    "htmintrin.h" "htmxlintrin.h" "ia32intrin.h" "immintrin.h" "intrin.h" "inttypes.h" "iso646.h"
-    "limits.h" "lwpintrin.h" "lzcntintrin.h" "mm3dnow.h" "mm_malloc.h" "mmintrin.h" "module.modulemap"
-    "msa.h" "mwaitxintrin.h" "nmmintrin.h" "opencl-c.h" "pkuintrin.h" "pmmintrin.h" "popcntintrin.h"
-    "prfchwintrin.h" "rdseedintrin.h" "rtmintrin.h" "s390intrin.h" "sanitizer" "shaintrin.h" "smmintrin.h"
-    "stdalign.h" "stdarg.h" "stdatomic.h" "stdbool.h" "stddef.h" "stdint.h" "stdnoreturn.h" "tbmintrin.h"
-    "tgmath.h" "tmmintrin.h" "unwind.h" "vadefs.h" "varargs.h" "vecintrin.h" "wmmintrin.h" "x86intrin.h"
-    "xmmintrin.h" "xopintrin.h" "xray" "xsavecintrin.h" "xsaveintrin.h" "xsaveoptintrin.h" "xsavesintrin.h"
-    "xtestintrin.h" "unistd.h" "libaio.h" "numa.h"))
-
 (defun +amos/add-include (h &rest others)
   "Add an #include line for `h' near top of file, avoiding duplicates."
   (interactive "M#include: ")
@@ -278,40 +251,11 @@ The insertion will be repeated COUNT times."
           (insert incl)
           (newline))))))
 
-(defun +amos/ivy-add-include ()
-  (interactive)
-  (ivy-read "Include: "
-            (append
-             (if-let ((includes (getenv "CC_INCLUDE_LIST")))
-                 (split-string  includes ","))
-             +amos/default-include-headers
-             (split-string
-              (shell-command-to-string "(cd /usr/local/include ; find . -type f ; cd /usr/include ; find -L ./sys -type f) | sed 's=^./=='")))
-            :action #'+amos/add-include))
-
 (add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1))
 (add-hook! 'c++-mode-hook #'modern-c++-font-lock-mode)
 (set-company-backend!
   '(c-mode c++-mode objc-mode)
   'company-dabbrev-code)
-
-;; (def-package! cquery
-;;   :after lsp-mode
-;;   :init
-;;   (setq
-;;    cquery-project-root-matchers
-;;    '(cquery-project-roots-matcher ".cquery" ".cquery" projectile-project-root "compile_commands.json")
-;;    cquery-sem-highlight-method nil)
-;;   (add-hook 'c-mode-common-hook #'cquery//enable))
-
-;; (defun cquery//enable ()
-;;   (direnv-update-environment)
-;;   (lsp-cquery-enable)
-;;   (setq-local flycheck-checker 'lsp-ui)
-;;   (lsp-ui-flycheck-add-mode major-mode)
-;;   (add-to-list 'flycheck-checkers 'lsp-ui)
-;;   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
-;;     (setq flycheck-checkers (delq c flycheck-checkers))))
 
 (def-package! ccls
   :after lsp-mode
@@ -333,28 +277,41 @@ The insertion will be repeated COUNT times."
                       (lsp-ui-peek--to-sequence)
                       (lsp--locations-to-xref-items)
                       (-filter 'identity))))
-           (unless xrefs
-             (user-error "No %s found for: %s" (symbol-name kind) input))
-           (+amos-ivy-xref xrefs kind)))
-
-  (defun ccls/inheritances (&optional base)
-    (interactive)
-    (ccls--ccls-buffer-check)
-    (let* ((input (symbol-at-point))
-           (xrefs
-            (-some->> (lsp--send-request (lsp--make-request "$ccls/inheritanceHierarchy"
-                                                            `(:textDocument (:uri ,(concat lsp--uri-file-prefix buffer-file-name))
-                                                              :position ,(lsp--cur-position)
-                                                              :derived ,(not base)
-                                                              :qualified ,(if ccls-inheritance-hierarchy-qualified t :json-false)
-                                                              :levels 10
-                                                              :flat t)))
-                      (lsp-ui-peek--to-sequence)
-                      (lsp--locations-to-xref-items)
-                      (-filter 'identity))))
       (unless xrefs
-        (user-error "No inheritances found for: %s" input))
-      (+amos-ivy-xref xrefs 'inheritances)))
+        (user-error "No %s found for: %s" (symbol-name kind) input))
+      (+amos-ivy-xref xrefs kind)))
+
+  (defun ccls/includes (&optional force)
+    (interactive)
+    (if (ccls--is-ccls-buffer)
+        (let ((x (intern (concat (doom-project-root) "--includes"))))
+          (unless (and (boundp x) (not force))
+            (setq x
+                  (lsp--send-request
+                   (lsp--make-request "$ccls/includes"))))
+          (ivy-read "Include: " x :action #'+amos/add-include))))
+
+  (defun ccls/diagnostic ()
+    (interactive)
+    (if (ccls--is-ccls-buffer)
+        (lsp--send-notification
+         (lsp--make-notification "$ccls/diagnostic"
+                                 `(:textDocument ,(lsp--text-document-identifier))))))
+
+  (defun ccls/inheritances ()
+    (interactive)
+    (if (ccls--is-ccls-buffer)
+        (let* ((input (symbol-at-point))
+               (xrefs
+                (-some->> (lsp--send-request (lsp--make-request "$ccls/inheritances"
+                                                                `(:textDocument ,(lsp--text-document-identifier)
+                                                                                :position ,(lsp--cur-position))))
+                          (lsp-ui-peek--to-sequence)
+                          (lsp--locations-to-xref-items)
+                          (-filter 'identity))))
+          (unless xrefs
+            (user-error "No inheritances found for: %s" input))
+          (+amos-ivy-xref xrefs 'inheritances))))
 
   (defun ccls/base () (interactive) (+amos-lsp-find-custom 'base "$ccls/base"))
   (defun ccls/callers () (interactive) (+amos-lsp-find-custom 'callers "$ccls/callers"))
@@ -406,7 +363,9 @@ The insertion will be repeated COUNT times."
   (defalias 'cquery/callers                  'ccls/callers)
   (defalias 'cquery-member-hierarchy         'ccls-member-hierarchy)
   (defalias 'cquery-inheritance-hierarchy    'ccls-inheritance-hierarchy)
-  (add-hook 'c-mode-common-hook #'ccls//enable))
+  (add-hook 'c-mode-common-hook #'ccls//enable)
+  (add-hook 'doom-escape-hook #'ccls/diagnostic)
+  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer))
 
 (defun ccls//enable ()
   (direnv-update-environment)
@@ -417,24 +376,6 @@ The insertion will be repeated COUNT times."
   (setq lsp-ui-flycheck-live-reporting nil)
   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
     (setq flycheck-checkers (delq c flycheck-checkers))))
-
-;; (defvar lsp-ui-flycheck--stale-diagnostics nil)
-
-;; (defun lsp-ui-flycheck-enable (_)
-;;   "Enable flycheck integration for the current buffer."
-;;   (setq-local flycheck-check-syntax-automatically nil)
-;;   (setq-local flycheck-checker 'lsp-ui)
-;;   (lsp-ui-flycheck-add-mode major-mode)
-;;   (add-to-list 'flycheck-checkers 'lsp-ui)
-;;   (run-with-idle-timer 0.2 t
-;;                        (lambda () (when (and lsp-ui-flycheck--stale-diagnostics flycheck-mode)
-;;                                     (flycheck-buffer)
-;;                                     (setq lsp-ui-flycheck--stale-diagnostics nil))))
-;;   (add-hook 'lsp-after-diagnostics-hook (lambda ()
-;;                                           (setq lsp-ui-flycheck--stale-diagnostics t)
-;;                                           ;; (when flycheck-mode
-;;                                           ;;   (flycheck-buffer))
-;;                                           )))
 
 (set-lookup-handlers! '(c-mode c++-mode)
   :definition #'xref-find-definitions
