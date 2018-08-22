@@ -220,10 +220,6 @@
     :group 'narrow-reindent)
   (global-narrow-reindent-mode +1))
 
-(when (and (not (getenv "TMUX")) (string= (getenv "GUI") "t"))
-  (require 'fcitx)
-  (fcitx-aggressive-setup))
-
 (def-package! git-gutter
   :config
   (defface +amos:modified
@@ -812,7 +808,7 @@ This function should be hooked to `buffer-list-update-hook'."
           ("<f8>" . rust-playground-rm)))
 
 (def-package! cc-playground
-  :commands cc-playground cc-playground-mode cc-playground-find-snippet
+  :commands cc-playground cc-playground-mode cc-playground-find-snippet cc-playground-leetcode
   :load-path (lambda () (interactive) (if (string= (system-name) "t450s") "~/git/cc-playground"))
   :init
   (put 'cc-exec 'safe-local-variable #'stringp)
@@ -1316,8 +1312,10 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
         path)))))
 (advice-add #'helm-dash-result-url :override #'+amos*helm-dash-result-url)
 
-(unless (string= (getenv "GUI") "t")
-  (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
+(setq tmux-p (getenv "TMUX"))
+
+(if tmux-p
+    (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
 
 (defun +amos/ivy-xref-make-collection (xrefs)
   "Transform XREFS into a collection for display via `ivy-read'."
@@ -1776,6 +1774,21 @@ representation of `NUMBER' is smaller."
         (reusable-frames . visible)))
 (map-put +popup-default-parameters 'modeline t)
 (advice-add #'hide-mode-line-mode :override #'ignore)
+
+(defun +amos/fcitx--activate-proc ()
+  (osc-fcitx-activate))
+
+(defun +amos/fcitx--deactivate-proc ()
+  (osc-fcitx-deactivate))
+
+(when tmux-p
+  (advice-add #'fcitx-check-status :override (lambda () t))
+  (advice-add #'fcitx--active-p :override #'ignore)
+  (advice-add #'fcitx--activate-proc :override #'+amos/fcitx--activate-proc)
+  (advice-add #'fcitx--deactivate-proc :override #'+amos/fcitx--deactivate-proc))
+
+(require 'fcitx)
+(fcitx-aggressive-setup)
 
 ;; ("^\\*Compil\\(ation\\|e-Log\\)" '((pop-up-frames . nil)) :select t :ttl 0 :quit t)
 
@@ -2493,6 +2506,7 @@ the current state and point position."
 
 (advice-add #'evil-multiedit--cycle :after #'+amos/recenter)
 (advice-add #'evil-multiedit-match-and-next :after #'+amos/recenter)
+(advice-add #'edebug-overlay-arrow :after #'realign-windows)
 
 (evil-define-motion +amos/evil-goto-line (count)
   "Go to the first non-blank character of line COUNT.
@@ -2548,19 +2562,20 @@ By default the last line."
          (target-list (evil-jumps-struct-ring jump-struct))
          (size (ring-length target-list))
          (i 0))
-        (cl-loop for target in (ring-elements target-list)
-                 do (let* ((marker (car target))
-                           (file-name (cadr target)))
-                      (if (or (not (markerp marker))
-                              (not (marker-buffer marker))
-                              (and buffer
-                                   (string= file-name (or buffer-file-name (buffer-name buffer)))))
-                          (if (<= i idx) (setq idx (- idx 1)))
-                        ;; else
-                        (ring-insert-at-beginning ring target)
-                        (setq i (+ i 1)))))
-        (setf (evil-jumps-struct-ring jump-struct) ring)
-        (setf (evil-jumps-struct-idx jump-struct) idx)))
+    (when target-list
+      (cl-loop for target in (ring-elements target-list)
+               do (let* ((marker (car target))
+                         (file-name (cadr target)))
+                    (if (or (not (markerp marker))
+                            (not (marker-buffer marker))
+                            (and buffer
+                                 (string= file-name (or buffer-file-name (buffer-name buffer)))))
+                        (if (<= i idx) (setq idx (- idx 1)))
+                      ;; else
+                      (ring-insert-at-beginning ring target)
+                      (setq i (+ i 1)))))
+      (setf (evil-jumps-struct-ring jump-struct) ring)
+      (setf (evil-jumps-struct-idx jump-struct) idx))))
 
 (defun +amos/close-current-buffer (&optional wipe kill)
   (interactive)

@@ -68,6 +68,11 @@ The insertion will be repeated COUNT times."
     (when evil-auto-indent
       (indent-according-to-mode)))
 
+  (defun +amos/cc-better-semicolon ()
+    (interactive)
+    (if (and (eolp) (looking-back ";"))
+        (funcall-interactively (key-binding (kbd "RET")))
+      (insert ";")))
   ;; Smartparens and cc-mode both try to autoclose angle-brackets intelligently.
   ;; The result isn't very intelligent (causes redundant characters), so just do
   ;; it ourselves.
@@ -75,6 +80,7 @@ The insertion will be repeated COUNT times."
           "<" nil
           :i ">"        #'+cc/autoclose->-maybe
           :i "RET"      #'+amos-append-comment-line
+          :i ";"        #'+amos/cc-better-semicolon
           :n "C-e"      #'+amos/maybe-add-end-of-statement
           :n "o"        #'+amos-evil-open-below
           :n "O"        #'+amos-evil-open-above

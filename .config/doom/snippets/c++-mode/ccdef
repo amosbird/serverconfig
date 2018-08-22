@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: ccdef
+# key: ccdef
+# --
+#ifdef CC_PLAYGROUND
+$0
+#endif
