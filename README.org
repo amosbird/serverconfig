@@ -147,7 +147,7 @@ git clone git@github.com:amosbird/reptyr
 cd reptyr && sudo make install
 #+END_SRC
 
-*** cgdb
+*** cgdb (c++11 required)
 
 #+BEGIN_SRC bash
 git clone git@github.com:amosbird/cgdb
