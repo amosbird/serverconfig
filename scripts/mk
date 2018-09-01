@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+make -j$(nproc || sysctl -n hw.ncpu || echo 4)

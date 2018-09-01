@@ -91,7 +91,7 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
 
 (def-modeline! 'main
   '(" " amos-matches " " amos-buffer-info amos-lcp selection-info frame)
-  '(" " keycast "  " host "  " buffer-encoding major-mode vcs))
+  '(" " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
 
 (defun +amos-buffer-file-name ()
 "~/Projects/FOSS/emacs/lisp/comint.el => ~/P/F/emacs/l/comint.el"
@@ -114,7 +114,7 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
                    (file-props     `(,@(if file-faces     `(:inherit ,file-faces))))
                    (line (concat (propertize root-path-parent 'face sp-props)
                                  (propertize (concat project "/") 'face project-props))))
-              (if (and relative-path (> (+ (length line) (length filename) (length relative-path)) 40))
+              (if (and relative-path (> (+ (length line) (length filename) (length relative-path)) 60))
                   (setq relative-path (string-remove-prefix "/" (shrink-path--dirs-internal relative-path t))))
               (concat line
                       (if relative-path (propertize relative-path 'face relative-props))

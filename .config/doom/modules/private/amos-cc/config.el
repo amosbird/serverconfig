@@ -304,6 +304,16 @@ The insertion will be repeated COUNT times."
          (lsp--make-notification "$ccls/diagnostic"
                                  `(:textDocument ,(lsp--text-document-identifier))))))
 
+  (defun ccls/sticky ()
+    (interactive)
+    (if (ccls--is-ccls-buffer)
+        (setq x
+              (lsp--send-request
+               (lsp--make-request "$ccls/sticky"
+                                  `(:textDocument ,(lsp--text-document-identifier)
+                                                  :position ,(lsp--cur-position))))))
+    (message x))
+
   (defun ccls/inheritances ()
     (interactive)
     (if (ccls--is-ccls-buffer)

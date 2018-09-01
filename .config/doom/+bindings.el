@@ -89,10 +89,11 @@
  :nv "C-f"                   #'+amos/avy-goto-char-timer
  :n "C-l"                    #'+amos/redisplay-and-recenter
  :n "C-s"                    #'swiper
- :n "S-<f4>"                 #'counsel-projectile-rg ;; terminal
- :n "C-S-s"                  #'counsel-projectile-rg ;; gui
+ ;; :n "S-<f4>"                 #'counsel-projectile-rg ;; terminal
+ ;; :n "C-S-s"                  #'counsel-projectile-rg ;; gui
+ :n "S-<f4>"                 #'+amos/counsel-rg-projectile ;; terminal
  :n "S-<f5>"                 #'+amos/counsel-rg-cur-dir ;; terminal
- :n "C-S-d"                  #'+amos/counsel-rg-cur-dir ;; gui
+ :n "S-<f11>"                #'clang-format-buffer ;; terminal
  :n "C-y"                    #'+amos/yank-buffer-filename-with-line-position
  :i "C-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank)))
  :i "M-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))

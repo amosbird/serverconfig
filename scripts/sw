@@ -17,7 +17,7 @@ df=$1
 shift
 ds=$1
 shift
-"$@" &
+nohup "$@" > /dev/null &
 PID=$!
 tput civis # hide cursor
 DATE_FORMAT="+%H:%M:%S"

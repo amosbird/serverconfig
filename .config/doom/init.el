@@ -216,7 +216,6 @@
 (setq projectile-require-project-root t)
 (setq projectile-sort-order 'recentf)
 (setq query-replace-skip-read-only t)
-(setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "/TAGS$" "/var/.+$" "/home/amos/Mail/" "/home/amos/\\.emacs\\.d/\\.local/"))
 (setq reftex-default-bibliography '("~/zotero.bib"))
 (setq require-final-newline t)
 (setq save-interprogram-paste-before-kill nil)

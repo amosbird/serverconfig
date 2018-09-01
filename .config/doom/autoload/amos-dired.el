@@ -8,6 +8,9 @@
 (require 'dired-x)
 (require 'cl-macs)
 
+(setq dired-listing-switches "-alh")
+(push ".d" dired-omit-extensions)
+
 (defun +dired|sort-directories-first ()
   "List directories first in dired buffers."
   (save-excursion

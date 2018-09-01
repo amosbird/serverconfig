@@ -57,6 +57,7 @@
 (package! evil-terminal-cursor-changer :recipe (:fetcher github :repo "amosbird/evil-terminal-cursor-changer"))
 (package! evil-textobj-line :recipe (:fetcher github :repo "syohex/evil-textobj-line"))
 (package! font-lock+ :recipe (:fetcher github :repo "emacsmirror/font-lock-plus"))
+(package! stickyfunc-enhance :recipe (:fetcher github :repo "tuhdo/semantic-stickyfunc-enhance"))
 (package! google-translate :recipe (:fetcher github :repo "atykhonov/google-translate"))
 (package! help-fns+ :recipe (:fetcher github :repo "emacsmirror/help-fns-plus"))
 (package! hl-line+ :recipe (:fetcher github :repo "emacsmirror/hl-line-plus"))

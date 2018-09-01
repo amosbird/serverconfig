@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 
+mkdir -p ~/.config
+
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+mkdir -p ~/.lc
+ln -sf "$DIR"/lc/config.json "$HOME"/.lc/
 
 configs=(
     .globalrc

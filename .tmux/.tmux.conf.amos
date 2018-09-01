@@ -80,6 +80,8 @@ bind-key -T amos S-F4 send-keys C-s
 bind-key -T amos S-F5 send-keys C-d
 # URxvt.keysym.C-J:           \033[5;30017~
 bind-key -T amos S-F6 send-keys C-j
+# URxvt.keysym.M-S-BackSpace: \033[5;30018~
+bind-key -T amos S-F6 send-keys C-j
 # URxvt.keysym.M-S-BackSpace: \033[5;30011~
 bind-key -T amos S-F7 send-keys M-BSpace
 # URxvt.keysym.Shift-Return:  \033[5;30012~

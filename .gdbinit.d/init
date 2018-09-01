@@ -46,6 +46,7 @@ set pagination off
 # set scheduler-locking on
 # set range-stepping off
 set non-stop on
+set confirm off
 # Finally, turn it on!
 
 skip -gfi /usr/include/c++/*/*/*

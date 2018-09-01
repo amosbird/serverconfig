@@ -4,7 +4,7 @@ function perfflametmux
     argparse -n perfflametmux 'h/help' 'p=' -- $argv
     or return
     if set -q _flag_h
-        echo 'Usage: perfflame [-h|--help] ...'
+        echo 'Usage: perfflametmux [-h|--help] ...'
         return
     end
 

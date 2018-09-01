@@ -93,6 +93,9 @@
          '((+amos/forward-delete-word . ((:default . evil-mc-execute-default-call)))
            (evil-repeat . ((:default . evil-mc-execute-default-call)))
            (+amos/smart-eol-insert . ((:default . evil-mc-execute-default-call)))
+           (company-complete-common . ((:default . evil-mc-execute-default-complete)))
+           (company-select-next . ((:default . evil-mc-execute-default-complete)))
+           (company-select-previous . ((:default . evil-mc-execute-default-complete)))
            (+amos/forward-delete-word . ((:default . evil-mc-execute-default-call)))
            (+amos/backward-delete-word . ((:default . evil-mc-execute-default-call)))
            (+amos/forward-delete-subword . ((:default . evil-mc-execute-default-call)))
@@ -448,7 +451,13 @@ Skip buffers that match `ivy-ignore-buffers'."
          (setf (window-parameter window 'my-last-buffer) new-buffer))))))
 (add-hook! 'window-configuration-change-hook #'+amos|update-window-buffer-list)
 
-(autoload #'counsel-projectile-rg "counsel-projectile.el")
+(defun +amos/counsel-rg-projectile ()
+  (interactive)
+  (unless (doom-project-p)
+    (user-error "You’re not in a project"))
+  (require 'counsel)
+  (counsel-rg nil (doom-project-root)))
+
 (defun +amos/counsel-rg-cur-dir ()
   (interactive)
   (require 'counsel)
@@ -1377,6 +1386,9 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 
 (advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
 
+(after! recentf
+  (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "/TAGS$" "/var/.+$" "/home/amos/cc/" "/home/amos/Mail/" "/home/amos/\\.emacs\\.d/\\.local/")))
+
 (after! ivy
 
   ;;;###autoload
@@ -1775,22 +1787,22 @@ representation of `NUMBER' is smaller."
 (map-put +popup-default-parameters 'modeline t)
 (advice-add #'hide-mode-line-mode :override #'ignore)
 
-(defun +amos/fcitx--activate-proc ()
-  (osc-fcitx-activate))
+;; (defun +amos/fcitx--activate-proc ()
+;;   (osc-fcitx-activate))
 
-(defun +amos/fcitx--deactivate-proc ()
-  (osc-fcitx-deactivate))
+;; (defun +amos/fcitx--deactivate-proc ()
+;;   (osc-fcitx-deactivate))
 
-(when tmux-p
-  (advice-add #'fcitx-check-status :override (lambda () t))
-  (advice-add #'fcitx--active-p :override #'ignore)
-  (advice-add #'fcitx--activate-proc :override #'+amos/fcitx--activate-proc)
-  (advice-add #'fcitx--deactivate-proc :override #'+amos/fcitx--deactivate-proc))
+;; there is no easy way to query local info from remote via termio
+;; (when tmux-p
+;;   (advice-add #'fcitx-check-status :override (lambda () t))
+;;   (advice-add #'fcitx--active-p :override #'ignore)
+;;   (advice-add #'fcitx--activate-proc :override #'+amos/fcitx--activate-proc)
+;;   (advice-add #'fcitx--deactivate-proc :override #'+amos/fcitx--deactivate-proc))
 
-(require 'fcitx)
-(fcitx-aggressive-setup)
-
-;; ("^\\*Compil\\(ation\\|e-Log\\)" '((pop-up-frames . nil)) :select t :ttl 0 :quit t)
+(unless tmux-p
+  (require 'fcitx)
+  (fcitx-aggressive-setup))
 
 (defun first-non-dired-buffer () (loop for b in (buffer-list) if (not (with-current-buffer b (derived-mode-p 'dired-mode))) return b))
 
@@ -2595,8 +2607,12 @@ By default the last line."
   (define-key minibuffer-local-map "\C-p" #'previous-line-or-history-element)
   (define-key minibuffer-local-map "\C-n" #'next-line-or-history-element))
 
-;; (add-hook! 'minibuffer-setup-hook (setq truncate-lines t)) ;; TODO breaks ivy minibuffer
+(add-hook! 'minibuffer-setup-hook
+  (setq-local truncate-lines t)
+  (setq-local inhibit-message t))
 
+(setq window-adjust-process-window-size-smallest #'ignore)
+(advice-add #'set-process-window-size :override #'ignore)
 (advice-add #'evil-escape-mode :override #'ignore)
 (advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
 (advice-add #'recenter-top-bottom :override #'recenter)
@@ -3044,6 +3060,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos/counsel-recentf-no-cache ()
   (interactive)
+  (require 'recentf)
   (recentf-cleanup)
   (counsel-recentf))
 
@@ -3081,19 +3098,16 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
            (line-number (and matched
                              (match-string 2 filename)
                              (string-to-number (match-string 2 filename))))
-           (filename (if matched (match-string 1 filename) filename)))
-      (apply orig-fun (list filename wildcards))
+           (filename (if matched (match-string 1 filename) filename))
+           (buffer (apply orig-fun (list filename wildcards))))
       (when line-number
         ;; goto-line is for interactive use
         (goto-char (point-min))
         (forward-line (1- line-number))
-        (+amos/recenter)))))
+        (+amos/recenter))
+      buffer)))
 
 (advice-add 'find-file :around #'find-file--line-number)
-
-(add-hook! 'minibuffer-setup-hook
-  (setq-local truncate-lines t)
-  (setq-local inhibit-message t))
 
 (mapc #'evil-declare-change-repeat
       '(company-complete-mouse
@@ -3112,6 +3126,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         +amos/counsel-projectile-switch-project
         +amos/counsel-recentf-no-cache
         +amos/counsel-rg-cur-dir
+        +amos/counsel-rg-projectile
         +amos/decrease-zoom
         +amos/dired-jump
         +amos/direnv-reload
@@ -3200,3 +3215,52 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         yasdcv-translate-at-point
         zygospore-toggle-delete-other-windows
         ))
+
+;; debugging eldoc
+(defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
+(stupid_function)
+
+(defun +amos*ivy--insert-minibuffer (text)
+  "Insert TEXT into minibuffer with appropriate cleanup."
+  (let ((resize-mini-windows nil)
+        (update-fn (ivy-state-update-fn ivy-last))
+        (old-mark (marker-position (mark-marker)))
+        deactivate-mark)
+    (ivy--cleanup)
+    (when update-fn
+      (funcall update-fn))
+    (ivy--insert-prompt)
+    ;; Do nothing if while-no-input was aborted.
+    (when (stringp text)
+      (if ivy-display-function
+          (funcall ivy-display-function text)
+        (ivy-display-function-fallback text)))
+    (unless (frame-root-window-p (minibuffer-window))
+      (with-selected-window (minibuffer-window)
+        (set-window-text-height nil
+                                (+ ivy-height
+                                   (if ivy-add-newline-after-prompt
+                                       1
+                                     0)))))
+    ;; prevent region growing due to text remove/add
+    (when (region-active-p)
+      (set-mark old-mark))))
+(advice-add #'ivy--insert-minibuffer :override #'+amos*ivy--insert-minibuffer)
+(advice-add #'semantic-mode :around #'doom*shut-up)
+
+(defun my-inhibit-semantic-p ()
+  (not (or (equal major-mode 'c-mode) (equal major-mode 'c++-mode))))
+(add-to-list 'semantic-default-submodes 'global-semantic-stickyfunc-mode)
+(semantic-mode 1)
+;; (require 'stickyfunc-enhance)
+(with-eval-after-load 'semantic
+  (add-to-list 'semantic-inhibit-functions #'my-inhibit-semantic-p))
+
+ (defun my-replace (beg end)
+    (interactive
+     (list (if (use-region-p) evil-visual-beginning (line-beginning-position))
+           (if (use-region-p) evil-visual-end (line-end-position))))
+    (save-excursion
+      (while (and (goto-char beg)
+                  (re-search-forward "\\[\\([^]]+\\)\\]" end t))
+        (replace-match (format "{%s}" (match-string 1))))))
