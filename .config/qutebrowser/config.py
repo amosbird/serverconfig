@@ -10,23 +10,10 @@
 # aliases, while the values are the commands they map to.
 # Type: Dict
 c.aliases = {'q': 'quit', 'w': 'session-save', 'wq': 'quit --save'}
-
-# List of domains that should always be loaded, despite being ad-
-# blocked. Domains may contain * and ? wildcards and are otherwise
-# required to exactly match the requested domain. Local domains are
-# always exempt from hostblocking.
-# Type: List of String
 c.content.host_blocking.whitelist = ['piwik.org']
-
-# How to behave when the last tab is closed.
-# Type: String
-# Valid values:
-#   - ignore: Don't do anything.
-#   - blank: Load a blank page.
-#   - startpage: Load the start page.
-#   - default-page: Load the default page.
-#   - close: Close the window.
+c.url.searchengines = { 'DEFAULT': 'https://google.com/search?q={}', 'google': 'https://google.com/search?q={}', 'searx.me': 'https://searx.me/?q={}'}
 c.tabs.last_close = 'close'
+
 
 # Bindings for normal mode
 config.bind('<Ctrl-Space>', 'spawn i3-msg focus right')
@@ -42,6 +29,7 @@ config.bind('d', 'scroll-page 0 0.5')
 config.bind('p', 'open -t -- {clipboard}')
 config.bind('t', 'set-cmd-text -s :open -t')
 config.bind('u', 'scroll-page 0 -0.5')
+config.bind('s', 'set-cmd-text -s :open -t google ')
 
 # Bindings for command mode
 config.bind('<Ctrl-D>', 'rl-delete-char', mode='command')
@@ -54,3 +42,16 @@ config.bind('<Ctrl-D>', 'rl-delete-char', mode='prompt')
 config.bind('<Ctrl-J>', 'prompt-item-focus next', mode='prompt')
 config.bind('<Ctrl-K>', 'prompt-item-focus prev', mode='prompt')
 config.bind('<Ctrl-O>', 'rl-kill-line', mode='prompt')
+
+config.bind('<ctrl+a>', 'fake-key <Home>', mode='insert')
+config.bind('<ctrl+e>', 'fake-key <End>', mode='insert')
+config.bind('<alt+a>', 'fake-key <Ctrl-a>', mode='insert')
+config.bind('<alt+b>', 'fake-key <Ctrl-Left>', mode='insert')
+config.bind('<alt+f>', 'fake-key <Ctrl-Right>', mode='insert')
+config.bind('<ctrl+b>', 'fake-key <Left>', mode='insert')
+config.bind('<ctrl+f>', 'fake-key <Right>', mode='insert')
+config.bind('<ctrl+j>', 'fake-key <Down>', mode='insert')
+config.bind('<ctrl+k>', 'fake-key <Up>', mode='insert')
+config.bind('<alt+backspace>', 'fake-key <Ctrl+Shift+Left>;; fake-key <Shift+Delete>', mode='insert')
+config.bind('<ctrl+u>', 'fake-key <Ctrl+Shift+Home>;; fake-key <Shift+Delete>', mode='insert')
+config.bind('<ctrl+o>', 'fake-key <Ctrl+Shift+End>;; fake-key <Shift+Delete>', mode='insert')
