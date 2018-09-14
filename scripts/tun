@@ -15,15 +15,7 @@
 # sleep 0.5
 # pkill -SIGRTMIN+11 i3blocks
 
-(( UID == 0 )) || exec sudo "$0" "$@" || exit
+# sudo RUST_LOG=info kytan -m c -h chuhuangvm.eastasia.cloudapp.azure.com -p 4555 -s $(gpg -d /home/amos/passwords/kytan.gpg) &
 
-ip r a 10.0.0.0/8 via 10.61.2.254
-if ip r | grep -q '128.0.0.0/1'
-then
-    ip r d 0.0.0.0/1
-    ip r d 128.0.0.0/1
-else
-    ip r a 0.0.0.0/1 via 172.26.133.192
-    ip r a 128.0.0.0/1 via 172.26.133.192
-fi
-pkill -SIGRTMIN+11 i3blocks
+sudo pkill -9 openconnect
+gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin chuhuangvm.eastasia.cloudapp.azure.com:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c

@@ -6,12 +6,12 @@ instance=$3
 title=$(xtitle "$wid")
 case "$class" in
     Conky)
-        echo $wid > /tmp/conky
+        echo "$wid" > /tmp/conky
         # setbg.sh reset_conky
         echo "desktop=n"
         ;;
     stalonetray)
-        echo $wid > /tmp/stalonetray
+        echo "$wid" > /tmp/stalonetray
         setbg.sh reset_tray
         echo "desktop=n layer=above"
         ;;
@@ -31,11 +31,11 @@ case "$class" in
                 echo "desktop=d follow=on"
                 ;;
             urxvt_scratchpad)
-                echo $wid > /tmp/urxvt_scratchpad
+                echo "$wid" > /tmp/urxvt_scratchpad
                 echo "state=floating hidden=on"
                 ;;
             stardict)
-                echo $wid > /tmp/stardict
+                echo "$wid" > /tmp/stardict
                 echo "sticky=on state=floating hidden=on"
                 compton-trans -w "$wid" 70
                 ;;
@@ -49,28 +49,32 @@ case "$class" in
             201.nobida.cn*)
                 echo "desktop=d follow=on"
                 ;;
+            vim)
+                echo "$wid" > /tmp/vim
+                echo "state=floating"
+                ;;
             urxvt_scratchpad)
-                echo $wid > /tmp/urxvt_scratchpad
+                echo "$wid" > /tmp/urxvt_scratchpad
                 echo "state=floating hidden=on"
                 ;;
             stardict)
-                echo $wid > /tmp/stardict
+                echo "$wid" > /tmp/stardict
                 echo "sticky=on state=floating hidden=on"
                 compton-trans -w "$wid" 70
                 ;;
         esac
         ;;
     TelegramDesktop)
-        echo $wid > /tmp/telegram
+        echo "$wid" > /tmp/telegram
         echo "sticky=on state=floating hidden=on"
         ;;
     Emacs)
         case "$title" in
             editor-frame)
-                echo "desktop=e follow=on"
+                echo "desktop=e state=tiled follow=on"
                 ;;
             mail-frame)
-                echo "desktop=v follow=on"
+                echo "desktop=v state=tiled follow=on"
                 ;;
         esac
         ;;

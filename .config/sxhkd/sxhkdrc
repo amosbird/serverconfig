@@ -50,13 +50,35 @@ ctrl+alt+h
   showshell.sh 0
 super+Home
   xrandr --output VIRTUAL1 --off --output eDP1 --mode 1600x900 --pos 0x0 --rotate normal --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
+  bspc monitor eDP1 -o w e d f v n i o p c h; \
   bspc monitor eDP1 -f -g 1600x900+0+0; \
-  bspc monitor eDP1 -d w e d f v n i o p c h; \
+  # bspc desktop w -m eDP1; \
+  # bspc desktop e -m eDP1; \
+  # bspc desktop d -m eDP1; \
+  # bspc desktop f -m eDP1; \
+  # bspc desktop v -m eDP1; \
+  # bspc desktop n -m eDP1; \
+  # bspc desktop i -m eDP1; \
+  # bspc desktop o -m eDP1; \
+  # bspc desktop p -m eDP1; \
+  # bspc desktop c -m eDP1; \
+  # bspc desktop h -m eDP1; \
   setbg.sh
 super+End
   xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0 --rotate normal --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
+  bspc monitor DP2-2 -o w e d f v n i o p c h; \
   bspc monitor DP2-2 -f -g 1920x1080+0+0; \
-  bspc monitor DP2-2 -d w e d f v n i o p c h; \
+  # bspc desktop w -m DP2-2; \
+  # bspc desktop e -m DP2-2; \
+  # bspc desktop d -m DP2-2; \
+  # bspc desktop f -m DP2-2; \
+  # bspc desktop v -m DP2-2; \
+  # bspc desktop n -m DP2-2; \
+  # bspc desktop i -m DP2-2; \
+  # bspc desktop o -m DP2-2; \
+  # bspc desktop p -m DP2-2; \
+  # bspc desktop c -m DP2-2; \
+  # bspc desktop h -m DP2-2; \
   setbg.sh
 super+Insert
   xrandr --output eDP1 --off --output DP2-2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 ; feh --bg-scale ~/Pictures/river.jpg
@@ -135,6 +157,8 @@ ctrl + F2
   pulseaudio-ctl down 3
 ctrl + F3
   pulseaudio-ctl up 3
+ctrl + F4
+  pavucontrol
 XF86AudioLowerVolume
   pulseaudio-ctl down 3
 XF86AudioRaiseVolume

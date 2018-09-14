@@ -1,6 +1,6 @@
 #!/usr/local/bin/fish
 
-bspc monitor (bspc query -M | head) -d w e d f v n u i o p c h
+bspc monitor -d w e d f v n i o p c h
 
 bspc config border_width         0
 bspc config window_gap           0

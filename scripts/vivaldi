@@ -30,9 +30,10 @@ exists() { [[ -e $1 ]]; }; shopt -s nullglob
 if ! exists /run/user/1000/qutebrowser/*
 then
     cd /home/amos/git/qutebrowser
+    # python -m qutebrowser -l vdebug &
     python -m qutebrowser &
     mkdir -p /run/user/1000/qutebrowser
-    while read -r && [[ $REPLY != *ATTRIB\ ipc-* ]]; do break; done < <(inotifywait -m -e create /run/user/1000/qutebrowser)
+    while read -r && [[ $REPLY != *ATTRIB\ ipc-* ]]; do break; done < <(inotifywait -m -t 5 -e create /run/user/1000/qutebrowser)
 fi
 
 socket=(/run/user/1000/qutebrowser/*)
