@@ -10,7 +10,7 @@
 
        :completion
        company
-       ivy
+       (ivy +fuzzy)
 
        :ui
        doom
@@ -74,6 +74,7 @@
 (setq browse-url-chrome-program (expand-file-name "~/scripts/vivaldi"))
 (setq browse-url-firefox-program "luakit")
 (setq browse-url-mailto-function 'mu4e~compose-browse-url-mail)
+(setq comint-move-point-for-output 'this)
 (setq company-auto-complete nil)
 (setq company-idle-delay 0)
 (setq company-dabbrev-ignore-case t)

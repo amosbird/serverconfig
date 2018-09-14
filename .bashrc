@@ -5,7 +5,7 @@ if [ -f /etc/bashrc ]; then
         . /etc/bashrc
 fi
 
-stty -ixon
+stty -ixon 2> /dev/null
 
 # User specific environment and startup programs
 

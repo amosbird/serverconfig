@@ -89,21 +89,25 @@
  :nv "C-f"                   #'+amos/avy-goto-char-timer
  :n "C-l"                    #'+amos/redisplay-and-recenter
  :n "C-s"                    #'swiper
- ;; :n "S-<f4>"                 #'counsel-projectile-rg ;; terminal
- ;; :n "C-S-s"                  #'counsel-projectile-rg ;; gui
+ :n "C-S-s"                  #'+amos/counsel-rg-projectile ;; gui
+ :n "C-S-d"                  #'+amos/counsel-rg-cur-dir ;; gui
+ :n "C-S-f"                  #'+amos/format-buffer ;; gui
  :n "S-<f4>"                 #'+amos/counsel-rg-projectile ;; terminal
  :n "S-<f5>"                 #'+amos/counsel-rg-cur-dir ;; terminal
- :n "S-<f11>"                #'clang-format-buffer ;; terminal
+ :n "S-<f11>"                #'+amos/format-buffer ;; terminal
  :n "C-y"                    #'+amos/yank-buffer-filename-with-line-position
  :i "C-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank)))
  :i "M-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
  :i "C-a"                    #'evil-beginning-of-line
  :n "C-a"                    #'evil-numbers/inc-at-pt
+ :n "C-q"                    #'evil-numbers/dec-at-pt
  :n "M-s"                    #'+amos/line-substitute
  :n "M-S"                    #'+amos/all-substitute
  :v "M-s"                    #'+amos/region-substitute
  :v "C-a"                    #'+amos/ca
  :v "g C-a"                  #'+amos/gca
+ :v "C-q"                    #'+amos/cd
+ :v "g C-q"                  #'+amos/gcd
  :i [remap newline]          #'newline-and-indent
  :n "C-e"                    #'+amos/maybe-add-end-of-statement
  :i "C-e"                    #'+amos/smart-eol-insert
@@ -190,7 +194,8 @@
    :desc "Find file in project (no cache)" :nv ">"   #'+amos/projectile-find-file-no-cache
    :desc "Find recent file"                :nv ","   #'counsel-recentf
    :desc "Find recent file (no cache)"     :nv "<"   #'+amos/counsel-recentf-no-cache
-   :desc "Shell command"                   :nv "e"   #'shell-command
+   :desc "Shell command"                   :n  "e"   #'shell-command
+   :desc "Shell command replace"           :v  "e"   #'+amos/shell-command-replace
    :desc "Blink cursor line"               :nv "DEL" #'doom/open-scratch-buffer
    :desc "Elisp command"                   :nv "RET" #'eval-expression
    :desc "Ivy resume"                      :nv "r"   #'ivy-resume
@@ -317,6 +322,12 @@
    "C-k"        #'company-search-repeat-backward
    "C-s"        (lambda! (company-complete-common) (company-filter-candidates))
    "SPC"        #'+amos/company-search-abort
+   ";"          #'+amos/company-search-abort
+   ":"          #'+amos/company-search-abort
+   "<"          #'+amos/company-search-abort
+   ">"          #'+amos/company-search-abort
+   "{"          #'+amos/company-search-abort
+   "}"          #'+amos/company-search-abort
    "("          #'+amos/company-search-abort
    ")"          #'+amos/company-search-abort
    "C-e"        #'+amos/company-search-abort

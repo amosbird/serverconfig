@@ -30,6 +30,7 @@
 (package! gitignore-mode)
 (package! go-playground)
 (package! helm-make)
+(package! ivy-prescient)
 (package! kurecolor)
 (package! link-hint)
 (package! lispyville)

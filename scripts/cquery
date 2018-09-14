@@ -7,7 +7,7 @@
 # export CCLS_TRACEME=1
 # export CCLS_CRASH_RECOVERY=0
 
-includes=$(g++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print $0}' | xargs realpath -s | awk '{print "\"-isystem"$0"\""}' | paste -sd ",")
+# includes=$(clang++ -v -xc++ /dev/null -fsyntax-only 2>&1 | awk '/^ \/usr/ && !/GNU/{gsub(/ /, "", $0); print $0}' | xargs realpath -s | awk '{print "\"-isystem"$0"\""}' | paste -sd ",")
 includes="\"-I/dev/null\""
 
 for i in $cquery_include_dirs

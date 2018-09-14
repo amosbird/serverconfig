@@ -1391,6 +1391,8 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 
 (after! ivy
 
+  (add-to-list 'ivy-re-builders-alist '(cc-playground-find-snippet . ivy--regex-plus))
+
   ;;;###autoload
   (defun amos-recentf ()
     "Find a file on `recentf-list'."
@@ -1558,7 +1560,6 @@ representation of `NUMBER' is smaller."
         (setq +amos--gca-count (+ 1 +amos--gca-count)))))
 
 (defvar +amos--gca-count nil)
-
 (defun +amos/gca (count start end)
   (interactive "*p\nr")
   (setq +amos--gca-count count)
@@ -1568,6 +1569,24 @@ representation of `NUMBER' is smaller."
   (interactive "*p\nr")
   (setq +amos--gca-count count)
   (evil-apply-on-block #'+amos/inc start end nil))
+
+(defun +amos/dec (s e &optional inc)
+  (save-restriction
+    (narrow-to-region s e)
+    (goto-char (point-min))
+    (if (and (evil-numbers/dec-at-pt +amos--gcd-count) inc)
+        (setq +amos--gcd-count (+ 1 +amos--gcd-count)))))
+
+(defvar +amos--gcd-count nil)
+(defun +amos/gcd (count start end)
+  (interactive "*p\nr")
+  (setq +amos--gcd-count count)
+  (evil-apply-on-block #'+amos/dec start end nil t))
+
+(defun +amos/cd (count start end)
+  (interactive "*p\nr")
+  (setq +amos--gcd-count count)
+  (evil-apply-on-block #'+amos/dec start end nil))
 
 (def-package! direnv
   :config
@@ -2229,7 +2248,7 @@ the current state and point position."
     (select-frame frame)
     (raise-frame frame)
     (push frame +amos-frame-stack)
-    (realign-windows)
+    (+amos/reset-cursor)
     (recenter)))
 
 (defun +amos/workspace-switch-to (index)
@@ -2454,38 +2473,6 @@ the current state and point position."
     (delete-file ".git/index.lock")))
 (advice-add #'magit-refresh :before #'+amos*remove-git-index-lock)
 
-(defvar postpone-auto-revert-buffers nil)
-
-(defvar postpone-auto-revert-interval nil)
-
-(defadvice auto-revert-buffers (around maybe-postpone-auto-revert-buffers)
-  "Delay `auto-revert-buffers' if `postpone-auto-revert-buffers' is non-nil."
-  (if postpone-auto-revert-buffers
-      ;; Do not run `auto-revert-buffers', but make its timer run more
-      ;; frequently in the meantime, so that it will run promptly once
-      ;; it's safe.  Remember the original `auto-revert-interval'.
-      (unless postpone-auto-revert-interval
-        (setq postpone-auto-revert-interval auto-revert-interval)
-        (setq auto-revert-interval 0.5)
-        (auto-revert-set-timer))
-    ;; We are no longer postponed, so restore the original
-    ;; `auto-revert-interval', and run `auto-revert-buffers'.
-    (when postpone-auto-revert-interval
-      (setq auto-revert-interval postpone-auto-revert-interval)
-      (setq postpone-auto-revert-interval nil)
-      (auto-revert-set-timer))
-    ad-do-it)) ;; Run `auto-revert-buffers'.
-
-(ad-activate 'auto-revert-buffers)
-
-(defun +amos*magit-process-filter (&rest _)
-  (setq postpone-auto-revert-buffers t))
-(advice-add #'magit-process-filter :before #'+amos*magit-process-filter)
-
-(defun +amos*magit-process-finish (&rest _)
-  (setq postpone-auto-revert-buffers nil))
-(advice-add #'magit-process-filter :before #'+amos*magit-process-filter)
-
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
@@ -2497,7 +2484,7 @@ the current state and point position."
     (modify-category-entry (cons ?a ?z) ?u)
     (make-variable-buffer-local 'evil-cjk-word-separating-categories)
     (add-hook 'subword-mode-hook (lambda! (if subword-mode (push '(?u . ?U) evil-cjk-word-separating-categories)
-                                       (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories)))))))
+                                            (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories)))))))
 
 (after! magit
   (setq
@@ -2541,9 +2528,13 @@ By default the last line."
 
 (defun +amos/company-search-abort ()
   (interactive)
-  (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
-  (company-complete-selection)
-  (call-interactively (key-binding (this-command-keys))))
+  (if company-selection-changed
+      (progn
+        (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
+        (company-complete-selection)
+        (call-interactively (key-binding (this-command-keys))))
+    (company-abort)
+    (call-interactively (key-binding (this-command-keys)))))
 
 (defun ediff-copy-both-to-C ()
   (interactive)
@@ -3117,12 +3108,22 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         company-complete-selection
         company-complete-common))
 
+(defun +amos/format-buffer ()
+  (interactive)
+  (pcase major-mode
+    ('c++-mode (clang-format-buffer))
+    ('emacs-lisp-mode
+     (save-excursion
+       (indent-region (point-min) (point-max) nil)))))
+
 (mapc #'evil-declare-ignore-repeat
       '(
         +amos/align-repeat-left
         +amos/align-repeat-right
         +amos/all-substitute
         +amos/avy-goto-char-timer
+        +amos/avy-goto-url
+        +amos/avy-open-url
         +amos/counsel-projectile-switch-project
         +amos/counsel-recentf-no-cache
         +amos/counsel-rg-cur-dir
@@ -3131,6 +3132,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         +amos/dired-jump
         +amos/direnv-reload
         +amos/dump-evil-jump-list
+        +amos/format-buffer
         +amos/increase-zoom
         +amos/kill-current-buffer
         +amos/line-substitute
@@ -3147,6 +3149,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         +amos/replace-last-sexp
         +amos/reset-cursor
         +amos/reset-zoom
+        +amos/shell-command-replace
         +amos/smart-jumper-backward
         +amos/smart-jumper-forward
         +amos/switch-buffer
@@ -3157,6 +3160,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         +amos/wipe-current-buffer
         +amos/workspace-delete
         +amos/workspace-new
+        +amos/workspace-new-scratch
         +amos/workspace-switch-left
         +amos/workspace-switch-right
         +amos/workspace-switch-to-1
@@ -3192,6 +3196,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         execute-extended-command
         find-file
         flycheck-mode
+        flycheck-previous-error
+        flycheck-next-error
         git-gutter:next-hunk
         git-gutter:previous-hunk
         git-gutter:revert-hunk
@@ -3246,6 +3252,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
     (when (region-active-p)
       (set-mark old-mark))))
 (advice-add #'ivy--insert-minibuffer :override #'+amos*ivy--insert-minibuffer)
+
 (advice-add #'semantic-mode :around #'doom*shut-up)
 
 (defun my-inhibit-semantic-p ()
@@ -3256,11 +3263,51 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (with-eval-after-load 'semantic
   (add-to-list 'semantic-inhibit-functions #'my-inhibit-semantic-p))
 
- (defun my-replace (beg end)
-    (interactive
-     (list (if (use-region-p) evil-visual-beginning (line-beginning-position))
-           (if (use-region-p) evil-visual-end (line-end-position))))
-    (save-excursion
-      (while (and (goto-char beg)
-                  (re-search-forward "\\[\\([^]]+\\)\\]" end t))
-        (replace-match (format "{%s}" (match-string 1))))))
+(defun my-replace (beg end)
+  (interactive
+   (list (if (use-region-p) evil-visual-beginning (line-beginning-position))
+         (if (use-region-p) evil-visual-end (line-end-position))))
+  (save-excursion
+    (while (and (goto-char beg)
+                (re-search-forward "\\[\\([^]]+\\)\\]" end t))
+      (replace-match (format "{%s}" (match-string 1))))))
+
+(add-hook! 'comint-mode-hook
+  (add-hook! :local 'evil-insert-state-entry-hook
+    (setq comint-move-point-for-output 'this)
+    (goto-char (point-max)))
+  (add-hook! :local 'evil-insert-state-exit-hook
+    (setq comint-move-point-for-output nil)))
+
+(remove-hook '+lookup-definition-functions #'+lookup-dumb-jump-backend)
+(remove-hook '+lookup-definition-functions #'+lookup-project-search-backend)
+
+(defun +amos/shell-command-replace (start end command)
+  (interactive (let (string)
+                 (unless (mark)
+                   (user-error "The mark is not set now, so there is no region"))
+                 (setq string (read-shell-command "Shell command on region: "))
+                 (list (region-beginning) (region-end)
+                       string)))
+  (let ((error-file nil)
+        exit-status)
+    (let ((swap (< start end)))
+      (goto-char start)
+      (push-mark (point) 'nomsg)
+      (setq exit-status
+            (call-shell-region start end command t
+                               (if error-file
+                                   (list t error-file)
+                                 t)))
+      (and swap (exchange-point-and-mark)))
+    (when (and error-file (file-exists-p error-file))
+      (if (< 0 (nth 7 (file-attributes error-file)))
+          (with-current-buffer (get-buffer-create error-buffer)
+            (let ((pos-from-end (- (point-max) (point))))
+              (or (bobp)
+                  (insert "\f\n"))
+              (format-insert-file error-file nil)
+              (goto-char (- (point-max) pos-from-end)))
+            (display-buffer (current-buffer))))
+      (delete-file error-file))
+    exit-status))
