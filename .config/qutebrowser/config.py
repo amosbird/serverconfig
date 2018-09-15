@@ -19,8 +19,8 @@ c.tabs.last_close = 'close'
 # import glob
 
 # c.content.user_stylesheets = glob.glob('/home/amos/css/*.user.css')
-# c.hints.next_regexes.append(r'next page$')
-# c.hints.prev_regexes.append(r'previous page$')
+c.hints.next_regexes.append(r'下一页')
+c.hints.prev_regexes.append(r'上一页')
 
 
 # Bindings for normal mode
@@ -60,6 +60,7 @@ config.bind('<Ctrl-K>', 'prompt-item-focus prev', mode='prompt')
 config.bind('<Ctrl-O>', 'rl-kill-line', mode='prompt')
 
 config.bind('<Escape>', 'leave-mode ;; fake-key <Escape>', mode='insert')
+config.bind('<Enter>', 'fake-key <Enter>', mode='insert')
 config.bind('<ctrl+a>', 'fake-key <Home>', mode='insert')
 config.bind('<ctrl+e>', 'fake-key <End>', mode='insert')
 config.bind('<alt+a>', 'fake-key <Ctrl+a>', mode='insert')

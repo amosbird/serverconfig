@@ -1590,6 +1590,7 @@ representation of `NUMBER' is smaller."
 
 (def-package! direnv
   :config
+  (setq direnv-show-paths-in-summary nil)
   (direnv-mode))
 (add-hook! 'after-save-hook (if (string= (file-name-nondirectory buffer-file-name) ".envrc") (direnv-update-environment)))
 
