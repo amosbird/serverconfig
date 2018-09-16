@@ -1322,6 +1322,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (advice-add #'helm-dash-result-url :override #'+amos*helm-dash-result-url)
 
 (setq tmux-p (getenv "TMUX"))
+(setq gui-p (getenv "GUI"))
 
 (if tmux-p
     (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
@@ -1820,7 +1821,7 @@ representation of `NUMBER' is smaller."
 ;;   (advice-add #'fcitx--activate-proc :override #'+amos/fcitx--activate-proc)
 ;;   (advice-add #'fcitx--deactivate-proc :override #'+amos/fcitx--deactivate-proc))
 
-(unless tmux-p
+(when gui-p
   (require 'fcitx)
   (fcitx-aggressive-setup))
 
@@ -3312,3 +3313,13 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
             (display-buffer (current-buffer))))
       (delete-file error-file))
     exit-status))
+
+(defun +amos/clear-yasnippet ()
+  (interactive)
+  (let* ((snippet (car (yas-active-snippets)))
+         (active-field (overlay-get yas--active-field-overlay 'yas--field))
+         (target-field (yas--find-next-field 1 snippet active-field)))
+    (while target-field
+      (yas--skip-and-clear target-field)
+      (setq target-field (yas--find-next-field 1 snippet target-field)))
+    (yas-exit-snippet snippet)))

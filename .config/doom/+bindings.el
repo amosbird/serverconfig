@@ -468,6 +468,7 @@
  (:after yasnippet
    :map yas-keymap
    "C-l"           #'yas-next-field
+   "C-e"           #'+amos/clear-yasnippet
 
    :map yas-minor-mode-map
    :i "C-l" yas-maybe-expand)

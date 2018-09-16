@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: print
+# key: d
+# --
+printn("$1"${, ${}});
