@@ -57,6 +57,7 @@
 (package! direnv :recipe (:fetcher github :repo "wbolster/emacs-direnv"))
 (package! evil-terminal-cursor-changer :recipe (:fetcher github :repo "amosbird/evil-terminal-cursor-changer"))
 (package! evil-textobj-line :recipe (:fetcher github :repo "syohex/evil-textobj-line"))
+(package! flyspell-lazy :recipe (:fetcher github :repo "rolandwalker/flyspell-lazy"))
 (package! font-lock+ :recipe (:fetcher github :repo "emacsmirror/font-lock-plus"))
 (package! stickyfunc-enhance :recipe (:fetcher github :repo "tuhdo/semantic-stickyfunc-enhance"))
 (package! google-translate :recipe (:fetcher github :repo "atykhonov/google-translate"))

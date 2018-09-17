@@ -1392,7 +1392,11 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 
 (after! ivy
 
-  (add-to-list 'ivy-re-builders-alist '(cc-playground-find-snippet . ivy--regex-plus))
+  ;; (add-to-list 'ivy-re-builders-alist '(cc-playground-find-snippet . ivy--regex-plus))
+  (setf (alist-get t ivy-re-builders-alist) 'ivy--regex-plus)
+
+  (dolist (command '(ccls/includes))
+    (setf (alist-get command ivy-re-builders-alist) 'ivy--regex-fuzzy))
 
   ;;;###autoload
   (defun amos-recentf ()
@@ -3323,3 +3327,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (yas--skip-and-clear target-field)
       (setq target-field (yas--find-next-field 1 snippet target-field)))
     (yas-exit-snippet snippet)))
+
+(def-package! flyspell-lazy
+  :config
+  (add-to-list 'ispell-extra-args "--sug-mode=ultra"))
