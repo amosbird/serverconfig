@@ -68,7 +68,7 @@
 (setq auto-revert-verbose nil)
 (setq auto-save-visited-interval 5)
 (setq auto-save-visited-mode nil)
-(setq avy-timeout-seconds 0.3)
+(setq avy-timeout-seconds 0.2)
 (setq bibtex-completion-browser-function 'browser-url-chromium)
 (setq bibtex-completion-pdf-open-function (lambda (fpath) (call-process "zathura" nil 0 nil fpath)))
 (setq browse-url-chrome-program (expand-file-name "~/scripts/vivaldi"))
@@ -82,6 +82,9 @@
 (setq company-dabbrev-code-everywhere t)
 (setq company-dabbrev-other-buffers t)
 (setq company-dabbrev-ignore-buffers (lambda (buffer) (not (projectile-project-buffer-p buffer (projectile-project-root)))))
+(setq company-show-numbers t)
+(setq company-transformers nil)
+(setq company-lsp-cache-candidates nil)
 (setq dired-create-destination-dirs 'always)
 (setq dired-omit-verbose nil)
 (setq dired-open-extensions

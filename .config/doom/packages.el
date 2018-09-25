@@ -1,22 +1,22 @@
 ;; -*- no-byte-compile: t; -*-
 
-(package! centered-window-mode :disable t)
-(package! evil-matchit :disable t)
-(package! evil-numbers :disable t)
-(package! git-gutter-fringe :disable t)
-(package! magit-todos :disable t)
-(package! smerge-mode :disable t)
-(package! solaire-mode :disable t)
-(package! stripe-buffer :disable t)
-(package! vi-tilde-fringe :disable t)
-(package! visual-fill-column :disable t)
+(disable-packages! centered-window-mode
+                   company-prescient
+                   evil-matchit
+                   evil-numbers
+                   git-gutter-fringe
+                   magit-todos
+                   smerge-mode
+                   solaire-mode
+                   stripe-buffer
+                   vi-tilde-fringe
+                   visual-fill-column)
 
 (package! adoc-mode)
 (package! bind-map)
 (package! chinese-yasdcv)
 (package! company-lsp)
 (package! counsel-dash)
-(package! cquery)
 (package! dired-quick-sort)
 (package! easy-hugo)
 (package! evil-magit)
@@ -29,7 +29,7 @@
 (package! gitconfig-mode)
 (package! gitignore-mode)
 (package! go-playground)
-(package! helm-make)
+(package! htmlize)
 (package! ivy-prescient)
 (package! kurecolor)
 (package! link-hint)
@@ -43,8 +43,10 @@
 (package! page-break-lines)
 (package! pdf-tools)
 (package! rust-playground)
-(package! sdcv)
+(package! smart-forward)
+(package! symbol-overlay)
 (package! syntactic-close)
+(package! try)
 (package! unfill)
 (package! ws-butler)
 (package! yapfify)

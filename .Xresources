@@ -16,7 +16,7 @@ URxvt.url-picker.launcher:  luakit
 URxvt.url-picker.order:     descending
 ! iso-level-tab
 URxvt.keysym.C-I:           \033[Z
-URxvt.keysym.Escape:        \035
+! URxvt.keysym.Escape:        \035
 URxvt.keysym.C-1:           1
 URxvt.keysym.C-2:           2
 URxvt.keysym.C-3:           3

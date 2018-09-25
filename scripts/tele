@@ -3,20 +3,20 @@
 if pgrep -f telegram > /dev/null
 then
     id=$(cat /tmp/telegram)
-    if [ -z $id ]
+    if [ -z "$id" ]
     then
         exit 0
     fi
-    bspc node $id -g hidden -f
-    wh=($(xdpyinfo | grep dimensions | sed -r 's/^[^0-9]*([0-9]+x[0-9]+).*$/\1/' | awk -Fx '{print $1" "$2}'))
+    bspc node "$id" -g hidden -f
+    wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
     w=${wh[0]}
     h=${wh[1]}
     x=$((w/4 - 80))
     y=80
     w=$((w/2 + 80))
     h=$((h - 140))
-    xdo move -x $x -y $y $id
-    xdo resize -w $w -h $h $id
+    xdo move -x $x -y $y "$id"
+    xdo resize -w $w -h $h "$id"
 else
     env FONTCONFIG_FILE=~/.config/tgfonts.conf telegram-desktop
 fi

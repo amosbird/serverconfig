@@ -49,9 +49,6 @@ bind c new-window
 bind d kill-pane
 bind k kill-window
 
-bind o run "tmux run -t emacs \"tmux neww -c '#{pane_current_path}' emacsclient -c -eval '(+amos/dired-jump)'\"; tmux switch-client -t emacs"
-bind g run "if git rev-parse; then exit 0; fi; tmux run -t emacs \"tmux neww -c '#{pane_current_path}' emacsclient -c -eval '(magit-status)'\"; tmux switch-client -t emacs"
-
 bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection
 bind -Tcopy-mode-vi q send -X clear-selection
@@ -128,10 +125,7 @@ bind-key -T amos C-l send-keys C-l
 bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
 bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
 
-# bind-key -T amos C-v send-key C-v
-
 bind-key -T amos M-0 switch-client -t emacs\; send f12
-# bind-key -T amos M-0 switch-client -t emacs
 bind-key -T amos M-= switch-client -t htop
 
 bind-key -T amos M-u copy-mode\; send -X cursor-up\; send -X search-backward ❯

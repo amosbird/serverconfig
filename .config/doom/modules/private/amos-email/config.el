@@ -76,6 +76,7 @@ default/fallback account."
    mu4e-view-image-max-width 800
    mu4e-view-show-addresses t
    mu4e-view-show-images t
+   ;; mu4e-view-use-gnus t
    sendmail-program "msmtp"
    mu4e-completing-read-function (cond ((featurep! :completion ivy) #'ivy-completing-read)
                                        ((featurep! :completion helm) #'completing-read)

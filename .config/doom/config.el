@@ -240,13 +240,14 @@
   (global-git-gutter-mode +1)
   (advice-add #'git-gutter:set-window-margin :override #'ignore)
   (defun +amos*git-gutter:before-string (sign)
-    (let* ((gutter-sep (concat " " (make-string (- (car (window-margins (get-buffer-window))) 2) ? ) sign))
+    (let* ((gutter-sep (concat " " (make-string (- (car (window-margins)) 2) ? ) sign))
            (face (pcase sign
                    ("=" '+amos:modified)
                    ("+" '+amos:added)
                    ("-" '+amos:deleted)))
            (ovstring (propertize gutter-sep 'face face)))
       (propertize " " 'display `((margin left-margin) ,ovstring))))
+  (advice-add #'git-gutter:put-signs :before (lambda (&rest _) (realign-windows)))
   (advice-add #'git-gutter:before-string :override #'+amos*git-gutter:before-string)
   (add-hook! 'window-configuration-change-hook #'git-gutter:update-all-windows))
 
@@ -465,11 +466,6 @@ Skip buffers that match `ivy-ignore-buffers'."
 
 (def-package! yapfify
   :after python)
-
-(def-package! helm-make
-  :after ivy
-  :config
-  (setq helm-make-completion-method 'ivy))
 
 ;; from spacemacs
 (defun +amos/rename-current-buffer-file (&optional arg)
@@ -1217,7 +1213,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (def-package! lsp-mode
   :init
   (setq lsp-enable-eldoc nil
-        lsp-enable-indentation nil)
+        lsp-enable-indentation nil
+        lsp--json-array-use-vector t)
   :config
   (require 'lsp-imenu)
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
@@ -1443,21 +1440,6 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
   (interactive)
   (redraw-display)
   (+amos/recenter))
-
-(defun +amos/evil-find-file-at-point-with-line ()
-  (interactive)
-  (let ((fname (with-no-warnings (ffap-file-at-point))))
-    (if fname
-        (let ((line
-               (save-excursion
-                 (goto-char (cadr ffap-string-at-point-region))
-                 (and (re-search-backward ":\\([0-9]+\\)\\=" (line-beginning-position) t)
-                      (string-to-number (match-string 1))))))
-          (with-no-warnings (ffap))
-          (when line
-            (goto-char (point-min))
-            (forward-line (1- line))))
-      (user-error "File does not exist."))))
 
 (defun evil-numbers/inc-at-pt (amount)
   "Increment the number at point or after point before `end-of-line' by AMOUNT."
@@ -2061,6 +2043,10 @@ the current state and point position."
                                 (yas--template-expand-env yas--current-template)))
         (yas--message 1 "No snippets can be inserted here!")))))
 
+(defun async-shell-command! (command)
+  (let ((inhibit-message t))
+    (call-process-shell-command command nil 0)))
+
 (defun shell-command! (command)
   (let ((inhibit-message t))
     (shell-command command)))
@@ -2093,12 +2079,6 @@ the current state and point position."
   (interactive)
   (+amos-store-jump-history)
   (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory)))
-
-;; (defun +amos/tmux-fork-window ()
-;;   "Detach if inside tmux."
-;;   (interactive)
-;;   (+amos-store-jump-history)
-;;   (shell-command! "tmux split -h"))
 
 (defun +amos/tmux-source ()
   "Source tmux config if inside tmux."
@@ -2318,7 +2298,7 @@ the current state and point position."
   (add-hook! 'dired-mode-hook
     (let ((inhibit-message t))
       (toggle-truncate-lines +1)
-      (dired-omit-mode)
+      ;; (dired-omit-mode) ;; .d folders are gone
       (+amos-store-jump-history))))
 
 (define-advice dired-revert (:after (&rest _) +amos*dired-revert)
@@ -2327,7 +2307,9 @@ the current state and point position."
       (+amos/recenter)
     (error nil)))
 
-(after! wdired (evil-set-initial-state 'wdired-mode 'normal))
+(after! wdired
+  (evil-set-initial-state 'wdired-mode 'normal))
+
 (defun +amos/dired-open-callgrind ()
   "Open callgrind files according to its name."
   (interactive)
@@ -2344,7 +2326,8 @@ the current state and point position."
       ad-do-it))
 
 (after! evil-snipe
-  (push 'dired-mode evil-snipe-disabled-modes))
+  (push 'dired-mode evil-snipe-disabled-modes)
+  )
 
 ;; fix constructor list
 (defun +amos*c-determine-limit (orig-fun &rest args)
@@ -2474,34 +2457,34 @@ the current state and point position."
 
 (def-package! syntactic-close)
 
-(defun +amos*remove-git-index-lock (&rest _)
-  (ignore-errors
-    (delete-file ".git/index.lock")))
-(advice-add #'magit-refresh :before #'+amos*remove-git-index-lock)
-
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
 (after! subword
-  (progn
-    (define-category ?U "Uppercase")
-    (define-category ?u "Lowercase")
-    (modify-category-entry (cons ?A ?Z) ?U)
-    (modify-category-entry (cons ?a ?z) ?u)
-    (make-variable-buffer-local 'evil-cjk-word-separating-categories)
-    (add-hook 'subword-mode-hook (lambda! (if subword-mode (push '(?u . ?U) evil-cjk-word-separating-categories)
-                                            (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories)))))))
+  (define-category ?U "Uppercase")
+  (define-category ?u "Lowercase")
+  (modify-category-entry (cons ?A ?Z) ?U)
+  (modify-category-entry (cons ?a ?z) ?u)
+  (make-variable-buffer-local 'evil-cjk-word-separating-categories)
+  (add-hook 'subword-mode-hook (lambda! (if subword-mode (push '(?u . ?U) evil-cjk-word-separating-categories)
+                                          (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories))))))
 
 (after! magit
   (setq
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect t
-   magit-revision-show-gravatars '("^Author:     " . "^Commit:     ")))
+   magit-repository-directories '(("~/git" . 2))
+   magit-revision-show-gravatars '("^Author:     " . "^Commit:     "))
+  (defun +amos*remove-git-index-lock (&rest _)
+    (ignore-errors
+      (delete-file ".git/index.lock")))
+  (advice-add #'magit-refresh :before #'+amos*remove-git-index-lock))
 
 (after! evil-magit
   (setq evil-magit-use-z-for-folds nil))
 
-(after! org (setq org-image-actual-width '(400)))
+(after! org
+  (setq org-image-actual-width '(400)))
 
 (after! recentf
   (setq recentf-max-saved-items 10000))
@@ -2643,9 +2626,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -3010,8 +2993,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         (lsp-ui-imenu-mode)
         (setq mode-line-format '(:eval (lsp-ui-imenu--win-separator)))
         (goto-char 1)
-        (add-hook 'post-command-hook 'lsp-ui-imenu--post-command nil t)
-        ))
+        (add-hook 'post-command-hook 'lsp-ui-imenu--post-command nil t)))
     (let ((win (display-buffer-in-side-window (get-buffer "*lsp-ui-imenu*") '((side . right))))
           (fit-window-to-buffer-horizontally t))
       (set-window-margins win 1)
@@ -3118,7 +3100,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   (interactive)
   (pcase major-mode
     ('c++-mode (clang-format-buffer))
-    ('emacs-lisp-mode
+    (_
      (save-excursion
        (indent-region (point-min) (point-max) nil)))))
 
@@ -3232,6 +3214,34 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
 (stupid_function)
 
+(defun +amos/find-file-at-point ()
+  (interactive)
+  (-if-let (s (symbol-at-point))
+      (let* ((path (symbol-name s))
+             (dir (file-name-directory path))
+             (name (file-name-nondirectory path))
+             (adir (expand-file-name (or dir "./")))
+             (_ (while (not (file-directory-p adir))
+                  (let ((tmp (substring adir 0 -1)))
+                    (setq adir (file-name-directory tmp))
+                    (setq name (concat (file-name-nondirectory tmp) "/" name)))))
+             (default-directory adir))
+        (minibuffer-with-setup-hook
+            (lambda ()
+              (insert name))
+          (ivy-read "Find file: " #'read-file-name-internal
+                    :matcher #'counsel--find-file-matcher
+                    :action #'counsel-find-file-action
+                    :require-match 'confirm-after-completion
+                    :history 'file-name-history
+                    :keymap counsel-find-file-map
+                    :caller 'counsel-find-file)))
+    (user-error "No file at point")))
+
+(defun +amos/upload ()
+  (interactive)
+  (async-shell-command! (concat "upload " (buffer-file-name))))
+
 (defun +amos*ivy--insert-minibuffer (text)
   "Insert TEXT into minibuffer with appropriate cleanup."
   (let ((resize-mini-windows nil)
@@ -3265,7 +3275,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   (not (or (equal major-mode 'c-mode) (equal major-mode 'c++-mode))))
 (add-to-list 'semantic-default-submodes 'global-semantic-stickyfunc-mode)
 (semantic-mode 1)
-;; (require 'stickyfunc-enhance)
 (with-eval-after-load 'semantic
   (add-to-list 'semantic-inhibit-functions #'my-inhibit-semantic-p))
 
@@ -3331,3 +3340,47 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (def-package! flyspell-lazy
   :config
   (add-to-list 'ispell-extra-args "--sug-mode=ultra"))
+
+(def-package! smart-forward)
+
+(def-package! symbol-overlay
+  :commands (symbol-overlay-put))
+
+;; unwind flycheck backtrace
+;; (defun doom*flycheck-buffer ()
+;;   (interactive)
+;;   (flycheck-clean-deferred-check)
+;;   (if flycheck-mode
+;;       (unless (flycheck-running-p)
+;;         (run-hooks 'flycheck-before-syntax-check-hook)
+;;         (flycheck-clear-errors)
+;;         (flycheck-mark-all-overlays-for-deletion)
+;;         (let* ((checker (flycheck-get-checker-for-buffer)))
+;;           (if checker
+;;               (flycheck-start-current-syntax-check checker)
+;;             (flycheck-clear)
+;;             (flycheck-report-status 'no-checker))))
+;;     (user-error "Flycheck mode disabled")))
+;; (advice-add #'flycheck-buffer :override #'doom*flycheck-buffer)
+;; (defun doom*flycheck-start-command-checker (checker callback)
+;;   (let (process)
+;;     (let* ((program (flycheck-find-checker-executable checker))
+;;            (args (flycheck-checker-substituted-arguments checker))
+;;            (command (funcall flycheck-command-wrapper-function
+;;                              (cons program args)))
+;;            (process-connection-type nil))
+;;       (setq process (apply 'start-process (format "flycheck-%s" checker)
+;;                            nil command))
+;;       (setf (process-sentinel process) #'flycheck-handle-signal)
+;;       (setf (process-filter process) #'flycheck-receive-checker-output)
+;;       (set-process-query-on-exit-flag process nil)
+;;       (process-put process 'flycheck-checker checker)
+;;       (process-put process 'flycheck-callback callback)
+;;       (process-put process 'flycheck-buffer (current-buffer))
+;;       (process-put process 'flycheck-working-directory default-directory)
+;;       (process-put process 'flycheck-temporaries flycheck-temporaries)
+;;       (setq flycheck-temporaries nil)
+;;       (when (flycheck-checker-get checker 'standard-input)
+;;         (flycheck-process-send-buffer process))
+;;       process)))
+;; (advice-add #'flycheck-start-command-checker :override #'doom*flycheck-start-command-checker)

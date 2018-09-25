@@ -49,39 +49,18 @@ ctrl+alt+l
 ctrl+alt+h
   showshell.sh 0
 super+Home
-  xrandr --output VIRTUAL1 --off --output eDP1 --mode 1600x900 --pos 0x0 --rotate normal --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
-  bspc monitor eDP1 -o w e d f v n i o p c h; \
-  bspc monitor eDP1 -f -g 1600x900+0+0; \
-  # bspc desktop w -m eDP1; \
-  # bspc desktop e -m eDP1; \
-  # bspc desktop d -m eDP1; \
-  # bspc desktop f -m eDP1; \
-  # bspc desktop v -m eDP1; \
-  # bspc desktop n -m eDP1; \
-  # bspc desktop i -m eDP1; \
-  # bspc desktop o -m eDP1; \
-  # bspc desktop p -m eDP1; \
-  # bspc desktop c -m eDP1; \
-  # bspc desktop h -m eDP1; \
-  setbg.sh
+  xrandr --output VIRTUAL1 --off --output eDP1 --primary --mode 1600x900 --pos 0x0 --brightness 1 --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
+  monitormove eDP1 DP2-2; \
+  pkill conky; \
+  startconky
 super+End
-  xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0 --rotate normal --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
-  bspc monitor DP2-2 -o w e d f v n i o p c h; \
-  bspc monitor DP2-2 -f -g 1920x1080+0+0; \
-  # bspc desktop w -m DP2-2; \
-  # bspc desktop e -m DP2-2; \
-  # bspc desktop d -m DP2-2; \
-  # bspc desktop f -m DP2-2; \
-  # bspc desktop v -m DP2-2; \
-  # bspc desktop n -m DP2-2; \
-  # bspc desktop i -m DP2-2; \
-  # bspc desktop o -m DP2-2; \
-  # bspc desktop p -m DP2-2; \
-  # bspc desktop c -m DP2-2; \
-  # bspc desktop h -m DP2-2; \
-  setbg.sh
+  xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0 --brightness 1 --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
+  monitormove DP2-2 eDP1; \
+  pkill conky; \
+  startconky
 super+Insert
-  xrandr --output eDP1 --off --output DP2-2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 ; feh --bg-scale ~/Pictures/river.jpg
+  xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 --output DP2 --off; \
+  bspc monitor HDMI1 -o w e d f v n i o p c h;
 super+Delete
   lxrandr
 ctrl+alt+r
@@ -178,6 +157,11 @@ ctrl+Eisu_toggle
   trackpointspeed
 mod3 + e
   xdg-open "$(xclip -o)"
+
+super + shift + r
+  restartbspwm.sh
+super + shift + q
+  restartbspwm.sh 1
 
 # mod3+d
 #   copyq disable

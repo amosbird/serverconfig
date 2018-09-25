@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 
-file=$(realpath $1)
-tmux switch-client -t emacs
-if [ -z $2 ]
+file=$(realpath "$1")
+session=$(tmux display-message -p "#S")
+if [[ $session = "gui" ]]
 then
-    emacsclient -n -eval "(progn (+amos/workspace-new) (setq +amos-tmux-need-switch t) (doom/sudo-find-file \"$file\"))" > /dev/null
+    bspc desktop --focus e
 else
-    emacsclient -n -eval "(progn (setq +amos-tmux-need-switch t) (doom/sudo-find-file \"$file\"))" > /dev/null
+    tmux switch-client -t emacs
+fi
+if [ -z "$2" ]
+then
+    [[ $session = "gui" ]] || emacsclient -n -eval "(setq +amos-tmux-need-switch t)" > /dev/null
+    emacsclient -n -eval "(progn (+amos/workspace-new) (doom/sudo-find-file \"$file\"))" > /dev/null
+else
+    emacsclient -n -eval "(doom/sudo-find-file \"$file\")" > /dev/null
 fi

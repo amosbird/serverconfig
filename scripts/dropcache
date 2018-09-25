@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-(( UID == 0 )) || exec sudo "$0" "$@" || exit
+(( UID == 0 )) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
 
 echo 1 | tee /proc/sys/vm/drop_caches > /dev/null

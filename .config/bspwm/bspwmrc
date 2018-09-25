@@ -1,24 +1,26 @@
 #!/usr/local/bin/fish
 
+# if test -e "$BSPWM_STATE"
+# 	bspc wm -l "$BSPWM_STATE"
+# 	rm "$BSPWM_STATE"
+# end
+
 bspc monitor -d w e d f v n i o p c h
+bspc monitor DP2-2 -r
 
 bspc config border_width         0
 bspc config window_gap           0
-
 bspc config split_ratio          0.52
-bspc config split_dir east
 bspc config borderless_monocle   true
 bspc config gapless_monocle      false
-
 bspc config focus_follows_pointer false
 bspc config pointer_follows_focus false
-
 bspc config pointer_modifier mod3  # wait for control fix
 bspc config pointer_action1 move
+bspc config external_rules_command /home/amos/scripts/external_rules.sh
 
 bspc rule -a "*" split_dir=east
 bspc rule -a copyq state=floating
-
 bspc rule -a Screenkey manage=off
 bspc rule -a Arandr sticky=on state=floating
 bspc rule -a Deadbeef state=floating
@@ -27,11 +29,9 @@ bspc rule -a netease-cloud-music desktop=p follow=on
 bspc rule -a xfreerdp desktop=w follow=on
 bspc rule -a Luakit desktop=f follow=on
 bspc rule -a Skype desktop=o state=fullscreen
-bspc config external_rules_command /home/amos/scripts/external_rules.sh
 
-stalonetray --window-type normal -i 32 --sticky false --window-strut none &
-conky
-
+stalonetray &
+startconky
 setbg.sh
 
 # Program Workspaces

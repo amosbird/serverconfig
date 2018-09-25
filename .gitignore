@@ -24,3 +24,5 @@ fishd.*
 .config/copyq/copyq_geometry.ini
 .config/copyq/copyq_tabs.ini
 /.docker/.buildNodeID
+fcitx/profile*
+/.config/fcitx/profile_

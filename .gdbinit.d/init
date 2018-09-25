@@ -1,10 +1,26 @@
 # requires: https://github.com/cyrus-and/gdb-dashboard
+#
+python
+class AmosCommand(gdb.Command):
+
+    def __init__(self):
+        gdb.Command.__init__(self, 'amos',
+                             gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+
+    def invoke(self, arg, from_tty):
+        arg = Dashboard.parse_arg(arg)
+        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+            if thread.is_stopped():
+                run("thread {}".format(thread.num))
+
+AmosCommand()
+end
 
 # enable auto-load
 set auto-load safe-path /
 
 # prefer Intel assembly syntax
-set disassembly-flavor att
+set disassembly-flavor intel
 
 # GDB dashboard defaults
 dashboard -layout stack expressions threads registers
@@ -18,6 +34,9 @@ set opaque-type-resolution off
 set history filename ~/.gdb_history
 set history save on
 set history remove-duplicates 5000
+alias -a w = dashboard expressions watch
+alias -a W = dashboard expressions unwatch
+
 # set auto-solib-add off
 
 # useful auto-redraw hooks
@@ -34,6 +53,18 @@ define hookpost-frame
   dashboard
 end
 
+define hookpost-stop
+  dashboard
+end
+
+define hookpost-continue
+  amos
+end
+
+define hookpost-thread
+  dashboard
+end
+
 # handle SIGTSTP noprint nostop pass
 # handle SIGQUIT noprint nostop pass
 # handle SIGINT noprint nostop pass
@@ -41,10 +72,10 @@ end
 # set $dlopen = (void*(*)(char*, int)) dlopen
 # call $dlopen("/home/amos/git/luakit/lualib.so", 1)
 
-# If using the CLI, pagination breaks non-stop.
+# set scheduler-locking off
+
+set target-async 1
 set pagination off
-# set scheduler-locking on
-# set range-stepping off
 set non-stop on
 set confirm off
 # Finally, turn it on!

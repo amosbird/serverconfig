@@ -55,7 +55,7 @@ function conky_setup(  )
 	-- reading the variables
 	local nex = 0;
 	-- dimensions
-	width, height = string.match("1980x1080", "(%d+)x(%d+)")
+	width, height = 1980, 1000
 
 	-- network
 	local file = io.popen("ip r g 180.76.76.76 | awk 'NR==1{print $5;exit}'");

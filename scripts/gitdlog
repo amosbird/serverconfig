@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# b=$(git rev-parse --abbrev-ref HEAD | head -1)
+git log $1... --graph --oneline --boundary

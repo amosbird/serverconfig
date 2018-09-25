@@ -263,6 +263,19 @@ The insertion will be repeated COUNT times."
   '(c-mode c++-mode objc-mode)
   'company-dabbrev-code)
 
+;; (defun +my//realtime-elisp-doc-function ()
+;;   (-when-let* ((w (selected-window))
+;;                (s (intern-soft (current-word))))
+;;     (describe-symbol s)
+;;     (realign-windows)
+;;     (select-window w)))
+;; (defun +my/realtime-elisp-doc ()
+;;   (interactive)
+;;   (when (eq major-mode 'emacs-lisp-mode)
+;;     (if (advice-function-member-p #'+my//realtime-elisp-doc-function eldoc-documentation-function)
+;;         (remove-function (local 'eldoc-documentation-function) #'+my//realtime-elisp-doc-function)
+;;       (add-function :after-while (local 'eldoc-documentation-function) #'+my//realtime-elisp-doc-function))))
+
 (def-package! ccls
   :after lsp-mode
   :init
@@ -278,7 +291,7 @@ The insertion will be repeated COUNT times."
            (xrefs
             (-some->> (lsp--send-request (lsp--make-request
                                           request
-                                          (or param (lsp--text-document-position-params))))
+                                          (append param (lsp--text-document-position-params))))
                       ;; Language servers may return a single LOCATION instead of a sequence of them.
                       (lsp-ui-peek--to-sequence)
                       (lsp--locations-to-xref-items)
@@ -304,16 +317,6 @@ The insertion will be repeated COUNT times."
          (lsp--make-notification "$ccls/diagnostic"
                                  `(:textDocument ,(lsp--text-document-identifier))))))
 
-  (defun ccls/sticky ()
-    (interactive)
-    (if (ccls--is-ccls-buffer)
-        (setq x
-              (lsp--send-request
-               (lsp--make-request "$ccls/sticky"
-                                  `(:textDocument ,(lsp--text-document-identifier)
-                                                  :position ,(lsp--cur-position))))))
-    (message x))
-
   (defun ccls/inheritances ()
     (interactive)
     (if (ccls--is-ccls-buffer)
@@ -329,10 +332,32 @@ The insertion will be repeated COUNT times."
             (user-error "No inheritances found for: %s" input))
           (+amos-ivy-xref xrefs 'inheritances))))
 
-  (defun ccls/base () (interactive) (+amos-lsp-find-custom 'base "$ccls/base"))
-  (defun ccls/callers () (interactive) (+amos-lsp-find-custom 'callers "$ccls/callers"))
-  (defun ccls/vars (kind) (+amos-lsp-find-custom 'vars "$ccls/vars" (plist-put (lsp--text-document-position-params) :kind kind)))
-  (defun ccls/random () (interactive) (+amos-lsp-find-custom 'random "$ccls/random"))
+  (defun ccls/callee ()
+    (interactive)
+    (+amos-lsp-find-custom 'callee "$ccls/call" '(:callee t)))
+  (defun ccls/caller ()
+    (interactive)
+    (+amos-lsp-find-custom 'caller "$ccls/call"))
+  (defun ccls/vars (kind)
+    (+amos-lsp-find-custom 'vars "$ccls/vars" `(:kind ,kind)))
+  (defun ccls/base (levels)
+    (+amos-lsp-find-custom 'base "$ccls/inheritance" `(:levels ,levels)))
+  (defun ccls/derived (levels)
+    (+amos-lsp-find-custom 'derived "$ccls/inheritance" `(:levels ,levels :derived t)))
+  (defun ccls/member (kind)
+    (+amos-lsp-find-custom 'member "$ccls/member" `(:kind ,kind)))
+
+  (defun ccls/member (kind)
+    (+amos-lsp-find-custom 'member "$ccls/member" `(:kind ,kind)))
+  (defun ccls/member-function ()
+    (interactive)
+    (ccls/member 3))
+  (defun ccls/member-type ()
+    (interactive)
+    (ccls/member 2))
+  (defun ccls/member-field ()
+    (interactive)
+    (ccls/member 1))
 
   ;; References w/ Role::Address bit (e.g. variables explicitly being taken addresses)
   (defun ccls/references-address ()
@@ -374,18 +399,16 @@ The insertion will be repeated COUNT times."
      (plist-put (lsp--text-document-position-params) :context
                 '(:role 16))))
 
-  (defalias 'lsp-cquery-enable 'lsp-ccls-enable)
-  (defalias 'cquery-call-hierarchy           'ccls-call-hierarchy)
-  (defalias 'cquery/callers                  'ccls/callers)
-  (defalias 'cquery-member-hierarchy         'ccls-member-hierarchy)
-  (defalias 'cquery-inheritance-hierarchy    'ccls-inheritance-hierarchy)
   (add-hook 'c-mode-common-hook #'ccls//enable)
-  (add-hook 'doom-escape-hook #'ccls/diagnostic)
-  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer))
+  ;; (add-hook 'doom-escape-hook #'ccls/diagnostic)
+  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer)
+  )
 
 (defun ccls//enable ()
   (direnv-update-environment)
-  (lsp-ccls-enable)
+  (condition-case nil
+      (lsp-ccls-enable)
+    (user-error nil))
   (setq-local flycheck-checker 'lsp-ui)
   (lsp-ui-flycheck-add-mode major-mode)
   (add-to-list 'flycheck-checkers 'lsp-ui)
@@ -398,13 +421,12 @@ The insertion will be repeated COUNT times."
   :references #'xref-find-references
   :documentation #'counsel-dash-at-point)
 
-
 (defun +amos*lsp--position-to-point (params)
   "Convert Position object in PARAMS to a point."
   (save-excursion
     (save-restriction
       (widen)
-      (goto-char 1)
+      (goto-char (point-min))
       ;; The next line calculs the point from the LSP position.
       ;; We use `goto-char' to ensure that we return a point inside the buffer
       ;; to avoid out of range error

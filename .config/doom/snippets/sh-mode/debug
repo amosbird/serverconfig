@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: debug
+# key: debug
+# --
+exec {xtracefd}>/tmp/bashdebug; BASH_XTRACEFD=$xtracefd; set -x;

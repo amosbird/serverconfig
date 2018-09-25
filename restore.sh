@@ -22,6 +22,8 @@ configs=(
     .gitconfig
     .Xresources
     .xprofile
+    .xinitrc
+    .stalonetrayrc
     .bashrc
     .bash_profile
     .chisels

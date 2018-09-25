@@ -12,7 +12,7 @@ case "$class" in
         ;;
     stalonetray)
         echo "$wid" > /tmp/stalonetray
-        setbg.sh reset_tray
+        # setbg.sh reset_tray
         echo "desktop=n layer=above"
         ;;
     qutebrowser)
@@ -22,6 +22,19 @@ case "$class" in
                 ;;
             *)
                 echo "split_dir=east"
+                ;;
+        esac
+        ;;
+    URxvt)
+        case "$title" in
+            urxvt_scratchpad)
+                echo "$wid" > /tmp/urxvt_scratchpad
+                echo "state=floating hidden=on"
+                ;;
+            stardict)
+                echo "$wid" > /tmp/stardict
+                echo "sticky=on state=floating hidden=on"
+                compton-trans -w "$wid" 70
                 ;;
         esac
         ;;

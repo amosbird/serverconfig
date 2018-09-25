@@ -147,7 +147,7 @@
  :v "@"                      #'+evil:macro-on-all-lines
  :n "g@"                     #'+evil:macro-on-all-lines
  :n "gx"                     #'evil-exchange
- :n "gf"                     #'+amos/evil-find-file-at-point-with-line
+ :n "gf"                     #'+amos/find-file-at-point
  :n "gd"                     #'+lookup/definition
  :n "go"                     #'+amos/evil-insert-line-below
  :n "gO"                     #'+amos/evil-insert-line-above
@@ -437,6 +437,7 @@
  (:after ivy
    :map ivy-minibuffer-map
    "C-a"    #'move-beginning-of-line
+   "C-b"    #'backward-char
    "C-d"    #'+amos/delete-char
    "C-j"    #'ivy-next-line
    "C-k"    #'ivy-previous-line
@@ -459,6 +460,10 @@
    "M-z"    #'undo
    "TAB"    #'ivy-call
    [escape] #'keyboard-escape-quit
+   ;; ivy has its own logic for these
+   ;; "DEL"         #'+amos/backward-delete-char
+   ;; [M-backspace] #'+amos/backward-delete-word
+   ;; [134217855]   #'+amos/backward-delete-word ; M-DEL
 
    :map ivy-occur-grep-mode-map
    "C-d"    nil
@@ -472,28 +477,6 @@
 
    :map yas-minor-mode-map
    :i "C-l" yas-maybe-expand)
-
- (:after cquery
-   (:map cquery-tree-mode-map
-     :m "C-i"      #'cquery-tree-toggle-expand
-     :n "c"        #'cquery-tree-toggle-calling
-     :n "f"        #'cquery-tree-press
-     :n "h"        #'cquery-tree-collapse-or-select-parent
-     :n "j"        #'cquery-tree-next-line
-     :n "k"        #'cquery-tree-prev-line
-     :n "J"        #'cquery-tree-next-sibling
-     :n "K"        #'cquery-tree-prev-sibling
-     :n "l"        #'cquery-tree-expand-or-set-root
-     :n "oh"       #'cquery-tree-press-and-horizontal-split
-     :n "ov"       #'cquery-tree-press-and-vertical-split
-     :n "oo"       #'cquery-tree-press-and-switch
-     :n "q"        #'cquery-tree-quit
-     :n "<escape>" #'cquery-tree-quit
-     :n "Q"        #'quit-window
-     :n "yy"       #'cquery-tree-yank-path
-     :n "RET"      #'cquery-tree-press-and-switch
-     :n "<left>"   #'cquery-tree-collapse-or-select-parent
-     :n "<right>"  #'cquery-tree-expand-or-set-root))
 
  (:after ccls
    (:map ccls-tree-mode-map
@@ -592,6 +575,9 @@
    :n "q"   #'git-timemachine-quit
    :n "gb"  #'git-timemachine-blame)
 
+ (:after helpful
+   :map helpful-mode-map
+   :gn "q" #'+amos/kill-current-buffer)
 
  (:after magit-blame
    :map magit-blame-read-only-mode-map
@@ -624,7 +610,7 @@
    :g "p" #'evil-snipe-repeat-reverse)
 
  (:map key-translation-map
-   "\035"          [escape]
+   "\035"          (kbd "<escape>")
    [S-iso-lefttab] [backtab]
    "C-1"           (kbd "1")
    "C-2"           (kbd "2")
@@ -647,25 +633,25 @@
         evil-ex-search-keymap
         read-expression-map)
    [escape]      #'abort-recursive-edit
+   "C-a"         #'move-beginning-of-line
+   "C-b"         #'backward-char
+   "C-d"         #'+amos/delete-char
+   "C-o"         #'+amos/kill-line
+   "C-r"         #'evil-paste-from-register
+   "C-u"         #'+amos/backward-kill-to-bol-and-indent
    "C-y"         (lambda! (let ((kill-ring my-kill-ring)) (yank)))
    "M-y"         (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
-   "C-r"         #'evil-paste-from-register
-   "C-a"         #'move-beginning-of-line
    "M-b"         #'+amos/backward-word-insert
    "M-d"         #'+amos/forward-delete-word
    "M-f"         #'+amos/forward-word-insert
    "M-B"         #'+amos/backward-subword-insert
    "M-D"         #'+amos/forward-delete-subword
    "M-F"         #'+amos/forward-subword-insert
+   "M-z"         #'undo
    "DEL"         #'+amos/backward-delete-char
    [M-backspace] #'+amos/backward-delete-word
    [134217855]   #'+amos/backward-delete-word ; M-DEL
-   "C-w"         #'ivy-yank-word
-   "C-u"         #'+amos/backward-kill-to-bol-and-indent
-   "C-k"         #'+amos/kill-line
-   "C-o"         #'+amos/kill-line
-   "C-d"         #'+amos/delete-char
-   "M-z"         #'doom/minibuffer-undo)
+   )
 
  ;; --- Custom evil text-objects ---------------------
  :textobj "a" #'evil-inner-arg                    #'evil-outer-arg

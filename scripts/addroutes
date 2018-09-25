@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-(( UID == 0 )) || exec sudo "$0" "$@" || exit
+(( UID == 0 )) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
 
 ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
@@ -4988,27 +4988,27 @@ ip r a 10.0.0.0/8 via $gw table cn
 
 # github
 
-ip r a 192.30.252.0/22 via $gw table cn
-ip r a 185.199.108.0/22 via $gw table cn
-ip r a 140.82.112.0/22 via $gw table cn
-ip r a 192.30.252.0/22 via $gw table cn
-ip r a 185.199.108.0/22 via $gw table cn
-ip r a 140.82.112.0/20 via $gw table cn
-ip r a 13.229.188.59/32 via $gw table cn
-ip r a 13.250.177.223/32 via $gw table cn
-ip r a 18.194.104.89/32 via $gw table cn
-ip r a 18.195.85.27/32 via $gw table cn
-ip r a 35.159.8.160/32 via $gw table cn
-ip r a 52.74.223.119/32 via $gw table cn
-ip r a 192.30.252.153/32 via $gw table cn
-ip r a 192.30.252.154/32 via $gw table cn
-ip r a 185.199.108.153/32 via $gw table cn
-ip r a 185.199.109.153/32 via $gw table cn
-ip r a 185.199.110.153/32 via $gw table cn
-ip r a 185.199.111.153/32 via $gw table cn
-ip r a 54.87.5.173/32 via $gw table cn
-ip r a 54.166.52.62/32 via $gw table cn
-ip r a 23.20.92.3/32 via $gw table cn
+# ip r a 192.30.252.0/22 via $gw table cn
+# ip r a 185.199.108.0/22 via $gw table cn
+# ip r a 140.82.112.0/22 via $gw table cn
+# ip r a 192.30.252.0/22 via $gw table cn
+# ip r a 185.199.108.0/22 via $gw table cn
+# ip r a 140.82.112.0/20 via $gw table cn
+# ip r a 13.229.188.59/32 via $gw table cn
+# ip r a 13.250.177.223/32 via $gw table cn
+# ip r a 18.194.104.89/32 via $gw table cn
+# ip r a 18.195.85.27/32 via $gw table cn
+# ip r a 35.159.8.160/32 via $gw table cn
+# ip r a 52.74.223.119/32 via $gw table cn
+# ip r a 192.30.252.153/32 via $gw table cn
+# ip r a 192.30.252.154/32 via $gw table cn
+# ip r a 185.199.108.153/32 via $gw table cn
+# ip r a 185.199.109.153/32 via $gw table cn
+# ip r a 185.199.110.153/32 via $gw table cn
+# ip r a 185.199.111.153/32 via $gw table cn
+# ip r a 54.87.5.173/32 via $gw table cn
+# ip r a 54.166.52.62/32 via $gw table cn
+# ip r a 23.20.92.3/32 via $gw table cn
 
 
 # azure

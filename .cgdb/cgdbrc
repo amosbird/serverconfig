@@ -24,8 +24,8 @@ map <C-o> :up<CR>
 map <C-i> :down<CR>
 imap <C-o> <C-k>
 imap <C-v> <PageDown>
-map w :w
-map W :W
+map w iw<Space>
+map W iW<Space>
 map X :X<CR>
 map b ib
 map t it<Space>

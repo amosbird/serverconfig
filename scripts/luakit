@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
 bspc desktop --focus f
-vivaldi "$@"
+/home/amos/scripts/vivaldi "$@"
