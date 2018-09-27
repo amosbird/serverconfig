@@ -20,6 +20,7 @@ map s :step<CR>
 map S :S<CR>
 map <C-f> :switch<CR>
 map <C-r> :refresh<CR>
+map <C-t> :switchbreak<CR>
 map <C-o> :up<CR>
 map <C-i> :down<CR>
 imap <C-o> <C-k>

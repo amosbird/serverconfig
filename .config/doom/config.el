@@ -668,14 +668,20 @@ using a visual block/rectangle selection."
 (def-package! gitignore-mode
   :defer t)
 
-(def-package! magit-svn
-  :commands turn-on-magit-svn
-  :init (add-hook 'magit-mode-hook 'turn-on-magit-svn))
+;; (def-package! magit-svn
+;;   :commands turn-on-magit-svn
+;;   :init (add-hook 'magit-mode-hook 'turn-on-magit-svn))
 
 (def-package! page-break-lines
   :commands global-page-break-lines-mode
   :init
   (global-page-break-lines-mode +1))
+
+(defun amos*page-break-lines--update-display-tables  (&optional _)
+  "Function called for updating display table in windows of current selected frame."
+  (unless (minibufferp)
+    (mapc 'page-break-lines--update-display-table (window-list nil 'no-minibuffer))))
+(advice-add 'page-break-lines--update-display-tables :override #'amos*page-break-lines--update-display-tables)
 
 (def-package! adoc-mode
   :mode "\\.adoc$")

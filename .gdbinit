@@ -1189,7 +1189,7 @@ location, if available. Optionally list the frame arguments and locals too."""
         return lines
 
     @staticmethod
-    def get_pc_line(frame, style):
+    def get_pc_line(frame, style, filename=None):
         frame_pc = ansi(format_address(frame.pc()), style)
         info = 'from {}'.format(frame_pc)
         if frame.name():
@@ -1211,6 +1211,8 @@ location, if available. Optionally list the frame arguments and locals too."""
             info += ' in {}'.format(frame_name)
             sal = frame.find_sal()
             if sal.symtab:
+                if filename is not None:
+                    filename[0] = '{}:{}'.format(sal.symtab.filename, sal.line)
                 file_name = ansi(sal.symtab.filename, style)
                 file_line = ansi(str(sal.line), style)
                 info += ' at {}:{}'.format(file_name, file_line)
@@ -1463,6 +1465,7 @@ class Threads(Dashboard.Module):
 
     def lines(self, term_width, style_changed):
         out = []
+        gdb.stopped_threads = []
         selected_thread = gdb.selected_thread()
         # do not restore the selected frame if the thread is not stopped
         restore_frame = gdb.selected_thread().is_stopped()
@@ -1483,7 +1486,9 @@ class Threads(Dashboard.Module):
             try:
                 thread.switch()
                 frame = gdb.newest_frame()
-                info += ' ' + Stack.get_pc_line(frame, style)
+                filename = ['']
+                info += ' ' + Stack.get_pc_line(frame, style, filename)
+                gdb.stopped_threads.append((thread.num, filename[0]))
             except gdb.error:
                 info += ' (running)'
             out.append(info)
