@@ -3,4 +3,4 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 chisels=${DIR}/../.chisels
 
-( cd "$chisels" && sudo -H sysdig -c ${chisels}/topfiles_bytes $@)
+( cd "$chisels" && sudo -H sysdig -c ${chisels}/topfiles_bytes "$@")

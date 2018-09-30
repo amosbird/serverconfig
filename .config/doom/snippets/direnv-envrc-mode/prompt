@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: prompt
+# key: prompt
+# --
+export envprompt=

@@ -266,19 +266,13 @@ The insertion will be repeated COUNT times."
   '(c-mode c++-mode objc-mode)
   'company-dabbrev-code)
 
-;; (defun +my//realtime-elisp-doc-function ()
-;;   (-when-let* ((w (selected-window))
-;;                (s (intern-soft (current-word))))
-;;     (describe-symbol s)
-;;     (realign-windows)
-;;     (select-window w)))
-;; (defun +my/realtime-elisp-doc ()
-;;   (interactive)
-;;   (when (eq major-mode 'emacs-lisp-mode)
-;;     (if (advice-function-member-p #'+my//realtime-elisp-doc-function eldoc-documentation-function)
-;;         (remove-function (local 'eldoc-documentation-function) #'+my//realtime-elisp-doc-function)
-;;       (add-function :after-while (local 'eldoc-documentation-function) #'+my//realtime-elisp-doc-function))))
-
+(after! lsp-mode
+  (lsp-define-stdio-client lsp-clangd-c++
+                         "cpp"
+                         (lsp-make-traverser "compile_commands.json")
+                         (list "clangd")
+                         :ignore-regexps
+                         '("^Error -[0-9]+: .+$")))
 (def-package! ccls
   :after lsp-mode
   :init
@@ -400,9 +394,8 @@ The insertion will be repeated COUNT times."
                 '(:role 16))))
 
   (add-hook 'c-mode-common-hook #'ccls//enable)
-  ;; (add-hook 'doom-escape-hook #'ccls/diagnostic)
-  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer)
-  )
+  (add-hook 'after-save-hook #'ccls/diagnostic)
+  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer))
 
 (defun ccls//enable ()
   (direnv-update-environment)
