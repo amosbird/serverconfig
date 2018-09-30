@@ -21,6 +21,8 @@ c.tabs.last_close = 'close'
 # c.content.user_stylesheets = glob.glob('/home/amos/css/*.user.css')
 c.hints.next_regexes.append(r'下一页')
 c.hints.prev_regexes.append(r'上一页')
+c.hints.next_regexes.append(r'>>')
+c.hints.prev_regexes.append(r'<<')
 
 
 # Bindings for normal mode
@@ -78,8 +80,8 @@ config.bind('<ctrl+f>', 'fake-key <Right>', mode='insert')
 config.bind('<ctrl+j>', 'fake-key <Down>', mode='insert')
 config.bind('<ctrl+k>', 'fake-key <Up>', mode='insert')
 config.bind('<ctrl+i>', 'fake-key <Tab>', mode='insert')
-config.bind('<ctrl+u>', 'spawn copyq disable ;; fake-key <Shift+Home>;; fake-key <BackSpace> ;; spawn copyq enable', mode='insert')
-config.bind('<ctrl+o>', 'spawn copyq disable ;; fake-key <Shift+End>;; fake-key <Delete> ;; spawn copyq enable', mode='insert')
+config.bind('<ctrl+u>', 'fake-key <Shift+Home>;; fake-key <BackSpace>', mode='insert')
+config.bind('<ctrl+o>', 'fake-key <Shift+End>;; fake-key <Delete>', mode='insert')
 
 config.bind('<ctrl+q>', ':jseval --quiet --file ./ctrlu.js', mode='insert')
 config.bind('<ctrl+x>', ':jseval --quiet --file ./ctrlk.js', mode='insert')

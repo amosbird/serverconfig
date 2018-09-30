@@ -1599,6 +1599,7 @@ representation of `NUMBER' is smaller."
   `(dolist (mode (doom-enlist ,modes))
      (push (cons mode (list ,@plist)) +amos-end-of-statement-regex)))
 (set! :eos '(c-mode c++-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
+(set! :eos '(sql-mode) :regex-char '("[ \t\r\n\v\f]" ";" ?\;))
 (set! :eos '(emacs-lisp-mode) :regex-char "[ \t\r\n\v\f]")
 
 (defun +amos/maybe-add-end-of-statement (&optional move)
@@ -3390,3 +3391,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 ;;         (flycheck-process-send-buffer process))
 ;;       process)))
 ;; (advice-add #'flycheck-start-command-checker :override #'doom*flycheck-start-command-checker)
+
+(defun +amos*git-link--select-remote ()
+  (if current-prefix-arg
+      (git-link--read-remote)
+    (or (magit-get-push-remote) (magit-get-upstream-remote) "origin")))
+(advice-add #'git-link--select-remote :override #'+amos*git-link--select-remote)

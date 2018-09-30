@@ -79,8 +79,7 @@
  :n "M-i"                    #'yasdcv-translate-at-point
  :v "M-i"                    #'+amos/evil-visual-insert-snippet
  ;; :n "M-o"                    #'+amos/dired-jump
- :ni "M-o"                   #'downcase-word
- :n "M-v"                    #'+amos/lsp-ui-imenu
+ ;; :ni "M-o"                   #'downcase-word
  :genvi "M-h"                #'evil-window-left
  :genvi "M-j"                #'evil-window-down
  :genvi "M-k"                #'evil-window-up

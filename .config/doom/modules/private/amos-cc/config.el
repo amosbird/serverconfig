@@ -84,10 +84,13 @@ The insertion will be repeated COUNT times."
           :n "C-e"      #'+amos/maybe-add-end-of-statement
           :n "o"        #'+amos-evil-open-below
           :n "O"        #'+amos-evil-open-above
+          :n "M-v"      #'+amos/lsp-ui-imenu
           :n "gh"       #'ccls-call-hierarchy
           :n "gR"       #'ccls/callers
-          :n "gt"       #'cquery-member-hierarchy
+          :n "gt"       #'ccls/inheritances
           :n "ge"       #'lsp-execute-code-action
+          :n "M-u"      #'ccls-code-lens-mode
+          :n "M-o"      #'lsp-ui-sideline-mode
           "C-c i"       #'ccls/includes
           "C-c I"       (lambda! (ccls/includes t))))
 
@@ -257,7 +260,7 @@ The insertion will be repeated COUNT times."
           (insert incl)
           (newline))))))
 
-(add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1))
+(add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1) (setq-local indent-region-function #'lsp-format-region))
 (add-hook! 'c++-mode-hook #'modern-c++-font-lock-mode)
 (set-company-backend!
   '(c-mode c++-mode objc-mode)
@@ -346,9 +349,6 @@ The insertion will be repeated COUNT times."
     (+amos-lsp-find-custom 'derived "$ccls/inheritance" `(:levels ,levels :derived t)))
   (defun ccls/member (kind)
     (+amos-lsp-find-custom 'member "$ccls/member" `(:kind ,kind)))
-
-  (defun ccls/member (kind)
-    (+amos-lsp-find-custom 'member "$ccls/member" `(:kind ,kind)))
   (defun ccls/member-function ()
     (interactive)
     (ccls/member 3))
@@ -435,3 +435,4 @@ The insertion will be repeated COUNT times."
       (point))))
 
 (advice-add #'lsp--position-to-point :override #'+amos*lsp--position-to-point)
+(advice-add #'lsp-ui-sideline--diagnostics-changed :override #'ignore)

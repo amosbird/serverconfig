@@ -26,3 +26,4 @@ fishd.*
 /.docker/.buildNodeID
 fcitx/profile*
 /.config/fcitx/profile_
+/.config/fish/fish_universal_variables
