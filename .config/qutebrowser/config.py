@@ -19,6 +19,8 @@ c.tabs.last_close = 'close'
 # import glob
 
 # c.content.user_stylesheets = glob.glob('/home/amos/css/*.user.css')
+c.hints.next_regexes.insert(0, r'»')
+c.hints.prev_regexes.insert(0, r'«')
 c.hints.next_regexes.append(r'下一页')
 c.hints.prev_regexes.append(r'上一页')
 c.hints.next_regexes.append(r'>>')
