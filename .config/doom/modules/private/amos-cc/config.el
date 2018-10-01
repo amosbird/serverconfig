@@ -260,7 +260,13 @@ The insertion will be repeated COUNT times."
           (insert incl)
           (newline))))))
 
-(add-hook! (c-mode c++-mode) (flycheck-mode +1) (eldoc-mode -1) (setq-local indent-region-function #'lsp-format-region))
+(add-hook! (c-mode c++-mode)
+  (flycheck-mode +1)
+  (eldoc-mode -1)
+  ;; (setq-local indent-region-function #'lsp-format-region)
+  ;; (setq-local indent-line-function (lambda (&rest _) (lsp-format-region (line-beginning-position) (line-end-position))))
+  )
+
 (add-hook! 'c++-mode-hook #'modern-c++-font-lock-mode)
 (set-company-backend!
   '(c-mode c++-mode objc-mode)
@@ -279,9 +285,9 @@ The insertion will be repeated COUNT times."
   (setq
    ccls-project-root-matchers
    '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
-   ;; ccls-sem-highlight-method 'font-lock)
+   ccls-sem-highlight-method 'font-lock)
    ;; ccls-sem-highlight-method 'overlay)
-   ccls-sem-highlight-method nil)
+   ;; ccls-sem-highlight-method nil)
 
   (defun +amos-lsp-find-custom (kind request &optional param)
     (let* ((input (symbol-at-point))
@@ -395,6 +401,7 @@ The insertion will be repeated COUNT times."
 
   (add-hook 'c-mode-common-hook #'ccls//enable)
   (add-hook 'after-save-hook #'ccls/diagnostic)
+  (add-hook 'lsp-after-open-hook #'ccls-code-lens-mode)
   (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer))
 
 (defun ccls//enable ()
