@@ -28,7 +28,7 @@
 
   (defun +amos-append-comment-line ()
     (interactive)
-    (newline-and-indent)
+    (evil-ret 1)
     (if (eq (car (car (c-guess-basic-syntax))) 'c)
         (insert "* "))
     (indent-according-to-mode))

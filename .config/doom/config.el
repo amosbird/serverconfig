@@ -3397,3 +3397,69 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (git-link--read-remote)
     (or (magit-get-push-remote) (magit-get-upstream-remote) "origin")))
 (advice-add #'git-link--select-remote :override #'+amos*git-link--select-remote)
+
+(evil-define-command +amos*evil-scroll-down (count)
+  "Scrolls the window and the cursor COUNT lines downwards.
+If COUNT is not specified the function scrolls down
+`evil-scroll-count', which is the last used count.
+If the scroll count is zero the command scrolls half the screen."
+  :repeat nil
+  :keep-visual t
+  (interactive "<c>")
+  (evil-save-column
+    (setq count (or count (max 0 evil-scroll-count)))
+    (setq evil-scroll-count count)
+    (when (eobp) (signal 'end-of-buffer nil))
+    (when (zerop count)
+      (setq count (/ (1- (window-height)) 2)))
+    ;; BUG #660: First check whether the eob is visible.
+    ;; In that case we do not scroll but merely move point.
+    (if (<= (point-max) (window-end))
+        (with-no-warnings (next-line count nil))
+      (let ((xy (posn-x-y (posn-at-point))))
+        (condition-case nil
+            (progn
+              (scroll-up count)
+              (let* ((wend (window-end nil t))
+                     (p (posn-at-x-y (car xy) (cdr xy)))
+                     ;; header line breaks
+                     (p2 (posn-at-x-y (car xy) (1+ (cdr xy))))
+                     (margin (max 0 (- scroll-margin
+                                       (cdr (posn-col-row p))))))
+                (goto-char (or (posn-point p) (posn-point p2)))
+                ;; ensure point is not within the scroll-margin
+                (when (> margin 0)
+                  (with-no-warnings (next-line margin))
+                  (recenter scroll-margin))
+                (when (<= (point-max) wend)
+                  (save-excursion
+                    (goto-char (point-max))
+                    (recenter (- (max 1 scroll-margin)))))))
+          (end-of-buffer
+           (goto-char (point-max))
+           (recenter (- (max 1 scroll-margin)))))))))
+(advice-add #'evil-scroll-down :override #'+amos*evil-scroll-down)
+
+(defun +amos*evil-insert-newline-below ()
+  "Inserts a new line below point and places point in that line
+with regard to indentation."
+  (evil-narrow-to-field
+    (evil-move-end-of-line)
+    (if (not (looking-at "\n"))
+        (insert (if use-hard-newlines hard-newline "\n"))
+      (forward-char 1)
+      (insert (if use-hard-newlines hard-newline "\n"))
+      (backward-char 1))
+    (back-to-indentation)))
+(advice-add #'evil-insert-newline-below :override #'+amos*evil-insert-newline-below)
+
+(evil-define-motion +amos*evil-ret (count)
+    "Move the cursor COUNT lines down.
+If point is on a widget or a button, click on it.
+In Insert state, insert a newline."
+  :type line
+  (let ((nl (looking-at "\n")))
+    (if nl (forward-char 1))
+    (evil-ret-gen count nil)
+    (if nl (backward-char 1))))
+(advice-add #'evil-ret :override #'+amos*evil-ret)

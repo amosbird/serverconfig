@@ -56,7 +56,7 @@
 (setq all-the-icons-scale-factor 1.0)
 (setq +amos--frame-list "---")
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
-(setq doom-line-numbers-style 'relative)
+(setq display-line-numbers-type 'relative)
 ;; fix start-process xdg-open
 (setq process-connection-type nil)
 ;; (setq package-archives

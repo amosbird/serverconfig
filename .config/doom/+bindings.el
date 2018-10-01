@@ -267,6 +267,7 @@
      :desc "Flycheck"                      :nv "f" #'flycheck-mode
      :desc "Rainbow"                       :nv "r" #'rainbow-mode
      :desc "Truncate lines"                :nv "l" #'toggle-truncate-lines
+     :desc "Line numbers"                  :nv "n" #'doom/toggle-line-numbers
      :desc "Whitespace"                    :nv "w" #'whitespace-mode
      :desc "Fullscreen"                    :nv "f" #'doom/toggle-fullscreen
      :desc "Indent guides"                 :nv "i" #'highlight-indentation-mode
@@ -317,8 +318,10 @@
 
    :map company-search-map
    "C-i"        #'company-complete-selection
-   "C-j"        #'company-search-repeat-forward
-   "C-k"        #'company-search-repeat-backward
+   "C-j"        #'company-select-next
+   "C-k"        #'company-select-previous
+   "C-n"        #'company-search-repeat-forward
+   "C-p"        #'company-search-repeat-backward
    "C-s"        (lambda! (company-complete-common) (company-filter-candidates))
    "SPC"        #'+amos/company-search-abort
    ";"          #'+amos/company-search-abort
