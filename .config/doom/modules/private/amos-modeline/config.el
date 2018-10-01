@@ -95,7 +95,7 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
 
 (defun +amos-buffer-file-name ()
 "~/Projects/FOSS/emacs/lisp/comint.el => ~/P/F/emacs/l/comint.el"
-  (let* ((project-root (doom-project-root))
+  (let* ((project-root (or (doom-project-root) ""))
          (file-name-split (shrink-path-file-mixed project-root
                                                   (file-name-directory buffer-file-name)
                                                   buffer-file-name))
