@@ -1,3 +1,4 @@
+#' -*- mode:yaml -*-
 ---
 IndentWidth: 4
 ---
@@ -58,7 +59,9 @@ KeepEmptyLinesAtTheStartOfBlocks: false
 MacroBlockBegin: ''
 MacroBlockEnd:   ''
 MaxEmptyLinesToKeep: 1
-NamespaceIndentation: Inner
+# NamespaceIndentation: Inner
+NamespaceIndentation: None
+# NamespaceIndentation: All
 PenaltyBreakAssignment: 2
 PenaltyBreakBeforeFirstCallParameter: 19
 PenaltyBreakComment: 300

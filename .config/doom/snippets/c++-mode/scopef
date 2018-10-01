@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: scope_fail
+# key: scopef
+# --
+SCOPE_FAIL {
+    $0
+};

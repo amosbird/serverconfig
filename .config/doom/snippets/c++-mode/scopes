@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: scope_success
+# key: scopes
+# --
+SCOPE_SUCCESS {
+    $0
+};

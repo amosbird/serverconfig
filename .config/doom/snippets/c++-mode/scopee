@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: scope_exit
+# key: scopee
+# --
+SCOPE_EXIT {
+    $0
+};
