@@ -3510,3 +3510,9 @@ In Insert state, insert a newline."
         (--find-last-index (> (line-number-at-pos) it) lines)
       (--find-index (< (line-number-at-pos) it) lines))))
 (advice-add #'git-gutter:search-near-diff-index :override #'+amos*git-gutter:search-near-diff-index)
+
+(defun +amos-company--insert-candidate (candidate)
+  (when (> (length candidate) 0)
+    (setq candidate (substring-no-properties candidate))
+    (insert (company-strip-prefix candidate))))
+(advice-add #'company--insert-candidate :override #'+amos-company--insert-candidate)
