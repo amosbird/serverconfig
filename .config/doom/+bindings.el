@@ -59,6 +59,7 @@
  :i "M-n"                    #'next-line
  :i "M-p"                    #'previous-line
  :m "N"                      #'evil-ex-search-previous
+ :m "W"                      #'+amos/evil-forward-subword-begin
  :m "E"                      #'+amos/evil-forward-subword-end
  :m "B"                      #'+amos/evil-backward-subword-begin
  :ni "M-b"                   #'+amos/backward-word-insert
@@ -90,10 +91,10 @@
  :n "C-s"                    #'swiper
  :n "C-S-s"                  #'+amos/counsel-rg-projectile ;; gui
  :n "C-S-d"                  #'+amos/counsel-rg-cur-dir ;; gui
- :n "C-S-f"                  #'+amos/format-buffer ;; gui
+ :nv "C-S-f"                 #'+amos/format-buffer ;; gui
  :n "S-<f4>"                 #'+amos/counsel-rg-projectile ;; terminal
  :n "S-<f5>"                 #'+amos/counsel-rg-cur-dir ;; terminal
- :n "S-<f11>"                #'+amos/format-buffer ;; terminal
+ :nv "S-<f11>"               #'+amos/format-buffer ;; terminal
  :n "C-y"                    #'+amos/yank-buffer-filename-with-line-position
  :i "C-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank)))
  :i "M-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
@@ -203,6 +204,7 @@
    :desc "Next diff hunk"                  :nv "j"   #'git-gutter:next-hunk
    :desc "Previous diff hunk"              :nv "k"   #'git-gutter:previous-hunk
    :desc "Switch workspace buffer"         :nv "b"   #'switch-to-buffer
+   :desc "Comment"                         :nv "l"   #'evil-commentary-line
 
    (:desc "file" :prefix "f"
      :desc "File file"                     :nv "f" #'find-file
@@ -217,6 +219,7 @@
      :desc "Git status"                    :nv "s" #'magit-status
      :desc "Git blame"                     :nv "b" #'magit-blame
      :desc "Git timemachine"               :nv "t" #'git-timemachine
+     :desc "Git popup hunk"                :nv "p" #'git-gutter:popup-hunk
      :desc "Git revert hunk"               :nv "r" #'git-gutter:revert-hunk
      :desc "Git revert buffer"             :nv "R" #'vc-revert)
 
@@ -631,10 +634,13 @@
         minibuffer-local-completion-map
         minibuffer-local-must-match-map
         minibuffer-local-isearch-map
+        minibuffer-local-shell-command-map
         evil-ex-completion-map
         evil-ex-search-keymap
         read-expression-map)
    [escape]      #'abort-recursive-edit
+   "C-n"         #'next-line-or-history-element
+   "C-p"         #'previous-line-or-history-element
    "C-a"         #'move-beginning-of-line
    "C-b"         #'backward-char
    "C-d"         #'+amos/delete-char

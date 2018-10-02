@@ -22,6 +22,7 @@
        popup
 
        :editor
+       format
        rotate-text
        multiple-cursors
 
@@ -245,6 +246,11 @@
 (setq yasdcv-sdcv-command "sdcv --non-interactive --utf8-output --utf8-input \"%word\"")
 (setq yasdcv-sdcv-dicts '(("jianminghy" "简明汉英词典" "powerword2007" t)))
 (setq +latex-bibtex-file "~/Papers/references.bib")
+
+(define-category ?U "Uppercase")
+(define-category ?u "Lowercase")
+(modify-category-entry (cons ?A ?Z) ?U)
+(modify-category-entry (cons ?a ?z) ?u)
 
 (def-package-hook! nav-flash
   :pre-init

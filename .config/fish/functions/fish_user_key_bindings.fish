@@ -30,7 +30,7 @@ function fish_user_key_bindings
         set -q FZF_ALT_C_COMMAND; or set -l FZF_ALT_C_COMMAND "command jump top"
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         begin
-            set -lx FZF_DEFAULT_OPTS "+s --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
+            set -lx FZF_DEFAULT_OPTS "--height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
             eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -l result
             if string match -r '^ *$' (commandline) > /dev/null 2>&1
                 [ "$result" ]

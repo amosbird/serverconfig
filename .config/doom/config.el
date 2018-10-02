@@ -448,7 +448,7 @@ Skip buffers that match `ivy-ignore-buffers'."
        (unless (eq old-buffer new-buffer)
          ;; The buffer of a previously existing window has changed or
          ;; a new window has been added to this frame.
-         (+amos/recenter)
+         ;; (+amos/recenter)
          (setf (window-parameter window 'my-last-buffer) new-buffer))))))
 (add-hook! 'window-configuration-change-hook #'+amos|update-window-buffer-list)
 
@@ -668,6 +668,7 @@ using a visual block/rectangle selection."
 (def-package! gitignore-mode
   :defer t)
 
+;; way slower
 ;; (def-package! magit-svn
 ;;   :commands turn-on-magit-svn
 ;;   :init (add-hook 'magit-mode-hook 'turn-on-magit-svn))
@@ -728,14 +729,17 @@ using a visual block/rectangle selection."
 
 (defun +amos/projectile-current-project-files ()
   "Return a list of files for the current project."
-  (let ((files (and projectile-enable-caching
-                    (gethash (projectile-project-root) projectile-projects-cache))))
+  (let* ((directory (projectile-project-root))
+         (files (and projectile-enable-caching
+                     (gethash directory projectile-projects-cache))))
     ;; nothing is cached
     (unless files
       (when projectile-enable-caching
         (message "Empty cache. Projectile is initializing cache..."))
       (setq files
             (projectile-adjust-files
+             directory
+             (projectile-project-vcs directory)
              (split-string
               (shell-command-to-string
                (concat "cd " (projectile-project-root) "; fd --hidden")))))
@@ -1034,14 +1038,18 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (mkr! (backward-delete-char-untabify 1 1)))
 
 (evil-define-command +amos/kill-line ()
-  (mkr! (kill-region (point) (point-at-eol))))
+  (mkr! (kill-region (point)
+                     (let ((overlay (iedit-find-overlay-at-point (point) 'iedit-occurrence-overlay-name)))
+                       (if overlay
+                           (overlay-end overlay)
+                         (point-at-eol))))))
 
 (evil-define-command +amos/backward-kill-to-bol-and-indent ()
-  (let* ((x (save-excursion (doom/backward-to-bol-or-indent)))
-         (y (point))
-         (a (min x y))
-         (b (max x y)))
-    (mkr! (kill-region a b))))
+  (if (bolp) (+amos/backward-delete-char)
+    (let* ((overlay (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name))
+           (x (if overlay (overlay-start overlay) (save-excursion (doom/backward-to-bol-or-indent))))
+           (y (point)))
+      (mkr! (kill-region x y)))))
 
 (defun +amos-insert-state-p ()
   (require 'evil-multiedit)
@@ -1054,11 +1062,10 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     (evil-insert-state)))
 
 (defmacro +amos-subword-move! (type command)
-  `(evil-define-motion ,(intern (concat "+amos/" (s-replace "word" "subword" (symbol-name command)))) (count &optional bigword)
+  `(evil-define-motion ,(intern (concat "+amos/" (s-replace "word" "subword" (symbol-name command)))) (count)
      :type ,type
-     (subword-mode +1)
-     (,command count bigword)
-     (subword-mode -1)))
+     (let ((find-word-boundary-function-table +amos-subword-find-word-boundary-function-table))
+       (,command count))))
 
 (+amos-subword-move! inclusive evil-forward-word-end)
 (+amos-subword-move! exclusive evil-forward-word-begin)
@@ -1068,7 +1075,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (evil-signal-at-bob-or-eob 1)
   (unless (+amos-insert-state-p)
     (+amos-insert-state))
-  (if subword (subword-mode +1))
   (mkr! (kill-region (point)
                      (max
                       (save-excursion
@@ -1076,10 +1082,9 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                             (progn
                               (re-search-forward "[^ \t\r\n\v\f]")
                               (backward-char))
-                          (forward-thing 'evil-word 1))
+                          (+amos-word-movement-internal subword 1))
                         (point))
-                      (line-beginning-position))))
-  (if subword (subword-mode -1)))
+                      (line-beginning-position)))))
 (evil-define-command +amos/forward-delete-subword ()
   (+amos/forward-delete-word t))
 
@@ -1088,7 +1093,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (unless (or (eolp) (+amos-insert-state-p))
     (+amos-insert-state)
     (forward-char))
-  (if subword (subword-mode +1))
   (mkr! (kill-region (point)
                      (min
                       (save-excursion
@@ -1096,16 +1100,14 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                             (progn
                               (re-search-backward "[^ \t\r\n\v\f]")
                               (forward-char))
-                          (forward-thing 'evil-word -1))
+                          (+amos-word-movement-internal subword -1))
                         (point))
-                      (line-end-position))))
-  (if subword (subword-mode -1)))
+                      (line-end-position)))))
 (evil-define-command +amos/backward-delete-subword ()
   (+amos/backward-delete-word t))
 
 (evil-define-command +amos/backward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob -1)
-  (if subword (subword-mode +1))
   (unless (or (eolp) (+amos-insert-state-p))
     (+amos-insert-state)
     (forward-char))
@@ -1113,66 +1115,109 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
       (progn
         (re-search-backward "[^ \t\r\n\v\f]")
         (forward-char))
-    (forward-thing 'evil-word -1))
-  (if subword (subword-mode -1)))
+    (+amos-word-movement-internal subword -1)))
 (evil-define-command +amos/backward-subword-insert ()
   (+amos/backward-word-insert t))
 
 (evil-define-command +amos/forward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob 1)
-  (if subword (subword-mode +1))
   (unless (+amos-insert-state-p)
     (+amos-insert-state))
   (if (looking-at "[ \t\r\n\v\f]")
       (progn
         (re-search-forward "[^ \t\r\n\v\f]")
         (backward-char))
-    (forward-thing 'evil-word 1))
-  (if subword (subword-mode -1)))
+    (+amos-word-movement-internal subword 1)))
 (evil-define-command +amos/forward-subword-insert ()
   (+amos/forward-word-insert t))
 
-(defun +amos*subword-forward-internal ()
-  (if superword-mode
-      (forward-symbol 1)
-    (if (and
-         (save-excursion
-           (let ((case-fold-search nil))
-             (with-syntax-table (make-syntax-table (syntax-table))
-               (modify-syntax-entry ?_ "_") ;; added
-               (re-search-forward subword-forward-regexp nil t))))
-         (> (match-end 0) (point)))
-        (goto-char
-         (cond
-          ((and (< 1 (- (match-end 2) (match-beginning 2)))
-                ;; If we have an all-caps word with no following lower-case or
-                ;; non-word letter, don't leave the last char (bug#13758).
-                (not (and (null (match-beginning 3))
-                          (eq (match-end 2) (match-end 1)))))
-           (1- (match-end 2)))
-          (t
-           (match-end 0))))
-      (forward-word 1))))
-(advice-add #'subword-forward-internal :override #'+amos*subword-forward-internal)
+(defvar +amos-subword-forward-regexp
+  "\\W*\\(\\([[:upper:]]*\\(\\W\\)?\\)[[:lower:][:digit:]]*\\)"
+  "Regexp used by `subword-forward-internal'.")
 
-(defun +amos*subword-backward-internal ()
-  (if superword-mode
-      (forward-symbol -1)
-    (if (save-excursion
-          (let ((case-fold-search nil))
-            (with-syntax-table (make-syntax-table (syntax-table))
-              (modify-syntax-entry ?_ "_") ;;  added
-              (re-search-backward subword-backward-regexp nil t))))
-        (goto-char
-         (cond
-          ((and (match-end 3)
-                (< 1 (- (match-end 3) (match-beginning 3)))
-                (not (eq (point) (match-end 3))))
-           (1- (match-end 3)))
-          (t
-           (1+ (match-beginning 0)))))
-      (backward-word 1))))
-(advice-add #'subword-backward-internal :override #'+amos*subword-backward-internal)
+(defvar +amos-subword-backward-regexp
+  "\\(\\(\\W\\|[[:lower:][:digit:]]\\)\\([[:upper:]]+\\W*\\)\\|\\W\\w+\\)"
+  "Regexp used by `subword-backward-internal'.")
+
+(defun +amos-subword-forward-internal ()
+  (if (and
+       (save-excursion
+         (let ((case-fold-search nil))
+           (modify-syntax-entry ?_ "_")
+           (re-search-forward +amos-subword-forward-regexp nil t)))
+       (> (match-end 0) (point)))
+      (goto-char
+       (cond
+        ((and (< 1 (- (match-end 2) (match-beginning 2)))
+              (not (and (null (match-beginning 3))
+                        (eq (match-end 2) (match-end 1)))))
+         (1- (match-end 2)))
+        (t
+         (match-end 0))))
+    (forward-word 1)))
+
+(defun +amos-subword-backward-internal ()
+  (if (save-excursion
+        (let ((case-fold-search nil))
+          (modify-syntax-entry ?_ "_")
+          (re-search-backward +amos-subword-backward-regexp nil t)))
+      (goto-char
+       (cond
+        ((and (match-end 3)
+              (< 1 (- (match-end 3) (match-beginning 3)))
+              (not (eq (point) (match-end 3))))
+         (1- (match-end 3)))
+        (t
+         (1+ (match-beginning 0)))))
+    (backward-word 1)))
+
+(defconst +amos-subword-find-word-boundary-function-table
+  (let ((tab (make-char-table nil)))
+    (set-char-table-range tab t #'+amos-subword-find-word-boundary)
+    tab))
+
+(defconst +amos-subword-empty-char-table
+  (make-char-table nil))
+
+(defun +amos-subword-find-word-boundary (pos limit)
+  (let ((find-word-boundary-function-table +amos-subword-empty-char-table))
+    (save-match-data
+      (save-excursion
+        (save-restriction
+          (if (< pos limit)
+              (progn
+                (goto-char pos)
+                (narrow-to-region (point-min) limit)
+                (+amos-subword-forward-internal))
+            (goto-char (1+ pos))
+            (narrow-to-region limit (point-max))
+            (+amos-subword-backward-internal))
+          (point))))))
+
+(defun +amos-word-movement-internal (subword dir)
+  (let ((find-word-boundary-function-table
+         (if subword
+             +amos-subword-find-word-boundary-function-table
+           +amos-subword-empty-char-table)))
+    (evil-forward-nearest
+     dir
+     (lambda (&optional cnt)
+       (let ((word-separating-categories evil-cjk-word-separating-categories)
+             (word-combining-categories evil-cjk-word-combining-categories))
+         (if subword (push '(?u . ?U) word-separating-categories))
+         (pnt (point)))
+       (forward-word cnt)
+       (if (= pnt (point)) cnt 0))
+     (lambda (&optional cnt)
+       (if (< 0 cnt)
+           (if (iedit-find-overlay-at-point (point) 'iedit-occurrence-overlay-name)
+               (goto-char (overlay-end overlay))
+             (goto-char (line-end-position)))
+         (if (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name)
+             (goto-char (overlay-start overlay))
+           (goto-char (line-beginning-position))))
+       0)
+     (lambda (&optional cnt) (forward-thing 'evil-word cnt) 0))))
 
 (evil-define-text-object +amos/any-object-inner (count &optional beg end type)
   (save-excursion
@@ -1825,6 +1870,8 @@ representation of `NUMBER' is smaller."
     ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit))
   '(("^\\*Completions"
      :slot -1 :vslot -2 :ttl 0)
+    ("^\\*git-gutter*"
+     :side right :size 0.5)
     ("^\\*Compil\\(?:ation\\|e-Log\\)"
      :side right :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*\\(?:scratch\\|Messages\\)"
@@ -1905,7 +1952,9 @@ representation of `NUMBER' is smaller."
 
 (defun +amos*+lookup-set-jump (orig-fun &rest args)
   (evil-set-jump)
-  (apply orig-fun args)
+  (condition-case nil
+      (apply orig-fun args)
+    (error nil))
   (condition-case nil
       (+amos/recenter)
     (error nil)))
@@ -2467,15 +2516,6 @@ the current state and point position."
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
-(after! subword
-  (define-category ?U "Uppercase")
-  (define-category ?u "Lowercase")
-  (modify-category-entry (cons ?A ?Z) ?U)
-  (modify-category-entry (cons ?a ?z) ?u)
-  (make-variable-buffer-local 'evil-cjk-word-separating-categories)
-  (add-hook 'subword-mode-hook (lambda! (if subword-mode (push '(?u . ?U) evil-cjk-word-separating-categories)
-                                          (setq evil-cjk-word-separating-categories (default-value 'evil-cjk-word-separating-categories))))))
-
 (after! magit
   (setq
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
@@ -2633,9 +2673,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -3103,13 +3143,14 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         company-complete-selection
         company-complete-common))
 
-(defun +amos/format-buffer ()
-  (interactive)
-  (pcase major-mode
-    ('c++-mode (clang-format-buffer))
-    (_
-     (save-excursion
-       (indent-region (point-min) (point-max) nil)))))
+(defalias '+amos/format-buffer #'+format/region-or-buffer)
+;; (defun +amos/format-buffer ()
+;;   (interactive)
+;;   (pcase major-mode
+;;     ('c++-mode (clang-format-buffer))
+;;     (_
+;;      (save-excursion
+;;        (indent-region (point-min) (point-max) nil)))))
 
 (mapc #'evil-declare-ignore-repeat
       '(
@@ -3275,7 +3316,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
     (when (region-active-p)
       (set-mark old-mark))))
 (advice-add #'ivy--insert-minibuffer :override #'+amos*ivy--insert-minibuffer)
-
 (advice-add #'semantic-mode :around #'doom*shut-up)
 
 (defun my-inhibit-semantic-p ()
@@ -3454,7 +3494,7 @@ with regard to indentation."
 (advice-add #'evil-insert-newline-below :override #'+amos*evil-insert-newline-below)
 
 (evil-define-motion +amos*evil-ret (count)
-    "Move the cursor COUNT lines down.
+  "Move the cursor COUNT lines down.
 If point is on a widget or a button, click on it.
 In Insert state, insert a newline."
   :type line
@@ -3463,3 +3503,10 @@ In Insert state, insert a newline."
     (evil-ret-gen count nil)
     (if nl (backward-char 1))))
 (advice-add #'evil-ret :override #'+amos*evil-ret)
+
+(defun +amos*git-gutter:search-near-diff-index (diffinfos is-reverse)
+  (let ((lines (--map (git-gutter-hunk-start-line it) diffinfos)))
+    (if is-reverse
+        (--find-last-index (> (line-number-at-pos) it) lines)
+      (--find-index (< (line-number-at-pos) it) lines))))
+(advice-add #'git-gutter:search-near-diff-index :override #'+amos*git-gutter:search-near-diff-index)
