@@ -52,6 +52,7 @@ config.bind('T', 'spawn fcitx-remote -c ;; set-cmd-text :open -t -r {url:pretty}
 config.bind('t', 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t')
 config.bind('s', 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t google ')
 config.bind('gs', 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t github ')
+config.unbind('D')
 
 # Bindings for command mode
 config.bind('<Ctrl-D>', 'rl-delete-char', mode='command')
