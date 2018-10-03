@@ -6,7 +6,7 @@
 (defface +amos-workspace-tab-selected-face '((t (:inherit 'highlight))) ".")
 (defface +amos-workspace-tab-face '((t (:inherit 'default))) ".")
 (defun +amos-frame-modeline (&optional names)
-  (let ((frames +amos--frame-list)
+  (let ((frames +amos-frame-list)
         (current-frame (selected-frame)))
     (concat (propertize "|" 'face '+amos-workspace-tab-face)
             (mapconcat
@@ -94,7 +94,7 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
   '(" " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
 
 (defun +amos-buffer-file-name ()
-"~/Projects/FOSS/emacs/lisp/comint.el => ~/P/F/emacs/l/comint.el"
+  "~/Projects/FOSS/emacs/lisp/comint.el => ~/P/F/emacs/l/comint.el"
   (let* ((project-root (or (doom-project-root) ""))
          (file-name-split (shrink-path-file-mixed project-root
                                                   (file-name-directory buffer-file-name)

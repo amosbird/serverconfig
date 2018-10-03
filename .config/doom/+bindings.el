@@ -43,7 +43,7 @@
  :gn "C-w"                   #'+amos/close-current-buffer ;; bury
  :gniv "M-m"                 #'+amos/switch-buffer
  :n "%"                      #'anzu-multiedit
- :n "R"                      #'evil-multiedit-match-all
+ :n "R"                      (lambda! (evil-multiedit-match-all) (iedit-show/hide-unmatched-lines))
  :nv "G"                     #'+amos/evil-goto-line
  :n "M-RET"                  #'+amos/toggle-mc
  :i "M-RET"                  #'+amos/close-block

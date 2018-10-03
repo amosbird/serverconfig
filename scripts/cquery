@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# if [[ -z "${cquery_include_dirs}" ]]; then
-#     exec ~/git/cquery/build/release/bin/cquery --log-file=/tmp/cq.txt "$@"
+# if [[ -z "${ccls_include_dirs}" ]]; then
+#     exec ~/git/ccls/build/release/bin/ccls --log-file=/tmp/cq.txt "$@"
 # fi
 
 # export CCLS_TRACEME=1
@@ -9,13 +9,13 @@
 
 includes="\"-I/dev/null\""
 
-for i in $cquery_include_dirs
+for i in $ccls_include_dirs
 do
     includes="${includes}, \"-I$i\""
 done
 
 blacklist="\"/tmp\""
-for i in $cquery_blacklist
+for i in $ccls_blacklist
 do
     blacklist="${blacklist}, \"$i\""
 done
@@ -26,5 +26,11 @@ then
     suffix=-"$suffix"
 fi
 
+if [[ -z "$ccls_multi" ]]
+then
+    multi=0
+else
+    multi=1
+fi
 # exec ~/git/ccls/debug/ccls --log-file=/tmp/cq.txt$suffix --init="{\"cacheFormat\": \"blob\", \"cacheDirectory\": \"/home/amos/.cache/.ccls_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"trackDependency\": 1, \"comments\": 0, \"initialBlacklist\": [$blacklist]}, \"diagnostics\": {\"onChange\": -1, \"onOpen\": -1, \"onSave\": -1}, \"completion\": {\"includeWhitelist\": [\"ccutils\", \"/usr/(local/)?include/(sys/)?[^/]+\\\\.h$\"], \"includeBlacklist\": [\"(x86_64-redhat-linux|x86_64-pc-linux-gnu)/(32|bits|tr1|tr2|parallel|experimental|profile|ext|debug)/\", \"^/usr/(local/)?include/c\\\\+\\\\+/[0-9\\\\.]+/(bits|tr1|tr2|parallel|experimental|profile|ext|debug)/\", \"^/usr/(local/)?include/c\\\\+\\\\+/v1/\", \"^/usr/(local/)?include/(?!c\\\\+\\\\+).+\"]}, \"clang\": {\"resourceDir\": \"/home/amos/git/llvm/release/lib/clang/8.0.0\", \"pathMappings\": [\"/usr/local/bin/c++:/home/amos/git/llvm/release/bin/clang++\"], \"excludeArgs\": [\"-fno-tree-loop-distribute-patterns\"], \"extraArgs\": [\"-xobjective-c++-header\", \"-resource-dir=/home/amos/git/llvm/release/lib/clang/8.0.0\", \"-D__cpp_deduction_guides=0\", \"-Wno-macro-redefined\", $includes]}}" "$@"
-exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$suffix --init="{\"highlight\" : {\"largeFileSize\": 131072}, \"cacheFormat\": \"blob\", \"cacheDirectory\": \"/home/amos/.cache/.ccls_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"multiVersion\": 1, \"trackDependency\": 1, \"comments\": 0, \"initialBlacklist\": [$blacklist]}, \"diagnostics\": {\"onChange\": -1, \"onOpen\": -1, \"onSave\": -1}, \"completion\": {\"includeWhitelist\": [\"ccutils\", \"/usr/(local/)?include/(sys/)?[^/]+\\\\.h$\"], \"includeBlacklist\": [\"(x86_64-redhat-linux|x86_64-pc-linux-gnu)/(32|bits|tr1|tr2|parallel|experimental|profile|ext|debug)/\", \"^/usr/(local/)?include/c\\\\+\\\\+/[0-9\\\\.]+/(bits|tr1|tr2|parallel|experimental|profile|ext|debug)/\", \"^/usr/(local/)?include/c\\\\+\\\\+/v1/\", \"^/usr/(local/)?include/(?!c\\\\+\\\\+).+\"]}, \"clang\": {\"resourceDir\": \"/home/amos/git/llvm/release/lib/clang/8.0.0\", \"pathMappings\": [\"/usr/local/bin/c++:/home/amos/git/llvm/release/bin/clang++\"], \"excludeArgs\": [\"-fno-tree-loop-distribute-patterns\"], \"extraArgs\": [\"-xobjective-c++-header\", \"-resource-dir=/home/amos/git/llvm/release/lib/clang/8.0.0\", \"-D__cpp_deduction_guides=0\", \"-Wno-macro-redefined\", $includes]}}" "$@"
+exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$suffix --init="{\"highlight\" : {\"largeFileSize\": 131072}, \"cacheFormat\": \"blob\", \"cacheDirectory\": \"/home/amos/.cache/.ccls_cached_index\", \"client\": {\"snippetSupport\": true}, \"index\": {\"multiVersion\": $multi, \"trackDependency\": 1, \"comments\": 0, \"initialBlacklist\": [$blacklist]}, \"diagnostics\": {\"onChange\": -1, \"onOpen\": -1, \"onSave\": -1}, \"completion\": {\"includeWhitelist\": [\"ccutils\", \"/usr/(local/)?include/(sys/)?[^/]+\\\\.h$\"], \"includeBlacklist\": [\"(x86_64-redhat-linux|x86_64-pc-linux-gnu)/(32|bits|tr1|tr2|parallel|experimental|profile|ext|debug)/\", \"^/usr/(local/)?include/c\\\\+\\\\+/[0-9\\\\.]+/(bits|tr1|tr2|parallel|experimental|profile|ext|debug)/\", \"^/usr/(local/)?include/c\\\\+\\\\+/v1/\", \"^/usr/(local/)?include/(?!c\\\\+\\\\+).+\"]}, \"clang\": {\"resourceDir\": \"/home/amos/git/llvm/release/lib/clang/8.0.0\", \"pathMappings\": [\"/usr/local/bin/c++:/home/amos/git/llvm/release/bin/clang++\"], \"excludeArgs\": [\"-fno-tree-loop-distribute-patterns\"], \"extraArgs\": [\"-xobjective-c++-header\", \"-resource-dir=/home/amos/git/llvm/release/lib/clang/8.0.0\", \"-D__cpp_deduction_guides=0\", \"-Wno-macro-redefined\", $includes]}}" "$@"

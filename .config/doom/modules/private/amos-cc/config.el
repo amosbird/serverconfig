@@ -260,9 +260,17 @@ The insertion will be repeated COUNT times."
           (insert incl)
           (newline))))))
 
+(setq +amos-system-header-paths
+      '("/usr/local/include"
+        "/usr/include"
+        ))
+
 (add-hook! (c-mode c++-mode)
   (flycheck-mode +1)
   (eldoc-mode -1)
+  (when (--any? (string-prefix-p it default-directory) +amos-system-header-paths)
+    (c-make-styles-buffer-local t)
+    (c-set-style "gnu"))
   ;; (setq-local indent-region-function #'lsp-format-region)
   ;; (setq-local indent-line-function (lambda (&rest _) (lsp-format-region (line-beginning-position) (line-end-position))))
   )
@@ -274,11 +282,11 @@ The insertion will be repeated COUNT times."
 
 (after! lsp-mode
   (lsp-define-stdio-client lsp-clangd-c++
-                         "cpp"
-                         (lsp-make-traverser "compile_commands.json")
-                         (list "clangd")
-                         :ignore-regexps
-                         '("^Error -[0-9]+: .+$")))
+                           "cpp"
+                           (lsp-make-traverser "compile_commands.json")
+                           (list "clangd")
+                           :ignore-regexps
+                           '("^Error -[0-9]+: .+$")))
 (def-package! ccls
   :after lsp-mode
   :init
@@ -286,22 +294,8 @@ The insertion will be repeated COUNT times."
    ccls-project-root-matchers
    '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
    ccls-sem-highlight-method 'font-lock)
-   ;; ccls-sem-highlight-method 'overlay)
-   ;; ccls-sem-highlight-method nil)
-
-  (defun +amos-lsp-find-custom (kind request &optional param)
-    (let* ((input (symbol-at-point))
-           (xrefs
-            (-some->> (lsp--send-request (lsp--make-request
-                                          request
-                                          (append param (lsp--text-document-position-params))))
-                      ;; Language servers may return a single LOCATION instead of a sequence of them.
-                      (lsp-ui-peek--to-sequence)
-                      (lsp--locations-to-xref-items)
-                      (-filter 'identity))))
-      (unless xrefs
-        (user-error "No %s found for: %s" (symbol-name kind) input))
-      (+amos-ivy-xref xrefs kind)))
+  ;; ccls-sem-highlight-method 'overlay)
+  ;; ccls-sem-highlight-method nil)
 
   (defun ccls/includes (&optional force)
     (interactive)
@@ -317,23 +311,39 @@ The insertion will be repeated COUNT times."
     (interactive)
     (if (ccls--is-ccls-buffer)
         (lsp--send-notification
-         (lsp--make-notification "$ccls/diagnostic"
-                                 `(:textDocument ,(lsp--text-document-identifier))))))
+         (lsp--make-notification
+          "$ccls/diagnostic"
+          `(:textDocument ,(lsp--text-document-identifier))))))
 
   (defun ccls/inheritances ()
     (interactive)
     (if (ccls--is-ccls-buffer)
         (let* ((input (symbol-at-point))
                (xrefs
-                (-some->> (lsp--send-request (lsp--make-request "$ccls/inheritances"
-                                                                `(:textDocument ,(lsp--text-document-identifier)
-                                                                                :position ,(lsp--cur-position))))
+                (-some->> (lsp--send-request
+                           (lsp--make-request "$ccls/inheritances"
+                                              `(:textDocument ,(lsp--text-document-identifier)
+                                                :position ,(lsp--cur-position))))
                           (lsp-ui-peek--to-sequence)
                           (lsp--locations-to-xref-items)
                           (-filter 'identity))))
           (unless xrefs
             (user-error "No inheritances found for: %s" input))
           (+amos-ivy-xref xrefs 'inheritances))))
+
+  (defun +amos-lsp-find-custom (kind request &optional param)
+    (let* ((input (symbol-at-point))
+           (xrefs
+            (-some->> (lsp--send-request
+                       (lsp--make-request
+                        request
+                        (append param (lsp--text-document-position-params))))
+                      (lsp-ui-peek--to-sequence)
+                      (lsp--locations-to-xref-items)
+                      (-filter 'identity))))
+      (unless xrefs
+        (user-error "No %s found for: %s" (symbol-name kind) input))
+      (+amos-ivy-xref xrefs kind)))
 
   (defun ccls/callee ()
     (interactive)

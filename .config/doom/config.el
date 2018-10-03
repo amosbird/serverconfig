@@ -1,6 +1,7 @@
 ;;; private/amos/config.el -*- lexical-binding: t; -*-
 
 (load! "+bindings")
+(require 'dash)
 
 (defun +amos/recenter (&rest _)
   (interactive)
@@ -9,6 +10,141 @@
 
 (defvar +amos-dir (file-name-directory load-file-name))
 (defvar +amos-snippets-dir (expand-file-name "snippets/" +amos-dir))
+
+(defvar +file-templates-dir
+  (expand-file-name "templates/" +amos-dir)
+  "The path to a directory of yasnippet folders to use for file templates.")
+
+(def-package! autoinsert ; built-in
+  :commands (auto-insert-mode auto-insert)
+  :init
+  (setq auto-insert-query nil  ; Don't prompt before insertion
+        auto-insert-alist nil) ; Tabula rasa
+
+  ;; load autoinsert as late as possible
+  (defun +file-templates|init ()
+    (and (not buffer-read-only)
+         (bobp) (eobp)
+         (remove-hook 'find-file-hook #'+file-templates|init)
+         (auto-insert)))
+  (add-hook 'find-file-hook #'+file-templates|init)
+
+  :config
+  (auto-insert-mode 1)
+
+  (defun +file-templates--expand (key &optional mode project-only)
+    "Auto insert a yasnippet snippet into the blank file."
+    (when (if project-only (doom-project-p) t)
+      (require 'yasnippet)
+      (unless yas-minor-mode
+        (yas-minor-mode-on))
+      (when (and yas-minor-mode
+                 (yas-expand-snippet
+                  (yas--template-content
+                   (cl-find key (yas--all-templates (yas--get-snippet-tables mode))
+                            :key #'yas--template-key :test #'equal)))
+                 (and (featurep 'evil) evil-mode)
+                 (and yas--active-field-overlay
+                      (overlay-buffer yas--active-field-overlay)
+                      (overlay-get yas--active-field-overlay 'yas--field)))
+        (evil-initialize-state 'insert))))
+
+  (defun +file-templates-add (args)
+    (cl-destructuring-bind (regexp trigger &optional mode project-only-p) args
+      (push `(,regexp . (lambda () (+file-templates--expand ,trigger ',mode ,project-only-p)))
+            auto-insert-alist)))
+
+  (mapc #'+file-templates-add
+        (let ((doom (concat "/" (regexp-opt '(".emacs.d" ".doom.d" "doom-emacs" ".config/doom")) "/")))
+          `(;; General
+            ("/\\.gitignore$"                 "__"               gitignore-mode)
+            ("/Dockerfile$"                   "__"               dockerfile-mode)
+            ("/docker-compose.yml$"           "__"               yaml-mode)
+            ("/Makefile$"                     "__"               makefile-gmake-mode)
+            ;; elisp
+            ("\\.el$"                         "__initfile"       emacs-lisp-mode)
+            ("/.dir-locals.el$"               nil)
+            (snippet-mode "__" snippet-mode)
+            ;; C/C++
+            ("\\.h$"                           "__h"              c-mode)
+            ("\\.c$"                           "__c"              c-mode)
+            ("\\.h\\(h\\|pp|xx\\)$"            "__hpp"            c++-mode)
+            ("\\.\\(cc\\|cpp\\)$"              "__cpp"            c++-mode)
+            ("/main\\.\\(cc\\|cpp\\)$"         "__main.cpp"       c++-mode)
+            ("/win32_\\.\\(cc\\|cpp\\)$"       "__winmain.cpp"    c++-mode)
+            ;; go
+            ("\\.go$"                          "__.go"            go-mode)
+            ("/main\\.go$"                     "__main.go"        go-mode t)
+            ;; web-mode
+            ("\\.html$"                        "__.html"          web-mode)
+            ("\\.scss$"                        "__"               scss-mode)
+            ("/master\\.scss$"                 "__master.scss"    scss-mode)
+            ("/normalize\\.scss$"              "__normalize.scss" scss-mode)
+            ;; java
+            ("/src/.+\\.java$"                 "__"               java-mode)
+            ("/main\\.java$"                   "__main"           java-mode)
+            ("/build\\.gradle$"                "__build.gradle"   android-mode)
+            ;; javascript
+            ("\\.\\(json\\|jshintrc\\)$"       "__"                  json-mode)
+            ("/package\\.json$"                "__package.json"      json-mode)
+            ("/bower\\.json$"                  "__bower.json"        json-mode)
+            ("/gulpfile\\.js$"                 "__gulpfile.js"       js-mode)
+            ("/webpack\\.config\\.js$"         "__webpack.config.js" js-mode)
+            ;; Lua
+            ("/main\\.lua$"                    "__main.lua"       love-mode)
+            ("/conf\\.lua$"                    "__conf.lua"       love-mode)
+            ;; Markdown
+            ("\\.md$"                          "__"               markdown-mode)
+            ;; Org
+            ("\\.org$"                                          "__"            org-mode)
+            ;; PHP
+            ("\\.php$"                         "__"               php-mode)
+            ("\\.class\\.php$"                 "__.class.php"     php-mode)
+            ;; Python
+            ;;("tests?/test_.+\\.py$"         "__"                 nose-mode)
+            ;;("/setup\\.py$"                 "__setup.py"         python-mode)
+            ("\\.py$"                          "__"               python-mode)
+            ;; Ruby
+            ("\\.rb$"                          "__"               ruby-mode)
+            ("/Rakefile$"                      "__Rakefile"       ruby-mode t)
+            ("/Gemfile$"                       "__Gemfile"        ruby-mode t)
+            ("/\\.rspec$"                      "__.rspec"         rspec-mode)
+            ("\\.gemspec$"                     "__.gemspec"       ruby-mode t)
+            ("/spec_helper\\.rb$"              "__helper"         rspec-mode t)
+            ("/lib/.+\\.rb$"                   "__module"         ruby-mode t)
+            ("_spec\\.rb$"                     "__"               rspec-mode t)
+            ;; Rust
+            ("/main\\.rs$"                     "__main.rs"        rust-mode)
+            ("/Cargo.toml$"                    "__Cargo.toml"     rust-mode)
+            ;; Slim
+            ("/\\(index\\|main\\)\\.slim$"     "__"               slim-mode)
+            ;; Shell scripts
+            ("/home/amos/git/serverconfig/scripts/.+"   "__"   sh-mode)
+            ("/home/amos/git/serverconfig/.config/fish/functions/.+" "__func" fish-mode)
+            ("\\.z?sh$"                        "__"               sh-mode)
+            ("\\.fish$"                        "__"               fish-mode)
+            ("\\.zunit$"                       "__zunit"          sh-mode)))))
+
+(add-to-list 'auto-mode-alist '("/home/amos/git/serverconfig/scripts/.+" . sh-mode) 'append)
+
+(defun +file-templates-get-short-path ()
+  (when (string-match "/modules/\\(.+\\)$" buffer-file-truename)
+    (match-string 1 buffer-file-truename)))
+
+(defun +file-templates/insert-license ()
+  "Insert a license file template into the current file."
+  (interactive)
+  (require 'yasnippet)
+  (let* ((templates
+          (let ((yas-choose-tables-first nil) ; avoid prompts
+                (yas-choose-keys-first nil))
+            (cl-loop for tpl in (yas--all-templates (yas--get-snippet-tables 'text-mode))
+                     for uuid = (yas--template-uuid tpl)
+                     if (string-prefix-p "__license-" uuid)
+                     collect (cons (string-remove-prefix "__license-" uuid) tpl))))
+         (uuid (yas-choose-value (mapcar #'car templates))))
+    (when uuid
+      (yas-expand-snippet (cdr (assoc uuid templates))))))
 
 (setq epa-file-encrypt-to user-mail-address
       c-tab-always-indent t
@@ -20,11 +156,19 @@
     (apply orig-fn args)))
 (advice-add #'tramp-read-passwd :around #'+amos*no-authinfo-for-tramp)
 
-(defun special-indent-fn (pos state)
-  (save-excursion
-    (search-backward ":hint")
-    (current-column)))
-(put :hint 'lisp-indent-function 'special-indent-fn)
+(defmacro +amos-make-special-indent-fn! (keyword)
+  `(let* ((sname (symbol-name ,keyword))
+          (s (intern (concat "special-indent-fn-" sname))))
+     (fset s (lambda (pos state)
+               (save-excursion
+                 (search-backward sname)
+                 (current-column))))
+     (put ,keyword 'lisp-indent-function s)))
+(setq +amos-list-starters
+      '(:hint
+        :textDocument
+        ))
+(--map (+amos-make-special-indent-fn! it) +amos-list-starters)
 (put :color 'lisp-indent-function 'defun)
 (put :pre 'lisp-indent-function 'defun)
 (put :post 'lisp-indent-function 'defun)
@@ -1436,19 +1580,13 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
 
 (after! recentf
-  (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "/TAGS$" "/var/.+$" "/home/amos/cc/" "/home/amos/Mail/" "/home/amos/\\.emacs\\.d/\\.local/")))
+  (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/")))
 
 (after! ivy
-
-  ;; (add-to-list 'ivy-re-builders-alist '(cc-playground-find-snippet . ivy--regex-plus))
   (setf (alist-get t ivy-re-builders-alist) 'ivy--regex-plus)
-
   (dolist (command '(ccls/includes))
     (setf (alist-get command ivy-re-builders-alist) 'ivy--regex-fuzzy))
-
-  ;;;###autoload
   (defun amos-recentf ()
-    "Find a file on `recentf-list'."
     (interactive)
     (require 'recentf)
     (recentf-mode)
@@ -1467,9 +1605,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
   (defun amos-recentf-sort-function (a b)
     (let ((project-root (doom-project-root)))
       (or (file-in-directory-p a project-root) (not (file-in-directory-p b project-root)))))
-
   (add-to-list 'ivy-sort-functions-alist '(counsel-recentf . amos-recentf-sort-function))
-
 
   (dolist (cmd '(counsel-find-file +amos/counsel-projectile-switch-project))
     (ivy-add-actions
@@ -1479,13 +1615,6 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
     (ivy-add-actions
      cmd
      '(("f" switch-to-buffer-other-frame "other frame")))))
-
-;; vertical bar
-(add-hook! 'doom-load-theme-hook
-  (set-face-background 'vertical-border "#282c34"))
-(add-hook! 'after-make-frame-functions
-  (set-face-background 'vertical-border "#282c34")
-  (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
 
 (defun +amos/redisplay-and-recenter ()
   (interactive)
@@ -1639,7 +1768,7 @@ representation of `NUMBER' is smaller."
   (kill-buffer " *direnv*")
   (direnv-mode +1))
 
-(defvar +amos-end-of-statement-regex nil)
+(setq +amos-end-of-statement-regex nil)
 (def-setting! :eos (modes &rest plist)
   `(dolist (mode (doom-enlist ,modes))
      (push (cons mode (list ,@plist)) +amos-end-of-statement-regex)))
@@ -1694,141 +1823,6 @@ representation of `NUMBER' is smaller."
   (interactive)
   (evil-visual-line (point-min) (point-max)))
 
-(defvar +file-templates-dir
-  (expand-file-name "templates/" +amos-dir)
-  "The path to a directory of yasnippet folders to use for file templates.")
-
-(def-package! autoinsert ; built-in
-  :commands (auto-insert-mode auto-insert)
-  :init
-  (setq auto-insert-query nil  ; Don't prompt before insertion
-        auto-insert-alist nil) ; Tabula rasa
-
-  ;; load autoinsert as late as possible
-  (defun +file-templates|init ()
-    (and (not buffer-read-only)
-         (bobp) (eobp)
-         (remove-hook 'find-file-hook #'+file-templates|init)
-         (auto-insert)))
-  (add-hook 'find-file-hook #'+file-templates|init)
-
-  :config
-  (auto-insert-mode 1)
-
-  (defun +file-templates--expand (key &optional mode project-only)
-    "Auto insert a yasnippet snippet into the blank file."
-    (when (if project-only (doom-project-p) t)
-      (require 'yasnippet)
-      (unless yas-minor-mode
-        (yas-minor-mode-on))
-      (when (and yas-minor-mode
-                 (yas-expand-snippet
-                  (yas--template-content
-                   (cl-find key (yas--all-templates (yas--get-snippet-tables mode))
-                            :key #'yas--template-key :test #'equal)))
-                 (and (featurep 'evil) evil-mode)
-                 (and yas--active-field-overlay
-                      (overlay-buffer yas--active-field-overlay)
-                      (overlay-get yas--active-field-overlay 'yas--field)))
-        (evil-initialize-state 'insert))))
-
-  (defun +file-templates-add (args)
-    (cl-destructuring-bind (regexp trigger &optional mode project-only-p) args
-      (push `(,regexp . (lambda () (+file-templates--expand ,trigger ',mode ,project-only-p)))
-            auto-insert-alist)))
-
-  (mapc #'+file-templates-add
-        (let ((doom (concat "/" (regexp-opt '(".emacs.d" ".doom.d" "doom-emacs" ".config/doom")) "/")))
-          `(;; General
-            ("/\\.gitignore$"                 "__"               gitignore-mode)
-            ("/Dockerfile$"                   "__"               dockerfile-mode)
-            ("/docker-compose.yml$"           "__"               yaml-mode)
-            ("/Makefile$"                     "__"               makefile-gmake-mode)
-            ;; elisp
-            ("\\.el$"                         "__initfile"       emacs-lisp-mode)
-            ("/.dir-locals.el$"               nil)
-            (snippet-mode "__" snippet-mode)
-            ;; C/C++
-            ("\\.h$"                           "__h"              c-mode)
-            ("\\.c$"                           "__c"              c-mode)
-            ("\\.h\\(h\\|pp|xx\\)$"            "__hpp"            c++-mode)
-            ("\\.\\(cc\\|cpp\\)$"              "__cpp"            c++-mode)
-            ("/main\\.\\(cc\\|cpp\\)$"         "__main.cpp"       c++-mode)
-            ("/win32_\\.\\(cc\\|cpp\\)$"       "__winmain.cpp"    c++-mode)
-            ;; go
-            ("\\.go$"                          "__.go"            go-mode)
-            ("/main\\.go$"                     "__main.go"        go-mode t)
-            ;; web-mode
-            ("\\.html$"                        "__.html"          web-mode)
-            ("\\.scss$"                        "__"               scss-mode)
-            ("/master\\.scss$"                 "__master.scss"    scss-mode)
-            ("/normalize\\.scss$"              "__normalize.scss" scss-mode)
-            ;; java
-            ("/src/.+\\.java$"                 "__"               java-mode)
-            ("/main\\.java$"                   "__main"           java-mode)
-            ("/build\\.gradle$"                "__build.gradle"   android-mode)
-            ;; javascript
-            ("\\.\\(json\\|jshintrc\\)$"       "__"                  json-mode)
-            ("/package\\.json$"                "__package.json"      json-mode)
-            ("/bower\\.json$"                  "__bower.json"        json-mode)
-            ("/gulpfile\\.js$"                 "__gulpfile.js"       js-mode)
-            ("/webpack\\.config\\.js$"         "__webpack.config.js" js-mode)
-            ;; Lua
-            ("/main\\.lua$"                    "__main.lua"       love-mode)
-            ("/conf\\.lua$"                    "__conf.lua"       love-mode)
-            ;; Markdown
-            ("\\.md$"                          "__"               markdown-mode)
-            ;; Org
-            ("\\.org$"                                          "__"            org-mode)
-            ;; PHP
-            ("\\.php$"                         "__"               php-mode)
-            ("\\.class\\.php$"                 "__.class.php"     php-mode)
-            ;; Python
-            ;;("tests?/test_.+\\.py$"         "__"                 nose-mode)
-            ;;("/setup\\.py$"                 "__setup.py"         python-mode)
-            ("\\.py$"                          "__"               python-mode)
-            ;; Ruby
-            ("\\.rb$"                          "__"               ruby-mode)
-            ("/Rakefile$"                      "__Rakefile"       ruby-mode t)
-            ("/Gemfile$"                       "__Gemfile"        ruby-mode t)
-            ("/\\.rspec$"                      "__.rspec"         rspec-mode)
-            ("\\.gemspec$"                     "__.gemspec"       ruby-mode t)
-            ("/spec_helper\\.rb$"              "__helper"         rspec-mode t)
-            ("/lib/.+\\.rb$"                   "__module"         ruby-mode t)
-            ("_spec\\.rb$"                     "__"               rspec-mode t)
-            ;; Rust
-            ("/main\\.rs$"                     "__main.rs"        rust-mode)
-            ("/Cargo.toml$"                    "__Cargo.toml"     rust-mode)
-            ;; Slim
-            ("/\\(index\\|main\\)\\.slim$"     "__"               slim-mode)
-            ;; Shell scripts
-            ("/home/amos/git/serverconfig/scripts/.+"   "__"   sh-mode)
-            ("/home/amos/git/serverconfig/.config/fish/functions/.+" "__func" fish-mode)
-            ("\\.z?sh$"                        "__"               sh-mode)
-            ("\\.fish$"                        "__"               fish-mode)
-            ("\\.zunit$"                       "__zunit"          sh-mode)))))
-
-(add-to-list 'auto-mode-alist '("/home/amos/git/serverconfig/scripts/.+" . sh-mode) 'append)
-
-(defun +file-templates-get-short-path ()
-  (when (string-match "/modules/\\(.+\\)$" buffer-file-truename)
-    (match-string 1 buffer-file-truename)))
-
-(defun +file-templates/insert-license ()
-  "Insert a license file template into the current file."
-  (interactive)
-  (require 'yasnippet)
-  (let* ((templates
-          (let ((yas-choose-tables-first nil) ; avoid prompts
-                (yas-choose-keys-first nil))
-            (cl-loop for tpl in (yas--all-templates (yas--get-snippet-tables 'text-mode))
-                     for uuid = (yas--template-uuid tpl)
-                     if (string-prefix-p "__license-" uuid)
-                     collect (cons (string-remove-prefix "__license-" uuid) tpl))))
-         (uuid (yas-choose-value (mapcar #'car templates))))
-    (when uuid
-      (yas-expand-snippet (cdr (assoc uuid templates))))))
-
 (defun +amos/projectile-find-other-file ()
   (interactive)
   (if (and (boundp 'cc-playground-mode) cc-playground-mode)
@@ -1863,7 +1857,8 @@ representation of `NUMBER' is smaller."
   (require 'fcitx)
   (fcitx-aggressive-setup))
 
-(defun first-non-dired-buffer () (loop for b in (buffer-list) if (not (with-current-buffer b (derived-mode-p 'dired-mode))) return b))
+(defun first-non-dired-buffer ()
+  (--first (not (with-current-buffer it (derived-mode-p 'dired-mode))) (buffer-list)))
 
 (set-popup-rules!
   '(("^\\*"  :slot 1 :vslot -1 :select t)
@@ -1988,7 +1983,6 @@ representation of `NUMBER' is smaller."
                                  (b (progn (goto-char current-pos) (end-of-line) (point))))
                              (= a b))))
               (ring-insert target-list `(,current-pos ,file-name)))))))))
-
 (advice-add #'evil--jumps-push :override #'+amos*evil--jumps-push)
 
 (defun +amos*evil--jumps-jump (idx shift)
@@ -2020,7 +2014,6 @@ representation of `NUMBER' is smaller."
           (goto-char pos)
           (setf (evil-jumps-struct-idx (evil--jumps-get-current)) idx)
           (run-hooks 'evil-jumps-post-jump-hook))))))
-
 (advice-add #'evil--jumps-jump :override #'+amos*evil--jumps-jump)
 
 (defun +amos/yank-buffer-filename ()
@@ -2202,7 +2195,6 @@ the current state and point position."
         (push (xref-make-match summary loc (- end-column beg-column))
               matches)))
     (nreverse matches)))
-
 (advice-add #'xref--collect-matches-1 :override #'+amos*xref--collect-matches-1)
 
 (defun comp-buffer-name (maj-mode)
@@ -2233,7 +2225,6 @@ the current state and point position."
               company-lsp-async t
               company-lsp-cache-candidates nil
               company-search-regexp-function 'company-search-flex-regexp)
-
 (defvar-local company-fci-mode-on-p nil)
 (defun company-turn-off-fci (&rest ignore)
   (when (boundp 'fci-mode)
@@ -2245,11 +2236,21 @@ the current state and point position."
 (add-hook 'company-completion-finished-hook  #'company-maybe-turn-on-fci)
 (add-hook 'company-completion-cancelled-hook #'company-maybe-turn-on-fci)
 
+(defvar +amos-frame-list nil)
+(defvar +amos-frame-stack nil)
+(defvar +amos-tmux-need-switch nil)
+
+;; vertical bar
+(add-hook! 'doom-load-theme-hook
+  (set-face-background 'vertical-border "#282c34"))
+(add-hook! 'after-make-frame-functions
+  (set-face-background 'vertical-border "#282c34")
+  (unless +amos-frame-list
+    (setq +amos-frame-list (+amos--frame-list-without-daemon))))
 (defsubst +amos--is-frame-daemons-frame (f)
   (and (daemonp) (eq f terminal-frame)))
 
 (defun +amos--frame-list-without-daemon ()
-  "Return a list of frames without the daemon's frame."
   (if (daemonp)
       (filtered-frame-list
        #'(lambda (f) (not (+amos--is-frame-daemons-frame f))))
@@ -2258,27 +2259,25 @@ the current state and point position."
 (defun +amos/workspace-new ()
   (interactive)
   (let ((name (frame-parameter nil 'name))
-        (oframe (selected-frame)))
+        (oframe (selected-frame))
+        (nframe))
     (make-frame-invisible oframe t)
-    (select-frame (if (s-starts-with? "F" name)
-                      (make-frame)
-                    (make-frame `((name . ,name))))))
-  (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon))))
-
-(setq +amos-tmux-need-switch nil)
-(setq +amos-frame-stack nil)
-(add-hook 'after-make-frame-functions (lambda (f) (if (frame-visible-p f) (push f +amos-frame-stack))))
+    (setq nframe (if (s-starts-with? "F" name)
+                     (make-frame)
+                   (make-frame `((name . ,name)))))
+    (select-frame nframe)
+    (push nframe +amos-frame-stack)
+    (setq +amos-frame-list
+          (-insert-at (1+ (-elem-index oframe +amos-frame-list)) nframe +amos-frame-list))))
 
 (defun +amos/workspace-delete ()
   (interactive)
   (let ((f (selected-frame)))
-    (setq +amos-frame-stack (-remove (lambda (e) (eq f e)) +amos-frame-stack))
-    (if +amos-tmux-need-switch
-        (if +amos-frame-stack
-            (+amos/workspace-switch-to-frame (car +amos-frame-stack)))
-      (+amos-workspace-cycle -1))
+    (setq +amos-frame-list (--remove (eq f it) +amos-frame-list))
+    (setq +amos-frame-stack (-uniq (--remove (eq f it) +amos-frame-stack)))
+    (if +amos-frame-stack
+        (+amos/workspace-switch-to-frame (car +amos-frame-stack)))
     (delete-frame f))
-  (setq +amos--frame-list (reverse (+amos--frame-list-without-daemon)))
   (when +amos-tmux-need-switch
     (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
     (setq +amos-tmux-need-switch nil)))
@@ -2295,8 +2294,8 @@ the current state and point position."
 
 (defun +amos/workspace-switch-to (index)
   (interactive)
-  (when (< index (length +amos--frame-list))
-    (let ((frame (nth index +amos--frame-list)))
+  (when (< index (length +amos-frame-list))
+    (let ((frame (nth index +amos-frame-list)))
       (+amos/workspace-switch-to-frame frame))))
 
 (defun +amos/workspace-switch-to-1 () (interactive) (+amos/workspace-switch-to 0))
@@ -2309,8 +2308,8 @@ the current state and point position."
 (defun +amos/workspace-switch-to-8 () (interactive) (+amos/workspace-switch-to 7))
 (defun +amos/workspace-switch-to-9 () (interactive) (+amos/workspace-switch-to 8))
 (defun +amos-workspace-cycle (off)
-  (let* ((n (length +amos--frame-list))
-         (index (-elem-index (selected-frame) +amos--frame-list))
+  (let* ((n (length +amos-frame-list))
+         (index (-elem-index (selected-frame) +amos-frame-list))
          (i (% (+ off index n) n)))
     (+amos/workspace-switch-to i)))
 (defun +amos/workspace-switch-left ()  (interactive) (+amos-workspace-cycle -1))
@@ -2673,9 +2672,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -2691,13 +2690,10 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                       line)))
       (when busted-p
         (+ current-indentation lua-indent-level)))))
-
-(defun rgc-lua-calculate-indentation-override (old-function &rest arguments)
+(defun +amos*lua-calculate-indentation-override (old-function &rest arguments)
   (or (lua-busted-fuckups-fix)
       (apply old-function arguments)))
-
-(advice-add #'lua-calculate-indentation-override
-            :around #'rgc-lua-calculate-indentation-override)
+(advice-add #'lua-calculate-indentation-override :around #'+amos*lua-calculate-indentation-override)
 
 (defun lua-find-matching-token-in-line (found-token found-pos token-type &optional direction)
   (let ((line (line-number-at-pos))
@@ -2833,167 +2829,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         0))))
 (advice-add #'lua-calculate-indentation :override #'+amos*lua-calculate-indentation)
 
-(evil-define-operator evil-ex-substitute
-  (beg end pattern replacement flags)
-  "The Ex substitute command.
-\[BEG,END]substitute/PATTERN/REPLACEMENT/FLAGS"
-  :repeat nil
-  :jump t
-  :move-point nil
-  :motion evil-line
-  (interactive "<r><s/>")
-  (evil-ex-nohighlight)
-  (unless pattern
-    (user-error "No pattern given"))
-  (setq replacement (or replacement ""))
-  (setq evil-ex-last-was-search nil)
-  (let* ((flags (append flags nil))
-         (count-only (memq ?n flags))
-         (confirm (and (memq ?c flags) (not count-only)))
-         (case-fold-search (evil-ex-pattern-ignore-case pattern))
-         (case-replace case-fold-search)
-         (evil-ex-substitute-regex (evil-ex-pattern-regex pattern))
-         (evil-ex-substitute-nreplaced 0)
-         (evil-ex-substitute-last-point (point))
-         (whole-line (evil-ex-pattern-whole-line pattern))
-         (evil-ex-substitute-overlay (make-overlay (point) (point)))
-         (evil-ex-substitute-hl (evil-ex-make-hl 'evil-ex-substitute))
-         (orig-point-marker (move-marker (make-marker) (point)))
-         (end-marker (move-marker (make-marker) end))
-         (use-reveal confirm)
-         reveal-open-spots
-         zero-length-match
-         match-contains-newline
-         transient-mark-mode)
-    (setq evil-ex-substitute-pattern pattern
-          evil-ex-substitute-replacement replacement
-          evil-ex-substitute-flags flags
-          isearch-string evil-ex-substitute-regex)
-    (isearch-update-ring evil-ex-substitute-regex t)
-    (unwind-protect
-        (progn
-          (evil-ex-hl-change 'evil-ex-substitute pattern)
-          (overlay-put evil-ex-substitute-overlay 'face 'isearch)
-          (overlay-put evil-ex-substitute-overlay 'priority 1001)
-          (goto-char beg)
-          (catch 'exit-search
-            (while (re-search-forward evil-ex-substitute-regex end-marker t)
-              (when (not (and query-replace-skip-read-only
-                              (text-property-any (match-beginning 0) (match-end 0) 'read-only t)))
-                (let ((match-str (match-string 0))
-                      (match-beg (move-marker (make-marker) (match-beginning 0)))
-                      (match-end (move-marker (make-marker) (match-end 0)))
-                      (match-data (match-data)))
-                  (goto-char match-beg)
-                  (setq match-contains-newline
-                        (string-match-p "\n" (buffer-substring-no-properties
-                                              match-beg match-end)))
-                  (setq zero-length-match (= match-beg match-end))
-                  (when (and (string= "^" evil-ex-substitute-regex)
-                             (= (point) end-marker))
-                    ;; The range (beg end) includes the final newline which means
-                    ;; end-marker is on one line down. With the regex "^" the
-                    ;; beginning of this last line will be matched which we don't
-                    ;; want, so we abort here.
-                    (throw 'exit-search t))
-                  (setq evil-ex-substitute-last-point match-beg)
-                  (if confirm
-                      (let ((prompt
-                             (format "Replace %s with %s (y/n/a/q/l/e/^E/^Y)? "
-                                     match-str
-                                     (evil-match-substitute-replacement
-                                      evil-ex-substitute-replacement
-                                      (not case-replace))))
-                            (search-invisible t)
-                            response)
-                        (move-overlay evil-ex-substitute-overlay match-beg match-end)
-                        ;; Simulate `reveal-mode'. `reveal-mode' uses
-                        ;; `post-command-hook' but that won't work here.
-                        (when use-reveal
-                          (reveal-post-command))
-                        (catch 'exit-read-char
-                          (while (setq response (read-char prompt))
-                            (if (= response ?e)
-                                (setf (cdr evil-ex-substitute-replacement)
-                                      (read-string "replace-string: " (cdr evil-ex-substitute-replacement))))
-                            (when (member response '(?y ?a ?l ?e))
-                              (unless count-only
-                                (set-match-data match-data)
-                                (evil-replace-match evil-ex-substitute-replacement
-                                                    (not case-replace)))
-                              (setq evil-ex-substitute-nreplaced
-                                    (1+ evil-ex-substitute-nreplaced))
-                              (evil-ex-hl-set-region 'evil-ex-substitute
-                                                     (save-excursion
-                                                       (forward-line)
-                                                       (point))
-                                                     (evil-ex-hl-get-max
-                                                      'evil-ex-substitute)))
-                            (cl-case response
-                              ((?y ?n ?e) (throw 'exit-read-char t))
-                              (?a (setq confirm nil)
-                                  (throw 'exit-read-char t))
-                              ((?q ?l ?\C-\[) (throw 'exit-search t))
-                              (?\C-e (evil-scroll-line-down 1))
-                              (?\C-y (evil-scroll-line-up 1))))))
-                    (setq evil-ex-substitute-nreplaced
-                          (1+ evil-ex-substitute-nreplaced))
-                    (unless count-only
-                      (set-match-data match-data)
-                      (evil-replace-match evil-ex-substitute-replacement
-                                          (not case-replace))))
-                  (goto-char match-end)
-                  (cond ((>= (point) end-marker)
-                         ;; Don't want to perform multiple replacements at the end
-                         ;; of the search region.
-                         (throw 'exit-search t))
-                        ((and (not whole-line)
-                              (not match-contains-newline))
-                         (forward-line)
-                         ;; forward-line just moves to the end of the line on the
-                         ;; last line of the buffer.
-                         (when (or (eobp)
-                                   (> (point) end-marker))
-                           (throw 'exit-search t)))
-                        ;; For zero-length matches check to see if point won't
-                        ;; move next time. This is a problem when matching the
-                        ;; regexp "$" because we can enter an infinite loop,
-                        ;; repeatedly matching the same character
-                        ((and zero-length-match
-                              (let ((pnt (point)))
-                                (save-excursion
-                                  (and
-                                   (re-search-forward
-                                    evil-ex-substitute-regex end-marker t)
-                                   (= pnt (point))))))
-                         (if (or (eobp)
-                                 (>= (point) end-marker))
-                             (throw 'exit-search t)
-                           (forward-char)))))))))
-      (evil-ex-delete-hl 'evil-ex-substitute)
-      (delete-overlay evil-ex-substitute-overlay)
-
-      (if count-only
-          (goto-char orig-point-marker)
-        (goto-char evil-ex-substitute-last-point))
-
-      (move-marker orig-point-marker nil)
-      (move-marker end-marker nil)
-
-      (when use-reveal
-        (evil-revert-reveal reveal-open-spots)))
-
-    (message "%s %d occurrence%s"
-             (if count-only "Found" "Replaced")
-             evil-ex-substitute-nreplaced
-             (if (/= evil-ex-substitute-nreplaced 1) "s" ""))
-    (evil-first-non-blank)))
-
-;; (add-hook! 'doom-load-theme-hook
-;;   (set-face-attribute 'mode-line-inactive nil
-;;                       :underline t
-;;                       :background (face-background 'default)))
-
 (global-page-break-lines-mode +1)
 
 (defun anzu-multiedit (&optional symbol)
@@ -3060,12 +2895,10 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos/wipe-current-buffer ()
   (interactive)
-  ;; wipe
   (+amos/close-current-buffer t))
 
 (defun +amos/kill-current-buffer ()
   (interactive)
-  ;; wipe and kill
   (+amos/close-current-buffer t t))
 
 (defun +amos/switch-buffer ()
@@ -3117,7 +2950,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   (evil-refresh-cursor)
   (realign-windows))
 
-(defun find-file--line-number (orig-fun filename &optional wildcards)
+(defun +amos*find-file (orig-fun filename &optional wildcards)
   "Turn files like file.cpp:14 into file.cpp and going to the 14-th line."
   (save-match-data
     (let* ((matched (string-match "^\\(.*\\):\\([0-9]+\\):?$" filename))
@@ -3132,8 +2965,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         (forward-line (1- line-number))
         (+amos/recenter))
       buffer)))
-
-(advice-add 'find-file :around #'find-file--line-number)
+(advice-add 'find-file :around #'+amos*find-file)
 
 (mapc #'evil-declare-change-repeat
       '(company-complete-mouse
