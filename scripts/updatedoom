@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+(cd ~/.emacs.d && bin/doom -y upgrade && bin/doom -y update)

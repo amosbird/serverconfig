@@ -6,4 +6,9 @@ errlog() {
 }
 set -o pipefail
 
-(/home/amos/bin/pbpst -P https://la.wentropy.com -Sf "$1" | awk 'END{printf $1}' | copyq add - && copyq select 0) || errlog; notify-send -a "teiler" "Text Uploaded" "$(copyq clipboard)"
+if [[ -z $GUI ]]
+then
+    curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2> /dev/null | osc52clip
+else
+    (curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2> /dev/null | copyq add - && copyq select 0) || errlog; notify-send -a "teiler" "Text Uploaded" "$(copyq clipboard)"
+fi
