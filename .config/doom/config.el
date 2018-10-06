@@ -61,13 +61,6 @@
 
   (mapc #'+file-templates-add
         (;; General
-         ("/\\.gitignore$"                 "__"               gitignore-mode)
-         ("/Dockerfile$"                   "__"               dockerfile-mode)
-         ("/docker-compose.yml$"           "__"               yaml-mode)
-         ("/Makefile$"                     "__"               makefile-gmake-mode)
-         ;; elisp
-         ("\\.el$"                         "__initfile"       emacs-lisp-mode)
-         ("/.dir-locals.el$"               nil)
          (snippet-mode "__" snippet-mode)
          ;; Shell scripts
          ("/home/amos/git/serverconfig/scripts/.+"   "__"   sh-mode)
@@ -1802,6 +1795,14 @@ representation of `NUMBER' is smaller."
 (defun first-non-dired-buffer ()
   (--first (not (with-current-buffer it (derived-mode-p 'dired-mode))) (buffer-list)))
 
+(setq +popup-default-alist
+      '((window-height . 0.16)
+        (reusable-frames . nil)))
+
+(setq +popup-default-display-buffer-actions
+      '(display-buffer-pop-up-window
+        +popup-display-buffer-stacked-side-window))
+
 (set-popup-rules!
   '(("^\\*"  :slot 1 :vslot -1 :select t)
     ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit))
@@ -1810,7 +1811,6 @@ representation of `NUMBER' is smaller."
     ("^\\*git-gutter*"
      :side right :size 0.5)
     ("^\\*Compil\\(?:ation\\|e-Log\\)"
-     :actions (+amos-display-buffer-no-reuse-window +popup-display-buffer-stacked-side-window)
      :side right :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*\\(?:scratch\\|Messages\\)"
      :autosave t :ttl nil)
@@ -1827,16 +1827,14 @@ representation of `NUMBER' is smaller."
      :slot 2 :side left :size 20 :select t :quit t)
     ;; `help-mode', `helpful-mode'
     ("^\\*[Hh]elp"
-     :slot 2 :vslot 2 :size 0.35 :select t)
+     :side right :size 0.5 :select t)
     ;; `Info-mode'
     ("^\\*info\\*$"
      :slot 2 :vslot 2 :size 0.45 :select t)
-
     ("^\\(?:\\*magit\\|magit:\\)" :ignore t)
-
     ("^\\*ivy-occur"
      :side right :size 0.9 :select t))
-  '(("^\\*Backtrace" :vslot 99 :size 0.4 :quit nil)))
+  '(("^\\*Backtrace" :side right :size 0.5 :quit nil)))
 
 (evil-define-command +amos*evil-visual-paste (count &optional register)
   "Paste over Visual selection."
@@ -2179,6 +2177,9 @@ the current state and point position."
                      (make-frame)
                    (make-frame `((name . ,name)))))
     (select-frame nframe)
+    (let ((dir default-directory))
+      (switch-to-buffer "*scratch*")
+      (cd dir))
     (push nframe +amos-frame-stack)
     (setq +amos-frame-list
           (-insert-at (1+ (-elem-index oframe +amos-frame-list)) nframe +amos-frame-list))))

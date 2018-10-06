@@ -679,4 +679,4 @@
              python-mode-map
              lua-mode-map
              perl-mode-map)
-      :ni [C-return] (lambda! (compile (buffer-file-name) t)))
+      :ni [C-return] (lambda! (evil-normal-state) (compile (buffer-file-name) t)))
