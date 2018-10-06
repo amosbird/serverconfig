@@ -7,6 +7,7 @@
        snippets
        spellcheck
        (syntax-checker +childframe)
+       file-templates
 
        :completion
        company

@@ -15,78 +15,102 @@
 
 (defvar +amos-dir (file-name-directory load-file-name))
 (defvar +amos-snippets-dir (expand-file-name "snippets/" +amos-dir))
+;; Don't use default snippets, use mine.
+(after! yasnippet
+  (add-hook! 'yas-minor-mode-hook (yas-activate-extra-mode 'fundamental-mode))
+  (setq yas-snippet-dirs
+        (append (list '+amos-snippets-dir '+file-templates-dir)
+                (delq 'yas-installed-snippets-dir yas-snippet-dirs))))
 
-(defvar +file-templates-dir
-  (expand-file-name "templates/" +amos-dir)
-  "The path to a directory of yasnippet folders to use for file templates.")
-
-(def-package! autoinsert ; built-in
-  :commands (auto-insert-mode auto-insert)
-  :init
-  (setq auto-insert-query nil  ; Don't prompt before insertion
-        auto-insert-alist nil) ; Tabula rasa
-
-  ;; load autoinsert as late as possible
-  (defun +file-templates|init ()
-    (and (not buffer-read-only)
-         (bobp) (eobp)
-         (remove-hook 'find-file-hook #'+file-templates|init)
-         (auto-insert)))
-  (add-hook 'find-file-hook #'+file-templates|init)
-
-  :config
-  (auto-insert-mode 1)
-
-  (defun +file-templates--expand (key &optional mode project-only)
-    "Auto insert a yasnippet snippet into the blank file."
-    (when (if project-only (doom-project-p) t)
-      (require 'yasnippet)
-      (unless yas-minor-mode
-        (yas-minor-mode-on))
-      (when (and yas-minor-mode
-                 (yas-expand-snippet
-                  (yas--template-content
-                   (cl-find key (yas--all-templates (yas--get-snippet-tables mode))
-                            :key #'yas--template-key :test #'equal)))
-                 (and (featurep 'evil) evil-mode)
-                 (and yas--active-field-overlay
-                      (overlay-buffer yas--active-field-overlay)
-                      (overlay-get yas--active-field-overlay 'yas--field)))
-        (evil-initialize-state 'insert))))
-
-  (defun +file-templates-add (args)
-    (cl-destructuring-bind (regexp trigger &optional mode project-only-p) args
-      (push `(,regexp . (lambda () (+file-templates--expand ,trigger ',mode ,project-only-p)))
-            auto-insert-alist)))
-
-  (mapc #'+file-templates-add
-        (;; General
-         (snippet-mode "__" snippet-mode)
-         ;; Shell scripts
-         ("/home/amos/git/serverconfig/scripts/.+"   "__"   sh-mode)
-         ("/home/amos/git/serverconfig/.config/fish/functions/.+" "__func" fish-mode)
-         ("\\.z?sh$"                        "__"               sh-mode)
-         ("\\.fish$"                        "__"               fish-mode)
-         ("\\.zunit$"                       "__zunit"          sh-mode))))
-
-(defun +file-templates-get-short-path ()
-  (when (string-match "/modules/\\(.+\\)$" buffer-file-truename)
-    (match-string 1 buffer-file-truename)))
-
-(defun +file-templates/insert-license ()
-  "Insert a license file template into the current file."
-  (interactive)
-  (require 'yasnippet)
-  (let* ((templates
-          (let ((yas-choose-tables-first nil) ; avoid prompts
-                (yas-choose-keys-first nil))
-            (cl-loop for tpl in (yas--all-templates (yas--get-snippet-tables 'text-mode))
-                     for uuid = (yas--template-uuid tpl)
-                     if (string-prefix-p "__license-" uuid)
-                     collect (cons (string-remove-prefix "__license-" uuid) tpl))))
-         (uuid (yas-choose-value (mapcar #'car templates))))
-    (when uuid
-      (yas-expand-snippet (cdr (assoc uuid templates))))))
+(add-to-list 'auto-mode-alist '("/git/serverconfig/scripts/.+" . sh-mode))
+(setq +file-templates-alist
+  `(;; General
+    ("/git/serverconfig/scripts/.+" :mode sh-mode)
+    ("/git/serverconfig/.config/fish/functions/.+" :trigger "__func" :mode fish-mode)
+    (gitignore-mode)
+    (dockerfile-mode)
+    ("/docker-compose\\.yml$" :mode yaml-mode)
+    ("/Makefile$"             :mode makefile-gmake-mode)
+    ;; elisp
+    ("/.dir-locals.el$")
+    ("/packages\\.el$" :when +file-templates-in-emacs-dirs-p
+     :trigger "__doom-packages"
+     :mode emacs-lisp-mode)
+    ("/doctor\\.el$" :when +file-templates-in-emacs-dirs-p
+     :trigger "__doom-doctor"
+     :mode emacs-lisp-mode)
+    ("/test/.+\\.el$" :when +file-templates-in-emacs-dirs-p
+     :trigger "__doom-test"
+     :mode emacs-lisp-mode)
+    ("\\.el$" :when +file-templates-in-emacs-dirs-p
+     :trigger "__doom-module"
+     :mode emacs-lisp-mode)
+    ("-test\\.el$" :mode emacs-ert-mode)
+    (emacs-lisp-mode :trigger "__initfile")
+    (snippet-mode)
+    ;; C/C++
+    ("/main\\.c\\(?:c\\|pp\\)$"   :trigger "__main.cpp"    :mode c++-mode)
+    ("/win32_\\.c\\(?:c\\|pp\\)$" :trigger "__winmain.cpp" :mode c++-mode)
+    ("\\.c\\(?:c\\|pp\\)$"        :trigger "__cpp" :mode c++-mode)
+    ("\\.h\\(?:h\\|pp\\|xx\\)$"   :trigger "__hpp" :mode c++-mode)
+    ("\\.h$" :trigger "__h" :mode c-mode)
+    (c-mode  :trigger "__c")
+    ;; go
+    ("/main\\.go$" :trigger "__main.go" :mode go-mode :project t)
+    (go-mode :trigger "__.go")
+    ;; web-mode
+    ("/normalize\\.scss$" :trigger "__normalize.scss" :mode scss-mode)
+    ("/master\\.scss$" :trigger "__master.scss" :mode scss-mode)
+    ("\\.html$" :trigger "__.html" :mode web-mode)
+    (scss-mode)
+    ;; java
+    ("/main\\.java$" :trigger "__main" :mode java-mode)
+    ("/build\\.gradle$" :trigger "__build.gradle" :mode android-mode)
+    ("/src/.+\\.java$" :mode java-mode)
+    ;; javascript
+    ("/package\\.json$"        :trigger "__package.json" :mode json-mode)
+    ("/bower\\.json$"          :trigger "__bower.json" :mode json-mode)
+    ("/gulpfile\\.js$"         :trigger "__gulpfile.js" :mode js-mode)
+    ("/webpack\\.config\\.js$" :trigger "__webpack.config.js" :mode js-mode)
+    ("\\.js\\(?:on\\|hintrc\\)$" :mode json-mode)
+    ;; Lua
+    ("/main\\.lua$" :trigger "__main.lua" :mode love-mode)
+    ("/conf\\.lua$" :trigger "__conf.lua" :mode love-mode)
+    ;; Markdown
+    (markdown-mode)
+    ;; Org
+    ("/README\\.org$"
+     :when +file-templates-in-emacs-dirs-p
+     :trigger "__doom-readme"
+     :mode org-mode)
+    ("\\.org$" :trigger "__" :mode org-mode)
+    ;; PHP
+    ("\\.class\\.php$" :trigger "__.class.php" :mode php-mode)
+    (php-mode)
+    ;; Python
+    ;; TODO ("tests?/test_.+\\.py$" :trigger "__" :mode nose-mode)
+    ;; TODO ("/setup\\.py$" :trigger "__setup.py" :mode python-mode)
+    (python-mode)
+    ;; Ruby
+    ("/lib/.+\\.rb$"      :trigger "__module"   :mode ruby-mode :project t)
+    ("/spec_helper\\.rb$" :trigger "__helper"   :mode rspec-mode :project t)
+    ("_spec\\.rb$"                              :mode rspec-mode :project t)
+    ("/\\.rspec$"         :trigger "__.rspec"   :mode rspec-mode :project t)
+    ("\\.gemspec$"        :trigger "__.gemspec" :mode ruby-mode :project t)
+    ("/Gemfile$"          :trigger "__Gemfile"  :mode ruby-mode :project t)
+    ("/Rakefile$"         :trigger "__Rakefile" :mode ruby-mode :project t)
+    (ruby-mode)
+    ;; Rust
+    ("/Cargo.toml$" :trigger "__Cargo.toml" :mode rust-mode)
+    ("/main\\.rs$" :trigger "__main.rs" :mode rust-mode)
+    ;; Slim
+    ("/\\(?:index\\|main\\)\\.slim$" :mode slim-mode)
+    ;; Shell scripts
+    ("\\.zunit$" :trigger "__zunit" :mode sh-mode)
+    (fish-mode)
+    (sh-mode)
+    ;; Solidity
+    (solidity-mode :trigger "__sol")))
 
 (setq epa-file-encrypt-to user-mail-address
       c-tab-always-indent t
@@ -209,13 +233,6 @@
     (add-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors nil t))
   (add-hook! 'evil-mc-after-cursors-deleted
     (remove-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors t)))
-
-;; Don't use default snippets, use mine.
-(after! yasnippet
-  (add-hook! 'yas-minor-mode-hook (yas-activate-extra-mode 'fundamental-mode))
-  (setq yas-snippet-dirs
-        (append (list '+amos-snippets-dir '+file-templates-dir)
-                (delq 'yas-installed-snippets-dir yas-snippet-dirs))))
 
 (after! cus-edit (evil-set-initial-state 'Custom-mode 'normal))
 (after! ivy (evil-set-initial-state 'ivy-occur-grep-mode 'normal))
