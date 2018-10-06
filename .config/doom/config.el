@@ -2,6 +2,11 @@
 
 (load! "+bindings")
 (require 'dash)
+(require 'cl-lib)
+(require 'evil-multiedit)
+(require 'company)
+(require 'company-lsp)
+(require 'counsel)
 
 (defun +amos/recenter (&rest _)
   (interactive)
@@ -55,77 +60,21 @@
             auto-insert-alist)))
 
   (mapc #'+file-templates-add
-        (let ((doom (concat "/" (regexp-opt '(".emacs.d" ".doom.d" "doom-emacs" ".config/doom")) "/")))
-          `(;; General
-            ("/\\.gitignore$"                 "__"               gitignore-mode)
-            ("/Dockerfile$"                   "__"               dockerfile-mode)
-            ("/docker-compose.yml$"           "__"               yaml-mode)
-            ("/Makefile$"                     "__"               makefile-gmake-mode)
-            ;; elisp
-            ("\\.el$"                         "__initfile"       emacs-lisp-mode)
-            ("/.dir-locals.el$"               nil)
-            (snippet-mode "__" snippet-mode)
-            ;; C/C++
-            ("\\.h$"                           "__h"              c-mode)
-            ("\\.c$"                           "__c"              c-mode)
-            ("\\.h\\(h\\|pp|xx\\)$"            "__hpp"            c++-mode)
-            ("\\.\\(cc\\|cpp\\)$"              "__cpp"            c++-mode)
-            ("/main\\.\\(cc\\|cpp\\)$"         "__main.cpp"       c++-mode)
-            ("/win32_\\.\\(cc\\|cpp\\)$"       "__winmain.cpp"    c++-mode)
-            ;; go
-            ("\\.go$"                          "__.go"            go-mode)
-            ("/main\\.go$"                     "__main.go"        go-mode t)
-            ;; web-mode
-            ("\\.html$"                        "__.html"          web-mode)
-            ("\\.scss$"                        "__"               scss-mode)
-            ("/master\\.scss$"                 "__master.scss"    scss-mode)
-            ("/normalize\\.scss$"              "__normalize.scss" scss-mode)
-            ;; java
-            ("/src/.+\\.java$"                 "__"               java-mode)
-            ("/main\\.java$"                   "__main"           java-mode)
-            ("/build\\.gradle$"                "__build.gradle"   android-mode)
-            ;; javascript
-            ("\\.\\(json\\|jshintrc\\)$"       "__"                  json-mode)
-            ("/package\\.json$"                "__package.json"      json-mode)
-            ("/bower\\.json$"                  "__bower.json"        json-mode)
-            ("/gulpfile\\.js$"                 "__gulpfile.js"       js-mode)
-            ("/webpack\\.config\\.js$"         "__webpack.config.js" js-mode)
-            ;; Lua
-            ("/main\\.lua$"                    "__main.lua"       love-mode)
-            ("/conf\\.lua$"                    "__conf.lua"       love-mode)
-            ;; Markdown
-            ("\\.md$"                          "__"               markdown-mode)
-            ;; Org
-            ("\\.org$"                                          "__"            org-mode)
-            ;; PHP
-            ("\\.php$"                         "__"               php-mode)
-            ("\\.class\\.php$"                 "__.class.php"     php-mode)
-            ;; Python
-            ;;("tests?/test_.+\\.py$"         "__"                 nose-mode)
-            ;;("/setup\\.py$"                 "__setup.py"         python-mode)
-            ("\\.py$"                          "__"               python-mode)
-            ;; Ruby
-            ("\\.rb$"                          "__"               ruby-mode)
-            ("/Rakefile$"                      "__Rakefile"       ruby-mode t)
-            ("/Gemfile$"                       "__Gemfile"        ruby-mode t)
-            ("/\\.rspec$"                      "__.rspec"         rspec-mode)
-            ("\\.gemspec$"                     "__.gemspec"       ruby-mode t)
-            ("/spec_helper\\.rb$"              "__helper"         rspec-mode t)
-            ("/lib/.+\\.rb$"                   "__module"         ruby-mode t)
-            ("_spec\\.rb$"                     "__"               rspec-mode t)
-            ;; Rust
-            ("/main\\.rs$"                     "__main.rs"        rust-mode)
-            ("/Cargo.toml$"                    "__Cargo.toml"     rust-mode)
-            ;; Slim
-            ("/\\(index\\|main\\)\\.slim$"     "__"               slim-mode)
-            ;; Shell scripts
-            ("/home/amos/git/serverconfig/scripts/.+"   "__"   sh-mode)
-            ("/home/amos/git/serverconfig/.config/fish/functions/.+" "__func" fish-mode)
-            ("\\.z?sh$"                        "__"               sh-mode)
-            ("\\.fish$"                        "__"               fish-mode)
-            ("\\.zunit$"                       "__zunit"          sh-mode)))))
-
-(add-to-list 'auto-mode-alist '("/home/amos/git/serverconfig/scripts/.+" . sh-mode) 'append)
+        (;; General
+         ("/\\.gitignore$"                 "__"               gitignore-mode)
+         ("/Dockerfile$"                   "__"               dockerfile-mode)
+         ("/docker-compose.yml$"           "__"               yaml-mode)
+         ("/Makefile$"                     "__"               makefile-gmake-mode)
+         ;; elisp
+         ("\\.el$"                         "__initfile"       emacs-lisp-mode)
+         ("/.dir-locals.el$"               nil)
+         (snippet-mode "__" snippet-mode)
+         ;; Shell scripts
+         ("/home/amos/git/serverconfig/scripts/.+"   "__"   sh-mode)
+         ("/home/amos/git/serverconfig/.config/fish/functions/.+" "__func" fish-mode)
+         ("\\.z?sh$"                        "__"               sh-mode)
+         ("\\.fish$"                        "__"               fish-mode)
+         ("\\.zunit$"                       "__zunit"          sh-mode))))
 
 (defun +file-templates-get-short-path ()
   (when (string-match "/modules/\\(.+\\)$" buffer-file-truename)
@@ -173,10 +122,15 @@
 (put :pre 'lisp-indent-function 'defun)
 (put :post 'lisp-indent-function 'defun)
 
+(after! evil-snipe (evil-snipe-mode -1))
+
 (after! evil-multiedit
   (setq evil-multiedit-follow-matches t))
 
 (after! smartparens
+  (require 'smartparens-config)
+  (setf (caddr (assoc 'emacs-lisp-mode sp-sexp-prefix)) (rx (1+ (or "`" "," ",@" "'" "#'"))))
+
   ;; Auto-close more conservatively
   (let ((unless-list '(sp-point-before-word-p
                        sp-point-after-word-p
@@ -273,14 +227,6 @@
 (after! cus-edit (evil-set-initial-state 'Custom-mode 'normal))
 (after! ivy (evil-set-initial-state 'ivy-occur-grep-mode 'normal))
 (after! compile (evil-set-initial-state 'compilation-mode 'normal))
-
-(defhydra +amos@paste (:hint nil)
-  "Paste"
-  ("0" evil-digit-argument-or-evil-beginning-of-line "bol" :exit t)
-  ("C-j" evil-paste-pop "Next Paste")
-  ("C-k" evil-paste-pop-next "Prev Paste")
-  ("p" evil-paste-after "Paste After")
-  ("P" evil-paste-before "Paste Before"))
 
 (defun +amos|init-frame (&optional frame)
   (when (and frame (display-graphic-p frame))
@@ -600,12 +546,10 @@ Skip buffers that match `ivy-ignore-buffers'."
   (interactive)
   (unless (doom-project-p)
     (user-error "You’re not in a project"))
-  (require 'counsel)
   (counsel-rg nil (doom-project-root)))
 
 (defun +amos/counsel-rg-cur-dir ()
   (interactive)
-  (require 'counsel)
   (counsel-rg nil default-directory))
 
 (def-package! yapfify
@@ -1162,7 +1106,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                 (end-of-thing 'symbol))
             (point)))
       (save-excursion (insert " ")))
-  (company-complete))
+  (company-manual-begin))
 
 (evil-define-command +amos/complete-filter ()
   (+amos/complete)
@@ -1196,11 +1140,9 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
       (mkr! (kill-region x y)))))
 
 (defun +amos-insert-state-p ()
-  (require 'evil-multiedit)
   (or (evil-insert-state-p) (evil-multiedit-insert-state-p) (active-minibuffer-window)))
 
 (defun +amos-insert-state ()
-  (require 'evil-multiedit)
   (if (evil-multiedit-state-p)
       (evil-multiedit-insert-state)
     (evil-insert-state)))
@@ -1868,6 +1810,7 @@ representation of `NUMBER' is smaller."
     ("^\\*git-gutter*"
      :side right :size 0.5)
     ("^\\*Compil\\(?:ation\\|e-Log\\)"
+     :actions (+amos-display-buffer-no-reuse-window +popup-display-buffer-stacked-side-window)
      :side right :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*\\(?:scratch\\|Messages\\)"
      :autosave t :ttl nil)
@@ -2206,36 +2149,6 @@ the current state and point position."
     (evil-normal-state)))
 (add-hook! 'compilation-finish-functions #'+amos/normalize-compilation-buffer)
 
-(require 'company)
-(require 'company-tng)
-(require 'company-lsp)
-
-(setq-default company-idle-delay 0.3
-              company-auto-complete nil
-              company-tooltip-limit 14
-              company-dabbrev-downcase nil
-              company-dabbrev-ignore-case nil
-              company-dabbrev-code-other-buffers t
-              company-tooltip-align-annotations t
-              company-require-match 'never
-              company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
-              company-frontends (append '(company-tng-frontend) company-frontends)
-              company-backends '(company-lsp company-capf company-dabbrev company-ispell company-yasnippet)
-              company-transformers nil
-              company-lsp-async t
-              company-lsp-cache-candidates nil
-              company-search-regexp-function 'company-search-flex-regexp)
-(defvar-local company-fci-mode-on-p nil)
-(defun company-turn-off-fci (&rest ignore)
-  (when (boundp 'fci-mode)
-    (setq company-fci-mode-on-p fci-mode)
-    (when fci-mode (fci-mode -1))))
-(defun company-maybe-turn-on-fci (&rest ignore)
-  (when company-fci-mode-on-p (fci-mode 1)))
-(add-hook 'company-completion-started-hook   #'company-turn-off-fci)
-(add-hook 'company-completion-finished-hook  #'company-maybe-turn-on-fci)
-(add-hook 'company-completion-cancelled-hook #'company-maybe-turn-on-fci)
-
 (defvar +amos-frame-list nil)
 (defvar +amos-frame-stack nil)
 (defvar +amos-tmux-need-switch nil)
@@ -2418,6 +2331,7 @@ the current state and point position."
  "M-."            #'sp-unwrap-sexp
  "M-r"            #'sp-forward-slurp-sexp
  "M-R"            #'sp-forward-barf-sexp
+ "M-s"            #'sp-splice-sexp
  "M-t"            #'sp-transpose-sexp
  "C-t"            #'sp-transpose-hybrid-sexp
  "M-d"            #'sp-kill-sexp
@@ -2425,12 +2339,10 @@ the current state and point position."
  [M-backspace]    #'sp-backward-kill-sexp
  [134217855]      #'sp-backward-kill-sexp ; M-DEL
  "M-w"            #'sp-copy-sexp
- "M-("            #'wrap-with-parens
- "M-{"            #'wrap-with-braces
- "M-'"            #'wrap-with-single-quotes
- "M-\""           #'wrap-with-double-quotes
- "M-_"            #'wrap-with-underscores
- "M-`"            #'wrap-with-back-quotes)
+ "M-("            #'sp-wrap-round
+ "M-{"            #'sp-wrap-curly
+ "M-["            #'sp-wrap-square
+ "M-\""           (lambda! (sp-wrap-with-pair "\"")))
 
 (defun lisp-state-toggle-lisp-state ()
   "Toggle the lisp state."
@@ -3000,6 +2912,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         +amos/dired-jump
         +amos/direnv-reload
         +amos/dump-evil-jump-list
+        +amos/exec-shell-command
         +amos/format-buffer
         +amos/increase-zoom
         +amos/kill-current-buffer
@@ -3120,7 +3033,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos/upload ()
   (interactive)
-  (async-shell-command! (concat "upload " (buffer-file-name))))
+  (kill-new
+   (string-trim-right
+    (shell-command-to-string (concat "upload " (buffer-file-name) " out")))))
 
 (defun +amos*ivy--insert-minibuffer (text)
   "Insert TEXT into minibuffer with appropriate cleanup."
@@ -3294,7 +3209,7 @@ If the scroll count is zero the command scrolls half the screen."
               (scroll-up count)
               (let* ((wend (window-end nil t))
                      (p (posn-at-x-y (car xy) (cdr xy)))
-                     ;; header line breaks
+                     ;; amos: header line breaks
                      (p2 (posn-at-x-y (car xy) (1+ (cdr xy))))
                      (margin (max 0 (- scroll-margin
                                        (cdr (posn-col-row p))))))
@@ -3346,5 +3261,129 @@ In Insert state, insert a newline."
 (defun +amos-company--insert-candidate (candidate)
   (when (> (length candidate) 0)
     (setq candidate (substring-no-properties candidate))
-    (insert (company-strip-prefix candidate))))
+    (let* ((prefix (s-shared-start company-prefix candidate))
+           (non-prefix (substring company-prefix (length prefix))))
+      (delete-region (- (point) (length non-prefix)) (point))
+      (insert (substring candidate (length prefix))))))
 (advice-add #'company--insert-candidate :override #'+amos-company--insert-candidate)
+
+;; company
+
+(setq-default company-idle-delay 0.3
+              company-auto-complete nil
+              company-tooltip-limit 14
+              company-dabbrev-downcase nil
+              company-dabbrev-ignore-case nil
+              company-dabbrev-code-other-buffers t
+              company-tooltip-align-annotations t
+              company-require-match 'never
+              company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
+              company-frontends (append '(company-tng-frontend) company-frontends)
+              company-backends '(company-lsp company-capf company-dabbrev company-ispell company-yasnippet)
+              company-transformers nil
+              company-lsp-async t
+              company-lsp-cache-candidates nil
+              company-search-regexp-function 'company-search-flex-regexp)
+(defvar-local company-fci-mode-on-p nil)
+(defun company-turn-off-fci (&rest ignore)
+  (when (boundp 'fci-mode)
+    (setq company-fci-mode-on-p fci-mode)
+    (when fci-mode (fci-mode -1))))
+(defun company-maybe-turn-on-fci (&rest ignore)
+  (when company-fci-mode-on-p (fci-mode 1)))
+(add-hook 'company-completion-started-hook   #'company-turn-off-fci)
+(add-hook 'company-completion-finished-hook  #'company-maybe-turn-on-fci)
+(add-hook 'company-completion-cancelled-hook #'company-maybe-turn-on-fci)
+
+(defvar-local company-tng--overlay nil)
+
+(defun company-tng-frontend (command)
+  (cl-case command
+    (show
+     (let ((ov (make-overlay (point) (point))))
+       (setq company-tng--overlay ov)
+       (overlay-put ov 'priority 2))
+     (advice-add 'company-select-next :before-until 'company-tng--allow-unselected)
+     (advice-add 'company-fill-propertize :filter-args 'company-tng--adjust-tooltip-highlight))
+    (update
+     (let* ((ov company-tng--overlay)
+            (candidate (nth company-selection company-candidates))
+            (prefix (s-shared-start company-prefix candidate))
+            (non-prefix (substring company-prefix (length prefix)))
+            (selected (substring candidate (length prefix)))
+            (selected (and company-selection-changed
+                           (if (iedit-find-current-occurrence-overlay)
+                               (propertize selected 'face 'iedit-occurrence)
+                             selected))))
+       (move-overlay ov (- (point) (length non-prefix)) (point))
+       (overlay-put ov (if (= (length non-prefix) 0) 'after-string 'display)
+                    selected)))
+    (hide
+     (when company-tng--overlay
+       (delete-overlay company-tng--overlay)
+       (kill-local-variable 'company-tng--overlay))
+     (advice-remove 'company-select-next 'company-tng--allow-unselected)
+     (advice-remove 'company-fill-propertize 'company-tng--adjust-tooltip-highlight))
+    (pre-command
+     (when (and company-selection-changed
+                (not (company--company-command-p (this-command-keys))))
+       (company--unread-this-command-keys)
+       (setq this-command 'company-complete-selection)
+       (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)))))
+
+(defun company-tng--allow-unselected (&optional arg)
+  "Advice `company-select-next' to allow for an 'unselected'
+state. Unselected means that no user interaction took place on the
+completion candidates and it's marked by setting
+`company-selection-changed' to nil. This advice will call the underlying
+`company-select-next' unless we need to transition to or from an unselected
+state.
+
+Possible state transitions:
+- (arg > 0) unselected -> first candidate selected
+- (arg < 0) first candidate selected -> unselected
+- (arg < 0 wrap-round) unselected -> last candidate selected
+- (arg < 0 no wrap-round) unselected -> unselected
+
+There is no need to advice `company-select-previous' because it calls
+`company-select-next' internally."
+  (cond
+   ;; Selecting next
+   ((or (not arg) (> arg 0))
+    (unless company-selection-changed
+      (company-set-selection (1- (or arg 1)) 'force-update)
+      t))
+   ;; Selecting previous
+   ((< arg 0)
+    (when (and company-selection-changed
+               (< (+ company-selection arg) 0))
+      (company-set-selection 0)
+      (setq company-selection-changed nil)
+      (company-call-frontends 'update)
+      t)
+    )))
+
+(defun company-tng--adjust-tooltip-highlight (args)
+  (unless company-selection-changed
+    (setf (nth 3 args) nil))
+  args)
+
+(defun company-tng--supress-post-completion (command &rest args)
+  (when (eq command 'post-completion)
+    (advice-remove 'company-call-backend 'company-tng--supress-post-completion)
+    t))
+
+(defun +amos*doom-buffer-frame-predicate (buf)
+  (let ((mode (with-current-buffer buf major-mode)))
+    (pcase mode
+      ('dired-mode nil)
+      (_ t))))
+(advice-add #'doom-buffer-frame-predicate :override #'+amos*doom-buffer-frame-predicate)
+
+(defun +amos-display-buffer-no-reuse-window (&rest _) nil)
+
+(defun +amos/exec-shell-command ()
+  (interactive)
+  (ivy-read "Shell command: " (split-string (shell-command-to-string "bash -c 'compgen -c' | tail -n +85"))
+            :action #'compile
+            :caller '+amos-exec-shell-command))

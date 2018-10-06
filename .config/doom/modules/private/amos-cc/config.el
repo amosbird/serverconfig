@@ -265,17 +265,20 @@ The insertion will be repeated COUNT times."
         "/usr/include"
         ))
 
-(add-hook! (c-mode c++-mode)
+(add-hook! 'c-mode-common-hook
   (flycheck-mode +1)
   (eldoc-mode -1)
-  (when (--any? (string-prefix-p it default-directory) +amos-system-header-paths)
-    (c-make-styles-buffer-local t)
+  (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
     (c-set-style "gnu"))
-  ;; (setq-local indent-region-function #'lsp-format-region)
-  ;; (setq-local indent-line-function (lambda (&rest _) (lsp-format-region (line-beginning-position) (line-end-position))))
-  )
+  (if (s-starts-with? "/xxxxxx/home/amos/cc/" default-directory)
+      (lsp-clangd-c++-enable)
+    (add-hook 'after-save-hook #'ccls/diagnostic nil t)
+    (add-hook 'lsp-after-open-hook #'ccls-code-lens-mode nil t)
+    (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
+    (ccls//enable)))
 
-(add-hook! 'c++-mode-hook #'modern-c++-font-lock-mode)
+(add-hook 'c++-mode-hook #'modern-c++-font-lock-mode)
+
 (set-company-backend!
   '(c-mode c++-mode objc-mode)
   'company-dabbrev-code)
@@ -293,9 +296,10 @@ The insertion will be repeated COUNT times."
   (setq
    ccls-project-root-matchers
    '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
-   ccls-sem-highlight-method 'font-lock)
-  ;; ccls-sem-highlight-method 'overlay)
-  ;; ccls-sem-highlight-method nil)
+   ;; ccls-sem-highlight-method 'font-lock
+   ;; ccls-sem-highlight-method 'overlay
+   ccls-sem-highlight-method nil
+   )
 
   (defun ccls/includes (&optional force)
     (interactive)
@@ -408,11 +412,7 @@ The insertion will be repeated COUNT times."
      'write "textDocument/references"
      (plist-put (lsp--text-document-position-params) :context
                 '(:role 16))))
-
-  (add-hook 'c-mode-common-hook #'ccls//enable)
-  (add-hook 'after-save-hook #'ccls/diagnostic)
-  (add-hook 'lsp-after-open-hook #'ccls-code-lens-mode)
-  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer))
+  )
 
 (defun ccls//enable ()
   (direnv-update-environment)

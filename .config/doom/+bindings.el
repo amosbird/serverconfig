@@ -16,6 +16,7 @@
  "<f12>"         #'+amos/reset-cursor
  "<f11>"         #'+amos/dump-evil-jump-list
  "M-x"           #'execute-extended-command
+ "M-X"           #'+amos/exec-shell-command
  "C-M-u"         #'+amos/avy-open-url
  "<f1>"          #'+amos/reset-zoom
  "<f2>"          #'+amos/decrease-zoom
@@ -37,6 +38,7 @@
  "C-<comma>"     #'+amos/workspace-switch-left
  "C-<period>"    #'+amos/workspace-switch-right)
 
+;; Q U M H
 (map!
  :gn "M-W"                   #'+amos/kill-current-buffer
  :gn "M-w"                   #'+amos/wipe-current-buffer
@@ -138,8 +140,10 @@
  :o "s"                      #'evil-surround-edit
  :v "v"                      #'er/expand-region
  :v "V"                      #'er/contract-region
- :n "p"                      #'+amos@paste/evil-paste-after
- :n "P"                      #'+amos@paste/evil-paste-before
+ :n "p"                      #'evil-paste-after
+ :n "P"                      #'evil-paste-before
+ :n "K"                      #'evil-paste-pop
+ :n "L"                      #'evil-paste-pop-next
  :n "("                      #'+amos/smart-jumper-backward
  :n ")"                      #'+amos/smart-jumper-forward
  :v "<"                      #'+evil/visual-dedent
@@ -605,14 +609,8 @@
 
  (:after evil-snipe
    :map evil-snipe-parent-transient-map
-   :g "n" #'evil-snipe-repeat
    :g "j" #'evil-snipe-repeat
-   :g "k" #'evil-snipe-repeat-reverse
-   :g "SPC" #'evil-snipe-repeat
-   :g "DEL" #'evil-snipe-repeat-reverse
-   :g [backspace] #'evil-snipe-repeat-reverse
-   :g "N" #'evil-snipe-repeat-reverse
-   :g "p" #'evil-snipe-repeat-reverse)
+   :g "k" #'evil-snipe-repeat-reverse)
 
  (:map key-translation-map
    "\035"          (kbd "<escape>")
@@ -675,3 +673,10 @@
              (">" . nil)
              ("C-i" . company-complete-selection)
              ("C-h" . company-quickhelp-manual-begin)))
+
+(map! :map* (sh-mode-map
+             fish-mode-map
+             python-mode-map
+             lua-mode-map
+             perl-mode-map)
+      :ni [C-return] (lambda! (compile (buffer-file-name) t)))

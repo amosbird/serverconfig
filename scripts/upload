@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 
 errlog() {
-	notify-send -a "teiler" "Error Log" "$(cat /dev/fd/2)";
+	notify-send -a "teiler" "Error Log" "$(cat /dev/fd/2)"
 	exit 1
 }
 set -o pipefail
 
-if [[ -z $GUI ]]
-then
-    curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2> /dev/null | osc52clip
+if [[ -z $2 ]]; then
+	if [[ -z $GUI ]]; then
+		curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null | osc52clip
+	else
+		(curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null | copyq add - && copyq select 0) || errlog
+		notify-send -a "teiler" "Text Uploaded" "$(copyq clipboard)"
+	fi
 else
-    (curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2> /dev/null | copyq add - && copyq select 0) || errlog; notify-send -a "teiler" "Text Uploaded" "$(copyq clipboard)"
+	curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null
 fi
