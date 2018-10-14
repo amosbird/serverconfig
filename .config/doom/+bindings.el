@@ -191,9 +191,8 @@
    "C-SPC" #'easy-hugo)
 
  (:prefix "SPC"
-   :desc "Toggle mc"                       :nv "m"   #'+amos/toggle-mc
-   ;; :desc "Toggle mc"                       :nv "SPC" #'+amos/dired-jump
-   :desc "Toggle mc"                       :nv "SPC" #'counsel-find-file
+   :desc "Find file in cwd"                :nv "m"   #'find-file
+   :desc "Toggle mc"                       :nv "SPC" #'+amos/toggle-mc
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
    :desc "Find file in project (no cache)" :nv ">"   #'+amos/projectile-find-file-no-cache
    :desc "Find recent file"                :nv ","   #'counsel-recentf
@@ -344,8 +343,8 @@
 
  (:after swiper
    :map swiper-map
-   "C-c o"    #'+ivy/wgrep-occur
-   "C-c C-o"  #'+ivy/wgrep-occur)
+   "C-c o"    #'+amos/wgrep-occur
+   "C-c C-o"  #'+amos/wgrep-occur)
 
  (:after counsel
    :map counsel-ag-map
@@ -508,6 +507,10 @@
      :n "RET"      #'ccls-tree-press-and-switch
      :n "<left>"   #'ccls-tree-collapse-or-select-parent
      :n "<right>"  #'ccls-tree-expand-or-set-root))
+
+ (:after comint
+   (:map comint-mode-map
+     "C-d" nil))
 
  (:after debug
    ;; For elisp debugging

@@ -272,8 +272,7 @@ The insertion will be repeated COUNT times."
     (c-set-style "gnu"))
   (if (s-starts-with? "/xxxxxx/home/amos/cc/" default-directory)
       (lsp-clangd-c++-enable)
-    (add-hook 'after-save-hook #'ccls/diagnostic nil t)
-    (add-hook 'lsp-after-open-hook #'ccls-code-lens-mode nil t)
+    ;; (add-hook 'lsp-after-open-hook #'ccls-code-lens-mode nil t)
     (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
     (ccls//enable)))
 

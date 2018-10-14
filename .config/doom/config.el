@@ -145,9 +145,6 @@
   (setq evil-multiedit-follow-matches t))
 
 (after! smartparens
-  (require 'smartparens-config)
-  (setf (caddr (assoc 'emacs-lisp-mode sp-sexp-prefix)) (rx (1+ (or "`" "," ",@" "'" "#'"))))
-
   ;; Auto-close more conservatively
   (let ((unless-list '(sp-point-before-word-p
                        sp-point-after-word-p
@@ -1169,36 +1166,40 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (evil-define-command +amos/forward-delete-word (&optional subword)
   (evil-signal-at-bob-or-eob 1)
-  (unless (+amos-insert-state-p)
-    (+amos-insert-state))
-  (mkr! (kill-region (point)
-                     (max
-                      (save-excursion
-                        (if (looking-at "[ \t\r\n\v\f]")
-                            (progn
-                              (re-search-forward "[^ \t\r\n\v\f]")
-                              (backward-char))
-                          (+amos-word-movement-internal subword 1))
-                        (point))
-                      (line-beginning-position)))))
+  (when (or (not (or (evil-multiedit-state-p) (evil-multiedit-insert-state-p)))
+            (iedit-find-overlay-at-point (point) 'iedit-occurrence-overlay-name))
+    (unless (+amos-insert-state-p)
+      (+amos-insert-state))
+    (mkr! (kill-region (point)
+                       (max
+                        (save-excursion
+                          (if (looking-at "[ \t\r\n\v\f]")
+                              (progn
+                                (re-search-forward "[^ \t\r\n\v\f]")
+                                (backward-char))
+                            (+amos-word-movement-internal subword 1))
+                          (point))
+                        (line-beginning-position))))))
 (evil-define-command +amos/forward-delete-subword ()
   (+amos/forward-delete-word t))
 
 (evil-define-command +amos/backward-delete-word (&optional subword)
   (evil-signal-at-bob-or-eob -1)
-  (unless (or (eolp) (+amos-insert-state-p))
-    (+amos-insert-state)
-    (forward-char))
-  (mkr! (kill-region (point)
-                     (min
-                      (save-excursion
-                        (if (looking-back "[ \t\r\n\v\f]")
-                            (progn
-                              (re-search-backward "[^ \t\r\n\v\f]")
-                              (forward-char))
-                          (+amos-word-movement-internal subword -1))
-                        (point))
-                      (line-end-position)))))
+  (when (or (not (or (evil-multiedit-state-p) (evil-multiedit-insert-state-p)))
+            (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name))
+    (unless (or (eolp) (+amos-insert-state-p))
+      (+amos-insert-state)
+      (forward-char))
+    (mkr! (kill-region (point)
+                       (min
+                        (save-excursion
+                          (if (looking-back "[ \t\r\n\v\f]")
+                              (progn
+                                (re-search-backward "[^ \t\r\n\v\f]")
+                                (forward-char))
+                            (+amos-word-movement-internal subword -1))
+                          (point))
+                        (line-end-position))))))
 (evil-define-command +amos/backward-delete-subword ()
   (+amos/backward-delete-word t))
 
@@ -1416,6 +1417,7 @@ it will restore the window configuration to prior to full-framing."
 
 (defun save-buffer-maybe ()
   (interactive)
+  (ccls/diagnostic)
   (when (and (buffer-file-name)
              (not defining-kbd-macro)
              (buffer-modified-p))
@@ -1850,7 +1852,7 @@ representation of `NUMBER' is smaller."
      :slot 2 :vslot 2 :size 0.45 :select t)
     ("^\\(?:\\*magit\\|magit:\\)" :ignore t)
     ("^\\*ivy-occur"
-     :side right :size 0.9 :select t))
+     :side right :size 0.9 :select t :ttl 0))
   '(("^\\*Backtrace" :side right :size 0.5 :quit nil)))
 
 (evil-define-command +amos*evil-visual-paste (count &optional register)
@@ -3299,6 +3301,8 @@ In Insert state, insert a newline."
               company-dabbrev-downcase nil
               company-dabbrev-ignore-case nil
               company-dabbrev-code-other-buffers t
+              company-dabbrev-code-time-limit 0.3
+              company-dabbrev-ignore-buffers "\\`[ *]"
               company-tooltip-align-annotations t
               company-require-match 'never
               company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
@@ -3411,3 +3415,110 @@ There is no need to advice `company-select-previous' because it calls
   (ivy-read "Shell command: " (split-string (shell-command-to-string "bash -c 'compgen -c' | tail -n +85"))
             :action #'compile
             :caller '+amos-exec-shell-command))
+
+;; get rid of minibuffer resize limitation
+(defun +amos*window--resize-mini-window (window delta)
+  "Resize minibuffer window WINDOW by DELTA pixels.
+If WINDOW cannot be resized by DELTA pixels make it as large (or
+as small) as possible, but don't signal an error."
+  (when (window-minibuffer-p window)
+    (let* ((frame (window-frame window))
+	   (root (frame-root-window frame))
+	   (height (window-pixel-height window))
+	   (min-delta
+	    (- (window-pixel-height root)
+	       (window-min-size root nil t t)))) ;; amos
+      ;; Sanitize DELTA.
+      (cond
+       ((<= (+ height delta) 0)
+	(setq delta (- (frame-char-height (window-frame window)) height)))
+       ((> delta min-delta)
+	(setq delta min-delta)))
+
+      (unless (zerop delta)
+	;; Resize now.
+	(window--resize-reset frame)
+	;; Ideally we should be able to resize just the last child of root
+	;; here.  See the comment in `resize-root-window-vertically' for
+	;; why we do not do that.
+	(window--resize-this-window root (- delta) nil nil t)
+	(set-window-new-pixel window (+ height delta))
+	;; The following routine catches the case where we want to resize
+	;; a minibuffer-only frame.
+	(when (resize-mini-window-internal window)
+	  (window--pixel-to-total frame)
+	  (run-window-configuration-change-hook frame))))))
+(advice-add #'window--resize-mini-window :override #'+amos*window--resize-mini-window)
+
+
+(defun +amos/wgrep-occur ()
+  "Invoke the search+replace wgrep buffer on the current ag/rg search results."
+  (interactive)
+  (unless (window-minibuffer-p)
+    (user-error "No completion session is active"))
+  (require 'wgrep)
+  (let* ((ob (ivy-state-buffer ivy-last))
+         (caller (ivy-state-caller ivy-last))
+         (recursive (and (eq (with-current-buffer ob major-mode) 'ivy-occur-grep-mode)
+                         (eq caller 'swiper)))
+         (occur-fn (plist-get ivy--occurs-list caller))
+         (buffer (generate-new-buffer
+                    (format "*ivy-occur%s \"%s\"*"
+                            (if caller (concat " " (prin1-to-string caller)) "")
+                            ivy-text))))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (if recursive (+amos/swiper-occur)
+          (funcall occur-fn)))
+      (setf (ivy-state-text ivy-last) ivy-text)
+      (setq ivy-occur-last ivy-last)
+      (setq-local ivy--directory ivy--directory))
+    (ivy-exit-with-action
+     `(lambda (_)
+        (if ,recursive
+            (progn
+              (switch-to-buffer ,buffer)
+              (kill-buffer ,ob))
+          (pop-to-buffer ,buffer))
+        (ivy-wgrep-change-to-wgrep-mode)))))
+
+(defun +amos/swiper-occur (&optional revert)
+  "Generate a custom occur buffer for `swiper'.
+When REVERT is non-nil, regenerate the current *ivy-occur* buffer.
+When capture groups are present in the input, print them instead of lines."
+  (let* ((buffer (ivy-state-buffer ivy-last))
+         (re (progn (string-match "\"\\(.*\\)\"" (buffer-name))
+                    (match-string 1 (buffer-name))))
+         (re (mapconcat #'identity (ivy--split re) ".*?"))
+         (cands
+          (mapcar
+           (lambda (s)
+             (let* ((n (get-text-property 0 'swiper-line-number s))
+                    (i (string-match-p "[ \t\n\r]+\\'" n)))
+               (when i (setq n (substring n 0 i)))
+               (put-text-property 0 (length n) 'face 'compilation-line-number n)
+               (format "%s" (substring s 1))))
+           (if (not revert)
+               ivy--old-cands
+             (setq ivy--old-re nil)
+             (let ((ivy--regex-function 'swiper--re-builder))
+               (ivy--filter re (with-current-buffer buffer
+                                 (swiper--candidates))))))))
+    (if (string-match-p "\\\\(" re)
+        (insert
+         (mapconcat #'identity
+                    (swiper--extract-matches
+                     re (with-current-buffer buffer
+                          (swiper--candidates)))
+                    "\n"))
+      (unless (eq major-mode 'ivy-occur-grep-mode)
+        (ivy-occur-grep-mode)
+        (font-lock-mode -1))
+      (setq swiper--current-window-start nil)
+      (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
+                      default-directory))
+      (insert (format "%d candidates:\n" (length cands)))
+      (ivy--occur-insert-lines cands)
+      (goto-char (point-min))
+      (forward-line 4))))

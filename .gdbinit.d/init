@@ -80,21 +80,21 @@ ThreadSwitchCommand()
 #         if ( event.inferior_thread is not None) :
 #             print ("thread num: %s" % (event.inferior_thread.num))
 
-def breakpoint_stop_handler (event):
-    print ("why")
-    if (isinstance (event, gdb.StopEvent)):
-        print ("event type: stop")
-    if (isinstance (event, gdb.BreakpointEvent)):
-        print ("stop reason: breakpoint")
-        print ("first breakpoint number: %s" % (event.breakpoint.number))
-        for bp in event.breakpoints:
-            print ("breakpoint number: %s" % (bp.number))
-        if ( event.inferior_thread is not None) :
-            print ("thread num: %s" % (event.inferior_thread.num))
-        else:
-            print ("all threads stopped")
+# def breakpoint_stop_handler (event):
+#     print ("why")
+#     if (isinstance (event, gdb.StopEvent)):
+#         print ("event type: stop")
+#     if (isinstance (event, gdb.BreakpointEvent)):
+#         print ("stop reason: breakpoint")
+#         print ("first breakpoint number: %s" % (event.breakpoint.number))
+#         for bp in event.breakpoints:
+#             print ("breakpoint number: %s" % (bp.number))
+#         if ( event.inferior_thread is not None) :
+#             print ("thread num: %s" % (event.inferior_thread.num))
+#         else:
+#             print ("all threads stopped")
 
-gdb.events.stop.connect(breakpoint_stop_handler)
+# gdb.events.stop.connect(breakpoint_stop_handler)
 end
 
 # enable auto-load
@@ -130,29 +130,29 @@ alias -a W = dashboard expressions unwatch
 #   afterbird
 # end
 
-define hookpost-up
-  dashboard
-end
+# define hookpost-up
+#   dashboard
+# end
 
-define hookpost-down
-  dashboard
-end
+# define hookpost-down
+#   dashboard
+# end
 
-define hookpost-frame
-  dashboard
-end
+# define hookpost-frame
+#   dashboard
+# end
 
-define hookpost-stop
-  dashboard
-end
+# define hookpost-stop
+#   dashboard
+# end
 
-define hookpost-continue
-  dashboard
-end
+# define hookpost-continue
+#   dashboard
+# end
 
-define hookpost-thread
-  dashboard
-end
+# define hookpost-thread
+#   dashboard
+# end
 
 # handle SIGTSTP noprint nostop pass
 # handle SIGQUIT noprint nostop pass

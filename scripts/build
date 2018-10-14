@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+mkdir -p release
+cd release
+case "$1" in
+    llvm)
+        cmake ../llvm -G Ninja -D LLVM_TARGETS_TO_BUILD='X86' -D LLVM_CCACHE_BUILD=On -D LLVM_ENABLE_PROJECTS='clang;libcxx;libcxxabi;compiler-rt;lld;polly' -D CMAKE_BUILD_TYPE=Release -DLLVM_BUILD_LLVM_DYLIB=On -D CMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1' ../llvm
+        ninja
+        ;;
+    ccls)
+        cmake .. -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=On -DSYSTEM_CLANG=On -DUSE_SHARED_LLVM=On -DCMAKE_PREFIX_PATH="$HOME/git/llvm/release;$HOME/git/llvm/release/tools/clang;$HOME/git/llvm/llvm;$HOME/git/llvm/clang"
+        ninja
+        ;;
+esac

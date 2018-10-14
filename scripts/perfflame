@@ -1,0 +1,32 @@
+#!/usr/bin/env fish
+
+# set -l options -x 'f,F' -x 'F,s' 'h/help' 'f/file' 'F/fifo' 's/suffix=' 'T-testing'
+# argparse -n psub --max-args=0 $options -- $argv
+argparse -n perfflame 'h/help' 'p=' -- $argv || exit 1
+if set -q _flag_h
+    echo 'Usage: perfflame [-h|--help] ...'
+    exit 1
+end
+
+if test 1 -le $_flag_p > /dev/null 2> /dev/null
+    mkdir -p ~/perfdata
+    pushd ~/perfdata
+    set -l df (mktemp (date '+%Y-%m-%d-%H_%M_%S_')XXX.data)
+    set -l ds (basename -s .data $df).svg
+    set -l cols (tput cols)
+    set -l rows (tput lines)
+    set -l msg "Start recording process "$_flag_p" ("(ps -p $_flag_p -o comm=)"). Hit Ctrl-C to finish."
+    set -l centercol (math -s 0 \({$cols}-(string length $msg)\)/2)
+    set -l centercol2 (math -s 0 \({$cols}-8\)/2)
+    set -l centerrow (math -s 0 $rows/2-1)
+    tput smcup
+    tput cup $centerrow $centercol
+    set -l msg \e\[1m\e\[92m$msg\e\[0m
+    set -l clock \e\[1m\e\[33m(string repeat -n $centercol2 " ")
+    echo $msg
+    echo
+    # need time to resume execution, hacky
+    time sw $clock $df $ds perf record -F 99 -g -p $_flag_p -o $df ^ /dev/null
+    tput rmcup
+    popd
+end
