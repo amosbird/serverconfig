@@ -3568,3 +3568,13 @@ When capture groups are present in the input, print them instead of lines."
       (ivy-wgrep-change-to-wgrep-mode)
       (goto-char (point-min))
       (forward-line 4))))
+
+(defun +amos/delete-nonascii (beg end)
+  "Delete binary characters in a region"
+  (interactive "r")
+  (save-excursion
+    (save-restriction
+      (narrow-to-region beg end)
+      (goto-char (point-min))
+      (while (re-search-forward "[^[:ascii:]]" nil t)
+        (replace-match "")))))
