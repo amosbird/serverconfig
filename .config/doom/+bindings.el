@@ -90,7 +90,7 @@
  :n "C-p"                    #'+amos/counsel-projectile-switch-project
  :nv "C-f"                   #'+amos/avy-goto-char-timer
  :n "C-l"                    #'+amos/redisplay-and-recenter
- :n "C-s"                    #'swiper
+ :n "C-s"                    #'+amos/swiper
  :n "C-S-s"                  #'+amos/counsel-rg-projectile ;; gui
  :n "C-S-d"                  #'+amos/counsel-rg-cur-dir ;; gui
  :nv "C-S-f"                 #'+amos/format-buffer ;; gui

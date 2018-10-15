@@ -1785,13 +1785,6 @@ representation of `NUMBER' is smaller."
     (projectile-find-other-file)))
 
 (setq interprogram-paste-function #'x-get-selection)
-(setq +popup-default-alist
-      '((slot . 1)
-        (vslot . -1)
-        (side . right)
-        (size . 0.5)
-        (reusable-frames . visible)))
-(map-put +popup-default-parameters 'modeline t)
 (advice-add #'hide-mode-line-mode :override #'ignore)
 
 ;; (defun +amos/fcitx--activate-proc ()
@@ -1815,9 +1808,12 @@ representation of `NUMBER' is smaller."
   (--first (not (with-current-buffer it (derived-mode-p 'dired-mode))) (buffer-list)))
 
 (setq +popup-default-alist
-      '((window-height . 0.16)
+      '((slot . 1)
+        (vslot . -1)
+        (side . right)
+        (size . 0.5)
         (reusable-frames . nil)))
-
+(map-put +popup-default-parameters 'modeline t)
 (setq +popup-default-display-buffer-actions
       '(display-buffer-pop-up-window
         +popup-display-buffer-stacked-side-window))
@@ -1827,6 +1823,8 @@ representation of `NUMBER' is smaller."
     ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit))
   '(("^\\*Completions"
      :slot -1 :vslot -2 :ttl 0)
+    ("^\\*Warning*"
+     :actions (+popup-display-buffer-stacked-side-window))
     ("^\\*git-gutter*"
      :side right :size 0.5)
     ("^\\*Compil\\(?:ation\\|e-Log\\)"
@@ -3423,33 +3421,43 @@ If WINDOW cannot be resized by DELTA pixels make it as large (or
 as small) as possible, but don't signal an error."
   (when (window-minibuffer-p window)
     (let* ((frame (window-frame window))
-	   (root (frame-root-window frame))
-	   (height (window-pixel-height window))
-	   (min-delta
-	    (- (window-pixel-height root)
-	       (window-min-size root nil t t)))) ;; amos
+	       (root (frame-root-window frame))
+	       (height (window-pixel-height window))
+	       (min-delta
+	        (- (window-pixel-height root)
+	           (window-min-size root nil t t)))) ;; amos
       ;; Sanitize DELTA.
       (cond
        ((<= (+ height delta) 0)
-	(setq delta (- (frame-char-height (window-frame window)) height)))
+	    (setq delta (- (frame-char-height (window-frame window)) height)))
        ((> delta min-delta)
-	(setq delta min-delta)))
+	    (setq delta min-delta)))
 
       (unless (zerop delta)
-	;; Resize now.
-	(window--resize-reset frame)
-	;; Ideally we should be able to resize just the last child of root
-	;; here.  See the comment in `resize-root-window-vertically' for
-	;; why we do not do that.
-	(window--resize-this-window root (- delta) nil nil t)
-	(set-window-new-pixel window (+ height delta))
-	;; The following routine catches the case where we want to resize
-	;; a minibuffer-only frame.
-	(when (resize-mini-window-internal window)
-	  (window--pixel-to-total frame)
-	  (run-window-configuration-change-hook frame))))))
+	    ;; Resize now.
+	    (window--resize-reset frame)
+	    ;; Ideally we should be able to resize just the last child of root
+	    ;; here.  See the comment in `resize-root-window-vertically' for
+	    ;; why we do not do that.
+	    (window--resize-this-window root (- delta) nil nil t)
+	    (set-window-new-pixel window (+ height delta))
+	    ;; The following routine catches the case where we want to resize
+	    ;; a minibuffer-only frame.
+	    (when (resize-mini-window-internal window)
+	      (window--pixel-to-total frame)
+	      (run-window-configuration-change-hook frame))))))
 (advice-add #'window--resize-mini-window :override #'+amos*window--resize-mini-window)
 
+(defun +amos/swiper ()
+  (interactive)
+  (if (eq major-mode 'ivy-occur-grep-mode)
+      (save-restriction
+        (save-excursion
+          (goto-char 1)
+          (forward-line 4)
+          (narrow-to-region (point) (point-max)))
+        (swiper))
+    (swiper)))
 
 (defun +amos/wgrep-occur ()
   "Invoke the search+replace wgrep buffer on the current ag/rg search results."
@@ -3463,9 +3471,9 @@ as small) as possible, but don't signal an error."
                          (eq caller 'swiper)))
          (occur-fn (plist-get ivy--occurs-list caller))
          (buffer (generate-new-buffer
-                    (format "*ivy-occur%s \"%s\"*"
-                            (if caller (concat " " (prin1-to-string caller)) "")
-                            ivy-text))))
+                  (format "*ivy-occur%s \"%s\"*"
+                          (if caller (concat " " (prin1-to-string caller)) "")
+                          ivy-text))))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
         (erase-buffer)
