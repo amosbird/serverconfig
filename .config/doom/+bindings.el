@@ -331,6 +331,12 @@
    "C-s"        (lambda! (company-complete-common) (company-filter-candidates))
    "SPC"        #'+amos/company-search-abort
    ";"          #'+amos/company-search-abort
+   "_"          #'+amos/company-search-abort
+   "["          #'+amos/company-search-abort
+   "]"          #'+amos/company-search-abort
+   ","          #'+amos/company-search-abort
+   "-"          #'+amos/company-search-abort
+   "."          #'+amos/company-search-abort
    ":"          #'+amos/company-search-abort
    "<"          #'+amos/company-search-abort
    ">"          #'+amos/company-search-abort
@@ -343,16 +349,8 @@
 
  (:after swiper
    :map swiper-map
-   "C-c o"    #'+amos/wgrep-occur
-   "C-c C-o"  #'+amos/wgrep-occur)
-
- (:after counsel
-   :map counsel-ag-map
-   "C-c o"    #'+ivy/wgrep-occur
-   "C-c C-o"  #'+ivy/wgrep-occur
-   "C-i"      #'ivy-call
-   "C-SPC"    #'counsel-git-grep-recenter
-   "M-RET"    (+ivy-do-action! #'+ivy-git-grep-other-window-action))
+   "M-j"      #'ivy-next-line
+   "M-k"      #'ivy-previous-line)
 
  (:after dired
    :map dired-mode-map
@@ -444,6 +442,12 @@
  ;; ivy
  (:after ivy
    :map ivy-minibuffer-map
+   "C-<return>" #'ivy-immediate-done
+   "C-c o"    #'+ivy/wgrep-occur
+   "C-c C-o"  #'+ivy/wgrep-occur
+   "M-j"      #'ivy-next-line-and-call
+   "M-k"      #'ivy-previous-line-and-call
+   "C-i"      #'ivy-call
    "C-a"    #'move-beginning-of-line
    "C-b"    #'backward-char
    "C-d"    #'+amos/delete-char
@@ -463,7 +467,6 @@
    "M-D"    #'+amos/forward-delete-subword
    "M-F"    #'+amos/forward-subword-insert
    "M-g"    #'+amos/ivy-complete-dir
-   "M-j"    #'ivy-immediate-done
    "M-r"    #'ivy-toggle-fuzzy
    "M-z"    #'undo
    "TAB"    #'ivy-call

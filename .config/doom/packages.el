@@ -5,6 +5,7 @@
                    evil-matchit
                    evil-numbers
                    git-gutter-fringe
+                   magithub
                    magit-todos
                    smerge-mode
                    solaire-mode

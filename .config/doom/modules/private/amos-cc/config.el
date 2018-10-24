@@ -87,7 +87,9 @@ The insertion will be repeated COUNT times."
           :n "M-v"      #'+amos/lsp-ui-imenu
           :n "gh"       #'ccls-call-hierarchy
           :n "gR"       #'ccls/callers
-          :n "gt"       #'ccls/inheritances
+          :n "gb"       #'ccls/inheritances
+          :n "gt"       (lambda! (ccls/inheritance t))
+          :n "gT"       #'ccls/inheritance
           :n "ge"       #'lsp-execute-code-action
           :n "M-u"      #'ccls-code-lens-mode
           :n "M-o"      #'lsp-ui-sideline-mode
@@ -280,7 +282,7 @@ The insertion will be repeated COUNT times."
 
 (set-company-backend!
   '(c-mode c++-mode objc-mode)
-  'company-dabbrev-code)
+  'company-lsp)
 
 (after! lsp-mode
   (lsp-define-stdio-client lsp-clangd-c++
@@ -302,7 +304,7 @@ The insertion will be repeated COUNT times."
 
   (defun ccls/includes (&optional force)
     (interactive)
-    (if (ccls--is-ccls-buffer)
+    (if lsp--cur-workspace
         (let ((x (intern (concat (doom-project-root) "--includes"))))
           (unless (and (boundp x) (not force))
             (setq x
@@ -312,15 +314,33 @@ The insertion will be repeated COUNT times."
 
   (defun ccls/diagnostic ()
     (interactive)
-    (if (ccls--is-ccls-buffer)
+    (if lsp--cur-workspace
         (lsp--send-notification
          (lsp--make-notification
           "$ccls/diagnostic"
           `(:textDocument ,(lsp--text-document-identifier))))))
 
-  (defun ccls/inheritances ()
+  (defun ccls/inheritance (&optional derived)
     (interactive)
-    (if (ccls--is-ccls-buffer)
+    (if lsp--cur-workspace
+        (let* ((input (symbol-at-point))
+               (xrefs
+                (-some->> (lsp--send-request
+                           (lsp--make-request "$ccls/inheritance"
+                                              `(:textDocument ,(lsp--text-document-identifier)
+                                                :position ,(lsp--cur-position)
+                                                :levels 100
+                                                :derived ,derived)))
+                          (lsp-ui-peek--to-sequence)
+                          (lsp--locations-to-xref-items)
+                          (-filter 'identity))))
+          (unless xrefs
+            (user-error "No inheritances found for: %s" input))
+          (+amos-ivy-xref xrefs 'inheritances))))
+
+  (defun ccls/inheritances (&optional derived)
+    (interactive)
+    (if lsp--cur-workspace
         (let* ((input (symbol-at-point))
                (xrefs
                 (-some->> (lsp--send-request

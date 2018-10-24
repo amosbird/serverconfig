@@ -1296,6 +1296,32 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
          (if subword
              +amos-subword-find-word-boundary-function-table
            +amos-subword-empty-char-table)))
+    (goto-char
+     (funcall (if (< 0 dir) #'min #'max)
+              (save-excursion
+                (let ((word-separating-categories evil-cjk-word-separating-categories)
+                      (word-combining-categories evil-cjk-word-combining-categories))
+                  (if subword (push '(?u . ?U) word-separating-categories)))
+                (forward-word dir)
+                (point))
+              (save-excursion
+                (if (< 0 dir)
+                    (if-let ((overlay (iedit-find-overlay-at-point (point) 'iedit-occurrence-overlay-name)))
+                        (goto-char (overlay-end overlay))
+                      (goto-char (line-end-position)))
+                  (if-let ((overlay (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name)))
+                      (goto-char (overlay-start overlay))
+                    (goto-char (line-beginning-position))))
+                (point))
+              (save-excursion
+                (forward-thing 'evil-word dir)
+                (point))))))
+
+(defun +amos-word-movement-internal (subword dir)
+  (let ((find-word-boundary-function-table
+         (if subword
+             +amos-subword-find-word-boundary-function-table
+           +amos-subword-empty-char-table)))
     (evil-forward-nearest
      dir
      (lambda (&optional cnt)
@@ -1307,10 +1333,10 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
        (if (= pnt (point)) cnt 0))
      (lambda (&optional cnt)
        (if (< 0 cnt)
-           (if (iedit-find-overlay-at-point (point) 'iedit-occurrence-overlay-name)
+           (if-let ((overlay (iedit-find-overlay-at-point (point) 'iedit-occurrence-overlay-name)))
                (goto-char (overlay-end overlay))
              (goto-char (line-end-position)))
-         (if (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name)
+         (if-let ((overlay (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name)))
              (goto-char (overlay-start overlay))
            (goto-char (line-beginning-position))))
        0)
@@ -1417,7 +1443,6 @@ it will restore the window configuration to prior to full-framing."
 
 (defun save-buffer-maybe ()
   (interactive)
-  (ccls/diagnostic)
   (when (and (buffer-file-name)
              (not defining-kbd-macro)
              (buffer-modified-p))
@@ -1556,10 +1581,11 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
      ("f" find-file-other-frame "other frame")
      ("x" counsel-find-file-extern "open externally")))
 
-  (defun amos-recentf-sort-function (a b)
-    (let ((project-root (doom-project-root)))
-      (or (file-in-directory-p a project-root) (not (file-in-directory-p b project-root)))))
-  (add-to-list 'ivy-sort-functions-alist '(counsel-recentf . amos-recentf-sort-function))
+  ;; SLOWWWWW
+  ;; (defun amos-recentf-sort-function (a b)
+  ;;   (let ((project-root (doom-project-root)))
+  ;;     (or (file-in-directory-p a project-root) (not (file-in-directory-p b project-root)))))
+  ;; (add-to-list 'ivy-sort-functions-alist '(counsel-recentf . amos-recentf-sort-function))
 
   (dolist (cmd '(counsel-find-file +amos/counsel-projectile-switch-project))
     (ivy-add-actions
