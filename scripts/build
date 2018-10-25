@@ -15,6 +15,10 @@ case "$1" in
         cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On
         ninja
         ;;
+    fish)
+        cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On
+        ninja
+        ;;
 esac
 
 ln -sf release/compile_commands.json .
