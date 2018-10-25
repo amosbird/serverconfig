@@ -2022,7 +2022,7 @@ representation of `NUMBER' is smaller."
   "Copy the current buffer's filename with line number to the kill ring."
   (interactive)
   (if-let* ((filename (or buffer-file-name (bound-and-true-p list-buffers-directory))))
-      (message (kill-new (concat "b " filename ":" (number-to-string (line-number-at-pos)))))
+      (message (kill-new (concat "b" filename ":" (number-to-string (line-number-at-pos)) "\n")))
     (error "Couldn't find filename in current buffer")))
 
 (defun +amos/evil-insert-line-above (count)
