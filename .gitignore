@@ -26,3 +26,4 @@ fishd.*
 /.docker/.buildNodeID
 /.config/fish/fish_universal_variables
 /.config/fcitx/profile*
+/.config/qutebrowser/qsettings/QtProject.conf

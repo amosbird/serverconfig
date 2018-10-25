@@ -28,5 +28,5 @@ imap <C-v> <PageDown>
 map w iw<Space>
 map W iW<Space>
 map X :X<CR>
-map b ib
+map b ib<Space>
 map t it<Space>

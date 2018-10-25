@@ -4,7 +4,7 @@
 
 ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
-gw=$(ip r g 223.5.5.5 | cut -d" " -f3)
+gw=$(ip r g 168.235.105.19 | cut -d" " -f3)
 
 ip -batch - <<EOF
     r a 1.0.1.0/24 via $gw table cn
@@ -5017,8 +5017,19 @@ ip r a 13.75.109.155/32 via $gw table cn
 
 ip rule add table cn pref 30000
 
-ip r a 0.0.0.0/1 via 172.26.133.192
-ip r a 128.0.0.0/1 via 172.26.133.192
+
+if ! pgrep -f 'obfs-local'
+then
+    sudo -u amos obfs-local -f /tmp/obfs.pid -s 168.235.105.19 -p 8139 -l 4555 --obfs http --obfs-host www.bing.com
+fi
+
+if ! pgrep -f 'https-dns'
+then
+    sudo -u amos https-dns_linux_amd64 -d 8.8.8.8 --edns 159.226.39.0/24 -U &
+fi
+# sudo -u amos tun
+#ip r a 0.0.0.0/1 via 172.26.133.192
+#ip r a 128.0.0.0/1 via 172.26.133.192
 
 #ip r a 0.0.0.0/1 via 172.26.189.83
 #ip r a 128.0.0.0/1 via 172.26.189.83
