@@ -299,7 +299,7 @@ function fish_user_key_bindings
     bind \eg fzf-jump-cd
     bind \eo myprevd
     bind \ei mynextd
-    bind \eR pet-select
+    # bind \eR pet-select
     # bind \em fzf-command-go
     bind \cv fzf-select
     bind \er open-ranger

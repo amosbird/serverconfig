@@ -3578,3 +3578,15 @@ When capture groups are present in the input, print them instead of lines."
       (goto-char (point-min))
       (while (re-search-forward "[^[:ascii:]]" nil t)
         (replace-match "")))))
+
+(evil-define-command +amos/new-empty-fish-buffer (file pos)
+  (find-file file)
+  (goto-char pos)
+  (fish-mode)
+  (setq buffer-offer-save nil)
+  (setq mode-line-format nil)
+  (general-define-key
+   :states '(normal insert)
+   :keymaps 'local
+   "C-c C-c" (lambda! (save-buffer) (+amos/kill-current-buffer) (delete-frame))
+   "C-c C-k" (lambda! (set-buffer-modified-p nil) (server-send-string (car server-clients) "-error die"))))
