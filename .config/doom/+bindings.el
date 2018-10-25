@@ -443,8 +443,8 @@
  (:after ivy
    :map ivy-minibuffer-map
    "C-<return>" #'ivy-immediate-done
-   "C-c o"    #'+ivy/wgrep-occur
-   "C-c C-o"  #'+ivy/wgrep-occur
+   "C-c o"    #'+amos/wgrep-occur
+   "C-c C-o"  #'+amos/wgrep-occur
    "M-j"      #'ivy-next-line-and-call
    "M-k"      #'ivy-previous-line-and-call
    "C-i"      #'ivy-call

@@ -1498,9 +1498,10 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (if tmux-p
     (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
 
+(defvar +amos-last-xref-list nil)
 (defun +amos/ivy-xref-make-collection (xrefs)
   "Transform XREFS into a collection for display via `ivy-read'."
-  (let ((collection nil))
+  (let (collection last-xref-list)
     (dolist (xref xrefs)
       (with-slots (summary location) xref
         (let ((line (xref-location-line location))
@@ -1512,7 +1513,9 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
                            (when (string= "integer" (type-of line))
                              (concat ":" (int-to-string line) ": "))
                            summary))
-          (push `(,candidate . ,location) collection))))
+          (push `(,candidate . ,location) collection)
+          (push (format "%s:%d:%s" (replace-regexp-in-string (concat "^" default-directory) "./" file) line summary) last-xref-list))))
+    (setq +amos-last-xref-list (nreverse last-xref-list))
     (nreverse collection)))
 
 (defun +amos-ivy-xref (xrefs kind)
@@ -1528,6 +1531,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
             (+amos/recenter))))
     (let ((xref-pos (point))
           (xref-buffer (current-buffer))
+          (default-directory (doom-project-root))
           (success nil))
       (ivy-read (concat "Find " (symbol-name kind) ":") (+amos/ivy-xref-make-collection xrefs)
                 :unwind (lambda ()
@@ -3493,6 +3497,7 @@ as small) as possible, but don't signal an error."
   (require 'wgrep)
   (let* ((ob (ivy-state-buffer ivy-last))
          (caller (ivy-state-caller ivy-last))
+         (xref (eq caller '+lookup/references))
          (recursive (and (eq (with-current-buffer ob major-mode) 'ivy-occur-grep-mode)
                          (eq caller 'swiper)))
          (occur-fn (plist-get ivy--occurs-list caller))
@@ -3504,7 +3509,14 @@ as small) as possible, but don't signal an error."
       (let ((inhibit-read-only t))
         (erase-buffer)
         (if recursive (+amos/swiper-occur)
-          (funcall occur-fn)))
+          (if (not xref)
+              (funcall occur-fn)
+            (ivy-occur-grep-mode)
+            ;; Need precise number of header lines for `wgrep' to work.
+            (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
+                            default-directory))
+            (insert (format "%d candidates:\n" (length +amos-last-xref-list)))
+            (ivy--occur-insert-lines +amos-last-xref-list))))
       (setf (ivy-state-text ivy-last) ivy-text)
       (setq ivy-occur-last ivy-last)
       (setq-local ivy--directory ivy--directory))
@@ -3547,12 +3559,12 @@ When capture groups are present in the input, print them instead of lines."
                           (swiper--candidates)))
                     "\n"))
       (unless (eq major-mode 'ivy-occur-grep-mode)
-        (ivy-occur-grep-mode)
-        (font-lock-mode -1))
+        (ivy-occur-grep-mode))
       (setq swiper--current-window-start nil)
       (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
                       default-directory))
       (insert (format "%d candidates:\n" (length cands)))
       (ivy--occur-insert-lines cands)
+      (ivy-wgrep-change-to-wgrep-mode)
       (goto-char (point-min))
       (forward-line 4))))
