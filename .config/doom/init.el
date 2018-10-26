@@ -46,13 +46,14 @@
        latex
        lua
        markdown
-       python
+       ;; python
        ;; rust
        sh
        :private
        amos-modeline
        amos-cc
        amos-go
+       amos-python
        amos-org
        amos-email)
 
@@ -76,6 +77,7 @@
 (setq browse-url-chrome-program (expand-file-name "~/scripts/vivaldi"))
 (setq browse-url-firefox-program "luakit")
 (setq browse-url-mailto-function 'mu4e~compose-browse-url-mail)
+(setq counsel-rg-base-command "rg -S --no-heading --line-number --color never %s .")
 (setq comint-move-point-for-output 'this)
 (setq company-auto-complete nil)
 (setq company-idle-delay 0)
