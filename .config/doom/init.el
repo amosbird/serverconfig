@@ -42,16 +42,17 @@
        assembly
        data
        emacs-lisp
-       go
+       ;; go
        latex
        lua
        markdown
        python
-       rust
+       ;; rust
        sh
        :private
        amos-modeline
        amos-cc
+       amos-go
        amos-org
        amos-email)
 
