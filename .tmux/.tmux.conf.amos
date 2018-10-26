@@ -93,8 +93,8 @@ bind-key -T amos S-F12 send-keys C-]
 bind-key -T amos f12 display
 bind-key -T amos DoubleClick1Pane copy-mode\; send -X select-word
 bind-key -T amos C-] send-keys Escape
-bind-key -T amos C-j send-keys Down
-bind-key -T amos C-k run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "emacsclient|vim" &> /dev/null; then tmux send-key C-k; else tmux send-keys Up; fi'
+bind-key -T amos C-j run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "emacsclient" &> /dev/null; then tmux send-key C-j; else tmux send-keys Down; fi'
+bind-key -T amos C-k run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "emacsclient" &> /dev/null; then tmux send-key C-k; else tmux send-keys Up; fi'
 bind-key -T amos M-1 select-window -t 1
 bind-key -T amos M-2 select-window -t 2
 bind-key -T amos M-3 select-window -t 3

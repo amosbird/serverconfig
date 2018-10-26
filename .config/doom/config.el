@@ -3579,9 +3579,10 @@ When capture groups are present in the input, print them instead of lines."
       (while (re-search-forward "[^[:ascii:]]" nil t)
         (replace-match "")))))
 
-(evil-define-command +amos/new-empty-fish-buffer (file pos)
+(evil-define-command +amos/fish-editor (file &optional pos)
   (find-file file)
-  (goto-char pos)
+  (if pos
+      (goto-char pos))
   (fish-mode)
   (setq buffer-offer-save nil)
   (setq mode-line-format nil)

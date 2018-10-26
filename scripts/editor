@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-emacsclient -nw -c -u -e "(+amos/new-empty-fish-buffer `printf '"%s" %d' $1 $2`)"
+emacsclient -nw -c -u -e "(+amos/fish-editor `printf '"%s" %d' $1 $2`)"
 a=$?
 setcursor.sh $(tmux display -p "#{pane_tty}") > /dev/null 2>&1
 exit $a
