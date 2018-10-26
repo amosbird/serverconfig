@@ -30,16 +30,18 @@ function fish_user_key_bindings
         set -q FZF_ALT_C_COMMAND; or set -l FZF_ALT_C_COMMAND "command jump top"
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         begin
-            set -lx FZF_DEFAULT_OPTS "--height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
-            eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -l result
-            if string match -r '^ *$' (commandline) > /dev/null 2>&1
-                [ "$result" ]
-                and if not cd $result
-                    jump clean
+            set -lx FZF_DEFAULT_OPTS "--expect f10 --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
+            eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -lz result
+            set result (printf "%s" $result) # split the string into array
+            set -l dir (string trim $result[2])
+            if test -n $dir
+                if test -z $result[1]
+                    if not cd $dir
+                        jump clean
+                    end
+                else
+                    commandline -i $dir
                 end
-            else
-                [ "$result" ]
-                and commandline -i $result
             end
         end
         commandline -f repaint
@@ -136,24 +138,6 @@ function fish_user_key_bindings
         elvish | read -l result
         [ "$result" ]; and cd $result
         tput rmcup
-        commandline -f repaint
-        eval (direnv export fish);
-    end
-
-    function fzf-cd-widget -d "Change directory"
-        if type -q bfs
-            set cmd bfs
-        else
-            set cmd find
-        end
-        # set -q FZF_ALT_C_COMMAND; or set -l FZF_ALT_C_COMMAND "command $cmd -type d"
-        set -q FZF_ALT_C_COMMAND; or set -l FZF_ALT_C_COMMAND "command find ./ -mindepth 1 -maxdepth 1 -type d"
-        set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
-        begin
-            set -lx FZF_DEFAULT_OPTS "--height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
-            eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -l result
-            [ "$result" ]; and cd $result
-        end
         commandline -f repaint
         eval (direnv export fish);
     end
@@ -285,6 +269,10 @@ function fish_user_key_bindings
         builtin history merge
     end
 
+    function yank-commandline
+        commandline | osc52clip
+    end
+
     bind \eD delete-suggestion
     bind \cs sudo-commandline
     bind \e` proxy-commandline # Control-Shift-S
@@ -294,7 +282,6 @@ function fish_user_key_bindings
     bind \ci fzf-complete
     bind \eG open-magit
     bind \ep updir
-    # bind \en fzf-cd-widget
     bind \en elvish-nav
     bind \eg fzf-jump-cd
     bind \eo myprevd
@@ -303,7 +290,9 @@ function fish_user_key_bindings
     # bind \em fzf-command-go
     bind \cv fzf-select
     bind \er open-ranger
+    bind \ey open-ranger
     bind \eE my-edit-command
+    bind \ey yank-commandline
     function nop
     end
     bind \ee nop

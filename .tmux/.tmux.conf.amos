@@ -70,7 +70,7 @@ set -s key-table amos
 
 set -s user-keys[0] "\e[70~"
 # URxvt.keysym.C-Return:      \033[5;30010~
-bind-key -T amos User0 send-keys Enter
+bind-key -T amos User0 run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf" &> /dev/null; then tmux send-key F10; else tmux send-keys Enter; fi'
 # URxvt.keysym.C-S:           \033[5;30015~
 bind-key -T amos S-F4 send-keys C-s
 # URxvt.keysym.C-D:           \033[5;30016~
