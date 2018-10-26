@@ -3590,4 +3590,4 @@ When capture groups are present in the input, print them instead of lines."
    :states '(normal insert)
    :keymaps 'local
    "C-c C-c" (lambda! (save-buffer) (+amos/kill-current-buffer) (delete-frame))
-   "C-c C-k" (lambda! (set-buffer-modified-p nil) (server-send-string (car server-clients) "-error die"))))
+   "C-c C-k" (lambda! (delete-region (point-min) (point-max)) (save-buffer) (+amos/kill-current-buffer) (delete-frame))))

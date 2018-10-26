@@ -17,16 +17,11 @@ function edit_command_buffer --description 'Edit the command buffer in an extern
     commandline -b >$f
     __fish_disable_bracketed_paste
     editor $f (commandline -C)
-    set ret $status
     __fish_enable_bracketed_paste
-    if test $ret -eq 0
-        if test -s $f
-            commandline -r -- (cat $f)
-        else
-            commandline -r ""
-        end
+    if test -s $f
+        commandline -r -- (cat $f)
         commandline -C 999999
     end
-    commandline -f repaint
+    commandline -f force-repaint
     command rm $f
 end
