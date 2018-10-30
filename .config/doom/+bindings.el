@@ -437,6 +437,7 @@
    "C-n" #'evil-multiedit-next
    "C-p" #'evil-multiedit-prev
    :map evil-multiedit-insert-state-map
+   "C-v" #'+amos/iedit-number-occurrences
    "C-e" #'evil-multiedit--end-of-line
    "C-a" #'evil-multiedit--beginning-of-line)
 

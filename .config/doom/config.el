@@ -3609,3 +3609,26 @@ When capture groups are present in the input, print them instead of lines."
             :history 'file-name-history
             :keymap counsel-find-file-map
             :caller '+amos/list-file))
+
+(defun +amos/iedit-number-occurrences ()
+  (interactive)
+  (-when-let* ((overlay (iedit-find-current-occurrence-overlay))
+               (delta (- (point) (overlay-start overlay))))
+    (iedit-barf-if-buffering)
+    (setq format-string "%d")
+    (let ((iedit-number-occurrence-counter 1)
+          (inhibit-modification-hooks t))
+      (save-excursion
+        (goto-char (+ delta (iedit-first-occurrence)))
+        (setq overlay (iedit-find-current-occurrence-overlay))
+        (while (/= (point) (point-max))
+          (insert (format format-string iedit-number-occurrence-counter))
+          (iedit-move-conjoined-overlays overlay)
+          (setq iedit-number-occurrence-counter
+                (1+ iedit-number-occurrence-counter))
+          (goto-char (next-single-char-property-change (point) 'iedit-occurrence-overlay-name))
+          (goto-char (next-single-char-property-change (point) 'iedit-occurrence-overlay-name))
+          (setq overlay (iedit-find-current-occurrence-overlay))
+          (unless (and overlay
+                       (= (point) (overlay-end overlay)))
+            (goto-char (+ delta (point)))))))))
