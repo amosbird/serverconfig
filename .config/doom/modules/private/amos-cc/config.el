@@ -445,6 +445,11 @@ The insertion will be repeated COUNT times."
      'write "textDocument/references"
      (plist-put (lsp--text-document-position-params) :context
                 '(:role 16))))
+
+  (defun ccls/references ()
+    (interactive)
+    (+amos-lsp-find-custom
+     'write "textDocument/references"))
   )
 
 (defun ccls//enable ()
@@ -461,7 +466,7 @@ The insertion will be repeated COUNT times."
 
 (set-lookup-handlers! '(c-mode c++-mode)
   :definition #'xref-find-definitions
-  :references #'xref-find-references
+  :references #'ccls/references
   :documentation #'counsel-dash-at-point)
 
 (defun +amos*lsp--position-to-point (params)
