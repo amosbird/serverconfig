@@ -1533,7 +1533,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
           (xref-buffer (current-buffer))
           (default-directory (doom-project-root))
           (success nil))
-      (ivy-read (concat "Find " (symbol-name kind) ":") (+amos/ivy-xref-make-collection xrefs)
+      (ivy-read (concat "Find " kind ":") (+amos/ivy-xref-make-collection xrefs)
                 :unwind (lambda ()
                           (unless success
                             (switch-to-buffer xref-buffer)
@@ -2111,11 +2111,13 @@ the current state and point position."
   (interactive)
   (+amos/switch-to-buffer-other-frame "*scratch"))
 
-(defun +amos/tmux-fork-window ()
+(defun +amos/tmux-fork-window (&optional command)
   "Detach if inside tmux."
   (interactive)
   (+amos-store-jump-history)
-  (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory)))
+  (if command
+      (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux kill-window -t $envprompt; tmux new-window -n $envprompt -c %s; tmux send-keys %s C-m\"" default-directory command))
+    (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
 
 (defun +amos/tmux-source ()
   "Source tmux config if inside tmux."
@@ -3591,3 +3593,8 @@ When capture groups are present in the input, print them instead of lines."
    :keymaps 'local
    "C-c C-c" (lambda! (save-buffer) (+amos/kill-current-buffer) (delete-frame))
    "C-c C-k" (lambda! (delete-region (point-min) (point-max)) (save-buffer) (+amos/kill-current-buffer) (delete-frame))))
+
+(defun +amos/launch ()
+  (interactive)
+  (let ((default-directory (doom-project-root)))
+    (+amos/tmux-fork-window "launch.sh")))

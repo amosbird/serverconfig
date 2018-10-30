@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 mkdir -p release
-cd release
+pushd release
 case "$1" in
     llvm)
         cmake ../llvm -G Ninja -DLLVM_TARGETS_TO_BUILD='X86' -DLLVM_CCACHE_BUILD=On -DLLVM_ENABLE_PROJECTS='clang;libcxx;libcxxabi;compiler-rt;lld' -DCMAKE_BUILD_TYPE=Release -DLLVM_BUILD_LLVM_DYLIB=On -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1' ../llvm
@@ -20,5 +20,5 @@ case "$1" in
         ninja
         ;;
 esac
-
+popd
 ln -sf release/compile_commands.json .

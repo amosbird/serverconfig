@@ -85,6 +85,8 @@ The insertion will be repeated COUNT times."
           :n "o"        #'+amos-evil-open-below
           :n "O"        #'+amos-evil-open-above
           :n "M-v"      #'+amos/lsp-ui-imenu
+          :n "gs"       #'ccls/workspace-symbol
+          :n "gS"       (lambda! (setq current-prefix-arg t) (call-interactively #'ccls/workspace-symbol))
           :n "gh"       #'ccls-call-hierarchy
           :n "gR"       #'ccls/callers
           :n "gb"       #'ccls/inheritances
@@ -302,6 +304,18 @@ The insertion will be repeated COUNT times."
    ccls-sem-highlight-method nil
    )
 
+  (defun ccls/workspace-symbol (pattern)
+    (interactive (list (read-string
+                        "workspace/symbol: "
+                        nil 'xref--read-pattern-history)))
+    (let ((symbols (lsp--send-request (lsp--make-request
+                                       "workspace/symbol"
+                                       `(:query ,pattern :folders ,(if current-prefix-arg (vector (doom-project-root)) []))))))
+      (unless symbols
+        (user-error "No symbol found for: %s" pattern))
+      (+amos-ivy-xref
+       (mapcar (lambda (x) (lsp--symbol-information-to-xref x)) symbols) pattern)))
+
   (defun ccls/includes (&optional force)
     (interactive)
     (if lsp--cur-workspace
@@ -336,7 +350,7 @@ The insertion will be repeated COUNT times."
                           (-filter 'identity))))
           (unless xrefs
             (user-error "No inheritances found for: %s" input))
-          (+amos-ivy-xref xrefs 'inheritances))))
+          (+amos-ivy-xref xrefs "inheritances"))))
 
   (defun ccls/inheritances (&optional derived)
     (interactive)
@@ -352,7 +366,7 @@ The insertion will be repeated COUNT times."
                           (-filter 'identity))))
           (unless xrefs
             (user-error "No inheritances found for: %s" input))
-          (+amos-ivy-xref xrefs 'inheritances))))
+          (+amos-ivy-xref xrefs "inheritances"))))
 
   (defun +amos-lsp-find-custom (kind request &optional param)
     (let* ((input (symbol-at-point))
@@ -366,7 +380,7 @@ The insertion will be repeated COUNT times."
                       (-filter 'identity))))
       (unless xrefs
         (user-error "No %s found for: %s" (symbol-name kind) input))
-      (+amos-ivy-xref xrefs kind)))
+      (+amos-ivy-xref xrefs "kind")))
 
   (defun ccls/callee ()
     (interactive)

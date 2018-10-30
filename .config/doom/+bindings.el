@@ -183,6 +183,7 @@
    :g "C"       #'+amos/workspace-new-scratch
    :g "k"       #'+amos/workspace-delete
    :g "o"       #'+amos/tmux-fork-window
+   :g "l"       #'+amos/launch
    :gnemv "r"   #'+amos/tmux-source
    :g "C-c"     #'+amos/tmux-detach
    :g "p"       #'doom/other-popup)
