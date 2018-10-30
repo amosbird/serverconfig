@@ -310,7 +310,7 @@ The insertion will be repeated COUNT times."
                         nil 'xref--read-pattern-history)))
     (let ((symbols (lsp--send-request (lsp--make-request
                                        "workspace/symbol"
-                                       `(:query ,pattern :folders ,(if current-prefix-arg (vector (doom-project-root)) []))))))
+                                       `(:query ,pattern :folders ,(if current-prefix-arg (vector (doom-project-root)) (vector default-directory)))))))
       (unless symbols
         (user-error "No symbol found for: %s" pattern))
       (+amos-ivy-xref

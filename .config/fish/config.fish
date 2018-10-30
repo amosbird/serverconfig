@@ -16,7 +16,6 @@ set -x CABAL_HOME $HOME/.cabal
 set -x ARCANIST_HOME $HOME/git/arcanist
 set -x EDITOR vim
 set -x VISUAL vim
-set -x GTAGSFORCECPP true
 set -x GTK_IM_MODULE fcitx
 set -x XMODIFIERS @im=fcitx
 set -x QT_IM_MODULE fcitx

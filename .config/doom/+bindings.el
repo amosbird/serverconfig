@@ -192,7 +192,7 @@
    "C-SPC" #'easy-hugo)
 
  (:prefix "SPC"
-   :desc "Find file in cwd"                :nv "m"   #'find-file
+   :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
    :desc "Toggle mc"                       :nv "SPC" #'+amos/toggle-mc
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
    :desc "Find file in project (no cache)" :nv ">"   #'+amos/projectile-find-file-no-cache

@@ -3598,3 +3598,14 @@ When capture groups are present in the input, print them instead of lines."
   (interactive)
   (let ((default-directory (doom-project-root)))
     (+amos/tmux-fork-window "launch.sh")))
+
+(defun +amos/list-file (&optional initial-input)
+  (interactive)
+  (ivy-read "List file: " (split-string (shell-command-to-string "find -- * -prune -type f -print && find .* -prune -type f -print"))
+            :initial-input initial-input
+            :action #'find-file
+            :preselect (counsel--preselect-file)
+            :require-match 'confirm-after-completion
+            :history 'file-name-history
+            :keymap counsel-find-file-map
+            :caller '+amos/list-file))
