@@ -1,5 +1,15 @@
 ;;; lang/python/config.el -*- lexical-binding: t; -*-
 
+(defun pyls|enable ()
+  (direnv-update-environment)
+  (condition-case nil
+      (lsp-python-enable)
+    (user-error nil))
+  (setq-local flycheck-checker 'lsp-ui)
+  (lsp-ui-flycheck-add-mode major-mode)
+  (add-to-list 'flycheck-checkers 'lsp-ui)
+  (setq lsp-ui-flycheck-live-reporting nil))
+
 (def-package! python
   :defer t
   :init
@@ -41,4 +51,4 @@
   (setq-hook! 'python-mode-hook tab-width python-indent-offset)
   (require 'lsp-mode)
   (require 'lsp-python)
-  (add-hook 'python-mode-hook #'lsp-python-enable))
+  (add-hook 'python-mode-hook #'pyls|enable))

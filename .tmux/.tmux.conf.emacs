@@ -5,6 +5,7 @@ set -s prefix None
 set -s prefix2 None
 set -s status off
 set -s renumber-windows on
+set -s detach-on-destroy off
 
 set -s key-table emacs
 

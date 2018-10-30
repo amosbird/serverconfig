@@ -20,5 +20,5 @@
 sudo pkill -9 openconnect
 
 # gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin chuhuangvm.eastasia.cloudapp.azure.com:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
-# gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin 168.235.105.19:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
-gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin 127.0.0.1:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
+gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin 168.235.105.19:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
+# gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin 127.0.0.1:45555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
