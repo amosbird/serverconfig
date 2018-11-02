@@ -42,11 +42,9 @@
        assembly
        data
        emacs-lisp
-       ;; go
        latex
        lua
        markdown
-       ;; python
        ;; rust
        :private
        amos-cc

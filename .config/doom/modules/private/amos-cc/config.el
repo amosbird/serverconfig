@@ -368,20 +368,6 @@ The insertion will be repeated COUNT times."
             (user-error "No inheritances found for: %s" input))
           (+amos-ivy-xref xrefs "inheritances"))))
 
-  (defun +amos-lsp-find-custom (kind request &optional param)
-    (let* ((input (symbol-at-point))
-           (xrefs
-            (-some->> (lsp--send-request
-                       (lsp--make-request
-                        request
-                        (append param (lsp--text-document-position-params))))
-                      (lsp-ui-peek--to-sequence)
-                      (lsp--locations-to-xref-items)
-                      (-filter 'identity))))
-      (unless xrefs
-        (user-error "No %s found for: %s" (symbol-name kind) input))
-      (+amos-ivy-xref xrefs (symbol-name kind))))
-
   (defun ccls/callee ()
     (interactive)
     (+amos-lsp-find-custom 'callee "$ccls/call" '(:callee t)))
@@ -445,16 +431,6 @@ The insertion will be repeated COUNT times."
      'write "textDocument/references"
      (plist-put (lsp--text-document-position-params) :context
                 '(:role 16))))
-
-  (defun ccls/definitions ()
-    (interactive)
-    (+amos-lsp-find-custom
-     'definitions "textDocument/definition"))
-
-  (defun ccls/references ()
-    (interactive)
-    (+amos-lsp-find-custom
-     'references "textDocument/references"))
   )
 
 (defun ccls//enable ()
@@ -470,8 +446,8 @@ The insertion will be repeated COUNT times."
     (setq flycheck-checkers (delq c flycheck-checkers))))
 
 (set-lookup-handlers! '(c-mode c++-mode)
-  :definition #'ccls/definitions
-  :references #'ccls/references
+  :definition #'+amos/definitions
+  :references #'+amos/references
   :documentation #'counsel-dash-at-point)
 
 (defun +amos*lsp--position-to-point (params)

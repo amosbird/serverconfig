@@ -1385,10 +1385,35 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   :init
   (setq lsp-enable-eldoc nil
         lsp-enable-indentation nil
+        lsp-message-project-root-warning t
         lsp--json-array-use-vector t)
   :config
   (require 'lsp-imenu)
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
+
+(defun +amos-lsp-find-custom (kind request &optional param)
+  (let* ((input (symbol-at-point))
+         (xrefs
+          (-some->> (lsp--send-request
+                     (lsp--make-request
+                      request
+                      (append param (lsp--text-document-position-params))))
+                    (lsp-ui-peek--to-sequence)
+                    (lsp--locations-to-xref-items)
+                    (-filter 'identity))))
+    (unless xrefs
+      (user-error "No %s found for: %s" (symbol-name kind) input))
+    (+amos-ivy-xref xrefs (symbol-name kind))))
+
+(defun +amos/definitions ()
+  (interactive)
+  (+amos-lsp-find-custom
+   'definitions "textDocument/definition"))
+
+(defun +amos/references ()
+  (interactive)
+  (+amos-lsp-find-custom
+   'references "textDocument/references"))
 
 (def-package! lsp-ui)
 

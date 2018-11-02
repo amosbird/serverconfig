@@ -20,8 +20,8 @@
   (set-electric! 'python-mode :chars '(?:))
   (set-company-backend! 'python-mode 'company-lsp)
   (set-lookup-handlers! 'python-mode
-    :definition #'+lookup/definition
-    :references #'+lookup/references
+    :definition #'+amos/definitions
+    :references #'+amos/references
     :documentation #'counsel-dash-at-point)
 
   (set-pretty-symbols! 'python-mode

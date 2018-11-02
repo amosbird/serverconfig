@@ -16,6 +16,11 @@
   (set-electric! 'sh-mode :words '("else" "elif" "fi" "done" "then" "do" "esac" ";;"))
   (set-repl-handler! 'sh-mode #'+sh/repl)
 
+  (set-lookup-handlers! 'sh-mode
+    :definition #'+amos/definitions
+    :references #'+amos/references
+    :documentation #'counsel-dash-at-point)
+
   (setq sh-indent-after-continuation 'always)
 
   ;; [pedantry intensifies]
