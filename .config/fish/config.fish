@@ -44,9 +44,31 @@ end
 # prepend path
 set -U fish_user_paths $HOME/scripts $FZF_HOME/bin $N_HOME/bin $PYENV_ROOT/bin $GOPATH/bin $CARGO_HOME/bin $CABAL_HOME/bin $ARCANIST_HOST/bin $HOME/.local/bin $HOME/bin /usr/local/bin /usr/local/go/bin /usr/bin /bin /sbin /usr/sbin
 
-status --is-interactive; and source (pyenv init -|psub)
-status --is-interactive; and source (pyenv virtualenv-init -|psub)
+set -gx PATH '/home/amos/.pyenv/shims' $PATH
+set -gx PYENV_SHELL fish
+function pyenv
+  set command $argv[1]
+  set -e argv[1]
 
-if test -e ~/.local/share/icons-in-terminal/icons.fish
-    source ~/.local/share/icons-in-terminal/icons.fish
+  switch "$command"
+  case activate deactivate rehash shell
+    source (pyenv "sh-$command" $argv|psub)
+  case '*'
+    command pyenv "$command" $argv
+  end
 end
+
+set -gx PATH '/home/amos/.pyenv/plugins/pyenv-virtualenv/shims' $PATH;
+set -gx PYENV_VIRTUALENV_INIT 1;
+function _pyenv_virtualenv_hook --on-event fish_prompt;
+  set -l ret $status
+  if [ -n "$VIRTUAL_ENV" ]
+    pyenv activate --quiet; or pyenv deactivate --quiet; or true
+  else
+    pyenv activate --quiet; or true
+  end
+  return $ret
+end
+
+# status --is-interactive; and source (pyenv init -|psub)
+# status --is-interactive; and source (pyenv virtualenv-init -|psub)
