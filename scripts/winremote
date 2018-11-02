@@ -3,11 +3,9 @@
 # /sound /audio-mode:0  #client
 # /sound /audio-mode:1  #server
 # /audio-mode:2  #disable
-host=$(hostname)
-if [[ $host = "t450s" ]]
+if nmap --host-timeout 1 -p 3389 10.61.3.88 | grep -q -F 'open'
 then
-    xfreerdp +aero +menu-anims +window-drag /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amos /p:$(gpg -d ~/passwords/win.gpg) /v:172.26.172.81:3389
-    # xfreerdp +aero +menu-anims +window-drag /log-level:debug /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amos /p:$(gpg -d ~/passwords/win.gpg) /v:172.26.172.81:3389
+    xfreerdp +aero +menu-anims +window-drag /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:Administrator /p:$(gpg -d ~/passwords/win.gpg) /v:10.61.3.88:3389
 else
-    xfreerdp -wallpaper /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:16 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amos /p:$(gpg -d ~/passwords/win.gpg) /v:172.26.172.81:3389
+    xfreerdp -wallpaper /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:16 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:Administrator /p:$(gpg -d ~/passwords/win.gpg) /v:172.26.235.207:3389
 fi

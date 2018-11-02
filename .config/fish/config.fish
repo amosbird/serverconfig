@@ -25,6 +25,7 @@ set -x ASAN_OPTIONS "handle_segv=0:detect_leaks=0"
 set -x USE_GOLD_LINKER true
 set -x DIRENV_LOG_FORMAT ""
 set -x UID (id -u)
+set -x GPG_TTY (tty)
 
 set -e LS_COLORS
 alias l "exa"

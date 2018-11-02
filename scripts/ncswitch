@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 
+sudo pkill openconnect
 netctl stop-all
 sudo netctl switch-to "$1"
+addroutes

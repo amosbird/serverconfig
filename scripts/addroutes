@@ -5030,7 +5030,7 @@ fi
 
 if ! pgrep -f 'client_linux_amd64'
 then
-    client_linux_amd64 -r "[2604:180:3:28::c542]:4000" -l ":45555" -mode fast2 -sockbuf 16777217 &
+    client_linux_amd64 -r "[2604:180:3:28::c542]:4000" -l ":45555" --ds 10 --ps 10 --rcvwnd 1024 -mode fast3 -sockbuf 16777217 &
 fi
 # sudo -u amos tun
 #ip r a 0.0.0.0/1 via 172.26.133.192
