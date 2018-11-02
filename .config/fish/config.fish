@@ -13,6 +13,8 @@ set -x GOPATH /home/amos/go
 set -x SHELL /bin/bash
 set -x CARGO_HOME $HOME/.cargo
 set -x CABAL_HOME $HOME/.cabal
+set -x PYENV_ROOT $HOME/.pyenv
+set -x N_HOME $HOME/.n
 set -x ARCANIST_HOME $HOME/git/arcanist
 set -x EDITOR vim
 set -x VISUAL vim
@@ -25,7 +27,7 @@ set -x DIRENV_LOG_FORMAT ""
 set -x UID (id -u)
 
 set -e LS_COLORS
-alias l=exa
+alias l "exa"
 
 status --is-interactive;
 and function __jump_add --on-variable PWD
@@ -39,7 +41,10 @@ and function __direnv_export_eval --on-event fish_prompt;
 end
 
 # prepend path
-set -U fish_user_paths $HOME/scripts $FZF_HOME/bin $GOPATH/bin $HOME/pyenv/bin $CARGO_HOME/bin $CABAL_HOME/bin $ARCANIST_HOST/bin $HOME/.local/bin $HOME/bin /usr/local/bin /usr/local/go/bin /usr/bin /bin /sbin /usr/sbin
+set -U fish_user_paths $HOME/scripts $FZF_HOME/bin $N_HOME/bin $PYENV_ROOT/bin $GOPATH/bin $CARGO_HOME/bin $CABAL_HOME/bin $ARCANIST_HOST/bin $HOME/.local/bin $HOME/bin /usr/local/bin /usr/local/go/bin /usr/bin /bin /sbin /usr/sbin
+
+status --is-interactive; and source (pyenv init -|psub)
+status --is-interactive; and source (pyenv virtualenv-init -|psub)
 
 if test -e ~/.local/share/icons-in-terminal/icons.fish
     source ~/.local/share/icons-in-terminal/icons.fish

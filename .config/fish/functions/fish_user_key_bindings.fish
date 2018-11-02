@@ -162,13 +162,6 @@ function fish_user_key_bindings
         commandline -f execute
     end
 
-    function last-sudo -d "Execute last command using sudo if current commandline is blank"
-        if string match -r '^ *$' (commandline) > /dev/null 2>&1
-            commandline -a "sudo $history[1]"
-            commandline -f execute
-        end
-    end
-
     function open-magit -d "Open magit in emacs"
         if git rev-parse --is-inside-work-tree > /dev/null 2>&1
             emacsclient -n -eval "(+amos/workspace-new)" > /dev/null 2>&1
@@ -235,7 +228,7 @@ function fish_user_key_bindings
             commandline (string replace -r '^e ' 'E ' -- $cmd)
             commandline -f execute
         else
-            commandline "sudo "(commandline)
+            commandline "sudo -Es "(commandline)
             commandline -f execute
         end
     end

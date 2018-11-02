@@ -380,7 +380,7 @@ The insertion will be repeated COUNT times."
                       (-filter 'identity))))
       (unless xrefs
         (user-error "No %s found for: %s" (symbol-name kind) input))
-      (+amos-ivy-xref xrefs "kind")))
+      (+amos-ivy-xref xrefs (symbol-name kind))))
 
   (defun ccls/callee ()
     (interactive)
@@ -446,10 +446,15 @@ The insertion will be repeated COUNT times."
      (plist-put (lsp--text-document-position-params) :context
                 '(:role 16))))
 
+  (defun ccls/definitions ()
+    (interactive)
+    (+amos-lsp-find-custom
+     'definitions "textDocument/definition"))
+
   (defun ccls/references ()
     (interactive)
     (+amos-lsp-find-custom
-     'write "textDocument/references"))
+     'references "textDocument/references"))
   )
 
 (defun ccls//enable ()
@@ -465,7 +470,7 @@ The insertion will be repeated COUNT times."
     (setq flycheck-checkers (delq c flycheck-checkers))))
 
 (set-lookup-handlers! '(c-mode c++-mode)
-  :definition #'xref-find-definitions
+  :definition #'ccls/definitions
   :references #'ccls/references
   :documentation #'counsel-dash-at-point)
 

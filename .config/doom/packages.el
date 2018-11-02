@@ -22,7 +22,6 @@
 (package! easy-hugo)
 (package! evil-magit)
 (package! fcitx)
-(package! fish-mode)
 (package! general)
 (package! git-gutter)
 (package! git-timemachine)

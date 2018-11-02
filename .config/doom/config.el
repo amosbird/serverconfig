@@ -451,9 +451,6 @@
 (def-package! move-text
   :commands move-text-up move-text-down)
 
-(def-package! fish-mode
-  :mode "\\.fish")
-
 (def-package! ws-butler
   :demand
   :config
@@ -1533,7 +1530,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
           (xref-buffer (current-buffer))
           (default-directory (doom-project-root))
           (success nil))
-      (ivy-read (concat "Find " kind ":") (+amos/ivy-xref-make-collection xrefs)
+      (ivy-read (concat "Find " kind ": ") (+amos/ivy-xref-make-collection xrefs)
                 :unwind (lambda ()
                           (unless success
                             (switch-to-buffer xref-buffer)
@@ -2499,6 +2496,9 @@ the current state and point position."
 
 (after! flycheck
   (setq flycheck-check-syntax-automatically '(save mode-enabled)))
+
+(after! counsel
+  (setq counsel-rg-base-command "rg -S --no-heading --line-number --color never %s ."))
 
 (advice-add #'evil-multiedit--cycle :after #'+amos/recenter)
 (advice-add #'evil-multiedit-match-and-next :after #'+amos/recenter)

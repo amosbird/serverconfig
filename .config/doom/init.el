@@ -48,14 +48,15 @@
        markdown
        ;; python
        ;; rust
-       sh
        :private
-       amos-modeline
        amos-cc
+       amos-email
        amos-go
-       amos-python
+       amos-modeline
        amos-org
-       amos-email)
+       amos-python
+       amos-sh
+       )
 
 (setq all-the-icons-scale-factor 1.0)
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
@@ -77,7 +78,6 @@
 (setq browse-url-chrome-program (expand-file-name "~/scripts/vivaldi"))
 (setq browse-url-firefox-program "luakit")
 (setq browse-url-mailto-function 'mu4e~compose-browse-url-mail)
-(setq counsel-rg-base-command "rg -S --no-heading --line-number --color never %s .")
 (setq comint-move-point-for-output 'this)
 (setq company-auto-complete nil)
 (setq company-idle-delay 0)

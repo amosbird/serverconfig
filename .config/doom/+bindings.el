@@ -444,6 +444,7 @@
  ;; ivy
  (:after ivy
    :map ivy-minibuffer-map
+   "C-SPC" #'ivy-restrict-to-matches
    "C-<return>" #'ivy-immediate-done
    "C-c o"    #'+amos/wgrep-occur
    "C-c C-o"  #'+amos/wgrep-occur
