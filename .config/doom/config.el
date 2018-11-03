@@ -935,6 +935,18 @@ This function should be hooked to `buffer-list-update-hook'."
           ("C-c o" . cc-playground-switch-optimization-flag)
           ("C-c f" . cc-playground-add-compilation-flags)))
 
+(def-package! py-playground
+  :commands py-playground py-playground-mode py-playground-find-snippet
+  :load-path (lambda () (interactive) (if (string= (system-name) "t450s") "~/git/py-playground"))
+  :init
+  (dolist (x '(py-playground-exec py-playground-debug))
+    (advice-add x :before #'evil-normal-state))
+  :bind (:map py-playground-mode-map
+          ("<f8>" . py-playground-rm) ; terminal
+          ("S-RET" . py-playground-rm) ; gui
+          ("C-c r" . py-playground-add-or-modify-tag)
+          ("C-c d" . py-playground-debug)))
+
 (defvar +amos--ivy-regex-hash
   (make-hash-table :test #'equal)
   "Store pre-computed regex.")
@@ -1879,6 +1891,8 @@ representation of `NUMBER' is smaller."
      :actions (+popup-display-buffer-stacked-side-window))
     ("^\\*git-gutter*"
      :side right :size 0.5)
+    ("^\\*Flycheck"
+     :side bottom :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*Compil\\(?:ation\\|e-Log\\)"
      :side right :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*\\(?:scratch\\|Messages\\)"

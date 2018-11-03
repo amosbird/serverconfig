@@ -1,5 +1,5 @@
 [whitelist]
-prefix = ["/home/amos/cc/playground", "/home/amos/py/playground"]
+prefix = ["/home/amos/cc/playground", "/home/amos/cc-playground", "/home/amos/py/playground", "/home/amos/py-playground"]
 exact = [
     "/Users/adam/code/bar",
     "/Users/adam/code/quux/.envrc"

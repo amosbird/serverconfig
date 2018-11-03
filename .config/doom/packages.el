@@ -52,6 +52,7 @@
 (package! yapfify)
 
 (package! cc-playground :recipe (:fetcher github :repo "amosbird/cc-playground" :files ("*.el" "templates")))
+(package! py-playground :recipe (:fetcher github :repo "amosbird/py-playground" :files ("*.el" "templates")))
 (package! color-moccur :recipe (:fetcher github :repo "myuhe/color-moccur.el"))
 (package! moccur-edit :recipe (:fetcher github :repo "myuhe/moccur-edit.el"))
 (package! dired-hacks :recipe (:fetcher github :repo "Fuco1/dired-hacks"))

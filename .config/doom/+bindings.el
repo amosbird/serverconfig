@@ -683,9 +683,19 @@
              ("C-i" . company-complete-selection)
              ("C-h" . company-quickhelp-manual-begin)))
 
-(map! :map* (sh-mode-map
-             fish-mode-map
-             python-mode-map
-             lua-mode-map
-             perl-mode-map)
-      :ni [C-return] (lambda! (evil-normal-state) (compile (buffer-file-name) t)))
+(defun +amos/run-script () (interactive) (evil-normal-state) (compile (buffer-file-name) t))
+
+(after! sh-script
+  (define-key sh-mode-map (kbd "<C-return>") #'+amos/run-script))
+
+(after! fish-mode
+  (define-key fish-mode-map (kbd "<C-return>") #'+amos/run-script))
+
+(after! python-mode
+  (define-key python-mode-map (kbd "<C-return>") #'+amos/run-script))
+
+(after! lua-mode
+  (define-key lua-mode-map (kbd "<C-return>") #'+amos/run-script))
+
+(after! perl-mode
+  (define-key perl-mode-map (kbd "<C-return>") #'+amos/run-script))

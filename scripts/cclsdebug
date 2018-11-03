@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-sudo sysdig -As999 --unbuffered -p '%evt.type %proc.name %evt.buffer' "proc.exe contains ccls and fd.type=pipe"
