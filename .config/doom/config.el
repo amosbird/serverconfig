@@ -3128,9 +3128,16 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos/upload ()
   (interactive)
-  (kill-new
-   (string-trim-right
-    (shell-command-to-string (concat "upload " (buffer-file-name) " out")))))
+  (let ((filename (buffer-file-name))
+        tmp)
+    (unless filename
+      (setq filename (make-temp-file "upload"))
+      (write-region (point-min) (point-max) filename)
+      (setq tmp t))
+    (kill-new
+     (string-trim-right
+      (shell-command-to-string (concat "upload " filename " out"))))
+    (if tmp (delete-file filename))))
 
 (defun +amos*ivy--insert-minibuffer (text)
   "Insert TEXT into minibuffer with appropriate cleanup."

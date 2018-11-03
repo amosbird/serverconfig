@@ -72,3 +72,5 @@ end
 
 # status --is-interactive; and source (pyenv init -|psub)
 # status --is-interactive; and source (pyenv virtualenv-init -|psub)
+
+[ -s "/home/amos/.jabba/jabba.fish" ]; and source "/home/amos/.jabba/jabba.fish"
