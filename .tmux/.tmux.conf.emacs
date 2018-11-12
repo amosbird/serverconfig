@@ -14,3 +14,4 @@ bind-key -T emacs M-= switch-client -t htop
 
 set -s user-keys[0] "\e[70~"
 bind-key -T emacs User0 send C-Enter
+bind-key -T emacs M-"'" send-keys "'"{}"'" Left Left

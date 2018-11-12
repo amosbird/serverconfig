@@ -346,7 +346,8 @@
       (propertize " " 'display `((margin left-margin) ,ovstring))))
   (advice-add #'git-gutter:put-signs :before (lambda (&rest _) (realign-windows)))
   (advice-add #'git-gutter:before-string :override #'+amos*git-gutter:before-string)
-  (add-hook! 'window-configuration-change-hook #'git-gutter:update-all-windows))
+  (add-hook 'window-configuration-change-hook #'git-gutter:update-all-windows)
+  (add-hook! 'doom-escape-hook (when git-gutter-mode (ignore (git-gutter)))))
 
 (def-package! evil-textobj-line
   :after evil)
@@ -1396,6 +1397,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (def-package! lsp-mode
   :init
   (setq lsp-enable-eldoc nil
+        lsp-eldoc-hook nil
         lsp-enable-indentation nil
         lsp-message-project-root-warning t
         lsp--json-array-use-vector t)
@@ -2912,11 +2914,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (+amos-evil-ex! line-substitute "s/")
 (+amos-evil-ex! all-substitute "%s/")
 (+amos-evil-ex! region-substitute "'<,'>s/")
-
-(defun +amos/projectile-find-file-no-cache ()
-  (interactive)
-  (projectile-invalidate-cache nil)
-  (projectile-find-file))
 
 (defun +amos/counsel-recentf-no-cache ()
   (interactive)

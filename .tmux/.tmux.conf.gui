@@ -130,3 +130,4 @@ bind-key -Tcopy-mode-vi M-s send -X search-backward-incremental
 bind-key -Tcopy-mode-vi M-u send -X search-backward ❯
 bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
 bind-key -T gui M-- set synchronize-panes
+bind-key -T gui M-"'" send-keys "'"{}"'" Left Left

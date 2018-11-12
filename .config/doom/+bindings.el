@@ -195,7 +195,7 @@
    :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
    :desc "Toggle mc"                       :nv "SPC" #'+amos/toggle-mc
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
-   :desc "Find file in project (no cache)" :nv ">"   #'+amos/projectile-find-file-no-cache
+   :desc "Find file in project (no cache)" :nv ">"   (lambda! (setq current-prefix-arg t) (call-interactively #'+amos/projectile-find-file))
    :desc "Find recent file"                :nv ","   #'counsel-recentf
    :desc "Find recent file (no cache)"     :nv "<"   #'+amos/counsel-recentf-no-cache
    :desc "Shell command"                   :n  "e"   #'shell-command
@@ -445,6 +445,7 @@
  (:after ivy
    :map ivy-minibuffer-map
    "C-SPC" #'ivy-restrict-to-matches
+   "C-s" #'ivy-restrict-to-matches
    "C-<return>" #'ivy-immediate-done
    "C-c o"    #'+amos/wgrep-occur
    "C-c C-o"  #'+amos/wgrep-occur
