@@ -199,7 +199,8 @@
    :desc "Find recent file"                :nv ","   #'counsel-recentf
    :desc "Find recent file (no cache)"     :nv "<"   #'+amos/counsel-recentf-no-cache
    :desc "Shell command"                   :n  "e"   #'shell-command
-   :desc "Shell command replace"           :v  "e"   #'+amos/shell-command-replace
+   :desc "Shell command"                   :n  "E"   #'+amos/shell-command-on-buffer
+   :desc "Shell command replace"           :v  "e"   #'+amos/shell-command-on-region
    :desc "Blink cursor line"               :nv "DEL" #'doom/open-scratch-buffer
    :desc "Elisp command"                   :nv "RET" #'eval-expression
    :desc "Ivy resume"                      :nv "r"   #'ivy-resume

@@ -2675,9 +2675,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -3190,36 +3190,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (remove-hook '+lookup-definition-functions #'+lookup-dumb-jump-backend)
 (remove-hook '+lookup-definition-functions #'+lookup-project-search-backend)
 
-(defun +amos/shell-command-replace (start end command)
-  (interactive (let (string)
-                 (unless (mark)
-                   (user-error "The mark is not set now, so there is no region"))
-                 (setq string (read-shell-command "Shell command on region: "))
-                 (list (region-beginning) (region-end)
-                       string)))
-  (let ((error-file nil)
-        exit-status)
-    (let ((swap (< start end)))
-      (goto-char start)
-      (push-mark (point) 'nomsg)
-      (setq exit-status
-            (call-shell-region start end command t
-                               (if error-file
-                                   (list t error-file)
-                                 t)))
-      (and swap (exchange-point-and-mark)))
-    (when (and error-file (file-exists-p error-file))
-      (if (< 0 (nth 7 (file-attributes error-file)))
-          (with-current-buffer (get-buffer-create error-buffer)
-            (let ((pos-from-end (- (point-max) (point))))
-              (or (bobp)
-                  (insert "\f\n"))
-              (format-insert-file error-file nil)
-              (goto-char (- (point-max) pos-from-end)))
-            (display-buffer (current-buffer))))
-      (delete-file error-file))
-    exit-status))
-
 (defun +amos/clear-yasnippet ()
   (interactive)
   (let* ((snippet (car (yas-active-snippets)))
@@ -3675,3 +3645,15 @@ When capture groups are present in the input, print them instead of lines."
           (unless (and overlay
                        (= (point) (overlay-end overlay)))
             (goto-char (+ delta (point)))))))))
+
+(defun +amos/shell-command-on-buffer (command)
+  (interactive "sShell command on buffer: ")
+  (shell-command-on-region (point-min) (point-max) command nil t))
+
+(defun +amos/shell-command-on-region (start end command)
+  (interactive (let (string)
+                 (unless (mark)
+                   (user-error "The mark is not set now, so there is no region"))
+                 (setq string (read-shell-command "Shell command on region: "))
+                 (list (region-beginning) (region-end) string)))
+  (shell-command-on-region start end command nil t))
