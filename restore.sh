@@ -27,6 +27,7 @@ configs=(
     .bashrc
     .bash_profile
     .chisels
+    .gitignore_global
     scripts
 )
 

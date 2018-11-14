@@ -5,3 +5,5 @@
 	rebase = true
 [color]
 	ui = auto
+[core]
+	excludesfile = ~/.gitignore_global
