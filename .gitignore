@@ -27,3 +27,4 @@ fishd.*
 /.config/fish/fish_universal_variables
 /.config/fcitx/profile*
 /.config/qutebrowser/qsettings/QtProject.conf
+/.config/qutebrowser/.mypy_cache
