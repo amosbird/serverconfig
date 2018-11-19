@@ -68,18 +68,22 @@ case "$class" in
                 ;;
             urxvt_scratchpad)
                 echo "$wid" > /tmp/urxvt_scratchpad
-                echo "state=floating hidden=on"
+                echo "state=floating hidden=on"  # hidden for show shell logic
                 ;;
             stardict)
                 echo "$wid" > /tmp/stardict
-                echo "sticky=on state=floating hidden=on"
+                echo "sticky=on state=floating"
                 compton-trans -w "$wid" 70
                 ;;
         esac
         ;;
+    scrcpy)
+        echo "$wid" > /tmp/scrcpy
+        echo "sticky=on state=floating"
+        ;;
     TelegramDesktop)
         echo "$wid" > /tmp/telegram
-        echo "sticky=on state=floating hidden=on"
+        echo "sticky=on state=floating"
         ;;
     Emacs)
         case "$title" in

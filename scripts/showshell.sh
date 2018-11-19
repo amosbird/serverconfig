@@ -5,6 +5,7 @@ then
     :
 else
     termite -t urxvt_scratchpad -e "tmux new -A -s gui" &
+    sleep 0.5  # sleep for show shell logic
 fi
 
 id=$(cat /tmp/urxvt_scratchpad);

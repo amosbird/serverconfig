@@ -29,10 +29,10 @@ url="$1"
 exists() { [[ -e $1 ]]; }; shopt -s nullglob
 if ! pgrep -f qutebrowser > /dev/null
 then
-    rm /run/user/1000/qutebrowser/*
-    cd /home/amos/git/qutebrowser
+    find /run/user/1000/qutebrowser/ -type f -delete
+    cd /home/amos/git/qutebrowser/
     # python -m qutebrowser --qt-flag single-process -l vdebug &
-    python -m qutebrowser --qt-flag single-process &
+    /usr/bin/python -m qutebrowser --qt-flag single-process &
     mkdir -p /run/user/1000/qutebrowser
     while read -r && [[ $REPLY != *ATTRIB\ ipc-* ]]; do break; done < <(inotifywait -m -t 5 -e create /run/user/1000/qutebrowser)
 fi

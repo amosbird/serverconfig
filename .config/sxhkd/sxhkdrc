@@ -34,6 +34,16 @@ super+z
   slock
 super+q
   bspc node -c
+ctrl+alt+1
+  showphone.sh
+ctrl+alt+2
+  echo s | nc -U /tmp/scrcpy.socket
+ctrl+alt+3
+  echo p | nc -U /tmp/scrcpy.socket
+ctrl+alt+4
+  echo n | nc -U /tmp/scrcpy.socket
+ctrl+alt+5
+  echo c | nc -U /tmp/scrcpy.socket
 ctrl+alt+8
   rofiman
 ctrl+alt+9
@@ -42,6 +52,8 @@ ctrl+alt+0
   tele
 super+s
   termite -e fish
+ctrl+alt+g
+  colorpick
 ctrl+alt+s
   showshell.sh 2
 ctrl+alt+l
