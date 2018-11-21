@@ -8,9 +8,9 @@ set -o pipefail
 
 if [[ -z $2 ]]; then
 	if [[ -z $GUI ]]; then
-		curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null | osc52clip
+		curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null | perl -pe 'chomp if eof' | osc52clip
 	else
-		(curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null | copyq add - && copyq select 0) || errlog
+		(curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null | perl -pe 'chomp if eof' | copyq add - && copyq select 0) || errlog
 		notify-send -a "teiler" "Text Uploaded" "$(copyq clipboard)"
 	fi
 else

@@ -7,7 +7,7 @@ then
     then
         exit 0
     fi
-    bspc node "$id" -g hidden -f
+    bspc node "$id" -g sticky=on -g hidden -f
     wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
     w=${wh[0]}
     h=${wh[1]}

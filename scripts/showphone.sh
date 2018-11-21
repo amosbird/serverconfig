@@ -4,9 +4,7 @@ if ! pgrep -f 'release/app/scrcpy' > /dev/null
 then
     cd /home/amos/git/scrcpy/
     ./run release &
-    pkill -9 -f 'gnirehtet run' > /dev/null
     sleep 0.5
-    gnirehtet run &
 fi
 
 id=$(cat /tmp/scrcpy)

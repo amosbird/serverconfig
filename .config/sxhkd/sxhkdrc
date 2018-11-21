@@ -16,14 +16,14 @@ mod3+i
   teiler --quickcopy fullscreen
 mod3+I
   teiler --quick fullscreen
-mod3+p
-  teiler --quickcopy area
 mod3+o
-  teiler --quickcopy orc
+  lang=$(echo -e "chi_sim\neng\nchi_sim+eng" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
+mod3+p
+  maim -s | xclip -selection clipboard -t image/png
 mod3+shift+p
-  teiler --quick area
+  maim -s | upload -
 mod3+t
-  teiler --paste
+  xclip -out | upload -
 mod3+shift+r
   teiler --togglecast
 mod3+g
@@ -49,7 +49,7 @@ ctrl+alt+8
 ctrl+alt+9
   showdict.sh
 ctrl+alt+0
-  tele
+  showtele.sh
 super+s
   termite -e fish
 ctrl+alt+g
