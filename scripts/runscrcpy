@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+cd /home/amos/git/scrcpy
+while :; do adb wait-for-device && ./run release; sleep 0.2; done

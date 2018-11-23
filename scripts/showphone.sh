@@ -1,24 +1,20 @@
 #!/usr/bin/env bash
 
-if ! pgrep -f 'release/app/scrcpy' > /dev/null
-then
-    cd /home/amos/git/scrcpy/
-    ./run release &
-    sleep 0.5
-fi
-
 workspace=$(bspc query -D -d focused --names)
 
 id=$(cat /tmp/scrcpy)
 if [[ -z "$id" ]]
 then
+    echo z | nc -U /tmp/scrcpy.socket
     exit 0
 fi
 
-if bspc query -N -d focused | grep -q "$(bspc query -N -n "$id")"
+wid=$(bspc query -N -n "$id")
+if [[ -n "$wid" ]] && bspc query -N -d focused | grep -q "$wid"
 then
     bspc node "$id" -g hidden -f
 else
+    echo z | nc -U /tmp/scrcpy.socket
     bspc node "$id" --to-desktop "$workspace"
     bspc node "$id" -g hidden=off -f
     bspc node "$id" -t floating

@@ -1599,7 +1599,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
 
 (after! recentf
-  (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/")))
+  (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/")))
 
 (after! ivy
   (setf (alist-get t ivy-re-builders-alist) 'ivy--regex-plus)

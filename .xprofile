@@ -22,4 +22,5 @@ unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 fcitx
 fish -c sxhkd > /home/amos/sxhkd.log &
 fish -c copyq &
+fish -c runscrcpy &
 # thunar --daemon &
