@@ -21,7 +21,9 @@ mod3+I
 mod3+o
   lang=$(echo -e "chi_sim\neng\nchi_sim+eng" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
 mod3+p
-  maim -s | xclip -selection clipboard -t image/png
+  maim -s | xclip -selection clipboard -t image/png;\
+  sleep 0.3; \
+  copyq select 0
 mod3+shift+p
   maim -s | upload -
 mod3+t
