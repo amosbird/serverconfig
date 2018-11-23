@@ -835,7 +835,7 @@ using a visual block/rectangle selection."
              (projectile-project-vcs directory)
              (split-string
               (shell-command-to-string
-               (concat "cd " (projectile-project-root) "; fd --hidden")))))
+               (concat "cd " (projectile-project-root) "; fd --hidden -E '.git'")) "\n")))
       ;; cache the resulting list of files
       (when projectile-enable-caching
         (projectile-cache-project (projectile-project-root) files)))
@@ -3455,7 +3455,7 @@ There is no need to advice `company-select-previous' because it calls
 
 (defun +amos/exec-shell-command ()
   (interactive)
-  (ivy-read "Shell command: " (split-string (shell-command-to-string "bash -c 'compgen -c' | tail -n +85"))
+  (ivy-read "Shell command: " (split-string (shell-command-to-string "bash -c 'compgen -c' | tail -n +85") "\n")
             :action #'compile
             :caller '+amos-exec-shell-command))
 
@@ -3614,7 +3614,7 @@ When capture groups are present in the input, print them instead of lines."
 
 (defun +amos/list-file (&optional initial-input)
   (interactive)
-  (ivy-read "List file: " (split-string (shell-command-to-string "find -- * -prune -type f -print && find .* -prune -type f -print"))
+  (ivy-read "List file: " (split-string (shell-command-to-string "find -- * -prune -type f -print && find .* -prune -type f -print") "\n")
             :initial-input initial-input
             :action #'find-file
             :preselect (counsel--preselect-file)
