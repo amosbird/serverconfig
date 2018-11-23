@@ -7,20 +7,28 @@
 # export CCLS_TRACEME=1
 # export CCLS_CRASH_RECOVERY=0
 
-cxx_flags="-O0"
+cxx_flags='[
+      "-xobjective-c++-header",
+      "-resource-dir=/home/amos/git/llvm/release/lib/clang/8.0.0",
+      "-D__cpp_deduction_guides=0",
+      "-Wno-macro-redefined",
+      "-O0"'
 
 for i in $ccls_cxx_flags; do
-	cxx_flags="${cxx_flags}, $i"
+	cxx_flags="${cxx_flags}, \"$i\""
 done
 
 for i in $ccls_include_dirs; do
-	cxx_flags="${cxx_flags}, -I$i"
+	cxx_flags="${cxx_flags}, \"-I$i\""
 done
 
-blacklist="/tmp"
+cxx_flags="${cxx_flags}]"
+
+blacklist='["/tmp"'
 for i in $ccls_blacklist; do
-	blacklist="${blacklist}, $i"
+	blacklist="${blacklist}, \"$i\""
 done
+blacklist="${blacklist}]"
 
 suffix=$(basename "$(git rev-parse --show-toplevel)")
 if [[ ! -z "$suffix" ]]; then
@@ -34,7 +42,8 @@ multi=0
 # else
 #     multi=1
 # fi
-init=$(jq -c -n --arg multi "$multi" --arg blacklist "$blacklist" --arg cxx_flags "$cxx_flags" '
+#
+init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argjson cxx_flags "$cxx_flags" '
 {
   "highlight": { "largeFileSize": 131072 },
   "cacheFormat": "blob",
@@ -44,19 +53,19 @@ init=$(jq -c -n --arg multi "$multi" --arg blacklist "$blacklist" --arg cxx_flag
     "multiVersion": $multi,
     "trackDependency": 1,
     "comments": 0,
-    "initialBlacklist": [$blacklist]
+    "initialBlacklist": $blacklist
   },
   "workspaceSymbol": { "caseSensitivity": 0, "maxNum": 2000 },
   "diagnostics": { "onChange": 1000, "onOpen": 1000, "onSave": 1000 },
   "completion": {
     "detailedLabel": false,
     "include": {
-        "whitelist": ["ccutils", "/usr/(local/)?include/(sys/)?[^/]+.h$"],
+        "whitelist": ["ccutils", "/usr/(local/)?include/(sys/)?[^/]+\\.h$"],
         "blacklist": [
           "(x86_64-redhat-linux|x86_64-pc-linux-gnu)/(32|bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
-          "^/usr/(local/)?include/c++/[0-9.]+/(bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
-          "^/usr/(local/)?include/c++/v1/",
-          "^/usr/(local/)?include/(?!c++).+"
+          "^/usr/(local/)?include/c\\+\\+/[0-9\\.]+/(bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
+          "^/usr/(local/)?include/c\\+\\+/v1/",
+          "^/usr/(local/)?include/(?!c\\+\\+).+"
         ]
     }
   },
@@ -67,14 +76,8 @@ init=$(jq -c -n --arg multi "$multi" --arg blacklist "$blacklist" --arg cxx_flag
       "/usr/local/bin/c++:/home/amos/git/llvm/release/bin/clang++"
     ],
     "excludeArgs": ["-fno-tree-loop-distribute-patterns"],
-    "extraArgs": [
-      "-xobjective-c++-header",
-      "-resource-dir=/home/amos/git/llvm/release/lib/clang/8.0.0",
-      "-D__cpp_deduction_guides=0",
-      "-Wno-macro-redefined",
-      $cxx_flags
-    ]
+    "extraArgs": $cxx_flags
   }
-}' | sed 's/"/\\"/g' )
+}')
 
-exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$suffix --init="\"$init\"" "$@"
+exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$suffix --init="$init" "$@"
