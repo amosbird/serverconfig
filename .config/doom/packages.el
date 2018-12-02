@@ -8,6 +8,7 @@
                    magithub
                    magit-todos
                    smerge-mode
+                   dired-k
                    solaire-mode
                    stripe-buffer
                    vi-tilde-fringe
@@ -56,7 +57,6 @@
 (package! color-moccur :recipe (:fetcher github :repo "myuhe/color-moccur.el"))
 (package! moccur-edit :recipe (:fetcher github :repo "myuhe/moccur-edit.el"))
 (package! dired-hacks :recipe (:fetcher github :repo "Fuco1/dired-hacks"))
-(package! dired-k :recipe (:fetcher github :repo "amosbird/emacs-dired-k"))
 (package! direnv :recipe (:fetcher github :repo "wbolster/emacs-direnv"))
 (package! evil-terminal-cursor-changer :recipe (:fetcher github :repo "amosbird/evil-terminal-cursor-changer"))
 (package! evil-textobj-line :recipe (:fetcher github :repo "syohex/evil-textobj-line"))

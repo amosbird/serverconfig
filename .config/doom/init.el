@@ -28,7 +28,6 @@
        multiple-cursors
 
        :emacs
-       dired
        ediff
        electric
        imenu
