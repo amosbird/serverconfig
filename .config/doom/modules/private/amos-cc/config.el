@@ -269,7 +269,7 @@ The insertion will be repeated COUNT times."
         "/usr/include"
         ))
 
-(add-hook! 'c-mode-common-hook
+(add-hook! '(c-mode-hook c++-mode-hook)
   (flycheck-mode +1)
   (eldoc-mode -1)
   (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)

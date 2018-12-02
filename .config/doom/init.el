@@ -42,12 +42,13 @@
        assembly
        data
        emacs-lisp
-       latex
+       (latex +latexmk +zathura)
        lua
        markdown
        ;; rust
        :private
        amos-cc
+       amos-java
        amos-email
        amos-go
        amos-modeline
@@ -61,11 +62,6 @@
 (setq display-line-numbers-type 'relative)
 ;; fix start-process xdg-open
 (setq process-connection-type nil)
-;; (setq package-archives
-;;       '(("gnu"   . "http://elpa.emacs-china.org/gnu/")
-;;         ("melpa" . "http://elpa.emacs-china.org/melpa/")
-;;         ("org"   . "http://elpa.emacs-china.org/org/")))
-(setq TeX-view-program-selection '((output-pdf "Zathura") (output-html "xdg-open")))
 (setq auto-revert-interval 0.3)
 (setq auto-revert-verbose nil)
 (setq auto-save-visited-interval 5)

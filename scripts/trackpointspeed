@@ -10,7 +10,7 @@ while IFS= read -r line; do
             echo 15 | sudo tee $line
             ;;
         *serio2*)
-            echo 255 | sudo tee $line
+            echo 200 | sudo tee $line
             ;;
     esac
 done < <(/usr/bin/fd sensitivity /sys)

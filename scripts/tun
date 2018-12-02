@@ -17,6 +17,9 @@
 
 # sudo RUST_LOG=info kytan -m c -h chuhuangvm.eastasia.cloudapp.azure.com -p 4555 -s $(gpg -d /home/amos/passwords/kytan.gpg) &
 
+sudo pkill -9 -f 'client_linux_amd64'
+client_linux_amd64 --quiet -r "[2604:180:3:28::c542]:4000" -l ":45555" --ds 10 --ps 10 --rcvwnd 1024 -mode fast3 -sockbuf 16777217 &
+
 sudo pkill -9 openconnect
 # gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin chuhuangvm.eastasia.cloudapp.azure.com:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
 # gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin 2604:180:3:28::c542:4556 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c

@@ -19,6 +19,9 @@
 
 sudo pkill -9 openconnect
 
+# obfs-local -f /tmp/obfs.pid -s 168.235.105.19 -p 8139 -l 4555 --obfs http --obfs-host www.bing.com
+obfs-local -f /tmp/obfs2.pid -s 13.75.109.155 -p 4555 -l 4555 --obfs http --obfs-host www.bing.com
+
 # gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin chuhuangvm.eastasia.cloudapp.azure.com:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
-gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin 168.235.105.19:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
+gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin 127.0.0.1:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
 # gpg -d ~/passwords/openconnect.gpg | sudo openconnect -b --user amos --passwd-on-stdin 127.0.0.1:45555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c

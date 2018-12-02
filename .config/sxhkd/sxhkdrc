@@ -21,9 +21,7 @@ mod3+I
 mod3+o
   lang=$(echo -e "chi_sim\neng\nchi_sim+eng" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
 mod3+p
-  maim -s | xclip -selection clipboard -t image/png;\
-  sleep 0.3; \
-  copyq select 0
+  maim -s | xclip -selection clipboard -t image/png
 mod3+shift+p
   maim -s | upload -
 mod3+t
@@ -170,7 +168,11 @@ XF86MonBrightnessUp
 #   bspc node --state tiled
 
 ctrl+Eisu_toggle
-  trackpointspeed
+  echo 'connect 04:52:C7:02:E5:FD' | bluetoothctl
+  # trackpointspeed
+
+ctrl+alt+Eisu_toggle
+  unlockphone
 mod3 + e
   xdg-open "$(xclip -o)"
 

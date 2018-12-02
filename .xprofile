@@ -23,4 +23,5 @@ fcitx
 fish -c sxhkd > /home/amos/sxhkd.log &
 fish -c copyq &
 fish -c runscrcpy &
+fish -c rungnirehtet &
 # thunar --daemon &

@@ -19,6 +19,10 @@ case "$1" in
         cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On
         ninja
         ;;
+    copyq)
+        cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On
+        ninja
+        ;;
 esac
 popd
 ln -sf release/compile_commands.json .
