@@ -6,6 +6,7 @@
 (require 'tramp)
 (require 'dired)
 (require 'dired-x)
+(require 'dired-aux)
 (require 'cl-macs)
 
 (setq dired-listing-switches "-alh")
