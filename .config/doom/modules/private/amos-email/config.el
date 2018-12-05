@@ -283,8 +283,8 @@ default/fallback account."
              :name "ict"
              :enter-func (lambda () (mu4e-message "Switch to the ict context"))
              ;; :leave-func (lambda () (mu4e-clear-caches))
-             :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi@software.ict.ac.cn")))
-             :vars '(( user-mail-address       . "zhengtianqi@software.ict.ac.cn" )
+             :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi@ict.ac.cn")))
+             :vars '(( user-mail-address       . "zhengtianqi@ict.ac.cn" )
                      ( user-full-name          . "郑天祺" )
                      ( mu4e-compose-signature  . "郑天祺\n中科院计算所网络数据实验室\n")))
            ,(make-mu4e-context

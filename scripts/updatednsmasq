@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 
+curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/hostnames.txt | sudo tee /etc/.hostnames.txt > /dev/null
+curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/domains.txt | sudo tee /etc/.domains.txt > /dev/null
+
 {
 	echo '
 port=53
 no-resolv
 no-poll
 min-cache-ttl=3600
-server=127.0.0.1#5353
-server=/163.com/202.38.64.1
-server=/126.net/202.38.64.1
+conf-file=/etc/.domains.txt
+addn-hosts=/etc/.hostnames.txt
+server=127.0.0.1#5300
 server=/ict.ac.cn/159.226.8.6
 '
 	curl -s https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
 } | sudo tee /etc/dnsmasq.conf >/dev/null
 
 sudo systemctl restart dnsmasq
+
+notify-send -a "Dnsmasq" "Dnsmasq Updated"
