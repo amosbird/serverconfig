@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+FC_DEBUG=4 pango-view -qt "$1" 2>&1 | awk -F \" '/family: / { m = $2 } END { print m }'

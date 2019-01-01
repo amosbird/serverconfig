@@ -163,10 +163,10 @@ alias -a W = dashboard expressions unwatch
 
 # set scheduler-locking off
 
-set target-async 1
-set pagination off
-set non-stop on
-set confirm off
+# set target-async 1
+# set pagination off
+# set non-stop on
+# set confirm off
 # Finally, turn it on!
 
 skip -gfi /usr/include/c++/*/*/*

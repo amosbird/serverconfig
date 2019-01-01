@@ -30,9 +30,11 @@ for i in $ccls_blacklist; do
 done
 blacklist="${blacklist}]"
 
-suffix=$(basename "$(git rev-parse --show-toplevel)")
-if [[ ! -z "$suffix" ]]; then
-	suffix=-"$suffix"
+if [[ -z "$ccls_suffix" ]]; then
+    ccls_suffix=$(basename "$(git rev-parse --show-toplevel)")
+fi
+if [[ ! -z "$ccls_suffix" ]]; then
+	ccls_suffix=-"$ccls_suffix"
 fi
 
 multi=0
@@ -53,10 +55,16 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
     "multiVersion": $multi,
     "trackDependency": 1,
     "comments": 0,
-    "initialBlacklist": $blacklist
+    "initialBlacklist": $blacklist,
+    "blacklist": ["~$"]
   },
   "workspaceSymbol": { "caseSensitivity": 0, "maxNum": 2000 },
-  "diagnostics": { "onChange": 1000, "onOpen": 1000, "onSave": 1000 },
+  "diagnostics": {
+    "onChange": 1000,
+    "onOpen": 1000,
+    "onSave": 1000,
+    "blacklist": ["~$"]
+  },
   "completion": {
     "detailedLabel": false,
     "include": {
@@ -75,9 +83,9 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
       "/usr/local/bin/cc:/home/amos/git/llvm/release/bin/clang",
       "/usr/local/bin/c++:/home/amos/git/llvm/release/bin/clang++"
     ],
-    "excludeArgs": ["-fno-tree-loop-distribute-patterns"],
+    "excludeArgs": ["-fno-tree-loop-distribute-patterns", "-fwhole-program"],
     "extraArgs": $cxx_flags
   }
 }')
 
-exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$suffix --init="$init" "$@"
+exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"

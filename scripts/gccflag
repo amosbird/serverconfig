@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+readelf -p .GCC.command.line "$1"

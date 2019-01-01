@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+url=$(echo "$1" | sed 's=https://github.com\(.*\)=https://patch-diff.githubusercontent.com\1.patch=')
+curl -s -L "$url" | git am -3

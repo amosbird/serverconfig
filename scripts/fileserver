@@ -1,0 +1,8 @@
+#!/usr/bin/env fish
+
+if test $argv[1]
+    set port $argv[1]
+else
+    set port 8000
+end
+httpfolder -i 0.0.0.0 -p $port

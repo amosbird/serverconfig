@@ -274,11 +274,8 @@ The insertion will be repeated COUNT times."
   (eldoc-mode -1)
   (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
     (c-set-style "gnu"))
-  (if (s-starts-with? "/xxxxxx/home/amos/cc/" default-directory)
-      (lsp-clangd-c++-enable)
-    ;; (add-hook 'lsp-after-open-hook #'ccls-code-lens-mode nil t)
-    (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
-    (ccls//enable)))
+  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
+  (ccls//enable))
 
 (add-hook 'c++-mode-hook #'modern-c++-font-lock-mode)
 
@@ -286,19 +283,10 @@ The insertion will be repeated COUNT times."
   '(c-mode c++-mode objc-mode)
   'company-lsp)
 
-(after! lsp-mode
-  (lsp-define-stdio-client lsp-clangd-c++
-                           "cpp"
-                           (lsp-make-traverser "compile_commands.json")
-                           (list "clangd")
-                           :ignore-regexps
-                           '("^Error -[0-9]+: .+$")))
 (def-package! ccls
   :after lsp-mode
   :init
   (setq
-   ccls-project-root-matchers
-   '(ccls-project-roots-matcher ".ccls" ".cquery" projectile-project-root "compile_commands.json")
    ;; ccls-sem-highlight-method 'font-lock
    ;; ccls-sem-highlight-method 'overlay
    ccls-sem-highlight-method nil
@@ -308,66 +296,32 @@ The insertion will be repeated COUNT times."
     (interactive (list (read-string
                         "workspace/symbol: "
                         nil 'xref--read-pattern-history)))
-    (let ((symbols (lsp--send-request (lsp--make-request
-                                       "workspace/symbol"
-                                       `(:query ,pattern :folders ,(if current-prefix-arg (vector (doom-project-root)) (vector default-directory)))))))
+    (let ((symbols (lsp-request
+                    "workspace/symbol"
+                    `(:query ,pattern :folders ,(if current-prefix-arg (vector (doom-project-root)) (vector default-directory))))))
       (unless symbols
         (user-error "No symbol found for: %s" pattern))
       (+amos-ivy-xref
        (mapcar (lambda (x) (lsp--symbol-information-to-xref x)) symbols) pattern)))
-
   (defun ccls/includes (&optional force)
     (interactive)
-    (if lsp--cur-workspace
-        (let ((x (intern (concat (doom-project-root) "--includes"))))
+    (let ((x (intern (concat (doom-project-root) "--includes"))))
           (unless (and (boundp x) (not force))
-            (setq x
-                  (lsp--send-request
-                   (lsp--make-request "$ccls/includes"))))
-          (ivy-read "Include: " x :action #'+amos/add-include))))
-
+            (setq x (lsp-request "$ccls/includes" nil)))
+          (ivy-read "Include: " x :action #'+amos/add-include)))
+  (defun ccls/fileinfo ()
+    (interactive)
+    (lsp-request
+     "$ccls/fileInfo"
+     (list :textDocument (lsp--text-document-identifier))))
   (defun ccls/diagnostic ()
     (interactive)
-    (if lsp--cur-workspace
-        (lsp--send-notification
-         (lsp--make-notification
-          "$ccls/diagnostic"
-          `(:textDocument ,(lsp--text-document-identifier))))))
-
-  (defun ccls/inheritance (&optional derived)
+    (lsp-notify
+     "$ccls/diagnostic"
+     (list :textDocument (lsp--text-document-identifier))))
+  (defun ccls/inheritances ()
     (interactive)
-    (if lsp--cur-workspace
-        (let* ((input (symbol-at-point))
-               (xrefs
-                (-some->> (lsp--send-request
-                           (lsp--make-request "$ccls/inheritance"
-                                              `(:textDocument ,(lsp--text-document-identifier)
-                                                :position ,(lsp--cur-position)
-                                                :levels 100
-                                                :derived ,derived)))
-                          (lsp-ui-peek--to-sequence)
-                          (lsp--locations-to-xref-items)
-                          (-filter 'identity))))
-          (unless xrefs
-            (user-error "No inheritances found for: %s" input))
-          (+amos-ivy-xref xrefs "inheritances"))))
-
-  (defun ccls/inheritances (&optional derived)
-    (interactive)
-    (if lsp--cur-workspace
-        (let* ((input (symbol-at-point))
-               (xrefs
-                (-some->> (lsp--send-request
-                           (lsp--make-request "$ccls/inheritances"
-                                              `(:textDocument ,(lsp--text-document-identifier)
-                                                :position ,(lsp--cur-position))))
-                          (lsp-ui-peek--to-sequence)
-                          (lsp--locations-to-xref-items)
-                          (-filter 'identity))))
-          (unless xrefs
-            (user-error "No inheritances found for: %s" input))
-          (+amos-ivy-xref xrefs "inheritances"))))
-
+    (+amos-lsp-find-custom 'inheritances "$ccls/inheritances"))
   (defun ccls/callee ()
     (interactive)
     (+amos-lsp-find-custom 'callee "$ccls/call" '(:callee t)))
@@ -436,7 +390,7 @@ The insertion will be repeated COUNT times."
 (defun ccls//enable ()
   (direnv-update-environment)
   (condition-case nil
-      (lsp-ccls-enable)
+      (lsp)
     (user-error nil))
   (setq-local flycheck-checker 'lsp-ui)
   (lsp-ui-flycheck-add-mode major-mode)

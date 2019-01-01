@@ -12,7 +12,8 @@
                    solaire-mode
                    stripe-buffer
                    vi-tilde-fringe
-                   visual-fill-column)
+                   visual-fill-column
+                   which-key)
 
 (package! adoc-mode)
 (package! bind-map)
@@ -23,6 +24,8 @@
 (package! easy-hugo)
 (package! evil-magit)
 (package! fcitx)
+(package! flycheck)
+(package! flycheck-inline)
 (package! general)
 (package! git-gutter)
 (package! git-timemachine)
@@ -43,6 +46,7 @@
 (package! ov)
 (package! page-break-lines)
 (package! pdf-tools)
+(package! quick-peek)
 (package! rust-playground)
 (package! smart-forward)
 (package! symbol-overlay)

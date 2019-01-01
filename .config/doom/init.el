@@ -6,7 +6,7 @@
        lookup
        snippets
        spellcheck
-       (syntax-checker +childframe)
+       ;; syntax-checker
        file-templates
 
        :completion
@@ -45,16 +45,17 @@
        (latex +latexmk +zathura)
        lua
        markdown
+       (sh +fish)
        ;; rust
        :private
        amos-cc
-       amos-java
+       ;; amos-java
        amos-email
        amos-go
        amos-modeline
        amos-org
        amos-python
-       amos-sh
+       ;; amos-sh
        )
 
 (setq all-the-icons-scale-factor 1.0)
@@ -115,8 +116,6 @@
 (setq evil-snipe-scope 'visible)
 (setq explicit-shell-file-name "/bin/bash")
 (setq find-file-visit-truename t)
-(setq flycheck-pos-tip-mode nil)
-(setq flycheck-indication-mode nil)
 (setq fringes-outside-margins t)
 (setq global-auto-revert-non-file-buffers t)
 (setq helm-bibtex-bibliography '("~/zotero.bib"))

@@ -191,7 +191,7 @@
  (:prefix "C-c"
    "C-SPC" #'easy-hugo)
 
- (:prefix "SPC"
+ (:leader "SPC"
    :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
    :desc "Toggle mc"                       :nv "SPC" #'+amos/toggle-mc
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
@@ -211,7 +211,7 @@
    :desc "Switch workspace buffer"         :nv "b"   #'switch-to-buffer
    :desc "Comment"                         :nv "l"   #'evil-commentary-line
 
-   (:desc "file" :prefix "f"
+   (:prefix "f"
      :desc "File file"                     :nv "f" #'find-file
      :desc "Open project editorconfig"     :nv "c" #'editorconfig-find-current-editorconfig
      :desc "Delete current file"           :nv "D" #'+evil:delete-this-file
@@ -220,7 +220,7 @@
      :desc "Yank filename"                 :nv "y" #'+amos/yank-buffer-filename
      :desc "Yank filename"                 :nv "Y" #'+amos/yank-buffer-filename-nondir)
 
-   (:desc "git" :prefix "g"
+   (:prefix "g"
      :desc "Git status"                    :nv "s" #'magit-status
      :desc "Git blame"                     :nv "b" #'magit-blame
      :desc "Git timemachine"               :nv "t" #'git-timemachine
@@ -228,7 +228,7 @@
      :desc "Git revert hunk"               :nv "r" #'git-gutter:revert-hunk
      :desc "Git revert buffer"             :nv "R" #'vc-revert)
 
-   (:desc "help" :prefix "h"
+   (:prefix "h"
      :desc "Apropos"                       :nv "a" #'apropos
      :desc "Reload theme"                  :nv "R" #'doom/reload-theme
      :desc "Find library"                  :nv "l" #'find-library
@@ -247,7 +247,7 @@
      :desc "Info"                          :nv "i" #'info
      :desc "Toggle profiler"               :nv "p" #'doom/toggle-profiler)
 
-   (:desc "notes" :prefix "n"
+   (:prefix "n"
      :desc "Rust playground"               :nv "r" #'rust-playground
      :desc "Go playground"                 :nv "g" #'go-playground
      :desc "C++ playground"                :nv "c" (lambda! (+amos/workspace-new) (cc-playground))
@@ -263,15 +263,15 @@
 
    :desc "Dired"                           :nv "o" #'+amos/dired-jump
 
-   (:desc "quit" :prefix "q"
+   (:prefix "q"
      :desc "Quit"                          :nv "q" #'+amos/prompt-kill-emacs)
 
-   (:desc "snippets" :prefix "s"
+   (:prefix "s"
      :desc "New snippet"                   :nv "n" #'yas-new-snippet
      :desc "Insert snippet"                :nv "i" #'yas-insert-snippet
      :desc "Find snippet for mode"         :nv "s" #'yas-visit-snippet-file)
 
-   (:desc "toggle" :prefix "t"
+   (:prefix "t"
      :desc "Flycheck"                      :nv "f" #'flycheck-mode
      :desc "Rainbow"                       :nv "r" #'rainbow-mode
      :desc "Truncate lines"                :nv "l" #'toggle-truncate-lines
@@ -474,6 +474,8 @@
    "M-g"    #'+amos/ivy-complete-dir
    "M-r"    #'ivy-toggle-fuzzy
    "M-z"    #'undo
+   "S-<f7>"      #'+amos/backward-delete-subword
+   "M-S-<backspace>"       #'+amos/backward-delete-subword
    "TAB"    #'ivy-call
    [escape] #'keyboard-escape-quit
    ;; ivy has its own logic for these
@@ -666,6 +668,8 @@
    "M-F"         #'+amos/forward-subword-insert
    "M-z"         #'undo
    "DEL"         #'+amos/backward-delete-char
+   "S-<f7>"      #'+amos/backward-delete-subword
+   "M-S-<backspace>"       #'+amos/backward-delete-subword
    [M-backspace] #'+amos/backward-delete-word
    [134217855]   #'+amos/backward-delete-word ; M-DEL
    )

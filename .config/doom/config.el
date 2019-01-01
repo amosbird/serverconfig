@@ -858,7 +858,8 @@ With a prefix ARG, invalidate the cache first."
             :caller #'+amos/projectile-find-file))
 
 (advice-add #'projectile-cache-files-find-file-hook :override #'ignore)
-(add-hook! 'projectile-mode-hook (ad-deactivate 'delete-file))
+;; TODO prevent projectile clear caches when removing files, following doesn't work anymore
+;; (add-hook! 'projectile-mode-hook (ad-deactivate 'delete-file))
 
 (defvar switch-buffer-functions
   nil
@@ -1396,28 +1397,21 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (def-package! lsp-mode
   :init
-  (setq lsp-enable-eldoc nil
-        lsp-eldoc-hook nil
+  (setq lsp-eldoc-hook nil
+        lsp-prefer-flymake nil
         lsp-enable-indentation nil
-        lsp-message-project-root-warning t
-        lsp--json-array-use-vector t)
+        lsp-auto-guess-root t)
   :config
-  (require 'lsp-imenu)
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
 
-(defun +amos-lsp-find-custom (kind request &optional param)
-  (let* ((input (symbol-at-point))
-         (xrefs
-          (-some->> (lsp--send-request
-                     (lsp--make-request
-                      request
-                      (append param (lsp--text-document-position-params))))
-                    (lsp-ui-peek--to-sequence)
-                    (lsp--locations-to-xref-items)
-                    (-filter 'identity))))
-    (unless xrefs
-      (user-error "No %s found for: %s" (symbol-name kind) input))
-    (+amos-ivy-xref xrefs (symbol-name kind))))
+(cl-defun +amos-lsp-find-custom (kind method &optional extra &key display-action)
+  "Send request named METHOD and get cross references of the symbol under point.
+EXTRA is a plist of extra parameters."
+  (let ((loc (lsp-request method
+                          (append (lsp--text-document-position-params) extra))))
+    (if loc
+        (+amos-ivy-xref (lsp--locations-to-xref-items (if (sequencep loc) loc (list loc))) (symbol-name kind))
+      (message "Not found for: %s" (thing-at-point 'symbol t)))))
 
 (defun +amos/definitions ()
   (interactive)
@@ -1429,7 +1423,10 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (+amos-lsp-find-custom
    'references "textDocument/references"))
 
-(def-package! lsp-ui)
+(def-package! lsp-ui
+  :config
+  (setq lsp-ui-sideline-enable nil)
+  )
 
 (defun +amos/create-fish-function (name)
   (interactive "sNew function's name: ")
@@ -1599,7 +1596,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
 
 (after! recentf
-  (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/")))
+  (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local")))
 
 (after! ivy
   (setf (alist-get t ivy-re-builders-alist) 'ivy--regex-plus)
@@ -1866,9 +1863,22 @@ representation of `NUMBER' is smaller."
 ;;   (advice-add #'fcitx--activate-proc :override #'+amos/fcitx--activate-proc)
 ;;   (advice-add #'fcitx--deactivate-proc :override #'+amos/fcitx--deactivate-proc))
 
-(when gui-p
-  (require 'fcitx)
-  (fcitx-aggressive-setup))
+(require 'fcitx)
+(fcitx-aggressive-setup)
+
+(unless gui-p
+  (defun +amos*fcitx--activate-proc ()
+    (shell-command! "fcitxenable"))
+
+  (defun +amos*fcitx--deactivate-proc ()
+    (shell-command! "fcitxdisable"))
+
+  (defun +amos*fcitx--active-p-proc ()
+    (string= "2\n" (shell-command-to-string "fcitxstatus")))
+
+  (advice-add #'fcitx--activate-proc :override #'+amos*fcitx--activate-proc)
+  (advice-add #'fcitx--deactivate-proc :override #'+amos*fcitx--deactivate-proc)
+  (advice-add #'fcitx--active-p-proc :override #'+amos*fcitx--active-p-proc))
 
 (defun first-non-dired-buffer ()
   (--first (not (with-current-buffer it (derived-mode-p 'dired-mode))) (buffer-list)))
@@ -2184,10 +2194,9 @@ the current state and point position."
   (save-some-buffers nil t)
   (kill-emacs))
 
-(defun +amos*lsp--xref-make-item (filename location)
-  "Return a xref-item from a LOCATION in FILENAME."
-  (let* ((range (gethash "range" location))
-         (pos-start (gethash "start" range))
+(defun +amos*lsp--xref-make-item (filename range)
+  "Return a xref-item from a RANGE in FILENAME."
+  (let* ((pos-start (gethash "start" range))
          (pos-end (gethash "end" range))
          (line (lsp--extract-line-from-buffer pos-start))
          (start (gethash "character" pos-start))
@@ -2195,7 +2204,7 @@ the current state and point position."
          (len (length line)))
     (add-face-text-property (max (min start len) 0)
                             (max (min end len) 0)
-                            'ivy-minibuffer-match-face-2 t line)
+                            'ivy-minibuffer-match-face-2 t line) ;; NOTE change face
     ;; LINE is nil when FILENAME is not being current visited by any buffer.
     (xref-make (or line filename)
                (xref-make-file-location filename
@@ -2536,9 +2545,44 @@ the current state and point position."
 (after! recentf
   (setq recentf-max-saved-items 10000))
 
-(after! flycheck
-  (setq flycheck-highlighting-mode 'columns)
-  (setq flycheck-check-syntax-automatically '(save mode-enabled)))
+(def-package! quick-peek)
+
+(defun +amos*flycheck-inline-display-errors (ofun &rest candidate)
+  (if (or (eq last-command 'flycheck-previous-error)
+          (eq last-command 'flycheck-next-error)
+          (eq last-input-event 29))
+      (apply ofun candidate)))
+
+(def-package! flycheck
+  :commands (flycheck-list-errors flycheck-buffer)
+  :after-call (doom-enter-buffer-hook after-find-file)
+  :config
+  ;; Emacs feels snappier without checks on newline
+  (setq flycheck-check-syntax-automatically '(save idle-change mode-enabled))
+  (after! evil
+    (defun +syntax-checkers|flycheck-buffer ()
+      "Flycheck buffer on ESC in normal mode."
+      (when flycheck-mode
+        (ignore-errors (flycheck-buffer))
+        nil))
+    (add-hook 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
+  (global-flycheck-inline-mode +1)
+  (global-flycheck-mode +1)
+  (advice-add #'flycheck-inline-display-errors :around #'+amos*flycheck-inline-display-errors)
+  ;; (advice-add #'flycheck-display-error-messages :override #'flycheck-inline-display-errors)
+  (setq flycheck-highlighting-mode 'columns
+        flycheck-check-syntax-automatically '(save mode-enabled)
+        flycheck-indication-mode nil
+        ;; flycheck-inline-display-function
+        ;; (lambda (msg pos)
+        ;;   (let* ((ov (quick-peek-overlay-ensure-at pos))
+        ;;          (contents (quick-peek-overlay-contents ov)))
+        ;;     (setf (quick-peek-overlay-contents ov)
+        ;;           (concat contents (when contents "\n") msg))
+        ;;     (quick-peek-update ov)))
+        ;; flycheck-inline-clear-function #'quick-peek-hide
+        flycheck-display-errors-delay 0)
+  (require 'lsp-ui-flycheck))
 
 (after! counsel
   (setq counsel-rg-base-command "rg -S --no-heading --line-number --color never %s ."))
@@ -3251,11 +3295,12 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 ;;       process)))
 ;; (advice-add #'flycheck-start-command-checker :override #'doom*flycheck-start-command-checker)
 
-(defun +amos*git-link--select-remote ()
-  (if current-prefix-arg
-      (git-link--read-remote)
-    (or (magit-get-push-remote) (magit-get-upstream-remote) "origin")))
-(advice-add #'git-link--select-remote :override #'+amos*git-link--select-remote)
+;; (defun +amos*git-link--select-remote ()
+;;   (if current-prefix-arg
+;;       (git-link--read-remote)
+;;     (or (magit-get-upstream-remote) (magit-get-push-remote) "origin")))
+;; (setq git-link-default-branch "master")
+;; (advice-add #'git-link--select-remote :override #'+amos*git-link--select-remote)
 
 (evil-define-command +amos*evil-scroll-down (count)
   "Scrolls the window and the cursor COUNT lines downwards.
@@ -3683,3 +3728,6 @@ will be killed."
             (kill-buffer buf)
             (message "Killed non-existing/unreadable file buffer: %s" filename))))))
   (message "Finished reverting buffers containing unmodified files."))
+
+(advice-add #'flycheck-previous-error :after (lambda (&rest _) (recenter)))
+(advice-add #'flycheck-next-error :after (lambda (&rest _) (recenter)))

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+#
+sudo gdb --nx -batch -ex "attach $1" -ex "call putenv(\"$2\")" -ex 'detach' > /dev/null 2>&1
