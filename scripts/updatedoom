@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-(cd ~/.emacs.d && bin/doom -y upgrade && bin/doom -y update)
+(cd ~/.emacs.d && bin/doom -y upgrade && bin/doom -y update && bin/doom -y refresh && bin/doom -y compile && bin/doom -y compile :plugins)

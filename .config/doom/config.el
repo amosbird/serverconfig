@@ -433,19 +433,6 @@
    easy-hugo-previewtime "300"
    easy-hugo-default-ext ".org"))
 
-
-(def-package! link-hint
-  :commands link-hint-open-link link-hint-open-all-links
-  :config
-  (after! mu4e
-    (defun +amos/mu4e-open-all-attachments ()
-      "Open all visible mu4e attachments."
-      (interactive)
-      (let ((link-hint-ignore-types
-             (remove 'mu4e-attachment link-hint-all-types))
-            link-hint-act-on-all-ignore-types)
-        (link-hint-open-all-links)))))
-
 (def-package! lispyville
   :commands lispyville-mode)
 

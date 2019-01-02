@@ -1,5 +1,6 @@
 ;;;  -*- lexical-binding: t; -*-
 
+(require 'use-package)
 (doom! :feature
        eval
        (evil +everywhere)
@@ -47,14 +48,16 @@
        markdown
        (sh +fish)
        ;; rust
+       python
+       go
        :private
        amos-cc
        ;; amos-java
        amos-email
-       amos-go
+       ;; amos-go
        amos-modeline
        amos-org
-       amos-python
+       ;; amos-python
        ;; amos-sh
        )
 

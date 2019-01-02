@@ -31,3 +31,4 @@ fishd.*
 /scripts/.mypy_cache/
 /.config/fcitx/conf/fcitx-notify.config
 /.config/fcitx/rime/installation.yaml
+*.elc

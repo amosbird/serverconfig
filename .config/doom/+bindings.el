@@ -178,7 +178,7 @@
    :i "C-f"     #'amos-company-files
    :i "C-n"     #'company-dabbrev-code
    :i "C-p"     #'+company/dabbrev-code-previous
-   :g "u"       #'link-hint-open-link
+   :g "u"       #'+amos/avy-open-url
    :g "c"       #'+amos/workspace-new
    :g "C"       #'+amos/workspace-new-scratch
    :g "k"       #'+amos/workspace-delete
