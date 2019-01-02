@@ -118,7 +118,7 @@
 (setq find-file-visit-truename t)
 (setq fringes-outside-margins t)
 (setq global-auto-revert-non-file-buffers t)
-(setq helm-bibtex-bibliography '("~/zotero.bib"))
+(setq helm-bibtex-bibliography '("citations.bib"))
 (setq helm-bibtex-notes-path "~/bibnotes.org")
 (setq helm-bibtex-pdf-field "file")
 (setq initial-buffer-choice t)

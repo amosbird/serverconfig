@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+# /sound /audio-mode:0  #client
+# /sound /audio-mode:1  #server
+# /audio-mode:2  #disable
+sudo ip r a 172.25.0.1 via 172.26.138.142
+xfreerdp -wallpaper /rfx /gfx:avc444 /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:16 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:Administrator /p:$(gpg -d ~/passwords/win.gpg) /v:172.25.0.1:3389

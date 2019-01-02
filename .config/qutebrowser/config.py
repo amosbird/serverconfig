@@ -12,7 +12,7 @@ config.load_autoconfig()
 c.aliases = {'q': 'quit', 'w': 'session-save', 'wq': 'quit --save'}
 c.content.host_blocking.whitelist = ['piwik.org']
 # c.url.searchengines = { 'DEFAULT': 'http://localhost:8888/?q={}', 'google': 'http://localhost:8888/?q={}', 'github': 'https://github.com/search?q={}', 'searx': 'https://searx.me/?q={}'}
-c.url.searchengines = { 'DEFAULT': 'https://google.com/search?q={}', 'google': 'https://google.com/search?q={}', 'github': 'https://github.com/search?q={}', 'searx': 'https://searx.me/?q={}'}
+c.url.searchengines = { 'DEFAULT': 'https://google.com/search?q={}', 'google': 'https://google.com/search?q={}', 'github': 'https://github.com/search?q={}', 'searx': 'https://searx.me/?q={}', 'scholar': 'https://scholar.google.com/scholar?q={}'}
 c.tabs.last_close = 'close'
 
 
@@ -49,6 +49,7 @@ config.bind('O', 'spawn fcitx-remote -c ;; set-cmd-text :open {url:pretty}')
 config.bind('T', 'spawn fcitx-remote -c ;; set-cmd-text :open -t -r {url:pretty}')
 config.bind('t', 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t')
 config.bind('s', 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t google ')
+config.bind('S', 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t scholar ')
 config.bind('gs', 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t github ')
 config.unbind('D')
 

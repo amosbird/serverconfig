@@ -25,6 +25,7 @@ configs=(
     .xinitrc
     .stalonetrayrc
     .bashrc
+    .wgetrc
     .bash_profile
     .chisels
     .gitignore_global

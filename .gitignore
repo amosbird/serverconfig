@@ -29,3 +29,5 @@ fishd.*
 /.config/qutebrowser/qsettings/QtProject.conf
 /.config/qutebrowser/.mypy_cache
 /scripts/.mypy_cache/
+/.config/fcitx/conf/fcitx-notify.config
+/.config/fcitx/rime/installation.yaml

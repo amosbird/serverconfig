@@ -17,9 +17,11 @@ export GDK_SCALE=1
 /home/amos/scripts/restartxcape.sh
 xset s off -dpms
 xset b off
+xset r rate 200 30
 compton -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 fcitx
+fish -c rundbusproxy &
 fish -c sxhkd > /home/amos/sxhkd.log &
 fish -c copyq &
 fish -c runscrcpy &
