@@ -13,7 +13,8 @@
                    stripe-buffer
                    vi-tilde-fringe
                    visual-fill-column
-                   which-key)
+                   which-key
+                   emacs-snippets)
 
 (package! adoc-mode)
 (package! bind-map)
