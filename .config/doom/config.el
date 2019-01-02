@@ -1,5 +1,4 @@
-;;; private/amos/config.el -*- lexical-binding: t; -*-
-;;; -*- no-byte-compile: t; -*-
+;;; private/amos/config.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
 (add-to-list '+evil-collection-disabled-list 'mu4e 'mu4e-conversation)
 
@@ -847,6 +846,8 @@ With a prefix ARG, invalidate the cache first."
 (advice-add #'projectile-cache-files-find-file-hook :override #'ignore)
 ;; TODO prevent projectile clear caches when removing files, following doesn't work anymore
 ;; (add-hook! 'projectile-mode-hook (ad-deactivate 'delete-file))
+(after! projectile
+  (advice-remove 'delete-file #'delete-file-projectile-remove-from-cache))
 
 (defvar switch-buffer-functions
   nil
