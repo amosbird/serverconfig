@@ -1,4 +1,5 @@
 ;;;  -*- lexical-binding: t; -*-
+;;; -*- no-byte-compile: t; -*-
 
 (require 'use-package)
 (doom! :feature
@@ -62,7 +63,7 @@
        )
 
 (setq all-the-icons-scale-factor 1.0)
-(setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
+(setq doom-font (font-spec :family "Ubuntu Mono" :size 14))
 (setq display-line-numbers-type 'relative)
 ;; fix start-process xdg-open
 (setq process-connection-type nil)
@@ -267,4 +268,3 @@
   (server-start))
 ;; disable this fucking stupid feature by masking
 (provide 'smartparens-lua)
-(provide 'evil-collection-mu4e)

@@ -1,4 +1,6 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; -*-
+;;; -*- no-byte-compile: t; -*-
+
 
 (require 'general)
 (general-override-mode)

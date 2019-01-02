@@ -47,7 +47,7 @@ default/fallback account."
 ;;
 
 (def-package! mu4e
-  :load-path "/usr/share/emacs/site-lisp/mu4e"
+  :load-path "/usr/local/share/emacs/site-lisp/mu4e"
   :commands (mu4e mu4e-compose-new browse-url-mail)
   :config
   (setq
@@ -63,7 +63,6 @@ default/fallback account."
    mu4e-confirm-quit nil
    mu4e-context-policy 'pick-first
    mu4e-drafts-folder "/drafts"
-   mu4e-enable-notifications t
    mu4e-get-mail-command "fmail.sh"
    mu4e-hide-index-messages t
    mu4e-maildir +email-mu4e-mail-path
@@ -119,24 +118,24 @@ default/fallback account."
   ;; However, the real magic happens in `+email|gmail-fix-flags'.
   ;;
   ;; Gmail will handle the rest.
-  (setq mu4e-marks (assq-delete-all 'trash mu4e-marks))
-  (push '(trash :char ("d" . "▼")
-                :prompt "dtrash"
-                :dyn-target (lambda (target msg) (mu4e-get-trash-folder msg))
-                :action
-                (lambda (docid msg target)
-                  (mu4e~proc-move docid (mu4e~mark-check-target target) "+S-u-N")))
-        mu4e-marks)
+  ;; (setq mu4e-marks (assq-delete-all 'trash mu4e-marks))
+  ;; (push '(trash :char ("d" . "▼")
+  ;;               :prompt "dtrash"
+  ;;               :dyn-target (lambda (target msg) (mu4e-get-trash-folder msg))
+  ;;               :action
+  ;;               (lambda (docid msg target)
+  ;;                 (mu4e~proc-move docid (mu4e~mark-check-target target) "+S-u-N")))
+  ;;       mu4e-marks)
 
   ;; Refile will be my "archive" function.
-  (setq mu4e-marks (assq-delete-all 'refile mu4e-marks))
-  (push '(refile :char ("r" . "▶")
-                 :prompt "refile"
-                 :show-target (lambda (target) "archive")
-                 :action
-                 (lambda (docid msg target)
-                   (mu4e~proc-move docid (mu4e~mark-check-target target) "+S-u-N")))
-        mu4e-marks)
+  ;; (setq mu4e-marks (assq-delete-all 'refile mu4e-marks))
+  ;; (push '(refile :char ("r" . "▶")
+  ;;                :prompt "refile"
+  ;;                :show-target (lambda (target) "/archive")
+  ;;                :action
+  ;;                (lambda (docid msg target)
+  ;;                  (mu4e~proc-move docid (mu4e~mark-check-target target) "+S-u-N")))
+  ;;       mu4e-marks)
 
   ;; This hook correctly modifies gmail flags on emails when they are marked.
   ;; Without it, refiling (archiving), trashing, and flagging (starring) email
@@ -187,36 +186,36 @@ default/fallback account."
              do (evil-set-initial-state (car str) (cdr str)))
 
     (setq mu4e-view-mode-map (make-sparse-keymap)
-          ;; mu4e-compose-mode-map (make-sparse-keymap)
           mu4e-headers-mode-map (make-sparse-keymap)
           mu4e-main-mode-map (make-sparse-keymap))
 
     (map! (:map (mu4e-main-mode-map mu4e-headers-mode-map mu4e-view-mode-map)
-            :n "C" #'mu4e-compose-new
             :n "F" #'mu4e-compose-forward
             :n "R" #'mu4e-compose-reply
-            :n "C" #'mu4e-compose-new
             :n "E" #'mu4e-compose-edit
-            :leader
-            :n "," #'mu4e-context-switch
-            :n "." #'mu4e-headers-search-bookmark
-            :n ">" #'mu4e-headers-search-bookmark-edit
-            :n "/" #'mu4e~headers-jump-to-maildir)
+            :n "M" #'mu4e-context-switch)
 
           (:map mu4e-main-mode-map
             :n "q"   #'mu4e-quit
             :n "u"   #'mu4e-update-index
-            :n "U"   #'mu4e-update-mail-and-index
+            "C-c C-u" #'mu4e-update-mail-and-index
             :n "j"   #'mu4e~headers-jump-to-maildir
-            :n "c"   #'+email/compose
+            :n "J"   #'mu4e~headers-jump-to-maildir
+            :n "s"   #'mu4e-headers-search
+            :n "C"   #'mu4e-compose-new
+            :n "B"   #'mu4e-headers-search-bookmark-edit
             :n "b"   #'mu4e-headers-search-bookmark)
 
           (:map mu4e-headers-mode-map
             "C-c C-u" #'mu4e-update-mail-and-index
             "C-l"     #'mu4e-update-index
+            :n "J"   #'mu4e~headers-jump-to-maildir
             :n "q"    #'mu4e~headers-quit-buffer
+            :n "C"    #'mu4e-compose-new
             :n "s"    #'mu4e-headers-search-edit
             :n "S"    #'mu4e-headers-search-narrow
+            :n "B"   #'mu4e-headers-search-bookmark-edit
+            :n "b"   #'mu4e-headers-search-bookmark
             :n "RET"  #'mu4e-headers-view-message
             :n "U"    #'mu4e-mark-unmark-all
             :nv "u"   #'mu4e-headers-mark-for-unmark
@@ -247,7 +246,6 @@ default/fallback account."
 
           (:map mu4e-view-mode-map
             :n "o" #'link-hint-open-link
-            :n "f" #'link-hint-open-link
             :n "a" #'mu4e-view-action
             :n "q" #'mu4e~view-quit-buffer
 
@@ -476,3 +474,4 @@ attachments, but as this is the default, you may not need it."
 ;;                 :initial-input initial-input
 ;;                 :action 'bjm/counsel-email-action
 ;;                 :keymap bjm/counsel-email-map)))))
+;;

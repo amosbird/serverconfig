@@ -1,4 +1,7 @@
 ;;; private/amos/config.el -*- lexical-binding: t; -*-
+;;; -*- no-byte-compile: t; -*-
+
+(add-to-list '+evil-collection-disabled-list 'mu4e 'mu4e-conversation)
 
 (load! "+bindings")
 (require 'dash)
@@ -240,7 +243,7 @@
     (with-selected-frame frame
       (dolist (charset '(kana han cjk-misc bopomofo))
         (set-fontset-font t charset
-                          (font-spec :family "WenQuanYi Micro Hei" :size 18)))
+                          (font-spec :family "WenQuanYi Micro Hei" :size 14)))
       (remove-hook! 'after-make-frame-functions #'+amos|init-frame))))
 
 (add-hook! 'after-init-hook
@@ -506,9 +509,6 @@ Skip buffers that match `ivy-ignore-buffers'."
   :demand
   :config
   (global-hl-line-mode +1))
-
-(def-package! rainbow-blocks
-  :commands rainbow-blocks-mode)
 
 (after! evil
   (defadvice evil-ret-gen (around amos*evil-ret-gen activate)
@@ -2964,7 +2964,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos/decrease-zoom ()
   (interactive)
-  (text-scale-decrease 0.0))
+  (text-scale-decrease 0.5))
 
 (defun +amos/paste-from-gui ()
   (interactive)
