@@ -193,7 +193,7 @@
  (:prefix "C-c"
    "C-SPC" #'easy-hugo)
 
- (:leader "SPC"
+ (:leader
    :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
    :desc "Toggle mc"                       :nv "SPC" #'+amos/toggle-mc
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
