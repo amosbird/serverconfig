@@ -349,7 +349,7 @@
   (advice-add #'git-gutter:put-signs :before (lambda (&rest _) (realign-windows)))
   (advice-add #'git-gutter:before-string :override #'+amos*git-gutter:before-string)
   (add-hook 'window-configuration-change-hook #'git-gutter:update-all-windows)
-  (add-hook! 'doom-escape-hook (when git-gutter-mode (ignore (git-gutter)))))
+  )
 
 (def-package! evil-textobj-line
   :after evil)
@@ -1467,8 +1467,24 @@ it will restore the window configuration to prior to full-framing."
   (when (and (buffer-file-name)
              (not defining-kbd-macro)
              (buffer-modified-p))
-    (save-buffer)))
+    (save-buffer))
+  nil)
+
+(setq ccls-enabled nil)
+(defun diagnostic-maybe ()
+  (interactive)
+  (when ccls-enabled
+    (ccls/diagnostic))
+  nil)
+
+(defun git-gutter-maybe ()
+  (interactive)
+  (when git-gutter-mode (ignore (git-gutter)))
+  nil)
+
 (add-hook 'doom-escape-hook #'save-buffer-maybe)
+(add-hook 'doom-escape-hook #'diagnostic-maybe)
+(add-hook 'doom-escape-hook #'git-gutter-maybe)
 
 (defun my-reload-dir-locals-for-all-buffer-in-this-directory ()
   "For every buffer with the same `default-directory` as the
@@ -1774,12 +1790,12 @@ representation of `NUMBER' is smaller."
   (direnv-mode +1))
 
 (setq +amos-end-of-statement-regex nil)
-(def-setting! :eos (modes &rest plist)
-  `(dolist (mode (doom-enlist ,modes))
-     (push (cons mode (list ,@plist)) +amos-end-of-statement-regex)))
-(set! :eos '(c-mode c++-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
-(set! :eos '(sql-mode) :regex-char '("[ \t\r\n\v\f]" ";" ?\;))
-(set! :eos '(emacs-lisp-mode) :regex-char "[ \t\r\n\v\f]")
+(defun set-eos! (modes &rest plist)
+  (dolist (mode (doom-enlist modes))
+    (push (cons mode plist) +amos-end-of-statement-regex)))
+(set-eos! '(c-mode c++-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
+(set-eos! '(sql-mode) :regex-char '("[ \t\r\n\v\f]" ";" ?\;))
+(set-eos! '(emacs-lisp-mode) :regex-char "[ \t\r\n\v\f]")
 
 (defun +amos/maybe-add-end-of-statement (&optional move)
   (interactive)
@@ -2152,7 +2168,7 @@ the current state and point position."
   (interactive)
   (+amos-store-jump-history)
   (if command
-      (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux kill-window -t $envprompt; tmux new-window -n $envprompt -c %s; tmux send-keys %s C-m\"" default-directory command))
+      (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux if-shell \\\"tmux new-window -t $envprompt -k -n $envprompt -c %s\\\" '' \\\"new-window -n $envprompt -c %s\\\"; tmux send-keys %s C-m\"" default-directory default-directory command))
     (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
 
 (defun +amos/tmux-source ()
@@ -3045,6 +3061,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         +amos/kill-current-buffer
         +amos/line-substitute
         +amos/lsp-ui-imenu
+        +amos/launch
         +amos/maybe-add-end-of-statement
         +amos/other-window
         +amos/paste-from-gui

@@ -392,6 +392,7 @@ The insertion will be repeated COUNT times."
   (condition-case nil
       (lsp)
     (user-error nil))
+  (setq-local ccls-enabled t)
   (setq-local flycheck-checker 'lsp-ui)
   (lsp-ui-flycheck-add-mode major-mode)
   (add-to-list 'flycheck-checkers 'lsp-ui)

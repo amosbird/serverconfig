@@ -9,7 +9,6 @@
 
 cxx_flags='[
       "-xobjective-c++-header",
-      "-resource-dir=/home/amos/git/llvm/release/lib/clang/8.0.0",
       "-D__cpp_deduction_guides=0",
       "-Wno-macro-redefined",
       "-O0"'
@@ -31,7 +30,7 @@ done
 blacklist="${blacklist}]"
 
 if [[ -z "$ccls_suffix" ]]; then
-    ccls_suffix=$(basename "$(git rev-parse --show-toplevel)")
+	ccls_suffix=$(basename "$(git rev-parse --show-toplevel)")
 fi
 if [[ ! -z "$ccls_suffix" ]]; then
 	ccls_suffix=-"$ccls_suffix"
@@ -78,11 +77,6 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
     }
   },
   "clang": {
-    "resourceDir": "/home/amos/git/llvm/release/lib/clang/8.0.0",
-    "pathMappings": [
-      "/usr/local/bin/cc:/home/amos/git/llvm/release/bin/clang",
-      "/usr/local/bin/c++:/home/amos/git/llvm/release/bin/clang++"
-    ],
     "excludeArgs": ["-fno-tree-loop-distribute-patterns", "-fwhole-program"],
     "extraArgs": $cxx_flags
   }

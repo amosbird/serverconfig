@@ -115,7 +115,7 @@ bind-key -T amos M-K swap-pane -s '{up-of}'
 bind-key -T amos M-L swap-pane -s '{right-of}'
 bind-key -T amos MouseDown1Pane   select-pane -t = \; send-keys -M
 bind-key -T amos MouseDown1Status select-window -t =
-bind-key -T amos MouseDown3Pane   if-shell -F -t = "#{mouse_any_flag}" "select-pane -t=\; send-keys -M" "select-pane -mt="
+# bind-key -T amos MouseDown3Pane   if-shell -F -t = "#{mouse_any_flag}" "select-pane -t=\; send-keys -M" "select-pane -mt="
 bind-key -T amos MouseDrag1Pane   if-shell -F -t = "#{mouse_any_flag}" "if -Ft= \"#{pane_in_mode}\" \"copy-mode -M\" \"send-keys -M\"" "copy-mode -M"
 bind-key -T amos MouseDrag1Border resize-pane -M
 bind-key -T amos WheelUpPane      if-shell -F -t = "#{mouse_any_flag}" "send-keys -M" "if -Ft= \"#{pane_in_mode}\" \"send-keys -M\" \"copy-mode -et=\""
@@ -136,3 +136,6 @@ bind-key -Tcopy-mode-vi M-u send -X search-backward ❯
 bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
 bind-key -T amos M-- set synchronize-panes
 bind-key -T amos M-"'" send-keys "'"{}"'" Left Left
+
+set word-separators "‘’ ='`;+|[](){},?\\\\\"⏎❯"
+bind-key -T amos MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\;  send -X copy-pipe-and-cancel "echo"\; paste-buffer -p
