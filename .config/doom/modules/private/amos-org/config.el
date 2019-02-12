@@ -3,7 +3,6 @@
 ;; Custom variables
 (defvar +org-dir (expand-file-name "~/org/")
   "The directory where org files are kept.")
-(defvaralias 'org-directory '+org-dir)
 
 (add-hook 'org-load-hook #'+org|init)
 (add-hook 'org-mode-hook #'+org|hook)
@@ -211,7 +210,7 @@
   (advice-add #'org-export-output-file-name
               :filter-args #'+org*export-output-file-name)
 
-  (defun +org-export|clear-single-linebreak-in-cjk-string (string &optional backend info)
+  (defun +org-export|clear-single-linebreak-in-cjk-string (string &rest _)
     "clear single line-break between cjk characters that is usually soft line-breaks"
     (let* ((regexp "\\([\u4E00-\u9FA5]\\)\n\\([\u4E00-\u9FA5]\\)")
            (start (string-match regexp string)))
@@ -222,7 +221,7 @@
 
   ;; remove comments from org document for use with export hook
   ;; https://emacs.stackexchange.com/questions/22574/orgmode-export-how-to-prevent-a-new-line-for-comment-lines
-  (defun +org-export|delete-org-comments (backend)
+  (defun +org-export|delete-org-comments (_)
     (loop for comment in (reverse (org-element-map (org-element-parse-buffer)
                                       'comment 'identity))
           do
@@ -387,10 +386,10 @@ key to automatically delete list prefixes."
                                 ((org-get-todo-state) #'org-insert-todo-heading)
                                 (t #'org-insert-heading))))
   (save-excursion
-    (next-line)
+    (forward-line)
     (beginning-of-line)
     (unless (looking-at "[[:space:]]*$")
-      (previous-line)
+      (forward-line -1)
       (end-of-line)
       (newline))))
 

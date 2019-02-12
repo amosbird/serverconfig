@@ -70,7 +70,7 @@ The insertion will be repeated COUNT times."
 
   (defun +amos/cc-better-semicolon ()
     (interactive)
-    (if (and (eolp) (looking-back ";"))
+    (if (and (eolp) (looking-back ";" 0))
         (funcall-interactively (key-binding (kbd "RET")))
       (insert ";")))
   ;; Smartparens and cc-mode both try to autoclose angle-brackets intelligently.
@@ -103,7 +103,7 @@ The insertion will be repeated COUNT times."
   (c-toggle-electric-state -1)
   (c-toggle-auto-newline -1)
 
-  (defun my-c-lineup-arglist-lambda (langelem)
+  (defun my-c-lineup-arglist-lambda (_)
     "Line up lambda."
     (save-excursion
       (back-to-indentation)
@@ -132,9 +132,9 @@ The insertion will be repeated COUNT times."
       (save-excursion
         (goto-char pos)
         (backward-sexp 1)
-        (or (looking-back "enum\\s-+")
-            (looking-back "enum\\s-+class\\s-+")
-            (looking-back "enum\\s-+class\\s-+\\S-+\\s-*:\\s-*")))))
+        (or (looking-back "enum\\s-+" 0)
+            (looking-back "enum\\s-+class\\s-+" 0)
+            (looking-back "enum\\s-+class\\s-+\\S-+\\s-*:\\s-*" 0)))))
 
   (defun align-enum-class (langelem)
     (if (inside-class-enum-p (c-langelem-pos langelem))

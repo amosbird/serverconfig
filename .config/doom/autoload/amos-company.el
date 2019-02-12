@@ -7,7 +7,7 @@
 
 (defun amos-company-files--directory-files (dir prefix)
   ;; Don't use directory-files. It produces directories without trailing /.
-  (condition-case err
+  (condition-case _
       (let ((comp (sort (file-name-all-completions prefix dir)
                         (lambda (s1 s2) (string-lessp (downcase s1) (downcase s2))))))
         (when amos-company-files-exclusions

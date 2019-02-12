@@ -1,11 +1,11 @@
 ;;; ui/doom-modeline/config.el -*- lexical-binding: t; -*-
 
-(defvar +amos--hostname (propertize system-name 'face '(:weight bold :foreground "#51afef")))
+(defvar +amos--hostname (propertize (system-name) 'face '(:weight bold :foreground "#51afef")))
 (def-modeline-segment! host +amos--hostname)
 
-(defface +amos-workspace-tab-selected-face '((t (:inherit 'highlight))) ".")
-(defface +amos-workspace-tab-face '((t (:inherit 'default))) ".")
-(defun +amos-frame-modeline (&optional names)
+(defface +amos-workspace-tab-selected-face '((t (:inherit 'highlight))) "." :group 'amos-face)
+(defface +amos-workspace-tab-face '((t (:inherit 'default))) "." :group 'amos-face)
+(defun +amos-frame-modeline (&optional _)
   (let ((frames +amos-frame-list)
         (current-frame (selected-frame)))
     (concat (propertize "|" 'face '+amos-workspace-tab-face)
@@ -14,7 +14,7 @@
              (cl-loop for frame in frames
                       for i to (length frames)
                       collect
-                      (propertize (format " %d " (1+ i) frame)
+                      (propertize (format " %d " (1+ i))
                                   'face (if (eq current-frame frame)
                                             '+amos-workspace-tab-selected-face
                                           '+amos-workspace-tab-face)))

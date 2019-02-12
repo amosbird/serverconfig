@@ -48,6 +48,7 @@ default/fallback account."
 ;;
 
 (def-package! mu4e
+  :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
   :load-path "/usr/local/share/emacs/site-lisp/mu4e"
   :commands (mu4e mu4e-compose-new browse-url-mail)
   :config
@@ -296,6 +297,7 @@ default/fallback account."
                      ( mu4e-compose-signature  . "郑天祺\n中科天玑数据科技股份有限公司\n"))))))
 
 (def-package! mu4e-maildirs-extension
+  :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
   :after mu4e
   :config
   (mu4e-maildirs-extension-load)
@@ -360,7 +362,7 @@ copy ring."
         (switch-to-buffer buf)
         (throw 'loop buf))))
   (save-excursion
-    (end-of-buffer)
+    (goto-char (point-max))
     (let* ((index (if (numberp arg) arg 0))
            (data (ring-ref dired-ranger-copy-ring index))
            (files (cdr data))

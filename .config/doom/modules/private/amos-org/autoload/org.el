@@ -272,7 +272,7 @@ with `org-cycle'). Also:
   (interactive)
   (save-excursion
     (org-beginning-of-line)
-    (cond ((org-table-p)
+    (cond ((org-at-table-p)
            (org-table-align))
           ((org-in-src-block-p)
            (org-babel-remove-result))
@@ -292,8 +292,8 @@ with `org-cycle'). Also:
   (save-excursion
     (let ((remove (list (match-beginning 0) (match-end 0)))
           (description (if (match-end 3)
-                           (org-match-string-no-properties 3)
-                         (org-match-string-no-properties 1))))
+                           (match-string-no-properties 3)
+                         (match-string-no-properties 1))))
       (apply #'delete-region remove)
       (insert description))))
 

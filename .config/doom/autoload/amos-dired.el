@@ -47,11 +47,9 @@
 
 (defun +amos--ring-index-elements (ring)
   "Return elements of `ring', along with its index in a (cons)."
-  (let (listing)
-    (dotimes (idx (ring-length ring) listing)
-      (setq listing (append (cons idx (ring-ref ring idx)) listing)))))
+  (cl-loop for i to (ring-length ring) collect (cons i (ring-ref ring i))))
 
-(defun +amos--update-history (name ring index)
+(defun +amos--update-history (name ring _)
   "Update history ring and current index"
   (when (or (ring-empty-p ring)
             (file-directory-p name)
@@ -208,7 +206,7 @@ unless SUDO-USER is provided."
          (host  (tramp-file-name-host file-vec))
          (localname (expand-file-name
                      (tramp-file-name-localname file-vec))))
-    (when (string= system-name host)
+    (when (string= (system-name) host)
       (setq host nil))
     (cond
      ;; remote directory -> sudo
