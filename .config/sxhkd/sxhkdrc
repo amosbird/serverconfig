@@ -36,6 +36,8 @@ super+z
   slock
 super+q
   bspc node -c
+alt+F4
+  bspc node -c
 ctrl+alt+1
   showphone.sh
 ctrl+alt+2

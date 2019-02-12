@@ -4,7 +4,6 @@
 
 (load! "+bindings")
 (require 'dash)
-(require 'cl-lib)
 (require 'evil-multiedit)
 (require 'company)
 (require 'company-lsp)
@@ -271,10 +270,12 @@
   :config
   ;; (add-hook! 'realign-hooks #'recenter)
   (defun amos-special-window-p (window)
-    (let* ((buffer (window-buffer window))
+    (let* ((fname (frame-parameter nil 'name))
+           (buffer (window-buffer window))
            (buffname (string-trim (buffer-name buffer))))
       (or (equal buffname "*doom*")
           (equal buffname "*flycheck-posframe-buffer*")
+          (equal fname "popup")
           (equal (with-current-buffer buffer major-mode) 'pdf-view-mode))))
   (push #'amos-special-window-p realign-ignore-window-predicates))
 

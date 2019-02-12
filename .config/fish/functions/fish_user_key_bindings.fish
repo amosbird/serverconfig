@@ -164,18 +164,36 @@ function fish_user_key_bindings
 
     function open-magit -d "Open magit in emacs"
         if git rev-parse --is-inside-work-tree > /dev/null 2>&1
-            emacsclient -n -eval "(+amos/workspace-new)" > /dev/null 2>&1
-            emacsclient -n -eval "(magit-status $pwd)" > /dev/null 2>&1
-            tmux switch-client -t emacs
-            emacsclient -n -eval "(setq +amos-tmux-need-switch t)" > /dev/null 2>&1
+            set -l sn (tmux display-message -p '#S')
+            set -l EMACS
+            if [ $sn = "gui" ]
+                set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
+                $EMACS "(make-frame '((name . \"popup\")))"
+                $EMACS "(magit-status $pwd)"
+            else
+                set EMACS emacsclient -n -q -u -e
+                tmux switch-client -t emacs
+                $EMACS "(+amos/workspace-new)"
+                $EMACS "(magit-status $pwd)"
+                $EMACS "(setq +amos-tmux-need-switch t)"
+            end
         end
     end
 
     function open-ranger -d "Open ranger in emacs"
-        emacsclient -n -eval "(+amos/workspace-new)" > /dev/null 2>&1
-        emacsclient -n -eval "(+amos/dired-jump $pwd)" > /dev/null 2>&1
-        tmux switch-client -t emacs
-        emacsclient -n -eval "(setq +amos-tmux-need-switch t)" > /dev/null 2>&1
+        set -l sn (tmux display-message -p '#S')
+        set -l EMACS
+        if [ $sn = "gui" ]
+            set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
+            $EMACS "(make-frame '((name . \"popup\")))"
+            $EMACS "(+amos/dired-jump $pwd)"
+        else
+            set EMACS emacsclient -n -q -u -e
+            tmux switch-client -t emacs
+            $EMACS "(+amos/workspace-new)"
+            $EMACS "(+amos/dired-jump $pwd)"
+            $EMACS "(setq +amos-tmux-need-switch t)"
+        end
     end
 
     function fish_clipboard_copy

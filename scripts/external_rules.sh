@@ -93,6 +93,16 @@ case "$class" in
             mail-frame)
                 echo "desktop=v state=tiled follow=on"
                 ;;
+            popup)
+                wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+                w=${wh[0]}
+                h=${wh[1]}
+                x=$((w*3/16))
+                y=30
+                w=$((w*5/8))
+                h=$((h - 60))
+                echo "rectangle=${w}x${h}+$x+$y"
+                ;;
         esac
         ;;
 esac
