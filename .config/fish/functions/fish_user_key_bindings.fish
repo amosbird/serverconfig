@@ -168,14 +168,11 @@ function fish_user_key_bindings
             set -l EMACS
             if [ $sn = "gui" ]
                 set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
-                $EMACS "(make-frame '((name . \"popup\")))"
-                $EMACS "(magit-status $pwd)"
+                $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (magit-status \"$PWD\"))"
             else
                 set EMACS emacsclient -n -q -u -e
                 tmux switch-client -t emacs
-                $EMACS "(+amos/workspace-new)"
-                $EMACS "(magit-status $pwd)"
-                $EMACS "(setq +amos-tmux-need-switch t)"
+                $EMACS "(progn (+amos/workspace-new) (magit-status \"$PWD\") (setq +amos-tmux-need-switch t))"
             end
         end
     end
@@ -185,14 +182,11 @@ function fish_user_key_bindings
         set -l EMACS
         if [ $sn = "gui" ]
             set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
-            $EMACS "(make-frame '((name . \"popup\")))"
-            $EMACS "(+amos/dired-jump $pwd)"
+            $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (cd \"$PWD\") (+amos/dired-jump))"
         else
             set EMACS emacsclient -n -q -u -e
             tmux switch-client -t emacs
-            $EMACS "(+amos/workspace-new)"
-            $EMACS "(+amos/dired-jump $pwd)"
-            $EMACS "(setq +amos-tmux-need-switch t)"
+            $EMACS "(progn (+amos/workspace-new) (cd \"$PWD\") (+amos/dired-jump) (setq +amos-tmux-need-switch t))"
         end
     end
 
