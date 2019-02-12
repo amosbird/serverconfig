@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+adb shell am broadcast -a com.genymobile.gnirehtet.CLIP_GET -n com.genymobile.gnirehtet/.GnirehtetControlReceiver | perl -0777 -ne 'print /Broadcast completed: result=-1, data="(.*)"$/s' | xclip
