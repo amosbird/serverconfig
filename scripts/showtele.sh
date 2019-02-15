@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep -f telegram > /dev/null
+if pgrep -f Telegram > /dev/null
 then
-    id=$(cat /tmp/telegram)
+    id=$(head -1 /tmp/telegram)
     if [ -z "$id" ]
     then
         exit 0
@@ -13,9 +13,8 @@ then
         bspc node "$id" -g hidden -f
     else
         bspc node "$id" --to-desktop "$workspace"
-        bspc node "$id" -g hidden=off -f
         bspc node "$id" -t floating
-        bspc node "$id" -l above
+        bspc node "$id" -g hidden=off -f
     fi
     wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
     w=${wh[0]}
@@ -26,6 +25,9 @@ then
     h=$((h - 140))
     xdo move -x $x -y $y "$id"
     xdo resize -w $w -h $h "$id"
+    bspc node "$id" -l above
 else
-    env FONTCONFIG_FILE=~/.config/tgfonts.conf telegram-desktop
+    rm /tmp/telegram
+    # env FONTCONFIG_FILE=~/.config/tgfonts.conf
+    Telegram
 fi

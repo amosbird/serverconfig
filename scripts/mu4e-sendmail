@@ -26,6 +26,5 @@ if [[ $daemon ]]; then
 else
     # Non-daemon servers flicker a lot if frames are created from terminal, so
     # we do it internally instead.
-    emacsclient -a "" \
-        -e "(mu4e-compose-new)"
+    emacsclient -a "" -e "(mu4e-compose-new)"
 fi

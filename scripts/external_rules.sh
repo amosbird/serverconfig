@@ -4,6 +4,8 @@ wid=$1
 class=$2
 instance=$3
 title=$(xtitle "$wid")
+echo $class > /tmp/wowow
+
 case "$class" in
     Conky)
         echo "$wid" > /tmp/conky
@@ -81,9 +83,22 @@ case "$class" in
         echo "$wid" > /tmp/scrcpy
         echo "sticky=on state=floating"
         ;;
+    # Telegram-desktop)
+    #     echo "layer=above"
+    #     ;;
     TelegramDesktop)
-        echo "$wid" > /tmp/telegram
+        echo "$wid" >> /tmp/telegram
         echo "sticky=on state=floating"
+        ;;
+    Soffice)
+        wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+        w=${wh[0]}
+        h=${wh[1]}
+        x=$((w*3/16))
+        y=30
+        w=$((w*5/8))
+        h=$((h - 60))
+        echo "rectangle=${w}x${h}+$x+$y"
         ;;
     Emacs)
         case "$title" in

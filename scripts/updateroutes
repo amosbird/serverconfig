@@ -11,8 +11,8 @@ def generate_mac():
     results=fetch_ip_data()
 
     upscript_header=textwrap.dedent("""\
-    route add 10.0.0.0/8 via GATEWAY table cn
-    route add 192.168.0.0/16 via GATEWAY table cn
+    route add 10.0.0.0/8 via GATEWAY
+    route add 192.168.0.0/16 via GATEWAY
     """)
 
     upfile=open('/home/amos/.routefile','w')

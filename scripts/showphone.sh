@@ -16,14 +16,14 @@ then
 else
     echo z | nc -U /tmp/scrcpy.socket
     bspc node "$id" --to-desktop "$workspace"
-    bspc node "$id" -g hidden=off -f
     bspc node "$id" -t floating
-    bspc node "$id" -l above
+    bspc node "$id" -g hidden=off -f
 fi
 
 wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
 
 xy=($(xwininfo -id $id | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+bspc node "$id" -l above
 # w=${wh[0]}
 # h=${wh[1]}
 # x=$((w/4 + 230))

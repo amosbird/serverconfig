@@ -37,7 +37,6 @@ else
     else
         bspc node "$id" -t floating
         bspc node "$id" -g hidden=off
-        bspc node "$id" -l above
         bspc node "$id" --to-desktop "$workspace"
     fi
     if [[ "$1" -eq  1 ]]
@@ -50,4 +49,5 @@ else
     xdo move -x $x -y $y "$id"
     xdo resize -w $w -h $h "$id"
     bspc node "$id" -f
+    bspc node "$id" -l above
 fi

@@ -1,0 +1,22 @@
+#!/usr/bin/env fish
+
+set addr $argv
+if not string match -q 'mailto:*' -- $addr
+    set addr "mailto:"$addr
+end
+
+function mailto -d "Mail to url" --argument-names 'url'
+    function _mailto -d "Mail to url" --argument-names 'url'
+        if test (count $argv) -ne 1
+            echo "Usage: $_ <mailto url>"
+            return 1
+        end
+        set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
+        $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (browse-url-mail \"$url\"))"
+    end
+    if not _mailto $argv
+        notify-send -t "mail" "mu4e" "Bad url!"
+    end
+end
+
+mailto $addr
