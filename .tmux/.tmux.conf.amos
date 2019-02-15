@@ -138,4 +138,4 @@ bind-key -T amos M-- set synchronize-panes
 bind-key -T amos M-"'" send-keys "'"{}"'" Left Left
 
 set word-separators "‘’ ='`;+|[](){},?\\\\\"⏎❯"
-bind-key -T amos MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\;  send -X copy-pipe-and-cancel "echo"\; paste-buffer -p
+bind-key -T amos MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\; send -X copy-pipe-and-cancel "echo"\; set-buffer -b "amos" -a " "\; paste-buffer -b "amos"
