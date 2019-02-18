@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+adb install -r "$@" && notify-send -a "adb" "apk installed"

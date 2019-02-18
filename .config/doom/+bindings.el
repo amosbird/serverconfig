@@ -39,6 +39,13 @@
  "C-<comma>"     #'+amos/workspace-switch-left
  "C-<period>"    #'+amos/workspace-switch-right)
 
+;; (defun +amos/evil-delete (&rest args)
+;;   (interactive (advice-eval-interactive-spec
+;;                 (cadr (interactive-form #'evil-delete))))
+;;   (if amos-sticky-ctrl-mode
+;;       (call-interactively #'evil-scroll-down)
+;;     (apply (if (called-interactively-p 'any) #'funcall-interactively #'funcall) #'evil-delete args)))
+
 ;; Q U M H
 (map!
  :gn "M-W"                   #'+amos/kill-current-buffer
@@ -193,6 +200,7 @@
    "C-SPC" #'easy-hugo)
 
  (:leader
+   :desc "sticky"                          :n  [escape]   #'evil-sticky-state
    :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
    :desc "Toggle mc"                       :nv "SPC" #'+amos/toggle-mc
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
@@ -369,7 +377,6 @@
    "C-o" nil
    "C-i" nil
    :n "q"   #'quit-window
-   :n "SPC o" #'quit-window
    :n "M-o" #'quit-window
    :n "C-f" #'dired-omit-mode
    :n "C-i" #'peep-dired-toggle
@@ -600,6 +607,7 @@
 
  (:after helpful
    :map helpful-mode-map
+   :gn "o" #'ace-link-help
    :gn "q" #'+amos/kill-current-buffer)
 
  (:after magit-blame

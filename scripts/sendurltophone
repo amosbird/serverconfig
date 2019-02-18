@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+sq="'"
+adb shell am start -a android.intent.action.VIEW -d $sq"$(xclip -o)"$sq

@@ -36,7 +36,9 @@ super+z
   slock
 super+q
   bspc node -c
-alt+F4
+# alt+F4
+#   altf4
+ctrl+alt+q
   bspc node -c
 ctrl+alt+1
   showphone.sh
@@ -58,6 +60,8 @@ super+s
   termite -e fish
 ctrl+alt+g
   colorpick
+ctrl+alt+b
+  scanqrcode
 ctrl+alt+s
   showshell.sh 2
 ctrl+alt+l
@@ -81,8 +85,6 @@ super+Delete
   lxrandr
 ctrl+alt+r
   rofi-runner
-# ctrl+alt+o
-#   org-capture
 super+0
   pkill -SIGUSR1 sxhkd
 ctrl+F12

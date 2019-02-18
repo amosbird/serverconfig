@@ -231,8 +231,6 @@
 ;; (setq swiper-include-line-number-in-search t) ;; TODO it breaks wgrep occur
 (setq tab-always-indent t)
 (setq truncate-partial-width-windows nil)
-(setq undo-tree-auto-save-history t)
-(setq undo-tree-history-directory-alist '((".*" . "~/.emacs.d/undo-files")))
 (setq user-full-name "Amos Bird")
 (setq user-mail-address "amosbird@gmail.com")
 (setq visible-cursor nil)

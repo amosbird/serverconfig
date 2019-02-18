@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+maim -s | zbarimg -q --raw - | perl -ne 'use URI; my $url = URI->new($_); $url->scheme(lc $url->scheme); $url->host(lc $url->host); print $url->as_string' | xclip

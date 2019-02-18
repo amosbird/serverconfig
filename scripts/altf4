@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+wid=$(xprop -id $(bspc query -N -n focused) WM_CLASS)
+widd=52428801
+# bspc node --focus any.!focused
+xdotool keydown --window $widd F4
+xdotool key --window $widd alt
+xdotool keydown --window $widd alt
+bspc node --focus $wid
+# if echo $wid | perl -ne 'my @x = split; @x[3] =~ /^"xfreerdp"$/ or exit 1'
+# then
+#     xdotool key --window $wid f
+# else
+#     bspc node -c
+# fi

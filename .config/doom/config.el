@@ -270,12 +270,10 @@
   :config
   ;; (add-hook! 'realign-hooks #'recenter)
   (defun amos-special-window-p (window)
-    (let* ((fname (frame-parameter nil 'name))
-           (buffer (window-buffer window))
+    (let* ((buffer (window-buffer window))
            (buffname (string-trim (buffer-name buffer))))
       (or (equal buffname "*doom*")
           (equal buffname "*flycheck-posframe-buffer*")
-          (equal fname "popup")
           (equal (with-current-buffer buffer major-mode) 'pdf-view-mode))))
   (push #'amos-special-window-p realign-ignore-window-predicates))
 
@@ -296,6 +294,7 @@
                       ("visual" "#808080" hbar)
                       ("motion" "#cd96cd" box)
                       ("lisp" "#ff6eb4" bar)
+                      ("sticky" "#B59FEA" box)
                       ("iedit" "#ff3030" box)
                       ("multiedit" "#ff3030" box)
                       ("multiedit-insert" "#ff3030" bar)
@@ -3737,3 +3736,15 @@ will be killed."
 
 (advice-add #'flycheck-previous-error :after (lambda (&rest _) (recenter)))
 (advice-add #'flycheck-next-error :after (lambda (&rest _) (recenter)))
+
+(evil-define-state sticky
+  "Sticky state.
+ Used to stick modifiers."
+  :tag " <Sticky> ")
+
+(set-keymap-parent evil-sticky-state-map (make-composed-keymap evil-motion-state-map evil-normal-state-map))
+
+(general-define-key
+ :states 'sticky
+ "u"            #'evil-scroll-up
+ "d"            #'evil-scroll-down)

@@ -2,6 +2,7 @@
 
 (disable-packages! centered-window-mode
                    company-prescient
+                   evil-escape
                    evil-matchit
                    evil-numbers
                    git-gutter-fringe

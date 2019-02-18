@@ -83,9 +83,6 @@ case "$class" in
         echo "$wid" > /tmp/scrcpy
         echo "sticky=on state=floating"
         ;;
-    # Telegram-desktop)
-    #     echo "layer=above"
-    #     ;;
     TelegramDesktop)
         echo "$wid" >> /tmp/telegram
         echo "sticky=on state=floating"
