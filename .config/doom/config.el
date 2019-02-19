@@ -3391,8 +3391,8 @@ In Insert state, insert a newline."
 
 ;; company
 
-(setq-default company-idle-delay 0.3
-              company-auto-complete nil
+(setq-default company-idle-delay (lambda () (if (company-in-string-or-comment) nil 0.3))
+              company-auto-complete nil ; this is actually company-auto-finish
               company-tooltip-limit 14
               company-dabbrev-downcase nil
               company-dabbrev-ignore-case nil

@@ -31,15 +31,15 @@ function fish_user_key_bindings
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         begin
             set -lx FZF_DEFAULT_OPTS "--expect f10 --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
-            eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -aAl result
-            set -l dir (string trim $result[2])
+            eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -a -d \n -z result
+            set -l dir (string trim -- $result[2])
             if test -n $dir
                 if test -z $result[1]
                     if not cd $dir
                         jump clean
                     end
                 else
-                    commandline -i $dir"/"
+                    commandline -i -- "$dir/"
                 end
             end
         end
@@ -90,7 +90,7 @@ function fish_user_key_bindings
                     commandline -t -- (string escape -- $r)
                 case '"'
                     if string match '*"*' -- $r >/dev/null
-                        commandline -t --  (string escape -- $r)
+                        commandline -t -- (string escape -- $r)
                     else
                         commandline -t -- '"'$r'"'
                     end

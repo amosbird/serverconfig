@@ -7,7 +7,7 @@ end
 
 # The fish_postexec event is fired after executing a command line.
 function fish_command_timer_postexec -e fish_postexec
-  if test "$cmd_duration" -lt 500
+  if test "$CMD_DURATION" -lt 500
       return
   end
   set -l command_end_time (date '+%s')
@@ -17,11 +17,11 @@ function fish_command_timer_postexec -e fish_postexec
   set -l HOUR 3600000
   set -l DAY 86400000
 
-  set -l num_days (math "$cmd_duration / $DAY")
-  set -l num_hours (math "$cmd_duration % $DAY / $HOUR")
-  set -l num_mins (math "$cmd_duration % $HOUR / $MIN")
-  set -l num_secs (math "$cmd_duration % $MIN / $SEC")
-  set -l num_millis (math "$cmd_duration % $SEC")
+  set -l num_days (math "$CMD_DURATION / $DAY")
+  set -l num_hours (math "$CMD_DURATION % $DAY / $HOUR")
+  set -l num_mins (math "$CMD_DURATION % $HOUR / $MIN")
+  set -l num_secs (math "$CMD_DURATION % $MIN / $SEC")
+  set -l num_millis (math "$CMD_DURATION % $SEC")
   set -l time_str ""
   if [ $num_days -gt 0 ]
     set time_str {$time_str}{$num_days}"d "
