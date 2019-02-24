@@ -6,7 +6,6 @@
        (evil +everywhere)
        lookup
        snippets
-       spellcheck
        ;; syntax-checker
        file-templates
 
@@ -38,6 +37,8 @@
        :tools
        make
        magit
+       vterm
+       flyspell
 
        :lang
        assembly
@@ -89,21 +90,46 @@
 (setq company-lsp-cache-candidates nil)
 (setq dired-create-destination-dirs 'always)
 (setq dired-omit-verbose nil)
+(setq dired-open-functions '(dired-open-by-extension dired-open-call-function-by-extension dired-open-subdir))
+(setq dired-open-extensions-elisp
+      '(("zip" . +amos/compress-view)
+        ("jar" . +amos/compress-view)
+        ("apk" . +amos/compress-view)
+        ("deb" . +amos/compress-view)
+        ("rpm" . +amos/compress-view)
+        ("gz" . +amos/compress-view)
+        ("rar" . +amos/compress-view)
+        ("tar" . +amos/compress-view)
+        ("xz" . +amos/compress-view)
+        ("lz" . +amos/compress-view)
+        ("lzh" . +amos/compress-view)
+        ("lzma" . +amos/compress-view)
+        ("bz2" . +amos/compress-view)
+        ("7z" . +amos/compress-view)))
 (setq dired-open-extensions
       '(("pdf" . "xdg-open")
+        ("mp3" . "xdg-open")
+        ("flac" . "xdg-open")
+        ("m4a" . "xdg-open")
+        ("mp4" . "xdg-open")
         ("ps" . "xdg-open")
+        ("gif" . "xdg-open")
+        ("svg" . "xdg-open")
         ("jpg" . "xdg-open")
+        ("jpeg" . "xdg-open")
+        ("png" . "xdg-open")
+        ("jfif" . "xdg-open")
         ("iso" . "xdg-open")
         ("callgrind.out.*" . "kcachegrind")
         ("doc" . "xdg-open")
         ("docx" . "xdg-open")
-        ("html" . "xdg-open")
-        ("xlsx" . "xdg-open")
+        ;; ("html" . "xdg-open")
         ("xls" . "xdg-open")
+        ("xlsx" . "xdg-open")
         ("odt" . "xdg-open")
         ("ppt" . "xdg-open")
-        ("mkv" . "xdg-open")
         ("pptx" . "xdg-open")
+        ("mkv" . "xdg-open")
         ("torrent" . "xdg-open")))
 (setq dired-open-find-file-function #'+amos/find-file)
 (setq dired-recursive-copies 'always)

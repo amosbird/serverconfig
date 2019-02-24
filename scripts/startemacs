@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+exec {lockfd}>/tmp/emacs.lock && flock $lockfd || exit;
+exec emacsclient -a '' -t -c

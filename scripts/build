@@ -23,6 +23,10 @@ case "$1" in
         cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On && \
         ninja
         ;;
+    obs)
+        cmake .. -G Ninja -DUNIX_STRUCTURE=0 -DCMAKE_EXPORT_COMPILE_COMMANDS=On && \
+        ninja
+        ;;
 esac
 popd
 ln -sf release/compile_commands.json .

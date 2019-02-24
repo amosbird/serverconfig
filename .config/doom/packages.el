@@ -51,6 +51,7 @@
 (package! quick-peek)
 (package! rust-playground)
 (package! smart-forward)
+(package! speed-type)
 (package! symbol-overlay)
 (package! syntactic-close)
 (package! try)
@@ -76,4 +77,3 @@
 (package! osc :recipe (:fetcher github :repo "amosbird/osc.el"))
 (package! rainbow-mode :recipe (:fetcher github :repo "amosbird/rainbow-mode"))
 (package! realign-mode :recipe (:fetcher github :repo "amosbird/realign-mode.el"))
-(package! company-mode :recipe (:fetcher github :repo "amosbird/company-mode"))

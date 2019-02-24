@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 
+id="2717:ff48"
+fuser -k /tmp/scrcpy.lock
+pkill -f "$id"
 cd /home/amos/git/scrcpy
-while :; do adb wait-for-device && ./run release -x 2717:ff48; sleep 0.2; done
+exec {lockfd}>/tmp/scrcpy.lock && flock "$lockfd" || exit
+while :; do adb wait-for-device && ./run release -x "$id"; sleep 0.2; done

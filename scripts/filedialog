@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+if [ -z "$1" ]
+then
+    file="$HOME/"
+elif [ -d "$1" ]
+then
+    file="$(realpath "$1")/"
+else
+    file="$(realpath "$1")"
+fi
+
+EMACS="emacsclient -s mu4e -n -q -u --display $DISPLAY -e"
+$EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (dired-jump nil \"$file\") (+amos/recenter))"

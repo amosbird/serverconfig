@@ -1,6 +1,6 @@
 #// main:
 set font "fixedzero normal 9"
-set adjust-open width
+set adjust-open "width"
 set guioptions
 set n-completion-items 10
 set show-scrollbars false

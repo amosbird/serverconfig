@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep -f Telegram > /dev/null
+if pgrep obs > /dev/null
 then
-    id=$(head -1 /tmp/telegram)
+    id=$(head -1 /tmp/obs)
     if [ -z "$id" ]
     then
         exit 0
@@ -27,7 +27,8 @@ then
     xdo resize -w $w -h $h "$id"
     bspc node "$id" -l above
 else
-    rm /tmp/telegram
+    rm /tmp/obs
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    Telegram
+    cd /usr/local/bin/64bit
+    ./obs
 fi

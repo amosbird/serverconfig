@@ -48,6 +48,8 @@ c.bindings.commands['normal'] = {
     'i': 'hint inputs --first --visible',
     'y': 'yank',
     'co': 'download-open;; download-remove',
+    'cc': 'download-copy',
+    'cC': 'download-copy-all',
     'O': 'spawn fcitx-remote -c ;; set-cmd-text :open {url:pretty}',
     'T': 'spawn fcitx-remote -c ;; set-cmd-text :open -t -r {url:pretty}',
     't': 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t',

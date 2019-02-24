@@ -27,7 +27,7 @@ xkb_symbols "basic" {
     key <AD08> {	[	  i,	I		]	};
     key <AD09> {	[	  o,	O		]	};
     key <AD10> {	[	  p,	P		]	};
-    key <AD11> {	[ quotedbl,	braceleft	]	};
+    key <AD11> {	[ quotedbl,	quotedbl	]	};
     key <AD12> {	[ bracketright,	braceright	]	};
 
     key <AC01> {	[	  a,	A 		,  asciitilde ]	};
@@ -40,7 +40,7 @@ xkb_symbols "basic" {
     key <AC08> {	[	  k,	K		]	};
     key <AC09> {	[	  l,	L		]	};
     key <AC10> {	[ underscore,	underscore   ]	};
-    key <AC11> {	[ apostrophe,	quotedbl	]	};
+    key <AC11> {	[ apostrophe,	apostrophe	]	};
 
     key <AB01> {	[	  z,	Z 		,  grave      ]	};
     key <AB02> {	[	  x,	X		,  colon      ]	};

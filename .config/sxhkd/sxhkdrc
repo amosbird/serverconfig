@@ -11,9 +11,9 @@ mod3+2
 mod3+3
   sleep 0.1 && fcitx-remote -w 20A1D24c1a79B177
 mod3+d
-  teiler --quickcopy fullscreen
+  dshot | xclip -selection clipboard -t image/png
 mod3+D
-  teiler --quick fullscreen
+  dshot | uploadimg -
 mod3+i
   teiler --quickcopy fullscreen
 mod3+I
@@ -23,7 +23,7 @@ mod3+o
 mod3+p
   maim -s | xclip -selection clipboard -t image/png
 mod3+shift+p
-  maim -s | upload -
+  maim -s | uploadimg -
 mod3+t
   xclip -out | upload -
 mod3+shift+r
@@ -40,6 +40,8 @@ super+q
 #   altf4
 ctrl+alt+q
   bspc node -c
+ctrl+alt+Eisu_toggle
+  adb shell am startservice -a com.kaytat.simpleprotocolplayer.action.PLAY -e ip_addr 172.26.100.36 --ei audio_port 12345 --ei sample_rate 44100 --ez stereo true --ei buffer_ms 50 com.kaytat.simpleprotocolplayer/.MusicService
 ctrl+alt+1
   showphone.sh
 ctrl+alt+2
@@ -49,7 +51,8 @@ ctrl+alt+3
 ctrl+alt+4
   echo n | nc -U /tmp/scrcpy.socket
 ctrl+alt+5
-  echo c | nc -U /tmp/scrcpy.socket
+  showobs.sh
+  # echo c | nc -U /tmp/scrcpy.socket
 ctrl+alt+8
   rofiman
 ctrl+alt+9
@@ -175,8 +178,6 @@ ctrl+Eisu_toggle
   echo 'connect 04:52:C7:02:E5:FD' | bluetoothctl
   # trackpointspeed
 
-ctrl+alt+Eisu_toggle
-  unlockphone
 mod3 + e
   xdg-open "$(xclip -o)"
 

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+round() {
+    echo $(( ${1:?need one argument} / 2 * 2))
+}
+delay=$(echo -e "3\n5\n10" | rofi -dmenu -p "delay seconds > ")
+read -r X Y W H G ID < <(slop -f "%x %y %w %h %g %i")
+X=$(round $X)
+Y=$(round $Y)
+W=$(round $W)
+H=$(round $H)
+ffmpeg_display=$(echo $DISPLAY);
+ffmpeg_offset=$(echo $(xininfo -mon-x),$(xininfo -mon-y))
+ffmpeg -f x11grab -show_region 1 -s "$W"x"$H" -ss $delay -i $ffmpeg_display+$X,$Y -framerate 1 -vframes 1 -f singlejpeg -

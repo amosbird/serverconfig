@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+luakit https://mp.douyu.com/live/main

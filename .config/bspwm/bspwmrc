@@ -40,7 +40,6 @@ setbg.sh
 # for_window [class="dolphin"] floating enable
 # for_window [class="Pcmanfm"] floating enable
 # for_window [class="copyq"] floating enable
-# for_window [class="feh"] floating enable
 # for_window [class="GoldenDict"] floating enable
 # for_window [class="Seahorse"] floating enable
 # for_window [class="Pavucontrol"] floating enable

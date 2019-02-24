@@ -365,3 +365,33 @@ If called with `universal-argument' (C-u), ask for username.
     (unless (eq (current-buffer) buf)
       (bury-buffer buf))))
 (advice-add #'dired-open-file :around #'+amos*dired-open-file)
+
+(require 'dired-ranger)
+(defun +amos-dired-copy-ring-string ()
+  (let* ((data (ring-ref dired-ranger-copy-ring 0))
+         (files (cdr data)))
+    (mapconcat 'identity files "\n")))
+
+;;;###autoload
+(defun +amos/dired-copy-to-clipboard ()
+  (interactive)
+  (shell-command! (concat "copyq copyUriList " (shell-quote-argument (+amos-dired-copy-ring-string)))))
+
+;;;###autoload
+(defun +amos/dired-print-clipboard ()
+  (interactive)
+  (message (+amos-dired-copy-ring-string)))
+
+(defun +amos/dired-xdg-open ()
+  (interactive)
+  (let ((file (ignore-errors (dired-get-file-for-visit)))
+        process)
+    (when (and file
+               (not (file-directory-p file)))
+      (dired-open--start-process file "xdg-open")
+      process)))
+
+;;;###autoload
+(defun +amos/dired-feh-current-dir ()
+  (interactive)
+  (shell-command! (format "feh --scale-down --auto-zoom '%s'" default-directory)))

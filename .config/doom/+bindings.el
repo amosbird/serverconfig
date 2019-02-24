@@ -386,10 +386,9 @@
    :n "M-n" #'+amos/counsel-jumpfile-function
    :n "M-v" #'peep-dired-scroll-page-up
    :n "S"   #'hydra-dired-quick-sort/body
-   :n "S"   #'hydra-dired-quick-sort/body
    :n "W"   (lambda! (dired-copy-filename-as-kill 0))
-   :n "Y"   #'+amos/dired-rsync
-   :n "c"   (lambda! (dired-ranger-copy t))
+   :n "c"   (lambda! (dired-ranger-copy t) (+amos/dired-print-clipboard))
+   :n "C"   #'+amos/dired-copy-to-clipboard
    :n "d"   #'dired-flag-file-deletion
    :n "f"   #'counsel-find-file
    :n "h"   #'+amos/up-directory
@@ -397,8 +396,11 @@
    :n "k"   #'dired-previous-line
    :n "p"   #'dired-ranger-paste
    :n "r"   #'dired-ranger-move
-   :n "y"   (lambda! (dired-ranger-copy nil))
+   :n "y"   (lambda! (dired-ranger-copy nil) (+amos/dired-print-clipboard))
+   :n "Y"   (lambda! (dired-ranger-copy nil) (+amos/dired-copy-to-clipboard) (+amos/dired-print-clipboard))
+   :n "a"   #'+amos/dired-rsync
    :n "RET" #'dired-open-file
+   :n "C-<return>" #'+amos/dired-xdg-open
    :n "l"   #'dired-open-file)
 
  (:map emacs-lisp-mode-map
@@ -648,6 +650,9 @@
    "C-9"           (kbd "9")
    "C-0"           (kbd "0")
    "C-@"           (kbd "C-SPC"))
+
+ ;; (:map query-replace-map
+ ;;   [escape]      #'keyboard-escape-quit)
 
  (:map (minibuffer-local-map
         minibuffer-local-ns-map

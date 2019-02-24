@@ -1532,8 +1532,16 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (setq tmux-p (getenv "TMUX"))
 (setq gui-p (getenv "GUI"))
 
-(if tmux-p
-    (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
+(unless tmux-p
+  (map!
+   (:map key-translation-map
+     "\033"          (kbd "<escape>"))))
+
+(when tmux-p
+  (let ((create-lockfiles t))
+    (find-file-noselect "/tmp/emacs.lock")
+    (lock-buffer "/tmp/emacs.lock"))
+  (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
 
 (defvar +amos-last-xref-list nil)
 (defun +amos/ivy-xref-make-collection (xrefs)
@@ -1698,7 +1706,7 @@ decimal: [0-9]+, e.g. 42 or 23"
     (or
      (not (memq (char-after) '(?b ?B ?o ?O ?x ?X)))
      (/= (char-before) ?0)
-     (and (> (point) 2)				; Should also take bofp into consideration
+     (and (> (point) 2)                 ; Should also take bofp into consideration
           (not (looking-back "\\W0" 2)))
      ;; skip format specifiers and interpret as bool
      (<= 0 (skip-chars-forward "bBoOxX"))))))
@@ -1919,6 +1927,7 @@ representation of `NUMBER' is smaller."
     ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)"
      :size +popup-shrink-to-fit :side right :ttl 0 :select ignore)
     ("^\\*Customize" :ignore t)
+    ("^amos-compress-view" :ignore t)
     ("^ \\*undo-tree\\*"
      :slot 2 :side left :size 20 :select t :quit t)
     ;; `help-mode', `helpful-mode'
@@ -2136,9 +2145,9 @@ the current state and point position."
   (let ((inhibit-message t))
     (call-process-shell-command command nil 0)))
 
-(defun shell-command! (command)
+(defun shell-command! (command &optional out-buffer err-buffer)
   (let ((inhibit-message t))
-    (shell-command command)))
+    (shell-command command out-buffer err-buffer)))
 
 (defun +amos/tmux-detach ()
   "Detach if inside tmux."
@@ -2983,9 +2992,29 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   (interactive)
   (text-scale-decrease 0.5))
 
+(defun +amos-dispatch-uri-list (uri-list)
+  (cond
+   ((eq major-mode 'mu4e-compose-mode)
+    (save-excursion
+      (goto-char (point-max))
+      (let ((files (split-string uri-list "[\0\r\n]" t)))
+        (--each files
+          (let ((file-name (string-remove-prefix "file://" it)))
+            (when (and (file-exists-p file-name)
+                       (not (file-directory-p file-name)))
+              (mail-add-attachment file-name))))))
+    t)
+   (t
+    nil)))
+
 (defun +amos/paste-from-gui ()
   (interactive)
-  (insert-for-yank (gui-get-primary-selection)))
+  (let ((uri-list
+         (condition-case nil
+             (x-get-selection-internal 'PRIMARY 'text/uri-list nil nil)
+           (error nil))))
+    (unless (and uri-list (+amos-dispatch-uri-list uri-list))
+      (insert-for-yank (gui-get-primary-selection)))))
 
 (defun +amos/dump-evil-jump-list ()
   (interactive)
@@ -3001,25 +3030,28 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (remove-hook 'find-file-hook #'+file-templates|check)
 (defun +amos*find-file (filename &optional wildcards)
   "Turn files like file.cpp:14 into file.cpp and going to the 14-th line."
-  (save-match-data
-    (let* ((matched (string-match "^\\(.*\\):\\([0-9]+\\):?$" filename))
-           (line-number (and matched
-                             (match-string 2 filename)
-                             (string-to-number (match-string 2 filename))))
-           (filename (if matched (match-string 1 filename) filename))
-           (buffer
-            (let ((value (find-file-noselect filename nil nil wildcards)))
-              (if (listp value)
-                  (mapcar 'pop-to-buffer-same-window (nreverse value))
-                (pop-to-buffer-same-window value))
-              (+file-templates|check)
-              value)))
-      (when line-number
-        ;; goto-line is for interactive use
-        (goto-char (point-min))
-        (forward-line (1- line-number))
-        (+amos/recenter))
-      buffer)))
+  (pcase (file-name-extension filename)
+    ("zip" (+amos/compress-view filename))
+    (_
+     (save-match-data
+       (let* ((matched (string-match "^\\(.*\\):\\([0-9]+\\):?$" filename))
+              (line-number (and matched
+                                (match-string 2 filename)
+                                (string-to-number (match-string 2 filename))))
+              (filename (if matched (match-string 1 filename) filename))
+              (buffer
+               (let ((value (find-file-noselect filename nil nil wildcards)))
+                 (if (listp value)
+                     (mapcar 'pop-to-buffer-same-window (nreverse value))
+                   (pop-to-buffer-same-window value))
+                 (+file-templates|check)
+                 value)))
+         (when line-number
+           ;; goto-line is for interactive use
+           (goto-char (point-min))
+           (forward-line (1- line-number))
+           (+amos/recenter))
+         buffer)))))
 (advice-add 'find-file :override #'+amos*find-file)
 
 (mapc #'evil-declare-change-repeat
@@ -3500,7 +3532,7 @@ There is no need to advice `company-select-previous' because it calls
 (defun +amos*doom-buffer-frame-predicate (buf)
   (let ((mode (with-current-buffer buf major-mode)))
     (pcase mode
-      ('dired-mode nil)
+      ;; ('dired-mode nil)
       (_ t))))
 (advice-add #'doom-buffer-frame-predicate :override #'+amos*doom-buffer-frame-predicate)
 
@@ -3519,31 +3551,31 @@ If WINDOW cannot be resized by DELTA pixels make it as large (or
 as small) as possible, but don't signal an error."
   (when (window-minibuffer-p window)
     (let* ((frame (window-frame window))
-	       (root (frame-root-window frame))
-	       (height (window-pixel-height window))
-	       (min-delta
-	        (- (window-pixel-height root)
-	           (window-min-size root nil t t)))) ;; amos
+           (root (frame-root-window frame))
+           (height (window-pixel-height window))
+           (min-delta
+            (- (window-pixel-height root)
+               (window-min-size root nil t t)))) ;; amos
       ;; Sanitize DELTA.
       (cond
        ((<= (+ height delta) 0)
-	    (setq delta (- (frame-char-height (window-frame window)) height)))
+        (setq delta (- (frame-char-height (window-frame window)) height)))
        ((> delta min-delta)
-	    (setq delta min-delta)))
+        (setq delta min-delta)))
 
       (unless (zerop delta)
-	    ;; Resize now.
-	    (window--resize-reset frame)
-	    ;; Ideally we should be able to resize just the last child of root
-	    ;; here.  See the comment in `resize-root-window-vertically' for
-	    ;; why we do not do that.
-	    (window--resize-this-window root (- delta) nil nil t)
-	    (set-window-new-pixel window (+ height delta))
-	    ;; The following routine catches the case where we want to resize
-	    ;; a minibuffer-only frame.
-	    (when (resize-mini-window-internal window)
-	      (window--pixel-to-total frame)
-	      (run-window-configuration-change-hook frame))))))
+        ;; Resize now.
+        (window--resize-reset frame)
+        ;; Ideally we should be able to resize just the last child of root
+        ;; here.  See the comment in `resize-root-window-vertically' for
+        ;; why we do not do that.
+        (window--resize-this-window root (- delta) nil nil t)
+        (set-window-new-pixel window (+ height delta))
+        ;; The following routine catches the case where we want to resize
+        ;; a minibuffer-only frame.
+        (when (resize-mini-window-internal window)
+          (window--pixel-to-total frame)
+          (run-window-configuration-change-hook frame))))))
 (advice-add #'window--resize-mini-window :override #'+amos*window--resize-mini-window)
 
 (defun +amos/swiper ()
@@ -3746,5 +3778,119 @@ will be killed."
 
 (general-define-key
  :states 'sticky
+ "u"            #'evil-scroll-up
+ "d"            #'evil-scroll-down)
+(add-hook! 'evil-sticky-state-exit-hook #'+amos/reset-cursor)
+
+(def-package! speed-type
+  :config
+  (map!
+   :map speed-type--completed-keymap
+   :ni "q" #'kill-this-buffer
+   :ni "r" #'speed-type--replay
+   :ni "n" #'speed-type--play-next))
+
+(remove-hook 'after-change-major-mode-hook #'doom|highlight-non-default-indentation)
+
+;; for remapped escape key
+(defun +amos*read-char-choice (prompt chars &optional inhibit-keyboard-quit)
+  "Read and return one of CHARS, prompting for PROMPT.
+Any input that is not one of CHARS is ignored.
+
+If optional argument INHIBIT-KEYBOARD-QUIT is non-nil, ignore
+keyboard-quit events while waiting for a valid input."
+  (unless (consp chars)
+    (error "Called `read-char-choice' without valid char choices"))
+  (let (char done show-help (helpbuf " *Char Help*"))
+    (let ((cursor-in-echo-area t)
+          (executing-kbd-macro executing-kbd-macro)
+      (esc-flag nil))
+      (save-window-excursion          ; in case we call help-form-show
+    (while (not done)
+      (unless (get-text-property 0 'face prompt)
+        (setq prompt (propertize prompt 'face 'minibuffer-prompt)))
+      (setq char (let ((inhibit-quit inhibit-keyboard-quit))
+               (read-key prompt)))
+      (and show-help (buffer-live-p (get-buffer helpbuf))
+           (kill-buffer helpbuf))
+      (cond
+       ((eq 'escape char)
+        (keyboard-quit))
+       ((not (numberp char)))
+       ;; If caller has set help-form, that's enough.
+       ;; They don't explicitly have to add help-char to chars.
+       ((and help-form
+         (eq char help-char)
+         (setq show-help t)
+         (help-form-show)))
+       ((memq char chars)
+        (setq done t))
+       ((and executing-kbd-macro (= char -1))
+        ;; read-event returns -1 if we are in a kbd macro and
+        ;; there are no more events in the macro.  Attempt to
+        ;; get an event interactively.
+        (setq executing-kbd-macro nil))
+       ((not inhibit-keyboard-quit)
+        (cond
+         ((and (null esc-flag) (eq char ?\e))
+          (setq esc-flag t))
+         ((memq char '(?\C-g ?\e))
+          (keyboard-quit))))))))
+    ;; Display the question with the answer.  But without cursor-in-echo-area.
+    (message "%s%s" prompt (char-to-string char))
+    char))
+(advice-add #'read-char-choice :override #'+amos*read-char-choice)
+
+(defun make-set ()
+  (make-hash-table))
+(defun add-to-set (element set)
+  (puthash element t set))
+(defun in-set-p (element set)
+  (gethash element set nil))
+(defun remove-from-set (element set)
+  (remhash element set))
+
+(defvar compile-set (make-set))
+(defvar compress-view-set (make-set))
+(defvar-local +amos-compressed-file nil)
+
+(defun +amos/compress-view (&optional file)
+  (interactive)
+  (let ((file (or file (dired-get-file-for-visit)))
+        (buffer (generate-new-buffer "amos-compress-view")))
+    (switch-to-buffer buffer)
+    ;; (shell-command! (format "7z l %s | perl -0777ne 'print /(Date      Time    Attr         Size   Compressed  Name.*)/s'"
+    ;;                        (shell-quote-argument file)) buffer)
+    (shell-command! (format "x -l %s" (shell-quote-argument file)) buffer)
+    (add-to-set buffer compress-view-set)
+    (amos-compress-view-mode)
+    (cd (file-name-directory file))
+    (setq-local +amos-compressed-file file)))
+
+(defun +amos|kill-buffer-hook()
+  (if (in-set-p (current-buffer) compress-view-set) (remove-from-set (current-buffer) compress-view-set))
+  (if (in-set-p (current-buffer) compile-set) (remove-from-set (current-buffer) compile-set)))
+(add-hook! 'kill-buffer-hook #'+amos|kill-buffer-hook)
+
+(defun +amos|buffer-list-update-hook()
+  (maphash (lambda (buffer _) (unless (get-buffer-window buffer) (kill-buffer buffer))) compress-view-set)
+  (maphash (lambda (buffer _) (unless (get-buffer-window buffer) (kill-buffer buffer))) compile-set))
+(add-hook! 'buffer-list-update-hook #'+amos|buffer-list-update-hook)
+
+(defun +amos/decompress-file (&optional file)
+  (interactive)
+  (let* ((file (or file +amos-compressed-file (dired-get-file-for-visit)))
+         (dir (shell-command-to-string (format "dtrx -n %s 2> /dev/null" (shell-quote-argument file)))))
+    (unless (string-empty-p dir)
+      (dired-jump nil (string-trim-right dir)))))
+
+(define-derived-mode amos-compress-view-mode special-mode "Compress-View")
+(set-keymap-parent amos-compress-view-mode-map (make-composed-keymap evil-motion-state-map evil-normal-state-map))
+(general-define-key
+ :states 'normal
+ :keymaps 'amos-compress-view-mode-map
+ "i"            nil
+ "x"            #'+amos/decompress-file
+ "q"            #'kill-this-buffer
  "u"            #'evil-scroll-up
  "d"            #'evil-scroll-down)

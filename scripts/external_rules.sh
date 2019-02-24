@@ -6,7 +6,35 @@ instance=$3
 title=$(xtitle "$wid")
 echo $class > /tmp/wowow
 
+fc() {
+    wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+    w=${wh[0]}
+    h=${wh[1]}
+    x=$((w*3/16))
+    y=30
+    w=$((w*5/8))
+    h=$((h - 60))
+    echo "state=floating sticky=on rectangle=${w}x${h}+$x+$y"
+}
+
 case "$class" in
+    mpv)
+        wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+        w=${wh[0]}
+        h=${wh[1]}
+        x=$((w*3/16))
+        y=100
+        w=$((w*5/8))
+        h=$((h - 279))
+        echo "state=floating sticky=on rectangle=${w}x${h}+$x+$y"
+        ;;
+    feh)
+        fc
+        ;;
+    obs)
+        echo "$wid" >> /tmp/obs
+        fc
+        ;;
     Conky)
         echo "$wid" > /tmp/conky
         # setbg.sh reset_conky
@@ -58,6 +86,9 @@ case "$class" in
         ;;
     Termite)
         case "$title" in
+            local)
+                echo "desktop=e follow=on"
+                ;;
             weechat)
                 echo "desktop=c follow=on"
                 ;;
@@ -106,14 +137,7 @@ case "$class" in
                 echo "desktop=v state=tiled follow=on"
                 ;;
             popup)
-                wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
-                w=${wh[0]}
-                h=${wh[1]}
-                x=$((w*3/16))
-                y=30
-                w=$((w*5/8))
-                h=$((h - 60))
-                echo "rectangle=${w}x${h}+$x+$y"
+                fc
                 ;;
         esac
         ;;

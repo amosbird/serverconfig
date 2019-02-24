@@ -377,38 +377,36 @@ copy ring."
                        (length files)
                        (if (> (length files) 1) "s" ""))))))
 
-(defun +amos/dired-save-attachments (&optional msg)
-  "Offer to save multiple email attachments from the current message.
-Default is to save all messages, [1..n], where n is the number of
-attachments.  You can type multiple values separated by space, e.g.
-  1 3-6 8
-will save attachments 1,3,4,5,6 and 8.
+(defvar attachments nil)
+(defun +amos*mu4e-process-file-through-pipe (old-function path pipecmd)
+  (cond
+   ((string= pipecmd "+amos:build")
+    (setq attachments (add-to-list 'attachments path t)))
+   ((string= pipecmd "+amos:eof")
+    (ring-insert dired-ranger-copy-ring (cons (list) attachments))
+    (+amos/dired-copy-to-clipboard)
+    (setq attachments nil))
+   (t
+    (apply old-function path pipecmd))))
+(advice-add #'mu4e-process-file-through-pipe :around #'+amos*mu4e-process-file-through-pipe)
 
-Furthermore, there is a shortcut \"a\" which so means all
-attachments, but as this is the default, you may not need it."
+;;;###autoload
+(defun +amos/dired-save-attachments (&optional msg)
   (interactive)
+  (require 'dired-ranger)
   (let* ((msg (or msg (mu4e-message-at-point)))
          (attachstr (mu4e~view-get-attach-num
                      "Attachment number range (or 'a' for 'all')" msg t))
          (count (hash-table-count mu4e~view-attach-map))
-         (attachnums (mu4e-split-ranges-to-numbers attachstr count)))
-    (let* ((path (concat (mu4e~get-attachment-dir) "/"))
-           (attachdir (mu4e~view-request-attachments-dir path)))
-      (dolist (num attachnums)
-        (let* ((att (mu4e~view-get-attach msg num))
-               (fname  (plist-get att :name))
-               (index (plist-get att :index))
-               (retry t)
-               fpath)
-          (while retry
-            (setq fpath (expand-file-name (concat attachdir fname) path))
-            (setq retry
-                  (and (file-exists-p fpath)
-                       (not (y-or-n-p
-                             (mu4e-format "Overwrite '%s'?" fpath))))))
-          (mu4e~proc-extract
-           'save (mu4e-message-field msg :docid)
-           index mu4e-decryption-policy fpath))))))
+         (attachnums (mu4e-split-ranges-to-numbers attachstr count))
+         index)
+    (setq attachments nil)
+    (dolist (num attachnums)
+      (let* ((att (mu4e~view-get-attach msg num)))
+        (setq index (plist-get att :index))
+        (mu4e~view-temp-action
+         (mu4e-message-field msg :docid) index "pipe" "+amos:build")))
+    (mu4e~view-temp-action (mu4e-message-field msg :docid) index "pipe" "+amos:eof")))
 
 ;; maybe useful
 
