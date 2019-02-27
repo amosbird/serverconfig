@@ -41,7 +41,8 @@ super+q
 ctrl+alt+q
   bspc node -c
 ctrl+alt+Eisu_toggle
-  adb shell am startservice -a com.kaytat.simpleprotocolplayer.action.PLAY -e ip_addr 172.26.100.36 --ei audio_port 12345 --ei sample_rate 44100 --ez stereo true --ei buffer_ms 50 com.kaytat.simpleprotocolplayer/.MusicService
+  adb shell am broadcast -a com.kaytat.simpleprotocolplayer.action.START -e ip_addr 172.26.100.36 com.kaytat.simpleprotocolplayer/.MusicIntentReceiver
+  # adb shell am startservice -a com.kaytat.simpleprotocolplayer.action.PLAY -e ip_addr 172.26.100.36 --ei audio_port 12345 --ei sample_rate 44100 --ez stereo true --ei buffer_ms 50 com.kaytat.simpleprotocolplayer/.MusicService
 ctrl+alt+1
   showphone.sh
 ctrl+alt+2

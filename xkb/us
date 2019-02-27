@@ -28,7 +28,7 @@ xkb_symbols "basic" {
     key <AD09> {	[	  o,	O		]	};
     key <AD10> {	[	  p,	P		]	};
     key <AD11> {	[ quotedbl,	quotedbl	]	};
-    key <AD12> {	[ bracketright,	braceright	]	};
+    key <AD12> {	[ quotedbl,	quotedbl	]	};
 
     key <AC01> {	[	  a,	A 		,  asciitilde ]	};
     key <AC02> {	[	  s,	S		,  question   ]	};
@@ -39,7 +39,7 @@ xkb_symbols "basic" {
     key <AC07> {	[	  j,	J		]	};
     key <AC08> {	[	  k,	K		]	};
     key <AC09> {	[	  l,	L		]	};
-    key <AC10> {	[ underscore,	underscore   ]	};
+    key <AC10> {	[ underscore,	underscore  ]	};
     key <AC11> {	[ apostrophe,	apostrophe	]	};
 
     key <AB01> {	[	  z,	Z 		,  grave      ]	};
@@ -53,7 +53,7 @@ xkb_symbols "basic" {
     key <AB09> {	[    period,	greater		]	};
     key <AB10> {	[     slash,	question	]	};
 
-    key <BKSL> {	[ backslash,         bar	]	};
+    key <BKSL> {	[ apostrophe,   apostrophe	]	};
 };
 
 partial alphanumeric_keys

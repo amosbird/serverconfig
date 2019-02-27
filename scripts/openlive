@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
-luakit https://mp.douyu.com/live/main
+# luakit https://mp.douyu.com/live/main
+luakit https://link.bilibili.com/p/center/index#/my-room/start-live
+# luakit https://live.bilibili.com/21290308

@@ -15,6 +15,8 @@ c.content.host_blocking.whitelist = ['piwik.org']
 # c.url.searchengines = { 'DEFAULT': 'http://localhost:8888/?q={}', 'google': 'http://localhost:8888/?q={}', 'github': 'https://github.com/search?q={}', 'searx': 'https://searx.me/?q={}'}
 c.url.searchengines = { 'DEFAULT': 'https://google.com/search?q={}', 'google': 'https://google.com/search?q={}', 'github': 'https://github.com/search?q={}', 'searx': 'https://searx.me/?q={}', 'scholar': 'https://scholar.google.com/scholar?q={}'}
 c.tabs.last_close = 'close'
+c.tabs.title.format = '{index}: {title}'
+
 
 
 # import glob
