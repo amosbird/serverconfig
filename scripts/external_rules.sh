@@ -112,6 +112,7 @@ case "$class" in
         ;;
     scrcpy)
         echo "$wid" > /tmp/scrcpy
+        compton-trans -w "$wid" 100
         echo "sticky=on state=floating"
         ;;
     TelegramDesktop)

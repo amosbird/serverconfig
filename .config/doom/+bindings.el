@@ -417,7 +417,7 @@
    :n "<escape>" nil
    :map (magit-status-mode-map magit-revision-mode-map)
    "SPC" nil
-   :n "z" #'magit-stash-popup
+   :n "z" #'magit-stash
    :n "C-j" nil
    :n [tab] #'magit-section-toggle
    :n "C-k" nil)

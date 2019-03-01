@@ -204,7 +204,7 @@ The insertion will be repeated COUNT times."
             (vector (current-column)))))))
   (c-set-offset 'c #'+amos-c-lineup-C-comments)
 
-  (setq c-noise-macro-names '("constexpr"))
+  (setq-default c-noise-macro-names '("constexpr"))
   ;; Indent privacy keywords at same level as class properties
   ;; (c-set-offset 'inclass #'+cc-c-lineup-inclass)
 

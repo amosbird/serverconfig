@@ -1,32 +1,45 @@
 #!/usr/bin/env bash
 
-mkdir -p release
-pushd release
-case "$1" in
+mkdir -p release && pushd release || exit 1
+
+if [[ $1 == install ]]; then
+    ninja && sudo ninja install
+else
+    target=..
+    case $1 in
     llvm)
-        cmake ../llvm -G Ninja -DLLVM_TARGETS_TO_BUILD='X86' -DLLVM_CCACHE_BUILD=On -DLLVM_ENABLE_PROJECTS='clang;libcxx;libcxxabi;compiler-rt;lld' -DCMAKE_BUILD_TYPE=Release -DLLVM_BUILD_LLVM_DYLIB=On -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1' ../llvm && \
-        ninja
+        target=../llvm
+        cmake_args=(
+            -DLLVM_TARGETS_TO_BUILD='X86'
+            -DLLVM_CCACHE_BUILD=On
+            -DLLVM_ENABLE_PROJECTS='clang;libcxx;libcxxabi;compiler-rt;lld'
+            -DCMAKE_BUILD_TYPE=Release
+            -DLLVM_BUILD_LLVM_DYLIB=On
+            -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1'
+        )
         ;;
     ccls)
-        cmake .. -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=On -DSYSTEM_CLANG=On -DUSE_SHARED_LLVM=On -DCMAKE_PREFIX_PATH="$HOME/git/llvm-project/release;$HOME/git/llvm-project/release/tools/clang;$HOME/git/llvm-project/llvm;$HOME/git/llvm-project/clang" && \
-        ninja
-        ;;
-    rdp)
-        cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On && \
-        ninja
-        ;;
-    fish)
-        cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On && \
-        ninja
-        ;;
-    copyq)
-        cmake .. -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On && \
-        ninja
+        cmake_args=(
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            -DSYSTEM_CLANG=On
+            -DUSE_SHARED_LLVM=On
+            -DCMAKE_PREFIX_PATH="$HOME/git/llvm-project/release;$HOME/git/llvm-project/release/tools/clang;$HOME/git/llvm-project/llvm;$HOME/git/llvm-project/clang"
+        )
         ;;
     obs)
-        cmake .. -G Ninja -DUNIX_STRUCTURE=0 -DCMAKE_EXPORT_COMPILE_COMMANDS=On && \
-        ninja
+        cmake_args=(
+            -DUNIX_STRUCTURE=0
+        )
         ;;
-esac
+    *)
+        cmake_args=(
+        )
+        ;;
+    esac
+    cmake "$target" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On "${cmake_args[@]}" &&
+    ninja &&
+    [[ $2 == install ]] && sudo ninja install
+fi
+
 popd
 ln -sf release/compile_commands.json .

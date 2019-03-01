@@ -29,7 +29,6 @@
 
        :emacs
        dired
-       ediff
        electric
        imenu
        vc

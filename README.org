@@ -222,6 +222,12 @@ git checkout -b amos amos/master
 go install
 #+END_SRC
 
+*** perl related
+
+#+BEGIN_SRC bash
+cpan URL::Search
+#+END_SRC
+
 ** emacs
 
 #+BEGIN_SRC bash
