@@ -2,7 +2,7 @@
 
 if test (count $argv) -ne 1
     echo "Usage: $_ <file>"
-    return 1
+    exit 1
 end
 set file $argv[1]
 set addr (ztaddr)

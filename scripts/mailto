@@ -9,7 +9,7 @@ function mailto -d "Mail to url" --argument-names 'url'
     function _mailto -d "Mail to url" --argument-names 'url'
         if test (count $argv) -ne 1
             echo "Usage: $_ <mailto url>"
-            return 1
+            exit 1
         end
         set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
         $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (browse-url-mail \"$url\"))"

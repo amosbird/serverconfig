@@ -2,12 +2,12 @@
 
 if test (count $argv) -ne 1
     echo "Usage: $_ <file|dir>"
-    return 1
+    exit 1
 end
 set -l filename $argv[1]
 if not test -e $filename
     echo "file not exist"
-    return 1
+    exit 1
 end
 if test -d $filename
     set filename $filename"/"
@@ -22,7 +22,7 @@ while set -q $hostfile
         if test (pwd) = "/"
             echo "Cannot find a .hostfile up from here."
             popd
-            return 1
+            exit 1
         end
         cd ..
     end
@@ -34,5 +34,5 @@ set dirpath (dirname $syncpath"dummy")
 # while read -la host
 #     rsync --rsync-path="mkdir -p $dirpath && rsync" --delete -a $filename $host:$syncpath
 # end < $hostfile
-# return 0
+# exit 0
 parallel "rsync --rsync-path=\"mkdir -p $dirpath; rsync\" -a $filename '{}':$syncpath --delete" :::: "$hostfile"

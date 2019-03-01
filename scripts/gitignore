@@ -3,7 +3,7 @@
 function __gitignore_run -a msg command
     if not spin "$command" -f "\r @ $msg\r\n" --error=/dev/null
         printf " × $msg\n"
-        return 1
+        exit 1
     end
     printf " ✓ $msg\n"
 end
@@ -38,12 +38,12 @@ getopts $argv | while read -l 1 2
             printf "     -u --update              Update templates file\n"
             printf "     -o --output=<file>       Write output to <file>\n"
             printf "     -h --help                Show this help\n"
-            return
+            exit
 
         case \*
             printf "gitignore: '%s' is not a valid option\n" $1 >& 2
             gitignore --help >& 2
-            return 1
+            exit 1
     end
 end
 
@@ -52,17 +52,17 @@ if test ! -s $cache_templates -o $update -ne 0
         curl --max-time 10 -sS '$gitignoreio_url/list' | tr ',' ' ' | tr '\n' ' ' > $cache_templates
         "
         echo "gitignore: can not fetch templates list from gitignore.io." > /dev/stderr
-        return 1
+        exit 1
     end
 end
 
 if test ! -s $cache_templates
     echo "gitignore: can not read templates list." > /dev/stderr
-    return 1
+    exit 1
 end
 
 if not set -q templates[1]
-    return
+    exit
 end
 
 set templates (printf ',%s' $templates | cut -c2-)
@@ -71,5 +71,5 @@ if not __gitignore_run "Fetch template" "
     curl --max-time 10 -sS '$gitignoreio_url/$templates' > $output
     "
     echo "gitignore: can not fetch template from gitignore.io." > /dev/stderr
-    return 1
+    exit 1
 end

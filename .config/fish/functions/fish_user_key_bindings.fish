@@ -168,11 +168,11 @@ function fish_user_key_bindings
             set -l EMACS
             if [ $sn = "gui" ]
                 set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
-                $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (magit-status \"$PWD\"))"
+                $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (cd \"$PWD\") (magit-status))"
             else
                 set EMACS emacsclient -n -q -u -e
                 tmux switch-client -t emacs
-                $EMACS "(progn (+amos/workspace-new) (magit-status \"$PWD\") (setq +amos-tmux-need-switch t))"
+                $EMACS "(progn (+amos/workspace-new) (cd \"$PWD\") (magit-status) (setq +amos-tmux-need-switch t))"
             end
         end
     end

@@ -2296,15 +2296,15 @@ the current state and point position."
 
 (defun +amos/workspace-delete ()
   (interactive)
+  (when +amos-tmux-need-switch
+    (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
+    (setq +amos-tmux-need-switch nil))
   (let ((f (selected-frame)))
     (setq +amos-frame-list (--remove (eq f it) +amos-frame-list))
     (setq +amos-frame-stack (-uniq (--remove (eq f it) +amos-frame-stack)))
     (if +amos-frame-stack
         (+amos/workspace-switch-to-frame (car +amos-frame-stack)))
-    (delete-frame f))
-  (when +amos-tmux-need-switch
-    (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
-    (setq +amos-tmux-need-switch nil)))
+    (delete-frame f)))
 
 (defun +amos/workspace-switch-to-frame (frame)
   (setq +amos-tmux-need-switch nil)
