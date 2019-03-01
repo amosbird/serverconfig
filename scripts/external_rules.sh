@@ -3,7 +3,7 @@
 wid=$1
 class=$2
 instance=$3
-title=$(xtitle "$wid")
+title=$(xprop -id "$wid" WM_NAME | perl -ne 'print /"(.*)"/')
 echo $class > /tmp/wowow
 
 fc() {

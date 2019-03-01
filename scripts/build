@@ -31,6 +31,16 @@ else
             -DUNIX_STRUCTURE=0
         )
         ;;
+    rel)
+        cmake_args=(
+            -DCMAKE_BUILD_TYPE=Release
+        )
+        ;;
+    deb)
+        cmake_args=(
+            -DCMAKE_BUILD_TYPE=Debug
+        )
+        ;;
     *)
         cmake_args=(
         )
