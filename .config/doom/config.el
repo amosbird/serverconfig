@@ -2622,17 +2622,16 @@ By default the last line."
   (if company-selection-changed
       (+amos/company-search-abort)
     (company-abort)
-    (call-interactively (key-binding (this-command-keys)))))
+    (run-with-timer 0.001 nil #'call-interactively (key-binding (this-command-keys)))))
 
 (defun +amos/company-search-abort ()
   (interactive)
   (if company-selection-changed
       (progn
         (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
-        (company-complete-selection)
-        (call-interactively (key-binding (this-command-keys))))
-    (company-abort)
-    (call-interactively (key-binding (this-command-keys)))))
+        (company-complete-selection))
+    (company-abort))
+  (run-with-timer 0.001 nil #'call-interactively (key-binding (this-command-keys))))
 
 (defun ediff-copy-both-to-C ()
   (interactive)
@@ -3062,6 +3061,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       '(company-complete-mouse
         ;; +amos/maybe-add-end-of-statement
         +amos/company-abort
+        +amos/company-search-abort
         amos-company-files
         company-complete-selection
         company-complete-common))
@@ -3077,6 +3077,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (mapc #'evil-declare-ignore-repeat
       '(
+        +amos/complete
         +amos/align-repeat-left
         +amos/align-repeat-right
         +amos/all-substitute
@@ -3808,38 +3809,38 @@ keyboard-quit events while waiting for a valid input."
   (let (char done show-help (helpbuf " *Char Help*"))
     (let ((cursor-in-echo-area t)
           (executing-kbd-macro executing-kbd-macro)
-      (esc-flag nil))
+          (esc-flag nil))
       (save-window-excursion          ; in case we call help-form-show
-    (while (not done)
-      (unless (get-text-property 0 'face prompt)
-        (setq prompt (propertize prompt 'face 'minibuffer-prompt)))
-      (setq char (let ((inhibit-quit inhibit-keyboard-quit))
-               (read-key prompt)))
-      (and show-help (buffer-live-p (get-buffer helpbuf))
-           (kill-buffer helpbuf))
-      (cond
-       ((eq 'escape char)
-        (keyboard-quit))
-       ((not (numberp char)))
-       ;; If caller has set help-form, that's enough.
-       ;; They don't explicitly have to add help-char to chars.
-       ((and help-form
-         (eq char help-char)
-         (setq show-help t)
-         (help-form-show)))
-       ((memq char chars)
-        (setq done t))
-       ((and executing-kbd-macro (= char -1))
-        ;; read-event returns -1 if we are in a kbd macro and
-        ;; there are no more events in the macro.  Attempt to
-        ;; get an event interactively.
-        (setq executing-kbd-macro nil))
-       ((not inhibit-keyboard-quit)
-        (cond
-         ((and (null esc-flag) (eq char ?\e))
-          (setq esc-flag t))
-         ((memq char '(?\C-g ?\e))
-          (keyboard-quit))))))))
+        (while (not done)
+          (unless (get-text-property 0 'face prompt)
+            (setq prompt (propertize prompt 'face 'minibuffer-prompt)))
+          (setq char (let ((inhibit-quit inhibit-keyboard-quit))
+                       (read-key prompt)))
+          (and show-help (buffer-live-p (get-buffer helpbuf))
+               (kill-buffer helpbuf))
+          (cond
+           ((eq 'escape char)
+            (keyboard-quit))
+           ((not (numberp char)))
+           ;; If caller has set help-form, that's enough.
+           ;; They don't explicitly have to add help-char to chars.
+           ((and help-form
+                 (eq char help-char)
+                 (setq show-help t)
+                 (help-form-show)))
+           ((memq char chars)
+            (setq done t))
+           ((and executing-kbd-macro (= char -1))
+            ;; read-event returns -1 if we are in a kbd macro and
+            ;; there are no more events in the macro.  Attempt to
+            ;; get an event interactively.
+            (setq executing-kbd-macro nil))
+           ((not inhibit-keyboard-quit)
+            (cond
+             ((and (null esc-flag) (eq char ?\e))
+              (setq esc-flag t))
+             ((memq char '(?\C-g ?\e))
+              (keyboard-quit))))))))
     ;; Display the question with the answer.  But without cursor-in-echo-area.
     (message "%s%s" prompt (char-to-string char))
     char))
