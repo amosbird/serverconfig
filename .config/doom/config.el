@@ -1647,6 +1647,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 
 (defun +amos/redisplay-and-recenter ()
   (interactive)
+  (evil-scroll-left 10)
   (redraw-display)
   (+amos/recenter))
 
@@ -2706,6 +2707,7 @@ By default the last line."
 (advice-add #'recenter-top-bottom :override #'recenter)
 (advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))
 (advice-add #'magit-blame--update-margin :override #'ignore)
+(advice-add #'evil-visual-update-x-selection :override #'ignore)
 
 (defun +amos/avy-goto-url()
   "Use avy to go to an URL in the buffer."
@@ -3009,6 +3011,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos/paste-from-gui ()
   (interactive)
+  (if (evil-visual-state-p)
+      (call-interactively #'+amos/evil-substitute))
   (let ((uri-list
          (condition-case nil
              (x-get-selection-internal 'PRIMARY 'text/uri-list nil nil)
@@ -3894,3 +3898,107 @@ keyboard-quit events while waiting for a valid input."
  "q"            #'kill-this-buffer
  "u"            #'evil-scroll-up
  "d"            #'evil-scroll-down)
+
+(defun +amos-bibtex-completion-format-citation-cite (keys)
+  "Formatter for LaTeX citation commands. Prompts for the command
+and for arguments if the commands can take any. If point is
+inside or just after a citation command, only adds KEYS to it."
+  (let (macro)
+    (cond
+     ((and (require 'reftex-parse nil t)
+           (setq macro (reftex-what-macro 1))
+           (stringp (car macro))
+           (string-match "\\`\\\\cite\\|cite\\'" (car macro)))
+      ;; We are inside a cite macro. Insert key at point, with appropriate delimiters.
+      (delete-horizontal-space)
+      (concat (pcase (preceding-char)
+                (?\{ "")
+                (?, " ")
+                (_ ", "))
+              (s-join ", " keys)
+              (if (member (following-char) '(?\} ?,))
+             ""
+                ", ")))
+     ((and (equal (preceding-char) ?\})
+           (require 'reftex-parse nil t)
+           (save-excursion
+             (forward-char -1)
+             (setq macro (reftex-what-macro 1)))
+           (stringp (car macro))
+           (string-match "\\`\\\\cite\\|cite\\'" (car macro)))
+      ;; We are right after a cite macro. Append key and leave point at the end.
+      (delete-char -1)
+      (delete-horizontal-space t)
+      (concat (pcase (preceding-char)
+                (?\{ "")
+                (?, " ")
+                (_ ", "))
+              (s-join ", " keys)
+              "}"))
+     (t
+      (format "~\\cite{%s}" (s-join ", " keys))))))
+
+(defun +amos-bibtex-completion-format-ref (key)
+  (set-text-properties 0 (length key) nil key)
+  (insert
+   (let (macro)
+     (cond
+      ((and (require 'reftex-parse nil t)
+            (setq macro (reftex-what-macro 1))
+            (stringp (car macro))
+            (string-match "\\`\\\\cref\\|cref\\'" (car macro)))
+       ;; We are inside a cref macro. Insert key at point, with appropriate delimiters.
+       (delete-horizontal-space)
+       (concat (pcase (preceding-char)
+                 (?\{ "")
+                 (?, "")
+                 (_ ","))
+               key
+               (if (member (following-char) '(?\} ?,))
+                   ""
+                 ",")))
+      ((and (equal (preceding-char) ?\})
+            (require 'reftex-parse nil t)
+            (save-excursion
+              (forward-char -1)
+              (setq macro (reftex-what-macro 1)))
+            (stringp (car macro))
+            (string-match "\\`\\\\cref\\|cref\\'" (car macro)))
+       ;; We are right after a cref macro. Append key and leave point at the end.
+       (delete-char -1)
+       (delete-horizontal-space t)
+       (concat (pcase (preceding-char)
+                 (?\{ "")
+                 (?, "")
+                 (_ ","))
+               key
+               "}"))
+      (t
+       (format "~\\cref{%s}" key))))))
+
+(defun +amos/ivy-reftex ()
+  (interactive)
+  (require 'bibtex-completion)
+  (require 'company-reftex)
+  (bibtex-completion-init)
+  (let* ((candidates (company-reftex-label-candidates "")))
+    (ivy-read "RefTeX entries: "
+              candidates
+              :caller #'+amos/ivy-reftex
+              :action #'+amos-bibtex-completion-format-ref)))
+
+(def-package! ascii-art-to-unicode)
+
+(setq interprogram-paste-function nil)
+
+(evil-define-operator +amos/evil-substitute (beg end type)
+  "Change a character."
+  :motion evil-forward-char
+  (interactive "<R>")
+  (evil-change beg end type ?_))
+
+(defun +amos/xterm-paste (event)
+  (interactive "e")
+  (if (evil-visual-state-p)
+      (call-interactively #'+amos/evil-substitute))
+  (xterm-paste event))

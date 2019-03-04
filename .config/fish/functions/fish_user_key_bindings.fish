@@ -30,7 +30,7 @@ function fish_user_key_bindings
         set -q FZF_ALT_C_COMMAND; or set -l FZF_ALT_C_COMMAND "command jump top"
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         begin
-            set -lx FZF_DEFAULT_OPTS "--expect f10 --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
+            set -lx FZF_DEFAULT_OPTS "--expect ctrl-space,alt-enter --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
             eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -a -d \n -z result
             set -l dir (string trim -- $result[2])
             if test -n $dir
@@ -39,7 +39,7 @@ function fish_user_key_bindings
                         jump clean
                     end
                 else
-                    commandline -i -- "$dir/"
+                    commandline -i -- "$dir/ "
                 end
             end
         end

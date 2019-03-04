@@ -13,6 +13,8 @@ conf-file=/etc/.domains.txt
 addn-hosts=/etc/.hostnames.txt
 server=127.0.0.1#5300
 server=/ict.ac.cn/159.226.8.6
+ipset=/ieee.org/gfwlist
+ipset=/acm.org/gfwlist
 '
 	curl -s https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
 } | sudo tee /etc/dnsmasq.conf >/dev/null

@@ -14,10 +14,10 @@
                    stripe-buffer
                    vi-tilde-fringe
                    visual-fill-column
-                   which-key
                    emacs-snippets)
 
 (package! adoc-mode)
+(package! ascii-art-to-unicode)
 (package! bind-map)
 (package! chinese-yasdcv)
 (package! company-lsp)

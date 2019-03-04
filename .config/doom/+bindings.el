@@ -14,6 +14,7 @@
                                       (xref-backend-identifier-completion-table backend)
                                       nil nil nil
                                       'xref--read-identifier-history nil))))
+ "<xterm-paste>" #'+amos/xterm-paste
  "<f12>"         #'+amos/reset-cursor
  "<f11>"         #'+amos/dump-evil-jump-list
  "M-x"           #'execute-extended-command
@@ -421,6 +422,11 @@
    :n "C-j" nil
    :n [tab] #'magit-section-toggle
    :n "C-k" nil)
+
+ (:after tex
+   :map TeX-mode-map
+   :i "M-o" #'ivy-bibtex-with-local-bibliography
+   :i "M-O" #'+amos/ivy-reftex)
 
  (:after lsp-ui-imenu
    :map lsp-ui-imenu-mode-map

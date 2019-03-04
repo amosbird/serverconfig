@@ -146,9 +146,6 @@
 (setq find-file-visit-truename t)
 (setq fringes-outside-margins t)
 (setq global-auto-revert-non-file-buffers t)
-(setq helm-bibtex-bibliography '("citations.bib"))
-(setq helm-bibtex-notes-path "~/bibnotes.org")
-(setq helm-bibtex-pdf-field "file")
 (setq initial-buffer-choice t)
 (setq indent-tabs-mode t)
 (setq ivy-do-completion-in-region nil)
@@ -243,7 +240,14 @@
 (setq projectile-require-project-root t)
 (setq projectile-sort-order 'recentf)
 (setq query-replace-skip-read-only t)
-(setq reftex-default-bibliography '("~/zotero.bib"))
+(setq bibtex-completion-cite-prompt-for-optional-arguments nil)
+(setq bibtex-completion-format-citation-functions
+  '((org-mode      . bibtex-completion-format-citation-ebib)
+    (latex-mode    . +amos-bibtex-completion-format-citation-cite)
+    (markdown-mode . bibtex-completion-format-citation-pandoc-citeproc)
+    (default       . bibtex-completion-format-citation-default)))
+(setq ivy-bibtex-default-action 'ivy-bibtex-insert-citation)
+
 (setq require-final-newline t)
 (setq save-interprogram-paste-before-kill nil)
 (setq shell-file-name "/bin/bash")
@@ -265,7 +269,9 @@
 (setq yas-triggers-in-field nil)
 (setq yasdcv-sdcv-command "sdcv --non-interactive --utf8-output --utf8-input \"%word\"")
 (setq yasdcv-sdcv-dicts '(("jianminghy" "简明汉英词典" "powerword2007" t)))
-(setq +latex-bibtex-file "~/Papers/references.bib")
+(setq +latex-bibtex-file "~/git/serverconfig/amosbird.bib")
+(setq-default TeX-engine 'xetex)
+(setq reftex-label-ignored-macros-and-environments '("enumerate" "itemize"))
 
 (ignore-errors
   (define-category ?U "Uppercase")

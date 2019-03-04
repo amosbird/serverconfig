@@ -72,5 +72,5 @@ map h scroll full-left
 map l scroll full-right
 map gg goto top scroll page-top
 map <C-Space> exec 'i3-msg focus right'
-map y exec 'sh -c "echo -n $FILE | xclip"'
+map y exec 'sh -c "copyq copyUriList \"$FILE\""'
 map <C-y> exec 'sh -c "echo -n [[file+sys:$FILE][$(xclip -o)]] | xclip"'

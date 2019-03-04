@@ -8,6 +8,11 @@ ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
 gw=$(ip r g 168.235.105.19 | cut -d" " -f3)
 
+
+ip r f table direct
+ip r a 0.0.0.0/0 via $gw table direct
+ip rule add fwmark 8 table direct pref 20000
+
 ip r f table cn
 ip -batch - <<EOF
 $(sed "s/GATEWAY/$gw/" /home/amos/.routefile)
@@ -40,12 +45,12 @@ ip r a 159.203.2.154/32 via $gw table cn
 ip r a 47.90.50.109/32 via $gw table cn
 
 # ieee.org
-ip r a 140.98.0.0/16 via $gw table cn
+# ip r a 140.98.0.0/16 via $gw table cn
 # acm.org
-ip r a 216.87.128.0/19 via $gw table cn
+# ip r a 216.87.128.0/19 via $gw table cn
 # dl.acm.org
-ip r a 64.238.147.0/24 via $gw table cn
-ip r a 104.17.80.0/24 via $gw table cn
+# ip r a 64.238.147.0/24 via $gw table cn
+# ip r a 104.17.80.0/24 via $gw table cn
 # delivery.acm.org
 # ip r a 23.192.0.0/11 via $gw table cn
 # staticieeexplore.ieee.org

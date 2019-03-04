@@ -108,7 +108,7 @@ bind-key -T amos M-h select-pane -L
 bind-key -T amos M-j select-pane -D
 bind-key -T amos M-k select-pane -U
 bind-key -T amos M-l select-pane -R
-bind-key -T amos C-@ run-shell "fish -c 'i3focus right (tmux display -p \"#{pane_tty}\")'"
+# bind-key -T amos C-@ run-shell "fish -c 'i3focus right (tmux display -p \"#{pane_tty}\")'"
 bind-key -T amos M-H swap-pane -s '{left-of}'
 bind-key -T amos M-J swap-pane -s '{down-of}'
 bind-key -T amos M-K swap-pane -s '{up-of}'
