@@ -17,11 +17,11 @@ def generate_mac():
 
     upfile=open('/home/amos/.routefile','w')
 
-    upfile.write(upscript_header)
-    upfile.write('\n')
-
     for ip,_,mask in results:
         upfile.write('route add %s/%s via GATEWAY table cn\n'%(ip,mask))
+
+    upfile.write(upscript_header)
+    upfile.write('\n')
 
     upfile.close()
 

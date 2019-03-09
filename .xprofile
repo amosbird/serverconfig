@@ -8,7 +8,7 @@ export XMODIFIERS=@im=fcitx
 export QT_IM_MODULE=fcitx
 export QT_QPA_PLATFORMTHEME=gtk2
 export AWT_TOOLKIT=XToolkit
-export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel"
+# export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel"
 export AMPLXE_RUNTOOL_OPTIONS=--no-altstack
 export QT_SCALE_FACTOR=1
 export QT_AUTO_SCREEN_SCALE_FACTOR=0

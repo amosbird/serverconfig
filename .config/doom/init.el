@@ -108,6 +108,7 @@
 (setq dired-open-extensions
       '(("pdf" . "xdg-open")
         ("mp3" . "xdg-open")
+        ("mpg" . "xdg-open")
         ("flac" . "xdg-open")
         ("m4a" . "xdg-open")
         ("mp4" . "xdg-open")
@@ -272,6 +273,9 @@
 (setq +latex-bibtex-file "~/git/serverconfig/amosbird.bib")
 (setq-default TeX-engine 'xetex)
 (setq reftex-label-ignored-macros-and-environments '("enumerate" "itemize"))
+(setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${note:*}")))
+(setq bibtex-completion-additional-search-fields '("note"))
+
 
 (ignore-errors
   (define-category ?U "Uppercase")

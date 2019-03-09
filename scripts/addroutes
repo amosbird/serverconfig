@@ -6,7 +6,7 @@
 
 ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
-gw=$(ip r g 168.235.105.19 | cut -d" " -f3)
+gw=$(ip r g 13.75.109.155 | cut -d" " -f3)
 
 
 ip r f table direct
