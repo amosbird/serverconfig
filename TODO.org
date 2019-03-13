@@ -33,3 +33,7 @@
 ** TODO sp-auto-insert should work everywhere
 
 ** TODO design @:
+
+* TODO good code integration
+
+** https://github.com/abseil/abseil-cpp/blob/master/absl/container/internal/layout.h

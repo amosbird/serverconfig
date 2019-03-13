@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
 # (cd ~/.emacs.d && bin/doom -y upgrade && bin/doom -y update && bin/doom -y refresh && bin/doom -y compile && bin/doom -y compile :plugins)
+find ~/.emacs.d/{core,modules} -iname '*.elc' -delete
 for cmd in upgrade compile update; do ~/.emacs.d/bin/doom -y $cmd; done
 if (($#)); then ~/.emacs.d/bin/doom -y compile :plugins; fi

@@ -11,7 +11,8 @@ no-poll
 min-cache-ttl=3600
 conf-file=/etc/.domains.txt
 addn-hosts=/etc/.hostnames.txt
-server=127.0.0.1#5300
+#server=127.0.0.1#5300
+server=8.8.8.8
 server=/ict.ac.cn/159.226.8.6
 ipset=/ieee.org/gfwlist
 ipset=/acm.org/gfwlist
