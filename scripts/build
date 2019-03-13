@@ -41,6 +41,16 @@ else
             -DCMAKE_BUILD_TYPE=Debug
         )
         ;;
+    folly)
+        cmake_args=(
+            -DBUILD_SHARED_LIBS=1
+        )
+        ;;
+    mtrace)
+        cmake_args=(
+            -DDISABLE_CLIENT=1
+        )
+        ;;
     *)
         cmake_args=(
         )

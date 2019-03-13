@@ -3008,17 +3008,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
    (t
     nil)))
 
-(defun +amos/paste-from-gui ()
-  (interactive)
-  (if (evil-visual-state-p)
-      (call-interactively #'+amos/evil-substitute))
-  (let ((uri-list
-         (condition-case nil
-             (x-get-selection-internal 'PRIMARY 'text/uri-list nil nil)
-           (error nil))))
-    (unless (and uri-list (+amos-dispatch-uri-list uri-list))
-      (insert-for-yank (gui-get-primary-selection)))))
-
 (defun +amos/dump-evil-jump-list ()
   (interactive)
   (message (format "idx = %d, size = %d"
@@ -3856,6 +3845,10 @@ keyboard-quit events while waiting for a valid input."
   (remhash element set))
 
 (defvar compile-set (make-set))
+(defun +amos*add-compile-buffer-to-set (&rest _)
+    (add-to-set next-error-last-buffer compress-view-set))
+(advice-add #'compilation-start :after #'+amos*add-compile-buffer-to-set)
+
 (defvar compress-view-set (make-set))
 (defvar-local +amos-compressed-file nil)
 
@@ -3998,8 +3991,86 @@ inside or just after a citation command, only adds KEYS to it."
   (interactive "<R>")
   (evil-change beg end type ?_))
 
+(defun +amos-extract-rectangle-line (startcol _ lines)
+  (let (start end begextra endextra line)
+    (move-to-column startcol)
+    (setq start (point)
+      begextra (- (current-column) startcol))
+    (end-of-line)
+    (setq end (point)
+      endextra 0)
+    (setq line (buffer-substring start (point)))
+    (if (< begextra 0)
+    (setq endextra (+ endextra begextra)
+          begextra 0))
+    (if (< endextra 0)
+    (setq endextra 0))
+    (goto-char start)
+    (while (search-forward "\t" end t)
+      (let ((width (- (current-column)
+              (save-excursion (forward-char -1)
+                      (current-column)))))
+    (setq line (concat (substring line 0 (- (point) end 1))
+               (spaces-string width)
+               (substring line (+ (length line)
+                          (- (point) end)))))))
+    (if (or (> begextra 0) (> endextra 0))
+    (setq line (concat (spaces-string begextra)
+               line
+               (spaces-string endextra))))
+    (setcdr lines (cons line (cdr lines)))))
+
 (defun +amos/xterm-paste (event)
   (interactive "e")
+  (with-temp-buffer
+    (xterm-paste event)
+    (let ((lines (list nil)))
+      (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
+      (setq lines (nreverse (cdr lines)))
+      (let* ((yank-handler (list #'evil-yank-block-handler
+                                 lines
+                                 t
+                                 'evil-delete-yanked-rectangle))
+             (text (propertize (mapconcat #'identity lines "\n")
+                               'yank-handler yank-handler)))
+        (evil-set-register ?r text)))
+    (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
+  (if current-prefix-arg
+      (progn
+        (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
+            (forward-char))
+        (evil-paste-before nil ?r))
+    (if (evil-insert-state-p)
+        (evil-paste-after nil ?t)
+      (evil-paste-before nil ?t))))
+
+(defun +amos/paste-from-gui ()
+  (interactive)
   (if (evil-visual-state-p)
       (call-interactively #'+amos/evil-substitute))
-  (xterm-paste event))
+  (let ((uri-list
+         (condition-case nil
+             (x-get-selection-internal 'PRIMARY 'text/uri-list nil nil)
+           (error nil))))
+    (unless (and uri-list (+amos-dispatch-uri-list uri-list))
+      (with-temp-buffer
+        (insert-for-yank (gui-get-primary-selection))
+        (let ((lines (list nil)))
+          (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
+          (setq lines (nreverse (cdr lines)))
+          (let* ((yank-handler (list #'evil-yank-block-handler
+                                     lines
+                                     t
+                                     'evil-delete-yanked-rectangle))
+                 (text (propertize (mapconcat #'identity lines "\n")
+                                   'yank-handler yank-handler)))
+            (evil-set-register ?r text)))
+        (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
+      (if current-prefix-arg
+          (progn
+            (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
+                (forward-char))
+            (evil-paste-before nil ?r))
+        (if (evil-insert-state-p)
+            (evil-paste-after nil ?t)
+          (evil-paste-before nil ?t))))))

@@ -6,7 +6,7 @@
 
 (general-define-key
  :keymaps 'override
- :states '(normal insert visual emacs)
+ :states '(normal insert visual emacs sticky)
  "C-h d"         (lambda!
                   (xref-find-definitions
                    (let* ((backend (xref-find-backend)))
@@ -392,6 +392,7 @@
    :n "C"   #'+amos/dired-copy-to-clipboard
    :n "d"   #'dired-flag-file-deletion
    :n "f"   #'counsel-find-file
+   :n "F"   #'dired-do-copy
    :n "h"   #'+amos/up-directory
    :n "j"   #'dired-next-line
    :n "k"   #'dired-previous-line
