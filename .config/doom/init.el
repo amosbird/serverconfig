@@ -243,7 +243,7 @@
 (setq query-replace-skip-read-only t)
 (setq bibtex-completion-cite-prompt-for-optional-arguments nil)
 (setq bibtex-completion-format-citation-functions
-  '((org-mode      . bibtex-completion-format-citation-ebib)
+  '((org-mode      . +amos-bibtex-completion-format-citation-cite)
     (latex-mode    . +amos-bibtex-completion-format-citation-cite)
     (markdown-mode . bibtex-completion-format-citation-pandoc-citeproc)
     (default       . bibtex-completion-format-citation-default)))

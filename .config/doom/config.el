@@ -4022,55 +4022,52 @@ inside or just after a citation command, only adds KEYS to it."
 
 (defun +amos/xterm-paste (event)
   (interactive "e")
-  (with-temp-buffer
-    (xterm-paste event)
-    (let ((lines (list nil)))
-      (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
-      (setq lines (nreverse (cdr lines)))
-      (let* ((yank-handler (list #'evil-yank-block-handler
-                                 lines
-                                 t
-                                 'evil-delete-yanked-rectangle))
-             (text (propertize (mapconcat #'identity lines "\n")
-                               'yank-handler yank-handler)))
-        (evil-set-register ?r text)))
-    (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
-  (if current-prefix-arg
-      (progn
-        (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
-            (forward-char))
-        (evil-paste-before nil ?r))
-    (if (evil-insert-state-p)
-        (evil-paste-after nil ?t)
-      (evil-paste-before nil ?t))))
+  (if (evil-insert-state-p)
+      (xterm-paste event)
+    (with-temp-buffer
+      (xterm-paste event)
+      (let ((lines (list nil)))
+        (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
+        (setq lines (nreverse (cdr lines)))
+        (let* ((yank-handler (list #'evil-yank-block-handler
+                                   lines
+                                   t
+                                   'evil-delete-yanked-rectangle))
+               (text (propertize (mapconcat #'identity lines "\n")
+                                 'yank-handler yank-handler)))
+          (evil-set-register ?r text)))
+      (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
+    (if current-prefix-arg
+        (progn
+          (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
+              (forward-char))
+          (evil-paste-before nil ?t)))))
 
 (defun +amos/paste-from-gui ()
   (interactive)
-  (if (evil-visual-state-p)
-      (call-interactively #'+amos/evil-substitute))
-  (let ((uri-list
-         (condition-case nil
-             (x-get-selection-internal 'PRIMARY 'text/uri-list nil nil)
-           (error nil))))
-    (unless (and uri-list (+amos-dispatch-uri-list uri-list))
-      (with-temp-buffer
-        (insert-for-yank (gui-get-primary-selection))
-        (let ((lines (list nil)))
-          (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
-          (setq lines (nreverse (cdr lines)))
-          (let* ((yank-handler (list #'evil-yank-block-handler
-                                     lines
-                                     t
-                                     'evil-delete-yanked-rectangle))
-                 (text (propertize (mapconcat #'identity lines "\n")
-                                   'yank-handler yank-handler)))
-            (evil-set-register ?r text)))
-        (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
-      (if current-prefix-arg
-          (progn
-            (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
-                (forward-char))
-            (evil-paste-before nil ?r))
-        (if (evil-insert-state-p)
-            (evil-paste-after nil ?t)
+  (if (evil-insert-state-p)
+      (xterm-paste event)
+    (let ((uri-list
+           (condition-case nil
+               (x-get-selection-internal 'PRIMARY 'text/uri-list nil nil)
+             (error nil))))
+      (unless (and uri-list (+amos-dispatch-uri-list uri-list))
+        (with-temp-buffer
+          (insert-for-yank (gui-get-primary-selection))
+          (let ((lines (list nil)))
+            (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
+            (setq lines (nreverse (cdr lines)))
+            (let* ((yank-handler (list #'evil-yank-block-handler
+                                       lines
+                                       t
+                                       'evil-delete-yanked-rectangle))
+                   (text (propertize (mapconcat #'identity lines "\n")
+                                     'yank-handler yank-handler)))
+              (evil-set-register ?r text)))
+          (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
+        (if current-prefix-arg
+            (progn
+              (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
+                  (forward-char))
+              (evil-paste-before nil ?r))
           (evil-paste-before nil ?t))))))
