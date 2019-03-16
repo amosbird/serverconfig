@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+current_panes=$(tmux list-panes -F "#{pane_id}")
+SAVEIFS="$IFS"
+IFS=$'\n'
+array=($current_panes)
+# Restore IFS
+IFS=$SAVEIFS
+for ((i = 0; i < ${#array[@]}; i++)); do
+    tmux send-keys -t "${array[$i]}" C-c C-c
+done
+tmux kill-window

@@ -4041,7 +4041,8 @@ inside or just after a citation command, only adds KEYS to it."
         (progn
           (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
               (forward-char))
-          (evil-paste-before nil ?t)))))
+          (evil-paste-before nil ?r))
+      (evil-paste-before nil ?t))))
 
 (defun +amos/paste-from-gui ()
   (interactive)

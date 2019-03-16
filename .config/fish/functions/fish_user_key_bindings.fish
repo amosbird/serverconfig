@@ -32,10 +32,10 @@ function fish_user_key_bindings
         begin
             set -lx FZF_DEFAULT_OPTS "--expect ctrl-space,alt-enter --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
             eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -a -d \n -z result
-            set -l dir (string trim -- $result[2])
-            if test -n $dir
-                if test -z $result[1]
-                    if not cd $dir
+            set -l dir (string trim -- "$result[2]")
+            if test -n "$dir"
+                if test -z "$result[1]"
+                    if not cd "$dir"
                         jump clean
                     end
                 else

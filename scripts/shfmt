@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+/home/amos/go/bin/shfmt -i 4 "$@"

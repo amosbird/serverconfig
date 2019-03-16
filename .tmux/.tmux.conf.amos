@@ -47,7 +47,7 @@ bind C-c detach-client
 bind r source-file ~/.tmux/.tmux.conf.amos \; display '~/.tmux/.tmux.conf.amos sourced'
 bind c new-window
 bind d kill-pane
-bind k kill-window
+bind k run-shell 'tmuxkillwindow'
 
 bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection
