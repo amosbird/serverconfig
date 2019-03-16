@@ -121,7 +121,7 @@ function conky_main(  )
 	-- setup variables for web based content
 	local min = tonumber(conky_parse('${time %M}'));
 	local sec = tonumber(conky_parse('${time %S}'));
-	local file = io.popen("/sbin/route -n | grep -c '^0\.0\.0\.0'");
+	local file = io.popen("/sbin/route -n | grep -c '^0.0.0.0'");
 	internet = tonumber(file:read("*a"));
 	io.close(file);	
 
