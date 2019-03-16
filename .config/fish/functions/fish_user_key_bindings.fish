@@ -167,8 +167,7 @@ function fish_user_key_bindings
             set -l sn (tmux display-message -p '#S')
             set -l EMACS
             if [ $sn = "gui" ]
-                set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
-                $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (cd \"$PWD\") (magit-status))"
+                emacspopup "(cd \"$PWD\") (magit-status)"
             else
                 set EMACS emacsclient -n -q -u -e
                 tmux switch-client -t emacs
@@ -181,8 +180,7 @@ function fish_user_key_bindings
         set -l sn (tmux display-message -p '#S')
         set -l EMACS
         if [ $sn = "gui" ]
-            set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
-            $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (cd \"$PWD\") (+amos/dired-jump))"
+            emacspopup "(cd \"$PWD\") (+amos/dired-jump)"
         else
             set EMACS emacsclient -n -q -u -e
             tmux switch-client -t emacs

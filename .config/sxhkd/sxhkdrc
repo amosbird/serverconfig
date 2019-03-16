@@ -60,6 +60,8 @@ ctrl+alt+9
   showdict.sh
 ctrl+alt+0
   showtele.sh
+ctrl+alt+p
+  showpopup.sh
 super+s
   termite -e fish
 ctrl+alt+g
@@ -142,11 +144,11 @@ super + {_,shift + }{h,j,k,l}
 super + {_,shift + }m
 	bspc node --{focus,swap} biggest
 
-ctrl + alt + shift + {w,e,d,f,v,n,i,o,p,c}
-	bspc node --to-desktop {w,e,d,f,v,n,i,o,p,c}
+ctrl + alt + shift + {w,e,d,f,v,n,i,o,c}
+	bspc node --to-desktop {w,e,d,f,v,n,i,o,c}
 
-ctrl + alt + {w,e,d,f,v,n,i,o,p,c}
-	bspc desktop --focus {w,e,d,f,v,n,i,o,p,c}
+ctrl + alt + {w,e,d,f,v,n,i,o,c}
+	bspc desktop --focus {w,e,d,f,v,n,i,o,c}
 
 # Focus left/right occupied desktop, used to find missing node
 ctrl + alt + {Left,Right}

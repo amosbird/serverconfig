@@ -138,6 +138,7 @@ case "$class" in
                 echo "desktop=v state=tiled follow=on"
                 ;;
             popup)
+                echo "$wid" > /tmp/popup
                 fc
                 ;;
         esac

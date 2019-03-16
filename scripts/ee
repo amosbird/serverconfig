@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 
 file=$(realpath "$1")
-EMACS="emacsclient -s mu4e -n -q -u --display $DISPLAY -e"
-$EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (find-file \"$file\"))"
+emacspopup "(find-file \"$file\")"

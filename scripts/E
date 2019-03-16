@@ -4,8 +4,7 @@ file=$(realpath "$1")
 session=$(tmux display-message -p "#S")
 if [[ $session = "gui" ]]
 then
-    EMACS="emacsclient -s mu4e -n -q -u --display $DISPLAY -e"
-    $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (doom/sudo-find-file \"$file\"))"
+    emacspopup "(doom/sudo-find-file \"$file\")"
 else
     EMACS="emacsclient -n -q -u -e"
     tmux switch-client -t emacs

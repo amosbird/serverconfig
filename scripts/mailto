@@ -11,8 +11,7 @@ function mailto -d "Mail to url" --argument-names 'url'
             echo "Usage: $_ <mailto url>"
             exit 1
         end
-        set EMACS emacsclient -s mu4e -n -q -u --display $DISPLAY -e
-        $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) (browse-url-mail \"$url\"))"
+        emacspopup "(browse-url-mail \"$url\")"
     end
     if not _mailto $argv
         notify-send -t "mail" "mu4e" "Bad url!"

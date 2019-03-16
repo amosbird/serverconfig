@@ -5,7 +5,7 @@
 # 	rm "$BSPWM_STATE"
 # end
 
-bspc monitor -d w e d f v n i o p c h
+bspc monitor -d w e d f v n i o c h
 bspc monitor DP2-2 -r
 
 bspc config border_width         0
