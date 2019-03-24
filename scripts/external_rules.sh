@@ -19,6 +19,7 @@ fc() {
 
 case "$class" in
     mpv)
+        echo "$wid" > /tmp/mpv
         wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
         w=${wh[0]}
         h=${wh[1]}
@@ -116,7 +117,7 @@ case "$class" in
         echo "sticky=on state=floating"
         ;;
     TelegramDesktop)
-        echo "$wid" >> /tmp/telegram
+        echo "$wid" >> /tmp/telegram # appending so that sub windows don't overwrite
         echo "sticky=on state=floating"
         ;;
     Soffice)

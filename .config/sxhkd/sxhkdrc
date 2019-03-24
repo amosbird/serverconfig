@@ -74,6 +74,10 @@ ctrl+alt+l
   showshell.sh 1
 ctrl+alt+h
   showshell.sh 0
+ctrl+alt+m
+  showmusicbox.sh
+ctrl+alt+x
+  for i in $(bspc query -N -n .floating); do bspc node $i -g hidden=on; done
 super+Home
   xrandr --output VIRTUAL1 --off --output eDP1 --primary --mode 1600x900 --pos 0x0 --brightness 1 --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
   monitormove eDP1 DP2-2; \

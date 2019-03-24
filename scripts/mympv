@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+pkill mpv
+mpv --loop --external-file=/home/amos/Pictures/cover.png --force-window --image-display-duration=inf --vid=1 "$@"

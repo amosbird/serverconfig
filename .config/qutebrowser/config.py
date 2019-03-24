@@ -7,6 +7,8 @@ c = c  # type: ConfigContainer # noqa: F821 pylint: disable=E0602,C0103
 # Uncomment this to still load settings configured via autoconfig.yml
 config.load_autoconfig()
 
+# config.set('hints.selectors', {'all': ['a[data-hovercard-type="pull_request"]']}, "*.github.com")
+
 # Aliases for commands. The keys of the given dictionary are the
 # aliases, while the values are the commands they map to.
 # Type: Dict

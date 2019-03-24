@@ -1802,7 +1802,7 @@ representation of `NUMBER' is smaller."
 (defun set-eos! (modes &rest plist)
   (dolist (mode (doom-enlist modes))
     (push (cons mode plist) +amos-end-of-statement-regex)))
-(set-eos! '(c-mode c++-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
+(set-eos! '(c-mode c++-mode java-mode perl-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
 (set-eos! '(sql-mode) :regex-char '("[ \t\r\n\v\f]" ";" ?\;))
 (set-eos! '(emacs-lisp-mode) :regex-char "[ \t\r\n\v\f]")
 
@@ -3024,6 +3024,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   "Turn files like file.cpp:14 into file.cpp and going to the 14-th line."
   (pcase (file-name-extension filename)
     ("zip" (+amos/compress-view filename))
+    ("rar" (+amos/compress-view filename))
     (_
      (save-match-data
        (let* ((matched (string-match "^\\(.*\\):\\([0-9]+\\):?$" filename))
@@ -4079,3 +4080,6 @@ inside or just after a citation command, only adds KEYS to it."
            (when (equal fname (frame-parameter frame 'name))
              frame))
          (frame-list)))
+
+(after! tex
+  (setq-default TeX-master t))

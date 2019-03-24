@@ -108,6 +108,7 @@
 (setq dired-open-extensions
       '(("pdf" . "xdg-open")
         ("mp3" . "xdg-open")
+        ("mp4" . "xdg-open")
         ("mpg" . "xdg-open")
         ("flac" . "xdg-open")
         ("m4a" . "xdg-open")

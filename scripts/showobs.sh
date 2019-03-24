@@ -16,9 +16,7 @@ then
         bspc node "$id" -t floating
         bspc node "$id" -g hidden=off -f
     fi
-    wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
-    w=${wh[0]}
-    h=${wh[1]}
+    read -r w h < <(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q')
     x=$((w/8))
     y=80
     w=$((w*3/4))
