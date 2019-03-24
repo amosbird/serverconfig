@@ -108,10 +108,10 @@ ip r a 13.75.109.155/32 via $gw
 
 ip rule add table cn pref 30000
 
-if ! pgrep -f 'https-dns'
-then
-    sudo -u amos https-dns_linux_amd64 -d 8.8.8.8 --edns 159.226.39.0/24 -U &
-fi
+# if ! pgrep -f 'https-dns'
+# then
+#     sudo -u amos https-dns_linux_amd64 -d 8.8.8.8 --edns 159.226.39.0/24 -U &
+# fi
 
 # sudo -u amos tun
 #ip r a 0.0.0.0/1 via 172.26.133.192

@@ -27,11 +27,10 @@ function fish_user_key_bindings
     end
 
     function fzf-jump-cd -d "Change directory"
-        set -q FZF_ALT_C_COMMAND; or set -l FZF_ALT_C_COMMAND "command jump top"
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         begin
             set -lx FZF_DEFAULT_OPTS "--expect ctrl-space,alt-enter --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
-            eval "$FZF_ALT_C_COMMAND | "(__fzfcmd)" +m" | read -a -d \n -z result
+            set -l result (jump top | fzf +m)
             set -l dir (string trim -- "$result[2]")
             if test -n "$dir"
                 if test -z "$result[1]"
@@ -39,7 +38,7 @@ function fish_user_key_bindings
                         jump clean
                     end
                 else
-                    commandline -i -- "$dir/ "
+                    commandline -i -- "$dir/"
                 end
             end
         end
@@ -54,7 +53,7 @@ function fish_user_key_bindings
         set -l cmd (commandline -j)
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         [ "$cmd" ]; or return
-        eval $cmd | eval (__fzfcmd) -m --height $FZF_TMUX_HEIGHT --reverse --tiebreak=index --select-1 --exit-0 | string join ' ' | read -l result
+        set -l result ($cmd | fzf -m --height $FZF_TMUX_HEIGHT --reverse --tiebreak=index --select-1 --exit-0 | string join ' ')
         [ "$result" ]; and commandline -j -- $result
         commandline -f repaint
     end
@@ -81,7 +80,7 @@ function fish_user_key_bindings
         set -l complist (complete -C$cmd)
         set -l result
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
-        string join -- \n $complist | sort | eval (__fzfcmd) -m --height $FZF_TMUX_HEIGHT --reverse --select-1 --exit-0 --header '(commandline)' | cut -f1 | while read -l r; set result $result $r; end
+        string join -- \n $complist | sort | fzf -m --height $FZF_TMUX_HEIGHT --reverse --select-1 --exit-0 --header (commandline) | cut -f1 | while read -l r; set result $result $r; end
         set prefix (string sub -s 1 -l 1 -- (commandline -t))
         for i in (seq (count $result))
             set -l r $result[$i]
@@ -109,7 +108,7 @@ function fish_user_key_bindings
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         begin
             set -lx FZF_DEFAULT_OPTS "--read0 --reverse --height $FZF_TMUX_HEIGHT $FZF_DEFAULT_OPTS +s --tiebreak=index --bind=ctrl-r:toggle-sort $FZF_CTRL_R_OPTS +m"
-            history -z |  eval (__fzfcmd) -q '(commandline)' | read -l result
+            history -z | fzf -q (commandline) | read -l result
             and commandline -r -- (string trim -r $result)
         end
         commandline -f repaint
@@ -122,10 +121,10 @@ function fish_user_key_bindings
         begin
             set -lx FZF_DEFAULT_OPTS "--reverse --height $FZF_TMUX_HEIGHT $FZF_DEFAULT_OPTS +s --tiebreak=index --bind=ctrl-r:toggle-sort $FZF_CTRL_R_OPTS +m"
             if [ $str = $tok ]
-                history -z | eval (__fzfcmd) --read0 -q '$str' | read -lz result
+                history -z | fzf --read0 -q $str | read -lz result
                 and commandline -r -- (string trim -r $result)
             else
-                string tokenize -n 1000 -a | eval (__fzfcmd) -q '$tok' | read -l result
+                string tokenize -n 1000 -a | fzf -q $tok | read -l result
                 and commandline -tr -- $result
             end
         end

@@ -29,6 +29,7 @@ configs=(
     .bash_profile
     .chisels
     .gitignore_global
+    .terminfo
     scripts
 )
 
