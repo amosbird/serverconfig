@@ -110,7 +110,9 @@ git clone https://aur.archlinux.org/trizen-git.git
 cd trizen-git
 makepkg -si
 
-trizen -S xorg-xrdb feh bspwm sddm jq grc net-tools compton arandr xorg-xset dnsutils npm pdnsd rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline tcl expect weechat dunst copyq xclip pandoc llvm clang lxappearance mu-git fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura-git mimi-git rsync dstat pinta sysstat hplip cups samba ccache rustup ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu-git zathura-pdf-mupdf-git zathura-ps-git ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel rust-racer luakit conky-lua xsensors vnstat stalonetray xdo bspwm gtk-doc intltool xtitle vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake emacs-git
+trizen -S perf fd conky-lua simple-obfs openconnect thinkfan exa python-pyqtwebengine python-attrs python-yaml python-pypeg2 python-pyqt5 pkg-config gtk3 libevent qt5-x11extras qt5-script qt5-svg qt5-tools ninja ipset dnsmasq zerotier-one openssh xorg-twm termite-terminfo xorg-xclock xorg-fonts xorg-fonts-misc xorg-drivers acpi xterm xorg-xrdb feh sddm sxhkd jq grc net-tools compton arandr xorg-xset dnsutils npm pdnsd rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline tcl expect weechat dunst xclip pandoc llvm clang lxappearance mu-git fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura-git rsync dstat pinta sysstat hplip cups samba ccache rustup ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu-git zathura-pdf-mupdf-git zathura-ps-git ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel conky-lua xsensors vnstat stalonetray xdo gtk-doc intltool vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake --noconfirm --needed
+
+trizen -S mimi-git
 
 sudo vim /etc/polkit-1/rules.d/49-nopasswd_global.rules
 /* Allow members of the wheel group to execute any actions
@@ -121,7 +123,8 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     }
 });
-sudo usermod -aG wheel sys amos
+sudo usermod -aG wheel amos
+sudo usermod -aG sys amos
 
 #+END_SRC
 
@@ -216,7 +219,7 @@ go get -d github.com/elves/elvish
 cd ~/go/src/github.com/elves/elvish
 git remote add amos git@github.com:amosbird/elvish
 git fetch amos master
-git checkout -b amos amos/master
+git reset --hard amos/master
 go install
 #+END_SRC
 
@@ -246,6 +249,108 @@ mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Scree
 
 open emacs and do M-x all-the-icons-install-fonts
 ccache -M 50G
-pkgfile --update
+sudo pkgfile --update
 systemctl enable org.cups.cupsd.service
 #+END_SRC
+
+
+export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/lib64/pkgconfig
+BUILD=/home/amos/git/serverconfig/scripts/build
+
+cd ~/git
+git clone git@github.com:amosbird/CopyQ
+cd CopyQ && $BUILD rel install
+
+cd ~/git
+git clone git@github.com:amosbird/FreeRDP
+cd FreeRDP && $BUILD rel install
+
+cd ~/git
+git clone git@github.com:amosbird/obs-studio
+cd obs-studio && $BUILD obs install
+
+cd ~/git
+git clone git@github.com:amosbird/bspwm
+cd bspwm && make -j && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/reptyr
+cd reptyr && make -j && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/cgdb
+cd cgdb && ./autogen.sh && ./configure && make -j && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/tmux
+cd tmux && sh autogen.sh && ./configure && make -j && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/fish-shell
+cd fish-shell && $BUILD rel install
+
+cd ~/git
+git clone git@github.com:amosbird/libvte
+cd libvte && ./autogen.sh && ./configure --enable-vala=no && make -j && sudo make install
+
+cd ~/git
+git clone --recursive git@github.com:amosbird/termite
+cd termite && make -j && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/cc-playground
+
+cd ~/git
+git clone git@github.com:amosbird/htop-vim
+cd htop-vim && ./autogen.sh && ./configure && make -j && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/qutebrowser
+
+cd ~/git
+git clone git@github.com:amosbird/xcape
+cd xcape && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/emacs
+cd emacs && sh autogen.sh && ./configure --with-modules && make -j && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/fcitx
+cd fcitx/pkg
+makepkg -si
+
+go get github.com/gsamokovarov/jump
+go get github.com/amosbird/httpfolder
+go get -d github.com/elves/elvish
+cd ~/go/src/github.com/elves/elvish
+git remote add amos git@github.com:amosbird/elvish
+git fetch amos master
+git reset --hard amos/master
+go install
+
+cd
+git clone git@github.com:amosbird/cc-snippets cc-playground
+cpan URL::Search Perl::Tidy Regexp::Common
+
+# git clone https://github.com/hlissner/doom-emacs -b develop ~/.emacs.d
+# cd ~/.emacs.d && make quickstart
+
+/usr/local/bin/Telegram
+/etc/modprobe.d/modprobe.conf
+~/.gnupg
+~/passwords
+/usr/local/bin/obfs-local
+/usr/local/bin/openconnect
+/etc/udev/hwdb.d/90-custom-keyboard.hwdb
+/etc/ld.so.conf.d/99-user-local.conf
+/etc/udev/rules.d/99-thinkfan.rules
+/etc/thinkfan.conf
+/etc/sysctl.d/99-amos.conf
+/etc/ipset.conf
+/etc/iptables/iptables.rules
+/etc/iproute2/rt_tables
+/etc/X11/xorg.conf.d/*
+/etc/polkit-1/rules.d/*
+/etc/netctl/*
+~/.local/share/qutebrowser/greasemonkey/*
