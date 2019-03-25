@@ -52,9 +52,11 @@ else
         )
         ;;
     esac
-    cmake "$target" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On "${cmake_args[@]}" &&
-    ninja &&
-    [[ $2 == install ]] && sudo ninja install
+    if cmake "$target" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On "${cmake_args[@]}" && ninja
+    then
+        [[ $2 == install ]] && sudo ninja install
+        [[ $1 == llvm ]] && cd lib && ln -s libLLVM-*.so libLLVM.so
+    fi
 fi
 
 popd

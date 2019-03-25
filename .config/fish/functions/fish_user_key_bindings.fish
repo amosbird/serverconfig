@@ -29,7 +29,7 @@ function fish_user_key_bindings
     function fzf-jump-cd -d "Change directory"
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         begin
-            set -lx FZF_DEFAULT_OPTS "--expect ctrl-space,alt-enter --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS $FZF_ALT_C_OPTS"
+            set -lx FZF_DEFAULT_OPTS "--expect ctrl-space,alt-enter --height $FZF_TMUX_HEIGHT --reverse $FZF_DEFAULT_OPTS"
             set -l result (jump top | fzf +m)
             set -l dir (string trim -- "$result[2]")
             if test -n "$dir"
