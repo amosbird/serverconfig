@@ -6,7 +6,12 @@
 # end
 
 bspc monitor -d w e d f v n i o c h
-bspc monitor DP2-2 -r
+if [[ `hostname` = abt480 ]]
+then
+    bspc monitor DP2 -r
+else
+    bspc monitor DP2-2 -r
+fi
 
 bspc config border_width         0
 bspc config window_gap           0

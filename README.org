@@ -363,6 +363,7 @@ cpan URL::Search Perl::Tidy Regexp::Common
 /etc/udev/rules.d/99-thinkfan.rules
 /etc/udev/rules.d/99-trackpoint.rules
 /etc/thinkfan.conf
+/etc/hosts
 /etc/sysctl.d/99-amos.conf
 /etc/ipset.conf
 /etc/default/earlyoom

@@ -41,8 +41,7 @@ super+q
 ctrl+alt+q
   bspc node -c
 ctrl+alt+Eisu_toggle
-  adb shell am broadcast -a com.kaytat.simpleprotocolplayer.action.START -e ip_addr 172.26.100.36 com.kaytat.simpleprotocolplayer/.MusicIntentReceiver
-  # adb shell am startservice -a com.kaytat.simpleprotocolplayer.action.PLAY -e ip_addr 172.26.100.36 --ei audio_port 12345 --ei sample_rate 44100 --ez stereo true --ei buffer_ms 50 com.kaytat.simpleprotocolplayer/.MusicService
+  toggleaudio
 ctrl+alt+1
   showphone.sh
 ctrl+alt+2
@@ -79,18 +78,12 @@ ctrl+alt+m
 ctrl+alt+x
   for i in $(bspc query -N -n .floating); do bspc node $i -g hidden=on; done
 super+Home
-  xrandr --output VIRTUAL1 --off --output eDP1 --primary --mode 1600x900 --pos 0x0 --brightness 1 --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
-  monitormove eDP1 DP2-2; \
-  pkill conky; \
-  startconky
+  movehome
 super+End
-  xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --primary --mode 1920x1080 --pos 0x0 --brightness 1 --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off; \
-  monitormove DP2-2 eDP1; \
-  pkill conky; \
-  startconky
+  moveend
 super+Insert
   xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 --output DP2 --off; \
-  bspc monitor HDMI1 -o w e d f v n i o p c h;
+  bspc monitor HDMI1 -o w e d f v n i o c h;
 super+Delete
   lxrandr
 ctrl+alt+r
@@ -101,25 +94,6 @@ ctrl+F12
   systemctl suspend
 ctrl+F10
   dunstctl.sh; pkill -SIGRTMIN+11 i3blocks
-# ctrl+alt+2
-#   /usr/bin/deadbeef --toggle-pause
-# ctrl+alt+3
-#   /usr/bin/deadbeef --prev
-# ctrl+alt+4
-#   dead
-# ctrl+alt+2
-#   musicboxctrl.py c
-# ctrl+alt+3
-#   musicboxctrl.py n
-# ctrl+alt+4
-#   showmusicbox.sh
-# ctrl+alt+comma
-#   musicboxctrl.py ,
-# ctrl+alt+period
-#   musicboxctrl.py .
-# ctrl+Eisu_toggle
-#   tun
-
 ctrl + alt + {j, k}
   bspc node -f 'last.floating.local' || bspc node -f {next,prev}.local
 
@@ -192,8 +166,3 @@ super + shift + r
   restartbspwm.sh
 super + shift + q
   restartbspwm.sh 1
-
-# mod3+d
-#   copyq disable
-# mod3+e
-#   copyq enable

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+adb shell am broadcast -a com.kaytat.simpleprotocolplayer.action.START -e ip_addr `ztaddr` com.kaytat.simpleprotocolplayer/.MusicIntentReceiver

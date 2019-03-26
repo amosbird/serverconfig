@@ -6,6 +6,6 @@ if [ -z "$id" ]
 then
     $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) $*)"
 else
-    $EMACS "(progn (let ((frame (+amos-get-frame-by-name \"popup\"))) (select-frame frame)) $*)"
     showpopup.sh
+    $EMACS "(progn (let ((frame (+amos-get-frame-by-name \"popup\"))) (select-frame frame) (raise-frame frame)) $*)"
 fi
