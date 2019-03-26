@@ -1,0 +1,41 @@
+set -g default-terminal "xterm-tmux-24bits"
+set -ga terminal-overrides ",xterm-*:Tc"
+set -g escape-time 0
+set -g focus-events on
+set -g xterm-keys on
+set -g base-index 1
+set -g pane-base-index 1
+set -g automatic-rename on
+set -g aggressive-resize on
+set -g visual-bell off
+set -g status off
+set -g prefix C-x
+set -g prefix2 C-x
+set -g history-limit 0
+set -g set-titles off
+set -g mouse on
+set -g mode-keys vi
+set -g repeat-time 600
+set -g visual-activity off
+
+bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
+bind -Tcopy-mode-vi y send -X copy-selection
+bind -Tcopy-mode-vi q send -X clear-selection
+unbind -Tcopy-mode-vi MouseDragEnd1Pane
+bind -Tcopy-mode-vi TripleClick1Pane send -X select-line
+bind -Tcopy-mode-vi v send-keys -X begin-selection
+bind -Tcopy-mode-vi C-v send-keys -X rectangle-toggle
+bind -Tcopy-mode-vi d send-keys -X halfpage-down
+bind -Tcopy-mode-vi u send-keys -X halfpage-up
+bind -Tcopy-mode-vi M-v send-keys -X halfpage-up
+bind -Tcopy-mode-vi H resize-pane -L 5
+bind -Tcopy-mode-vi J resize-pane -D 5
+bind -Tcopy-mode-vi K resize-pane -U 5
+bind -Tcopy-mode-vi L resize-pane -R 5
+bind -Tcopy-mode-vi C-g send -X cancel
+
+bind-key -T root C-] send-keys Escape
+bind-key -T root M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
+bind-key -Tcopy-mode-vi M-s command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
+bind-key -T root MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\; send -X copy-pipe-and-cancel "echo"\; set-buffer -b "amos" -a " "\; paste-buffer -b "amos"
+

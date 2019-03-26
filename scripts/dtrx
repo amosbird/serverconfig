@@ -507,8 +507,8 @@ class NoPipeExtractor(BaseExtractor):
 
 class ZipExtractor(NoPipeExtractor):
     file_type = 'Zip file'
-    extract_command = ['unzip', '-q']
-    list_command = ['zipinfo', '-1']
+    extract_command = ['7z', 'x']
+    list_command = ['7z', 'l']
 
     def is_fatal_error(self, status):
         return status > 1

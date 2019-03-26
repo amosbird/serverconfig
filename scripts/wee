@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
-termite -e weechat -t weechat
+# termite -e weechat -t weechat
+
+termite -t weechat -e "ssh -t wentropy.com tmux a"

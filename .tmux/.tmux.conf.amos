@@ -35,7 +35,7 @@ set -s window-active-style 'bg=#141414'
 set -s pane-active-border-style "fg=#009aff"
 set -s pane-border-style "fg=#585858"
 set -s pane-border-status top
-set -s pane-border-format "#[bold,fg=#dddddd,bg=#009aff]#{=-40:pane_current_path}"
+set -s pane-border-format "#{?#{==:#{pane_current_command},ssh},ssh session,#[bold,fg=#dddddd,bg=#009aff]#{pane_current_path}}"
 
 set -s prefix C-x
 set -s prefix2 C-x

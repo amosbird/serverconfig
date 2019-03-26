@@ -14,7 +14,7 @@ fc() {
     y=30
     w=$((w*5/8))
     h=$((h - 60))
-    echo "state=floating sticky=on rectangle=${w}x${h}+$x+$y"
+    echo "layer=above state=floating sticky=on rectangle=${w}x${h}+$x+$y"
 }
 
 case "$class" in

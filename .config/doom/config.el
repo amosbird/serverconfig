@@ -3860,7 +3860,8 @@ keyboard-quit events while waiting for a valid input."
     (switch-to-buffer buffer)
     ;; (shell-command! (format "7z l %s | perl -0777ne 'print /(Date      Time    Attr         Size   Compressed  Name.*)/s'"
     ;;                        (shell-quote-argument file)) buffer)
-    (shell-command! (format "x -l %s" (shell-quote-argument file)) buffer)
+    (let ((encoding (if current-prefix-arg "zh_CN.GBK" "en_US.UTF-8")))
+      (shell-command! (format "LANG=%s dtrx -l %s" encoding (shell-quote-argument file)) buffer))
     (add-to-set buffer compress-view-set)
     (amos-compress-view-mode)
     (cd (file-name-directory file))
@@ -3878,10 +3879,11 @@ keyboard-quit events while waiting for a valid input."
 
 (defun +amos/decompress-file (&optional file)
   (interactive)
-  (let* ((file (or file +amos-compressed-file (dired-get-file-for-visit)))
-         (dir (shell-command-to-string (format "dtrx -n %s 2> /dev/null" (shell-quote-argument file)))))
-    (unless (string-empty-p dir)
-      (dired-jump nil (string-trim-right dir)))))
+  (let ((encoding (if current-prefix-arg "zh_CN.GBK" "en_US.UTF-8")))
+    (let* ((file (or file +amos-compressed-file (dired-get-file-for-visit)))
+           (dir (shell-command-to-string (format "LANG=%s dtrx -n %s 2> /dev/null" encoding (shell-quote-argument file)))))
+      (unless (string-empty-p dir)
+        (dired-jump nil (string-trim-right dir))))))
 
 (define-derived-mode amos-compress-view-mode special-mode "Compress-View")
 (set-keymap-parent amos-compress-view-mode-map (make-composed-keymap evil-motion-state-map evil-normal-state-map))
