@@ -106,7 +106,7 @@ case "$class" in
                 ;;
             stardict)
                 echo "$wid" > /tmp/stardict
-                echo "sticky=on state=floating"
+                echo "sticky=on state=floating hidden=on"
                 compton-trans -w "$wid" 70
                 ;;
         esac

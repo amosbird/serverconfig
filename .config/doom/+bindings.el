@@ -201,7 +201,7 @@
    "C-SPC" #'easy-hugo)
 
  (:leader
-   :desc "sticky"                          :n  [escape]   #'evil-sticky-state
+   :desc "sticky"                          :n  "DEL" #'evil-sticky-state
    :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
    :desc "Toggle mc"                       :nv "SPC" #'+amos/toggle-mc
    :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
@@ -211,7 +211,6 @@
    :desc "Shell command"                   :n  "e"   #'shell-command
    :desc "Shell command"                   :n  "E"   #'+amos/shell-command-on-buffer
    :desc "Shell command replace"           :v  "e"   #'+amos/shell-command-on-region
-   :desc "Blink cursor line"               :nv "DEL" #'doom/open-scratch-buffer
    :desc "Elisp command"                   :nv "RET" #'eval-expression
    :desc "Ivy resume"                      :nv "r"   #'ivy-resume
    :desc "Universal argument"              :nv "u"   #'universal-argument

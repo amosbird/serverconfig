@@ -4086,8 +4086,8 @@ inside or just after a citation command, only adds KEYS to it."
 (after! tex
   (setq-default TeX-master t))
 
-(unless gui-p
-  (advice-add #'handle-switch-frame :override #'ignore))
+;; (if tmux-p
+;;   (advice-add #'handle-switch-frame :override #'ignore))
 
 ;; (defun +amos*raise-frame-pre (&rest _)
 ;;   (message "wtf"))

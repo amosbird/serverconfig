@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
-feh --scale-down --auto-zoom "$@"
+cd $(dirname `realpath $1`)
+feh $1 $(perl -e 'print grep { not ( /\Q$ARGV[0]/ ) and ( /jpe?g$/i or /png$/i ) } `ls`' $1)

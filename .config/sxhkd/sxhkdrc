@@ -132,6 +132,12 @@ ctrl + alt + {w,e,d,f,v,n,i,o,c}
 ctrl + alt + {Left,Right}
 	bspc desktop --focus {prev,next}.occupied
 
+alt + F1
+  echo m | nc -U /tmp/scrcpy.socket
+alt + F2
+  echo d | nc -U /tmp/scrcpy.socket
+alt + F3
+  echo u | nc -U /tmp/scrcpy.socket
 ctrl + F1
   pulseaudio-ctl mute
 ctrl + F2

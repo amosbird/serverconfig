@@ -6,12 +6,11 @@
 # end
 
 bspc monitor -d w e d f v n i o c h
-if [[ `hostname` = abt480 ]]
-then
+if [ (hostname) = "abt480" ]
     bspc monitor DP2 -r
 else
     bspc monitor DP2-2 -r
-fi
+end
 
 bspc config border_width         0
 bspc config window_gap           0
@@ -29,7 +28,7 @@ bspc rule -a Screenkey manage=off
 bspc rule -a Arandr sticky=on state=floating
 bspc rule -a Deadbeef state=floating
 bspc rule -a Zathura state=tiled
-bspc rule -a netease-cloud-music desktop=p follow=on
+bspc rule -a netease-cloud-music desktop=o follow=on
 bspc rule -a xfreerdp desktop=w follow=on
 bspc rule -a Luakit desktop=f follow=on
 bspc rule -a Skype desktop=o state=fullscreen

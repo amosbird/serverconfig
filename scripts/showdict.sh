@@ -2,7 +2,7 @@
 
 if ! pgrep -f  'sdcv' > /dev/null
 then
-    urxvt -T stardict -e dict.sh &
+    termite -t stardict -e dict.sh &
     sleep 0.5
 fi
 
