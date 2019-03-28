@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 
 pkill mpv
-mpv --loop --external-file=/home/amos/Pictures/cover.png --force-window --image-display-duration=inf --vid=1 "$@"
+
+cd "$(dirname "$(realpath "$1")")"
+
+perl -e 'use List::Util qw(first); @p = qw(mpv --loop-playlist=inf --external-file=/home/amos/Pictures/cover.png --force-window --geometry=1280x800 --image-display-duration=inf --vid=1); @l = grep /\.(?:mp[34]|avi|mkv)$/i, <*>;; $n=@l; $i = first { $l[$_] =~ /\Q$ARGV[0]/ } 0..$#l; system(@p, @l[$i-$n..$i-1])' "$(basename "$1")"

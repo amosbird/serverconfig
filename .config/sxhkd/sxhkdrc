@@ -20,6 +20,8 @@ mod3+I
   teiler --quick fullscreen
 mod3+o
   lang=$(echo -e "chi_sim\neng\nchi_sim+eng" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
+mod3+c
+  cliprectangle
 mod3+p
   maim -s | xclip -selection clipboard -t image/png
 mod3+shift+p

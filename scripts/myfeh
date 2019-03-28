@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 
-cd $(dirname `realpath $1`)
-feh $1 $(perl -e 'print grep { not ( /\Q$ARGV[0]/ ) and ( /jpe?g$/i or /png$/i ) } `ls`' $1)
+pkill feh
+
+cd "$(dirname "$(realpath "$1")")"
+
+perl -e 'use List::Util qw(first); @l = grep /\.(?:jpe?g|png)$/i, <*>;; $n=@l; $i = first { $l[$_] =~ /\Q$ARGV[0]/ } 0..$#l; system("feh", "-g", "1280x800", @l[$i-$n..$i-1])' "$(basename "$1")"

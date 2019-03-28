@@ -8,7 +8,7 @@ then
     then
         exit 0
     fi
-    if bspc query -N -d focused | grep -q "$(bspc query -N -n "$id")"
+    if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"
     then
         bspc node "$id" -g hidden -f
     else

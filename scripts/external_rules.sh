@@ -20,17 +20,11 @@ fc() {
 case "$class" in
     mpv)
         echo "$wid" > /tmp/mpv
-        wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
-        w=${wh[0]}
-        h=${wh[1]}
-        x=$((w*3/16))
-        y=100
-        w=$((w*5/8))
-        h=$((h - 279))
-        echo "state=floating sticky=on rectangle=${w}x${h}+$x+$y"
+        echo "state=floating sticky=on"
         ;;
     feh)
-        fc
+        echo "$wid" > /tmp/feh
+        echo "state=floating sticky=on"
         ;;
     obs)
         echo "$wid" >> /tmp/obs

@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-
-# overture-linux-amd64 &
-vivaldi &
-wee &
-export LC_CTYPE=zh_CN.UTF-8
-em
-# mail
-# win &

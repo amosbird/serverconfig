@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+read -r X Y W H < /tmp/rectangle
+G="$W"x"$H"+"$X"+"$Y"
+echo $G
+maim --geometry=$G | copyq copyImage -
+echo $(copyq read 0 mimeText) >> /tmp/plist

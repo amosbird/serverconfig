@@ -1,0 +1,12 @@
+#!/usr/bin/env perl
+
+use Cwd qw();
+use Clipboard;
+my $path = Cwd::cwd();
+my $name = "$path/$ARGV[0]";
+$name =~ s/\\/\\\\\\\\/g;
+$name =~ s/'/\\\\'/g;
+Clipboard->copy("'$name'");
+open(my $fh, '>>', '/tmp/flist');
+print $fh "'$name'\n";
+close($fh);

@@ -9,16 +9,12 @@ if [ "$#" -ne "1" ]; then
 fi
 
 return-limits(){
-    for process in $@; do
-        process_pids=`pgrep $process`
-
+    for pid in $@; do
         if [ -z $@ ]; then
             echo "[no $process running]"
         else
-            for pid in $process_pids; do
-                echo "[$process #$pid — limits]"
-                cat /proc/$pid/limits
-            done
+            echo "[$process #$pid — limits]"
+            cat /proc/$pid/limits
         fi
     done
 }

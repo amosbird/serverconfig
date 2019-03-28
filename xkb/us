@@ -3,7 +3,7 @@ xkb_symbols "basic" {
 
     name[Group1]= "English (US)";
 
-    key <TLDE> {	[     Eisu_toggle,	asciitilde	]	};
+    key <TLDE> {	[     Eisu_toggle,	equal	]	};
     key <AE01> {	[	  1,	exclam 		,  6 ]	};
     key <AE02> {	[	  2,	at		    ,  ampersand   ]	};
     key <AE03> {	[	  3,	numbersign	,  parenleft   ]	};
@@ -14,7 +14,7 @@ xkb_symbols "basic" {
     key <AE08> {	[	  8,	asterisk	]	};
     key <AE09> {	[	  9,	plus       	]	};
     key <AE10> {	[	  0,	equal   	]	};
-    key <AE11> {	[     minus,	exclam	]	};
+    key <AE11> {	[     minus,	minus	]	};
     key <AE12> {	[     equal,	plus	]	};
 
     key <AD01> {	[	  q,	Q 		,  period     ]	};

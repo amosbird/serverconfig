@@ -31,7 +31,7 @@ else
     w=$((w/2 - 7))
     h=$((h - 12))
     y=6
-    if bspc query -N -d focused | grep -q "$(bspc query -N -n "$id")"
+    if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"
     then
         bspc node "$id" -g hidden
     else

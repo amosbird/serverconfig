@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-
-export EMACS_SERVER_NAME=server
-export LC_CTYPE=zh_CN.UTF-8
-emacsclient -a '' -s $EMACS_SERVER_NAME -n -c --frame-parameters='(quote (name . "editor-frame"))' --display "$DISPLAY" "$@"

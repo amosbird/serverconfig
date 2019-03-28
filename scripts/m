@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
 man -Hvivaldi-sleep "$@" &
-sleep 0.1
+sleep 0.2

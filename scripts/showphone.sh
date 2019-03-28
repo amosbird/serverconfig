@@ -10,7 +10,7 @@ then
 fi
 
 wid=$(bspc query -N -n "$id")
-if [[ -n "$wid" ]] && bspc query -N -d focused | grep -q "$wid"
+if [[ -n "$wid" ]] && bspc query -N -n focused | grep -q "$wid"
 then
     bspc node "$id" -g hidden -f
 else
