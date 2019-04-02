@@ -1,89 +1,82 @@
 ;;; lang/cc/config.el --- c, c++, and obj-c -*- lexical-binding: t; -*-
 
+(defvar +cc-default-header-file-mode 'c-mode
+  "Fallback major mode for .h files if all other heuristics fail (in
+`+cc-c-c++-objc-mode').")
+
 (def-package! cc-mode
   :commands (c-mode c++-mode objc-mode java-mode)
-  :mode ("\\.mm" . objc-mode) ("\\.h\\'" . c++-mode)
-  :preface
-  (defun +cc-c++-header-file-p ()
-    (and buffer-file-name
-         (equal (file-name-extension buffer-file-name) "h")
-         (or (file-exists-p (expand-file-name
-                             (concat (file-name-sans-extension buffer-file-name)
-                                     ".cpp"))))))
-
-  (defun +cc-objc-header-file-p ()
-    (and buffer-file-name
-         (equal (file-name-extension buffer-file-name) "h")
-         (re-search-forward "@\\<interface\\>" magic-mode-regexp-match-limit t)))
-
-  (push (cons #'+cc-c++-header-file-p  'c++-mode)  magic-mode-alist)
-  (push (cons #'+cc-objc-header-file-p 'objc-mode) magic-mode-alist)
-
+  :mode ("\\.mm\\'" . objc-mode)
   :init
-  (setq-default c-basic-offset tab-width)
+  (setq-default c-basic-offset tab-width
+                c-backspace-function #'delete-backward-char
+                c-default-style "cc-mode")
+
+  ;; The plusses in c++-mode can be annoying to search for ivy/helm (which reads
+  ;; queries as regexps), so we add these for convenience.
+  (defalias 'cpp-mode 'c++-mode)
+  (defvaralias 'cpp-mode-map 'c++-mode-map)
+
+  ;; Activate `c-mode', `c++-mode' or `objc-mode' depending on heuristics
+  (add-to-list 'auto-mode-alist '("\\.h\\'" . +cc-c-c++-objc-mode))
+
+  ;; Ensure find-file-at-point works in C modes, must be added before irony
+  ;; and/or lsp hooks are run.
+  (add-hook! (c-mode-local-vars c++-mode-local-vars objc-mode-local-vars)
+    #'+cc|init-ffap-integration)
 
   :config
-  (set-electric! '(c-mode c++-mode objc-mode java-mode)
-    :chars '(?{ ?\n ?}))
+  (set-electric! '(c-mode c++-mode objc-mode java-mode) :chars '(?\n ?\} ?\{))
 
-  (defun +amos-append-comment-line ()
-    (interactive)
-    (evil-ret 1)
-    (if (eq (car (car (c-guess-basic-syntax))) 'c)
-        (insert "* "))
-    (indent-according-to-mode))
+  (set-lookup-handlers! '(c-mode c++-mode)
+    :definition #'+amos/definitions
+    :references #'+amos/references
+    :documentation #'counsel-dash-at-point)
 
-  ;; TODO count doesn't work, last line broken
-  (defun +amos-evil-open-below (count)
-    "Insert a new line below point and switch to Insert state.
-The insertion will be repeated COUNT times."
-    (interactive "p")
-    (unless (eq evil-want-fine-undo t)
-      (evil-start-undo-step))
-    (push (point) buffer-undo-list)
-    (evil-insert-newline-below)
-    (setq evil-insert-count count
-          evil-insert-lines t
-          evil-insert-vcount nil)
-    (evil-insert-state 1)
-    (if (eq (car (car (c-guess-basic-syntax))) 'c)
-        (insert "* "))
-    (when evil-auto-indent
-      (indent-according-to-mode)))
+  (set-rotate-patterns! 'c++-mode
+    :symbols '(("public" "protected" "private")
+               ("class" "struct")))
 
-  ;; TODO count doesn't work, first line broken
-  (defun +amos-evil-open-above (count)
-    "Insert a new line above point and switch to Insert state.
-The insertion will be repeated COUNT times."
-    (interactive "p")
-    (unless (eq evil-want-fine-undo t)
-      (evil-start-undo-step))
-    (evil-insert-newline-above)
-    (setq evil-insert-count count
-          evil-insert-lines t
-          evil-insert-vcount nil)
-    (evil-insert-state 1)
-    (if (eq (car (car (c-guess-basic-syntax))) 'c)
-        (insert "* "))
-    (when evil-auto-indent
-      (indent-according-to-mode)))
+  (set-company-backend!
+    '(c-mode c++-mode objc-mode)
+    'company-lsp)
 
-  (defun +amos/cc-better-semicolon ()
-    (interactive)
-    (if (and (eolp) (looking-back ";" 0))
-        (funcall-interactively (key-binding (kbd "RET")))
-      (insert ";")))
-  ;; Smartparens and cc-mode both try to autoclose angle-brackets intelligently.
-  ;; The result isn't very intelligent (causes redundant characters), so just do
-  ;; it ourselves.
+  (set-pretty-symbols! '(c-mode c++-mode)
+    ;; Functional
+    ;; :def "void "
+    ;; Types
+    :null "nullptr"
+    :true "true" :false "false"
+    :int "int" :float "float"
+    :str "std::string"
+    :bool "bool"
+    ;; Flow
+    :not "!"
+    :and "&&" :or "||"
+    :for "for"
+    :return "return"
+    :yield "#require")
+
+  ;;; Better fontification (also see `modern-cpp-font-lock')
+  (add-hook 'c-mode-common-hook #'rainbow-delimiters-mode)
+  (add-hook! (c-mode c++-mode) #'+cc|fontify-constants)
+
+
+  (setq-default c-noise-macro-names '("constexpr"))
+  (add-hook 'c-mode-common-hook #'(lambda () (modify-syntax-entry ?_ "w")))
+
+
+  ;; (c-set-offset 'innamespace           0)
+  ;; (c-set-offset 'block-open            0)
+  ;; (c-set-offset 'statement-block-intro '+)
+
+  ;;; Keybindings
   (map! (:map (c-mode-map c++-mode-map)
           "<" nil
-          :i ">"        #'+cc/autoclose->-maybe
-          :i "RET"      #'+amos-append-comment-line
-          :i ";"        #'+amos/cc-better-semicolon
+          ">" nil
+          :i "RET"      #'+cc-append-comment-line
+          :i ";"        #'+amos/better-semicolon
           :n "C-e"      #'+amos/maybe-add-end-of-statement
-          :n "o"        #'+amos-evil-open-below
-          :n "O"        #'+amos-evil-open-above
           :n "M-v"      #'+amos/lsp-ui-imenu
           :n "gs"       #'ccls/workspace-symbol
           :n "gS"       (lambda! (setq current-prefix-arg t) (call-interactively #'ccls/workspace-symbol))
@@ -97,145 +90,18 @@ The insertion will be repeated COUNT times."
           :n "M-o"      #'lsp-ui-sideline-mode
           "C-c i"       #'ccls/includes
           "C-c I"       (lambda! (ccls/includes t))))
+  (sp-with-modes '(c++-mode objc-mode)
+    (sp-local-pair "<" ">"
+                   :when '(+cc-sp-point-is-template-p +cc-sp-point-after-include-p)
+                   :post-handlers '(("| " "SPC"))))
 
-  ;;; Style/formatting
-  ;; C/C++ style settings
-  (c-toggle-electric-state -1)
-  (c-toggle-auto-newline -1)
-
-  (defun my-c-lineup-arglist-lambda (_)
-    "Line up lambda."
-    (save-excursion
-      (back-to-indentation)
-      (when (looking-at "{") '+)))
-
-  (c-set-offset 'substatement-open     0) ; don 't indent brackets
-  (c-set-offset 'innamespace           0)
-  (c-set-offset 'inline-open           0)
-  (c-set-offset 'block-open            0)
-  (c-set-offset 'inlambda              0)
-  (c-set-offset 'statement-block-intro '+)
-  (c-set-offset 'case-label            '+)
-  (c-set-offset 'access-label          '-)
-  (c-set-offset 'arglist-intro         '+)
-  ;; (c-set-offset 'statement-cont        '(c-lineup-assignments +))
-  (c-set-offset 'statement-cont        '+)
-  (c-set-offset 'arglist-close         #'c-lineup-arglist)
-
-  ;; (c-set-offset 'defun-block-intro '(my-c-lineup-arglist-lambda '+))
-  ;; (c-set-offset 'arglist-cont-nonempty '(my-c-lineup-arglist-lambda c-lineup-arglist))
-  (c-set-offset 'arglist-cont-nonempty '+)
-
-  (defun inside-class-enum-p (pos)
-    "Checks if POS is within the braces of a C++ \"enum class\"."
-    (ignore-errors
-      (save-excursion
-        (goto-char pos)
-        (backward-sexp 1)
-        (or (looking-back "enum\\s-+" 0)
-            (looking-back "enum\\s-+class\\s-+" 0)
-            (looking-back "enum\\s-+class\\s-+\\S-+\\s-*:\\s-*" 0)))))
-
-  (defun align-enum-class (langelem)
-    (if (inside-class-enum-p (c-langelem-pos langelem))
-        0
-      (c-lineup-topmost-intro-cont langelem)))
-
-  (defun align-enum-class-closing-brace (langelem)
-    (if (inside-class-enum-p (c-langelem-pos langelem))
-        0
-      '+))
-
-  (c-set-offset 'brace-list-open #'align-enum-class)
-  (c-set-offset 'brace-list-intro '+)
-  (c-set-offset 'brace-list-close #'align-enum-class-closing-brace)
-
-  (defun +amos-c-lineup-C-comments (langelem)
-    (save-excursion
-      (let* ((here (point))
-             (prefixlen (progn (back-to-indentation)
-                               (if (looking-at c-current-comment-prefix)
-                                   (- (match-end 0) (point))
-                                 0)))
-             (starterlen
-              (max (save-excursion
-                     (goto-char (1+ (c-langelem-pos langelem)))
-                     (if (and (match-string 0)
-                              (looking-at (regexp-quote (match-string 0))))
-                         (- (match-end 0) (match-beginning 0))
-                       0))
-                   (save-excursion
-                     (goto-char (c-langelem-pos langelem))
-                     (looking-at comment-start-skip)
-                     (- (or (match-end 1)
-                            (save-excursion
-                              (goto-char (match-end 0))
-                              (skip-chars-backward " \t")
-                              (point)))
-                        (point)
-                        1)))))
-        (if (and (> starterlen 10) (zerop prefixlen))
-            (vector (current-column))
-          (while
-              (progn
-                (forward-line -1)
-                (back-to-indentation)
-                (and (> (point) (c-langelem-pos langelem))
-                     (looking-at "[ \t]*$"))))
-          (if (>= (c-langelem-pos langelem) (point))
-              (if (zerop prefixlen)
-                  (progn
-                    (looking-at comment-start-skip)
-                    (goto-char (match-end 0))
-                    (vector (current-column)))
-                (goto-char (+ (c-langelem-pos langelem) starterlen 1))
-                (vector (- (current-column) prefixlen)))
-            (when (or (not (looking-at c-current-comment-prefix))
-                      (eq (match-beginning 0) (match-end 0)))
-              (goto-char here)
-              (back-to-indentation)
-              (if (looking-at (concat "\\(" c-current-comment-prefix "\\)\\*/"))
-                  (goto-char (c-langelem-pos langelem))
-                (while (and (zerop (forward-line -1))
-                            (looking-at "^[ \t]*$")))
-                (back-to-indentation)
-                (if (< (point) (c-langelem-pos langelem))
-                    (goto-char (c-langelem-pos langelem)))))
-            (vector (current-column)))))))
-  (c-set-offset 'c #'+amos-c-lineup-C-comments)
-
-  (setq-default c-noise-macro-names '("constexpr"))
-  ;; Indent privacy keywords at same level as class properties
-  ;; (c-set-offset 'inclass #'+cc-c-lineup-inclass)
-
-  (add-hook 'c-mode-common-hook #'(lambda () (modify-syntax-entry ?_ "w")))
-
-  ;; Improve indentation of inline lambdas in C++11
-  ;; (advice-add #'c-lineup-arglist :around #'+cc*align-lambda-arglist)
-
-  ;;; Keybindings
-  ;; Completely disable electric keys because it interferes with smartparens and
-  ;; custom bindings. We'll do this ourselves.
-  ;; (setq c-tab-always-indent t
-  ;;       c-electric-flag nil)
-  ;; (dolist (key '("#" "{" "}" "/" "*" ";" "," ":" "(" ")"))
-  ;; (dolist (key '("/" "*"))
-  ;;   (define-key c-mode-base-map key nil))
-
-  ;; ...and leave it to smartparens
-  (after! smartparens
-    (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
-      (sp-local-pair "/*" "*/" :post-handlers '(("||\n[i]" "RET") ("| " "SPC") (" ||\n[i]" "*"))))))
-;; Doxygen blocks
+  (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
+    (sp-local-pair "/*!" "*/" :post-handlers '(("||\n[i]" "RET") ("[d-1]< | " "SPC")))))
 
 (def-package! cmake-mode
   :mode
   (("/CMakeLists\\.txt\\'" . cmake-mode)
    ("\\.cmake\\'" . cmake-mode)))
-
-(set-rotate-patterns! 'c++-mode
-  :symbols '(("public" "protected" "private")
-             ("class" "struct")))
 
 (def-package! disaster :commands disaster)
 
@@ -250,38 +116,8 @@ The insertion will be repeated COUNT times."
 (def-package! clang-format
   :commands clang-format-buffer clang-format)
 
-(defun +amos/add-include (h &rest others)
-  "Add an #include line for `h' near top of file, avoiding duplicates."
-  (interactive "M#include: ")
-  (dolist (header (cons h others))
-    (let ((incl (format "#include <%s>" header)))
-      (save-excursion
-        (if (search-backward incl nil t)
-            nil
-          (when (search-backward "#include" nil 'stop-at-top)
-            (forward-line)
-            (beginning-of-line))
-          (insert incl)
-          (newline))))))
-
-(setq +amos-system-header-paths
-      '("/usr/local/include"
-        "/usr/include"
-        ))
-
-(add-hook! '(c-mode-hook c++-mode-hook)
-  (flycheck-mode +1)
-  (eldoc-mode -1)
-  (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
-    (c-set-style "gnu"))
-  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
-  (ccls//enable))
-
-(add-hook 'c++-mode-hook #'modern-c++-font-lock-mode)
-
-(set-company-backend!
-  '(c-mode c++-mode objc-mode)
-  'company-lsp)
+(def-package! modern-cpp-font-lock
+  :hook (c++-mode . modern-c++-font-lock-mode))
 
 (def-package! ccls
   :after lsp-mode
@@ -387,6 +223,33 @@ The insertion will be repeated COUNT times."
                 '(:role 16))))
   )
 
+(defun +amos/add-include (h &rest others)
+  "Add an #include line for `h' near top of file, avoiding duplicates."
+  (interactive "M#include: ")
+  (dolist (header (cons h others))
+    (let ((incl (format "#include <%s>" header)))
+      (save-excursion
+        (if (search-backward incl nil t)
+            nil
+          (when (search-backward "#include" nil 'stop-at-top)
+            (forward-line)
+            (beginning-of-line))
+          (insert incl)
+          (newline))))))
+
+(setq +amos-system-header-paths
+      '("/usr/local/include"
+        "/usr/include"
+        ))
+
+(add-hook! (c-mode c++-mode)
+  (flycheck-mode +1)
+  ;; (eldoc-mode -1)
+  (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
+    (c-set-style "gnu"))
+  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
+  (ccls//enable))
+
 (defun ccls//enable ()
   (direnv-update-environment)
   (condition-case nil
@@ -400,23 +263,16 @@ The insertion will be repeated COUNT times."
   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
     (setq flycheck-checkers (delq c flycheck-checkers))))
 
-(set-lookup-handlers! '(c-mode c++-mode)
-  :definition #'+amos/definitions
-  :references #'+amos/references
-  :documentation #'counsel-dash-at-point)
+(c-add-style "llvm.org"
+             '("cc-mode"
+               (fill-column . 100)
+               (indent-tabs-mode . nil)
+               (c-offsets-alist . ((innamespace . 0)
+                                   (arglist-intro . ++)
+                                   (member-init-intro . ++)
+                                   (statement-cont . llvm-lineup-statement)))))
 
-(defun +amos*lsp--position-to-point (params)
-  "Convert Position object in PARAMS to a point."
-  (save-excursion
-    (save-restriction
-      (widen)
-      (goto-char (point-min))
-      ;; The next line calculs the point from the LSP position.
-      ;; We use `goto-char' to ensure that we return a point inside the buffer
-      ;; to avoid out of range error
-      (goto-char (+ (line-beginning-position (1+ (gethash "line" params)))
-                    (gethash "character" params)))
-      (point))))
-
-(advice-add #'lsp--position-to-point :override #'+amos*lsp--position-to-point)
-(advice-add #'lsp-ui-sideline--diagnostics-changed :override #'ignore)
+;; https://github.com/Fuco1/smartparens/issues/963
+(after! smartparens
+(push 'c-electric-brace sp--special-self-insert-commands)
+(push 'c-electric-paren sp--special-self-insert-commands))

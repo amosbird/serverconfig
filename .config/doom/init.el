@@ -11,6 +11,7 @@
 
        :completion
        company
+       (helm +fuzzy)
        (ivy +fuzzy)
 
        :ui
@@ -295,6 +296,11 @@
 (require 'server)
 (setq server-name (getenv "EMACS_SERVER_NAME"))
 (if (not server-name) (setq server-name "server"))
+(add-hook 'emacs-startup-hook
+  (lambda ()
+    (with-temp-file (concat "/tmp/emacs-" server-name)
+      (erase-buffer)
+      (insert (number-to-string (emacs-pid))))))
 (unless (server-running-p server-name)
   (server-start))
 ;; disable this fucking stupid feature by masking

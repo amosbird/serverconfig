@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
 
-exec {lockfd}>/tmp/emacs.lock && flock $lockfd || exit;
-exec emacsclient -a '' -t -c
+# exec {lockfd}>/tmp/emacs.lock && flock $lockfd || exit;
+# exec emacsclient -a '' -t -c
+flock -nox /tmp/emacs.lock -c "emacsclient -a '' -t -c" || echo "unable to lock, perhaps files opened by emacs don't exit?"
+# emacsclient -a '' -t -c

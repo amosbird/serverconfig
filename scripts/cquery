@@ -47,12 +47,11 @@ multi=0
 init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argjson cxx_flags "$cxx_flags" '
 {
   "highlight": { "largeFileSize": 131072 },
-  "cacheFormat": "blob",
-  "cacheDirectory": "/home/amos/.cache/.ccls_cached_index",
+  "cache": { "directory": "/home/amos/.cache/.ccls_cached_index" },
   "client": { "snippetSupport": true },
   "index": {
     "multiVersion": $multi,
-    "trackDependency": 1,
+    "trackDependency": 2,
     "comments": 0,
     "initialBlacklist": $blacklist,
     "blacklist": ["~$"]

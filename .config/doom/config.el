@@ -203,18 +203,17 @@
 
 (after! evil-mc
   (nconc evil-mc-known-commands
-         '((+amos/forward-delete-word . ((:default . evil-mc-execute-default-call)))
-           (evil-repeat . ((:default . evil-mc-execute-default-call)))
+         '((evil-repeat . ((:default . evil-mc-execute-default-call)))
            (+amos/smart-eol-insert . ((:default . evil-mc-execute-default-call)))
            (company-complete-common . ((:default . evil-mc-execute-default-complete)))
            (company-select-next . ((:default . evil-mc-execute-default-complete)))
            (company-select-previous . ((:default . evil-mc-execute-default-complete)))
-           (+amos/forward-delete-word . ((:default . evil-mc-execute-default-call)))
-           (+amos/backward-delete-word . ((:default . evil-mc-execute-default-call)))
-           (+amos/forward-delete-subword . ((:default . evil-mc-execute-default-call)))
-           (+amos/backward-delete-subword . ((:default . evil-mc-execute-default-call)))
+           (+amos/delete-forward-word . ((:default . evil-mc-execute-default-call)))
+           (+amos/delete-backward-word . ((:default . evil-mc-execute-default-call)))
+           (+amos/delete-forward-subword . ((:default . evil-mc-execute-default-call)))
+           (+amos/delete-backward-subword . ((:default . evil-mc-execute-default-call)))
            (+amos/delete-char . ((:default . evil-mc-execute-default-call)))
-           (+amos/backward-delete-char . ((:default . evil-mc-execute-default-call)))
+           (+amos/delete-backward-char . ((:default . evil-mc-execute-default-call)))
            (+amos/kill-line . ((:default . evil-mc-execute-default-call)))
            (+amos/backward-kill-to-bol-and-indent . ((:default . evil-mc-execute-default-call)))
            (+amos/replace-last-sexp . ((:default . evil-mc-execute-default-call)))
@@ -346,8 +345,16 @@
                    ("-" '+amos:deleted)))
            (ovstring (propertize gutter-sep 'face face)))
       (propertize " " 'display `((margin left-margin) ,ovstring))))
+
+  (defun +amos*git-gutter:start-git-diff-process (file proc-buf)
+    (let ((arg (git-gutter:git-diff-arguments file)))
+      (apply #'start-file-process "git-gutter" proc-buf
+             "git" "--no-pager" "-c" "diff.autorefreshindex=0"
+             "diff" "--no-color" "--no-ext-diff" "--relative" "-U0" "--"
+             arg)))
   (advice-add #'git-gutter:put-signs :before (lambda (&rest _) (realign-windows)))
   (advice-add #'git-gutter:before-string :override #'+amos*git-gutter:before-string)
+  (advice-add #'git-gutter:start-git-diff-process :override #'+amos*git-gutter:start-git-diff-process)
   (add-hook 'window-configuration-change-hook #'git-gutter:update-all-windows)
   )
 
@@ -378,6 +385,28 @@
 
 (def-package! chinese-yasdcv
   :commands yasdcv-translate-at-point)
+
+(after! helm-dash
+  :init
+  (setq
+   helm-dash-docsets-path "~/.docsets"
+   helm-dash-docsets-url "https://raw.github.com/Kapeli/feeds/master"
+   helm-dash-min-length 2
+   helm-dash-candidate-format "%d %n (%t)"
+   helm-dash-enable-debugging t
+   helm-dash-browser-func (lambda (url) (interactive) (browse-url url t))
+   helm-dash-ignored-docsets nil)
+  (add-hook! fish-mode (setq-local helm-dash-docsets '("fish" "Linux_Man_Pages")))
+  (add-hook! sh-mode (setq-local helm-dash-docsets '("Bash" "Linux_Man_Pages")))
+  (add-hook! go-mode (setq-local helm-dash-docsets '("Go")))
+  (add-hook! cmake-mode (setq-local helm-dash-docsets '("CMake")))
+  (add-hook! java-mode (setq-local helm-dash-docsets '("Java")))
+  (add-hook! rust-mode (setq-local helm-dash-docsets '("Rust")))
+  (add-hook! lua-mode (setq-local helm-dash-docsets '("Lua_5.1")))
+  (add-hook! c-mode (setq-local helm-dash-docsets '("C" "Linux_Man_Pages")))
+  (add-hook! c++-mode (setq-local helm-dash-docsets '("C" "C++" "Linux_Man_Pages" "Boost")))
+  (add-hook! python-mode (setq-local helm-dash-docsets '("Python_3" "Python_2")))
+  (add-hook! emacs-lisp-mode (setq-local helm-dash-docsets '("Emacs_Lisp"))))
 
 (def-package! counsel-dash
   :commands counsel-dash
@@ -904,26 +933,7 @@ This function should be hooked to `buffer-list-update-hook'."
   :bind (:map rust-playground-mode-map
           ("<f8>" . rust-playground-rm)))
 
-(def-package! cc-playground
-  :commands cc-playground cc-playground-mode cc-playground-find-snippet cc-playground-leetcode
-  :load-path (lambda () (interactive) (if (string= (system-name) "t450s") "~/git/cc-playground"))
-  :init
-  (put 'cc-exec 'safe-local-variable #'stringp)
-  (put 'cc-flags 'safe-local-variable #'stringp)
-  (put 'cc-links 'safe-local-variable #'stringp)
-  (dolist (x '(cc-playground-exec cc-playground-debug cc-playground-exec-test cc-playground-bench))
-    (advice-add x :before #'evil-normal-state))
-  :bind (:map cc-playground-mode-map
-          ("<f8>" . cc-playground-rm) ; terminal
-          ("S-RET" . cc-playground-rm) ; gui
-          ("C-c r" . cc-playground-add-or-modify-tag)
-          ("C-c b" . cc-playground-bench)
-          ("C-c d" . cc-playground-debug)
-          ("C-c t" . cc-playground-debug-test)
-          ("C-c l" . cc-playground-ivy-add-library-link)
-          ("C-c c" . cc-playground-change-compiler)
-          ("C-c o" . cc-playground-switch-optimization-flag)
-          ("C-c f" . cc-playground-add-compilation-flags)))
+
 
 (def-package! py-playground
   :commands py-playground py-playground-mode py-playground-find-snippet
@@ -1128,7 +1138,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (evil-define-command +amos/delete-char()
   (mkr! (delete-char 1 1)))
 
-(evil-define-command +amos/backward-delete-char()
+(evil-define-command +amos/delete-backward-char()
   (mkr! (backward-delete-char-untabify 1 1)))
 
 (evil-define-command +amos/kill-line ()
@@ -1139,7 +1149,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                          (point-at-eol))))))
 
 (evil-define-command +amos/backward-kill-to-bol-and-indent ()
-  (if (bolp) (+amos/backward-delete-char)
+  (if (bolp) (+amos/delete-backward-char)
     (let* ((overlay (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name))
            (x (if overlay (overlay-start overlay) (save-excursion (doom/backward-to-bol-or-indent))))
            (y (point)))
@@ -1163,7 +1173,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (+amos-subword-move! exclusive evil-forward-word-begin)
 (+amos-subword-move! exclusive evil-backward-word-begin)
 
-(evil-define-command +amos/forward-delete-word (&optional subword)
+(evil-define-command +amos/delete-forward-word (&optional subword)
   (evil-signal-at-bob-or-eob 1)
   (when (or (not (or (evil-multiedit-state-p) (evil-multiedit-insert-state-p)))
             (iedit-find-overlay-at-point (point) 'iedit-occurrence-overlay-name))
@@ -1179,10 +1189,10 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                             (+amos-word-movement-internal subword 1))
                           (point))
                         (line-beginning-position))))))
-(evil-define-command +amos/forward-delete-subword ()
-  (+amos/forward-delete-word t))
+(evil-define-command +amos/delete-forward-subword ()
+  (+amos/delete-forward-word t))
 
-(evil-define-command +amos/backward-delete-word (&optional subword)
+(evil-define-command +amos/delete-backward-word (&optional subword)
   (evil-signal-at-bob-or-eob -1)
   (when (or (not (or (evil-multiedit-state-p) (evil-multiedit-insert-state-p)))
             (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name))
@@ -1199,8 +1209,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                             (+amos-word-movement-internal subword -1))
                           (point))
                         (line-end-position))))))
-(evil-define-command +amos/backward-delete-subword ()
-  (+amos/backward-delete-word t))
+(evil-define-command +amos/delete-backward-subword ()
+  (+amos/delete-backward-word t))
 
 (evil-define-command +amos/backward-word-insert (&optional subword)
   (evil-signal-at-bob-or-eob -1)
@@ -1385,12 +1395,25 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (def-package! lsp-mode
   :init
-  (setq lsp-eldoc-hook nil
+  (setq
         lsp-prefer-flymake nil
         lsp-enable-indentation nil
         lsp-auto-guess-root t)
   :config
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
+
+(defun +amos/lsp-shutdown-workspace ()
+  "Shutdown language server."
+  (interactive)
+  (require 'lsp-mode)
+  (--when-let (pcase (lsp-workspaces)
+                (`nil (user-error "There are no active servers in the current buffer"))
+                (`(,workspace) workspace)
+                (workspaces (lsp--completing-read "Select server: "
+                                                  workspaces
+                                                  'lsp--workspace-print nil t)))
+    (setf (lsp--workspace-shutdown-action it) 'shutdown)
+    (with-lsp-workspace it (lsp--shutdown-workspace))))
 
 (cl-defun +amos-lsp-find-custom (kind method &optional extra &key display-action)
   "Send request named METHOD and get cross references of the symbol under point.
@@ -1413,8 +1436,25 @@ EXTRA is a plist of extra parameters."
 
 (def-package! lsp-ui
   :config
-  (setq lsp-ui-sideline-enable nil)
+  (setq lsp-ui-sideline-enable nil
+        lsp-ui-sideline-show-diagnostics nil)
   )
+
+(defun +amos*lsp--position-to-point (params)
+  "Convert Position object in PARAMS to a point."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      ;; The next line calculs the point from the LSP position.
+      ;; We use `goto-char' to ensure that we return a point inside the buffer
+      ;; to avoid out of range error
+      (goto-char (+ (line-beginning-position (1+ (gethash "line" params)))
+                    (gethash "character" params)))
+      (point))))
+
+(advice-add #'lsp--position-to-point :override #'+amos*lsp--position-to-point)
+(advice-add #'lsp-ui-sideline--diagnostics-changed :override #'ignore)
 
 (defun +amos/create-fish-function (name)
   (interactive "sNew function's name: ")
@@ -1647,7 +1687,8 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 
 (defun +amos/redisplay-and-recenter ()
   (interactive)
-  (evil-scroll-left 10)
+  (if (> (window-hscroll) 0)
+      (evil-scroll-left 10))
   (redraw-display)
   (+amos/recenter))
 
@@ -1805,6 +1846,12 @@ representation of `NUMBER' is smaller."
 (set-eos! '(c-mode c++-mode java-mode perl-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
 (set-eos! '(sql-mode) :regex-char '("[ \t\r\n\v\f]" ";" ?\;))
 (set-eos! '(emacs-lisp-mode) :regex-char "[ \t\r\n\v\f]")
+
+(defun +amos/better-semicolon ()
+  (interactive)
+  (if (and (eolp) (looking-back ";" 0))
+      (funcall-interactively (key-binding (kbd "RET")))
+    (insert ";")))
 
 (defun +amos/maybe-add-end-of-statement (&optional move)
   (interactive)
@@ -3056,9 +3103,13 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         company-complete-selection
         company-complete-common))
 
-(defalias '+amos/format-buffer #'+format/region-or-buffer)
-;; (defun +amos/format-buffer ()
-;;   (interactive)
+;; (defalias '+amos/format-buffer #'+format/region-or-buffer)
+(defun +amos/format-buffer ()
+  (interactive)
+  (if (use-region-p)
+      (call-interactively #'+format/region)
+    (call-interactively #'+format/buffer)))
+
 ;;   (pcase major-mode
 ;;     ('c++-mode (clang-format-buffer))
 ;;     (_
@@ -3104,6 +3155,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         +amos/shell-command-replace
         +amos/smart-jumper-backward
         +amos/smart-jumper-forward
+        +amos/swiper
         +amos/switch-buffer
         +amos/tmux-detach
         +amos/tmux-fork-window
@@ -3246,7 +3298,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (defun my-inhibit-semantic-p ()
   (not (or (equal major-mode 'c-mode) (equal major-mode 'c++-mode))))
 (add-to-list 'semantic-default-submodes 'global-semantic-stickyfunc-mode)
-(semantic-mode 1)
+(semantic-mode -1)
 (with-eval-after-load 'semantic
   (add-to-list 'semantic-inhibit-functions #'my-inhibit-semantic-p))
 
@@ -3575,6 +3627,7 @@ as small) as possible, but don't signal an error."
 
 (defun +amos/swiper ()
   (interactive)
+  ;; (swiper-helm)
   (if (eq major-mode 'ivy-occur-grep-mode)
       (save-restriction
         (save-excursion
@@ -3582,7 +3635,8 @@ as small) as possible, but don't signal an error."
           (forward-line 4)
           (narrow-to-region (point) (point-max)))
         (swiper))
-    (swiper)))
+    (swiper))
+  )
 
 (defun +amos/wgrep-occur ()
   "Invoke the search+replace wgrep buffer on the current ag/rg search results."
@@ -4088,8 +4142,82 @@ inside or just after a citation command, only adds KEYS to it."
 
 ;; (if tmux-p
 ;;   (advice-add #'handle-switch-frame :override #'ignore))
+(if tmux-p
+  (advice-add #'internal-handle-focus-in :override #'ignore))
 
 ;; (defun +amos*raise-frame-pre (&rest _)
 ;;   (message "wtf"))
 
 ;; (advice-add #'raise-frame :before #'+amos*raise-frame-pre)
+;;
+(defun +amos*evil-insert (&rest _)
+  (evil-insert-state))
+(advice-add #'speed-type--setup :after #'+amos*evil-insert)
+
+(def-package! corral
+  :init
+  ;; Keep point position instead of following delimiters
+  ;; This is controlled by the variable corral-preserve-point, which can be set manually or through customize.
+
+  (setq corral-preserve-point t)
+
+  ;; Configure how corral handles punctuation/symbols
+  ;; Corral can be configured to use special syntax rules, which are set through the variable corral-syntax-entries. This variable is a list of syntax entries and follows the same syntax as modify-syntax-entry.
+
+  ;; For example, if you want to have # and * be treated as symbols so that they are wrapped as part of the word:
+
+  ;; (setq corral-syntax-entries '((?# "_")
+  ;;                               (?* "_")))
+  )
+
+(eldoc-add-command-completions
+ "c-electric-"
+ "+amos/backward-"
+ "+amos/forward-"
+ "+amos/delete-"
+ "+amos/complete"
+ "evil-insert"
+ "evil-append"
+ "kill-region"
+ "company-"
+ )
+
+(def-package! cc-playground
+  :commands cc-playground cc-playground-mode cc-playground-find-snippet cc-playground-leetcode
+  :load-path (lambda () (interactive) (if gui-p "~/git/cc-playground"))
+  :init
+  (put 'cc-exec 'safe-local-variable #'stringp)
+  (put 'cc-flags 'safe-local-variable #'stringp)
+  (put 'cc-links 'safe-local-variable #'stringp)
+  (dolist (x '(cc-playground-exec cc-playground-debug cc-playground-exec-test cc-playground-bench))
+    (advice-add x :before #'evil-normal-state))
+  :bind (:map cc-playground-mode-map
+          ("<f8>" . cc-playground-rm) ; terminal
+          ("S-RET" . cc-playground-rm) ; gui
+          ("C-c r" . cc-playground-add-or-modify-tag)
+          ("C-c b" . cc-playground-bench)
+          ("C-c d" . cc-playground-debug)
+          ("C-c t" . cc-playground-debug-test)
+          ("C-c l" . cc-playground-ivy-add-library-link)
+          ("C-c c" . cc-playground-change-compiler)
+          ("C-c o" . cc-playground-switch-optimization-flag)
+          ("C-c f" . cc-playground-add-compilation-flags))
+  :config
+  (add-hook 'cc-playground-rm-hook #'+amos/lsp-shutdown-workspace))
+
+;; (defun +amos*handle-switch-frame (old-function &rest arguments)
+;;   (apply old-function arguments))
+;; (advice-add #'handle-switch-frame :around #'+amos*handle-switch-frame)
+
+;; (debug-on-entry #'handle-switch-frame)
+
+(require 'lv)
+
+(defun ivy-display-function-lv (text)
+  (let ((lv-force-update t))
+    (lv-message
+     (if (string-match "\\`\n" text)
+         (substring text 1)
+       text))))
+
+;; (setq ivy-display-function 'ivy-display-function-lv)

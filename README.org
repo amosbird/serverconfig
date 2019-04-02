@@ -110,7 +110,7 @@ git clone https://aur.archlinux.org/trizen-git.git
 cd trizen-git
 makepkg -si
 
-trizen -S xdotool zbar gpick xininfo-git wordnet-cli mbedtls libfdk-aac netease-cloud-music openbsd-netcat earlyoom jdk8-openjdk android-sdk mpv perf fd conky-lua simple-obfs openconnect thinkfan exa python-pyqtwebengine python-attrs python-yaml python-pypeg2 python-pyqt5 pkg-config gtk3 libevent qt5-x11extras qt5-script qt5-svg qt5-tools ninja ipset dnsmasq zerotier-one openssh xorg-twm termite-terminfo xorg-xclock xorg-fonts xorg-fonts-misc xorg-drivers acpi xterm xorg-xrdb sddm sxhkd jq grc net-tools compton arandr xorg-xset dnsutils npm pdnsd rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline tcl expect weechat dunst xclip pandoc llvm clang lxappearance mu-git fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura-git rsync dstat pinta sysstat hplip cups samba ccache rustup ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu-git zathura-pdf-mupdf-git zathura-ps-git ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel conky-lua xsensors vnstat stalonetray xdo gtk-doc intltool vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake --noconfirm --needed
+trizen -S linux-headers p7zip zip slock strace texlive-most texlive-lang aspell-en ntp xdotool zbar gpick xininfo-git wordnet-cli mbedtls libfdk-aac netease-cloud-music openbsd-netcat earlyoom jdk8-openjdk android-sdk mpv perf fd conky-lua simple-obfs openconnect thinkfan exa python-pyqtwebengine python-attrs python-yaml python-pypeg2 python-pyqt5 pkg-config gtk3 libevent qt5-x11extras qt5-script qt5-svg qt5-tools ninja ipset dnsmasq zerotier-one openssh xorg-twm termite-terminfo xorg-xclock xorg-fonts xorg-fonts-misc xorg-drivers acpi xterm xorg-xrdb sddm sxhkd jq grc net-tools compton arandr xorg-xset dnsutils npm pdnsd rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline tcl expect weechat dunst xclip pandoc llvm clang lxappearance mu-git fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura rsync dstat pinta sysstat hplip cups samba ccache rustup ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu zathura-pdf-mupdf zathura-ps ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel conky-lua xsensors vnstat stalonetray xdo gtk-doc intltool vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake --noconfirm --needed
 
 trizen -S mimi-git
 
@@ -345,12 +345,20 @@ git fetch amos master
 git reset --hard amos/master
 go install
 
+
 cd
+git clone https://github.com/asdf-vm/asdf ~/.asdf
+
+asdf install python
+asdf install nodejs
+
+npm install -g prettier
+
 git clone git@github.com:amosbird/cc-snippets cc-playground
 cpan URL::Search Perl::Tidy Regexp::Common Dir::ls Clipboard
 
-# git clone https://github.com/hlissner/doom-emacs -b develop ~/.emacs.d
-# cd ~/.emacs.d && make quickstart
+git clone https://github.com/amosbird/doom-emacs -b amos ~/.emacs.d
+cd ~/.emacs.d && make quickstart
 
 /usr/local/bin/Telegram
 /etc/modprobe.d/modprobe.conf
@@ -363,6 +371,7 @@ cpan URL::Search Perl::Tidy Regexp::Common Dir::ls Clipboard
 /usr/local/bin/obfs-local
 /usr/local/bin/openconnect
 /usr/local/bin/gnirehtet
+/usr/local/bin/client_linux_amd64
 /etc/udev/hwdb.d/90-custom-keyboard.hwdb
 /etc/ld.so.conf.d/99-user-local.conf
 /etc/udev/rules.d/99-thinkfan.rules

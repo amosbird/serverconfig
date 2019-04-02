@@ -77,17 +77,17 @@
  :ni "M-B"                   #'+amos/backward-subword-insert
  :ni "M-f"                   #'+amos/forward-word-insert
  :ni "M-F"                   #'+amos/forward-subword-insert
- :ni "M-d"                   #'+amos/forward-delete-word
- :ni "M-D"                   #'+amos/forward-delete-subword
- :ni [M-backspace]           #'+amos/backward-delete-word
- :ni [134217855]             #'+amos/backward-delete-word ; M-DEL
- :ni "S-<f7>"                #'+amos/backward-delete-subword
- :ni "M-S-<backspace>"       #'+amos/backward-delete-subword
- :i "DEL"                    #'+amos/backward-delete-char
- :i "C-w"                    #'+amos/backward-delete-word
+ :ni "M-d"                   #'+amos/delete-forward-word
+ :ni "M-D"                   #'+amos/delete-forward-subword
+ :ni [M-backspace]           #'+amos/delete-backward-word
+ :ni [134217855]             #'+amos/delete-backward-word ; M-DEL
+ :ni "S-<f7>"                #'+amos/delete-backward-subword
+ :ni "M-S-<backspace>"       #'+amos/delete-backward-subword
+ :i "DEL"                    #'+amos/delete-backward-char
+ :i "C-w"                    #'+amos/delete-backward-word
  :i "M-r"                    #'sp-slurp-hybrid-sexp
  :i "M-R"                    #'sp-forward-barf-sexp
- :n "M-e"                    #'counsel-dash-at-point
+ :n "M-e"                    #'helm-dash-at-point
  :n "M-i"                    #'yasdcv-translate-at-point
  :v "M-i"                    #'+amos/evil-visual-insert-snippet
  ;; :n "M-o"                    #'+amos/dired-jump
@@ -458,6 +458,14 @@
    "C-e" #'evil-multiedit--end-of-line
    "C-a" #'evil-multiedit--beginning-of-line)
 
+ (:after helm
+   :map helm-map
+   "C-<return>" #'helm-quit-and-execute-action
+   "C-o"      #'+amos/kill-line
+   "C-j"    #'helm-next-line
+   "C-k"    #'helm-previous-line
+   )
+
  ;; ivy
  (:after ivy
    :map ivy-minibuffer-map
@@ -482,16 +490,17 @@
    "C-y"    (lambda! (let ((kill-ring my-kill-ring)) (yank)))
    "M-y"    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
    "M-b"    #'+amos/backward-word-insert
-   "M-d"    #'+amos/forward-delete-word
+   "M-d"    #'+amos/delete-forward-word
    "M-f"    #'+amos/forward-word-insert
    "M-B"    #'+amos/backward-subword-insert
-   "M-D"    #'+amos/forward-delete-subword
+   "M-D"    #'+amos/delete-forward-subword
    "M-F"    #'+amos/forward-subword-insert
    "M-g"    #'+amos/ivy-complete-dir
    "M-r"    #'ivy-toggle-fuzzy
    "M-z"    #'undo
-   "S-<f7>"      #'+amos/backward-delete-subword
-   "M-S-<backspace>"       #'+amos/backward-delete-subword
+   "S-<f7>"      #'+amos/delete-backward-subword
+   "S-<insert>"    #'+amos/paste-from-gui
+   "M-S-<backspace>"       #'+amos/delete-backward-subword
    "TAB"    #'ivy-call
    [escape] #'keyboard-escape-quit
    ;; ivy has its own logic for these
@@ -681,17 +690,18 @@
    "C-y"         (lambda! (let ((kill-ring my-kill-ring)) (yank)))
    "M-y"         (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
    "M-b"         #'+amos/backward-word-insert
-   "M-d"         #'+amos/forward-delete-word
+   "M-d"         #'+amos/delete-forward-word
    "M-f"         #'+amos/forward-word-insert
    "M-B"         #'+amos/backward-subword-insert
-   "M-D"         #'+amos/forward-delete-subword
+   "M-D"         #'+amos/delete-forward-subword
    "M-F"         #'+amos/forward-subword-insert
    "M-z"         #'undo
-   "DEL"         #'+amos/backward-delete-char
-   "S-<f7>"      #'+amos/backward-delete-subword
-   "M-S-<backspace>"       #'+amos/backward-delete-subword
-   [M-backspace] #'+amos/backward-delete-word
-   [134217855]   #'+amos/backward-delete-word ; M-DEL
+   "DEL"         #'+amos/delete-backward-char
+   "S-<f7>"      #'+amos/delete-backward-subword
+   "S-<insert>"    #'+amos/paste-from-gui
+   "M-S-<backspace>"       #'+amos/delete-backward-subword
+   [M-backspace] #'+amos/delete-backward-word
+   [134217855]   #'+amos/delete-backward-word ; M-DEL
    )
 
  ;; --- Custom evil text-objects ---------------------
