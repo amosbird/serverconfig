@@ -4204,3 +4204,5 @@ inside or just after a citation command, only adds KEYS to it."
           ("C-c f" . cc-playground-add-compilation-flags))
   :config
   (add-hook 'cc-playground-rm-hook #'+amos/lsp-shutdown-workspace))
+
+(def-package! sync-recentf)

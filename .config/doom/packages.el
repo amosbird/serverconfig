@@ -75,6 +75,7 @@
 (package! hl-line+ :recipe (:fetcher github :repo "emacsmirror/hl-line-plus"))
 (package! ivy-rich :recipe (:fetcher github :repo "Yevgnen/ivy-rich"))
 (package! corral :recipe (:fetcher github :repo "nivekuil/corral"))
+(package! sync-recentf :recipe (:fetcher github :repo "ffevotte/sync-recentf"))
 (package! osc :recipe (:fetcher github :repo "amosbird/osc.el"))
 (package! rainbow-mode :recipe (:fetcher github :repo "amosbird/rainbow-mode"))
 (package! realign-mode :recipe (:fetcher github :repo "amosbird/realign-mode.el"))
