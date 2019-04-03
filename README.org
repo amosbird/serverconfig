@@ -110,7 +110,7 @@ git clone https://aur.archlinux.org/trizen-git.git
 cd trizen-git
 makepkg -si
 
-trizen -S linux-headers p7zip zip slock strace texlive-most texlive-lang aspell-en ntp xdotool zbar gpick xininfo-git wordnet-cli mbedtls libfdk-aac netease-cloud-music openbsd-netcat earlyoom jdk8-openjdk android-sdk mpv perf fd conky-lua simple-obfs openconnect thinkfan exa python-pyqtwebengine python-attrs python-yaml python-pypeg2 python-pyqt5 pkg-config gtk3 libevent qt5-x11extras qt5-script qt5-svg qt5-tools ninja ipset dnsmasq zerotier-one openssh xorg-twm termite-terminfo xorg-xclock xorg-fonts xorg-fonts-misc xorg-drivers acpi xterm xorg-xrdb sddm sxhkd jq grc net-tools compton arandr xorg-xset dnsutils npm pdnsd rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline tcl expect weechat dunst xclip pandoc llvm clang lxappearance mu-git fcitx fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight deadbeef thunar-volman thunar getmail xorg-xev xorg-xprop sdcv ninja unixodbc virtualbox virtualbox-guest-iso virtualbox-ext-oracle arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura rsync dstat pinta sysstat hplip cups samba ccache rustup ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu zathura-pdf-mupdf zathura-ps ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel conky-lua xsensors vnstat stalonetray xdo gtk-doc intltool vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake --noconfirm --needed
+trizen -S sysdig linux-headers p7zip zip slock strace texlive-most texlive-lang aspell-en ntp xdotool zbar gpick xininfo-git wordnet-cli mbedtls libfdk-aac netease-cloud-music openbsd-netcat earlyoom jdk8-openjdk android-sdk mpv perf fd conky-lua simple-obfs openconnect thinkfan exa python-pyqtwebengine python-attrs python-yaml python-pypeg2 python-pyqt5 pkg-config gtk3 libevent qt5-x11extras qt5-script qt5-svg qt5-tools ninja ipset dnsmasq zerotier-one openssh xorg-twm termite-terminfo xorg-xclock xorg-fonts xorg-fonts-misc xorg-drivers acpi xterm xorg-xrdb sddm sxhkd jq grc net-tools compton arandr xorg-xset dnsutils npm rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei wqy-zenhei readline tcl expect weechat dunst xclip pandoc llvm clang lxappearance fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight getmail xorg-xev xorg-xprop sdcv ninja unixodbc arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura rsync dstat pinta sysstat hplip cups samba ccache ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu zathura-pdf-mupdf zathura-ps ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel conky-lua xsensors vnstat stalonetray xdo gtk-doc intltool vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake --noconfirm --needed
 
 trizen -S mimi-git
 
@@ -271,19 +271,19 @@ cd obs-studio && $BUILD obs install
 
 cd ~/git
 git clone git@github.com:amosbird/bspwm
-cd bspwm && bear make -j && sudo make install
+cd bspwm && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/reptyr
-cd reptyr && bear make -j && sudo make install
+cd reptyr && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/cgdb
-cd cgdb && ./autogen.sh && ./configure && bear make -j && sudo make install
+cd cgdb && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/tmux
-cd tmux && sh autogen.sh && ./configure && bear make -j && sudo make install
+cd tmux && sh autogen.sh && ./configure && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/fish-shell
@@ -291,37 +291,37 @@ cd fish-shell && $BUILD rel install
 
 cd ~/git
 git clone git@github.com:amosbird/libvte
-cd libvte && ./autogen.sh && ./configure --enable-vala=no && bear make -j && sudo make install
+cd libvte && ./autogen.sh && ./configure --enable-vala=no && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone --recursive git@github.com:amosbird/termite
-cd termite && bear make -j && sudo make install
+cd termite && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/cc-playground
 
 cd ~/git
 git clone git@github.com:amosbird/htop-vim
-cd htop-vim && ./autogen.sh && ./configure && bear make -j && sudo make install
+cd htop-vim && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/qutebrowser
 
 cd ~/git
 git clone git@github.com:amosbird/xcape
-cd xcape && bear make -j && sudo make install
+cd xcape && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/feh
-cd xcape && bear make -j && sudo make install
+cd xcape && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/emacs
-cd emacs && sh autogen.sh && ./configure --with-modules && make -j && sudo make install
+cd emacs && sh autogen.sh && ./configure --with-modules && make -j`nproc` && sudo make install
 
 cd ~/git
 git clone https://github.com/djcb/mu
-cd mu && sh autogen.sh && bear make -j && sudo make install
+cd mu && sh autogen.sh && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone https://github.com/llvm/llvm-project
@@ -359,6 +359,8 @@ cpan URL::Search Perl::Tidy Regexp::Common Dir::ls Clipboard
 
 git clone https://github.com/amosbird/doom-emacs -b amos ~/.emacs.d
 cd ~/.emacs.d && make quickstart
+open emacs and do M-x all-the-icons-install-fonts
+
 
 /usr/local/bin/Telegram
 /etc/modprobe.d/modprobe.conf
@@ -387,3 +389,22 @@ cd ~/.emacs.d && make quickstart
 /etc/polkit-1/rules.d/*
 /etc/netctl/*
 ~/.local/share/qutebrowser/greasemonkey/*
+
+mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Screencasts Music Books org/todos Documents/pdfs Documents/ppts Documents/docs
+
+sddm --example-config | sudo tee /etc/sddm.conf
+sudo vim /etc/sddm.conf
+User=amos
+Session=bspwm.desktop
+systemctl enable sddm
+systemctl enable org.cups.cupsd.service
+systemctl enable dnsmasq
+systemctl enable earlyoom
+systemctl enable ipset
+systemctl enable iptables
+systemctl enable sshd
+systemctl enable thinkfan
+systemctl enable zerotier-one
+
+ccache -M 50G
+sudo pkgfile --update

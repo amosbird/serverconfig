@@ -11,7 +11,7 @@
 
        :completion
        company
-       (helm +fuzzy)
+       ;; (helm +fuzzy)
        (ivy +fuzzy)
 
        :ui

@@ -4204,20 +4204,3 @@ inside or just after a citation command, only adds KEYS to it."
           ("C-c f" . cc-playground-add-compilation-flags))
   :config
   (add-hook 'cc-playground-rm-hook #'+amos/lsp-shutdown-workspace))
-
-;; (defun +amos*handle-switch-frame (old-function &rest arguments)
-;;   (apply old-function arguments))
-;; (advice-add #'handle-switch-frame :around #'+amos*handle-switch-frame)
-
-;; (debug-on-entry #'handle-switch-frame)
-
-(require 'lv)
-
-(defun ivy-display-function-lv (text)
-  (let ((lv-force-update t))
-    (lv-message
-     (if (string-match "\\`\n" text)
-         (substring text 1)
-       text))))
-
-;; (setq ivy-display-function 'ivy-display-function-lv)

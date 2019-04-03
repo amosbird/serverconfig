@@ -87,7 +87,7 @@
  :i "C-w"                    #'+amos/delete-backward-word
  :i "M-r"                    #'sp-slurp-hybrid-sexp
  :i "M-R"                    #'sp-forward-barf-sexp
- :n "M-e"                    #'helm-dash-at-point
+ :n "M-e"                    #'counsel-dash-at-point
  :n "M-i"                    #'yasdcv-translate-at-point
  :v "M-i"                    #'+amos/evil-visual-insert-snippet
  ;; :n "M-o"                    #'+amos/dired-jump
