@@ -1928,14 +1928,16 @@ representation of `NUMBER' is smaller."
 
 (unless gui-p
   (defun +amos*fcitx--activate-proc ()
-    (shell-command! "fcitxenable"))
+    ;; (shell-command! "fcitxenable")
+    )
 
   (defun +amos*fcitx--deactivate-proc ()
-    (shell-command! "fcitxdisable"))
+    ;; (shell-command! "fcitxdisable")
+    )
 
   (defun +amos*fcitx--active-p-proc ()
-    (string= "2\n" (shell-command-to-string "fcitxstatus")))
-
+    ;; (string= "2\n" (shell-command-to-string "fcitxstatus"))
+    )
   (advice-add #'fcitx--activate-proc :override #'+amos*fcitx--activate-proc)
   (advice-add #'fcitx--deactivate-proc :override #'+amos*fcitx--deactivate-proc)
   (advice-add #'fcitx--active-p-proc :override #'+amos*fcitx--active-p-proc))
