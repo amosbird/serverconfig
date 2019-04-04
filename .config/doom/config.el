@@ -3927,8 +3927,8 @@ keyboard-quit events while waiting for a valid input."
 (add-hook! 'kill-buffer-hook #'+amos|kill-buffer-hook)
 
 (defun +amos|buffer-list-update-hook()
-  (maphash (lambda (buffer _) (unless (get-buffer-window buffer) (kill-buffer buffer))) compress-view-set)
-  (maphash (lambda (buffer _) (unless (get-buffer-window buffer) (kill-buffer buffer))) compile-set))
+  (maphash (lambda (buffer _) (unless (get-buffer-window buffer t) (kill-buffer buffer))) compress-view-set)
+  (maphash (lambda (buffer _) (unless (get-buffer-window buffer t) (kill-buffer buffer))) compile-set))
 (add-hook! 'buffer-list-update-hook #'+amos|buffer-list-update-hook)
 
 (defun +amos/decompress-file (&optional file)
