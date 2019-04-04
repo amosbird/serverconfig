@@ -10,7 +10,7 @@
   :init
   (setq-default c-basic-offset tab-width
                 c-backspace-function #'delete-backward-char
-                c-default-style "cc-mode")
+                c-default-style "amos")
 
   ;; The plusses in c++-mode can be annoying to search for ivy/helm (which reads
   ;; queries as regexps), so we add these for convenience.
@@ -263,14 +263,16 @@
   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
     (setq flycheck-checkers (delq c flycheck-checkers))))
 
-(c-add-style "llvm.org"
+(c-add-style "amos"
              '("cc-mode"
                (fill-column . 100)
                (indent-tabs-mode . nil)
                (c-offsets-alist . ((innamespace . 0)
                                    (arglist-intro . ++)
+                                   (substatement-open . 0)
                                    (member-init-intro . ++)
-                                   (statement-cont . llvm-lineup-statement)))))
+                                   (statement-cont . +cc-llvm-lineup-statement)))))
+
 
 ;; https://github.com/Fuco1/smartparens/issues/963
 (after! smartparens
