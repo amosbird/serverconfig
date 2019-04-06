@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
-id="2717:ff48"
+# id="2717:ff48"
+id="18d1:4ee7"
 fuser -k /tmp/scrcpy.lock
 pkill -f "$id"
 cd /home/amos/git/scrcpy
