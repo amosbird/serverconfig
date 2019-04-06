@@ -87,6 +87,17 @@
  :i "C-w"                    #'+amos/delete-backward-word
  :i "M-r"                    #'sp-slurp-hybrid-sexp
  :i "M-R"                    #'sp-forward-barf-sexp
+ :i "M-{"                    (lambda! (+amos-surround-with-pair ?} t))
+ :i "M-}"                    (lambda! (+amos-surround-with-pair ?}))
+ :i "M-("                    (lambda! (+amos-surround-with-pair ?\) t))
+ :i "M-)"                    (lambda! (+amos-surround-with-pair ?\)))
+ ;; :i "M-["                    (lambda! (+amos-surround-with-pair ?\] t))
+ ;; :i "M-]"                    (lambda! (+amos-surround-with-pair ?\]))
+ :i "M-'"                    (lambda! (+amos-surround-with-pair ?\'))
+ :i "M-_"                    (lambda! (+amos-surround-with-pair ?\' t))
+ :i "M-\""                   (lambda! (+amos-surround-with-pair ?\"))
+ :i "M-p"                    (lambda! (+amos-surround-with-pair ?\" t))
+ :i "M-R"                    #'sp-forward-barf-sexp
  :n "M-e"                    #'counsel-dash-at-point
  :n "M-i"                    #'yasdcv-translate-at-point
  :v "M-i"                    #'+amos/evil-visual-insert-snippet
@@ -689,6 +700,7 @@
    "C-u"         #'+amos/backward-kill-to-bol-and-indent
    "C-y"         (lambda! (let ((kill-ring my-kill-ring)) (yank)))
    "M-y"         (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
+   "M-'"         (lambda! (insert ?\') (insert ?\{) (insert ?\}) (insert ?\') (backward-char 2))
    "M-b"         #'+amos/backward-word-insert
    "M-d"         #'+amos/delete-forward-word
    "M-f"         #'+amos/forward-word-insert

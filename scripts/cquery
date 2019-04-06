@@ -10,8 +10,7 @@
 cxx_flags='[
       "-xobjective-c++-header",
       "-D__cpp_deduction_guides=0",
-      "-Wno-macro-redefined",
-      "-O0"'
+      "-Wno-macro-redefined"'
 
 for i in $ccls_cxx_flags; do
 	cxx_flags="${cxx_flags}, \"$i\""
@@ -76,9 +75,14 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
     }
   },
   "clang": {
-    "excludeArgs": ["-fno-tree-loop-distribute-patterns", "-fwhole-program"],
+    "excludeArgs": ["-fno-tree-loop-distribute-patterns", "-fwhole-program", "-Wno-maybe-uninitialized", "-Wno-unused-but-set-variable"],
     "extraArgs": $cxx_flags
   }
 }')
 
-exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"
+if [ "$ccls_suffix" = "-tdesktop" ]
+then
+    exec docker run -i --cap-add=SYS_PTRACE -v /home/amos/.cache:/home/amos/.cache -v /home/amos/cclstmp:/tmp -v /home/amos/git/docker-tdesktop:/home/amos/git/docker-tdesktop -v /home/amos/git:/home/amos/git amosbird/telegram /home/amos/git/ccls/tg/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" -v 2 "$@"
+else
+    exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"
+fi

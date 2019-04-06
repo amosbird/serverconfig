@@ -20,11 +20,6 @@
   ;; Activate `c-mode', `c++-mode' or `objc-mode' depending on heuristics
   (add-to-list 'auto-mode-alist '("\\.h\\'" . +cc-c-c++-objc-mode))
 
-  ;; Ensure find-file-at-point works in C modes, must be added before irony
-  ;; and/or lsp hooks are run.
-  (add-hook! (c-mode-local-vars c++-mode-local-vars objc-mode-local-vars)
-    #'+cc|init-ffap-integration)
-
   :config
   (set-electric! '(c-mode c++-mode objc-mode java-mode) :chars '(?\n ?\} ?\{))
 
@@ -75,6 +70,7 @@
           "<" nil
           ">" nil
           :i "RET"      #'+cc-append-comment-line
+          :n "RET"      #'+amos/lsp-highlight-symbol
           :i ";"        #'+amos/better-semicolon
           :n "C-e"      #'+amos/maybe-add-end-of-statement
           :n "M-v"      #'+amos/lsp-ui-imenu
@@ -243,12 +239,15 @@
         ))
 
 (add-hook! (c-mode c++-mode)
-  (flycheck-mode +1)
-  ;; (eldoc-mode -1)
-  (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
-    (c-set-style "gnu"))
-  (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
-  (ccls//enable))
+  (let ((name (buffer-name)))
+    (unless (or (string-prefix-p "timemachine:" name)
+                (string-suffix-p "~" name))
+      (flycheck-mode +1)
+      ;; (eldoc-mode -1)
+      (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
+        (c-set-style "gnu"))
+      (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
+      (ccls//enable))))
 
 (defun ccls//enable ()
   (direnv-update-environment)
@@ -270,6 +269,7 @@
                (c-offsets-alist . ((innamespace . 0)
                                    (arglist-intro . ++)
                                    (substatement-open . 0)
+                                   (inlambda . 0)
                                    (member-init-intro . ++)
                                    (statement-cont . +cc-llvm-lineup-statement)))))
 

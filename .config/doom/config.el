@@ -854,7 +854,7 @@ using a visual block/rectangle selection."
       ;; cache the resulting list of files
       (when projectile-enable-caching
         (projectile-cache-project (projectile-project-root) files)))
-    (projectile-sort-files files)))
+    files))
 
 (defun +amos/projectile-find-file (&optional arg)
   "Jump to a file in the current project.
@@ -1401,6 +1401,36 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
         lsp-auto-guess-root t)
   :config
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
+
+(defun +amos/lsp-highlight-symbol ()
+  (interactive)
+  (require 'lsp-mode)
+  (let ((inhibit-message t))
+    (setq-local +amos--lsp-maybe-highlight-symbol t)
+    (lsp--document-highlight)))
+
+(defun +amos|lsp-remove-highlight ()
+  (interactive)
+  (when (and (boundp '+amos--lsp-maybe-highlight-symbol) +amos--lsp-maybe-highlight-symbol)
+    (--each (lsp-workspaces)
+      (with-lsp-workspace it
+        (lsp--remove-cur-overlays)))
+    (setq-local +amos--lsp-maybe-highlight-symbol nil)))
+
+(add-hook 'doom-escape-hook #'+amos|lsp-remove-highlight)
+
+(defun +amos-surround-with-pair (c &optional back)
+  (let* ((e (save-excursion
+              (if back
+                  (+amos/backward-word-insert)
+                (+amos/forward-word-insert))
+              (point)))
+         (b (point)))
+    (if (< b e)
+        (evil-surround-region b e t c)
+      (save-excursion
+        (evil-surround-region e b t c))
+      (forward-char 1))))
 
 (defun +amos/lsp-shutdown-workspace ()
   "Shutdown language server."
@@ -4208,3 +4238,55 @@ inside or just after a citation command, only adds KEYS to it."
   (add-hook 'cc-playground-rm-hook #'+amos/lsp-shutdown-workspace))
 
 (def-package! sync-recentf)
+
+(defun +amos*evil-yank (beg end &optional type register yank-handler)
+  "Saves the characters in motion into the kill-ring."
+  (interactive
+   (let*
+       ((evil-operator-range-motion
+         (if (evil-has-command-property-p 'evil-yank :motion)
+             (or
+              (evil-get-command-property 'evil-yank :motion)
+              (function undefined))))
+        (evil-operator-range-type
+         (evil-get-command-property 'evil-yank :type))
+        (orig (point))
+        evil-operator-range-beginning evil-operator-range-end evil-inhibit-operator)
+     (setq evil-inhibit-operator-value nil evil-this-operator this-command)
+     (prog1
+         (append
+          (evil-operator-range t)
+          (list evil-this-register
+                (evil-yank-handler)))
+       (setq orig (point)
+             evil-inhibit-operator-value evil-inhibit-operator)
+       (if (or (evil-visual-state-p) (region-active-p))
+           (setq deactivate-mark t))
+       (cond
+        ((evil-get-command-property 'evil-yank :move-point)
+         (goto-char
+          (or evil-operator-range-beginning orig)))
+        (t
+         (goto-char orig))))))
+  (unwind-protect
+      (let ((evil-inhibit-operator evil-inhibit-operator-value))
+        (unless (and evil-inhibit-operator
+                     (called-interactively-p 'any))
+          (let
+              ((evil-was-yanked-without-register
+                (and evil-was-yanked-without-register
+                     (not register))))
+            (cond
+             ((and
+               (fboundp 'cua--global-mark-active)
+               (fboundp 'cua-copy-region-to-global-mark)
+               (cua--global-mark-active))
+              (cua-copy-region-to-global-mark beg end))
+             ((eq type 'block)
+              (evil-yank-rectangle beg end register yank-handler))
+             ((eq type 'line)
+              (evil-yank-lines beg end register yank-handler))
+             (t
+              (evil-yank-characters beg end register yank-handler))))))
+    (setq evil-inhibit-operator-value nil)))
+(advice-add #'evil-yank :override #'+amos*evil-yank)
