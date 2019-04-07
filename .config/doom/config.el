@@ -4290,3 +4290,25 @@ inside or just after a citation command, only adds KEYS to it."
               (evil-yank-characters beg end register yank-handler))))))
     (setq evil-inhibit-operator-value nil)))
 (advice-add #'evil-yank :override #'+amos*evil-yank)
+
+(defun +amos--minibuffer-yank-by (fn &rest args)
+  (require 'ivy)
+  (let (text)
+    (with-selected-window (minibuffer-selected-window)
+      (let ((beg (point))
+            (bol (line-beginning-position))
+            (eol (line-end-position))
+            end)
+        (unwind-protect
+             (progn (apply fn args)
+                    (setq end (goto-char (max bol (min (point) eol))))
+                    (setq text (buffer-substring-no-properties beg end))
+                    (ivy--pulse-region beg end))
+          (unless text
+            (goto-char beg)))))
+    (when text
+      (insert (replace-regexp-in-string "  +" " " text t t)))))
+
+(defun +amos/minibuffer-yank-word (&optional arg)
+  (interactive "p")
+  (+amos--minibuffer-yank-by #'forward-word arg))

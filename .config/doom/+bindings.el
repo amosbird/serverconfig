@@ -690,6 +690,7 @@
         evil-ex-search-keymap
         read-expression-map)
    [escape]      #'abort-recursive-edit
+   "C-w"         #'+amos/minibuffer-yank-word
    "C-n"         #'next-line-or-history-element
    "C-p"         #'previous-line-or-history-element
    "C-a"         #'move-beginning-of-line
