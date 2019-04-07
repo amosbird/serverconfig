@@ -40,13 +40,6 @@
  "C-<comma>"     #'+amos/workspace-switch-left
  "C-<period>"    #'+amos/workspace-switch-right)
 
-;; (defun +amos/evil-delete (&rest args)
-;;   (interactive (advice-eval-interactive-spec
-;;                 (cadr (interactive-form #'evil-delete))))
-;;   (if amos-sticky-ctrl-mode
-;;       (call-interactively #'evil-scroll-down)
-;;     (apply (if (called-interactively-p 'any) #'funcall-interactively #'funcall) #'evil-delete args)))
-
 ;; Q U M H
 (map!
  :gn "M-W"                   #'+amos/kill-current-buffer
@@ -91,6 +84,7 @@
  :i "M-}"                    (lambda! (+amos-surround-with-pair ?}))
  :i "M-("                    (lambda! (+amos-surround-with-pair ?\) t))
  :i "M-)"                    (lambda! (+amos-surround-with-pair ?\)))
+ ;; these will break terminal
  ;; :i "M-["                    (lambda! (+amos-surround-with-pair ?\] t))
  ;; :i "M-]"                    (lambda! (+amos-surround-with-pair ?\]))
  :i "M-'"                    (lambda! (+amos-surround-with-pair ?\'))
@@ -101,8 +95,6 @@
  :n "M-e"                    #'counsel-dash-at-point
  :n "M-i"                    #'yasdcv-translate-at-point
  :v "M-i"                    #'+amos/evil-visual-insert-snippet
- ;; :n "M-o"                    #'+amos/dired-jump
- ;; :ni "M-o"                   #'downcase-word
  :genvi "M-h"                #'evil-window-left
  :genvi "M-j"                #'evil-window-down
  :genvi "M-k"                #'evil-window-up
@@ -567,21 +559,6 @@
    :n "n"   #'debugger-step-through
    :n "c"   #'debugger-continue)
 
- ;; (:after compile
- ;;   :map compilation-mode-map
- ;;   "SPC" nil
- ;;   "0" nil
- ;;   "1" nil
- ;;   "2" nil
- ;;   "3" nil
- ;;   "4" nil
- ;;   "5" nil
- ;;   "6" nil
- ;;   "7" nil
- ;;   "8" nil
- ;;   "9" nil
- ;;   "g" nil)
-
  (:after edebug
    :map edebug-mode-map
    :gn "s"        #'edebug-step-mode
@@ -676,9 +653,6 @@
    "C-9"           (kbd "9")
    "C-0"           (kbd "0")
    "C-@"           (kbd "C-SPC"))
-
- ;; (:map query-replace-map
- ;;   [escape]      #'keyboard-escape-quit)
 
  (:map (minibuffer-local-map
         minibuffer-local-ns-map

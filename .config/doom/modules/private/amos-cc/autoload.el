@@ -192,9 +192,9 @@ simpler."
   (interactive)
   (evil-ret 1)
   (if (eq (car (car (c-guess-basic-syntax))) 'c)
-      (if (string= (save-excursion (previous-line 1) (buffer-substring-no-properties (point-at-bol) (point-at-eol))) " * ")
+      (if (string= (save-excursion (forward-line -1) (buffer-substring-no-properties (point-at-bol) (point-at-eol))) " * ")
           (progn
-            (delete-backward-char 2)
+            (delete-char -2)
             (insert "/"))
         (insert "* ")))
   (indent-according-to-mode))

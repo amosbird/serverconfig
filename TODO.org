@@ -37,3 +37,19 @@
 * TODO good code integration
 
 ** https://github.com/abseil/abseil-cpp/blob/master/absl/container/internal/layout.h
+
+* TODO <2019-04-07 Sun>
+
+- [ ] what's the point of adding hash bits to the lower bit fields?
+
+  https://martin.ankerl.com/2016/09/21/very-fast-hashmap-in-c-part-3/
+
+- [ ] the memory consumption characteristic of multiple sub hashmaps
+
+   https://greg7mdp.github.io/parallel-hashmap/
+
+- [X] mail inline image (undoable)
+
+- [ ] setup the string map
+
+- [ ] finish writing the description

@@ -1,7 +1,10 @@
 ;;; ui/doom-modeline/config.el -*- lexical-binding: t; -*-
 
+(require 'doom-modeline)
+
 (defvar +amos--hostname (propertize (system-name) 'face '(:weight bold :foreground "#51afef")))
-(def-modeline-segment! host +amos--hostname)
+
+(doom-modeline-def-segment host +amos--hostname)
 
 (defface +amos-workspace-tab-selected-face '((t (:inherit 'highlight))) "." :group 'amos-face)
 (defface +amos-workspace-tab-face '((t (:inherit 'default))) "." :group 'amos-face)
@@ -20,7 +23,7 @@
                                           '+amos-workspace-tab-face)))
              (propertize "|" 'face '+amos-workspace-tab-face))
             (propertize "|" 'face '+amos-workspace-tab-face))))
-(def-modeline-segment! frame (+amos-frame-modeline))
+(doom-modeline-def-segment frame (+amos-frame-modeline))
 
 (defface keycast-key
   '((t (:weight bold
@@ -48,7 +51,7 @@
 
 (add-hook 'pre-command-hook 'keycast-mode-line-update t)
 
-(def-modeline-segment! keycast
+(doom-modeline-def-segment keycast
   (let* ((key (ignore-errors
                 (key-description keycast--this-command-keys)))
          (cmd keycast--this-command))
@@ -62,36 +65,6 @@
                        'face 'keycast-key)
            (format " %s" (propertize (if (symbolp cmd) (symbol-name cmd) "No Key")
                                      'face 'keycast-command)))))))
-
-(def-modeline-segment! amos-buffer-info
-  "Combined information about the current buffer, including the current working
-directory, the file name, and its state (modified, read-only or non-existent)."
-  (if buffer-file-name
-      (+amos-buffer-file-name)
-    (buffer-name)))
-
-(def-modeline-segment! amos-matches
-  "Displays: 1. the currently recording macro, 2. A current/total for the
-current search term (with anzu), 3. The number of substitutions being conducted
-with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
-  (let ((meta (concat (+doom-modeline--macro-recording)
-                      (+doom-modeline--anzu)
-                      (+doom-modeline--evil-substitute)
-                      (+doom-modeline--iedit))))
-    (concat (if (not buffer-file-name) (make-string 20 ?\ ))
-            (or (and (not (equal meta "")) meta)
-                " %I "))))
-
-(def-modeline-segment! amos-evil-state
-  (evil-state-property evil-state :name))
-
-(def-modeline-segment! amos-lcp
-  ""
-  " %l:%c %p ")
-
-(def-modeline! 'main
-  '(" " amos-matches " " amos-buffer-info amos-lcp selection-info frame)
-  '(" " keycast "  " host "  " buffer-encoding major-mode vcs flycheck))
 
 (defun +amos-buffer-file-name ()
   "~/Projects/FOSS/emacs/lisp/comint.el => ~/P/F/emacs/l/comint.el"
@@ -119,3 +92,42 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
               (concat line
                       (if relative-path (propertize relative-path 'face relative-props))
                       (propertize filename 'face file-props)))))))))
+
+(doom-modeline-def-segment amos-buffer-info
+  "Combined information about the current buffer, including the current working
+directory, the file name, and its state (modified, read-only or non-existent)."
+  (if buffer-file-name
+      (+amos-buffer-file-name)
+    (buffer-name)))
+
+(doom-modeline-def-segment amos-matches
+  "Displays: 1. the currently recording macro, 2. A current/total for the
+current search term (with anzu), 3. The number of substitutions being conducted
+with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
+  (let ((meta (concat (doom-modeline--macro-recording)
+                      (doom-modeline--anzu)
+                      (doom-modeline--evil-substitute)
+                      (doom-modeline--iedit)
+                      (doom-modeline--symbol-overlay)
+                      (doom-modeline--multiple-cursors))))
+    (concat (if (not buffer-file-name) (make-string 20 ?\ ))
+            (or (and (not (equal meta "")) meta)
+                " %I "))))
+
+(doom-modeline-def-segment amos-evil-state
+  (evil-state-property evil-state :name))
+
+(doom-modeline-def-segment amos-lcp
+  ""
+  " %l:%c %p ")
+
+(doom-modeline-def-modeline 'amos
+  '(" " amos-matches " " amos-buffer-info amos-lcp selection-info frame)
+  '(" " keycast "  " host "  " buffer-encoding major-mode vcs checker))
+  ;; '(bar matches buffer-info remote-host buffer-position parrot selection-info)
+  ;; '(misc-info minor-modes input-method buffer-encoding major-mode process vcs checker))
+
+(defun +amos|setup-custom-doom-modeline ()
+  (doom-modeline-set-modeline 'amos 'default))
+
+(add-hook 'doom-modeline-mode-hook '+amos|setup-custom-doom-modeline)

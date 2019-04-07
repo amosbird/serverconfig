@@ -98,7 +98,26 @@ default/fallback account."
                     ("flag:flagged" "Starred messages" ?s)
                     ("date:today..now" "Today's messages" ?t)
                     ("date:7d..now" "Last 7 days" ?w)
-                    ("mime:image/*" "Messages with images" ?p)))
+                    ("mime:image/*" "Messages with images" ?p))
+
+   mu4e-headers-has-child-prefix '("+" . "")
+   mu4e-headers-empty-parent-prefix '("-" . "")
+   mu4e-headers-first-child-prefix '("\\" . "")
+   mu4e-headers-duplicate-prefix '("=" . "")
+   mu4e-headers-default-prefix '("|" . "")
+   mu4e-headers-draft-mark '("D" . "")
+   mu4e-headers-flagged-mark '("F" . "")
+   mu4e-headers-new-mark '("N" . "")
+   mu4e-headers-passed-mark '("P" . "")
+   mu4e-headers-replied-mark '("R" . "")
+   mu4e-headers-seen-mark '("S" . "")
+   mu4e-headers-trashed-mark '("T" . "")
+   mu4e-headers-attach-mark '("a" . "")
+   mu4e-headers-encrypted-mark '("x" . "")
+   mu4e-headers-signed-mark '("s" . "")
+   mu4e-headers-unread-mark '("u" . "")
+
+   )
 
   ;; Add a column to display what email account the email belongs to.
   (add-to-list 'mu4e-header-info-custom
@@ -300,7 +319,8 @@ default/fallback account."
   :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
   :after mu4e
   :config
-  (mu4e-maildirs-extension-load)
+  (mu4e-maildirs-extension)
+  (setq mu4e-maildirs-extension-title nil)
   (add-hook #'mu4e-view-mode-hook (lambda () (hl-line-mode +1))))
 
 ;; (def-package! notmuch
@@ -310,10 +330,8 @@ default/fallback account."
 ;;   (require 'notmuch-company)
 ;;   (require 'notmuch-mua))
 
-
 ;; (def-package! org-mu4e
-;;   :commands org-mu4e-compose-org-mode
-;;   :init (add-hook 'mu4e-compose-mode-hook #'org-mu4e-compose-org-mode)
+;;   :hook (mu4e-compose-mode . org-mu4e-compose-org-mode)
 ;;   :config
 ;;   (setq org-mu4e-link-query-in-headers-mode nil
 ;;         org-mu4e-convert-to-html t)

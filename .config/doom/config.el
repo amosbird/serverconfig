@@ -281,7 +281,7 @@
 (remove-hook! 'doom-init-ui-hook #'blink-cursor-mode)
 (remove-hook! 'doom-real-buffer-functions #'doom-dired-buffer-p)
 ;; (remove-hook! 'doom-init-ui-hook #'show-paren-mode)
-(add-hook! 'doom-post-init-hook
+(add-hook! 'doom-after-init-modules-hook
   (realign-mode)
   (blink-cursor-mode -1)
   (setq-default truncate-lines nil))
@@ -3996,12 +3996,12 @@ inside or just after a citation command, only adds KEYS to it."
       (delete-horizontal-space)
       (concat (pcase (preceding-char)
                 (?\{ "")
-                (?, " ")
-                (_ ", "))
-              (s-join ", " keys)
+                (?, "")
+                (_ ","))
+              (s-join "," keys)
               (if (member (following-char) '(?\} ?,))
                   ""
-                ", ")))
+                ",")))
      ((and (equal (preceding-char) ?\})
            (require 'reftex-parse nil t)
            (save-excursion
@@ -4014,12 +4014,12 @@ inside or just after a citation command, only adds KEYS to it."
       (delete-horizontal-space t)
       (concat (pcase (preceding-char)
                 (?\{ "")
-                (?, " ")
-                (_ ", "))
-              (s-join ", " keys)
+                (?, "")
+                (_ ","))
+              (s-join "," keys)
               "}"))
      (t
-      (format "~\\cite{%s}" (s-join ", " keys))))))
+      (format "~\\cite{%s}" (s-join "," keys))))))
 
 (defun +amos-bibtex-completion-format-ref (key)
   (set-text-properties 0 (length key) nil key)
@@ -4172,35 +4172,9 @@ inside or just after a citation command, only adds KEYS to it."
 (after! tex
   (setq-default TeX-master t))
 
-;; (if tmux-p
-;;   (advice-add #'handle-switch-frame :override #'ignore))
-(if tmux-p
-  (advice-add #'internal-handle-focus-in :override #'ignore))
-
-;; (defun +amos*raise-frame-pre (&rest _)
-;;   (message "wtf"))
-
-;; (advice-add #'raise-frame :before #'+amos*raise-frame-pre)
-;;
 (defun +amos*evil-insert (&rest _)
   (evil-insert-state))
 (advice-add #'speed-type--setup :after #'+amos*evil-insert)
-
-(def-package! corral
-  :init
-  ;; Keep point position instead of following delimiters
-  ;; This is controlled by the variable corral-preserve-point, which can be set manually or through customize.
-
-  (setq corral-preserve-point t)
-
-  ;; Configure how corral handles punctuation/symbols
-  ;; Corral can be configured to use special syntax rules, which are set through the variable corral-syntax-entries. This variable is a list of syntax entries and follows the same syntax as modify-syntax-entry.
-
-  ;; For example, if you want to have # and * be treated as symbols so that they are wrapped as part of the word:
-
-  ;; (setq corral-syntax-entries '((?# "_")
-  ;;                               (?* "_")))
-  )
 
 (eldoc-add-command-completions
  "c-electric-"

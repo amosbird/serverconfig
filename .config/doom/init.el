@@ -17,7 +17,7 @@
        :ui
        doom
        doom-quit
-       doom-modeline
+       modeline
        hl-todo
        nav-flash
        unicode ;; for mu4e
@@ -64,6 +64,7 @@
 
 (setq all-the-icons-scale-factor 1.0)
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 14))
+(setq doom-modeline-icon nil)
 (setq display-line-numbers-type 'relative)
 ;; fix start-process xdg-open
 (setq process-connection-type nil)

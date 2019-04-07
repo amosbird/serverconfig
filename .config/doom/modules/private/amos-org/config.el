@@ -416,17 +416,16 @@ key to automatically delete list prefixes."
   (require 'ivy-bibtex)
   (when arg
     (bibtex-completion-clear-cache))
-  (let ((bibtex-completion-bibliography "/home/amos/git/serverconfig/amosbird.bib"))
     (bibtex-completion-init)
     (let* ((candidates (bibtex-completion-candidates))
-           (key (bibtex-completion-key-at-point))
-           (preselect (and key
-                           (cl-position-if (lambda (cand)
-                                             (member (cons "=key=" key)
-                                                     (cdr cand)))
-                                           candidates))))
+	   (key (bibtex-completion-key-at-point))
+	   (preselect (and key
+			   (cl-position-if (lambda (cand)
+					     (member (cons "=key=" key)
+						     (cdr cand)))
+					   candidates))))
       (ivy-read "BibTeX entries: "
-                candidates
-                :preselect preselect
-                :caller 'ivy-bibtex
-                :action ivy-bibtex-default-action))))
+		candidates
+		:preselect preselect
+		:caller 'ivy-bibtex
+		:action ivy-bibtex-default-action)))
