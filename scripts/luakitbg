@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+/home/amos/scripts/vivaldi "$@" x
+notify-send "Open Url" "$@"

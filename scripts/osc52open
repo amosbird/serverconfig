@@ -7,6 +7,6 @@ end
 set file $argv[1]
 set addr (ztaddr)
 set max 74994
-set esc "\033]52;z;"(printf 'xdg-open '(realpath $file) | head -c $max | base64 | tr -d '\r\n')"\07"
+set esc "\033]52;z;"(printf -- "%b" 'xdg-open '(realpath $file) | head -c $max | base64 | tr -d '\r\n')"\07"
 set esc "\033Ptmux;\033"$esc"\033\\" # tmux
-printf "$esc"
+printf -- "%b" "$esc"

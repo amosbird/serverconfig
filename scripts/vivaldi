@@ -46,12 +46,14 @@ do
     if [[ "$str" = *qutebrowser* ]]
     then
         flag="last"
-        bspc node $wid -f
         break
     fi
 done < <(bspc query -N -d focused -n .!hidden)
 
-if [[ "$flag" = last ]]
+if [ -n "$2" ]
+then
+    ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"tab-silent\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"
+elif [[ "$flag" = last ]]
 then
     ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"last-focused\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"
 else

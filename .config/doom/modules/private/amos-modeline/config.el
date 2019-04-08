@@ -131,3 +131,7 @@ with `evil-ex-substitute', and/or 4. The number of active `iedit' regions."
   (doom-modeline-set-modeline 'amos 'default))
 
 (add-hook 'doom-modeline-mode-hook '+amos|setup-custom-doom-modeline)
+(advice-add #'doom-modeline-set-pdf-modeline :override #'ignore)
+(advice-add #'doom-modeline-set-special-modeline :override #'ignore)
+(advice-add #'doom-modeline-set-media-modeline :override #'ignore)
+(advice-add #'doom-modeline-set-project-modeline :override #'ignore)
