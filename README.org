@@ -391,7 +391,8 @@ open emacs and do M-x all-the-icons-install-fonts
 /etc/X11/xorg.conf.d/*
 /etc/polkit-1/rules.d/*
 /etc/netctl/*
-~/.local/share/qutebrowser/greasemonkey/*
+~/.local/share/qutebrowser/greasemonkey
+~/.local/share/qutebrowser/userscripts
 
 mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Screencasts Music Books org/todos Documents/pdfs Documents/ppts Documents/docs
 

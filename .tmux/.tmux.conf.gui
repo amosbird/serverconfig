@@ -13,11 +13,8 @@ set -s visual-activity off
 set -s wrap-search off
 set -s status-interval 1
 
-set -s mode-fg colour6
-set -s mode-bg colour0
-
+set -s mode-style "bg=colour0, fg=colour6"
 set -s message-style "bg=#00346e, fg=#ffffd7"
-
 set -s status-style "bg=#222222, fg=#ffffd7"
 set -s status-left "#[bg=#009aff] ❐ #S "
 set -s status-left-length 400
@@ -47,6 +44,7 @@ bind C-c detach-client
 bind r source-file ~/.tmux/.tmux.conf.gui \; display '~/.tmux/.tmux.conf.gui sourced'
 bind c new-window
 bind d kill-pane
+bind u run-shell /home/amos/scripts/uploadtmuxpane
 bind k run-shell /home/amos/scripts/tmuxkillwindow
 
 bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel

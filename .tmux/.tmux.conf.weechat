@@ -18,6 +18,18 @@ set -g mode-keys vi
 set -g repeat-time 600
 set -g visual-activity off
 
+set -g mode-style "bg=colour0, fg=colour6"
+set -g message-style "bg=#00346e, fg=#ffffd7"
+set -g status-style "bg=#222222, fg=#ffffd7"
+
+bind 1 resize-pane -Z
+bind 2 split-window -v -c '#{pane_current_path}'
+bind 3 split-window -h -c '#{pane_current_path}'
+bind C-x send-prefix
+bind C-c detach-client
+bind c new-window
+bind d kill-pane
+
 bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection
 bind -Tcopy-mode-vi q send -X clear-selection
@@ -33,6 +45,53 @@ bind -Tcopy-mode-vi J resize-pane -D 5
 bind -Tcopy-mode-vi K resize-pane -U 5
 bind -Tcopy-mode-vi L resize-pane -R 5
 bind -Tcopy-mode-vi C-g send -X cancel
+
+set -g user-keys[0] "\e[70~"
+# URxvt.keysym.C-Return:      \033[5;30010~
+bind-key -T root User0 send-keys Enter
+# URxvt.keysym.C-S:           \033[5;30015~
+bind-key -T root S-F4 send-keys C-s
+# URxvt.keysym.C-D:           \033[5;30016~
+bind-key -T root S-F5 send-keys C-d
+# URxvt.keysym.C-J:           \033[5;30017~
+bind-key -T root S-F6 send-keys C-j
+# URxvt.keysym.M-S-BackSpace: \033[5;30018~
+bind-key -T root S-F6 send-keys C-j
+# URxvt.keysym.M-S-BackSpace: \033[5;30011~
+bind-key -T root S-F7 send-keys M-BSpace
+# URxvt.keysym.Shift-Return:  \033[5;30012~
+bind-key -T root S-F8 send-keys Enter
+# URxvt.keysym.C-comma:       \033[5;30013~
+bind-key -T root S-F9 previous-window
+# URxvt.keysym.C-period:      \033[5;30014~
+bind-key -T root S-F10 next-window
+
+bind-key -T root S-F12 send-keys C-]
+
+bind-key -T root f12 display
+bind-key -T root DoubleClick1Pane copy-mode\; send -X select-word
+bind-key -T root C-] send-keys Escape
+bind-key -T root C-j send-keys Down
+bind-key -T root C-k send-keys Up
+bind-key -T root M-1 select-window -t 1
+bind-key -T root M-2 select-window -t 2
+bind-key -T root M-3 select-window -t 3
+bind-key -T root M-4 select-window -t 4
+bind-key -T root M-5 select-window -t 5
+bind-key -T root M-6 select-window -t 6
+bind-key -T root M-7 select-window -t 7
+bind-key -T root M-8 select-window -t 8
+bind-key -T root M-9 select-window -t 9
+bind-key -T root MouseDown1Pane   select-pane -t = \; send-keys -M
+bind-key -T root MouseDown1Status select-window -t =
+bind-key -T root MouseDrag1Pane   if-shell -F -t = "#{mouse_any_flag}" "if -Ft= \"#{pane_in_mode}\" \"copy-mode -M\" \"send-keys -M\"" "copy-mode -M"
+bind-key -T root MouseDrag1Border resize-pane -M
+bind-key -T root WheelUpPane      if-shell -F -t = "#{mouse_any_flag}" "send-keys -M" "if -Ft= \"#{pane_in_mode}\" \"send-keys -M\" \"copy-mode -et=\""
+bind-key -T root WheelUpStatus    previous-window
+bind-key -T root WheelDownStatus  next-window
+bind-key -T root C-l send-keys C-l
+bind-key -T root M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
+bind-key -T root C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
 
 bind-key -T root C-] send-keys Escape
 bind-key -T root M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""

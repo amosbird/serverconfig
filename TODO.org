@@ -53,3 +53,5 @@
 - [ ] setup the string map
 
 - [ ] finish writing the description
+
+* TODO multiple terminal frame auto switch when compilation is outputing
