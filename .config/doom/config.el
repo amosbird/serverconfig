@@ -3135,128 +3135,85 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         company-complete-selection
         company-complete-common))
 
-;; (defalias '+amos/format-buffer #'+format/region-or-buffer)
 (defun +amos/format-buffer ()
   (interactive)
   (if (use-region-p)
       (call-interactively #'+format/region)
     (call-interactively #'+format/buffer)))
 
-;;   (pcase major-mode
-;;     ('c++-mode (clang-format-buffer))
-;;     (_
-;;      (save-excursion
-;;        (indent-region (point-min) (point-max) nil)))))
+(defun +amos-ignore-repeat (&rest names)
+  (dolist (name names)
+    (mapc #'evil-declare-ignore-repeat (all-completions name obarray 'commandp))))
 
-(mapc #'evil-declare-ignore-repeat
-      '(
-        +amos/complete
-        +amos/align-repeat-left
-        +amos/align-repeat-right
-        +amos/all-substitute
-        +amos/avy-goto-char-timer
-        +amos/avy-goto-url
-        +amos/avy-open-url
-        +amos/counsel-projectile-switch-project
-        +amos/counsel-recentf-no-cache
-        +amos/counsel-rg-cur-dir
-        +amos/counsel-rg-projectile
-        +amos/decrease-zoom
-        +amos/dired-jump
-        +amos/direnv-reload
-        +amos/dump-evil-jump-list
-        +amos/exec-shell-command
-        +amos/format-buffer
-        +amos/increase-zoom
-        +amos/kill-current-buffer
-        +amos/line-substitute
-        +amos/lsp-ui-imenu
-        +amos/launch
-        +amos/maybe-add-end-of-statement
-        +amos/other-window
-        +amos/paste-from-gui
-        +amos/projectile-find-file-no-cache
-        +amos/projectile-find-other-file
-        +amos/redisplay-and-recenter
-        +amos/region-substitute
-        +amos/rename-current-buffer-file
-        +amos/replace-defun
-        +amos/replace-last-sexp
-        +amos/reset-cursor
-        +amos/reset-zoom
-        +amos/shell-command-replace
-        +amos/smart-jumper-backward
-        +amos/smart-jumper-forward
-        +amos/swiper
-        +amos/switch-buffer
-        +amos/tmux-detach
-        +amos/tmux-fork-window
-        +amos/tmux-source
-        +amos/toggle-mc
-        +amos/wipe-current-buffer
-        +amos/workspace-delete
-        +amos/workspace-new
-        +amos/workspace-new-scratch
-        +amos/workspace-switch-left
-        +amos/workspace-switch-right
-        +amos/workspace-switch-to-1
-        +amos/workspace-switch-to-2
-        +amos/workspace-switch-to-3
-        +amos/workspace-switch-to-4
-        +amos/workspace-switch-to-5
-        +amos/workspace-switch-to-6
-        +amos/workspace-switch-to-7
-        +amos/workspace-switch-to-8
-        +amos/workspace-switch-to-9
-        +amos/yank-buffer-filename
-        +amos/yank-buffer-filename-nondir
-        +amos/yank-buffer-filename-with-line-position
-        +eval/buffer
-        +eval/region-and-replace
-        +evil:delete-this-file
-        company-select-next-or-abort
-        company-select-previous
-        counsel-dash-at-point
-        counsel-find-file
-        counsel-grep-or-swiper
-        counsel-projectile-rg
-        counsel-recentf
-        direnv-edit
-        doom/sudo-this-file
-        doom/toggle-fullscreen
-        easy-hugo
-        editorconfig-find-current-editorconfig
-        eval-defun
-        evil-commentary-line
-        evil-multiedit-match-all
-        execute-extended-command
-        find-file
-        flycheck-mode
-        flycheck-previous-error
-        flycheck-next-error
-        git-gutter:next-hunk
-        git-gutter:previous-hunk
-        git-gutter:revert-hunk
-        git-timemachine
-        highlight-indentation-current-column-mode
-        highlight-indentation-mode
-        ivy-resume
-        magit-blame
-        magit-status
-        pp-eval-last-sexp
-        rainbow-mode
-        rotate-text
-        save-buffer
-        save-buffer-maybe
-        switch-to-buffer
-        toggle-truncate-lines
-        undo-tree-redo
-        undo-tree-undo
-        vc-revert
-        whitespace-mode
-        yasdcv-translate-at-point
-        zygospore-toggle-delete-other-windows
-        ))
+(+amos-ignore-repeat
+        "+amos/align"
+        "+amos/all-substitute"
+        "+amos/avy"
+        "+amos/complete"
+        "+amos/counsel"
+        "+amos/decrease-zoom"
+        "+amos/dired-jump"
+        "+amos/direnv-reload"
+        "+amos/dump-evil-jump-list"
+        "+amos/exec-shell-command"
+        "+amos/format-buffer"
+        "+amos/increase-zoom"
+        "+amos/kill-current-buffer"
+        "+amos/launch"
+        "+amos/line-substitute"
+        "+amos/lsp-ui-imenu"
+        "+amos/maybe-add-end-of-statement"
+        "+amos/other-window"
+        "+amos/paste-from-gui"
+        "+amos/projectile"
+        "+amos/redisplay-and-recenter"
+        "+amos/region-substitute"
+        "+amos/rename-current-buffer-file"
+        "+amos/replace"
+        "+amos/reset"
+        "+amos/shell-command-replace"
+        "+amos/smart-jumper"
+        "+amos/swiper"
+        "+amos/switch-buffer"
+        "+amos/tmux"
+        "+amos/toggle-mc"
+        "+amos/wipe-current-buffer"
+        "+amos/workspace"
+        "+amos/yank-buffer-filename"
+        "+eval/buffer"
+        "+eval/region-and-replace"
+        "+evil:delete-this-file"
+        "cc-playground"
+        "company-select-next-or-abort"
+        "company-select-previous"
+        "counsel"
+        "direnv-edit"
+        "doom/sudo-this-file"
+        "doom/toggle-fullscreen"
+        "easy-hugo"
+        "editorconfig-find-current-editorconfig"
+        "eval-defun"
+        "evil-commentary-line"
+        "evil-multiedit"
+        "execute-extended-command"
+        "find-file"
+        "flycheck"
+        "git-gutter"
+        "git-timemachine"
+        "highlight-indentation-"
+        "ivy-resume"
+        "magit"
+        "pp-eval-last-sexp"
+        "rainbow-mode"
+        "rotate-text"
+        "save-buffer"
+        "switch-to-buffer"
+        "toggle-truncate-lines"
+        "undo-tree"
+        "vc-revert"
+        "whitespace-mode"
+        "yasdcv-translate-at-point"
+        "zygospore-toggle-delete-other-windows")
 
 ;; debugging eldoc
 (defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
@@ -3666,9 +3623,8 @@ as small) as possible, but don't signal an error."
           (goto-char 1)
           (forward-line 4)
           (narrow-to-region (point) (point-max)))
-        (swiper))
-    (swiper))
-  )
+        (swiper-isearch))
+    (swiper-isearch)))
 
 (defun +amos/wgrep-occur ()
   "Invoke the search+replace wgrep buffer on the current ag/rg search results."
@@ -4286,3 +4242,94 @@ inside or just after a citation command, only adds KEYS to it."
 (defun +amos/minibuffer-yank-word (&optional arg)
   (interactive "p")
   (+amos--minibuffer-yank-by #'forward-word arg))
+
+(defun +amos/counsel-view-evil-marks ()
+  (interactive)
+  (let* ((all-markers
+          (append (cl-remove-if (lambda (m)
+                                  (or (not (and (>= (car m) ?a) (<= (car m) ?z)))
+                                      (not (markerp (cdr m)))))
+                                evil-markers-alist)
+                  (cl-remove-if (lambda (m)
+                                  (or (not (and (>= (car m) ?A) (<= (car m) ?Z)))
+                                      (not (markerp (cdr m)))))
+                                (default-value 'evil-markers-alist))))
+         (all-cands
+          (mapcar (lambda (m)
+                    (with-current-buffer (marker-buffer (cdr m))
+                      (save-excursion
+                        (save-restriction
+                          (widen)
+                          (goto-char (cdr m))
+                          (back-to-indentation)
+                          (list
+                           (format "%s:           %s"
+                                   (buffer-name)
+                                   (buffer-substring
+                                    (point)
+                                    (line-end-position)))
+                           (point)
+                           (buffer-name))))))
+                  all-markers))
+         (-compare-fn (lambda (x y) (string= (nth 0 x) (nth 0 y))))
+         (cands (-distinct all-cands)))
+    (if cands
+        (ivy-read "Mark: " cands
+                  :require-match t
+                  :action (lambda (cand)
+                            (let ((pos (nth 1 cand))
+                                  (buf-name (nth 2 cand)))
+                              (switch-to-buffer buf-name)
+                              (when pos
+                                (unless (<= (point-min) pos (point-max))
+                                  (if widen-automatically
+                                      (widen)
+                                    (error "\
+Position of selected mark outside accessible part of buffer")))
+                                (goto-char pos)
+                                (+amos/recenter))))
+                  :caller '+amos/counsel-view-evil-marks)
+      (message "Mark ring is empty"))))
+
+(defvar +amos-evil-global-marks ?A)
+(defvar-local +amos-evil-local-marks ?a)
+(defun +amos/evil-push-mark (&optional global)
+  (interactive)
+  (+amos/recenter)
+  (save-excursion
+    (move-beginning-of-line 1)
+    (if global
+        (let ((-compare-fn (lambda (x y) (and (markerp (cdr x)) (equal (marker-position x) (car y)) (equal (marker-buffer) (cdr y))))))
+          (when (not (-contains? (default-value 'evil-markers-alist) (cons (point) (current-buffer))))
+            (evil-set-marker +amos-evil-global-marks )
+            (if (= +amos-evil-global-marks ?Z)
+                (setq +amos-evil-global-marks ?A)
+              (cl-incf +amos-evil-global-marks))))
+      (let ((-compare-fn (lambda (x y) (and (markerp (cdr x)) (equal (marker-position x) (car y)) (equal (marker-buffer) (cdr y))))))
+        (when (not (-contains? evil-markers-alist (cons (point) (current-buffer))))
+          (evil-set-marker +amos-evil-local-marks )
+          (if (= +amos-evil-local-marks ?z)
+              (setq +amos-evil-local-marks ?a)
+            (cl-incf +amos-evil-local-marks)))))))
+
+;; do not truncate the last dir
+(defun +amos*shrink-path--dirs-internal (full-path &optional truncate-all)
+  (let* ((home (getenv "HOME"))
+         (path (replace-regexp-in-string
+                (s-concat "^" home) "~" full-path))
+         (split (s-split "/" path 'omit-nulls))
+         (split-len (length split))
+         shrunk)
+    (->> split
+         (--map-indexed (if (= it-index (1- split-len))
+                            it
+                          (shrink-path--truncate it)))
+         (s-join "/")
+         (setq shrunk))
+    (s-concat (unless (s-matches? (rx bos (or "~" "/")) shrunk) "/")
+              shrunk
+              (unless (s-ends-with? "/" shrunk) "/"))))
+(advice-add #'shrink-path--dirs-internal :override #'+amos*shrink-path--dirs-internal)
+
+(after! doom-modeline
+  (setq doom-modeline-buffer-file-name-style 'truncate-with-project))

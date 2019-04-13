@@ -118,7 +118,7 @@ set history remove-duplicates 5000
 alias -a w = dashboard expressions watch
 alias -a W = dashboard expressions unwatch
 
-# set auto-solib-add off
+set auto-solib-add off
 
 # useful auto-redraw hooks
 

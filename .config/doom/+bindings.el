@@ -32,7 +32,7 @@
  "M-6"           #'+amos/workspace-switch-to-6
  "M-7"           #'+amos/workspace-switch-to-7
  "M-8"           #'+amos/workspace-switch-to-8
- "M-9"           #'+amos/workspace-switch-to-9
+ ;; "M-9"           #'+amos/workspace-switch-to-9
  "S-<f9>"        #'+amos/workspace-switch-left
  "S-<f10>"       #'+amos/workspace-switch-right
  "C-,"           #'+amos/workspace-switch-left
@@ -173,6 +173,9 @@
  :m "gy"                     #'evil-commentary-yank
  :m "gc"                     #'evil-commentary
  :m "gl"                     #'evil-commentary-line
+ :n "m"                      #'+amos/evil-push-mark
+ :n "M"                      (lambda! (+amos/evil-push-mark t))
+ :n "M-9"                    #'+amos/counsel-view-evil-marks
  :m "gs"                     (lambda! (evil-goto-mark ?s))
  :m "gb"                     (lambda! (evil-goto-mark ?b))
  :m "gm"                     (lambda! (evil-goto-mark ?m))
