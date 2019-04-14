@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+shopt -s dotglob
+cd
+tar --exclude=home.tgz cfz home.tgz ./*
