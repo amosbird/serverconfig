@@ -2687,7 +2687,8 @@ By default the last line."
   (if company-selection-changed
       (+amos/company-search-abort)
     (company-abort)
-    (run-with-timer 0.001 nil #'call-interactively (key-binding (this-command-keys)))))
+    (evil-normal-state)
+    (cl-decf evil-repeat-pos)))
 
 (defun +amos/company-search-abort ()
   (interactive)
@@ -2696,7 +2697,8 @@ By default the last line."
         (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
         (company-complete-selection))
     (company-abort))
-  (run-with-timer 0.001 nil #'call-interactively (key-binding (this-command-keys))))
+  (evil-normal-state)
+  (cl-decf evil-repeat-pos))
 
 (defun ediff-copy-both-to-C ()
   (interactive)
@@ -3113,13 +3115,13 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (advice-add 'find-file :override #'+amos*find-file)
 
 (mapc #'evil-declare-change-repeat
-      '(company-complete-mouse
-        ;; +amos/maybe-add-end-of-statement
+      '(
+        +amos/complete
+        +amos/complete-filter
         +amos/company-abort
         +amos/company-search-abort
         amos-company-files
-        company-complete-selection
-        company-complete-common))
+        ))
 
 (defun +amos/format-buffer ()
   (interactive)
@@ -3136,7 +3138,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         "+amos/align"
         "+amos/all-substitute"
         "+amos/avy"
-        "+amos/complete"
         "+amos/counsel"
         "+amos/decrease-zoom"
         "+amos/dired-jump"
@@ -3148,7 +3149,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         "+amos/kill-current-buffer"
         "+amos/launch"
         "+amos/line-substitute"
-        "+amos/lsp-ui-imenu"
+        "+amos/lsp"
         "+amos/maybe-add-end-of-statement"
         "+amos/other-window"
         "+amos/paste-from-gui"
@@ -3172,10 +3173,10 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         "+eval/region-and-replace"
         "+evil:delete-this-file"
         "cc-playground"
-        "company-select-next-or-abort"
-        "company-select-previous"
+        "ccls"
         "counsel"
-        "direnv-edit"
+        "dired"
+        "direnv"
         "doom/sudo-this-file"
         "doom/toggle-fullscreen"
         "easy-hugo"
@@ -3192,11 +3193,14 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         "git-timemachine"
         "highlight-indentation-"
         "ivy-resume"
+        "lsp"
         "magit"
+        "move-text"
         "pp-eval-last-sexp"
-        "rainbow-mode"
+        "rainbow"
         "rotate-text"
         "save-buffer"
+        "split-window"
         "switch-to-buffer"
         "toggle-truncate-lines"
         "undo-tree"
@@ -4323,6 +4327,7 @@ Position of selected mark outside accessible part of buffer")))
 (advice-add #'shrink-path--dirs-internal :override #'+amos*shrink-path--dirs-internal)
 
 (after! doom-modeline
+  (setq doom-modeline-icon nil)
   (setq doom-modeline-buffer-file-name-style 'truncate-with-project))
 
 (advice-add #'doom-modeline--active :override (lambda () t))
