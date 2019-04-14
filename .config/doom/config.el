@@ -3186,6 +3186,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         "evil-multiedit"
         "evil-next-line"
         "evil-previous-line"
+        "+amos/evil-previous-visual-line"
+        "+amos/evil-next-visual-line"
         "execute-extended-command"
         "find-file"
         "flycheck"
@@ -4332,3 +4334,17 @@ Position of selected mark outside accessible part of buffer")))
 
 (advice-add #'doom-modeline--active :override (lambda () t))
 (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil)
+
+(evil-define-motion +amos/evil-next-visual-line (count)
+  "Move the cursor COUNT screen lines down."
+  :type exclusive
+  (let ((line-move-visual t)
+        (temporary-goal-column))
+    (evil-line-move (or count 1))))
+
+(evil-define-motion +amos/evil-previous-visual-line (count)
+  "Move the cursor COUNT screen lines up."
+  :type exclusive
+  (let ((line-move-visual t)
+        (temporary-goal-column))
+    (evil-line-move (- (or count 1)))))

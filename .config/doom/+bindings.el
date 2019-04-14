@@ -66,6 +66,8 @@
  :m "W"                      #'+amos/evil-forward-subword-begin
  :m "E"                      #'+amos/evil-forward-subword-end
  :m "B"                      #'+amos/evil-backward-subword-begin
+ :m "gj"                     #'+amos/evil-next-visual-line
+ :m "gk"                     #'+amos/evil-previous-visual-line
  :ni "M-b"                   #'+amos/backward-word-insert
  :ni "M-B"                   #'+amos/backward-subword-insert
  :ni "M-f"                   #'+amos/forward-word-insert
