@@ -3143,7 +3143,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos-ignore-repeat (&rest names)
   (dolist (name names)
-    (mapc #'evil-declare-ignore-repeat (all-completions name obarray 'commandp))))
+  (dolist (command (all-completions name obarray 'commandp))
+    (evil-declare-ignore-repeat (intern command)))))
 
 (+amos-ignore-repeat
         "+amos/align"
@@ -3170,6 +3171,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         "+amos/region-substitute"
         "+amos/rename-current-buffer-file"
         "+amos/replace"
+        "+amos/redisplay-and-recenter"
         "+amos/reset"
         "+amos/shell-command-replace"
         "+amos/smart-jumper"
