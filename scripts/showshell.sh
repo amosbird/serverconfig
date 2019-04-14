@@ -29,8 +29,8 @@ else
     w=${wh[0]}
     h=${wh[1]}
     w=$((w/2 - 7))
-    h=$((h - 12))
-    y=6
+    h=$((h - 20))
+    y=10
     if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"
     then
         bspc node "$id" -g hidden

@@ -44,6 +44,7 @@ bind C-c detach-client
 bind r source-file ~/.tmux/.tmux.conf.amos \; display '~/.tmux/.tmux.conf.amos sourced'
 bind c new-window
 bind d kill-pane
+bind e run-shell /home/amos/scripts/edittmuxpane
 bind u run-shell /home/amos/scripts/uploadtmuxpane
 bind k run-shell /home/amos/scripts/tmuxkillwindow
 

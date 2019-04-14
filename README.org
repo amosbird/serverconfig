@@ -326,11 +326,11 @@ cd mu && sh autogen.sh && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone https://github.com/llvm/llvm-project
-cd llvm-project && build llvm
+cd llvm-project && $BUILD llvm
 
 cd ~/git
 git clone --recursive git@github.com:amosbird/ccls
-cd ccls && build ccls
+cd ccls && $BUILD ccls
 
 cd ~/git
 git clone git@github.com:amosbird/fcitx
@@ -362,13 +362,12 @@ git clone https://github.com/amosbird/doom-emacs -b amos ~/.emacs.d
 cd ~/.emacs.d && make quickstart
 open emacs and do M-x all-the-icons-install-fonts
 
-
+~/.userpass
 /usr/local/bin/Telegram
 /etc/modprobe.d/modprobe.conf
 ~/.gnupg
 ~/.getmail
 ~/passwords
-~/.userpass
 ~/.msmtprc
 ~/.stardict
 /usr/local/bin/obfs-local
