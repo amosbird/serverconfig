@@ -1953,24 +1953,10 @@ representation of `NUMBER' is smaller."
 ;;   (advice-add #'fcitx--activate-proc :override #'+amos/fcitx--activate-proc)
 ;;   (advice-add #'fcitx--deactivate-proc :override #'+amos/fcitx--deactivate-proc))
 
-(require 'fcitx)
-(fcitx-aggressive-setup)
 
-(unless gui-p
-  (defun +amos*fcitx--activate-proc ()
-    ;; (shell-command! "fcitxenable")
-    )
-
-  (defun +amos*fcitx--deactivate-proc ()
-    ;; (shell-command! "fcitxdisable")
-    )
-
-  (defun +amos*fcitx--active-p-proc ()
-    ;; (string= "2\n" (shell-command-to-string "fcitxstatus"))
-    )
-  (advice-add #'fcitx--activate-proc :override #'+amos*fcitx--activate-proc)
-  (advice-add #'fcitx--deactivate-proc :override #'+amos*fcitx--deactivate-proc)
-  (advice-add #'fcitx--active-p-proc :override #'+amos*fcitx--active-p-proc))
+(when gui-p
+  (require 'fcitx)
+  (fcitx-aggressive-setup))
 
 (defun first-non-dired-buffer ()
   (--first (not (with-current-buffer it (derived-mode-p 'dired-mode))) (buffer-list)))
@@ -3197,6 +3183,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         "eval-defun"
         "evil-commentary-line"
         "evil-multiedit"
+        "evil-next-line"
+        "evil-previous-line"
         "execute-extended-command"
         "find-file"
         "flycheck"
@@ -3822,6 +3810,7 @@ will be killed."
 (add-hook! 'evil-sticky-state-exit-hook #'+amos/reset-cursor)
 
 (def-package! speed-type
+  :commands (speed-type-text)
   :config
   (map!
    :map speed-type--completed-keymap
