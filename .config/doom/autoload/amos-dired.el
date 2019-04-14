@@ -72,6 +72,8 @@
       (+amos/find-file jump-history t))))
 
 (defun +amos--get-all-jump-dirs ()
+  (unless (file-directory-p default-directory)
+    (cd "~"))
   (split-string (shell-command-to-string "jump top") "\n" t))
 
 ;;;###autoload
@@ -142,7 +144,9 @@
 
 ;;;###autoload
 (defun +amos-store-jump-history ()
-  (shell-command! "jump chdir || true"))
+  (if (file-directory-p default-directory)
+      (shell-command! "jump chdir || true")
+    (cd "~")))
 
 ;;;###autoload
 (defun +amos/dired-jump ()
