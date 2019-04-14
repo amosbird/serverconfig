@@ -4333,3 +4333,6 @@ Position of selected mark outside accessible part of buffer")))
 
 (after! doom-modeline
   (setq doom-modeline-buffer-file-name-style 'truncate-with-project))
+
+(advice-add #'doom-modeline--active :override (lambda () t))
+(set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil)
