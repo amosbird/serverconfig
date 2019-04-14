@@ -2,4 +2,4 @@
 
 shopt -s dotglob
 cd
-tar --exclude=home.tgz cfz home.tgz ./*
+tar --exclude=home.tgz -czf home.tgz ./*
