@@ -1399,9 +1399,9 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (def-package! lsp-mode
   :init
   (setq
-        lsp-prefer-flymake nil
-        lsp-enable-indentation nil
-        lsp-auto-guess-root t)
+   lsp-prefer-flymake nil
+   lsp-enable-indentation nil
+   lsp-auto-guess-root t)
   :config
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
 
@@ -2806,9 +2806,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -3135,85 +3135,85 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 
 (defun +amos-ignore-repeat (&rest names)
   (dolist (name names)
-  (dolist (command (all-completions name obarray 'commandp))
-    (evil-declare-ignore-repeat (intern command)))))
+    (dolist (command (all-completions name obarray 'commandp))
+      (evil-declare-ignore-repeat (intern command)))))
 
 (+amos-ignore-repeat
-        "+amos/align"
-        "+amos/all-substitute"
-        "+amos/avy"
-        "+amos/counsel"
-        "+amos/decrease-zoom"
-        "+amos/dired"
-        "+amos/direnv-reload"
-        "+amos/dump-evil-jump-list"
-        "+amos/exec-shell-command"
-        "+amos/format-buffer"
-        "+amos/increase-zoom"
-        "+amos/kill-current-buffer"
-        "+amos/launch"
-        "+amos/line-substitute"
-        "+amos/lsp"
-        "+amos/maybe-add-end-of-statement"
-        "+amos/other-window"
-        "+amos/paste-from-gui"
-        "+amos/projectile"
-        "+amos/redisplay-and-recenter"
-        "+amos/region-substitute"
-        "+amos/rename-current-buffer-file"
-        "+amos/replace"
-        "+amos/redisplay-and-recenter"
-        "+amos/reset"
-        "+amos/shell-command-replace"
-        "+amos/smart-jumper"
-        "+amos/swiper"
-        "+amos/switch-buffer"
-        "+amos/tmux"
-        "+amos/toggle-mc"
-        "+amos/wipe-current-buffer"
-        "+amos/workspace"
-        "+amos/yank-buffer-filename"
-        "+eval/buffer"
-        "+eval/region-and-replace"
-        "+evil:delete-this-file"
-        "cc-playground"
-        "ccls"
-        "counsel"
-        "dired"
-        "direnv"
-        "doom/sudo-this-file"
-        "doom/toggle-fullscreen"
-        "easy-hugo"
-        "editorconfig-find-current-editorconfig"
-        "eval-defun"
-        "evil-commentary-line"
-        "evil-multiedit"
-        "evil-next-line"
-        "evil-previous-line"
-        "+amos/evil-previous-visual-line"
-        "+amos/evil-next-visual-line"
-        "execute-extended-command"
-        "find-file"
-        "flycheck"
-        "git-gutter"
-        "git-timemachine"
-        "highlight-indentation-"
-        "ivy-resume"
-        "lsp"
-        "magit"
-        "move-text"
-        "pp-eval-last-sexp"
-        "rainbow"
-        "rotate-text"
-        "save-buffer"
-        "split-window"
-        "switch-to-buffer"
-        "toggle-truncate-lines"
-        "undo-tree"
-        "vc-revert"
-        "whitespace-mode"
-        "yasdcv-translate-at-point"
-        "zygospore-toggle-delete-other-windows")
+ "+amos/align"
+ "+amos/all-substitute"
+ "+amos/avy"
+ "+amos/counsel"
+ "+amos/decrease-zoom"
+ "+amos/dired"
+ "+amos/direnv-reload"
+ "+amos/dump-evil-jump-list"
+ "+amos/exec-shell-command"
+ "+amos/format-buffer"
+ "+amos/increase-zoom"
+ "+amos/kill-current-buffer"
+ "+amos/launch"
+ "+amos/line-substitute"
+ "+amos/lsp"
+ "+amos/maybe-add-end-of-statement"
+ "+amos/other-window"
+ "+amos/paste-from-gui"
+ "+amos/projectile"
+ "+amos/redisplay-and-recenter"
+ "+amos/region-substitute"
+ "+amos/rename-current-buffer-file"
+ "+amos/replace"
+ "+amos/redisplay-and-recenter"
+ "+amos/reset"
+ "+amos/shell-command-replace"
+ "+amos/smart-jumper"
+ "+amos/swiper"
+ "+amos/switch-buffer"
+ "+amos/tmux"
+ "+amos/toggle-mc"
+ "+amos/wipe-current-buffer"
+ "+amos/workspace"
+ "+amos/yank-buffer-filename"
+ "+eval/buffer"
+ "+eval/region-and-replace"
+ "+evil:delete-this-file"
+ "cc-playground"
+ "ccls"
+ "counsel"
+ "dired"
+ "direnv"
+ "doom/sudo-this-file"
+ "doom/toggle-fullscreen"
+ "easy-hugo"
+ "editorconfig-find-current-editorconfig"
+ "eval-defun"
+ "evil-commentary-line"
+ "evil-multiedit"
+ "evil-next-line"
+ "evil-previous-line"
+ "+amos/evil-previous-visual-line"
+ "+amos/evil-next-visual-line"
+ "execute-extended-command"
+ "find-file"
+ "flycheck"
+ "git-gutter"
+ "git-timemachine"
+ "highlight-indentation-"
+ "ivy-resume"
+ "lsp"
+ "magit"
+ "move-text"
+ "pp-eval-last-sexp"
+ "rainbow"
+ "rotate-text"
+ "save-buffer"
+ "split-window"
+ "switch-to-buffer"
+ "toggle-truncate-lines"
+ "undo-tree"
+ "vc-revert"
+ "whitespace-mode"
+ "yasdcv-translate-at-point"
+ "zygospore-toggle-delete-other-windows")
 
 ;; debugging eldoc
 (defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
@@ -3256,32 +3256,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (shell-command-to-string (concat "upload " filename " out"))))
     (if tmp (delete-file filename))))
 
-(defun +amos*ivy--insert-minibuffer (text)
-  "Insert TEXT into minibuffer with appropriate cleanup."
-  (let ((resize-mini-windows nil)
-        (update-fn (ivy-state-update-fn ivy-last))
-        (old-mark (marker-position (mark-marker)))
-        deactivate-mark)
-    (ivy--cleanup)
-    (when update-fn
-      (funcall update-fn))
-    (ivy--insert-prompt)
-    ;; Do nothing if while-no-input was aborted.
-    (when (stringp text)
-      (if ivy-display-function
-          (funcall ivy-display-function text)
-        (ivy-display-function-fallback text)))
-    (unless (frame-root-window-p (minibuffer-window))
-      (with-selected-window (minibuffer-window)
-        (set-window-text-height nil
-                                (+ ivy-height
-                                   (if ivy-add-newline-after-prompt
-                                       1
-                                     0)))))
-    ;; prevent region growing due to text remove/add
-    (when (region-active-p)
-      (set-mark old-mark))))
-(advice-add #'ivy--insert-minibuffer :override #'+amos*ivy--insert-minibuffer)
 (advice-add #'semantic-mode :around #'doom*shut-up)
 
 (defun my-inhibit-semantic-p ()
@@ -4239,10 +4213,10 @@ inside or just after a citation command, only adds KEYS to it."
             (eol (line-end-position))
             end)
         (unwind-protect
-             (progn (apply fn args)
-                    (setq end (goto-char (max bol (min (point) eol))))
-                    (setq text (buffer-substring-no-properties beg end))
-                    (ivy--pulse-region beg end))
+            (progn (apply fn args)
+                   (setq end (goto-char (max bol (min (point) eol))))
+                   (setq text (buffer-substring-no-properties beg end))
+                   (ivy--pulse-region beg end))
           (unless text
             (goto-char beg)))))
     (when text
@@ -4359,6 +4333,33 @@ Position of selected mark outside accessible part of buffer")))
         (temporary-goal-column))
     (evil-line-move (- (or count 1)))))
 
+(defun +amos*ivy--insert-minibuffer (text)
+  "Insert TEXT into minibuffer with appropriate cleanup."
+  (let ((resize-mini-windows nil)
+        (update-fn (ivy-state-update-fn ivy-last))
+        (old-mark (marker-position (mark-marker)))
+        deactivate-mark)
+    (ivy--cleanup)
+    (when (and update-fn (not (memq this-command '(ivy-call +amos/swiper-isearch-forward +amos/swiper-isearch-backward))))
+      (funcall update-fn))
+    (ivy--insert-prompt)
+    ;; Do nothing if while-no-input was aborted.
+    (when (stringp text)
+      (if ivy-display-function
+          (funcall ivy-display-function text)
+        (ivy-display-function-fallback text)))
+    (unless (frame-root-window-p (minibuffer-window))
+      (with-selected-window (minibuffer-window)
+        (set-window-text-height nil
+                                (+ ivy-height
+                                   (if ivy-add-newline-after-prompt
+                                       1
+                                     0)))))
+    ;; prevent region growing due to text remove/add
+    (when (region-active-p)
+      (set-mark old-mark))))
+(advice-add #'ivy--insert-minibuffer :override #'+amos*ivy--insert-minibuffer)
+
 (defun +amos*swiper-isearch-function (str)
   "Collect STR matches in the current buffer for `swiper-isearch'."
   (let* ((re-full (funcall ivy--regex-function str))
@@ -4370,6 +4371,9 @@ Position of selected mark outside accessible part of buffer")))
             (pt-hist (cdr (assoc str swiper--isearch-point-history)))
             cands
             idx-found
+            (prev-lb -1)
+            prev-line
+            (i 0)
             (idx 0))
         (with-ivy-window
           (save-excursion
@@ -4381,15 +4385,87 @@ Position of selected mark outside accessible part of buffer")))
                        (>= (match-beginning 0) (cdar swiper--isearch-point-history)))
                   (push (cons str (match-beginning 0)) swiper--isearch-point-history)
                   (setq idx-found idx)))
-              (cl-incf idx)
-              (let ((line (buffer-substring
-                           (line-beginning-position)
-                           (line-end-position))))
-                (put-text-property 0 1 'point (point) line)
-                (push line cands))
-              (forward-line 1))))
+              (let* ((lb (line-beginning-position))
+                     (line
+                      (if (= lb prev-lb)
+                          prev-line
+                        (setq i 0)
+                        (buffer-substring
+                         lb
+                         (line-end-position)))))
+                (put-text-property i (1+ i) 'point (point) line)
+                (put-text-property 0 1 'num i line)
+                (when (= i 0)
+                  (cl-incf idx)
+                  (push line cands)
+                  (setq prev-lb lb)
+                  (setq prev-line line))
+                (cl-incf i)))))
         (setq ivy--old-re re)
         (when idx-found
           (ivy-set-index idx-found))
         (setq ivy--old-cands (nreverse cands))))))
 (advice-add #'swiper-isearch-function :override #'+amos*swiper-isearch-function)
+
+(defvar-local +amos-swiper-isearch-last-line nil)
+(defvar-local +amos-swiper-isearch-last-point nil)
+
+(defun +amos-swiper-isearch-forward (x)
+  (let ((i 1)
+        (l (length x))
+        (p (get-text-property 0 'point x)))
+    (goto-char p)
+    (when (and +amos-swiper-isearch-last-line (= +amos-swiper-isearch-last-line (line-beginning-position)))
+      ;; finding the right pos
+      (while (and p +amos-swiper-isearch-last-point (<= p +amos-swiper-isearch-last-point) (< i l))
+        (setq p (get-text-property i 'point x))
+        (cl-incf i))
+      (if p (goto-char p)))
+    (setq +amos-swiper-isearch-last-line (line-beginning-position))
+    (setq +amos-swiper-isearch-last-point p)))
+
+(defun +amos-swiper-isearch-backward (x)
+  (let* ((l (length x))
+         (i (get-text-property 0 'num x))
+         (p (get-text-property i 'point x)))
+    (goto-char p)
+    (cl-decf i)
+    (when (and +amos-swiper-isearch-last-line (= +amos-swiper-isearch-last-line (line-beginning-position)))
+      ;; finding the right pos
+      (while (and p +amos-swiper-isearch-last-point (>= p +amos-swiper-isearch-last-point) (<= 0 i))
+        (setq p (get-text-property i 'point x))
+        (cl-decf i))
+      (if (< i 0) (setq p nil))
+      (if p (goto-char p)))
+    (setq +amos-swiper-isearch-last-line (line-beginning-position))
+    (setq +amos-swiper-isearch-last-point p)))
+
+(defun +amos-swiper-isearch-action (x)
+  "Move to X for `swiper-isearch'."
+  (if (> (length x) 0)
+      (with-ivy-window
+        (if (string= "C-r" (key-description (this-command-keys)))
+            (+amos-swiper-isearch-backward x)
+          (+amos-swiper-isearch-forward x))
+        (isearch-range-invisible (line-beginning-position)
+                                 (line-end-position))
+        (unless (eq ivy-exit 'done)
+          (swiper--cleanup)
+          (swiper--add-overlays (ivy--regex ivy-text))
+          (swiper--add-cursor-overlay)))
+    (swiper--cleanup)))
+(advice-add #'swiper-isearch-action :override #'+amos-swiper-isearch-action)
+(defun +amos/swiper-isearch-forward ()
+  (interactive)
+  (ivy-call)
+  (unless (with-ivy-window +amos-swiper-isearch-last-point)
+    (let ((ivy-calling t))
+      (ivy-next-line-or-history))))
+
+(defun +amos/swiper-isearch-backward ()
+  (interactive)
+  (ivy-call)
+  (unless (with-ivy-window +amos-swiper-isearch-last-point)
+    (let ((ivy-calling t))
+      (ivy-previous-line-or-history 1))))
+(advice-add #'swiper--init :before (lambda! (setq +amos-swiper-isearch-last-point nil +amos-swiper-isearch-last-line nil)))

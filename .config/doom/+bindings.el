@@ -478,6 +478,10 @@
 
  ;; ivy
  (:after ivy
+   :map swiper-map
+   "C-s" #'+amos/swiper-isearch-forward
+   "C-r"    #'+amos/swiper-isearch-backward
+
    :map ivy-minibuffer-map
    "C-SPC" #'ivy-restrict-to-matches
    "C-s" #'ivy-restrict-to-matches
@@ -600,7 +604,7 @@
    :gn "P"        #'edebug-view-outside ;; same as v
    :gn "W"        #'edebug-toggle-save-windows
    :gn "?"        #'edebug-help
-   :gn "d"        #'edebug-backtrace
+   :gn "d"        #'edebug-pop-to-backtrace
    :gn "-"        #'negative-argument
    :gn "="        #'edebug-temp-display-freq-count)
 
