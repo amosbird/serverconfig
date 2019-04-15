@@ -1869,7 +1869,6 @@ representation of `NUMBER' is smaller."
   (interactive)
   (shell-command! "direnv allow")
   (direnv-update-environment)
-  (kill-buffer " *direnv*")
   (direnv-mode +1))
 
 (setq +amos-end-of-statement-regex nil)
