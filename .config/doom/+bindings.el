@@ -6,7 +6,7 @@
 
 (general-define-key
  :keymaps 'override
- :states '(normal insert visual emacs sticky)
+ :states '(normal insert visual emacs sticky struct)
  "C-h d"         (lambda!
                   (xref-find-definitions
                    (let* ((backend (xref-find-backend)))

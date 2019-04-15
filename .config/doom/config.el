@@ -294,6 +294,7 @@
                       ("motion" "#cd96cd" box)
                       ("lisp" "#ff6eb4" bar)
                       ("sticky" "#B59FEA" box)
+                      ("struct" "#8991EF" box)
                       ("iedit" "#ff3030" box)
                       ("multiedit" "#ff3030" box)
                       ("multiedit-insert" "#ff3030" bar)
@@ -3816,6 +3817,16 @@ will be killed."
  "u"            #'evil-scroll-up
  "d"            #'evil-scroll-down)
 (add-hook! 'evil-sticky-state-exit-hook #'+amos/reset-cursor)
+(add-to-list 'doom-evil-state-alist '(?s . sticky))
+
+(evil-define-state struct
+  "struct state.
+ Used to do structure editing modifiers."
+  :tag " <Struct> ")
+
+(set-keymap-parent evil-struct-state-map (make-composed-keymap evil-motion-state-map evil-normal-state-map))
+(add-hook! 'evil-struct-state-exit-hook #'+amos/reset-cursor)
+(add-to-list 'doom-evil-state-alist '(?t . struct))
 
 (def-package! speed-type
   :commands (speed-type-text)
@@ -4350,3 +4361,38 @@ Position of selected mark outside accessible part of buffer")))
   (let ((line-move-visual t)
         (temporary-goal-column))
     (evil-line-move (- (or count 1)))))
+
+(defun +amos*swiper-isearch-function (str)
+  "Collect STR matches in the current buffer for `swiper-isearch'."
+  (let* ((re-full (funcall ivy--regex-function str))
+         (re (ivy-re-to-str re-full)))
+    (unless (string= re "")
+      (let ((re (if (string-match "\\`\\(.*\\)[\\]|\\'" re)
+                    (match-string 1 re)
+                  re))
+            (pt-hist (cdr (assoc str swiper--isearch-point-history)))
+            cands
+            idx-found
+            (idx 0))
+        (with-ivy-window
+          (save-excursion
+            (goto-char (point-min))
+            (while (re-search-forward re nil t)
+              (unless idx-found
+                (when (or
+                       (eq (match-beginning 0) pt-hist)
+                       (>= (match-beginning 0) (cdar swiper--isearch-point-history)))
+                  (push (cons str (match-beginning 0)) swiper--isearch-point-history)
+                  (setq idx-found idx)))
+              (cl-incf idx)
+              (let ((line (buffer-substring
+                           (line-beginning-position)
+                           (line-end-position))))
+                (put-text-property 0 1 'point (point) line)
+                (push line cands))
+              (forward-line 1))))
+        (setq ivy--old-re re)
+        (when idx-found
+          (ivy-set-index idx-found))
+        (setq ivy--old-cands (nreverse cands))))))
+(advice-add #'swiper-isearch-function :override #'+amos*swiper-isearch-function)

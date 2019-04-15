@@ -48,17 +48,31 @@
    :gniv [M-return]   #'+amos/org-meta-return
    :gniv "M-RET"      #'+amos/org-meta-return
    :gniv "C-t"        #'+amos/org-todo
+   :t "H"             #'org-do-promote
+   :t "L"             #'org-do-demote
+   :t "K"             #'org-promote-subtree
+   :t "J"             #'org-demote-subtree
+   :t "C-i"           #'org-cycle
+   :t "C-j"           #'org-metadown
+   :t "C-k"           #'org-metaup
+   :t "x"             #'org-cut-subtree
+   :t "y"             #'org-copy-subtree
+   :t "p"             #'org-paste-subtree
+   :t "r"             #'org-refile
+   :t "s"             #'org-sort
+   :t "t"             #'org-toggle-heading
+   :n "gt"            #'evil-struct-state
    :n "RET"           #'org-open-at-point
    :n "M-h"           #'evil-window-left
    :n "M-j"           #'evil-window-down
    :n "M-k"           #'evil-window-up
    :n "M-l"           #'evil-window-right
-   :n "C-j"           #'org-metadown
-   :n "C-k"           #'org-metaup
+   :n "C-j"           #'move-text-down
+   :n "C-k"           #'move-text-up
    :i "C-d"           #'delete-char
    :i "DEL"           #'org-delete-backward-char
-   :n  "gj"           #'evil-next-visual-line
-   :n  "gk"           #'evil-previous-visual-line
+   :n "gj"            #'evil-next-visual-line
+   :n "gk"            #'evil-previous-visual-line
    :n "M-a"           #'+amos/mark-whole-buffer
    :g "C-c e"         #'org-edit-special
    :g "C-c C-j"       #'counsel-org-goto
