@@ -281,6 +281,9 @@
 (setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${note:*}")))
 (setq bibtex-completion-additional-search-fields '("note"))
 
+(after! core-keybinds
+  (add-to-list 'doom-evil-state-alist '(?s . sticky))
+  (add-to-list 'doom-evil-state-alist '(?t . struct)))
 
 (ignore-errors
   (define-category ?U "Uppercase")

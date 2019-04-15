@@ -3817,7 +3817,6 @@ will be killed."
  "u"            #'evil-scroll-up
  "d"            #'evil-scroll-down)
 (add-hook! 'evil-sticky-state-exit-hook #'+amos/reset-cursor)
-(add-to-list 'doom-evil-state-alist '(?s . sticky))
 
 (evil-define-state struct
   "struct state.
@@ -3826,7 +3825,6 @@ will be killed."
 
 (set-keymap-parent evil-struct-state-map (make-composed-keymap evil-motion-state-map evil-normal-state-map))
 (add-hook! 'evil-struct-state-exit-hook #'+amos/reset-cursor)
-(add-to-list 'doom-evil-state-alist '(?t . struct))
 
 (def-package! speed-type
   :commands (speed-type-text)
