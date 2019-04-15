@@ -1159,6 +1159,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (or (evil-insert-state-p) (evil-multiedit-insert-state-p) (active-minibuffer-window)))
 
 (defun +amos-insert-state ()
+  (setq evil-insert-count 1
+        evil-insert-vcount nil)
   (if (evil-multiedit-state-p)
       (evil-multiedit-insert-state)
     (evil-insert-state)))
