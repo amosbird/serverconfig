@@ -4455,6 +4455,7 @@ Position of selected mark outside accessible part of buffer")))
           (swiper--add-cursor-overlay)))
     (swiper--cleanup)))
 (advice-add #'swiper-isearch-action :override #'+amos-swiper-isearch-action)
+
 (defun +amos/swiper-isearch-forward ()
   (interactive)
   (ivy-call)
