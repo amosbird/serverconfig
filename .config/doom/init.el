@@ -285,6 +285,8 @@
   (add-to-list 'doom-evil-state-alist '(?s . sticky))
   (add-to-list 'doom-evil-state-alist '(?t . struct)))
 
+(advice-add #'doom|init-clipboard-in-tty-emacs :override #'ignore)
+
 (ignore-errors
   (define-category ?U "Uppercase")
   (define-category ?u "Lowercase")
