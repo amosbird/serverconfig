@@ -2331,7 +2331,8 @@ the current state and point position."
 
 ;; vertical bar
 (add-hook! 'doom-load-theme-hook
-  (set-face-background 'vertical-border "#282c34"))
+  (set-face-background 'vertical-border "#282c34")
+  (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil))
 (add-hook! 'after-make-frame-functions
   (set-face-background 'vertical-border "#282c34")
   (unless +amos-frame-list
@@ -4341,10 +4342,8 @@ Position of selected mark outside accessible part of buffer")))
 
 (after! doom-modeline
   (setq doom-modeline-icon nil)
-  (setq doom-modeline-buffer-file-name-style 'truncate-with-project))
-
-(advice-add #'doom-modeline--active :override (lambda () t))
-(set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil)
+  (setq doom-modeline-buffer-file-name-style 'truncate-with-project)
+  (advice-add #'doom-modeline--active :override (lambda () t)))
 
 (evil-define-motion +amos/evil-next-visual-line (count)
   "Move the cursor COUNT screen lines down."
