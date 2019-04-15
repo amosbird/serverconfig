@@ -37,20 +37,20 @@
     'company-lsp)
 
   (set-pretty-symbols! '(c-mode c++-mode)
-    ;; Functional
-    ;; :def "void "
-    ;; Types
-    :null "nullptr"
-    :true "true" :false "false"
-    :int "int" :float "float"
-    :str "std::string"
-    :bool "bool"
-    ;; Flow
-    :not "!"
-    :and "&&" :or "||"
-    :for "for"
-    :return "return"
-    :yield "#require")
+                       ;; Functional
+                       ;; :def "void "
+                       ;; Types
+                       :null "nullptr"
+                       :true "true" :false "false"
+                       :int "int" :float "float"
+                       :str "std::string"
+                       :bool "bool"
+                       ;; Flow
+                       :not "!"
+                       :and "&&" :or "||"
+                       :for "for"
+                       :return "return"
+                       :yield "#require")
 
   ;;; Better fontification (also see `modern-cpp-font-lock')
   (add-hook 'c-mode-common-hook #'rainbow-delimiters-mode)
@@ -138,9 +138,9 @@
   (defun ccls/includes (&optional force)
     (interactive)
     (let ((x (intern (concat (doom-project-root) "--includes"))))
-          (unless (and (boundp x) (not force))
-            (setq x (lsp-request "$ccls/includes" nil)))
-          (ivy-read "Include: " x :action #'+amos/add-include)))
+      (unless (and (boundp x) (not force))
+        (setq x (lsp-request "$ccls/includes" nil)))
+      (ivy-read "Include: " x :action #'+amos/add-include)))
   (defun ccls/fileinfo ()
     (interactive)
     (lsp-request
@@ -276,5 +276,21 @@
 
 ;; https://github.com/Fuco1/smartparens/issues/963
 (after! smartparens
-(push 'c-electric-brace sp--special-self-insert-commands)
-(push 'c-electric-paren sp--special-self-insert-commands))
+  (push 'c-electric-brace sp--special-self-insert-commands)
+  (push 'c-electric-paren sp--special-self-insert-commands))
+
+(defun +amos*yes () t)
+(add-hook! 'iedit-mode-hook
+  (when (memq major-mode '(c-mode c++-mode))
+              (advice-add #'lsp-on-change :override #'ignore)
+              (advice-add #'c-font-lock-fontify-region :override #'ignore)
+              (advice-add #'c-called-from-text-property-change-p :override #'+amos*yes)))
+
+(add-hook! 'iedit-mode-end-hook
+  (when (memq major-mode '(c-mode c++-mode))
+              (advice-remove #'lsp-on-change #'ignore)
+              (lsp-on-revert)
+              (advice-remove #'c-font-lock-fontify-region #'ignore)
+              (save-excursion
+                (font-lock-fontify-region 0 (buffer-size) nil))
+              (advice-remove #'c-called-from-text-property-change-p #'+amos*yes)))
