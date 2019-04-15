@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+export LANG=en_US.UTF-8
 tmux -u new -d -s htop htop;
 if ! tmux list-sessions | grep -q -F emacs
 then

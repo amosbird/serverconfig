@@ -77,19 +77,19 @@
   (split-string (shell-command-to-string "jump top") "\n" t))
 
 ;;;###autoload
-(defun +amos/next-history ()
+(defun +amos/dired-next-history ()
   "Move forward in history"
   (interactive)
   (+amos--dired-jump-history -1))
 
 ;;;###autoload
-(defun +amos/prev-history ()
+(defun +amos/dired-prev-history ()
   "Move backward in history"
   (interactive)
   (+amos--dired-jump-history 1))
 
 ;;;###autoload
-(defun +amos/up-directory (&optional other-window)
+(defun +amos/dired-up-directory (&optional other-window)
   (interactive)
   (dired-up-directory other-window)
   (+amos-store-jump-history)

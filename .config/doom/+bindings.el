@@ -385,7 +385,6 @@
    "C-o" nil
    "C-i" nil
    :n "q"   #'quit-window
-   :n "M-o" #'quit-window
    :n "C-f" #'dired-omit-mode
    :n "C-i" #'peep-dired-toggle
    :n "C-v" #'peep-dired-scroll-page-down
@@ -400,7 +399,10 @@
    :n "d"   #'dired-flag-file-deletion
    :n "f"   #'counsel-find-file
    :n "F"   #'dired-do-copy
-   :n "h"   #'+amos/up-directory
+   :n "h"   #'+amos/dired-up-directory
+   :n "M-p" #'+amos/dired-up-directory
+   :n "M-o" #'+amos/dired-prev-directory
+   :n "M-i" #'+amos/dired-up-directory
    :n "j"   #'dired-next-line
    :n "k"   #'dired-previous-line
    :n "p"   #'dired-ranger-paste
