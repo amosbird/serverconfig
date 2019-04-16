@@ -5,6 +5,7 @@
 # st -T 201.nobida.cn -e ssh -t 201.nobida.cn /home/amos/scripts/tstart.sh
 
 # need to installterm first
-termite -t 201.nobida.cn -e "ssh -t 201.nobida.cn /home/amos/scripts/tstart.sh"
+# termite -t 201.nobida.cn -e "ssh -t 201.nobida.cn /home/amos/scripts/tstart.sh"
+termite -t 201.nobida.cn -e "ssh -t 201.nobida.cn 'env -i HOME=\$HOME TERM=\$TERM USER=\$USER /home/amos/gentoo/startprefix'"
 # gnome-terminal -t 201.nobida.cn -e "ssh -t 201.nobida.cn /home/amos/scripts/tstart.sh"
 # sakura -t 201.nobida.cn -e "ssh -t 201.nobida.cn /home/amos/scripts/tstart.sh"
