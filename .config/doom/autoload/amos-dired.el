@@ -379,7 +379,9 @@ If called with `universal-argument' (C-u), ask for username.
 ;;;###autoload
 (defun +amos/dired-copy-to-clipboard ()
   (interactive)
-  (shell-command! (concat "copyq copyUriList " (shell-quote-argument (+amos-dired-copy-ring-string)))))
+  (if gui-p
+      (shell-command! (concat "copyq copyUriList " (shell-quote-argument (+amos-dired-copy-ring-string))))
+    (kill-new  (shell-quote-argument (+amos-dired-copy-ring-string)))))
 
 ;;;###autoload
 (defun +amos/dired-print-clipboard ()
