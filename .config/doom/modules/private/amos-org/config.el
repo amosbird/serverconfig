@@ -42,41 +42,42 @@
     (evil-org-agenda-set-keys))
 
   (map! (:map (evil-org-mode-map)
-   "<f8>"             #'+amos/insert-todo-header
-   :gniv [S-return]   #'+amos/insert-todo-header
-   :gniv [C-return]   #'+amos/insert-header
-   :gniv [M-return]   #'+amos/org-meta-return
-   :gniv "M-RET"      #'+amos/org-meta-return
-   :gniv "C-t"        #'+amos/org-todo
-   :t "H"             #'org-do-promote
-   :t "L"             #'org-do-demote
-   :t "K"             #'org-promote-subtree
-   :t "J"             #'org-demote-subtree
-   :t "C-i"           #'org-cycle
-   :t "C-j"           #'org-metadown
-   :t "C-k"           #'org-metaup
-   :t "x"             #'org-cut-subtree
-   :t "y"             #'org-copy-subtree
-   :t "p"             #'org-paste-subtree
-   :t "r"             #'org-refile
-   :t "s"             #'org-sort
-   :t "t"             #'org-toggle-heading
-   :n "gt"            #'evil-struct-state
-   :n "RET"           #'org-open-at-point
-   :n "M-h"           #'evil-window-left
-   :n "M-j"           #'evil-window-down
-   :n "M-k"           #'evil-window-up
-   :n "M-l"           #'evil-window-right
-   :n "C-j"           #'move-text-down
-   :n "C-k"           #'move-text-up
-   :i "C-d"           #'delete-char
-   :i "DEL"           #'org-delete-backward-char
-   :n "gj"            #'evil-next-visual-line
-   :n "gk"            #'evil-previous-visual-line
-   :n "M-a"           #'+amos/mark-whole-buffer
-   :g "C-c e"         #'org-edit-special
-   :g "C-c C-j"       #'counsel-org-goto
-   :g "C-c C-S-l"     #'+org/remove-link)))
+          "<f8>"             #'+amos/insert-todo-header
+          :gniv [S-return]   #'+amos/insert-todo-header
+          :gniv [C-return]   #'+amos/insert-header
+          :gniv [M-return]   #'+amos/org-meta-return
+          :gniv "M-RET"      #'+amos/org-meta-return
+          :gniv "C-t"        #'+amos/org-todo
+          :t "H"             #'org-do-promote
+          :t "L"             #'org-do-demote
+          :t "K"             #'org-promote-subtree
+          :t "J"             #'org-demote-subtree
+          :t "C-i"           #'org-cycle
+          :t "C-j"           #'org-metadown
+          :t "C-k"           #'org-metaup
+          :t "x"             #'org-cut-subtree
+          :t "y"             #'org-copy-subtree
+          :t "p"             #'org-paste-subtree
+          :t "r"             #'org-refile
+          :t "s"             #'org-sort
+          :t "t"             #'org-toggle-heading
+          :n "gt"            #'evil-struct-state
+          :n "RET"           #'org-open-at-point
+          :n "M-h"           #'evil-window-left
+          :n "M-j"           #'evil-window-down
+          :n "M-k"           #'evil-window-up
+          :n "M-l"           #'evil-window-right
+          :n "C-j"           #'move-text-down
+          :n "C-k"           #'move-text-up
+          :i "C-d"           #'delete-char
+          :i "DEL"           #'org-delete-backward-char
+          :n "gj"            #'evil-next-visual-line
+          :n "gk"            #'evil-previous-visual-line
+          :n "M-a"           #'+amos/mark-whole-buffer
+          :n "M-q"           #'+amos/org-unfill-toggle
+          :g "C-c e"         #'org-edit-special
+          :g "C-c C-j"       #'counsel-org-goto
+          :g "C-c C-S-l"     #'+org/remove-link)))
 
 ;;
 ;; Hooks & bootstraps
@@ -198,14 +199,14 @@
 
 (add-hook 'org-load-hook #'+org-export|init t)
 
-;(def-package! ox-pandoc
-;  :config
-;  (unless (executable-find "pandoc")
-;    (warn "org-export: couldn't find pandoc, disabling pandoc export"))
-;  (setq org-pandoc-options
-;        '((standalone . t)
-;          (mathjax . t)
-;          (parse-raw . t))))
+                                        ;(def-package! ox-pandoc
+                                        ;  :config
+                                        ;  (unless (executable-find "pandoc")
+                                        ;    (warn "org-export: couldn't find pandoc, disabling pandoc export"))
+                                        ;  (setq org-pandoc-options
+                                        ;        '((standalone . t)
+                                        ;          (mathjax . t)
+                                        ;          (parse-raw . t))))
 
 (defun +org-export|init ()
   (setq org-export-directory (expand-file-name "export" +org-dir)
@@ -282,43 +283,43 @@
 or org-mode (when in the body)."
   (interactive)
   (let* ((sepapoint
-	   (save-excursion
-	     (goto-char (point-min))
-	     (search-forward-regexp mail-header-separator nil t))))
+          (save-excursion
+            (goto-char (point-min))
+            (search-forward-regexp mail-header-separator nil t))))
     ;; only do stuff when the sepapoint exist; note that after sending the
     ;; message, this function maybe called on a message with the sepapoint
     ;; stripped. This is why we don't use `message-point-in-header'.
     (when sepapoint
       (cond
-	;; we're in the body, but in mu4e-compose-mode?
-	;; if so, switch to org-mode
-	((and (> (point) sepapoint) (eq major-mode 'mu4e-compose-mode))
-	  (org-mode)
-	  (add-hook 'before-save-hook
-	    (lambda ()
-	      (mu4e-error "Switch to mu4e-compose-mode (M-m) before saving."))
-	    nil t)
-	  (org~mu4e-mime-decorate-headers)
-	  (local-set-key (kbd "M-m")
-	    (lambda (keyseq)
-	      (interactive "kEnter mu4e-compose-mode key sequence: ")
-	      (let ((func (lookup-key mu4e-compose-mode-map keyseq)))
-		(if func (funcall func) (insert keyseq))))))
-	;; we're in the headers, but in org-mode?
-	;; if so, switch to mu4e-compose-mode
-	((and (<= (point) sepapoint) (eq major-mode 'org-mode))
-      	  (org~mu4e-mime-undecorate-headers)
-	  (mu4e-compose-mode)
-    ;; change to insert mode
-    (evil-change-to-previous-state)
-    (add-hook 'message-send-hook 'org~mu4e-mime-convert-to-html-maybe nil t)))
+       ;; we're in the body, but in mu4e-compose-mode?
+       ;; if so, switch to org-mode
+       ((and (> (point) sepapoint) (eq major-mode 'mu4e-compose-mode))
+        (org-mode)
+        (add-hook 'before-save-hook
+                  (lambda ()
+                    (mu4e-error "Switch to mu4e-compose-mode (M-m) before saving."))
+                  nil t)
+        (org~mu4e-mime-decorate-headers)
+        (local-set-key (kbd "M-m")
+                       (lambda (keyseq)
+                         (interactive "kEnter mu4e-compose-mode key sequence: ")
+                         (let ((func (lookup-key mu4e-compose-mode-map keyseq)))
+                           (if func (funcall func) (insert keyseq))))))
+       ;; we're in the headers, but in org-mode?
+       ;; if so, switch to mu4e-compose-mode
+       ((and (<= (point) sepapoint) (eq major-mode 'org-mode))
+        (org~mu4e-mime-undecorate-headers)
+        (mu4e-compose-mode)
+        ;; change to insert mode
+        (evil-change-to-previous-state)
+        (add-hook 'message-send-hook 'org~mu4e-mime-convert-to-html-maybe nil t)))
       ;; and add the hook
       (add-hook 'post-command-hook 'org~mu4e-mime-switch-headers-or-body t t))))
 (advice-add #'org~mu4e-mime-switch-headers-or-body :override #'+org*mu4e-mime-switch-headers-or-body)
 
 (defadvice org-open-file (around +org*org-open-file activate)
   (doom-with-advice (start-process-shell-command (lambda (orig_func cmd &rest _) (shell-command cmd)))
-    ad-do-it))
+      ad-do-it))
 
 (defun org-autolist-beginning-of-item-after-bullet ()
   "Returns the position before the first character after the
@@ -346,7 +347,7 @@ automatically insert new list items."
            (not
             (and org-return-follows-link
                  (eq 'org-link (get-text-property (point) 'face)))))
-          (org-meta-return)
+      (org-meta-return)
     (apply ofun args)))
 (advice-add #'org-return :around #'+amos*org-return)
 
@@ -393,10 +394,10 @@ key to automatically delete list prefixes."
       (call-interactively (cond (arg #'org-insert-heading)
                                 ((org-at-table-p) #'org-table-wrap-region)
                                 ((org-in-item-p) (lambda! (org-beginning-of-item)
-                                                     (end-of-line)
-                                                     (if (org-at-item-checkbox-p)
-                                                         (org-insert-item 'checkbox)
-                                                       (org-insert-item))))
+                                                          (end-of-line)
+                                                          (if (org-at-item-checkbox-p)
+                                                              (org-insert-item 'checkbox)
+                                                            (org-insert-item))))
                                 ((org-get-todo-state) #'org-insert-todo-heading)
                                 (t #'org-insert-heading))))
   (save-excursion
@@ -411,12 +412,12 @@ key to automatically delete list prefixes."
 (advice-add #'outline-up-heading :before #'evil-set-jump)
 
 (after! recentf
-    ;; Don't clobber recentf with agenda files
-    (defun +org-is-agenda-file (filename)
-      (cl-find (file-truename filename) org-agenda-files
-               :key #'file-truename
-               :test #'equal))
-    (push #'+org-is-agenda-file recentf-exclude))
+  ;; Don't clobber recentf with agenda files
+  (defun +org-is-agenda-file (filename)
+    (cl-find (file-truename filename) org-agenda-files
+             :key #'file-truename
+             :test #'equal))
+  (push #'+org-is-agenda-file recentf-exclude))
 
 (defun +amos/org-todo ()
   (interactive)
@@ -430,16 +431,27 @@ key to automatically delete list prefixes."
   (require 'ivy-bibtex)
   (when arg
     (bibtex-completion-clear-cache))
-    (bibtex-completion-init)
-    (let* ((candidates (bibtex-completion-candidates))
-	   (key (bibtex-completion-key-at-point))
-	   (preselect (and key
-			   (cl-position-if (lambda (cand)
-					     (member (cons "=key=" key)
-						     (cdr cand)))
-					   candidates))))
-      (ivy-read "BibTeX entries: "
-		candidates
-		:preselect preselect
-		:caller 'ivy-bibtex
-		:action ivy-bibtex-default-action)))
+  (bibtex-completion-init)
+  (let* ((candidates (bibtex-completion-candidates))
+         (key (bibtex-completion-key-at-point))
+         (preselect (and key
+                         (cl-position-if (lambda (cand)
+                                           (member (cons "=key=" key)
+                                                   (cdr cand)))
+                                         candidates))))
+    (ivy-read "BibTeX entries: "
+              candidates
+              :preselect preselect
+              :caller 'ivy-bibtex
+              :action ivy-bibtex-default-action)))
+
+(defun +amos/org-unfill-toggle ()
+  "Toggle filling/unfilling of the current region, or current paragraph if no region active."
+  (interactive)
+  (let (deactivate-mark
+        (fill-column
+         (if (eq last-command this-command)
+             (progn (setq this-command nil)
+                    most-positive-fixnum)
+           fill-column)))
+    (call-interactively 'org-fill-paragraph)))
