@@ -277,6 +277,7 @@
 (setq yasdcv-sdcv-dicts '(("jianminghy" "简明汉英词典" "powerword2007" t)))
 (setq +latex-bibtex-file "~/git/serverconfig/amosbird.bib")
 (setq-default TeX-engine 'xetex)
+(setq-default line-spacing 0.1)
 (setq reftex-label-ignored-macros-and-environments '("enumerate" "itemize"))
 (setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${note:*}")))
 (setq bibtex-completion-additional-search-fields '("note"))

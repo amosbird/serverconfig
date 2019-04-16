@@ -2334,6 +2334,7 @@ the current state and point position."
   (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil))
 (add-hook! 'after-make-frame-functions
   (set-face-background 'vertical-border "#282c34")
+  (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil)
   (unless +amos-frame-list
     (setq +amos-frame-list (+amos--frame-list-without-daemon))))
 (defsubst +amos--is-frame-daemons-frame (f)
@@ -2782,15 +2783,13 @@ By default the last line."
   "Use avy to go to an URL in the buffer."
   (interactive)
   (require 'avy)
-  (avy--generic-jump "https?://" nil 'pre))
+  (avy-jump "https?://" :window-flip nil :beg nil :end nil :action #'goto-char))
 
 (defun +amos/avy-open-url ()
   "Use avy to select an URL in the buffer and open it."
   (interactive)
   (require 'avy)
-  (save-excursion
-    (if (+amos/avy-goto-url)
-        (browse-url-at-point))))
+  (avy-jump "https?://" :window-flip nil :beg nil :end nil :action (lambda (p) (save-excursion (goto-char p) (browse-url-at-point)))))
 
 (defun +amos/avy-goto-char-timer (&optional arg)
   "Read one or many consecutive chars and jump to the first one.

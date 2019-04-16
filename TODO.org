@@ -54,4 +54,10 @@
 
 - [ ] finish writing the description
 
-* TODO multiple terminal frame auto switch when compilation is outputing
+* DONE multiple terminal frame auto switch when compilation is outputing
+
+* DONE ccplayground copy and modeline issue (also fix inactive)
+
+* DONE avy jump url
+
+* TODO copy graph script, show graph vertex and edge tables, tar release and test on centos 6 with python
