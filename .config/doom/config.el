@@ -571,7 +571,8 @@ Skip buffers that match `ivy-ignore-buffers'."
 
 (defun +amos/counsel-rg-cur-dir ()
   (interactive)
-  (counsel-rg nil default-directory))
+  (let ((counsel-rg-base-command "rg -uu -S --no-heading --line-number --color never %s ."))
+    (counsel-rg nil default-directory)))
 
 (def-package! yapfify
   :after python)

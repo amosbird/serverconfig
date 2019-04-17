@@ -60,4 +60,6 @@
 
 * DONE avy jump url
 
+* DONE rg current dir without any ignore
+
 * TODO copy graph script, show graph vertex and edge tables, tar release and test on centos 6 with python
