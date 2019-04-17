@@ -34,3 +34,4 @@ fishd.*
 *.elc
 /.config/fish/fish_variables
 /.auctex-auto
+/.config/doom/.authinfo.gpg
