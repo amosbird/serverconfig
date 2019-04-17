@@ -2805,9 +2805,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -4443,7 +4443,8 @@ Position of selected mark outside accessible part of buffer")))
   "Move to X for `swiper-isearch'."
   (if (> (length x) 0)
       (with-ivy-window
-        (unless (eq ivy-exit 'done)
+        (if (eq ivy-exit 'done)
+            (setq evil-ex-search-pattern `(,ivy-text t t))
           (if (string= "C-r" (key-description (this-command-keys)))
               (+amos-swiper-isearch-backward x)
             (+amos-swiper-isearch-forward x)))
@@ -4470,3 +4471,26 @@ Position of selected mark outside accessible part of buffer")))
     (let ((ivy-calling t))
       (ivy-previous-line-or-history 1))))
 (advice-add #'swiper--init :before (lambda! (setq +amos-swiper-isearch-last-point nil +amos-swiper-isearch-last-line nil)))
+
+;;; Persistent scratch
+;;; Stolen from CCE - http://doc.rix.si/cce/cce.html
+(defun save-persistent-scratch ()
+  "Write the contents of *scratch* to the file name
+`persistent-scratch-file-name'."
+  (with-current-buffer (get-buffer-create "*scratch*")
+    (write-region (point-min) (point-max) "~/.emacs.d/persistent-scratch")))
+
+(defun load-persistent-scratch ()
+  "Load the contents of `persistent-scratch-file-name' into the
+  scratch buffer, clearing its contents first."
+  (if (file-exists-p "~/.emacs-persistent-scratch")
+      (with-current-buffer (get-buffer "*scratch*")
+        (delete-region (point-min) (point-max))
+        (insert-file-contents "~/.emacs.d/persistent-scratch"))))
+
+(add-hook 'after-init-hook 'load-persistent-scratch)
+(add-hook 'kill-emacs-hook 'save-persistent-scratch)
+
+(if (not (boundp 'my/save-persistent-scratch-timer))
+    (setq my/save-persistent-scratch-timer
+          (run-with-idle-timer 300 t 'save-persistent-scratch)))
