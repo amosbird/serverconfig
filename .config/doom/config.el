@@ -4494,3 +4494,10 @@ Position of selected mark outside accessible part of buffer")))
 (if (not (boundp 'my/save-persistent-scratch-timer))
     (setq my/save-persistent-scratch-timer
           (run-with-idle-timer 300 t 'save-persistent-scratch)))
+
+(defun +amos/count-buffers (&optional display-anyway)
+  "Display or return the number of buffers."
+  (interactive)
+  (let ((buf-count (length (buffer-list))))
+    (if (or (interactive-p) display-anyway)
+        (message "%d buffers in this Emacs" buf-count)) buf-count))

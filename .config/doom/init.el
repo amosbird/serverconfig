@@ -96,6 +96,7 @@
 (setq dired-open-extensions-elisp
       '(("zip" . +amos/compress-view)
         ("jar" . +amos/compress-view)
+        ("tgz" . +amos/compress-view)
         ("apk" . +amos/compress-view)
         ("deb" . +amos/compress-view)
         ("rpm" . +amos/compress-view)
