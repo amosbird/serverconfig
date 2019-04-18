@@ -4533,3 +4533,10 @@ Position of selected mark outside accessible part of buffer")))
 ;; important to make edebug kemap take effect
 (after! edebug
   (add-hook 'edebug-mode-hook #'evil-normalize-keymaps))
+
+;; conflict testing
+;; conflict testing
+;; conflict testing
+;; conflict testing
+;; conflict testing
+;; conflict testing
