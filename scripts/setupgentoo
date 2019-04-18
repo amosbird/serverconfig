@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+getent passwd > ~/gentoo/etc/passwd
+getent group > ~/gentoo/etc/group
