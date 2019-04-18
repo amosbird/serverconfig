@@ -3,7 +3,7 @@
 (map! :leader
       :desc "sticky"                          :nv "DEL" #'evil-sticky-state
       :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
-      :desc "Toggle mc"                       :nv "SPC" #'+amos/toggle-mc
+      :desc "Ivy resume"                      :nv "SPC" #'ivy-resume
       :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
       :desc "Find file in project (no cache)" :nv ">"   (lambda! (setq current-prefix-arg t) (call-interactively #'+amos/projectile-find-file))
       :desc "Find recent file"                :nv ","   #'counsel-recentf
@@ -11,7 +11,7 @@
       :desc "Shell command replace"           :nv "e"   #'+amos/shell-command-or-region
       :desc "Shell command"                   :nv "E"   #'+amos/shell-command-on-buffer
       :desc "Elisp command"                   :nv "RET" #'eval-expression
-      :desc "Ivy resume"                      :nv "r"   #'ivy-resume
+      :desc "Ivy resume"                      :nv "r"   #'+amos/revert-buffer
       :desc "Revert buffers"                  :nv "R"   #'+amos/revert-all-buffers
       :desc "Universal argument"              :nv "u"   #'universal-argument
       :desc "Save current file"               :nv "w"   #'save-buffer

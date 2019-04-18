@@ -4513,17 +4513,22 @@ Position of selected mark outside accessible part of buffer")))
 (after! autorevert
   (global-auto-revert-mode -1))
 
+(defun +amos/revert-buffer ()
+  (interactive)
+  (revert-buffer :ignore-auto :noconfirm))
+
 (defun +amos/revert-all-buffers ()
   "Refresh all open buffers from their respective files."
   (interactive)
   (dolist (buffer (buffer-list))
     (let ((filename (buffer-file-name buffer)))
-      (when filename
-        (if (and (file-exists-p filename)
-                 (not (verify-visited-file-modtime)))
-            (with-demoted-errors "Error: %S"
-              (with-current-buffer buffer
-                (revert-buffer :ignore-auto :noconfirm))))))))
+      (if (or (eq 'dired-mode (buffer-local-value 'major-mode buffer))
+              (and filename
+                   (file-exists-p filename)
+                   (not (verify-visited-file-modtime))))
+          (with-demoted-errors "Error: %S"
+            (with-current-buffer buffer
+              (+amos/revert-buffer)))))))
 
 ;; important to make edebug kemap take effect
 (after! edebug
