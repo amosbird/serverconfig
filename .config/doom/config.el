@@ -2611,6 +2611,7 @@ the current state and point position."
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
 (after! magit
+  (magit-auto-revert-mode +1)
   (setq
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect t
@@ -4446,11 +4447,14 @@ Position of selected mark outside accessible part of buffer")))
       (setq +amos-swiper-isearch-last-line nil)
       (setq +amos-swiper-isearch-last-point nil))))
 
+(defun +amos-ivy-done ()
+  (eq ivy-exit 'done))
+
 (defun +amos-swiper-isearch-action (x)
   "Move to X for `swiper-isearch'."
   (if (> (length x) 0)
       (with-ivy-window
-        (if (eq ivy-exit 'done)
+        (if (+amos-ivy-done)
             (setq evil-ex-search-pattern `(,ivy-text t t)
                   evil-ex-search-direction 'forward)
           (if (string= "C-r" (key-description (this-command-keys)))
@@ -4458,7 +4462,7 @@ Position of selected mark outside accessible part of buffer")))
             (+amos-swiper-isearch-forward x)))
         (isearch-range-invisible (line-beginning-position)
                                  (line-end-position))
-        (unless (eq ivy-exit 'done)
+        (unless (+amos-ivy-done)
           (swiper--cleanup)
           (swiper--add-overlays (ivy--regex ivy-text))
           (swiper--add-cursor-overlay)))
@@ -4534,9 +4538,22 @@ Position of selected mark outside accessible part of buffer")))
 (after! edebug
   (add-hook 'edebug-mode-hook #'evil-normalize-keymaps))
 
-;; conflict testing
-;; conflict testing
-;; conflict testing
-;; conflict testing
-;; conflict testing
-;; conflict testing
+;; (setq-local +amos-window-start nil)
+;; (add-hook! 'minibuffer-setup-hook #'+amos|record-window-start)
+;; (add-hook! 'minibuffer-exit-hook #'+amos|restore-window-start)
+
+;; (defun +amos|record-window-start ()
+;;   (let ((windows (window-list)))
+;;     (dolist (window windows)
+;;       (let ((buffer (window-buffer (car windows))))
+;;         (unless (minibufferp buffer)
+;;           (with-current-buffer buffer
+;;             (setq-local +amos-window-start (window-start))))))))
+
+;; (defun +amos|restore-window-start ()
+;;   (let ((windows (window-list)))
+;;     (dolist (window windows)
+;;       (let ((buffer (window-buffer (car windows))))
+;;         (unless (minibufferp buffer)
+;;           (with-current-buffer buffer
+;;             (set-window-start +amos-window-start)))))))
