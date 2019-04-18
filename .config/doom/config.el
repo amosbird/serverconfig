@@ -4524,3 +4524,7 @@ Position of selected mark outside accessible part of buffer")))
             (with-demoted-errors "Error: %S"
               (with-current-buffer buffer
                 (revert-buffer :ignore-auto :noconfirm))))))))
+
+;; important to make edebug kemap take effect
+(after! edebug
+  (add-hook 'edebug-mode-hook #'evil-normalize-keymaps))
