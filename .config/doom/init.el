@@ -289,6 +289,11 @@
 
 (advice-add #'doom|init-clipboard-in-tty-emacs :override #'ignore)
 
+(defun +amos*+evil-collection-init (orig-fun module)
+  (unless (memq (or (car-safe module) module) '(edebug dired))
+      (apply orig-fun (list module))))
+(advice-add #'+evil-collection-init :around #'+amos*+evil-collection-init)
+
 (ignore-errors
   (define-category ?U "Uppercase")
   (define-category ?u "Lowercase")

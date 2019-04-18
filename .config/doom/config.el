@@ -1402,6 +1402,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (setq
    lsp-prefer-flymake nil
    lsp-enable-indentation nil
+   lsp-enable-file-watchers nil
    lsp-auto-guess-root t)
   :config
   (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
@@ -3161,9 +3162,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
  "+amos/region-substitute"
  "+amos/rename-current-buffer-file"
  "+amos/replace"
- "+amos/redisplay-and-recenter"
  "+amos/reset"
- "+amos/shell-command-replace"
+ "+amos/revert"
+ "+amos/shell"
  "+amos/smart-jumper"
  "+amos/swiper"
  "+amos/switch-buffer"
@@ -3752,6 +3753,12 @@ When capture groups are present in the input, print them instead of lines."
                  (setq string (read-shell-command "Shell command on region: "))
                  (list (region-beginning) (region-end) string)))
   (shell-command-on-region start end command nil t))
+
+(defun +amos/shell-command-or-region ()
+  (interactive)
+  (if (use-region-p)
+      (call-interactively #'+amos/shell-command-on-region)
+    (call-interactively #'shell-command)))
 
 (defun +amos/revert-projectile-buffers ()
   "Refresh all open file buffers in current projectile without confirmation.
@@ -4444,7 +4451,8 @@ Position of selected mark outside accessible part of buffer")))
   (if (> (length x) 0)
       (with-ivy-window
         (if (eq ivy-exit 'done)
-            (setq evil-ex-search-pattern `(,ivy-text t t))
+            (setq evil-ex-search-pattern `(,ivy-text t t)
+                  evil-ex-search-direction 'forward)
           (if (string= "C-r" (key-description (this-command-keys)))
               (+amos-swiper-isearch-backward x)
             (+amos-swiper-isearch-forward x)))
@@ -4501,3 +4509,18 @@ Position of selected mark outside accessible part of buffer")))
   (let ((buf-count (length (buffer-list))))
     (if (or (interactive-p) display-anyway)
         (message "%d buffers in this Emacs" buf-count)) buf-count))
+
+(after! autorevert
+  (global-auto-revert-mode -1))
+
+(defun +amos/revert-all-buffers ()
+  "Refresh all open buffers from their respective files."
+  (interactive)
+  (dolist (buffer (buffer-list))
+    (let ((filename (buffer-file-name buffer)))
+      (when filename
+        (if (and (file-exists-p filename)
+                 (not (verify-visited-file-modtime)))
+            (with-demoted-errors "Error: %S"
+              (with-current-buffer buffer
+                (revert-buffer :ignore-auto :noconfirm))))))))
