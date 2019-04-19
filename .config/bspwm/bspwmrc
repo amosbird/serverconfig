@@ -34,7 +34,7 @@ bspc rule -a xfreerdp desktop=w follow=on
 bspc rule -a Luakit desktop=f follow=on
 bspc rule -a Skype desktop=o state=fullscreen
 
-stalonetray &
+# stalonetray &
 startconky
 setbg.sh
 

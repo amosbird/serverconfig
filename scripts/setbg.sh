@@ -5,6 +5,7 @@ w=${wh[0]}
 h=${wh[1]}
 
 function reset_tray {
+    return
     wid=$(cat /tmp/stalonetray)
     x=$((w/2 - 70))
     y=260
