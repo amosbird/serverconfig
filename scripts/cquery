@@ -82,7 +82,7 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
 
 if [ "$ccls_suffix" = "-tdesktop" ]
 then
-    exec docker run -i --cap-add=SYS_PTRACE -v /home/amos/.cache:/home/amos/.cache -v /home/amos/cclstmp:/tmp -v /home/amos/git/docker-tdesktop:/home/amos/git/docker-tdesktop -v /home/amos/git:/home/amos/git amosbird/telegram /home/amos/git/ccls/tg/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" -v 2 "$@"
+    exec docker run -i --cap-add=SYS_PTRACE -v /data/.ccls_cached_index:/home/amos/.cache/.ccls_cached_index -v /home/amos/cclstmp:/tmp -v /home/amos/git/docker-tdesktop:/home/amos/git/docker-tdesktop -v /home/amos/git:/home/amos/git amosbird/telegram /home/amos/git/ccls/tg/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" -v 2 "$@"
 else
     exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"
 fi

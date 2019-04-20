@@ -270,6 +270,7 @@
                                    (arglist-intro . ++)
                                    (substatement-open . 0)
                                    (inlambda . 0)
+                                   (inline-open . 0)
                                    (member-init-intro . ++)
                                    (statement-cont . +cc-llvm-lineup-statement)))))
 
@@ -280,6 +281,7 @@
   (push 'c-electric-paren sp--special-self-insert-commands))
 
 (defun +amos*yes () t)
+
 (add-hook! 'iedit-mode-hook
   (when (memq major-mode '(c-mode c++-mode))
               (advice-add #'lsp-on-change :override #'ignore)
@@ -294,3 +296,5 @@
               (save-excursion
                 (font-lock-fontify-region 0 (buffer-size) nil))
               (advice-remove #'c-called-from-text-property-change-p #'+amos*yes)))
+
+;; (add-hook! (c-mode c++-mode) (setq iedit-auto-bufferring t))

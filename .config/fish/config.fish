@@ -33,15 +33,15 @@ and function __direnv_export_eval --on-event fish_prompt;
   eval (direnv export fish);
 end
 
-set -x ASDF_DIR $HOME/.asdf
-set -l asdf_data_dir (if test -n "$ASDF_DATA_DIR";
-    echo $ASDF_DATA_DIR;
-else;
-    echo $HOME/.asdf;
-end)
+# set -x ASDF_DIR $HOME/.asdf
+# set -l asdf_data_dir (if test -n "$ASDF_DATA_DIR";
+#     echo $ASDF_DATA_DIR;
+# else;
+#     echo $HOME/.asdf;
+# end)
 
-status --is-interactive;
-and source $ASDF_DIR/completions/asdf.fish
+# status --is-interactive;
+# and source $ASDF_DIR/completions/asdf.fish
 
 if not set -q fish_initialized
     set -U fish_color_autosuggestion '555'  'brblack'
@@ -72,7 +72,8 @@ if not set -q fish_initialized
     set -U fish_pager_color_progress 'brwhite'  '--background=cyan'
 
     # prepend path
-    set -U fish_user_paths $HOME/scripts $ASDF_DIR/bin $ASDF_DIR/shims $asdf_data_dir/shims
+    # set -U fish_user_paths $HOME/scripts $ASDF_DIR/bin $ASDF_DIR/shims $asdf_data_dir/shims
+    set -U fish_user_paths $HOME/scripts
     set -U fish_initialized 1
 end
 
