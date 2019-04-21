@@ -111,7 +111,7 @@ git clone https://aur.archlinux.org/trizen-git.git
 cd trizen-git
 makepkg -si
 
-trizen -S xapian-core gmime3 libnotify bspwm tidy cpanminus prettier capitaine-cursors refind-efi nmap lsof docker paps sysdig linux-headers p7zip zip slock strace texlive-most texlive-lang aspell-en ntp xdotool zbar gpick xininfo-git wordnet-cli mbedtls libfdk-aac netease-cloud-music openbsd-netcat earlyoom jdk8-openjdk android-sdk mpv perf fd conky-lua simple-obfs openconnect thinkfan exa python-pyqtwebengine python-attrs python-yaml python-pypeg2 python-pyqt5 pkg-config gtk3 libevent qt5-x11extras qt5-script qt5-svg qt5-tools ninja ipset dnsmasq zerotier-one openssh xorg-twm termite-terminfo xorg-xclock xorg-fonts xorg-fonts-misc xorg-drivers acpi xterm xorg-xrdb sddm sxhkd jq grc net-tools compton arandr xorg-xset dnsutils npm rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei-kr-patched readline tcl expect weechat dunst xclip llvm pandoc-bin clang lxappearance fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight getmail xorg-xev xorg-xprop sdcv ninja unixodbc arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura rsync dstat pinta sysstat hplip cups samba ccache ripgrep tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu zathura-pdf-mupdf zathura-ps ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel conky-lua xsensors vnstat stalonetray xdo gtk-doc intltool vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake --noconfirm --needed
+trizen -S ttf-wps-fonts wps-office ttf-roboto-slab bear tidy cpanminus prettier capitaine-cursors refind-efi nmap lsof docker paps sysdig linux-headers p7zip zip slock strace texlive-most texlive-lang aspell-en ntp xdotool zbar gpick xininfo-git wordnet-cli mbedtls libfdk-aac netease-cloud-music openbsd-netcat earlyoom jdk8-openjdk android-sdk mpv perf fd conky-lua simple-obfs openconnect thinkfan exa python-pyqtwebengine python-attrs python-yaml python-pypeg2 python-pyqt5 pkg-config gtk3 libevent qt5-x11extras qt5-script qt5-svg qt5-tools ninja ipset dnsmasq zerotier-one openssh xorg-twm termite-terminfo xorg-xclock xorg-fonts xorg-fonts-misc xorg-drivers acpi xterm xorg-xrdb sddm sxhkd jq grc net-tools compton arandr xorg-xset dnsutils npm rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei-kr-patched readline tcl expect weechat dunst xclip llvm pandoc-bin clang lxappearance fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight getmail xorg-xev xorg-xprop sdcv ninja unixodbc arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura rsync dstat pinta sysstat hplip cups samba ccache ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu zathura-pdf-mupdf zathura-ps ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel conky-lua xsensors vnstat stalonetray xdo gtk-doc intltool vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake --noconfirm --needed
 
 trizen -S mimi-git
 
@@ -351,6 +351,8 @@ open emacs and do M-x all-the-icons-install-fonts
 ~/.getmail
 ~/.msmtprc
 ~/.stardict
+# might need to remove  simsun.ttc mingliu.ttc  for tdesktop and emacs-gui
+~/.local/share/fonts
 ~/.local/share/qutebrowser/greasemonkey
 ~/.local/share/qutebrowser/userscripts
 /etc/ld.so.conf.d/99-user-local.conf
@@ -400,3 +402,6 @@ systemctl enable docker
 
 ccache -M 50G
 sudo pkgfile --update
+
+updateroutes
+updatednsmasq

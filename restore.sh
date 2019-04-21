@@ -23,6 +23,7 @@ configs=(
     .Xresources
     .xprofile
     .xinitrc
+    .gtkrc-2.0
     .stalonetrayrc
     .bashrc
     .wgetrc

@@ -4057,7 +4057,7 @@ inside or just after a citation command, only adds KEYS to it."
 
 (defun +amos/xterm-paste (event)
   (interactive "e")
-  (if (evil-insert-state-p)
+  (if (or (evil-insert-state-p) (window-minibuffer-p))
       (xterm-paste event)
     (with-temp-buffer
       (xterm-paste event)
@@ -4081,7 +4081,7 @@ inside or just after a citation command, only adds KEYS to it."
 
 (defun +amos/paste-from-gui ()
   (interactive)
-  (if (evil-insert-state-p)
+  (if (or (evil-insert-state-p) (window-minibuffer-p))
       (insert-for-yank (gui-get-primary-selection))
     (let ((uri-list
            (condition-case nil
