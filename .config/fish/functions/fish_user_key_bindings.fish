@@ -53,7 +53,7 @@ function fish_user_key_bindings
         set -l cmd (commandline -j)
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         [ "$cmd" ]; or return
-        set -l result ($cmd | fzf -m --height $FZF_TMUX_HEIGHT --reverse --tiebreak=index --select-1 --exit-0 | string join ' ')
+        set -l result (eval $cmd | fzf -m --height $FZF_TMUX_HEIGHT --reverse --tiebreak=index --select-1 --exit-0 | string join ' ')
         [ "$result" ]; and commandline -j -- $result
         commandline -f repaint
     end
