@@ -9,7 +9,8 @@
 (require 'dired-aux)
 (require 'cl-macs)
 
-(setq dired-listing-switches "-alh")
+(setq dired-listing-switches "-alh"
+      dired-recursive-deletes 'always)
 (push ".d" dired-omit-extensions)
 
 (defun +dired|sort-directories-first ()
