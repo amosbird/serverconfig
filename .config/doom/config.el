@@ -3065,6 +3065,12 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   (interactive)
   (text-scale-decrease 0.5))
 
+(setq ssh-remote-addr (and (getenv "SSH_CONNECTION") (nth 2 (split-string (getenv "SSH_CONNECTION") " "))))
+(defun +amos-paste-file (filename)
+  (if ssh-remote-addr
+      (osc-command (format "scp %s %s:%s/" filename ssh-remote-addr default-directory))
+    (shell-command! (format "cp %s %s/" filename default-directory))))
+
 (defun +amos-dispatch-uri-list (uri-list)
   (cond
    ((eq major-mode 'mu4e-compose-mode)
@@ -3076,6 +3082,15 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
             (when (and (file-exists-p file-name)
                        (not (file-directory-p file-name)))
               (mail-add-attachment file-name))))))
+    t)
+   ((eq major-mode 'dired-mode)
+    (let ((files (split-string uri-list "[\0\r\n]" t)))
+        (--each files
+          (let ((file-name (string-remove-prefix "file://" it)))
+            (when (and (file-exists-p file-name)
+                       (not (file-directory-p file-name)))
+              (+amos-paste-file file-name))))
+        (+amos/revert-buffer))
     t)
    (t
     nil)))
@@ -4059,25 +4074,27 @@ inside or just after a citation command, only adds KEYS to it."
   (interactive "e")
   (if (or (evil-insert-state-p) (window-minibuffer-p))
       (xterm-paste event)
-    (with-temp-buffer
-      (xterm-paste event)
-      (let ((lines (list nil)))
-        (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
-        (setq lines (nreverse (cdr lines)))
-        (let* ((yank-handler (list #'evil-yank-block-handler
-                                   lines
-                                   t
-                                   'evil-delete-yanked-rectangle))
-               (text (propertize (mapconcat #'identity lines "\n")
-                                 'yank-handler yank-handler)))
-          (evil-set-register ?r text)))
-      (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
-    (if current-prefix-arg
-        (progn
-          (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
-              (forward-char))
-          (evil-paste-before nil ?r))
-      (evil-paste-before nil ?t))))
+    (let ((uri-list xterm-paste-urllist))
+      (unless (and uri-list (+amos-dispatch-uri-list uri-list))
+        (with-temp-buffer
+          (xterm-paste event)
+          (let ((lines (list nil)))
+            (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
+            (setq lines (nreverse (cdr lines)))
+            (let* ((yank-handler (list #'evil-yank-block-handler
+                                       lines
+                                       t
+                                       'evil-delete-yanked-rectangle))
+                   (text (propertize (mapconcat #'identity lines "\n")
+                                     'yank-handler yank-handler)))
+              (evil-set-register ?r text)))
+          (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
+        (if current-prefix-arg
+            (progn
+              (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
+                  (forward-char))
+              (evil-paste-before nil ?r))
+          (evil-paste-before nil ?t))))))
 
 (defun +amos/paste-from-gui ()
   (interactive)
@@ -4557,3 +4574,29 @@ Position of selected mark outside accessible part of buffer")))
 ;;         (unless (minibufferp buffer)
 ;;           (with-current-buffer buffer
 ;;             (set-window-start +amos-window-start)))))))
+
+(defun +amos*xterm--pasted-text ()
+  "Handle the rest of a terminal paste operation.
+Return the pasted text as a string."
+  (let ((end-marker-length (length xterm-paste-ending-sequence)))
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (while (not (search-backward xterm-paste-ending-sequence
+                                   (- (point) end-marker-length) t))
+        (let ((event (read-event nil nil
+                                 ;; Use finite timeout to avoid glomming the
+                                 ;; event onto this-command-keys.
+                                 most-positive-fixnum)))
+          (when (eql event ?\r)
+            (setf event ?\n))
+          (insert event)))
+      (let* ((last-coding-system-used)
+             (text (decode-coding-region (point-min) (point) (keyboard-coding-system) t)))
+      (if (string= "\e[290~" (this-command-keys))
+          (setq xterm-paste-urllist text)
+        (setq xterm-paste-urllist nil)
+        text)))))
+
+(advice-add #'xterm--pasted-text :override #'+amos*xterm--pasted-text)
+(after! xterm
+  (define-key xterm-rxvt-function-map "\e[290~" #'xterm-translate-bracketed-paste))

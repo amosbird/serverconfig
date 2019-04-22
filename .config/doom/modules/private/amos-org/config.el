@@ -141,6 +141,7 @@
    org-indent-indentation-per-level 2
    org-indent-mode-turns-on-hiding-stars t
    org-latex-compiler "xelatex"
+   org-latex-listings t
    org-startup-folded nil
    org-pretty-entities nil
    org-pretty-entities-include-sub-superscripts t
@@ -455,3 +456,17 @@ key to automatically delete list prefixes."
                     most-positive-fixnum)
            fill-column)))
     (call-interactively 'org-fill-paragraph)))
+
+(eval-after-load "ox-latex"
+
+  ;; update the list of LaTeX classes and associated header (encoding, etc.)
+  ;; and structure
+  '(add-to-list 'org-latex-classes
+                `("beamer"
+                  ,(concat "\\documentclass[presentation]{beamer}\n"
+                           "[DEFAULT-PACKAGES]"
+                           "[PACKAGES]"
+                           "[EXTRA]\n")
+                  ("\\section{%s}" . "\\section*{%s}")
+                  ("\\subsection{%s}" . "\\subsection*{%s}")
+                  ("\\subsubsection{%s}" . "\\subsubsection*{%s}"))))
