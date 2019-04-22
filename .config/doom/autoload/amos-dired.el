@@ -23,6 +23,7 @@
        (dired-insert-set-properties (point-min) (point-max)))
   (set-buffer-modified-p nil))
 (add-hook 'dired-after-readin-hook #'+dired|sort-directories-first)
+(add-hook! 'dired-after-readin-hook (auto-revert-mode +1))
 
 ;; Automatically create missing directories when creating new files
 (defun +dired|create-non-existent-directory ()

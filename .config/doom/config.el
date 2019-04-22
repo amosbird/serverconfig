@@ -3068,8 +3068,10 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (setq ssh-remote-addr (and (getenv "SSH_CONNECTION") (nth 2 (split-string (getenv "SSH_CONNECTION") " "))))
 (defun +amos-paste-file (filename)
   (if ssh-remote-addr
-      (osc-command (format "scp %s %s:%s/" filename ssh-remote-addr default-directory))
-    (shell-command! (format "cp %s %s/" filename default-directory))))
+      (let ((cmd (format "scp %s %s:%s/" (shell-quote-argument filename) ssh-remote-addr (shell-quote-argument default-directory))))
+        (message cmd)
+        (osc-command cmd))
+    (shell-command! (format "cp %s %s/" (shell-quote-argument filename) ssh-remote-addr (shell-quote-argument default-directory)))))
 
 (defun +amos-dispatch-uri-list (uri-list)
   (cond
@@ -3085,12 +3087,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
     t)
    ((eq major-mode 'dired-mode)
     (let ((files (split-string uri-list "[\0\r\n]" t)))
-        (--each files
-          (let ((file-name (string-remove-prefix "file://" it)))
-            (when (and (file-exists-p file-name)
-                       (not (file-directory-p file-name)))
-              (+amos-paste-file file-name))))
-        (+amos/revert-buffer))
+      (--each files
+        (let ((file-name (string-remove-prefix "file://" it)))
+          (+amos-paste-file file-name))))
     t)
    (t
     nil)))
@@ -4592,10 +4591,10 @@ Return the pasted text as a string."
           (insert event)))
       (let* ((last-coding-system-used)
              (text (decode-coding-region (point-min) (point) (keyboard-coding-system) t)))
-      (if (string= "\e[290~" (this-command-keys))
-          (setq xterm-paste-urllist text)
-        (setq xterm-paste-urllist nil)
-        text)))))
+        (if (string= "\e[290~" (this-command-keys))
+            (setq xterm-paste-urllist text)
+          (setq xterm-paste-urllist nil)
+          text)))))
 
 (advice-add #'xterm--pasted-text :override #'+amos*xterm--pasted-text)
 (after! xterm
