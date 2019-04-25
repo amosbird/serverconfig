@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+echo "$@" > /tmp/llpp.log
+/home/amos/git/llpp/build/llpp $1

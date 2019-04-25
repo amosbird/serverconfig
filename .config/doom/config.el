@@ -4074,7 +4074,7 @@ inside or just after a citation command, only adds KEYS to it."
 
 (defun +amos/xterm-paste (event)
   (interactive "e")
-  (if (or (evil-insert-state-p) (window-minibuffer-p))
+  (if (+amos-insert-state-p)
       (xterm-paste event)
     (let ((uri-list xterm-paste-urllist))
       (unless (and uri-list (+amos-dispatch-uri-list uri-list))
@@ -4091,6 +4091,8 @@ inside or just after a citation command, only adds KEYS to it."
                                      'yank-handler yank-handler)))
               (evil-set-register ?r text)))
           (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
+        (if (evil-multiedit-state-p)
+            (evil-multiedit--delete-occurrences))
         (if current-prefix-arg
             (progn
               (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
@@ -4100,7 +4102,7 @@ inside or just after a citation command, only adds KEYS to it."
 
 (defun +amos/paste-from-gui ()
   (interactive)
-  (if (or (evil-insert-state-p) (window-minibuffer-p))
+  (if (+amos-insert-state-p)
       (insert-for-yank (gui-get-primary-selection))
     (let ((uri-list
            (condition-case nil
@@ -4120,6 +4122,8 @@ inside or just after a citation command, only adds KEYS to it."
                                      'yank-handler yank-handler)))
               (evil-set-register ?r text)))
           (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
+        (if (evil-multiedit-state-p)
+            (evil-multiedit--delete-occurrences))
         (if current-prefix-arg
             (progn
               (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))

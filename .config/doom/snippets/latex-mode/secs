@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# contributor : Mads D. Kristensen <madsdk@gmail.com>
+# key : secs
+# group: sections
+# --
+\section*{${1:name}}
+$0

@@ -169,6 +169,8 @@
       :i "M-}"                    (lambda! (+amos-surround-with-pair ?}))
       :i "M-("                    (lambda! (+amos-surround-with-pair ?\) t))
       :i "M-)"                    (lambda! (+amos-surround-with-pair ?\)))
+      :i "M-,"                    (lambda! (+amos-surround-with-pair ?> t))
+      :i "M-."                    (lambda! (+amos-surround-with-pair ?>))
       ;; these will break terminal
       ;; :i "M-["                    (lambda! (+amos-surround-with-pair ?\] t))
       ;; :i "M-]"                    (lambda! (+amos-surround-with-pair ?\]))
@@ -210,7 +212,6 @@
       :i [remap newline]          #'newline-and-indent
       :n "C-e"                    #'+amos/maybe-add-end-of-statement
       :i "C-e"                    #'+amos/smart-eol-insert
-      :i "M-."                    #'+amos/insert-eol-and-return
       :i "M-e"                    #'smart-forward
       :i "M-a"                    #'smart-backward
       :i "C-u"                    #'+amos/backward-kill-to-bol-and-indent

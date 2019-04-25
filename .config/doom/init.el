@@ -49,7 +49,8 @@
        markdown
        (sh +fish)
        ;; rust
-       python
+       (ocaml +lsp)
+       (python +lsp)
        go
        :private
        amos-cc
@@ -280,6 +281,7 @@
 (setq-default TeX-engine 'xetex)
 (setq-default line-spacing 0.1)
 (setq reftex-label-ignored-macros-and-environments '("enumerate" "itemize"))
+(setq reftex-insert-label-flags '("sft"))
 (setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${note:*}")))
 (setq bibtex-completion-additional-search-fields '("note"))
 

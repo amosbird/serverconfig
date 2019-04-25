@@ -284,17 +284,17 @@
 
 (add-hook! 'iedit-mode-hook
   (when (memq major-mode '(c-mode c++-mode))
-              (advice-add #'lsp-on-change :override #'ignore)
-              (advice-add #'c-font-lock-fontify-region :override #'ignore)
-              (advice-add #'c-called-from-text-property-change-p :override #'+amos*yes)))
+    (advice-add #'lsp-on-change :override #'ignore)
+    (advice-add #'c-font-lock-fontify-region :override #'ignore)
+    (advice-add #'c-called-from-text-property-change-p :override #'+amos*yes)))
 
 (add-hook! 'iedit-mode-end-hook
   (when (memq major-mode '(c-mode c++-mode))
-              (advice-remove #'lsp-on-change #'ignore)
-              (lsp-on-revert)
-              (advice-remove #'c-font-lock-fontify-region #'ignore)
-              (save-excursion
-                (font-lock-fontify-region 0 (buffer-size) nil))
-              (advice-remove #'c-called-from-text-property-change-p #'+amos*yes)))
+    (advice-remove #'lsp-on-change #'ignore)
+    (lsp-on-revert)
+    (advice-remove #'c-font-lock-fontify-region #'ignore)
+    ;; (save-excursion
+    ;;   (font-lock-fontify-region 0 (buffer-size) nil))
+    (advice-remove #'c-called-from-text-property-change-p #'+amos*yes)))
 
 ;; (add-hook! (c-mode c++-mode) (setq iedit-auto-bufferring t))

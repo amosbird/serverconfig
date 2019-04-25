@@ -1,7 +1,9 @@
 # -*- mode: snippet -*-
-# name: block
-# key: bl
+# contributor: Claudio Marforio <marforio@gmail.com> 
+# key: block
+# group: environments
+# name : \begin{*block} ... \end{*block}
 # --
-\begin{block}{$1}
-        $0
-\end{block}
+\begin{${1:$$(yas/choose-value '("block" "exampleblock" "alertblock"))}}{${2:Block Title}}
+
+\end{$1}

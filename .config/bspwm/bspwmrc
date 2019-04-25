@@ -35,6 +35,7 @@ bspc rule -a Luakit desktop=f follow=on
 bspc rule -a Skype desktop=o state=fullscreen
 
 # stalonetray &
+xsetroot -cursor_name left_ptr
 startconky
 setbg.sh
 

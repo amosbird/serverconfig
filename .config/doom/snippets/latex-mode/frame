@@ -1,8 +1,7 @@
 # -*- mode: snippet -*-
 # name: frame
-# key: fr
+# key: f
 # --
-\begin{frame}${1:[$2]}
-        ${3:\frametitle{$4}}
-        $0
+\begin{frame}{${1:Frame Title}}
+  $0
 \end{frame}

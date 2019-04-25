@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# contributor : Mads D. Kristensen <madsdk@gmail.com>
+# key : g
+# --
+\includegraphics[width=${1:\linewidth}]{${2:file}}

@@ -4,5 +4,6 @@
 # --
 \subfigure[${1:caption}]{
   \label{fig:${2:label}} 
-  \includegraphics[width=.${3:3}\textwidth]{${4:path}}}
+  \includegraphics[width=.${3:3}\textwidth]{${4:path}}
+}
 $0

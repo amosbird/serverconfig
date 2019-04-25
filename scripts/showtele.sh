@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep -f Telegram > /dev/null
+if pgrep Telegram > /dev/null
 then
     id=$(head -1 /tmp/telegram)
     if [ -z "$id" ]
