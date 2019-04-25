@@ -143,7 +143,13 @@
 (after! evil-snipe (evil-snipe-mode -1))
 
 (after! evil-multiedit
-  (setq evil-multiedit-follow-matches t))
+  (setq evil-multiedit-follow-matches t)
+  (add-hook! 'evil-multiedit-insert-state-entry-hook
+    (evil-start-undo-step)
+    (setq evil-in-single-undo t))
+  (add-hook! 'evil-multiedit-insert-state-exit-hook
+    (setq evil-in-single-undo nil)
+    (evil-end-undo-step)))
 
 (after! smartparens
   ;; Auto-close more conservatively
@@ -2760,7 +2766,11 @@ By default the last line."
 (defun +amos*undo-tree (orig-fun &rest args)
   (if (and (not defining-kbd-macro)
            (not executing-kbd-macro))
-      (apply orig-fun args)
+      (if (not (memq major-mode '(c-mode c++-mode)))
+          (apply ofun arg)
+        (+amos|iedit-mode-hook)
+        (apply ofun arg)
+        (+amos|iedit-mode-end-hook))
     (message "cannot use undo when recording/executing a macro!")))
 (advice-add #'undo-tree-undo :around #'+amos*undo-tree)
 (advice-add #'undo-tree-redo :around #'+amos*undo-tree)
@@ -3628,7 +3638,7 @@ as small) as possible, but don't signal an error."
          (caller (ivy-state-caller ivy-last))
          (xref (eq caller '+lookup/references))
          (recursive (and (eq (with-current-buffer ob major-mode) 'ivy-occur-grep-mode)
-                         (eq caller 'swiper)))
+                         (eq caller 'swiper-isearch)))
          (occur-fn (plist-get ivy--occurs-list caller))
          (buffer (generate-new-buffer
                   (format "*ivy-occur%s \"%s\"*"
@@ -3663,23 +3673,24 @@ as small) as possible, but don't signal an error."
 When REVERT is non-nil, regenerate the current *ivy-occur* buffer.
 When capture groups are present in the input, print them instead of lines."
   (let* ((buffer (ivy-state-buffer ivy-last))
-         (re (progn (string-match "\"\\(.*\\)\"" (buffer-name))
-                    (match-string 1 (buffer-name))))
-         (re (mapconcat #'identity (ivy--split re) ".*?"))
+         (fname (propertize
+                 (with-ivy-window
+                   (if (buffer-file-name buffer)
+                       (file-name-nondirectory
+                        (buffer-file-name buffer))
+                     (buffer-name buffer)))
+                 'face
+                 'ivy-grep-info))
+         (ivy-text (and (string-match "\"\\(.*\\)\"" (buffer-name))
+                        (match-string 1 (buffer-name))))
+         (re (mapconcat #'identity (ivy--split ivy-text) ".*?"))
          (cands
-          (mapcar
-           (lambda (s)
-             (let* ((n (get-text-property 0 'swiper-line-number s))
-                    (i (string-match-p "[ \t\n\r]+\\'" n)))
-               (when i (setq n (substring n 0 i)))
-               (put-text-property 0 (length n) 'face 'compilation-line-number n)
-               (format "%s" (substring s 1))))
-           (if (not revert)
-               ivy--old-cands
-             (setq ivy--old-re nil)
-             (let ((ivy--regex-function 'swiper--re-builder))
-               (ivy--filter re (with-current-buffer buffer
-                                 (swiper--candidates))))))))
+          (if (not revert)
+              ivy--old-cands
+            (setq ivy--old-re nil)
+            (save-window-excursion
+              (switch-to-buffer buffer)
+              (swiper-isearch-function ivy-text)))))
     (if (string-match-p "\\\\(" re)
         (insert
          (mapconcat #'identity
@@ -3694,7 +3705,6 @@ When capture groups are present in the input, print them instead of lines."
                       default-directory))
       (insert (format "%d candidates:\n" (length cands)))
       (ivy--occur-insert-lines cands)
-      (ivy-wgrep-change-to-wgrep-mode)
       (goto-char (point-min))
       (forward-line 4))))
 

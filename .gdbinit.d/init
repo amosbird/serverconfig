@@ -118,8 +118,6 @@ set history remove-duplicates 5000
 alias -a w = dashboard expressions watch
 alias -a W = dashboard expressions unwatch
 
-set auto-solib-add off
-
 # useful auto-redraw hooks
 
 # define hook-break
@@ -162,6 +160,8 @@ set auto-solib-add off
 # call $dlopen("/home/amos/git/luakit/lualib.so", 1)
 
 # set scheduler-locking off
+
+set auto-solib-add off
 
 set target-async 1
 set pagination off
