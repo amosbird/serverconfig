@@ -395,8 +395,8 @@
         :n "F"   #'dired-do-copy
         :n "h"   #'+amos/dired-up-directory
         :n "M-p" #'+amos/dired-up-directory
-        :n "M-o" #'+amos/dired-prev-directory
-        :n "M-i" #'+amos/dired-up-directory
+        :n "M-o" #'+amos/dired-prev-history
+        :n "M-i" #'+amos/dired-next-history
         :n "j"   #'dired-next-line
         :n "k"   #'dired-previous-line
         :n "p"   #'dired-ranger-paste

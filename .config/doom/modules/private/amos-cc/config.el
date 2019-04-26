@@ -268,6 +268,7 @@
                (indent-tabs-mode . nil)
                (c-offsets-alist . ((innamespace . 0)
                                    (arglist-intro . ++)
+                                   (arglist-cont-nonempty . ++)
                                    (substatement-open . 0)
                                    (inlambda . 0)
                                    (inline-open . 0)
@@ -305,7 +306,7 @@
 (defun +amos|iedit-setup-hooks ()
   (add-hook 'before-change-functions #'+amos|iedit-mode-hook nil t)
   (add-hook 'after-change-functions #'+amos|iedit-mode-hook-after nil t))
-(add-hook #'iedit-mode-hook #'+amos|iedit-setup-hooks)
+(add-hook 'evil-multiedit-state-entry-hook #'+amos|iedit-setup-hooks)
 
 (defun +amos|iedit-mode-end-hook ()
   (when (memq major-mode '(c-mode c++-mode))
@@ -323,7 +324,7 @@
     )
   (font-lock-mode +1)
   t)
-(add-hook #'iedit-mode-end-hook #'+amos|iedit-mode-end-hook)
+(add-hook 'evil-multiedit-state-exit-hook #'+amos|iedit-mode-end-hook)
 
 ;; maybe useful?
 ;; (add-hook! (c-mode c++-mode) (setq iedit-auto-bufferring t))

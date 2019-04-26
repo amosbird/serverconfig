@@ -2,74 +2,75 @@
 #
 python
 import time
-class AmosCommand(gdb.Command):
 
-    def __init__(self):
-        gdb.Command.__init__(self, 'amos',
-                             gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+# class AmosCommand(gdb.Command):
 
-    def invoke(self, arg, from_tty):
-        if gdb.selected_thread().is_stopped():
-            return
-        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
-            if thread.is_stopped():
-                gdb.execute("thread {}".format(thread.num), from_tty=True)
-                return
+#     def __init__(self):
+#         gdb.Command.__init__(self, 'amos',
+#                              gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
 
-AmosCommand()
+#     def invoke(self, arg, from_tty):
+#         if gdb.selected_thread().is_stopped():
+#             return
+#         for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+#             if thread.is_stopped():
+#                 gdb.execute("thread {}".format(thread.num), from_tty=True)
+#                 return
 
-class BirdCommand(gdb.Command):
+# AmosCommand()
 
-    def __init__(self):
-        gdb.Command.__init__(self, 'bird',
-                             gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+# class BirdCommand(gdb.Command):
 
-    def invoke(self, arg, from_tty):
-        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
-            if thread.is_stopped():
-                self.bird_interrupted = None
-                return
-        self.bird_interrupted = gdb.selected_thread()
-        gdb.execute("interrupt", from_tty=True)
-        time.sleep(0.1)
+#     def __init__(self):
+#         gdb.Command.__init__(self, 'bird',
+#                              gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
 
-bc = BirdCommand()
+#     def invoke(self, arg, from_tty):
+#         for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+#             if thread.is_stopped():
+#                 self.bird_interrupted = None
+#                 return
+#         self.bird_interrupted = gdb.selected_thread()
+#         gdb.execute("interrupt", from_tty=True)
+#         time.sleep(0.1)
 
-class AfterBirdCommand(gdb.Command):
+# bc = BirdCommand()
 
-    def __init__(self, bc):
-        self.bc = bc
-        self.bc.bird_interrupted = None
-        gdb.Command.__init__(self, 'afterbird',
-                             gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+# class AfterBirdCommand(gdb.Command):
 
-    def invoke(self, arg, from_tty):
-        if self.bc.bird_interrupted is not None:
-            gdb.execute("continue {}&".format(self.bc.bird_interrupted.num), from_tty=True)
-            self.bc.bird_interrupted = None
+#     def __init__(self, bc):
+#         self.bc = bc
+#         self.bc.bird_interrupted = None
+#         gdb.Command.__init__(self, 'afterbird',
+#                              gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
 
-AfterBirdCommand(bc)
+#     def invoke(self, arg, from_tty):
+#         if self.bc.bird_interrupted is not None:
+#             gdb.execute("continue {}&".format(self.bc.bird_interrupted.num), from_tty=True)
+#             self.bc.bird_interrupted = None
 
-class ThreadSwitchCommand(gdb.Command):
+# AfterBirdCommand(bc)
 
-    def __init__(self):
-        gdb.Command.__init__(self, 'threadswitch',
-                             gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+# class ThreadSwitchCommand(gdb.Command):
 
-    def invoke(self, arg, from_tty):
-        print(arg)
-        for threadid, filename in gdb.stopped_threads:
-            if filename == arg:
-                gdb.execute("thread {}".format(threadid), from_tty=True)
-                return
+#     def __init__(self):
+#         gdb.Command.__init__(self, 'threadswitch',
+#                              gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
 
-        for threadid, filename in gdb.stopped_threads:
-            for bp in gdb.breakpoints():
-                if filename == bp.location:
-                    gdb.execute("thread {}".format(threadid), from_tty=True)
-                    return
+#     def invoke(self, arg, from_tty):
+#         print(arg)
+#         for threadid, filename in gdb.stopped_threads:
+#             if filename == arg:
+#                 gdb.execute("thread {}".format(threadid), from_tty=True)
+#                 return
 
-ThreadSwitchCommand()
+#         for threadid, filename in gdb.stopped_threads:
+#             for bp in gdb.breakpoints():
+#                 if filename == bp.location:
+#                     gdb.execute("thread {}".format(threadid), from_tty=True)
+#                     return
+
+# ThreadSwitchCommand()
 
 # def signal_stop_handler (event):
 #     if (isinstance (event, gdb.StopEvent)):
@@ -95,62 +96,117 @@ ThreadSwitchCommand()
 #             print ("all threads stopped")
 
 # gdb.events.stop.connect(breakpoint_stop_handler)
+
+# useful auto-redraw hooks
+
+class AmosCommand(gdb.Command):
+
+    def __init__(self):
+        gdb.Command.__init__(self, 'amos',
+                             gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+
+    def invoke(self, arg, from_tty):
+        print("current thread has exited")
+        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+            if thread.is_valid() and thread.is_stopped():
+                gdb.execute("thread {}".format(thread.num), from_tty=True)
+                gdb.execute("dashboard", from_tty=True)
+                return
+        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+            if thread.is_valid():
+                gdb.execute("thread {}".format(thread.num), from_tty=True)
+                gdb.execute("dashboard", from_tty=True)
+                return
+        print("wtf????")
+AmosCommand()
+
+class BirdCommand(gdb.Command):
+    def __init__(self):
+        gdb.Command.__init__(self, 'bird', gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+
+    def invoke(self, arg, from_tty):
+        try:
+            gdb.selected_thread()
+        except SystemError:
+            for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+                if thread.is_valid() and thread.is_stopped():
+                    gdb.execute("thread {}".format(thread.num), from_tty=True)
+                    gdb.execute("dashboard", from_tty=True)
+                    return
+            for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+                if thread.is_valid():
+                    gdb.execute("thread {}".format(thread.num), from_tty=True)
+                    gdb.execute("dashboard", from_tty=True)
+                    return
+        if gdb.selected_thread() is not None and gdb.selected_thread().is_stopped():
+            return
+        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+            if thread.is_valid() and thread.is_stopped():
+                gdb.execute("thread {}".format(thread.num), from_tty=True)
+                gdb.execute("dashboard", from_tty=True)
+                return
+        gdb.execute("dashboard", from_tty=True)
+
+BirdCommand()
+
+class RedashCommand(gdb.Command):
+    def __init__(self):
+        gdb.Command.__init__(self, 'redash', gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+
+    def invoke(self, arg, from_tty):
+        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+            if thread.is_valid() and thread.is_stopped():
+                return
+        gdb.execute("dashboard", from_tty=True)
+
+RedashCommand()
+
 end
 
-# enable auto-load
-set auto-load safe-path /
+define hookpost-finish
+  redash
+end
+define hookpost-next
+  redash
+end
+define hookpost-step
+  redash
+end
+define hookpost-stepi
+  redash
+end
+define hookpost-continue
+  redash
+end
 
-# prefer Intel assembly syntax
-set disassembly-flavor intel
+define hookpost-up
+  dashboard
+end
 
-# GDB dashboard defaults
+define hookpost-down
+  dashboard
+end
+
+define hookpost-frame
+  dashboard
+end
+
 dashboard -layout stack expressions threads registers
 dashboard -style syntax_highlighting 'monokai'
-dashboard source -style context 20
-dashboard assembly -style context 5
 dashboard stack -style compact True
 dashboard stack -style limit 3
 dashboard threads -style skip-running True
+
+# enable auto-load
+set auto-load safe-path /
+set auto-load scripts-directory ~/.cgdb
+set disassembly-flavor intel
 set opaque-type-resolution off
 set history filename ~/.gdb_history
 set history save on
 set history remove-duplicates 5000
 alias -a w = dashboard expressions watch
 alias -a W = dashboard expressions unwatch
-
-# useful auto-redraw hooks
-
-# define hook-break
-#   bird
-# end
-
-# define hookpost-break
-#   afterbird
-# end
-
-# define hookpost-up
-#   dashboard
-# end
-
-# define hookpost-down
-#   dashboard
-# end
-
-# define hookpost-frame
-#   dashboard
-# end
-
-# define hookpost-stop
-#   dashboard
-# end
-
-# define hookpost-continue
-#   dashboard
-# end
-
-# define hookpost-thread
-#   dashboard
-# end
 
 # handle SIGTSTP noprint nostop pass
 # handle SIGQUIT noprint nostop pass
@@ -162,12 +218,15 @@ alias -a W = dashboard expressions unwatch
 # set scheduler-locking off
 
 set auto-solib-add off
-
 set target-async 1
-set pagination off
 set non-stop on
 set confirm off
 # Finally, turn it on!
 
-skip -gfi /usr/include/c++/*/*/*
-skip -gfi /usr/local/include/c++/*/*/*
+skip -gfi usr/include/c++/*/*/*
+skip -gfi usr/local/include/c++/*/*/*
+
+# vim: filetype=python
+# Local Variables:
+# mode: python
+# End:

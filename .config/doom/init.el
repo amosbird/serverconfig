@@ -95,7 +95,8 @@
 (setq dired-omit-verbose nil)
 (setq dired-open-functions '(dired-open-by-extension dired-open-call-function-by-extension dired-open-subdir))
 (setq dired-open-extensions-elisp
-      '(("zip" . +amos/compress-view)
+      '(("el.gz" . find-file)
+        ("zip" . +amos/compress-view)
         ("jar" . +amos/compress-view)
         ("tgz" . +amos/compress-view)
         ("apk" . +amos/compress-view)
@@ -245,6 +246,7 @@
 (setq process-environment initial-environment)
 (setq projectile-find-dir-includes-top-level t)
 (setq projectile-globally-ignored-directories '(".idea" ".ensime_cache" ".eunit" ".git" ".hg" ".fslckout" "_FOSSIL_" ".bzr" "_darcs" ".tox" ".svn" ".stack-work" "~/.emacs.d/.local/" ".sync" ".cquery_cached_index"))
+(setq projectile-project-root-files-bottom-up '(".ignore" ".project" ".projectile" ".git" ".hg" ".fslckout" "_FOSSIL_" ".bzr" "_darcs"))
 (setq projectile-require-project-root t)
 (setq projectile-sort-order 'recentf)
 (setq query-replace-skip-read-only t)

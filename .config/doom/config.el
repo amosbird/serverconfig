@@ -279,6 +279,7 @@
            (buffname (string-trim (buffer-name buffer))))
       (or (equal buffname "*doom*")
           (equal buffname "*flycheck-posframe-buffer*")
+          (equal buffname "*Ediff Control Panel*")
           (equal (with-current-buffer buffer major-mode) 'pdf-view-mode))))
   (push #'amos-special-window-p realign-ignore-window-predicates))
 
@@ -453,11 +454,6 @@
   (setq-local amos-browse t)
   ad-do-it)
 
-(after! ediff
-  (add-hook! 'ediff-keymap-setup-hook
-    (define-key ediff-mode-map "k" 'ediff-previous-difference)
-    (define-key ediff-mode-map "j" 'ediff-next-difference)))
-
 (def-package! easy-hugo
   :commands easy-hugo
   :config
@@ -544,12 +540,6 @@ Skip buffers that match `ivy-ignore-buffers'."
   :demand
   :config
   (global-hl-line-mode +1))
-
-(after! evil
-  (defadvice evil-ret-gen (around amos*evil-ret-gen activate)
-    (let ((url (thing-at-point 'url)))
-      (if url (goto-address-at-point)
-        ad-do-it))))
 
 (def-package! unfill
   :commands (unfill-region unfill-paragraph unfill-toggle)
@@ -1415,10 +1405,12 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (defun +amos/lsp-highlight-symbol ()
   (interactive)
-  (require 'lsp-mode)
-  (let ((inhibit-message t))
-    (setq-local +amos--lsp-maybe-highlight-symbol t)
-    (lsp--document-highlight)))
+  (let ((url (thing-at-point 'url)))
+    (if url (goto-address-at-point)
+      (require 'lsp-mode)
+      (let ((inhibit-message t))
+        (setq-local +amos--lsp-maybe-highlight-symbol t)
+        (lsp--document-highlight)))))
 
 (defun +amos|lsp-remove-highlight ()
   (interactive)
@@ -2713,15 +2705,6 @@ By default the last line."
   (evil-normal-state)
   (cl-decf evil-repeat-pos))
 
-(defun ediff-copy-both-to-C ()
-  (interactive)
-  (ediff-copy-diff ediff-current-difference nil 'C nil
-                   (concat
-                    (ediff-get-region-contents ediff-current-difference 'A ediff-control-buffer)
-                    (ediff-get-region-contents ediff-current-difference 'B ediff-control-buffer))))
-(defun add-c-to-ediff-mode-map () (define-key ediff-mode-map "c" 'ediff-copy-both-to-C))
-(add-hook 'ediff-keymap-setup-hook 'add-c-to-ediff-mode-map)
-
 (defun +amos/close-block ()
   (interactive)
   (evil-with-state 'insert
@@ -2763,7 +2746,7 @@ By default the last line."
       (+amos-clean-evil-jump-list (current-buffer)))
   (or (and kill (kill-current-buffer)) (bury-buffer)))
 
-(defun +amos*undo-tree (orig-fun &rest args)
+(defun +amos*undo-tree (ofun &rest arg)
   (if (and (not defining-kbd-macro)
            (not executing-kbd-macro))
       (if (not (memq major-mode '(c-mode c++-mode)))
@@ -3437,10 +3420,12 @@ with regard to indentation."
 If point is on a widget or a button, click on it.
 In Insert state, insert a newline."
   :type line
-  (let ((nl (looking-at "\n")))
-    (if nl (forward-char 1))
-    (evil-ret-gen count nil)
-    (if nl (backward-char 1))))
+  (let ((url (thing-at-point 'url)))
+    (if url (goto-address-at-point)
+      (let ((nl (looking-at "\n")))
+        (if nl (forward-char 1))
+        (evil-ret-gen count nil)
+        (if nl (backward-char 1))))))
 (advice-add #'evil-ret :override #'+amos*evil-ret)
 
 (defun +amos*git-gutter:search-near-diff-index (diffinfos is-reverse)
@@ -4616,3 +4601,98 @@ Return the pasted text as a string."
 (advice-add #'xterm--pasted-text :override #'+amos*xterm--pasted-text)
 (after! xterm
   (define-key xterm-rxvt-function-map "\e[290~" #'xterm-translate-bracketed-paste))
+
+(defun +amos/make-ignore ()
+  (interactive)
+  (shell-command! "makeignore")
+  (setq projectile-project-root nil)
+  (setq projectile-project-root-cache (make-hash-table :test 'equal)))
+
+(defvar-local +amos-git-timemachine-revision nil)
+(defvar-local +amos-git-timemachine-file nil)
+(defvar-local +amos-git-timemachine--revisions-cache nil)
+
+(defun +amos-git-timemachine--revisions (default-directory file)
+  (with-temp-buffer
+    (unless (zerop (git-timemachine--process-file "log" "--name-only" "--follow" "--pretty=format:%H%x00%ar%x00%ad%x00%s%x00%an" "--" file))
+      (error "Git log command exited with non-zero exit status for file: %s" file))
+    (goto-char (point-min))
+    (let ((lines)
+          (commit-number (/ (1+ (count-lines (point-min) (point-max))) 3)))
+      (while (not (eobp))
+        (let ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
+          (string-match "\\([^\0]*\\)\0\\([^\0]*\\)\0\\([^\0]*\\)\0\\(.*\\)\0\\(.*\\)" line)
+          (let ((commit (match-string 1 line))
+                (date-relative (match-string 2 line))
+                (date-full (match-string 3 line))
+                (subject (match-string 4 line))
+                (author (match-string 5 line)))
+            (forward-line 1)
+            (let ((file-name (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
+              (push (list commit file-name commit-number date-relative date-full subject author) lines))))
+        (setq commit-number (1- commit-number))
+        (forward-line 2))
+      (nreverse lines))))
+
+(defun +amos/git-timemachine-ediff-current-revision ()
+  (interactive)
+  (+amos-git-timemachine-validate (buffer-file-name))
+  (let* ((git-directory (expand-file-name (vc-git-root (buffer-file-name))))
+         (file-name (magit-file-relative-name))
+         (cache (+amos-git-timemachine--revisions git-directory (buffer-file-name))))
+    (+amos-git-timemachine-ediff-revision (car cache) cache file-name)))
+
+(defun +amos-git-timemachine-ediff-revision (revision-log &optional cache file-name)
+  (lexical-let ((cache (or cache +amos-git-timemachine--revisions-cache))
+                (file-name (or file-name +amos-git-timemachine-file))
+                (revision-log revision-log))
+    (defun +amos|ediff-startup-hook ()
+      (setq
+       +amos-git-timemachine--revisions-cache cache
+       +amos-git-timemachine-file file-name
+       +amos-git-timemachine-revision revision-log)
+      (remove-hook 'ediff-startup-hook #'+amos|ediff-startup-hook))
+    (add-hook 'ediff-startup-hook #'+amos|ediff-startup-hook)
+    (if (eq major-mode 'ediff-mode)
+        (flet ((yes-or-no-p (&rest args) t)
+               (y-or-n-p (&rest args) t))
+          (ediff-quit nil)))
+    (magit-ediff-compare (car revision-log) nil file-name file-name)))
+
+(defun +amos-git-timemachine--next-revision (revisions)
+  (or (cadr (cl-member (car +amos-git-timemachine-revision) revisions :key #'car :test #'string=))
+      (car (reverse revisions))))
+
+(defun +amos/ediff-previous-revision ()
+  (interactive)
+  (let ((curr-revision +amos-git-timemachine-revision)
+        (new-revision (+amos-git-timemachine--next-revision +amos-git-timemachine--revisions-cache)))
+    (+amos-git-timemachine-ediff-revision new-revision)))
+
+(defun +amos/ediff-next-revision ()
+  (interactive)
+  (let ((curr-revision +amos-git-timemachine-revision)
+        (new-revision (+amos-git-timemachine--next-revision (reverse +amos-git-timemachine--revisions-cache))))
+    (+amos-git-timemachine-ediff-revision new-revision)))
+
+(defun +amos-git-timemachine-validate (file)
+  (unless file
+    (error "This buffer is not visiting a file"))
+  (unless (vc-git-registered file)
+    (error "This file is not git tracked")))
+
+(defun +amos/ediff-copy-both-to-C ()
+  (interactive)
+  (ediff-copy-diff ediff-current-difference nil 'C nil
+                   (concat
+                    (ediff-get-region-contents ediff-current-difference 'A ediff-control-buffer)
+                    (ediff-get-region-contents ediff-current-difference 'B ediff-control-buffer))))
+
+(after! ediff
+  (add-hook! 'ediff-keymap-setup-hook
+    (define-key ediff-mode-map "k" 'ediff-previous-difference)
+    (define-key ediff-mode-map "j" 'ediff-next-difference)
+    (define-key ediff-mode-map "c" '+amos/ediff-copy-both-to-C)
+    (define-key ediff-mode-map "K" '+amos/ediff-previous-revision)
+    (define-key ediff-mode-map "J" '+amos/ediff-next-revision)
+    ))
