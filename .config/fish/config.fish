@@ -18,6 +18,8 @@ set -x USE_GOLD_LINKER true
 set -x DIRENV_LOG_FORMAT ""
 set -x UID (id -u)
 set -x GPG_TTY (tty)
+set -x PREFIX ~/.local
+set -x NODE_PATH ~/.local/lib/node_modules/
 
 set -e LS_COLORS
 alias l "exa"
@@ -73,7 +75,7 @@ if not set -q fish_initialized
 
     # prepend path
     # set -U fish_user_paths $HOME/scripts $ASDF_DIR/bin $ASDF_DIR/shims $asdf_data_dir/shims
-    set -U fish_user_paths $HOME/scripts
+    set -U fish_user_paths $HOME/scripts $HOME/.local/bin
     set -U fish_initialized 1
 end
 

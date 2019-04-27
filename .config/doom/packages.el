@@ -28,6 +28,7 @@
 (package! fcitx)
 (package! flycheck)
 (package! flycheck-inline)
+(package! frame-local)
 (package! general)
 (package! git-gutter)
 (package! git-timemachine)

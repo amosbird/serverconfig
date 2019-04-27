@@ -142,10 +142,12 @@
       :n "M-."                    #'flycheck-next-error
       :n "M-p"                    #'evil-multiedit-match-symbol-and-prev
       :n "M-n"                    #'evil-multiedit-match-symbol-and-next
+      :n "M-y"                    #'+amos/yank-flycheck-error
       :v "M-p"                    #'evil-multiedit-match-and-prev
       :v "M-n"                    #'evil-multiedit-match-and-next
       :i "M-n"                    #'next-line
       :i "M-p"                    #'previous-line
+      :m "-"                      #'evil-end-of-line
       :m "N"                      #'evil-ex-search-previous
       :m "W"                      #'+amos/evil-forward-subword-begin
       :m "E"                      #'+amos/evil-forward-subword-end

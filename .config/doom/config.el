@@ -1984,6 +1984,8 @@ representation of `NUMBER' is smaller."
      :side bottom :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*Compil\\(?:ation\\|e-Log\\)"
      :side right :size 0.5 :select t :ttl 0 :quit t)
+    ("^\\*temp\\*"
+     :side right :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*\\(?:scratch\\|Messages\\)"
      :autosave t :ttl nil)
     ("^\\*Man "
@@ -2634,6 +2636,7 @@ the current state and point position."
 (defun +amos*flycheck-inline-display-errors (ofun &rest candidate)
   (if (or (eq last-command 'flycheck-previous-error)
           (eq last-command 'flycheck-next-error)
+          (eq last-command '+amos/yank-flycheck-error)
           (eq last-input-event 29))
       (apply ofun candidate)))
 
@@ -2971,7 +2974,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
              (search-pattern (evil-ex-make-search-pattern regex)))
         (evil-multiedit-ex-match (point-min) (point-max) nil (car search-pattern))))))
 
-(defun +amos/lsp-ui-imenu nil
+(defun +amos/lsp-ui-imenu ()
   (interactive)
   (setq lsp-ui-imenu--origin (current-buffer))
   (imenu--make-index-alist)
@@ -4309,13 +4312,13 @@ Position of selected mark outside accessible part of buffer")))
     (if global
         (let ((-compare-fn (lambda (x y) (and (markerp (cdr x)) (equal (marker-position x) (car y)) (equal (marker-buffer) (cdr y))))))
           (when (not (-contains? (default-value 'evil-markers-alist) (cons (point) (current-buffer))))
-            (evil-set-marker +amos-evil-global-marks )
+            (evil-set-marker +amos-evil-global-marks)
             (if (= +amos-evil-global-marks ?Z)
                 (setq +amos-evil-global-marks ?A)
               (cl-incf +amos-evil-global-marks))))
       (let ((-compare-fn (lambda (x y) (and (markerp (cdr x)) (equal (marker-position x) (car y)) (equal (marker-buffer) (cdr y))))))
         (when (not (-contains? evil-markers-alist (cons (point) (current-buffer))))
-          (evil-set-marker +amos-evil-local-marks )
+          (evil-set-marker +amos-evil-local-marks)
           (if (= +amos-evil-local-marks ?z)
               (setq +amos-evil-local-marks ?a)
             (cl-incf +amos-evil-local-marks)))))))
@@ -4700,3 +4703,52 @@ Return the pasted text as a string."
     (define-key ediff-mode-map "K" '+amos/ediff-previous-revision)
     (define-key ediff-mode-map "J" '+amos/ediff-next-revision)
     ))
+
+(defun +amos*flycheck-error-line-region (err)
+  (flycheck-error-with-buffer err
+    (save-restriction
+      (save-excursion
+        (widen)
+        (goto-char (point-min))
+        (forward-line (- (flycheck-error-line err) 1))
+        (let ((end (line-end-position)))
+          (skip-syntax-forward " " end)
+          (backward-prefix-chars)
+          (cons (point) (if (eolp) (+ 1 end) end)))))))
+
+(defun +amos*flycheck-error-column-region (err)
+  (flycheck-error-with-buffer err
+    (save-restriction
+      (save-excursion
+        (-when-let (column (flycheck-error-column err))
+          (widen)
+          (goto-char (point-min))
+          (forward-line (- (flycheck-error-line err) 1))
+          (cond
+           ((eobp)                    ; Line beyond EOF
+            (cons (- (point-max) 1) (point-max)))
+           ((eolp)                    ; Empty line
+            nil)
+           (t
+            (let ((end (min (+ (point) column)
+                            (+ (line-end-position) 1))))
+              (cons (- end 1) end)))))))))
+
+(advice-add #'flycheck-error-line-region :override #'+amos*flycheck-error-line-region)
+(advice-add #'flycheck-error-column-region :override #'+amos*flycheck-error-column-region)
+
+(defun +amos/yank-flycheck-error ()
+  (interactive)
+  (catch 'return
+    (let ((overlays (overlays-at (point))))
+      (cl-loop for overlay in overlays
+               do (when-let (str (overlay-get overlay 'flycheck-error))
+                    (kill-new (flycheck-error-message str))
+                    (throw 'return nil)))
+      (cl-loop for overlay in overlays
+               do (when-let (str (overlay-get overlay 'flycheck-warning))
+                    (kill-new (flycheck-error-message str))
+                    (throw 'return nil))))))
+
+  (advice-add #'better-jumper-jump-forward :override #'evil-jump-forward)
+  (advice-add #'better-jumper-jump-backward :override #'evil-jump-backward)

@@ -143,9 +143,14 @@
       (ivy-read "Include: " x :action #'+amos/add-include)))
   (defun ccls/fileinfo ()
     (interactive)
-    (lsp-request
-     "$ccls/fileInfo"
-     (list :textDocument (lsp--text-document-identifier))))
+    (let ((hashmap (lsp-request
+                "$ccls/fileInfo"
+                (list :textDocument (lsp--text-document-identifier)))))
+      (with-current-buffer (generate-new-buffer "*temp*")
+        (insert (format "path = %s\n args = %s"
+                        (gethash "path" hashmap)
+                        (gethash "args" hashmap)))
+        (+popup/buffer))))
   (defun ccls/diagnostic ()
     (interactive)
     (lsp-notify
@@ -258,7 +263,7 @@
   (setq-local flycheck-checker 'lsp-ui)
   (lsp-ui-flycheck-add-mode major-mode)
   (add-to-list 'flycheck-checkers 'lsp-ui)
-  (setq lsp-ui-flycheck-live-reporting nil)
+  (setq-local lsp-ui-flycheck-live-reporting nil)
   (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
     (setq flycheck-checkers (delq c flycheck-checkers))))
 
