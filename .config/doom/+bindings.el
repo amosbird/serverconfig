@@ -151,6 +151,8 @@
       :m "N"                      #'evil-ex-search-previous
       :m "W"                      #'+amos/evil-forward-subword-begin
       :m "E"                      #'+amos/evil-forward-subword-end
+      :m "C-o"                    #'evil-jump-backward
+      :m "C-i"                    #'evil-jump-forward
       :m "B"                      #'+amos/evil-backward-subword-begin
       :m "gj"                     #'+amos/evil-next-visual-line
       :m "gk"                     #'+amos/evil-previous-visual-line
@@ -262,9 +264,9 @@
       :m "gy"                     #'evil-commentary-yank
       :m "gc"                     #'evil-commentary
       :m "gl"                     #'evil-commentary-line
-      :n "m"                      #'+amos/evil-push-mark
-      :n "M"                      (lambda! (+amos/evil-push-mark t))
-      :n "M-9"                    #'+amos/counsel-view-evil-marks
+      :n "m"                      #'+amos/push-mark
+      :n "M"                      (lambda! (+amos/push-mark t))
+      :n "M-9"                    #'+amos/counsel-view-marks
       :m "gs"                     (lambda! (evil-goto-mark ?s))
       :m "gb"                     (lambda! (evil-goto-mark ?b))
       :m "gm"                     (lambda! (evil-goto-mark ?m))

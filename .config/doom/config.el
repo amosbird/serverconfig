@@ -1459,13 +1459,11 @@ EXTRA is a plist of extra parameters."
 
 (defun +amos/definitions ()
   (interactive)
-  (+amos-lsp-find-custom
-   'definitions "textDocument/definition"))
+  (+amos-lsp-find-custom 'definitions "textDocument/definition"))
 
 (defun +amos/references ()
   (interactive)
-  (+amos-lsp-find-custom
-   'references "textDocument/references"))
+  (+amos-lsp-find-custom 'references "textDocument/references"))
 
 (def-package! lsp-ui
   :config
@@ -1651,7 +1649,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
           (xref-buffer (current-buffer))
           (default-directory (doom-project-root))
           (success nil))
-      (ivy-read (concat "Find " kind ": ") (+amos/ivy-xref-make-collection xrefs)
+      (ivy-read (concat "Find " (symbol-name kind) ": ") (+amos/ivy-xref-make-collection xrefs)
                 :unwind (lambda ()
                           (unless success
                             (switch-to-buffer xref-buffer)
@@ -1665,9 +1663,9 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
                               (switch-to-buffer buf)
                               (with-ivy-window
                                 (goto-char marker)
-                                (+amos/recenter)
-                                (evil-set-jump))
+                                (+amos/recenter))
                               (unless (eq 'ivy-call this-command)
+                                (evil-set-jump)
                                 (setq success t)))))))))
 
 (defun +amos*xref--find-xrefs (input kind arg display-action)
@@ -1677,7 +1675,6 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
     (unless xrefs
       (user-error "No %s found for: %s" (symbol-name kind) input))
     (+amos-ivy-xref xrefs kind)))
-
 (advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
 
 (after! recentf
@@ -2803,9 +2800,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -4254,74 +4251,86 @@ inside or just after a citation command, only adds KEYS to it."
   (interactive "p")
   (+amos--minibuffer-yank-by #'forward-word arg))
 
-(defun +amos/counsel-view-evil-marks ()
+(defun +amos/counsel-view-marks ()
   (interactive)
   (let* ((all-markers
-          (append (cl-remove-if (lambda (m)
-                                  (or (not (and (>= (car m) ?a) (<= (car m) ?z)))
-                                      (not (markerp (cdr m)))))
-                                evil-markers-alist)
-                  (cl-remove-if (lambda (m)
-                                  (or (not (and (>= (car m) ?A) (<= (car m) ?Z)))
-                                      (not (markerp (cdr m)))))
-                                (default-value 'evil-markers-alist))))
+          (--filter (or (markerp (car it))
+                        (file-exists-p (cdr (car it))))
+                    (append (project-local-getq +amos-marker-list) +amos-marker-list)))
          (all-cands
           (mapcar (lambda (m)
-                    (with-current-buffer (marker-buffer (cdr m))
+                    (with-current-buffer (if (markerp (car m)) (marker-buffer (car m))
+                                           (find-file-noselect (cdr (car m))))
                       (save-excursion
                         (save-restriction
                           (widen)
-                          (goto-char (cdr m))
+                          (goto-char (if (markerp (car m)) (marker-position (car m)) (car (car m))))
                           (back-to-indentation)
-                          (list
-                           (format "%s:           %s"
-                                   (buffer-name)
-                                   (buffer-substring
-                                    (point)
-                                    (line-end-position)))
-                           (point)
-                           (buffer-name))))))
+                          (list (format "%s:           %s"
+                                        (buffer-name) (buffer-substring (point) (line-end-position)))
+                                (point)
+                                (buffer-name))))))
                   all-markers))
          (-compare-fn (lambda (x y) (string= (nth 0 x) (nth 0 y))))
          (cands (-distinct all-cands)))
     (if cands
-        (ivy-read "Mark: " cands
-                  :require-match t
-                  :action (lambda (cand)
-                            (let ((pos (nth 1 cand))
-                                  (buf-name (nth 2 cand)))
-                              (switch-to-buffer buf-name)
-                              (when pos
-                                (unless (<= (point-min) pos (point-max))
-                                  (if widen-automatically
-                                      (widen)
-                                    (error "\
-Position of selected mark outside accessible part of buffer")))
+        (lexical-let ((buffer (current-buffer))
+                      (pos (point)))
+          (ivy-read "Marks: " cands
+                    :require-match t
+                    :action (lambda (cand)
+                              (let ((pos (nth 1 cand))
+                                    (buf-name (nth 2 cand)))
+                                (switch-to-buffer buf-name)
+                                (when pos
+                                  (unless (<= (point-min) pos (point-max))
+                                    (if widen-automatically
+                                        (widen)
+                                      (error "Position of selected mark outside accessible part of buffer")))
+                                  (goto-char pos)
+                                  (+amos/recenter))))
+                    :unwind (lambda ()
+                              (unless success
+                                (switch-to-buffer buffer)
                                 (goto-char pos)
-                                (+amos/recenter))))
-                  :caller '+amos/counsel-view-evil-marks)
+                                (+amos/recenter)))
+                    :caller '+amos/counsel-view-marks))
       (message "Mark ring is empty"))))
 
-(defvar +amos-evil-global-marks ?A)
-(defvar-local +amos-evil-local-marks ?a)
-(defun +amos/evil-push-mark (&optional global)
+(defun +amos|swap-out-markers ()
+  "Turn markers into file references when the buffer is killed."
+  (when buffer-file-name
+    (dolist ((car entry) +amos-marker-list)
+      (and (markerp (car entry))
+           (eq (marker-buffer (car entry)) (current-buffer))
+           (setcar entry (cons (marker-position (car entry)) buffer-file-name))))
+    (let ((marker-list (project-local-getq +amos-marker-list))
+          (modified))
+      (dolist (entry marker-list)
+        (when (and (markerp (car entry))
+                   (eq (marker-buffer (car entry)) (current-buffer)))
+          (setcar entry (cons (marker-position (car entry)) buffer-file-name))
+          (setq modified t)))
+      (if modified
+          (project-local-setq +amos-marker-list marker-list)))))
+
+(defvar +amos-marker-list nil)
+(defun +amos/push-mark (&optional global)
   (interactive)
   (+amos/recenter)
+  (add-hook 'kill-buffer-hook #'+amos|swap-out-markers nil t)
   (save-excursion
     (move-beginning-of-line 1)
-    (if global
-        (let ((-compare-fn (lambda (x y) (and (markerp (cdr x)) (equal (marker-position x) (car y)) (equal (marker-buffer) (cdr y))))))
-          (when (not (-contains? (default-value 'evil-markers-alist) (cons (point) (current-buffer))))
-            (evil-set-marker +amos-evil-global-marks)
-            (if (= +amos-evil-global-marks ?Z)
-                (setq +amos-evil-global-marks ?A)
-              (cl-incf +amos-evil-global-marks))))
-      (let ((-compare-fn (lambda (x y) (and (markerp (cdr x)) (equal (marker-position x) (car y)) (equal (marker-buffer) (cdr y))))))
-        (when (not (-contains? evil-markers-alist (cons (point) (current-buffer))))
-          (evil-set-marker +amos-evil-local-marks)
-          (if (= +amos-evil-local-marks ?z)
-              (setq +amos-evil-local-marks ?a)
-            (cl-incf +amos-evil-local-marks)))))))
+    (let ((marker-list (if global +amos-marker-list (project-local-getq +amos-marker-list)))
+          (-compare-fn (lambda (y x)
+                         (if (markerp (car x)) (and (equal (marker-position (car x)) (car y)) (equal (marker-buffer (car x)) (cdr y)))
+                           (equal (car x) y)))))
+      (when (not (-contains? marker-list (cons (point) (current-buffer))))
+        (let ((marker (make-marker)))
+          (if global
+              (cl-pushnew `(,marker) +amos-marker-list)
+            (project-local-setq +amos-marker-list (push `(,marker) marker-list)))
+          (set-marker marker (point)))))))
 
 ;; do not truncate the last dir
 (defun +amos*shrink-path--dirs-internal (full-path &optional truncate-all)
@@ -4750,5 +4759,62 @@ Return the pasted text as a string."
                     (kill-new (flycheck-error-message str))
                     (throw 'return nil))))))
 
-  (advice-add #'better-jumper-jump-forward :override #'evil-jump-forward)
-  (advice-add #'better-jumper-jump-backward :override #'evil-jump-backward)
+(advice-add #'better-jumper-jump-forward :override #'evil-jump-forward)
+(advice-add #'better-jumper-jump-backward :override #'evil-jump-backward)
+
+(defvar project-local--obarrays nil
+  "Plist of obarrays for each project.")
+
+(defvar project-local--cache nil
+  "Cons of project and obarray currently used.
+This avoid to search the obarray in `project-local--obarrays' on every request.")
+
+(defun project-local--get-obarray-1 (project)
+  (if (plist-member project-local--obarrays project)
+      (plist-get project-local--obarrays project)
+    (let ((obarray (make-vector 32 0)))
+      (setq project-local--obarrays (plist-put project-local--obarrays project obarray))
+      obarray)))
+
+(defun project-local--get-obarray (project)
+  "Return the obarray associated to PROJECT.
+If there is no obarray and CREATE is non-nil, a new obarray is created."
+  (setq project (or project (doom-project-root) "global"))
+  (if (eq project (car project-local--cache))
+      (cdr project-local--cache)
+    (let ((obarray (project-local--get-obarray-1 project)))
+      (setq project-local--cache (cons project obarray))
+      obarray)))
+
+(defun project-local-set (name value &optional project)
+  "Set the symbol NAME's value to VALUE in PROJECT.
+If PROJECT is nil, set the symbol in the current project.
+Return VALUE."
+  (let* ((obarray (project-local--get-obarray project))
+         (sym (intern (symbol-name name) obarray)))
+    (set sym value)))
+
+(defun project-local-get (name &optional project)
+  "Return symbol NAME's value in PROJECT.
+Or in the current project if PROJECT is nil."
+  (let* ((obarray (project-local--get-obarray project)))
+    (symbol-value (intern-soft (symbol-name name) obarray))))
+
+(defmacro project-local-setq (name value &optional project)
+  "Similar to `project-local-set' but NAME must not be quoted.
+See `project-local-set' for the parameters VALUE and PROJECT."
+  `(project-local-set ',name ,value ,project))
+
+(defmacro project-local-getq (name &optional project)
+  "Similar to `project-local-get' but NAME must not be quoted.
+See `project-local-get' for the parameter PROJECT."
+  `(project-local-get ',name ,project))
+
+;; invalide cache?
+(defun project-local--on-delete (project)
+  "Delete the obarray associated to PROJECT, if any."
+  (when (and (projectp project)
+             (plist-member project-local--obarrays project))
+    (let ((obarray (plist-get project-local--obarrays project)))
+      (setq project-local--obarrays
+            (delq project (delq obarray project-local--obarrays))))))
