@@ -1,15 +1,7 @@
 ;;;  -*- lexical-binding: t; no-byte-compile: t; -*-
 
 (require 'use-package)
-(doom! :feature
-       eval
-       (evil +everywhere)
-       lookup
-       snippets
-       ;; syntax-checker
-       file-templates
-
-       :completion
+(doom! :completion
        company
        ;; (helm +fuzzy)
        (ivy +fuzzy)
@@ -24,9 +16,13 @@
        popup
 
        :editor
+       (evil +everywhere)
+       file-templates
        format
        rotate-text
        multiple-cursors
+       snippets
+       ;; syntax-checker
 
        :emacs
        dired
@@ -35,8 +31,10 @@
        vc
 
        :tools
+       eval
        make
        magit
+       (lookup)
        vterm
        flyspell
 

@@ -79,7 +79,7 @@
 (doom-modeline-def-segment host (let () +amos--hostname))
 
 (doom-modeline-def-modeline 'amos
-  '(bar evil-state amos-matches buffer-info buffer-position selection-info frame)
+  '(bar amos-matches buffer-info buffer-position selection-info frame)
   '(keycast host buffer-encoding major-mode vcs checker))
 
 (defun +amos|setup-custom-doom-modeline ()
