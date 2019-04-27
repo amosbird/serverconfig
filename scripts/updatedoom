@@ -5,8 +5,8 @@ die() { echo "$*" 1>&2 ; exit 1; }
 cd ~/.emacs.d || die "cd failed"
 rm ./*.elc
 find {core,modules} -iname '*.elc' -delete
+git pull
 set -e
-bin/doom -y upgrade
 bin/doom -y update
 bin/doom -y refresh
 bin/doom -y compile
