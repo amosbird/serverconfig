@@ -34,6 +34,7 @@
       (:prefix "g"
         :desc "Git status"                    :nv "s" #'magit-status
         :desc "Git blame"                     :nv "b" #'magit-blame
+        :desc "Git timemachine"               :nv "d" #'+amos/git-timemachine-ediff-current-revision
         :desc "Git timemachine"               :nv "t" #'git-timemachine
         :desc "Git popup hunk"                :nv "p" #'git-gutter:popup-hunk
         :desc "Git revert hunk"               :nv "r" #'git-gutter:revert-hunk

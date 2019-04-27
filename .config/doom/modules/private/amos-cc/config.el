@@ -281,8 +281,6 @@
   (push 'c-electric-brace sp--special-self-insert-commands)
   (push 'c-electric-paren sp--special-self-insert-commands))
 
-(defun +amos*yes () t)
-
 (defun +amos|iedit-mode-hook (&rest _)
   (when (memq major-mode '(c-mode c++-mode))
     (advice-add #'lsp-on-change :override #'ignore)

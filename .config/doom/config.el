@@ -346,7 +346,7 @@
   (global-git-gutter-mode +1)
   (advice-add #'git-gutter:set-window-margin :override #'ignore)
   (defun +amos*git-gutter:before-string (sign)
-    (let* ((gutter-sep (concat " " (make-string (- (car (window-margins)) 2) ? ) sign))
+    (let* ((gutter-sep (concat " " (make-string (- (if (car (window-margins)) (car (window-margins)) 4) 2) ? ) sign))
            (face (pcase sign
                    ("=" '+amos:modified)
                    ("+" '+amos:added)
@@ -4608,6 +4608,8 @@ Return the pasted text as a string."
   (setq projectile-project-root nil)
   (setq projectile-project-root-cache (make-hash-table :test 'equal)))
 
+(defun +amos*yes (&rest _) t)
+
 (defvar-local +amos-git-timemachine-revision nil)
 (defvar-local +amos-git-timemachine-file nil)
 (defvar-local +amos-git-timemachine--revisions-cache nil)
@@ -4636,6 +4638,8 @@ Return the pasted text as a string."
 
 (defun +amos/git-timemachine-ediff-current-revision ()
   (interactive)
+  (require 'magit)
+  (require 'git-timemachine)
   (+amos-git-timemachine-validate (buffer-file-name))
   (let* ((git-directory (expand-file-name (vc-git-root (buffer-file-name))))
          (file-name (magit-file-relative-name))
@@ -4654,8 +4658,8 @@ Return the pasted text as a string."
       (remove-hook 'ediff-startup-hook #'+amos|ediff-startup-hook))
     (add-hook 'ediff-startup-hook #'+amos|ediff-startup-hook)
     (if (eq major-mode 'ediff-mode)
-        (flet ((yes-or-no-p (&rest args) t)
-               (y-or-n-p (&rest args) t))
+        (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
+                  ((symbol-function 'yes-or-no-p) #'+amos*yes))
           (ediff-quit nil)))
     (magit-ediff-compare (car revision-log) nil file-name file-name)))
 
