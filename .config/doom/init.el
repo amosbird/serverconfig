@@ -149,6 +149,7 @@
 (setq evil-shift-width 4)
 (setq evil-snipe-auto-scroll nil)
 (setq evil-snipe-scope 'visible)
+(setq evil-want-C-i-jump t)
 (setq explicit-shell-file-name "/bin/bash")
 (setq find-file-visit-truename t)
 (setq fringes-outside-margins t)

@@ -1,5 +1,10 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
+(defun +amos-ivy-call-action-key (key)
+  (lambda ()
+    (interactive)
+    (ivy-exit-with-action (cadr (assoc key (cdr (ivy-state-action ivy-last)))))))
+
 (map! :leader
       :desc "sticky"                          :nv "DEL" #'evil-sticky-state
       :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
@@ -151,8 +156,6 @@
       :m "N"                      #'evil-ex-search-previous
       :m "W"                      #'+amos/evil-forward-subword-begin
       :m "E"                      #'+amos/evil-forward-subword-end
-      :m "C-o"                    #'evil-jump-backward
-      :m "C-i"                    #'evil-jump-forward
       :m "B"                      #'+amos/evil-backward-subword-begin
       :m "gj"                     #'+amos/evil-next-visual-line
       :m "gk"                     #'+amos/evil-previous-visual-line
@@ -490,6 +493,7 @@
         "M-j"      #'ivy-next-line-and-call
         "M-k"      #'ivy-previous-line-and-call
         "C-i"      #'ivy-call
+        "M-9"    #'+amos/delete-mark
         "C-a"    #'move-beginning-of-line
         "C-b"    #'backward-char
         "C-d"    #'+amos/delete-char

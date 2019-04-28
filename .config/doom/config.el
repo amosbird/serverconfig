@@ -2130,6 +2130,7 @@ representation of `NUMBER' is smaller."
           (goto-char pos)
           (setf (evil-jumps-struct-idx (evil--jumps-get-current)) idx)
           (run-hooks 'evil-jumps-post-jump-hook))))))
+(add-hook 'evil-jumps-post-jump-hook #'+amos/recenter)
 (advice-add #'evil--jumps-jump :override #'+amos*evil--jumps-jump)
 
 (defun +amos/yank-buffer-filename ()
@@ -2800,9 +2801,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -4251,37 +4252,66 @@ inside or just after a citation command, only adds KEYS to it."
   (interactive "p")
   (+amos--minibuffer-yank-by #'forward-word arg))
 
-(defun +amos/counsel-view-marks ()
+;; candidate is (_ _ pos buffer)
+(defun +amos/delete-mark ()
   (interactive)
+  (defun compare (x y)
+    (if (markerp (car x))
+        (and (equal (marker-position (car x)) (car y))
+             (equal (marker-buffer (car x)) (cadr y)))
+      (equal (car x) (cons (car y) (buffer-file-name (cadr y))))))
+  (let* ((collection (ivy-state-collection ivy-last))
+         (current (ivy-state-current ivy-last))
+         (key (cddr (let ((idx (get-text-property 0 'idx current)))
+                      (if idx
+                          (nth idx collection)
+                        (assoc current collection))))))
+    (setq +amos-marker-list (--remove (compare it key) +amos-marker-list))
+    (project-local-setq +amos-marker-list
+                        (--remove (compare it key)
+                                  (project-local-getq +amos-marker-list)))
+    (let ((cands (+amos-get-mark-cands)))
+      (if (not cands)
+          (abort-recursive-edit)
+        (setf (ivy-state-collection ivy-last) (+amos-get-mark-cands))
+        (setf (ivy-state-preselect ivy-last) ivy--index)
+        (ivy--reset-state ivy-last)))))
+
+(defun +amos-get-mark-cands ()
   (let* ((all-markers
           (--filter (or (markerp (car it))
-                        (file-exists-p (cdr (car it))))
+                        (file-exists-p (cadar it)))
                     (append (project-local-getq +amos-marker-list) +amos-marker-list)))
          (all-cands
           (mapcar (lambda (m)
                     (with-current-buffer (if (markerp (car m)) (marker-buffer (car m))
-                                           (find-file-noselect (cdr (car m))))
+                                           (find-file-noselect (cadar m)))
                       (save-excursion
                         (save-restriction
                           (widen)
-                          (goto-char (if (markerp (car m)) (marker-position (car m)) (car (car m))))
+                          (goto-char (if (markerp (car m)) (marker-position (car m)) (caar m)))
                           (back-to-indentation)
-                          (list (format "%s:           %s"
-                                        (buffer-name) (buffer-substring (point) (line-end-position)))
+                          (list (format "%s:%-8d   %s"
+                                        (buffer-name) (line-number-at-pos) (buffer-substring (point) (line-end-position)))
                                 (point)
-                                (buffer-name))))))
+                                (line-beginning-position)
+                                (current-buffer))))))
                   all-markers))
-         (-compare-fn (lambda (x y) (string= (nth 0 x) (nth 0 y))))
-         (cands (-distinct all-cands)))
+         (-compare-fn (lambda (x y) (string= (nth 0 x) (nth 0 y)))))
+    (-distinct all-cands)))
+
+(defun +amos/counsel-view-marks ()
+  (interactive)
+  (let* ((cands (+amos-get-mark-cands)))
     (if cands
-        (lexical-let ((buffer (current-buffer))
-                      (pos (point)))
+        (let ((buffer (current-buffer))
+              (pos (point)))
           (ivy-read "Marks: " cands
                     :require-match t
                     :action (lambda (cand)
                               (let ((pos (nth 1 cand))
-                                    (buf-name (nth 2 cand)))
-                                (switch-to-buffer buf-name)
+                                    (buf (nth 3 cand)))
+                                (switch-to-buffer buf)
                                 (when pos
                                   (unless (<= (point-min) pos (point-max))
                                     (if widen-automatically
@@ -4564,7 +4594,7 @@ inside or just after a citation command, only adds KEYS to it."
             (with-current-buffer buffer
               (+amos/revert-buffer)))))))
 
-;; important to make edebug kemap take effect
+;; important! to make edebug keymap take effect
 (after! edebug
   (add-hook 'edebug-mode-hook #'evil-normalize-keymaps))
 
