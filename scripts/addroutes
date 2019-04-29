@@ -10,10 +10,15 @@ gw=$(ip r g 13.75.109.155 | cut -d" " -f3)
 
 
 ip r f table direct
-ip r a 0.0.0.0/0 via $gw table direct
-ip rule add fwmark 8 table direct pref 20000
-
+ip r f table zerotier
 ip r f table cn
+ip r a 0.0.0.0/0 via $gw table direct
+ip r a 0.0.0.0/0 via 172.26.133.192 table zerotier
+ip r a 172.26.0.0/16 dev $(zerotier-cli listnetworks | perl -ne 'print +(split / /)[7] if /abnetwork/') table zerotier
+ip rule add fwmark 0x8 table direct pref 20000
+ip rule add fwmark 0x14 table zerotier pref 20000
+ip rule add table cn pref 30000
+
 ip -batch - <<EOF
 $(sed "s/GATEWAY/$gw/" /home/amos/.routefile)
 EOF
@@ -106,8 +111,6 @@ ip r a 168.235.97.16/32 via $gw table cn
 # azure
 ip r a 13.75.109.155/32 via $gw
 
-ip rule add table cn pref 30000
-
 # if ! pgrep -f 'https-dns'
 # then
 #     sudo -u amos https-dns_linux_amd64 -d 8.8.8.8 --edns 159.226.39.0/24 -U &
@@ -136,5 +139,4 @@ ip rule add table cn pref 30000
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
 sudo -u amos tunv4
-
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"

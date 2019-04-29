@@ -2,4 +2,4 @@
 
 # termite -e weechat -t weechat
 
-termite -t weechat -e "ssh -t wentropy.com tmux -u a"
+termite -t weechat -e "ssh -t chuhuangvm.eastasia.cloudapp.azure.com tmux -u a"
