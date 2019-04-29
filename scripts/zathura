@@ -1,4 +1,48 @@
 #!/usr/bin/env bash
 
-echo "$@" > /tmp/llpp.log
-/home/amos/git/llpp/build/llpp -- $1
+# echo "$@" > /tmp/llpp.log
+
+args=()
+sync=
+pdf=
+while (( $# ))
+do
+    case $1 in
+        --synctex-forward)
+            sync=$2
+            shift
+            shift
+            ;;
+        *.pdf)
+            pdf=$(realpath $1)
+            shift
+            ;;
+        *)
+            args+=$1
+            shift
+            ;;
+    esac
+done
+
+fifoname=$(zathura_getfifo.pl $pdf)
+if [ -n "$fifoname" ]
+then
+    echo 'reload' > $fifoname
+    if [ -z "$sync" ]
+    then
+        echo 'activatewin' > $fifoname
+    fi
+else
+    fifoname=$(mktemp -u /tmp/llpp/XXXXXX)
+    mkfifo $fifoname
+    trap "rm -rf $fifoname" 0
+    export EDITOR=eeee
+    /home/amos/git/llpp/build/llpp -remote $fifoname -- $pdf &
+fi
+
+if [ -n "$sync" ]
+then
+    # synctex view -i $sync -o $pdf -x "echo rect %{page} 999999 %{h} %{v} \$(echo '%{h} + %{width}' | bc -l) \$(echo '%{v} + %{height}' | bc -l) > $fifoname; echo goto %{page} %{x} %{y} > $fifoname"
+    synctex view -i $sync -o $pdf -x "echo goto %{page} %{x} %{y} > $fifoname"
+fi
+wait

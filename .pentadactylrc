@@ -4,7 +4,7 @@ colorscheme amosbird
 set titlestring="Ergonomized by Amos Bird"
 set hintkeys=hjklasdfgyuiopqwertnmzxcvb
 set strictfocus
-set editor="editor"
+set editor="eeee"
 set guioptions='s'
 map -modes=n s tg<Space>
 map -count -modes=c,i,n,t,v <C-c> <Pass>

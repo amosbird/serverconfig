@@ -30,6 +30,9 @@
       (:prefix "f"
         :desc "File file"                     :nv "f" #'find-file
         :desc "Open project editorconfig"     :nv "c" #'editorconfig-find-current-editorconfig
+        :desc "Delete current file"           :nv "d" #'+evil:delete-this-file
+        :desc "Browse emacs.d"                :nv "e" #'doom/sudo-this-file
+        :desc "Recent project files"          :nv "r" #'+amos/rename-current-buffer-file
         :desc "Delete current file"           :nv "D" #'+evil:delete-this-file
         :desc "Browse emacs.d"                :nv "E" #'doom/sudo-this-file
         :desc "Recent project files"          :nv "R" #'+amos/rename-current-buffer-file

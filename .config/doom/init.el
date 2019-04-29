@@ -268,7 +268,6 @@
 (setq sp-escape-quotes-after-insert nil)
 (setq split-height-threshold nil)
 (setq split-width-threshold 0)
-;; (setq swiper-include-line-number-in-search t) ;; TODO it breaks wgrep occur
 (setq tab-always-indent t)
 (setq truncate-partial-width-windows nil)
 (setq user-full-name "Amos Bird")

@@ -92,8 +92,8 @@ bind-key -T gui S-F12 send-keys C-]
 bind-key -T gui f12 display
 bind-key -T gui DoubleClick1Pane copy-mode\; send -X select-word
 bind-key -T gui C-] send-keys Escape
-bind-key -T gui C-j send-keys Down
-bind-key -T gui C-k send-keys Up
+bind-key -T gui C-j run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "emacsclient" &> /dev/null; then tmux send-key C-j; else tmux send-keys Down; fi'
+bind-key -T gui C-k run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "emacsclient" &> /dev/null; then tmux send-key C-k; else tmux send-keys Up; fi'
 bind-key -T gui M-1 select-window -t 1
 bind-key -T gui M-2 select-window -t 2
 bind-key -T gui M-3 select-window -t 3
@@ -126,7 +126,7 @@ bind-key -T gui C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=
 
 bind-key -T gui M-u copy-mode\; send -X cursor-up\; send -X search-backward ❯
 bind-key -T gui M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
-bind-key -Tcopy-mode-vi M-s send -X search-backward-incremental
+bind-key -Tcopy-mode-vi M-s command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
 bind-key -Tcopy-mode-vi M-u send -X search-backward ❯
 bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
 bind-key -T gui M-- set synchronize-panes

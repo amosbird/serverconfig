@@ -126,15 +126,22 @@ case "$class" in
         ;;
     Emacs)
         case "$title" in
-            editor-frame)
-                echo "desktop=e state=tiled follow=on"
-                ;;
             mail-frame)
                 echo "desktop=v state=tiled follow=on"
                 ;;
             popup)
                 echo "$wid" > /tmp/popup
                 fc
+                ;;
+            emacs-editor)
+                wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+                w=${wh[0]}
+                h=${wh[1]}
+                x=$((w*3/12))
+                y=80
+                w=$((w*4/8))
+                h=$((h - 120))
+                echo "layer=above state=floating sticky=on rectangle=${w}x${h}+$x+$y"
                 ;;
         esac
         ;;

@@ -270,14 +270,17 @@
                                             (browse-url-firefox url))
                                         (browse-url-osc url _new-window)))))
 
+(defvar server-visit-file nil)
 (def-package! realign-mode
   :commands realign-mode realign-windows
   :config
   ;; (add-hook! 'realign-hooks #'recenter)
   (defun amos-special-window-p (window)
     (let* ((buffer (window-buffer window))
+           (framename (frame-parameter (window-frame window) 'name))
            (buffname (string-trim (buffer-name buffer))))
       (or (equal buffname "*doom*")
+          (with-current-buffer buffer server-visit-file)
           (equal buffname "*flycheck-posframe-buffer*")
           (equal buffname "*Ediff Control Panel*")
           (equal (with-current-buffer buffer major-mode) 'pdf-view-mode))))
@@ -607,7 +610,10 @@ initialized with the current filename."
                             (projectile-project-p))
                    (call-interactively #'projectile-invalidate-cache))
                  (message "File '%s' successfully renamed to '%s'"
-                          name (file-name-nondirectory new-name)))))
+                          name (file-name-nondirectory new-name))
+                 (doom-modeline-update-buffer-file-state-icon)
+                 (doom-modeline-update-buffer-file-name)
+                 )))
       ;; the buffer is not visiting a file
       (let ((key))
         (while (not (memq key '(?s ?r)))
@@ -4848,3 +4854,37 @@ See `project-local-get' for the parameter PROJECT."
     (let ((obarray (plist-get project-local--obarrays project)))
       (setq project-local--obarrays
             (delq project (delq obarray project-local--obarrays))))))
+
+(defun +amos*kill-buffer (orig-func &rest args)
+  (interactive)
+  (if server-buffer-clients
+      (cl-letf* (((symbol-function 'y-or-n-p) #'+amos*yes))
+        (apply orig-func args))
+    (apply orig-func args)))
+(advice-add #'kill-buffer :around #'+amos*kill-buffer)
+
+(defun +amos|server-switch-hook ()
+  (when (current-local-map)
+    (use-local-map (copy-keymap (current-local-map))))
+  (when server-buffer-clients
+    (setq display-line-numbers 'relative)
+    (setq-local require-final-newline nil)
+    (local-set-key (kbd "C-c C-c")
+                   (lambda!
+                    (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
+                              ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
+                              ((symbol-function 'map-y-or-n-p) #'+amos*yes)
+                              ((symbol-function 'yes-or-no-p) #'+amos*yes))
+                      (call-interactively #'server-edit))))
+    (local-set-key (kbd "C-c C-k")
+                   (lambda!
+                    (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
+                              ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
+                              ((symbol-function 'map-y-or-n-p) #'+amos*yes)
+                              ((symbol-function 'yes-or-no-p) #'+amos*yes))
+                      (call-interactively #'delete-frame))))))
+(add-hook 'server-switch-hook #'+amos|server-switch-hook)
+
+(defun +amos|server-visit-hook ()
+  (setq-local server-visit-file t))
+(add-hook 'server-visit-hook #'+amos|server-visit-hook)

@@ -8,8 +8,8 @@ set -x MAKEFLAGS -j$CORES
 set -x FZF_DEFAULT_OPTS "--ansi --multi --bind=ctrl-v:half-page-down,alt-v:half-page-up,ctrl-l:accept"
 set -x GOPATH /home/amos/go
 set -x SHELL /bin/bash
-set -x EDITOR vim
-set -x VISUAL vim
+set -x EDITOR eee
+set -x VISUAL eee
 set -x GTK_IM_MODULE fcitx
 set -x XMODIFIERS @im=fcitx
 set -x QT_IM_MODULE fcitx
@@ -20,6 +20,11 @@ set -x UID (id -u)
 set -x GPG_TTY (tty)
 set -x PREFIX ~/.local
 set -x NODE_PATH ~/.local/lib/node_modules/
+
+set -x PERL5LIB /home/amos/perl5/lib/perl5
+set -x PERL_LOCAL_LIB_ROOT /home/amos/perl5
+set -x PERL_MB_OPT "--install_base \"/home/amos/perl5\""
+set -x PERL_MM_OPT "INSTALL_BASE=/home/amos/perl5"
 
 set -e LS_COLORS
 alias l "exa"
@@ -34,16 +39,6 @@ status --is-interactive;
 and function __direnv_export_eval --on-event fish_prompt;
   eval (direnv export fish);
 end
-
-# set -x ASDF_DIR $HOME/.asdf
-# set -l asdf_data_dir (if test -n "$ASDF_DATA_DIR";
-#     echo $ASDF_DATA_DIR;
-# else;
-#     echo $HOME/.asdf;
-# end)
-
-# status --is-interactive;
-# and source $ASDF_DIR/completions/asdf.fish
 
 if not set -q fish_initialized
     set -U fish_color_autosuggestion '555'  'brblack'
@@ -73,9 +68,7 @@ if not set -q fish_initialized
     set -U fish_pager_color_prefix 'white'  '--bold'  '--underline'
     set -U fish_pager_color_progress 'brwhite'  '--background=cyan'
 
-    # prepend path
-    # set -U fish_user_paths $HOME/scripts $ASDF_DIR/bin $ASDF_DIR/shims $asdf_data_dir/shims
-    set -U fish_user_paths $HOME/scripts $HOME/.local/bin
+    set -U fish_user_paths $HOME/scripts $HOME/.local/bin $HOME/perl5/bin
     set -U fish_initialized 1
 end
 

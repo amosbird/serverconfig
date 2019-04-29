@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+emacsclient -s mu4e -c --frame-parameters='(quote (name . "emacs-editor"))' -q -u --display $DISPLAY "$@"

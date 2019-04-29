@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# emacsclient -nw -s editor -c --frame-parameters='(quote (name . "emacs-editor"))' -q -u --display $DISPLAY "$@"
+emacsclient -nw -c -q -u $@
+# -e "(set-window-parameter (selected-window) 'name \"emacs-editor\")" "(find-file \"$@\")"
