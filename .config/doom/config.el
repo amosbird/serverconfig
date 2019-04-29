@@ -3119,7 +3119,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                 (string-to-number (match-string 2 filename))))
               (filename (if matched (match-string 1 filename) filename))
               (_ (let ((parent-directory (file-name-directory filename)))
-                   (if (not (file-exists-p parent-directory))
+                   (if (and parent-directory (not (file-exists-p parent-directory)))
                        (make-directory parent-directory t))))
               (buffer
                (let ((value (find-file-noselect filename nil nil wildcards)))
