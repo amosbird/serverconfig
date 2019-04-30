@@ -1,26 +1,7 @@
 #!/usr/bin/env bash
 
-# if pgrep -f 'kytan'
-# then
-#     sudo pkill kytan
-# #    sudo sed -e 's/.*8.8/#\0/ ; s/#\(.*223\)/\1/' -i /etc/resolv.conf
-# #    sudo sed -e 's/precedence ::ffff:0:0\/96  100/#\0/' -i /etc/gai.conf
-# else
-#     sudo RUST_LOG=DEBUG RUST_BACKTRACE=1 kytan -m c -h la.wentropy.com -p 8555 -s c3d62f381cc229de5c69ea7fec7faffce8d8da90307c1f9a8b1e7008b402be7c &
-#     # sudo RUST_LOG=DEBUG RUST_BACKTRACE=1 kytan -m c -h 2604:180:3:f9e::59d3 -p 8555 -s c3d62f381cc229de5c69ea7fec7faffce8d8da90307c1f9a8b1e7008b402be7c &
-#     #sudo kytan -m c -h 2604:180:3:f9e::59d3 -p 8555 -s c3d62f381cc229de5c69ea7fec7faffce8d8da90307c1f9a8b1e7008b402be7c &
-# #    sudo sed -e 's/.*223/#\0/ ; s/#\(.*8.8\)/\1/' -i /etc/resolv.conf
-# #    sudo sed -e 's/#\(precedence ::ffff:0:0\/96  100\)/\1/' -i /etc/gai.conf
-# fi
-# sleep 0.5
-# pkill -SIGRTMIN+11 i3blocks
+# sudo pkill -9 -f 'client_linux_amd64'
+# client_linux_amd64 --quiet -r "[2604:180:3:28::c542]:4000" -l ":45555" --ds 10 --ps 10 --rcvwnd 1024 -mode fast3 -sockbuf 16777217 &
 
-# sudo RUST_LOG=info kytan -m c -h chuhuangvm.eastasia.cloudapp.azure.com -p 4555 -s $(gpg -d /home/amos/passwords/kytan.gpg) &
-
-sudo pkill -9 -f 'client_linux_amd64'
-client_linux_amd64 --quiet -r "[2604:180:3:28::c542]:4000" -l ":45555" --ds 10 --ps 10 --rcvwnd 1024 -mode fast3 -sockbuf 16777217 &
-
-sudo pkill -9 openconnect
-# gpg -d ~/passwords/ztq.gpg | sudo openconnect -b --user amos --passwd-on-stdin chuhuangvm.eastasia.cloudapp.azure.com:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
-# gpg -d ~/passwords/ztq.gpg | sudo openconnect -b --user amos --passwd-on-stdin 2604:180:3:28::c542:4556 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
-gpg -d ~/passwords/ztq.gpg | sudo openconnect -b --user amos --passwd-on-stdin 127.0.0.1:45555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
+sudo pkill -9 -F /tmp/ocv6.pid
+gpg -d ~/passwords/ztq.gpg | sudo openconnect -b --pid-file /tmp/ocv6.pid --user amos --passwd-on-stdin [2604:180:3:28::c542]:45555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c

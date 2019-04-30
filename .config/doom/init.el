@@ -146,7 +146,6 @@
 (setq evil-kill-on-visual-paste nil)
 (setq evil-mc-cursor-overlay-priority 10000)
 (setq evil-shift-round nil)
-(setq evil-shift-width 4)
 (setq evil-snipe-auto-scroll nil)
 (setq evil-snipe-scope 'visible)
 (setq evil-want-C-i-jump t)

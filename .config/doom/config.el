@@ -790,11 +790,11 @@ using a visual block/rectangle selection."
   :init
   (global-page-break-lines-mode +1))
 
-(defun amos*page-break-lines--update-display-tables  (&optional _)
-  "Function called for updating display table in windows of current selected frame."
-  (unless (minibufferp)
-    (mapc 'page-break-lines--update-display-table (window-list nil 'no-minibuffer))))
-(advice-add 'page-break-lines--update-display-tables :override #'amos*page-break-lines--update-display-tables)
+;; (defun amos*page-break-lines--update-display-tables  (&optional _)
+;;   "Function called for updating display table in windows of current selected frame."
+;;   (unless (minibufferp)
+;;     (mapc 'page-break-lines--update-display-table (window-list nil 'no-minibuffer))))
+;; (advice-add 'page-break-lines--update-display-tables :override #'amos*page-break-lines--update-display-tables)
 
 (def-package! adoc-mode
   :mode "\\.adoc$")
@@ -2618,7 +2618,7 @@ the current state and point position."
   (magit-auto-revert-mode +1)
   (setq
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
-   magit-display-buffer-noselect t
+   magit-display-buffer-noselect nil
    magit-repository-directories '(("~/git" . 2))
    magit-revision-show-gravatars '("^Author:     " . "^Commit:     "))
   (defun +amos*remove-git-index-lock (&rest _)
@@ -4892,3 +4892,13 @@ See `project-local-get' for the parameter PROJECT."
 (after! latex
   (dolist (env '("itemize" "enumerate" "description"))
     (delete `(,env +latex/LaTeX-indent-item) LaTeX-indent-environment-list)))
+
+(setq whitespace-style '(face tabs tab-mark trailing))
+
+;; TODO font face for space characters?
+(defun +amos*whitespace-space-after-tab-regexp (&optional kind)
+  (format (car whitespace-space-after-tab-regexp) 1))
+(advice-add #'whitespace-space-after-tab-regexp :override #'+amos*whitespace-space-after-tab-regexp)
+
+(global-whitespace-mode +1)
+;; (advice-add #'doom|highlight-non-default-indentation :override #'ignore)
