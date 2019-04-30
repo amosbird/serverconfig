@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-url="$(rofi -p 'luakit google > ' -dmenu)"
+url=$(rofi -p 'luakit google > ' -dmenu)
 
 test -z "$url" && exit 1
 # want arg end --

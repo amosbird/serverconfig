@@ -48,6 +48,7 @@
 * bootstrap
 
 #+BEGIN_SRC bash
+
 timedatectl set-ntp true
 # legacy using dos, modern using gpt
 fdisk /dev/sdX
@@ -99,6 +100,7 @@ passwd amos
 pacman -S sudo
 vim /etc/sudoers/amos
 amos ALL=(ALL) NOPASSWD: ALL
+
 #+END_SRC
 
 pacman -S base-devel expac yajl git
@@ -111,13 +113,11 @@ git clone https://aur.archlinux.org/trizen-git.git
 cd trizen-git
 makepkg -si
 
-trizen -S xorg-xsetroot ttf-wps-fonts wps-office ttf-roboto-slab bear tidy cpanminus prettier capitaine-cursors refind-efi nmap lsof docker paps sysdig linux-headers p7zip zip slock strace texlive-most texlive-lang aspell-en ntp xdotool zbar gpick xininfo-git wordnet-cli mbedtls libfdk-aac netease-cloud-music openbsd-netcat earlyoom jdk8-openjdk android-sdk mpv perf fd conky-lua simple-obfs openconnect thinkfan exa python-pyqtwebengine python-attrs python-yaml python-pypeg2 python-pyqt5 pkg-config gtk3 libevent qt5-x11extras qt5-script qt5-svg qt5-tools ninja ipset dnsmasq zerotier-one openssh xorg-twm termite-terminfo xorg-xclock xorg-fonts xorg-fonts-misc xorg-drivers acpi xterm xorg-xrdb sddm sxhkd jq grc net-tools compton arandr xorg-xset dnsutils npm rofi ttf-ubuntu-font-family ttf-inconsolata ttf-dejavu ttf-roboto wqy-microhei-kr-patched readline tcl expect weechat dunst xclip llvm pandoc-bin clang lxappearance fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fcitx-cloudpinyin telegram-desktop-bin ncurses gdb librsvg gpm giflib libxpm libotf m17n-lib gtk3 hicolor-icon-theme gconf alsa-lib libmagick6 gnutls python-sphinx jansson gst-plugins-good gst-plugins-ugly gst-libav pulseaudio-alsa alsa-utils pavucontrol pulseaudio pulseaudio-ctl lxrandr-gtk3 xorg-xinput xorg-xbacklight getmail xorg-xev xorg-xprop sdcv ninja unixodbc arc-icon-theme arc-kde arc-gtk-theme wget pkgfile mtr zathura rsync dstat pinta sysstat hplip cups samba ccache ripgrep fd-rs tokei go fzf direnv poppler-data ncdu maim tesseract tesseract-data-chi_sim tesseract-data-eng zathura-djvu zathura-pdf-mupdf zathura-ps ttf-ms-fonts gnome-themes-standard socat inotify-tools parallel conky-lua xsensors vnstat stalonetray xdo gtk-doc intltool vala gobject-introspection xorg-xdpyinfo ruby xorg-xwininfo unclutter-xfixes-git cmake --noconfirm --needed
+trizen -S shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua conky-lua cpanminus cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exa exfat-utils expect fcitx-cloudpinyin fcitx-configtool fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fd fd-rs fzf gconf gdb getmail giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq krita libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls mpv mtr ncdu ncurses net-tools netease-cloud-music ninja ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin paps parallel pavucontrol pdfjs perf pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi ripgrep rofi rslsync rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump telegram-desktop-bin termite-terminfo tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-lang texlive-most texlive-slashbox thinkfan tidy time tokei ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-drivers xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zathura zathura-djvu zathura-pdf-mupdf zathura-ps zbar zenity zerotier-one zip --noconfirm --needed
+
 trizen -S mimi-git
 
 sudo vim /etc/polkit-1/rules.d/49-nopasswd_global.rules
-/* Allow members of the wheel group to execute any actions
- * without password authentication, similar to "sudo NOPASSWD:"
- */
 polkit.addRule(function(action, subject) {
     if (subject.isInGroup("wheel")) {
         return polkit.Result.YES;
@@ -132,131 +132,52 @@ sudo usermod -aG docker amos
 ** builds
 
 #+BEGIN_SRC bash
-mkdir ~/git && cd ~/git
-#+END_SRC
-
-*** config
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/serverconfig
-sh ~/git/serverconfig/restore.sh
-#+END_SRC
-
-*** reptyr
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/reptyr
-cd reptyr && sudo make install
-#+END_SRC
-
-*** cgdb (c++11 required)
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/cgdb
-cd cgdb && ./autogen.sh && ./configure && make && sudo make install
-#+END_SRC
-
-*** tmux
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/tmux
-cd tmux && sh autogen.sh && ./configure && make && sudo make install
-#+END_SRC
-
-*** fish-shell
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/fish-shell
-cd fish-shell && mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make && sudo make install
-#+END_SRC
-
-*** libvte
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/libvte
-cd libvte && ./autogen.sh && ./configure && make && sudo make install
-#+END_SRC
-
-*** termite
-
-#+BEGIN_SRC bash
-git clone --recursive git@github.com:amosbird/termite
-cd termite && sudo make install
-#+END_SRC
-
-*** htop-vim
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/htop-vim
-cd htop-vim && ./autogen.sh && ./configure && make && sudo make install
-#+END_SRC
-
-*** qutebrowser
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/qutebrowser
-#+END_SRC
-
-*** xcape
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/xcape
-cd xcape && sudo make install
-#+END_SRC
-
-*** fcitx
-
-#+BEGIN_SRC bash
-git clone git@github.com:amosbird/fcitx
-cd fcitx/pkg
-makepkg -si
-#+END_SRC
-
-*** go related
-
-#+BEGIN_SRC bash
-go get github.com/gsamokovarov/jump
-go get -d github.com/elves/elvish
-cd ~/go/src/github.com/elves/elvish
-git remote add amos git@github.com:amosbird/elvish
-git fetch amos master
-git reset --hard amos/master
-go install
-#+END_SRC
-
-*** perl related
-
-#+BEGIN_SRC bash
-cpan URL::Search
-#+END_SRC
-
-** emacs
-
-#+BEGIN_SRC bash
-git clone https://github.com/hlissner/doom-emacs -b develop ~/.emacs.d
-cd ~/.emacs.d && make quickstart
-#+END_SRC
-
-** post
-
-#+BEGIN_SRC bash
-sddm --example-config | sudo tee /etc/sddm.conf
-sudo vim /etc/sddm.conf
-User=amos
-Session=bspwm.desktop
-systemctl enable sddm
-
-mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Screencasts Music Books org/todos Documents/pdfs Documents/ppts Documents/docs
-
-open emacs and do M-x all-the-icons-install-fonts
-ccache -M 50G
-sudo pkgfile --update
-systemctl enable org.cups.cupsd.service
-#+END_SRC
-
-
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/lib64/pkgconfig
 BUILD=/home/amos/git/serverconfig/scripts/build
+
+cd ~/git
+git clone git@github.com:amosbird/cgdb
+cd cgdb && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/tmux
+cd tmux && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/libvte
+cd libvte && ./autogen.sh && ./configure --enable-vala=no && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/emacs
+cd emacs && ./autogen.sh && ./configure --with-modules && make -j`nproc` && sudo make install
+
+cd ~/git
+git clone https://github.com/djcb/mu
+cd mu && ./autogen.sh && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/htop-vim
+cd htop-vim && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/bspwm
+cd bspwm && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/reptyr
+cd reptyr && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone --recursive git@github.com:amosbird/termite
+cd termite && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/xcape
+cd xcape && bear make -j`nproc` && sudo make install
+
+cd ~/git
+git clone git@github.com:amosbird/feh
+cd feh && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/CopyQ
@@ -271,52 +192,16 @@ git clone git@github.com:amosbird/obs-studio
 cd obs-studio && $BUILD obs install
 
 cd ~/git
-git clone git@github.com:amosbird/bspwm
-cd bspwm && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/reptyr
-cd reptyr && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/cgdb
-cd cgdb && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/tmux
-cd tmux && sh autogen.sh && ./configure && bear make -j`nproc` && sudo make install
-
-cd ~/git
 git clone git@github.com:amosbird/fish-shell
 cd fish-shell && $BUILD rel install
 
 cd ~/git
-git clone git@github.com:amosbird/libvte
-cd libvte && ./autogen.sh && ./configure --enable-vala=no && bear make -j`nproc` && sudo make install
+git clone https://github.com/llvm/llvm-project
+cd llvm-project && $BUILD llvm
 
 cd ~/git
-git clone --recursive git@github.com:amosbird/termite
-cd termite && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/htop-vim
-cd htop-vim && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/xcape
-cd xcape && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/feh
-cd xcape && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/emacs
-cd emacs && sh autogen.sh && ./configure --with-modules && make -j`nproc` && sudo make install
-
-cd ~/git
-git clone https://github.com/djcb/mu
-cd mu && sh autogen.sh && bear make -j`nproc` && sudo make install
+git clone --recursive git@github.com:amosbird/ccls
+cd ccls && $BUILD ccls
 
 cd ~/git
 git clone git@github.com:amosbird/fcitx
@@ -329,28 +214,27 @@ git clone git@github.com:amosbird/qutebrowser
 cd ~/git
 git clone git@github.com:amosbird/cc-playground
 
-cd ~/git
-git clone https://github.com/llvm/llvm-project
-cd llvm-project && $BUILD llvm
-
-cd ~/git
-git clone --recursive git@github.com:amosbird/ccls
-cd ccls && $BUILD ccls
-
 git clone git@github.com:amosbird/cc-snippets cc-playground
-cpanm URL::Search Perl::Tidy Regexp::Common Dir::ls Clipboard
 
 git clone https://github.com/amosbird/doom-emacs -b amos ~/.emacs.d
 cd ~/.emacs.d && make quickstart
 open emacs and do M-x all-the-icons-install-fonts
 
+cpanm URL::Search Perl::Tidy Regexp::Common Dir::ls Clipboard File::Find::Rule IPC::Run3
+
+#+END_SRC
+
+** post
+
+# copy these files from the old box
 ~/passwords
+~/.terminfo
 ~/.userpass
 ~/.gnupg
 ~/.getmail
 ~/.msmtprc
 ~/.stardict
-# might need to remove  simsun.ttc mingliu.ttc  for tdesktop and emacs-gui
+# might need to remove simsun.ttc mingliu.ttc for tdesktop and emacs-gui
 ~/.local/share/fonts
 ~/.local/share/qutebrowser/greasemonkey
 ~/.local/share/qutebrowser/userscripts
@@ -401,9 +285,6 @@ systemctl enable docker
 
 ccache -M 50G
 sudo pkgfile --update
-
+systemctl enable org.cups.cupsd.service
 updateroutes
 updatednsmasq
-
-
-trizen -S python-language-server python-mccabe python-rope python-pyflakes python-pycodestyle python-pylint autopep8 yapf python-pydocstyle

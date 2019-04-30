@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-if [ ! -f ".ignore" ]
-then
-    echo "!" > .ignore
+if [ ! -f ".ignore" ]; then
+    echo "!" >.ignore
 fi

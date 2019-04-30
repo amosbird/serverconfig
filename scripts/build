@@ -2,11 +2,11 @@
 
 mkdir -p release && pushd release || exit 1
 
-if [[ $1 == install ]]; then
+if [[ "$1" == install ]]; then
     ninja && sudo ninja install
 else
     target=..
-    case $1 in
+    case "$1" in
     llvm)
         target=../llvm
         cmake_args=(
@@ -48,14 +48,13 @@ else
         ;;
     *)
         cmake_args=(
-	    -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release
         )
         ;;
     esac
-    if cmake "$target" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On "${cmake_args[@]}" && ninja
-    then
-        [[ $2 == install ]] && sudo ninja install
-        [[ $1 == llvm ]] && cd lib && ln -s libLLVM-*.so libLLVM.so
+    if cmake "$target" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On "${cmake_args[@]}" && ninja; then
+        [[ "$2" == install ]] && sudo ninja install
+        [[ "$1" == llvm ]] && cd lib && ln -s libLLVM-*.so libLLVM.so
     fi
 fi
 

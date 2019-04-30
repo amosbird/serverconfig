@@ -117,8 +117,7 @@ fi
 
 # enumerate all the attached screens
 displays=""
-while read id
-do
+while read id; do
     displays="$displays $id"
 done < <(xvinfo | sed -n 's/^screen #\([0-9]\+\)$/\1/p')
 
@@ -143,8 +142,7 @@ else
     log "No screensaver detected"
 fi
 
-checkDelayProgs()
-{
+checkDelayProgs() {
     log "checkDelayProgs()"
     for prog in "${delay_progs[@]}"; do
         if [ $(pgrep -lfc "$prog") -ge 1 ]; then
@@ -155,12 +153,10 @@ checkDelayProgs()
     done
 }
 
-checkFullscreen()
-{
+checkFullscreen() {
     log "checkFullscreen()"
     # loop through every display looking for a fullscreen window
-    for display in $displays
-    do
+    for display in $displays; do
         #get id of active window and clean output
         activ_win_id=$(DISPLAY=:0.${display} xprop -root _NET_CLIENT_LIST_STACKING | sed 's/.*\, //') #previously used _NET_ACTIVE_WINDOW, but it didn't work with some flash players (eg. Twitch.tv) in firefox. Using sed because id lengths can vary.
 
@@ -177,11 +173,11 @@ checkFullscreen()
             isActivWinAbove=$(DISPLAY=:0.${display} xprop -id $activ_win_id | grep _NET_WM_STATE_ABOVE)
             log "checkFullscreen(): Display: $display isFullScreen: \"$isActivWinFullscreen\""
             log "checkFullscreen(): Display: $display isAbove: \"$isActivWinAbove\""
-            if [[ "$isActivWinFullscreen" = *NET_WM_STATE_FULLSCREEN* || "$isActivWinAbove" = *NET_WM_STATE_ABOVE* ]];then
+            if [[ "$isActivWinFullscreen" == *NET_WM_STATE_FULLSCREEN* || "$isActivWinAbove" == *NET_WM_STATE_ABOVE* ]]; then
                 log "checkFullscreen(): Fullscreen detected"
                 isAppRunning
                 var=$?
-                if [[ $var -eq 1 ]];then
+                if [[ $var -eq 1 ]]; then
                     delayScreensaver
                     return
                 fi
@@ -206,17 +202,16 @@ checkFullscreen()
 #TODO only a window name in the variable activ_win_id, not whole line.
 #Then change IFs to detect more specifically the apps "<vlc>" and if a process name exists
 
-isAppRunning()
-{
+isAppRunning() {
     log "isAppRunning()"
     #Get title of active window
     activ_win_title=$(xprop -id $activ_win_id | grep "WM_CLASS(STRING)")
 
     # Check if a user wants to detect Video fullscreen on Firefox, modify variable firefox_flash_detection if you dont want Firefox detection
-    if [ $firefox_flash_detection == 1 ];then
-        if [[ "$activ_win_title" = *unknown* || "$activ_win_title" = *plugin-container* ]];then
+    if [ $firefox_flash_detection == 1 ]; then
+        if [[ "$activ_win_title" == *unknown* || "$activ_win_title" == *plugin-container* ]]; then
             # Check if plugin-container process is running
-            if [ "$(pidof -s plugin-container)" ];then
+            if [ "$(pidof -s plugin-container)" ]; then
                 log "isAppRunning(): firefox flash fullscreen detected"
                 return 1
             fi
@@ -224,11 +219,11 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect HTML Video fullscreen on Firefox, modify variable firefox_html5_detection if you dont want Firefox detection
-    if [ $firefox_html5_detection == 1 ];then
-        if [[ "$activ_win_title" = *Firefox* || "$activ_win_title" = *Iceweasel* ]];then
+    if [ $firefox_html5_detection == 1 ]; then
+        if [[ "$activ_win_title" == *Firefox* || "$activ_win_title" == *Iceweasel* ]]; then
             # Check if firefox process is actually running
             # firefox_process=$(pgrep -c "(firefox|/usr/bin/firefox|iceweasel|/usr/bin/iceweasel)")
-            if [ "$(pidof -s firefox iceweasel)" ];then
+            if [ "$(pidof -s firefox iceweasel)" ]; then
                 log "isAppRunning(): firefox html5 fullscreen detected"
                 return 1
             fi
@@ -236,11 +231,11 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect Video fullscreen on Chromium, modify variable chromium_flash_detection if you dont want Chromium detection
-    if [ $chromium_flash_detection == 1 ];then
-        if [[ "$activ_win_title" = *exe* || "$activ_win_title" = *hromium* ]];then
+    if [ $chromium_flash_detection == 1 ]; then
+        if [[ "$activ_win_title" == *exe* || "$activ_win_title" == *hromium* ]]; then
             # Check if Chromium Flash process is running
             flash_process=$(pgrep -lfc ".*chromium.*flashp.*")
-            if [[ $flash_process -ge 1 ]];then
+            if [[ $flash_process -ge 1 ]]; then
                 log "isAppRunning(): chromium flash fullscreen detected"
                 return 1
             fi
@@ -248,10 +243,10 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect html5 fullscreen on Chromium, modify variable chromium_html5_detection if you dont want Chromium html5 detection.
-    if [ $chromium_html5_detection == 1 ];then
-        if [[ "$activ_win_title" == *hromium* ]];then
+    if [ $chromium_html5_detection == 1 ]; then
+        if [[ "$activ_win_title" == *hromium* ]]; then
             # Check if Chromium html5 process is running
-            if [[ $(pgrep -c "chromium") -ge 1 ]];then
+            if [[ $(pgrep -c "chromium") -ge 1 ]]; then
                 log "isAppRunning(): chromium html5 fullscreen detected"
                 return 1
             fi
@@ -259,11 +254,11 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect flash fullscreen on Chromium, modify variable chromium_pepper_flash_detection if you dont want Chromium pepper flash detection.
-    if [ $chromium_pepper_flash_detection == 1 ];then
-        if [[ "$activ_win_title" = *hromium* ]];then
-        # Check if Chromium Flash process is running
+    if [ $chromium_pepper_flash_detection == 1 ]; then
+        if [[ "$activ_win_title" == *hromium* ]]; then
+            # Check if Chromium Flash process is running
             chrome_process=$(pgrep -lfc "chromium(|-browser) --type=ppapi ")
-            if [[ $chrome_process -ge 1 ]];then
+            if [[ $chrome_process -ge 1 ]]; then
                 log "isAppRunning(): chromium flash fullscreen detected"
                 return 1
             fi
@@ -271,11 +266,11 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect flash fullscreen on Chrome, modify variable chrome_pepper_flash_detection if you dont want Chrome pepper flash detection.
-    if [ $chrome_pepper_flash_detection == 1 ];then
-        if [[ "$activ_win_title" = *oogle-chrome* ]];then
-        # Check if Chrome Flash process is running
+    if [ $chrome_pepper_flash_detection == 1 ]; then
+        if [[ "$activ_win_title" == *oogle-chrome* ]]; then
+            # Check if Chrome Flash process is running
             chrome_process=$(pgrep -lfc "(c|C)hrome --type=ppapi ")
-            if [[ $chrome_process -ge 1 ]];then
+            if [[ $chrome_process -ge 1 ]]; then
                 log "isAppRunning(): chrome flash fullscreen detected"
                 return 1
             fi
@@ -283,13 +278,13 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect html5 fullscreen on Chrome, modify variable chrome_html5_detection if you dont want Chrome html5 detection.
-    if [ $chrome_html5_detection == 1 ];then
-        if [[ "$activ_win_title" = *oogle-chrome* ]];then
-        # Check if Chrome html5 process is running
+    if [ $chrome_html5_detection == 1 ]; then
+        if [[ "$activ_win_title" == *oogle-chrome* ]]; then
+            # Check if Chrome html5 process is running
             #chrome_process=`pgrep -lfc "(c|C)hrome --type=gpu-process "`
             # Sorry, I didn't see any gpu-process in my pc
             chrome_process=$(pgrep -lfc "(c|C)hrome")
-            if [[ $chrome_process -ge 1 ]];then
+            if [[ $chrome_process -ge 1 ]]; then
                 log "isAppRunning(): chrome html5 fullscreen detected"
                 return 1
             fi
@@ -297,11 +292,11 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect Video fullscreen on Opera, modify variable opera_flash_detection
-    if [ $opera_flash_detection == 1 ];then
-        if [[ "$activ_win_title" = *operapluginwrapper* ]];then
-        # Check if Opera flash process is running
+    if [ $opera_flash_detection == 1 ]; then
+        if [[ "$activ_win_title" == *operapluginwrapper* ]]; then
+            # Check if Opera flash process is running
             flash_process=$(pgrep -lfc operapluginwrapper-native)
-            if [[ $flash_process -ge 1 ]];then
+            if [[ $flash_process -ge 1 ]]; then
                 log "isAppRunning(): opera flash fullscreen detected"
                 return 1
             fi
@@ -309,10 +304,10 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect html5 fullscreen on Opera, modify variable chrome_html5_detection if you dont want Opera html5 detection.
-    if [ $opera_html5_detection == 1 ];then
-        if [[ "$activ_win_title" = *opera* ]];then
-        # Check if Opera html5 process is running
-            if [ "$(pidof -s opera)" ];then
+    if [ $opera_html5_detection == 1 ]; then
+        if [[ "$activ_win_title" == *opera* ]]; then
+            # Check if Opera html5 process is running
+            if [ "$(pidof -s opera)" ]; then
                 log "isAppRunning(): opera html5 fullscreen detected"
                 return 1
             fi
@@ -320,10 +315,10 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect html5 fullscreen on Epiphany, modify variable epiphany_html5_detection if you dont want Epiphany html5 detection.
-    if [ $epiphany_html5_detection == 1 ];then
-        if [[ "$activ_win_title" = *epiphany* ]];then
-        # Check if Epiphany html5 process is running
-            if [[ "$(pidof -s epiphany)" ]];then
+    if [ $epiphany_html5_detection == 1 ]; then
+        if [[ "$activ_win_title" == *epiphany* ]]; then
+            # Check if Epiphany html5 process is running
+            if [[ "$(pidof -s epiphany)" ]]; then
                 log "isAppRunning(): epiphany html5 fullscreen detected"
                 return 1
             fi
@@ -331,11 +326,11 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect Video fullscreen on WebKit, modify variable webkit_flash_detection if you dont want Webkit detection
-    if [ $webkit_flash_detection == 1 ];then
-        if [[ "$activ_win_title" = *WebKitPluginProcess* ]];then
-        # Check if WebKit Flash process is running
+    if [ $webkit_flash_detection == 1 ]; then
+        if [[ "$activ_win_title" == *WebKitPluginProcess* ]]; then
+            # Check if WebKit Flash process is running
             flash_process=$(pgrep -lfc ".*WebKitPluginProcess.*flashp.*")
-            if [[ $flash_process -ge 1 ]];then
+            if [[ $flash_process -ge 1 ]]; then
                 log "isAppRunning(): webkit flash fullscreen detected"
                 return 1
             fi
@@ -343,10 +338,10 @@ isAppRunning()
     fi
 
     #Check if a user wants to detect mplayer fullscreen, modify variable mplayer_detection
-    if [ $mplayer_detection == 1 ];then
-        if [[ "$activ_win_title" = *mplayer* || "$activ_win_title" = *MPlayer* ]];then
+    if [ $mplayer_detection == 1 ]; then
+        if [[ "$activ_win_title" == *mplayer* || "$activ_win_title" == *MPlayer* ]]; then
             #check if mplayer is running.
-            if [ "$(pidof -s mplayer)" ];then
+            if [ "$(pidof -s mplayer)" ]; then
                 log "isAppRunning(): mplayer fullscreen detected"
                 return 1
             fi
@@ -354,10 +349,10 @@ isAppRunning()
     fi
 
     #Check if a user wants to detect totem fullscreen, modify variable totem_detection
-    if [ $totem_detection == 1 ];then
-        if [[ "$activ_win_title" = *totem* ]];then
+    if [ $totem_detection == 1 ]; then
+        if [[ "$activ_win_title" == *totem* ]]; then
             #check if totem is running.
-            if [ "$(pidof -s totem)" ];then
+            if [ "$(pidof -s totem)" ]; then
                 log "isAppRunning(): totem fullscreen detected"
                 return 1
             fi
@@ -365,10 +360,10 @@ isAppRunning()
     fi
 
     #Check if a user wants to detect mpv fullscreen, modify variable mpv_detection
-    if [ $mpv_detection == 1 ];then
-        if [[ "$activ_win_title" = *mpv* ]];then
+    if [ $mpv_detection == 1 ]; then
+        if [[ "$activ_win_title" == *mpv* ]]; then
             #check if mpv is running.
-            if [ "$(pidof -s mpv)" ];then
+            if [ "$(pidof -s mpv)" ]; then
                 log "isAppRunning(): mpv fullscreen detected"
                 return 1
             fi
@@ -376,10 +371,10 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect vlc fullscreen, modify variable vlc_detection
-    if [ $vlc_detection == 1 ];then
-        if [[ "$activ_win_title" = *vlc* ]];then
+    if [ $vlc_detection == 1 ]; then
+        if [[ "$activ_win_title" == *vlc* ]]; then
             #check if vlc is running.
-            if [ "$(pidof -s vlc)" ];then
+            if [ "$(pidof -s vlc)" ]; then
                 log "isAppRunning(): vlc fullscreen detected"
                 return 1
             fi
@@ -387,28 +382,27 @@ isAppRunning()
     fi
 
     # Check if a user wants to detect minitube fullscreen, modify variable minitube_detection
-    if [ $minitube_detection == 1 ];then
-        if [[ "$activ_win_title" = *minitube* ]];then
+    if [ $minitube_detection == 1 ]; then
+        if [[ "$activ_win_title" == *minitube* ]]; then
             #check if minitube is running.
-            if [ "$(pidof -s minitube)" ];then
+            if [ "$(pidof -s minitube)" ]; then
                 log "isAppRunning(): minitube fullscreen detected"
                 return 1
             fi
         fi
     fi
 
-return 0
+    return 0
 }
 
-delayScreensaver()
-{
+delayScreensaver() {
     # reset inactivity time counter so screensaver is not started
     if [ "$screensaver" == "xscreensaver" ]; then
         log "delayScreensaver(): delaying xscreensaver..."
-        xscreensaver-command -deactivate > /dev/null
+        xscreensaver-command -deactivate >/dev/null
     elif [ "$screensaver" == "kscreensaver" ]; then
         log "delayScreensaver(): delaying kscreensaver..."
-        qdbus org.freedesktop.ScreenSaver /ScreenSaver SimulateUserActivity > /dev/null
+        qdbus org.freedesktop.ScreenSaver /ScreenSaver SimulateUserActivity >/dev/null
     elif [ "$screensaver" == "xautolock" ]; then
         log "delayScreensaver(): delaying xautolock..."
         xautolock -disable
@@ -428,7 +422,7 @@ delayScreensaver()
 
     # Check if DPMS is on. If it is, deactivate. If it is not, do nothing.
     dpmsStatus=$(xset -q | grep -c 'DPMS is Enabled')
-    if [ $dpmsStatus == 1 ];then
+    if [ $dpmsStatus == 1 ]; then
         xset -dpms
         # moved to checkFullscreen().
         #xset dpms
@@ -444,7 +438,7 @@ delayScreensaver()
     # Reset gnome session idle timer
     if [[ $gsettings_present == 1 && $(gsettings get org.gnome.desktop.session idle-delay 2>/dev/null) ]]; then
         sessionIdleDelay=$(gsettings get org.gnome.desktop.session idle-delay 2>/dev/null | sed "s/^.* //")
-        if [[ $sessionIdleDelay -ge 1 ]];then
+        if [[ $sessionIdleDelay -ge 1 ]]; then
             log "delayScreensaver(): resetting gnome session..."
             gsettings set org.gnome.desktop.session idle-delay 0 2>/dev/null
             gsettings set org.gnome.desktop.session idle-delay $sessionIdleDelay 2>/dev/null
@@ -452,27 +446,24 @@ delayScreensaver()
     fi
 }
 
-checkOutputs()
-{
+checkOutputs() {
     if [ $output_detection_control == 0 ]; then
         return
     fi
 
     declare -A connected_outputs
-    while read line
-    do
+    while read line; do
         declare output
-        IFS="=" read -a info <<< "$line"
-        if [[ "${info[0]}" = "output" ]]; then
+        IFS="=" read -a info <<<"$line"
+        if [[ "${info[0]}" == "output" ]]; then
             output=${info[1]}
-        elif [[ "${info[0]}" = "connected" && "${info[1]}" = "connected" ]]; then
+        elif [[ "${info[0]}" == "connected" && "${info[1]}" == "connected" ]]; then
             connected_outputs["${output}"]="connected"
         fi
     done < <(xrandr | sed -rn "s/^([^ ]+)[ ]+((dis)?connected)[ ]+(primary)?[ ]*([0-9]+x[0-9]+\+[0-9]+\+[0-9]+)?[ ]*.+$/output=\1\nconnected=\2\nignore=\3\nprimary=\4\nresolution=\5/p")
 
-    for output in $output_detection
-    do
-        if [[ ${connected_outputs["$output"]} = "connected" ]]; then
+    for output in $output_detection; do
+        if [[ ${connected_outputs["$output"]} == "connected" ]]; then
             log "checkOutputs(): Delaying because of output"
             delayScreensaver
             return
@@ -480,8 +471,7 @@ checkOutputs()
     done
 }
 
-_sleep()
-{
+_sleep() {
     if [ $dynamicDelay -eq 0 ]; then
         log "sleeping for $delay"
         sleep $delay
@@ -496,10 +486,10 @@ _sleep()
             fi
         fi
         if [ "$(echo $system_sleep_delay | egrep -c "^[0-9]+$")" == "1" ]; then
-            if [ $system_sleep_delay -le $(($default_sleep_delay+5)) ]; then
+            if [ $system_sleep_delay -le $(($default_sleep_delay + 5)) ]; then
                 sleep_delay=$default_sleep_delay
             else
-                sleep_delay=$(($system_sleep_delay-5))
+                sleep_delay=$(($system_sleep_delay - 5))
             fi
         else
             sleep_delay=$default_sleep_delay
@@ -513,21 +503,20 @@ delay=$1
 dynamicDelay=0
 
 # If argument empty, use dynamic delay.
-if [ -z "$1" ];then
+if [ -z "$1" ]; then
     dynamicDelay=1
     log "no delay specified, dynamicDelay=1"
 fi
 
 # If argument is not integer quit.
-if [[ $1 = *[^0-9]* ]]; then
+if [[ $1 == *[^0-9]* ]]; then
     echo "The Argument \"$1\" is not valid, not an integer"
     echo "Please use the time in seconds you want the checks to repeat."
     echo "You want it to be ~10 seconds less than the time it takes your screensaver or DPMS to activate"
     exit 1
 fi
 
-while true
-do
+while true; do
     checkDelayProgs
     checkFullscreen
     checkOutputs
@@ -535,4 +524,3 @@ do
 done
 
 exit 0
-

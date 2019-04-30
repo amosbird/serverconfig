@@ -3,14 +3,14 @@
 while IFS= read -r line; do
     echo $line
     case $line in
-        *0003:17EF:6009*)
-            echo 255 | sudo tee $line
-            ;;
-        *bluetooth*)
-            echo 15 | sudo tee $line
-            ;;
-        *serio2*)
-            echo 200 | sudo tee $line
-            ;;
+    *0003:17EF:6009*)
+        echo 255 | sudo tee $line
+        ;;
+    *bluetooth*)
+        echo 15 | sudo tee $line
+        ;;
+    *serio2*)
+        echo 200 | sudo tee $line
+        ;;
     esac
 done < <(/usr/bin/fd sensitivity /sys)

@@ -6,7 +6,7 @@ if ! xwininfo -name "popup" >/dev/null 2>&1; then
 else
     workspace=$(bspc query -D -d focused --names)
     id=$(cat /tmp/popup)
-    if [[ -z "$id" ]]; then
+    if [[ -z $id ]]; then
         exit 0
     fi
 
@@ -26,6 +26,6 @@ x=$((w / 8))
 y=50
 w=$((w * 3 / 4))
 h=$((h - 100))
-xdo move -x $x -y $y "$id"
-xdo resize -w $w -h $h "$id"
+xdo move -x "$x" -y "$y" "$id"
+xdo resize -w "$w" -h "$h" "$id"
 bspc node "$id" -l above

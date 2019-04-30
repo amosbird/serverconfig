@@ -7,6 +7,6 @@ my $name = "$path/$ARGV[0]";
 $name =~ s/\\/\\\\\\\\/g;
 $name =~ s/'/\\\\'/g;
 Clipboard->copy("'$name'");
-open(my $fh, '>>', '/tmp/flist');
+open( my $fh, '>>', '/tmp/flist' );
 print $fh "'$name'\n";
 close($fh);

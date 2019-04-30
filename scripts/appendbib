@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
 bibfile=/home/amos/git/serverconfig/amosbird.bib
-echo "" >> $bibfile
-cat "$@" >> $bibfile
+echo "" >>$bibfile
+cat "$@" >>$bibfile

@@ -14,16 +14,14 @@ if [ "$(VBoxManage list runningvms | wc -l)" = 0 ]; then
 fi
 
 # Wait until graphics are available
-until VBoxManage showvminfo $VMNAME | grep '"Graphics Mode": active/running' > /dev/null
-do
+until VBoxManage showvminfo $VMNAME | grep '"Graphics Mode": active/running' >/dev/null; do
     sleep 0.5s
 done
 
-for FILE in "$@"
-do
+for FILE in "$@"; do
 
     # Set a converted file path
-    if echo "$FILE" | grep '^/' > /dev/null; then
+    if echo "$FILE" | grep '^/' >/dev/null; then
         TARGETPATH=$FILE
     else
         TARGETPATH=$PWD'/'$FILE

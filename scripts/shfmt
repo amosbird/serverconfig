@@ -1,3 +1,5 @@
-#!/usr/bin/env bash
+#!/usr/bin/env fish
 
-/home/amos/go/bin/shfmt -i 4 "$@"
+cd (dirname (status -f)) || exit 1
+. ./path_for_wrapper.sh
+shfmt -i 4 $argv

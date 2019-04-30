@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
-nohup httpfolder -i `ztaddr` -p 8866 / > /dev/null 2>&1 & disown
+nohup httpfolder -i "$(ztaddr)" -p 8866 / >/dev/null 2>&1 &
+disown

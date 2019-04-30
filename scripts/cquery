@@ -13,26 +13,26 @@ cxx_flags='[
       "-Wno-macro-redefined"'
 
 for i in $ccls_cxx_flags; do
-	cxx_flags="${cxx_flags}, \"$i\""
+    cxx_flags="${cxx_flags}, \"$i\""
 done
 
 for i in $ccls_include_dirs; do
-	cxx_flags="${cxx_flags}, \"-I$i\""
+    cxx_flags="${cxx_flags}, \"-I$i\""
 done
 
 cxx_flags="${cxx_flags}]"
 
 blacklist='["/tmp"'
 for i in $ccls_blacklist; do
-	blacklist="${blacklist}, \"$i\""
+    blacklist="${blacklist}, \"$i\""
 done
 blacklist="${blacklist}]"
 
 if [[ -z "$ccls_suffix" ]]; then
-	ccls_suffix=$(basename "$(git rev-parse --show-toplevel)")
+    ccls_suffix=$(basename "$(git rev-parse --show-toplevel)")
 fi
 if [[ ! -z "$ccls_suffix" ]]; then
-	ccls_suffix=-"$ccls_suffix"
+    ccls_suffix=-"$ccls_suffix"
 fi
 
 multi=0
@@ -80,8 +80,7 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
   }
 }')
 
-if [ "$ccls_suffix" = "-tdesktop" ]
-then
+if [ "$ccls_suffix" = "-tdesktop" ]; then
     exec docker run -i --cap-add=SYS_PTRACE -v /data/.ccls_cached_index:/home/amos/.cache/.ccls_cached_index -v /home/amos/cclstmp:/tmp -v /home/amos/git/docker-tdesktop:/home/amos/git/docker-tdesktop -v /home/amos/git:/home/amos/git amosbird/telegram /home/amos/git/ccls/tg/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" -v 2 "$@"
 else
     exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"

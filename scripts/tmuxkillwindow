@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-if [ "Debug" = "$(tmux display-message -p '#W')" ]
-then
+if [ Debug = "$(tmux display-message -p '#W')" ]; then
     :
     # ttys=$(tmux list-panes -F "#{pane_tty}")
     # for tty in ${ttys[@]}

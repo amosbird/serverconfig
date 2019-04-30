@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 
-id="$(xwininfo -name "popup" -int 2> /dev/null | perl -ne 'print /xwininfo: Window id: (.*) "popup"/g')"
+id="$(xwininfo -name "popup" -int 2>/dev/null | perl -ne 'print /xwininfo: Window id: (.*) "popup"/g')"
 EMACS="emacsclient -s mu4e -n -q -u --display $DISPLAY -e"
-if [ -z "$id" ]
-then
+if [ -z "$id" ]; then
     $EMACS "(progn (select-frame (make-frame '((name . \"popup\")))) $*)"
 else
     showpopup.sh

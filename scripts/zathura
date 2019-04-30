@@ -5,45 +5,40 @@
 args=()
 sync=
 pdf=
-while (( $# ))
-do
-    case $1 in
-        --synctex-forward)
-            sync=$2
-            shift
-            shift
-            ;;
-        *.pdf)
-            pdf=$(realpath $1)
-            shift
-            ;;
-        *)
-            args+=$1
-            shift
-            ;;
+while (($#)); do
+    case "$1" in
+    --synctex-forward)
+        sync=$2
+        shift
+        shift
+        ;;
+    *.pdf)
+        pdf=$(realpath "$1")
+        shift
+        ;;
+    *)
+        args+=$1
+        shift
+        ;;
     esac
 done
 
 mkdir -p /tmp/llpp
-fifoname=$(zathura_getfifo.pl $pdf)
-if [ -n "$fifoname" ]
-then
-    echo 'reload' > $fifoname
-    if [ -z "$sync" ]
-    then
-        echo 'activatewin' > $fifoname
+fifoname=$(zathura_getfifo.pl "$pdf")
+if [ -n "$fifoname" ]; then
+    echo 'reload' >$fifoname
+    if [ -z "$sync" ]; then
+        echo 'activatewin' >$fifoname
     fi
 else
     fifoname=$(mktemp -u /tmp/llpp/XXXXXX)
     mkfifo $fifoname
     trap "rm -rf $fifoname" 0
     export EDITOR=eeee
-    /home/amos/git/llpp/build/llpp -remote $fifoname -- $pdf &
+    /home/amos/git/llpp/build/llpp -remote $fifoname -- "$pdf" &
 fi
 
-if [ -n "$sync" ]
-then
-    synctex view -i $sync -o $pdf -x "echo clearrects > $fifoname; echo prect %{page} 0.3 0.3 0.6 0.5 %{h} %{v} \$(echo '%{h} + %{width}' | bc -l) \$(echo '%{v} + %{height}' | bc -l) > $fifoname; echo goto %{page} %{x} %{y} > $fifoname"
-    # synctex view -i $sync -o $pdf -x "echo goto %{page} %{x} %{y} > $fifoname"
+if [ -n "$sync" ]; then
+    synctex view -i $sync -o "$pdf" -x "echo clearrects > $fifoname; echo prect %{page} 0.3 0.3 0.6 0.5 %{h} %{v} \$(echo '%{h} + %{width}' | bc -l) \$(echo '%{v} + %{height}' | bc -l) > $fifoname; echo goto %{page} %{x} %{y} > $fifoname"
 fi
 wait

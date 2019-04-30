@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 
-die() { echo "$*" 1>&2 ; exit 1; }
+die() {
+    echo "$*" 1>&2
+    exit 1
+}
 
 cd ~/.emacs.d || die "cd failed"
 rm ./*.elc

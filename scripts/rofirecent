@@ -8,5 +8,5 @@ files() {
     print_recent_db "$HOME/.recent.db"
 }
 
-path="$(files | rofi -p 'recent files > ' -dmenu)"
+path=$(files | rofi -p 'recent files > ' -dmenu)
 xdg-open "$path"

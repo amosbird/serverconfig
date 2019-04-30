@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
-function finish {
-  tput cnorm
-  kill -s SIGINT $PID
-  wait $PID
-  perf script -i $df | stackcollapse-perf.pl | grep -v cpu_idle | flamegraph.pl > $ds
-  fish -c "osc52browser $ds"
-  exit 0
+function finish() {
+    tput cnorm
+    kill -s SIGINT "$PID"
+    wait "$PID"
+    perf script -i "$df" | stackcollapse-perf.pl | grep -v cpu_idle | flamegraph.pl >"$ds"
+    # fish -c "osc52browser $ds"
+    osc52browser "$ds"
+    exit 0
 }
 
 trap finish INT
@@ -17,7 +18,7 @@ df=$1
 shift
 ds=$1
 shift
-nohup "$@" > /dev/null &
+nohup "$@" >/dev/null &
 PID=$!
 tput civis # hide cursor
 DATE_FORMAT="+%H:%M:%S"

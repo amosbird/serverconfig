@@ -3,9 +3,8 @@
 bspc desktop --focus f
 
 N="$(realpath $1)"
-if [ -e "$N" ]
-then
-   /home/amos/scripts/vivaldi file://"$N" "$2"
+if [ -e "$N" ]; then
+    /home/amos/scripts/vivaldi file://"$N" "$2"
 else
     /home/amos/scripts/vivaldi "$@"
 fi

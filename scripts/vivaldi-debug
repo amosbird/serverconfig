@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-url="$1"
+url=$1
 
-exists() { [[ -e $1 ]]; }; shopt -s nullglob
-if ! pgrep -f qbdebug > /dev/null
-then
+exists() { [[ -e $1 ]]; }
+shopt -s nullglob
+if ! pgrep -f qbdebug >/dev/null; then
     rm -rf /tmp/qbdebug
     cd /home/amos/git/qutebrowser/
     # python -m qutebrowser --qt-flag single-process -l vdebug &
@@ -16,19 +16,16 @@ fi
 
 socket=(/tmp/qbdebug/runtime/*)
 flag="no"
-while read -r wid
-do
-    str=$(xprop -id $wid WM_CLASS 2> /dev/null)
-    if [[ "$str" = *qutebrowser* ]]
-    then
+while read -r wid; do
+    str=$(xprop -id $wid WM_CLASS 2>/dev/null)
+    if [[ "$str" == *qutebrowser* ]]; then
         flag="last"
         bspc node $wid -f
         break
     fi
 done < <(bspc query -N -d focused -n .!hidden)
 
-if [[ "$flag" = last ]]
-then
+if [[ "$flag" == last ]]; then
     ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"last-focused\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"
 else
     ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"window\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"

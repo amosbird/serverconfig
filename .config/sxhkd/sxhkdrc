@@ -19,7 +19,7 @@ mod3+i
 mod3+I
   teiler --quick fullscreen
 mod3+o
-  lang=$(echo -e "chi_sim\neng\nchi_sim+eng" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
+  lang=$(echo -e "chi_sim\neng\nchi_sim+eng\njpn" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
 mod3+c
   cliprectangle
 mod3+p
@@ -29,7 +29,7 @@ mod3+shift+p
 mod3+t
   xclip -out | upload -
 mod3+shift+r
-  teiler --togglecast
+  teiler
 mod3+g
   fish -c 'url "www.google.com/search?q="'
 mod3+s

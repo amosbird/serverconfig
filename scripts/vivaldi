@@ -17,7 +17,7 @@
 # fi
 # exit 0
 
-url="$1"
+url=$1
 
 # if [[ "$url" = /tmp/* ]]
 # then
@@ -26,35 +26,31 @@ url="$1"
 #     trap "rm -rf ${url}" EXIT
 # fi
 
-exists() { [[ -e $1 ]]; }; shopt -s nullglob
-if ! pgrep -f qutebrowser > /dev/null
-then
+exists() { [[ -e "$1" ]]; }
+shopt -s nullglob
+if ! pgrep -f qutebrowser >/dev/null; then
     find /run/user/1000/qutebrowser/ -type f -delete
     cd /home/amos/git/qutebrowser/
     # /usr/bin/python -m qutebrowser -l vdebug &
     # /usr/bin/python -m qutebrowser &
-    /usr/bin/python -m qutebrowser > /tmp/qb.log 2>&1 &
+    /usr/bin/python -m qutebrowser >/tmp/qb.log 2>&1 &
     mkdir -p /run/user/1000/qutebrowser
     while read -r && [[ $REPLY != *ATTRIB\ ipc-* ]]; do break; done < <(inotifywait -m -t 5 -e create /run/user/1000/qutebrowser)
 fi
 
 socket=(/run/user/1000/qutebrowser/*)
-flag="no"
-while read -r wid
-do
-    str=$(xprop -id $wid WM_CLASS 2> /dev/null)
-    if [[ "$str" = *qutebrowser* ]]
-    then
+flag=no
+while read -r wid; do
+    str=$(xprop -id $wid WM_CLASS 2>/dev/null)
+    if [[ $str == *qutebrowser* ]]; then
         flag="last"
         break
     fi
 done < <(bspc query -N -d focused -n .!hidden)
 
-if [ -n "$2" ]
-then
+if [ -n "$2" ]; then
     ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"tab-silent\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"
-elif [[ "$flag" = last ]]
-then
+elif [[ "$flag" == last ]]; then
     ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"last-focused\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"
 else
     ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"window\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"

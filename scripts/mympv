@@ -2,6 +2,12 @@
 
 pkill mpv
 
-cd "$(dirname "$(realpath "$1")")"
+f=$(realpath "$1")
 
-perl -e 'use List::Util qw(first); @p = qw(mpv --loop-playlist=inf --external-file=/home/amos/Pictures/cover.png --force-window --geometry=1280x800 --image-display-duration=inf --vid=1); @l = grep /\.(?:mp[34]|avi|mkv)$/i, <*>;; $n=@l; $i = first { $l[$_] =~ /\Q$ARGV[0]/ } 0..$#l; system(@p, @l[$i-$n..$i-1])' "$(basename "$1")"
+if [ -d "$f" ]; then
+    cd "$f"
+    perl -e 'use File::Find::Rule; @p = qw(mpv --loop-playlist=inf --external-file=/home/amos/Pictures/cover.png --force-window --geometry=1280x800 --image-display-duration=inf --vid=1); @l = File::Find::Rule->file()->name( qr/\.(?:mp[34]|avi|mkv)$/i )->in( (".") ); system(@p, @l)'
+else
+    cd "$(dirname "$f")"
+    perl -e 'use List::Util qw(first); @p = qw(mpv --loop-playlist=inf --external-file=/home/amos/Pictures/cover.png --force-window --geometry=1280x800 --image-display-duration=inf --vid=1); @l = grep /\.(?:mp[34]|avi|mkv)$/i, <*>;; $n=@l; $i = first { $l[$_] =~ /\Q$ARGV[0]/ } 0..$#l; system(@p, @l[$i-$n..$i-1])' "$(basename "$f")"
+fi

@@ -2,7 +2,7 @@
 
 print_luakit_db() {
     sqlite3 -separator "                " "$1" \
-            'select a.title, a.uri from history a join (select title, min(length(uri)) shortest from history group by title) b on a.title=b.title and length(a.uri)=b.shortest order by last_visit desc'
+        'select a.title, a.uri from history a join (select title, min(length(uri)) shortest from history group by title) b on a.title=b.title and length(a.uri)=b.shortest order by last_visit desc'
 }
 
 hists() {
@@ -10,7 +10,7 @@ hists() {
     # print_luakit_db "/usr/home/var/bhists-inactive/history-20170701.db"
 }
 
-url="$(hists | rofi -p 'luakit history > ' -dmenu | sed 's/^.*                //')"
+url=$(hists | rofi -p 'luakit history > ' -dmenu | sed 's/^.*                //')
 
 test -z "$url" && exit 1
 # want arg end --

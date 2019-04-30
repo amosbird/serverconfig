@@ -1,6 +1,5 @@
-#!/usr/bin/env bash
+#!/usr/bin/env fish
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-chisels=${DIR}/../.chisels
-
-( cd "$chisels" && sudo -H sysdig -c ${chisels}/topfiles_bytes "$@")
+cd (dirname (status -f)) || exit 1
+set chisels ../.chisels
+cd "$chisels" && sudo -H sysdig -c "$chisels"/topfiles_bytes $argv

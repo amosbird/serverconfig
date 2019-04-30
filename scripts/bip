@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-
-echo $1 | tr '.' '\n' | while read octet
-do
+echo $1 | tr '.' '\n' | while read octet; do
     echo "2 o $octet p" | dc
 done | tr '\n' '.'

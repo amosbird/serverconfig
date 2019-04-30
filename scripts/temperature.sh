@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # vim:ts=4:sw=4:expandtab
-CORE="${1}"
+CORE=$1
 OUTPUT=$(sensors -Au)
 
 IFS=$'\n'

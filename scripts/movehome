@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-if [[ `hostname` = "abt480" ]]
-then
+if [[ $(hostname) == abt480 ]]; then
     xrandr --output VIRTUAL1 --off --output eDP1 --primary --mode 1600x900 --pos 0x0 --brightness 1 --output DP2 --off
     monitormove eDP1 DP2
 else

@@ -27,7 +27,7 @@ while getopts $keys opt; do
     key="\"$opt\""
     break
 done
-shift $((OPTIND-1))
+shift $((OPTIND - 1))
 
 [ -t 0 ] && str="$*" || str=$(cat)
 

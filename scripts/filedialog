@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 
-if [ -z "$1" ]
-then
-    file="$HOME/"
-elif [ -d "$1" ]
-then
-    file="$(realpath "$1")/"
+if [ -z "$1" ]; then
+    file=$HOME/
+elif [ -d "$1" ]; then
+    file=$(realpath "$1")/
 else
-    file="$(realpath "$1")"
+    file=$(realpath "$1")
 fi
 
 emacspopup "(dired-jump nil \"$file\") (+amos/recenter)"

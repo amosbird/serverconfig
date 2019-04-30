@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-(( UID == 0 )) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
+((UID == 0)) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
 
 # updateroutes
 
@@ -8,6 +8,14 @@ ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
 gw=$(ip r g 13.75.109.155 | cut -d" " -f3)
 
+ip l a type veth
+ip a a 10.0.8.1/30 dev veth0
+ip l s veth0 up
+ip l s veth1 netns zt
+ip -n zt a a 10.0.8.2/30 dev veth1
+ip -n zt l s veth1 up
+ip -n zt l s lo up
+ip -n zt r a default via 10.0.8.1
 
 ip r f table direct
 ip r f table zerotier
@@ -81,8 +89,6 @@ ip r a 168.235.97.16/32 via $gw table cn
 # ip r a 10.0.0.0/8 via $gw table cn
 # ip r a 172.26.72.26 via 172.26.59.244
 
-
-
 # github
 
 # ip r a 192.30.252.0/22 via $gw table cn
@@ -107,7 +113,6 @@ ip r a 168.235.97.16/32 via $gw table cn
 # ip r a 54.166.52.62/32 via $gw table cn
 # ip r a 23.20.92.3/32 via $gw table cn
 
-
 # azure
 ip r a 13.75.109.155/32 via $gw
 
@@ -124,7 +129,6 @@ ip r a 13.75.109.155/32 via $gw
 #ip r a 128.0.0.0/1 via 172.26.189.83
 #ip r a 0.0.0.0/1 via 172.26.234.42
 #ip r a 128.0.0.0/1 via 172.26.234.42
-
 
 # govpn
 # ip r a 0.0.0.0/1 via 172.16.0.1

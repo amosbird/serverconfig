@@ -4742,11 +4742,11 @@ Return the pasted text as a string."
 
 (after! ediff
   (add-hook! 'ediff-keymap-setup-hook
-    (define-key ediff-mode-map "k" 'ediff-previous-difference)
-    (define-key ediff-mode-map "j" 'ediff-next-difference)
-    (define-key ediff-mode-map "c" '+amos/ediff-copy-both-to-C)
-    (define-key ediff-mode-map "K" '+amos/ediff-previous-revision)
-    (define-key ediff-mode-map "J" '+amos/ediff-next-revision)
+    (define-key ediff-mode-map "k" #'ediff-previous-difference)
+    (define-key ediff-mode-map "j" #'ediff-next-difference)
+    (define-key ediff-mode-map "c" #'+amos/ediff-copy-both-to-C)
+    (define-key ediff-mode-map "K" #'+amos/ediff-previous-revision)
+    (define-key ediff-mode-map "J" #'+amos/ediff-next-revision)
     ))
 
 (defun +amos*flycheck-error-line-region (err)
@@ -4888,3 +4888,7 @@ See `project-local-get' for the parameter PROJECT."
 (defun +amos|server-visit-hook ()
   (setq-local server-visit-file t))
 (add-hook 'server-visit-hook #'+amos|server-visit-hook)
+
+(after! latex
+  (dolist (env '("itemize" "enumerate" "description"))
+    (delete `(,env +latex/LaTeX-indent-item) LaTeX-indent-environment-list)))

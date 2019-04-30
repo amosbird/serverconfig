@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/hostnames.txt | sudo tee /etc/.hostnames.txt > /dev/null
-curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/domains.txt | sudo tee /etc/.domains.txt > /dev/null
+curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/hostnames.txt | sudo tee /etc/.hostnames.txt >/dev/null
+curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/domains.txt | sudo tee /etc/.domains.txt >/dev/null
 
 {
-	echo '
+    echo '
 port=53
 no-resolv
 no-poll
@@ -19,7 +19,7 @@ ipset=/acm.org/gfwlist
 ipset=/sciencedirect.com/gfwlist
 ipset=/cn/gfwlist
 '
-	curl -s https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
+    curl -s https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
 } | sudo tee /etc/dnsmasq.conf >/dev/null
 
 sudo systemctl restart dnsmasq

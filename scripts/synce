@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 
-file=$(realpath $1)
+file=$(realpath "$1")
 tmux switch-client -t emacs
-if [ -z $2 ]
-then
-    emacsclient -eval "(progn (+amos/workspace-new) (setq +amos-tmux-need-switch t) (find-file \"$file\"))" > /dev/null
+if [ -z "$2" ]; then
+    emacsclient -eval "(progn (+amos/workspace-new) (setq +amos-tmux-need-switch t) (find-file \"$file\"))" >/dev/null
 else
-    emacsclient -eval "(progn (setq +amos-tmux-need-switch t) (find-file \"$file\"))" > /dev/null
+    emacsclient -eval "(progn (setq +amos-tmux-need-switch t) (find-file \"$file\"))" >/dev/null
 fi

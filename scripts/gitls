@@ -5,15 +5,18 @@ import os, stat, sys
 
 # for sorting
 import locale, functools
-locale.setlocale(locale.LC_ALL, '')
+
+locale.setlocale(locale.LC_ALL, "")
 
 from collections import defaultdict
+
 
 def run(cmd):
     return subprocess.check_output(cmd.split()).decode(sys.stdout.encoding)
 
-if 'GIT_PREFIX' in os.environ and os.environ['GIT_PREFIX']:
-    os.chdir(os.environ['GIT_PREFIX'])
+
+if "GIT_PREFIX" in os.environ and os.environ["GIT_PREFIX"]:
+    os.chdir(os.environ["GIT_PREFIX"])
 
 try:
     gprefix = run("git rev-parse --show-prefix")[:-1]
@@ -21,16 +24,16 @@ except:
     sys.exit(1)
 
 stat_types = {
-    'DD': 'merge',
-    'AU': 'merge',
-    'UD': 'merge',
-    'UA': 'merge',
-    'UA': 'merge',
-    'DU': 'merge',
-    'AA': 'merge',
-    'UU': 'merge',
-    '!!': 'ignored',
-    '??': 'untracked'
+    "DD": "merge",
+    "AU": "merge",
+    "UD": "merge",
+    "UA": "merge",
+    "UA": "merge",
+    "DU": "merge",
+    "AA": "merge",
+    "UU": "merge",
+    "!!": "ignored",
+    "??": "untracked",
 }
 
 
@@ -39,48 +42,53 @@ def git_status():
     gfiles = defaultdict(set)
     i = 0
     while i < len(gstat):
-        assert gstat[i][2] == ' '
+        assert gstat[i][2] == " "
         s = gstat[i][0:2]
         name = gstat[i][3:]
         i += 1
-        if s[0] == 'R':
+        if s[0] == "R":
             # file was renamed
             old_name = gstat[i]
             i += 1
         if name.startswith(gprefix):
-            name = name[len(gprefix):]
+            name = name[len(gprefix) :]
         stats = set()
-        if s in stat_types: stats.add(stat_types[s])
+        if s in stat_types:
+            stats.add(stat_types[s])
         else:
-            if s[0] in 'MADRC':
-                stats.add('index')
-            if s[1] in 'MADRC':
-                stats.add('local')
+            if s[0] in "MADRC":
+                stats.add("index")
+            if s[1] in "MADRC":
+                stats.add("local")
         while name not in [".", ""]:
             gfiles[name].update(stats)
             name = os.path.dirname(name)
     return gfiles
+
 
 def list_files(gfiles):
     for file in sorted(os.listdir("."), key=functools.cmp_to_key(locale.strcoll)):
         isdir = os.path.isdir(file)
         stats = gfiles[file]
         # don't ignore directories just because they contain some ignored files
-        if isdir and 'ignored' in stats:
-            stats.remove('ignored')
+        if isdir and "ignored" in stats:
+            stats.remove("ignored")
         # ignore unmodified dotfiles
         if not stats and file.startswith("."):
-            stats.add('ignored')
+            stats.add("ignored")
         if isdir:
-            stats.add('dir')
+            stats.add("dir")
         yield stats, file
+
 
 def div_round_up(n, k):
     return (n + k - 1) // k
 
+
 def column_widths(lens, ncols):
     nrows = div_round_up(len(lens), ncols)
-    return [max(lens[i*nrows:(i+1)*nrows]) for i in range(ncols)]
+    return [max(lens[i * nrows : (i + 1) * nrows]) for i in range(ncols)]
+
 
 def optimise_cols(lens, width):
     first = 0
@@ -93,7 +101,7 @@ def optimise_cols(lens, width):
             break
     while ncols > 0:
         nrows = div_round_up(len(lens), ncols)
-        if nrows * (ncols-1) < len(lens):
+        if nrows * (ncols - 1) < len(lens):
             cols = column_widths(lens, ncols)
             if sum(cols) <= width:
                 return cols
@@ -101,45 +109,62 @@ def optimise_cols(lens, width):
     # didn't fit at all, just use one column
     return [width]
 
+
 colour_map = {
-    'bold': '1',
-    'black': '30', 'red': '31', 'green': '32', 'yellow': '33',
-    'blue': '34', 'magenta': '35', 'cyan': '36', 'white': '37',
-    'back_black': '40', 'back_red': '41', 'back_green': '42', 'back_yellow': '43',
-    'back_blue': '44', 'back_magenta': '45', 'back_cyan': '46', 'back_white': '47',
-    }
+    "bold": "1",
+    "black": "30",
+    "red": "31",
+    "green": "32",
+    "yellow": "33",
+    "blue": "34",
+    "magenta": "35",
+    "cyan": "36",
+    "white": "37",
+    "back_black": "40",
+    "back_red": "41",
+    "back_green": "42",
+    "back_yellow": "43",
+    "back_blue": "44",
+    "back_magenta": "45",
+    "back_cyan": "46",
+    "back_white": "47",
+}
+
+
 def colour(text, *colours):
     return "\033[" + ";".join(colour_map[c] for c in colours) + "m" + text + "\033[0m"
+
 
 def format_file(stat, name):
     orig_name = name
 
-    if 'merge' in stat:
-        c = colour('X', 'red', 'bold')
-    elif 'local' in stat and 'index' in stat:
-        c = colour('&', 'red', 'bold')
-        name = colour(name, 'green')
-    elif 'local' in stat:
-        c = colour('*', 'red', 'bold')
-        name = colour(name, 'red', 'bold')
-    elif 'index' in stat:
-        c = colour('^', 'green')
-        name = colour(name, 'green')
-    elif 'untracked' in stat:
-        c = colour('?', 'yellow', 'bold')
-        name = colour(name, 'yellow')
+    if "merge" in stat:
+        c = colour("X", "red", "bold")
+    elif "local" in stat and "index" in stat:
+        c = colour("&", "red", "bold")
+        name = colour(name, "green")
+    elif "local" in stat:
+        c = colour("*", "red", "bold")
+        name = colour(name, "red", "bold")
+    elif "index" in stat:
+        c = colour("^", "green")
+        name = colour(name, "green")
+    elif "untracked" in stat:
+        c = colour("?", "yellow", "bold")
+        name = colour(name, "yellow")
     else:
-        c = ' '
+        c = " "
 
-    if 'dir' in stat:
-        name = colour(orig_name, 'blue', 'bold')
+    if "dir" in stat:
+        name = colour(orig_name, "blue", "bold")
 
     return c + name + "  "
+
 
 def print_files(files, lens, width):
     cols = optimise_cols(lens, width)
     nrows = div_round_up(len(files), len(cols))
-    col_fmt = "".join("{"+str(i)+":"+str(n)+"}" for i,n in enumerate(cols))
+    col_fmt = "".join("{" + str(i) + ":" + str(n) + "}" for i, n in enumerate(cols))
     for i in range(nrows):
         elems = [format_file(s, n) for s, n in files[i::nrows]]
         for j, txt in enumerate(elems):
@@ -147,7 +172,8 @@ def print_files(files, lens, width):
             sys.stdout.write(txt + " " * space)
         sys.stdout.write("\n")
 
-files = [(s, n) for s, n in list_files(git_status()) if 'ignored' not in s]
+
+files = [(s, n) for s, n in list_files(git_status()) if "ignored" not in s]
 width = int(subprocess.check_output("tput cols".split()))
 lengths = [len(n) + 3 for s, n in files]
 print_files(files, lengths, width)

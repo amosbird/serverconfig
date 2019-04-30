@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-if (( $# == 0 ))
-then
-    bspc wm -d > "$BSPWM_STATE" && bspc quit
-else
+if (($#)); then
     bspc quit 1
+else
+    bspc wm -d >"$BSPWM_STATE" && bspc quit
 fi

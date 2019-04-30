@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
-url="${1:-$(cat)}"
+url=${1:-$(cat)}
 html=$(mktemp)
-wget $url -O $html 2> /dev/null
+wget $url -O $html 2>/dev/null
 title=$(cat $html | pup -p 'h3 text{}' | python /home/amos/tt.py)
 tags=$(cat $html | pup -p 'a[class="btn btn-xs btn-default btn-round text-sm"] text{}' | python /home/amos/ttt.py)
 echo "* [[$url][$title]]                $tags"

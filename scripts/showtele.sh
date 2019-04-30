@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep Telegram > /dev/null
-then
+if pgrep Telegram >/dev/null; then
     id=$(head -1 /tmp/telegram)
-    if [ -z "$id" ]
-    then
+    if [ -z "$id" ]; then
         exit 0
     fi
-    if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"
-    then
+    if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"; then
         bspc node "$id" -g hidden -f
     else
         bspc node "$id" --to-desktop "$workspace"
@@ -19,9 +16,9 @@ then
     wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
     w=${wh[0]}
     h=${wh[1]}
-    x=$((w/8))
+    x=$((w / 8))
     y=80
-    w=$((w*3/4))
+    w=$((w * 3 / 4))
     h=$((h - 140))
     xdo move -x $x -y $y "$id"
     xdo resize -w $w -h $h "$id"

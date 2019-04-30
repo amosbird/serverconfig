@@ -3,8 +3,8 @@
 #!/usr/bin/env bash
 
 errlog() {
-	notify-send -a "teiler" "Error Log" "$(cat /dev/fd/2)"
-	exit 1
+    notify-send -a "teiler" "Error Log" "$(cat /dev/fd/2)"
+    exit 1
 }
 set -o pipefail
 

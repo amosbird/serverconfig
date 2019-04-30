@@ -3,7 +3,7 @@
 W="${1:-400}"
 H="${2:-300}"
 read -r X Y < <(getcursorpos)
-echo $X $Y $W $H > /tmp/rectangle
-ffmpeg_display=$(echo $DISPLAY);
+echo $X $Y $W $H >/tmp/rectangle
+ffmpeg_display=$(echo $DISPLAY)
 ffmpeg_offset=$(echo $(xininfo -mon-x),$(xininfo -mon-y))
-ffmpeg -f x11grab -show_region 1 -s "$W"x"$H" -ss 10000000 -i $ffmpeg_display+$X,$Y -framerate 1 -vframes 1 -f singlejpeg - 2> /dev/null
+ffmpeg -f x11grab -show_region 1 -s "$W"x"$H" -ss 10000000 -i $ffmpeg_display+$X,$Y -framerate 1 -vframes 1 -f singlejpeg - 2>/dev/null

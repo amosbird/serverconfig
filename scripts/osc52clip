@@ -2,4 +2,4 @@
 
 esc="\033]52;c;"$(printf -- "%b" "$(cat $1)" | base64 | tr -d '\r\n')"\07"
 esc="\033Ptmux;\033"$esc"\033\\" # tmux
-printf -- "%b"  "$esc"
+printf -- "%b" "$esc"

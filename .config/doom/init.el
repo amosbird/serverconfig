@@ -152,6 +152,7 @@
 (setq evil-want-C-i-jump t)
 (setq explicit-shell-file-name "/bin/bash")
 (setq find-file-visit-truename t)
+(setq inhibit-compacting-font-caches nil)
 (setq fringes-outside-margins t)
 (setq global-auto-revert-non-file-buffers t)
 (setq initial-buffer-choice t)
@@ -173,6 +174,7 @@
 (setq nav-flash-delay 0.3)
 (setq org-M-RET-may-split-line '((default)))
 (setq org-agenda-files '("~/org/todo.org"))
+(setq org-src-tab-acts-natively nil)
 (setq org-babel-load-languages
       '((python . t)
         (emacs-lisp . t)
@@ -253,10 +255,10 @@
 (setq query-replace-skip-read-only t)
 (setq bibtex-completion-cite-prompt-for-optional-arguments nil)
 (setq bibtex-completion-format-citation-functions
-  '((org-mode      . +amos-bibtex-completion-format-citation-cite)
-    (latex-mode    . +amos-bibtex-completion-format-citation-cite)
-    (markdown-mode . bibtex-completion-format-citation-pandoc-citeproc)
-    (default       . bibtex-completion-format-citation-default)))
+      '((org-mode      . +amos-bibtex-completion-format-citation-cite)
+        (latex-mode    . +amos-bibtex-completion-format-citation-cite)
+        (markdown-mode . bibtex-completion-format-citation-pandoc-citeproc)
+        (default       . bibtex-completion-format-citation-default)))
 (setq ivy-bibtex-default-action 'ivy-bibtex-insert-citation)
 
 (setq require-final-newline t)
@@ -295,7 +297,7 @@
 
 (defun +amos*+evil-collection-init (orig-fun module)
   (unless (memq (or (car-safe module) module) '(edebug dired))
-      (apply orig-fun (list module))))
+    (apply orig-fun (list module))))
 (advice-add #'+evil-collection-init :around #'+amos*+evil-collection-init)
 
 (ignore-errors
@@ -316,10 +318,10 @@
 (setq server-name (getenv "EMACS_SERVER_NAME"))
 (if (not server-name) (setq server-name "server"))
 (add-hook 'emacs-startup-hook
-  (lambda ()
-    (with-temp-file (concat "/tmp/emacs-" server-name)
-      (erase-buffer)
-      (insert (number-to-string (emacs-pid))))))
+          (lambda ()
+            (with-temp-file (concat "/tmp/emacs-" server-name)
+              (erase-buffer)
+              (insert (number-to-string (emacs-pid))))))
 (unless (server-running-p server-name)
   (server-start))
 ;; disable this fucking stupid feature by masking

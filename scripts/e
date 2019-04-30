@@ -2,14 +2,12 @@
 
 file=$(realpath "$1")
 session=$(tmux display-message -p "#S")
-if [[ $session = "gui" ]]
-then
+if [[ $session == "gui" ]]; then
     emacspopup "(find-file \"$file\")"
 else
     EMACS="emacsclient -n -q -u -e"
     tmux switch-client -t emacs
-    if [ -z "$2" ]
-    then
+    if [ -z "$2" ]; then
         $EMACS "(progn (setq +amos-tmux-need-switch t) (+amos/workspace-new) (find-file \"$file\"))"
     else
         $EMACS "(find-file \"$file\")"
