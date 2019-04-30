@@ -31,8 +31,8 @@ foreach my $line (@output) {
     local $/;
     open( my $file, "<$line" ) or die "Could not open file '$line' $!";
     my $doc = <$file>;
-    $doc =~
-s/\/\*\*.*Definition for a binary tree node.*\*\//\n#ifdef CC_PLAYGROUND\nstruct TreeNode {\nint val;\n TreeNode* left;\n TreeNode* right;\n TreeNode(int x)\n : val(x)\n , left(NULL)\n , right(NULL) {}\n};\n#endif\n/sm;
+    $doc
+        =~ s/\/\*\*.*Definition for a binary tree node.*\*\//\n#ifdef CC_PLAYGROUND\nstruct TreeNode {\nint val;\n TreeNode* left;\n TreeNode* right;\n TreeNode(int x)\n : val(x)\n , left(NULL)\n , right(NULL) {}\n};\n#endif\n/sm;
     open( my $nf2, ">$line" ) || die "File not found";
     print $nf2 "$doc";
 }

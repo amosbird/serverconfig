@@ -72,17 +72,18 @@ sub remember_stack {
     my ( $stack, $count ) = @_;
     $collapsed{$stack} += $count;
 }
-my $annotate_kernel = 0;    # put an annotation on kernel function
-my $annotate_jit    = 0;    # put an annotation on jit symbols
-my $annotate_all    = 0;    # enale all annotations
-my $include_pname   = 1;    # include process names in stacks
-my $include_pid     = 0;    # include process ID with process name
-my $include_tid     = 0;    # include process & thread ID with process name
-my $include_addrs   = 0;    # include raw address where a symbol can't be found
-my $tidy_java       = 1;    # condense Java signatures
-my $tidy_generic    = 1;    # clean up function names a little
-my $target_pname;           # target process name from perf invocation
-my $event_filter = "";  # event type filter, defaults to first encountered event
+my $annotate_kernel = 0;   # put an annotation on kernel function
+my $annotate_jit    = 0;   # put an annotation on jit symbols
+my $annotate_all    = 0;   # enale all annotations
+my $include_pname   = 1;   # include process names in stacks
+my $include_pid     = 0;   # include process ID with process name
+my $include_tid     = 0;   # include process & thread ID with process name
+my $include_addrs   = 0;   # include raw address where a symbol can't be found
+my $tidy_java       = 1;   # condense Java signatures
+my $tidy_generic    = 1;   # clean up function names a little
+my $target_pname;    # target process name from perf invocation
+my $event_filter
+    = "";            # event type filter, defaults to first encountered event
 my $event_defaulted = 0;    # whether we defaulted to an event (none provided)
 my $event_warning   = 0;    # if we printed a warning for the event
 
@@ -269,9 +270,9 @@ while ( defined( $_ = <> ) ) {
 
         my ( $pc, $rawfunc, $mod ) = ( $1, $2, $3 );
 
-       # Linux 4.8 included symbol offsets in perf script output by default, eg:
-       # 7fffb84c9afc cpu_startup_entry+0x800047c022ec ([kernel.kallsyms])
-       # strip these off:
+     # Linux 4.8 included symbol offsets in perf script output by default, eg:
+     # 7fffb84c9afc cpu_startup_entry+0x800047c022ec ([kernel.kallsyms])
+     # strip these off:
         $rawfunc =~ s/\+0x[\da-f]+$//;
 
         if (   $show_inline == 1
@@ -288,7 +289,8 @@ while ( defined( $_ = <> ) ) {
             my $func = $_;
 
             if ( $func eq "[unknown]" ) {
-                if ( $mod ne "[unknown]" ) { # use module name instead, if known
+                if ( $mod ne "[unknown]" )
+                {                     # use module name instead, if known
                     $func = $mod;
                     $func =~ s/.*\///;
                 }
@@ -308,10 +310,10 @@ while ( defined( $_ = <> ) ) {
                 $func =~ s/;/:/g;
                 if ( $func !~ m/\.\(.*\)\./ ) {
 
-                  # This doesn't look like a Go method name (such as
-                  # "net/http.(*Client).Do"), so everything after the first open
-                  # paren (that is not part of an "(anonymous namespace)") is
-                  # just noise.
+                # This doesn't look like a Go method name (such as
+                # "net/http.(*Client).Do"), so everything after the first open
+                # paren (that is not part of an "(anonymous namespace)") is
+                # just noise.
                     $func =~ s/\((?!anonymous namespace\)).*//;
                 }
 
@@ -335,16 +337,16 @@ while ( defined( $_ = <> ) ) {
                 $func =~ s/^L// if $func =~ m:/:;
             }
 
-    #
-    # Annotations
-    #
-    # detect inlined from the @inline array
-    # detect kernel from the module name; eg, frames to parse include:
-    #          ffffffff8103ce3b native_safe_halt ([kernel.kallsyms])
-    #          8c3453 tcp_sendmsg (/lib/modules/4.3.0-rc1-virtual/build/vmlinux)
-    #          7d8 ipv4_conntrack_local+0x7f8f80b8 ([nf_conntrack_ipv4])
-    # detect jit from the module name; eg:
-    #          7f722d142778 Ljava/io/PrintStream;::print (/tmp/perf-19982.map)
+  #
+  # Annotations
+  #
+  # detect inlined from the @inline array
+  # detect kernel from the module name; eg, frames to parse include:
+  #          ffffffff8103ce3b native_safe_halt ([kernel.kallsyms])
+  #          8c3453 tcp_sendmsg (/lib/modules/4.3.0-rc1-virtual/build/vmlinux)
+  #          7d8 ipv4_conntrack_local+0x7f8f80b8 ([nf_conntrack_ipv4])
+  # detect jit from the module name; eg:
+  #          7f722d142778 Ljava/io/PrintStream;::print (/tmp/perf-19982.map)
             if ( scalar(@inline) > 0 ) {
                 $func .= "_[i]";    # inlined
             }

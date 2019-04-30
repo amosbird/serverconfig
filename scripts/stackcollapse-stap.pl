@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 #
-# stackcolllapse-stap.pl	collapse multiline SystemTap stacks
-#				into single lines.
+# stackcolllapse-stap.pl    collapse multiline SystemTap stacks
+#                into single lines.
 #
 # Parses a multiline stack followed by a number on a separate line, and
 # outputs a semicolon separated stack followed by a space and the number.
@@ -17,7 +17,7 @@
 #  0xffffffff81013236 : cpu_idle+0xd6/0x120 [kernel]
 #  0xffffffff815bf03e : rest_init+0x72/0x74 [kernel]
 #  0xffffffff81aebbfe : start_kernel+0x3ba/0x3c5 [kernel]
-#	2404
+#    2404
 #
 # Example output:
 #
@@ -47,7 +47,7 @@
 #
 # CDDL HEADER END
 #
-# 16-Feb-2012	Brendan Gregg	Created this.
+# 16-Feb-2012    Brendan Gregg    Created this.
 
 use strict;
 

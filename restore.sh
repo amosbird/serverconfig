@@ -26,6 +26,7 @@ configs=(
     .gtkrc-2.0
     .stalonetrayrc
     .bashrc
+    .perltidyrc
     .wgetrc
     .bash_profile
     .chisels
