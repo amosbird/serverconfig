@@ -8,10 +8,13 @@ ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
 gw=$(ip r g 13.75.109.155 | cut -d" " -f3)
 
-ip l a type veth
+sudo -u amos tunv4
+sudo -u amos tun
+
+ip netns add zt
+ip l a veth0 type veth peer name veth1 netns zt
 ip a a 10.0.8.1/30 dev veth0
 ip l s veth0 up
-ip l s veth1 netns zt
 ip -n zt a a 10.0.8.2/30 dev veth1
 ip -n zt l s veth1 up
 ip -n zt l s lo up
@@ -23,7 +26,7 @@ ip r f table cn
 ip r a 0.0.0.0/0 via $gw table direct
 ip r a 0.0.0.0/0 via 172.25.88.1 table zerotier
 # ip r a 0.0.0.0/0 via 172.26.133.192 table zerotier
-ip r a 172.26.0.0/16 dev $(zerotier-cli listnetworks | perl -ne 'print +(split / /)[7] if /abnetwork/') table zerotier
+# ip r a 172.26.0.0/16 dev $(zerotier-cli listnetworks | perl -ne 'print +(split / /)[7] if /abnetwork/') table zerotier
 ip rule add fwmark 0x8 table direct pref 20000
 ip rule add fwmark 0x14 table zerotier pref 20000
 ip rule add table cn pref 30000
@@ -143,6 +146,4 @@ ip r a 13.75.109.155/32 via $gw
 # ip r a 0.0.0.0/1 via 172.23.10.1
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
-sudo -u amos tun
-sudo -u amos tunv4
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"

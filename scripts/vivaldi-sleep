@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 
 vivaldi "$@" 2>/dev/null
-
 sleep 5

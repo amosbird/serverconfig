@@ -309,7 +309,7 @@
 (defun +amos|iedit-setup-hooks ()
   (add-hook 'before-change-functions #'+amos|iedit-mode-hook nil t)
   (add-hook 'after-change-functions #'+amos|iedit-mode-hook-after nil t))
-(add-hook 'evil-multiedit-state-entry-hook #'+amos|iedit-setup-hooks)
+(add-hook 'iedit-mode-hook #'+amos|iedit-setup-hooks)
 
 (defun +amos|iedit-mode-end-hook ()
   (when (memq major-mode '(c-mode c++-mode))
@@ -327,7 +327,7 @@
     )
   (font-lock-mode +1)
   t)
-(add-hook 'evil-multiedit-state-exit-hook #'+amos|iedit-mode-end-hook)
+(add-hook 'iedit-mode-end-hook #'+amos|iedit-mode-end-hook)
 
 ;; maybe useful?
 ;; (add-hook! (c-mode c++-mode) (setq iedit-auto-bufferring t))

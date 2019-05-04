@@ -21,9 +21,9 @@ xset r rate 200 30
 compton -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 fcitx
-fish -c rundbusproxy &
 fish -c sxhkd > /home/amos/sxhkd.log &
 fish -c copyq &
 fish -c runscrcpy &
 fish -c rungnirehtet &
-# thunar --daemon &
+udiskie &
+pulseaudio &

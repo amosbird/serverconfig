@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+path=$(fd . -d 1 /run/media/amos/ | rofi -sort -p 'usb > ' -dmenu)
+xdg-open $path

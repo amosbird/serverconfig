@@ -25,37 +25,54 @@ foreground_bold = #c5c8c6
 cursor          = #b8860b
 background      = #1d1f21
 
+color0 = #282a2e
+color1 = #d54e53
+color2 = #b9ca4a
+color3 = #e6c547
+color4 = #7aa6da
+color5 = #c397d8
+color6 = #70c0ba
+color7 = #ffffff
+color8 = #666666
+color9 = #ff3334
+color10 = #9ec400
+color11 = #e7c547
+color12 = #7aa6da
+color13 = #b77ee0
+color14 = #54ced6
+color15 = #ffffff
+
 # black
-color0  = #282a2e
-color8  = #373b41
+# color0  = #282a2e
+# color8  = #373b41
 
-# red
-color1  = #a54242
-color9  = #cc6666
+# # red
+# color1  = #a54242
+# color9  = #cc6666
 
-# green
-color2  = #8c9440
-color10 = #b5bd68
+# # green
+# color2  = #8c9440
+# color10 = #b5bd68
 
-# yellow
-color3  = #de935f
-color11 = #f0c674
+# # yellow
+# color3  = #de935f
+# color11 = #f0c674
 
-# blue
-color4  = #5f819d
-color12 = #81a2be
+# # blue
+# color4  = #5f819d
+# color12 = #81a2be
 
-# magenta
-color5  = #85678f
-color13 = #b294bb
+# # magenta
+# color5  = #85678f
+# color13 = #b294bb
 
-# cyan
-color6  = #5e8d87
-color14 = #8abeb7
+# # cyan
+# color6  = #5e8d87
+# color14 = #8abeb7
 
-# white
-color7  = #707880
-color15 = #c5c8c6
+# # white
+# color7  = #707880
+# color15 = #c5c8c6
 
 [hints]
 foreground = #dcdccc

@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 #
 # dtrx -- Intelligently extract various archive types.
@@ -99,7 +99,7 @@ class FilenameChecker(object):
     def is_free(self, filename):
         try:
             result = self.free_func(filename, *self.free_args)
-        except OSError, error:
+        except OSError as error:
             if error.errno == errno.EEXIST:
                 return False
             raise
@@ -161,7 +161,7 @@ class BaseExtractor(object):
         self.exit_codes = []
         try:
             self.archive = open(filename, 'r')
-        except (IOError, OSError), error:
+        except (IOError, OSError) as error:
             raise ExtractorError("could not open %s: %s" %
                                  (filename, error.strerror))
         if encoding:
@@ -176,7 +176,7 @@ class BaseExtractor(object):
             processes.append(subprocess.Popen(command, stdin=stdin,
                                               stdout=stdout,
                                               stderr=self.stderr))
-        except OSError, error:
+        except OSError as error:
             if error.errno == errno.ENOENT:
                 raise ExtractorUnusable("could not run %s" % (command[0],))
             raise
@@ -296,7 +296,7 @@ class BaseExtractor(object):
     def extract(self):
         try:
             self.target = tempfile.mkdtemp(prefix='.dtrx-', dir='.')
-        except (OSError, IOError), error:
+        except (OSError, IOError) as error:
             raise ExtractorError("cannot extract here: %s" % (error.strerror,))
         old_path = os.path.realpath(os.curdir)
         os.chdir(self.target)
@@ -366,7 +366,7 @@ class CompressionExtractor(BaseExtractor):
         self.included_root = './'
         try:
             output_fd, self.target = tempfile.mkstemp(prefix='.dtrx-', dir='.')
-        except (OSError, IOError), error:
+        except (OSError, IOError) as error:
             raise ExtractorError("cannot extract here: %s" % (error.strerror,))
         self.run_pipes(output_fd)
         os.close(output_fd)
@@ -548,7 +548,7 @@ class SevenExtractor(NoPipeExtractor):
     file_type = '7z file'
     extract_command = ['7z', 'x']
     list_command = ['7z', 'l']
-    border_re = re.compile('^[- ]+$')
+    border_re = re.compile('^--------[- ]+$')
 
     def get_filenames(self):
         fn_index = None
@@ -1349,3 +1349,9 @@ class ExtractorApplication(object):
 if __name__ == '__main__':
     app = ExtractorApplication(sys.argv[1:])
     sys.exit(app.run())
+
+# Local Variables:
+# python-shell-interpreter: "python2"
+# flycheck-python-pycompile-executable: "python2"
+# flycheck-python-pylint-executable: "python2"
+# End:

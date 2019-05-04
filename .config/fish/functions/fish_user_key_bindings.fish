@@ -294,7 +294,40 @@ function fish_user_key_bindings
 
     bind \e, history-token-search-forward
 
-    # tmux
+    function start_bracketed_paste
+        set -g __fish_last_bind_mode $fish_bind_mode
+        # If the token is currently single-quoted,
+        # we escape single-quotes (and backslashes).
+        __fish_commandline_is_singlequoted
+        and set -g __fish_paste_quoted 1
+        set -g __fish_amos_cmd (commandline | string split0)
+        set -g __fish_amos_cursor (commandline -C)
+        commandline -r ""
+    end
+
+    function stop_bracketed_paste
+        set fish_bind_mode $__fish_last_bind_mode
+        set -e __fish_paste_quoted
+        set -l cmdline (string trim -N -- (commandline | string split0) | string split0)
+        set -l x (string sub -N -l $__fish_amos_cursor -- $__fish_amos_cmd | string split0)
+        if not test -n "$x"
+            set x ""
+        end
+        set -l y (string sub -N -s (math $__fish_amos_cursor + 1) -- $__fish_amos_cmd | string split0 )
+        if not test -n "$y"
+            set y ""
+        end
+        commandline -r -- $x$cmdline$y
+        commandline -C (math $__fish_amos_cursor + (string length -- "$cmdline"))
+        set -e __fish_amos_cmd
+        set -e __fish_amos_cursor
+        commandline -f force-repaint
+    end
+
+    for mode in (bind --list-modes | string match -v paste)
+        bind --preset -M $mode -m paste \e\[200~ 'start_bracketed_paste'
+    end
+    bind --preset -M paste \e\[201~ 'stop_bracketed_paste'
 
     function select-window --argument-names "n"
         tmux select-window -t $n > /dev/null 2>&1

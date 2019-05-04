@@ -85,6 +85,7 @@
 
 (defun +org|hook ()
   (setq line-spacing 1)
+  (setq evil-auto-indent nil)
   (visual-line-mode +1)
   (org-indent-mode -1)
   (doom|disable-line-numbers)

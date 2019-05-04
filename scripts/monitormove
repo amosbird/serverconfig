@@ -3,14 +3,14 @@
 # move $2 to $1
 od=$(bspc query -D -d focused --names | head -1)
 bspc monitor "$1" -d w2 e2 d2 f2 v2 n2 i2 o2 p2 c2 h2
-if arr=$(bspc query -D -m "$2" --names); then
+if arr=($(bspc query -D -m "$2" --names)); then
     for desktop in "${arr[@]}"; do
         for node in $(bspc query -N -d "$desktop"); do
             bspc node "$node" --to-desktop "$desktop"2
         done
     done
 fi
-if arr=$(bspc query -N -m "$2"); then
+if arr=($(bspc query -N -m "$2")); then
     for node in "${arr[@]}"; do
         bspc node "$node" --to-monitor "$1"
     done

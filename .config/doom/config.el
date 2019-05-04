@@ -1544,7 +1544,8 @@ it will restore the window configuration to prior to full-framing."
   (when (and (buffer-file-name)
              (not defining-kbd-macro)
              (buffer-modified-p))
-    (save-buffer))
+    (save-buffer)
+    )
   nil)
 
 (setq ccls-enabled nil)
@@ -4871,6 +4872,7 @@ See `project-local-get' for the parameter PROJECT."
     (setq-local require-final-newline nil)
     (local-set-key (kbd "C-c C-c")
                    (lambda!
+                    (evil-normal-state)
                     (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
                               ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
                               ((symbol-function 'map-y-or-n-p) #'+amos*yes)
@@ -4878,6 +4880,7 @@ See `project-local-get' for the parameter PROJECT."
                       (call-interactively #'server-edit))))
     (local-set-key (kbd "C-c C-k")
                    (lambda!
+                    (evil-normal-state)
                     (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
                               ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
                               ((symbol-function 'map-y-or-n-p) #'+amos*yes)
