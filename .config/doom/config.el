@@ -1673,7 +1673,9 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
                                 (+amos/recenter))
                               (unless (eq 'ivy-call this-command)
                                 (evil-set-jump)
-                                (setq success t)))))))))
+                                (setq success t)))))
+                :caller '+amos-ivy-xref
+                ))))
 
 (defun +amos*xref--find-xrefs (input kind arg display-action)
   (let ((xrefs (funcall (intern (format "xref-backend-%s" kind))
@@ -1683,6 +1685,10 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
       (user-error "No %s found for: %s" (symbol-name kind) input))
     (+amos-ivy-xref xrefs kind)))
 (advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
+
+(defun +amos*ivy-xref-show-xrefs (xrefs alist)
+  (+amos-ivy-xref xrefs 'xref))
+(advice-add #'ivy-xref-show-xrefs :override #'+amos*ivy-xref-show-xrefs)
 
 (after! recentf
   (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local")))
@@ -2759,9 +2765,10 @@ By default the last line."
            (not executing-kbd-macro))
       (if (not (memq major-mode '(c-mode c++-mode)))
           (apply ofun arg)
-        (+amos|iedit-mode-hook)
+        ;; (+amos|iedit-setup-hooks)
         (apply ofun arg)
-        (+amos|iedit-mode-end-hook))
+        ;; (+amos|iedit-mode-end-hook)
+        )
     (message "cannot use undo when recording/executing a macro!")))
 (advice-add #'undo-tree-undo :around #'+amos*undo-tree)
 (advice-add #'undo-tree-redo :around #'+amos*undo-tree)
