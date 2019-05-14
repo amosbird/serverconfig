@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+wandbox . snippet.cpp | osc52clip
+osc52notify "WandBox Uploaded"

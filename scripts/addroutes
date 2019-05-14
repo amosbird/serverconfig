@@ -8,7 +8,6 @@ ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
 gw=$(ip r g 13.75.109.155 | cut -d" " -f3)
 
-sudo -u amos tunv4
 sudo -u amos tun
 
 ip netns add zt
@@ -24,7 +23,19 @@ ip r f table direct
 ip r f table zerotier
 ip r f table cn
 ip r a 0.0.0.0/0 via $gw table direct
-ip r a 0.0.0.0/0 via 172.25.88.1 table zerotier
+for i in $(seq 1 10)
+do
+    if ip a | grep -q tunv6
+    then
+        break
+    fi
+    sleep 0.2
+done
+if ! ip a | grep -q tunv6
+then
+    sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "tunv6 cannot be created"
+fi
+ip r a default via 172.25.88.1 dev tunv6 table zerotier
 # ip r a 0.0.0.0/0 via 172.26.133.192 table zerotier
 # ip r a 172.26.0.0/16 dev $(zerotier-cli listnetworks | perl -ne 'print +(split / /)[7] if /abnetwork/') table zerotier
 ip rule add fwmark 0x8 table direct pref 20000
@@ -146,4 +157,5 @@ ip r a 13.75.109.155/32 via $gw
 # ip r a 0.0.0.0/1 via 172.23.10.1
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
+sudo -u amos tunv4
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"

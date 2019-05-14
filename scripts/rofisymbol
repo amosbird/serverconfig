@@ -1,0 +1,5 @@
+#!/usr/bin/env fish
+
+set symbols "cuo ×" "dui √" "xiao ＜" "da ＞" "bu ≠" "deng ＝" "xd ≤" "dd ≥" "yd ≈"
+set symbol (string join \n $symbols | rofi -p 'symbols > ' -dmenu)
+fcitx-remote -w (string split " " $symbol)[2]

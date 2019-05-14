@@ -1,5 +1,3 @@
 #!/usr/bin/env bash
 
-export PATH=/home/amos/scripts:/home/amos/.fzf/bin:/home/amos/go/bin:/home/amos/.cargo/bin:/home/amos/.cabal/bin:/home/amos/.local/bin:/home/amos/bin:/usr/local/bin:/usr/local/go/bin:/usr/bin:/bin:/sbin:/usr/sbin:/home/amos/perl5/bin:/usr/local/sbin:/opt/android-ndk:/opt/android-sdk/platform-tools:/opt/android-sdk/tools:/opt/android-sdk/tools/bin:/usr/lib/jvm/default/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl:/bin
-rofi -levenshtein-sort -show run >>~/rofi.log 2>>~/rofi.log
-# rofi -no-config -show run >> ~/rofi.log 2>> ~/rofi.log
+rofi -levenshtein-sort -show run >>/tmp/rofi.log 2>&1

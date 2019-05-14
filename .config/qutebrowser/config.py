@@ -99,6 +99,7 @@ c.bindings.commands["prompt"] = {
     "<ctrl-J>": "prompt-item-focus next",
     "<ctrl-K>": "prompt-item-focus prev",
     "<ctrl-O>": "rl-kill-line",
+    "<ctrl-i>": "prompt-item-focus next",
 }
 
 c.bindings.commands["insert"] = {

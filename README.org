@@ -259,6 +259,7 @@ cpanm URL::Search Perl::Tidy Regexp::Common Dir::ls Clipboard File::Find::Rule I
 /usr/local/bin/client_linux_amd64
 /etc/thinkfan.conf
 /etc/modprobe.d/modprobe.conf
+/etc/modules-load.d
 /etc/udev/hwdb.d/90-custom-keyboard.hwdb
 /etc/udev/rules.d/99-thinkfan.rules
 /etc/udev/rules.d/99-trackpoint.rules

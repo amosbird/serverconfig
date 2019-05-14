@@ -6,6 +6,7 @@ import sys
 import argparse
 import math
 import textwrap
+import subprocess as s
 
 def generate_mac():
     results=fetch_ip_data()
@@ -24,6 +25,7 @@ def generate_mac():
     upfile.write('\n')
 
     upfile.close()
+    s.call(['notify-send','route','route updated'])
 
 def fetch_ip_data():
     url=r'https://ftp.apnic.net/apnic/stats/apnic/delegated-apnic-latest'
