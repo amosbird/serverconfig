@@ -13,7 +13,6 @@
                    solaire-mode
                    stripe-buffer
                    vi-tilde-fringe
-                   visual-fill-column
                    emacs-snippets)
 
 (package! adoc-mode)
@@ -57,6 +56,7 @@
 (package! try)
 (package! unfill)
 (package! ws-butler)
+(package! visual-fill-column)
 (package! yapfify)
 
 (package! cc-playground :recipe (:fetcher github :repo "amosbird/cc-playground" :files ("*.el" "templates")))

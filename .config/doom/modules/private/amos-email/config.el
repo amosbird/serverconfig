@@ -176,7 +176,9 @@ default/fallback account."
   (when (featurep! :feature spellcheck)
     (add-hook! 'mu4e-compose-mode-hook #'flyspell-mode))
 
-  (add-hook! 'mu4e-compose-mode-hook (setq fill-column 80))
+  (add-hook! (mu4e-compose-mode mu4e-view-mode)
+    (setq visual-fill-column-width 100)
+    (visual-fill-column-mode +1))
 
   (when (fboundp 'imagemagick-register-types)
     (imagemagick-register-types))
@@ -315,13 +317,13 @@ default/fallback account."
                      ( user-full-name          . "郑天祺" )
                      ( mu4e-compose-signature  . "郑天祺\n中科天玑数据科技股份有限公司\n"))))))
 
-(def-package! mu4e-maildirs-extension
-  :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
-  :after mu4e
-  :config
-  (mu4e-maildirs-extension)
-  (setq mu4e-maildirs-extension-title nil)
-  (add-hook #'mu4e-view-mode-hook (lambda () (hl-line-mode +1))))
+;; (def-package! mu4e-maildirs-extension
+;;   :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
+;;   :after mu4e
+;;   :config
+;;   (mu4e-maildirs-extension)
+;;   (setq mu4e-maildirs-extension-title nil)
+;;   (add-hook #'mu4e-view-mode-hook (lambda () (hl-line-mode +1))))
 
 ;; (def-package! notmuch
 ;;   :init

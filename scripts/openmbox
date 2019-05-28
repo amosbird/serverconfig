@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+mb2md.pl -s "$1" -d ~/Mail/inbox && emacsclient -s mu4e -e '(mu4e-update-index)' && bspc desktop --focus v

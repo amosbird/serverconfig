@@ -132,7 +132,8 @@
         "C-,"           #'+amos/workspace-switch-left
         "C-."           #'+amos/workspace-switch-right
         "C-<comma>"     #'+amos/workspace-switch-left
-        "C-<period>"    #'+amos/workspace-switch-right)
+        "C-<period>"    #'+amos/workspace-switch-right
+        )
 
       :gn "M-W"                   #'+amos/kill-current-buffer
       :gn "M-w"                   #'+amos/wipe-current-buffer

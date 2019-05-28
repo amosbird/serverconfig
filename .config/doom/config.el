@@ -283,6 +283,8 @@
           (with-current-buffer buffer server-visit-file)
           (equal buffname "*flycheck-posframe-buffer*")
           (equal buffname "*Ediff Control Panel*")
+          (equal (with-current-buffer buffer major-mode) 'mu4e-view-mode)
+          (equal (with-current-buffer buffer major-mode) 'mu4e-compose-mode)
           (equal (with-current-buffer buffer major-mode) 'pdf-view-mode))))
   (push #'amos-special-window-p realign-ignore-window-predicates))
 
@@ -423,13 +425,13 @@
   :commands counsel-dash
   :init
   (setq
-   counsel-dash-docsets-path "~/.docsets"
-   counsel-dash-docsets-url "https://raw.github.com/Kapeli/feeds/master"
-   counsel-dash-min-length 2
-   counsel-dash-candidate-format "%d %n (%t)"
-   counsel-dash-enable-debugging t
-   counsel-dash-browser-func (lambda (url) (interactive) (browse-url url t))
-   counsel-dash-ignored-docsets nil)
+   dash-docs-docsets-path "~/.docsets"
+   dash-docs-docsets-url "https://raw.github.com/Kapeli/feeds/master"
+   dash-docs-min-length 2
+   dash-docs-candidate-format "%d %n (%t)"
+   dash-docs-enable-debugging t
+   dash-docs-browser-func (lambda (url) (interactive) (browse-url url t))
+   dash-docs-ignored-docsets nil)
   (defun counsel-dash-at-point ()
     (interactive)
     (counsel-dash (thing-at-point 'symbol)))
@@ -4539,7 +4541,7 @@ inside or just after a citation command, only adds KEYS to it."
         (unless (+amos-ivy-done)
           (swiper--cleanup)
           (swiper--add-overlays (ivy--regex ivy-text))
-          (swiper--add-cursor-overlay)))
+          (swiper--add-cursor-overlay (ivy-state-window ivy-last))))
     (swiper--cleanup)))
 (advice-add #'swiper-isearch-action :override #'+amos-swiper-isearch-action)
 
@@ -4558,28 +4560,26 @@ inside or just after a citation command, only adds KEYS to it."
       (ivy-previous-line-or-history 1))))
 (advice-add #'swiper--init :before (lambda! (setq +amos-swiper-isearch-last-point nil +amos-swiper-isearch-last-line nil)))
 
-;;; Persistent scratch
-;;; Stolen from CCE - http://doc.rix.si/cce/cce.html
+(setq scratch-file-name (concat "~/.emacs.d/persistent-scratch-" server-name))
+
 (defun save-persistent-scratch ()
   "Write the contents of *scratch* to the file name
 `persistent-scratch-file-name'."
   (with-current-buffer (get-buffer-create "*scratch*")
-    (write-region (point-min) (point-max) "~/.emacs.d/persistent-scratch")))
+    (write-region (point-min) (point-max) scratch-file-name)))
 
 (defun load-persistent-scratch ()
   "Load the contents of `persistent-scratch-file-name' into the
   scratch buffer, clearing its contents first."
-  (if (file-exists-p "~/.emacs-persistent-scratch")
+  (if (file-exists-p scratch-file-name)
       (with-current-buffer (get-buffer "*scratch*")
         (delete-region (point-min) (point-max))
-        (insert-file-contents "~/.emacs.d/persistent-scratch"))))
+        (insert-file-contents scratch-file-name))))
 
 (add-hook 'after-init-hook 'load-persistent-scratch)
 (add-hook 'kill-emacs-hook 'save-persistent-scratch)
 
-(if (not (boundp 'my/save-persistent-scratch-timer))
-    (setq my/save-persistent-scratch-timer
-          (run-with-idle-timer 300 t 'save-persistent-scratch)))
+(if (not (boundp 'my/save-persistent-scratch-timer)) (setq my/save-persistent-scratch-timer (run-with-idle-timer 300 t 'save-persistent-scratch)))
 
 (defun +amos/count-buffers (&optional display-anyway)
   "Display or return the number of buffers."
@@ -4911,4 +4911,3 @@ See `project-local-get' for the parameter PROJECT."
 (advice-add #'whitespace-space-after-tab-regexp :override #'+amos*whitespace-space-after-tab-regexp)
 
 (global-whitespace-mode +1)
-;; (advice-add #'doom|highlight-non-default-indentation :override #'ignore)

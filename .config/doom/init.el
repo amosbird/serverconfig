@@ -27,7 +27,6 @@
        :emacs
        dired
        electric
-       imenu
        vc
 
        :tools
@@ -35,7 +34,6 @@
        make
        magit
        (lookup)
-       vterm
        flyspell
 
        :lang
@@ -118,6 +116,7 @@
         ("flac" . "xdg-open")
         ("m4a" . "xdg-open")
         ("mp4" . "xdg-open")
+        ("mov" . "xdg-open")
         ("ps" . "xdg-open")
         ("gif" . "xdg-open")
         ("svg" . "xdg-open")
@@ -274,6 +273,7 @@
 (setq user-full-name "Amos Bird")
 (setq user-mail-address "amosbird@gmail.com")
 (setq visible-cursor nil)
+(setq visual-fill-column-center-text t)
 (setq warning-suppress-types '((yasnippet backquote-change)))
 (setq ws-butler-keep-whitespace-before-point nil)
 (setq xref-after-jump-hook nil)
