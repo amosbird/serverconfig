@@ -53,8 +53,8 @@ else
         ;;
     esac
     if cmake "$target" -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=On "${cmake_args[@]}" && ninja; then
-        [[ "$2" == install ]] && sudo ninja install
-        [[ "$1" == llvm ]] && cd lib && ln -s libLLVM-*.so libLLVM.so
+        [[ "$2" == install ]] && sudo "$(command -v ninja)" install
+        [[ "$1" == llvm ]] && cd lib && ln -sf libLLVM-*.so libLLVM.so
     fi
 fi
 

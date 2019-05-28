@@ -104,9 +104,9 @@ def main():
             'code': strip_comments(open(header).read())
         } for header in headers(directory)],
         'options': 'warning,c++17',
-        'compiler': 'clang-head',
+        'compiler': 'gcc-head',
         'save': True,
-        'compiler-option-raw': '-I.'
+        'compiler-option-raw': os.environ['ccls_cxx_flags'].strip()
     })
 
     print response['url']

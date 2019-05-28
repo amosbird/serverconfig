@@ -10,6 +10,7 @@
                    magit-todos
                    smerge-mode
                    dired-k
+                   forge
                    solaire-mode
                    stripe-buffer
                    vi-tilde-fringe

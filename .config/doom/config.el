@@ -1462,7 +1462,7 @@ EXTRA is a plist of extra parameters."
   (let ((loc (lsp-request method
                           (append (lsp--text-document-position-params) extra))))
     (if loc
-        (+amos-ivy-xref (lsp--locations-to-xref-items (if (sequencep loc) loc (list loc))) (symbol-name kind))
+        (+amos-ivy-xref (lsp--locations-to-xref-items (if (sequencep loc) loc (list loc))) kind)
       (message "Not found for: %s" (thing-at-point 'symbol t)))))
 
 (defun +amos/definitions ()
@@ -4488,7 +4488,6 @@ inside or just after a citation command, only adds KEYS to it."
         (when idx-found
           (ivy-set-index idx-found))
         (setq ivy--old-cands (nreverse cands))))))
-(advice-add #'swiper-isearch-function :override #'+amos*swiper-isearch-function)
 
 (defvar-local +amos-swiper-isearch-last-line nil)
 (defvar-local +amos-swiper-isearch-last-point nil)
@@ -4543,7 +4542,6 @@ inside or just after a citation command, only adds KEYS to it."
           (swiper--add-overlays (ivy--regex ivy-text))
           (swiper--add-cursor-overlay (ivy-state-window ivy-last))))
     (swiper--cleanup)))
-(advice-add #'swiper-isearch-action :override #'+amos-swiper-isearch-action)
 
 (defun +amos/swiper-isearch-forward ()
   (interactive)
@@ -4911,3 +4909,10 @@ See `project-local-get' for the parameter PROJECT."
 (advice-add #'whitespace-space-after-tab-regexp :override #'+amos*whitespace-space-after-tab-regexp)
 
 (global-whitespace-mode +1)
+;; (advice-add #'doom|highlight-non-default-indentation :override #'ignore)
+
+(defun +amos/upload-wandbox ()
+  (interactive)
+  (let ((url (shell-command-to-string "wandbox . snippet.cpp")))
+    (kill-new url)
+    (osc-command "notify-send OSC52Command '\nWandBox Uploaded'")))

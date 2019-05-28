@@ -169,7 +169,7 @@ simpler."
             (let ((id "[a-zA-Z0-9_]+") (ws "[ \t\r]+") (ws-maybe "[ \t\r]*"))
               (concat "^" ws-maybe "\\(?:"
                       "using" ws "\\(?:namespace" ws "std;\\|std::\\)"
-                      "\\|" "namespace" "\\(?:" ws id "\\)?" ws-maybe "{"
+                      "\\|" "namespace" "\\(?:" ws id "\\)?" ws-maybe "[{\n]"
                       "\\|" "class"     ws id ws-maybe "[:{\n]"
                       "\\|" "template"  ws-maybe "<.*>"
                       "\\|" "#include"  ws-maybe "<\\(?:string\\|iostream\\|map\\)>"

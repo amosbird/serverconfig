@@ -217,7 +217,7 @@ alias -a W = dashboard expressions unwatch
 
 # set scheduler-locking off
 
-set auto-solib-add off
+# set auto-solib-add off
 set target-async 1
 set non-stop on
 set confirm off

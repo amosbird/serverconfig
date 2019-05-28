@@ -4,7 +4,7 @@ function finish() {
     tput cnorm
     kill -s SIGINT "$PID"
     wait "$PID"
-    perf script -i "$df" | stackcollapse-perf.pl | grep -v cpu_idle | flamegraph.pl >"$ds"
+    perf script -i "$df" | stackcollapse-perf.pl | grep -v cpu_idle | flamegraph.pl --width 1800 >"$ds"
     # fish -c "osc52browser $ds"
     osc52browser "$ds"
     exit 0
