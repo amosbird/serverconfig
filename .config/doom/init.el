@@ -65,8 +65,8 @@
 (setq display-line-numbers-type 'relative)
 ;; fix start-process xdg-open
 (setq process-connection-type nil)
-(setq auto-revert-interval 0.3)
-(setq auto-revert-verbose nil)
+;; (setq auto-revert-interval 0.3)
+;; (setq auto-revert-verbose nil)
 (setq auto-save-visited-interval 5)
 (setq auto-save-visited-mode nil)
 (setq avy-timeout-seconds 0.2)
@@ -152,7 +152,7 @@
 (setq find-file-visit-truename t)
 (setq inhibit-compacting-font-caches nil)
 (setq fringes-outside-margins t)
-(setq global-auto-revert-non-file-buffers t)
+;; (setq global-auto-revert-non-file-buffers t)
 (setq initial-buffer-choice t)
 (setq indent-tabs-mode t)
 (setq ivy-do-completion-in-region nil)
@@ -287,6 +287,7 @@
 (setq reftex-insert-label-flags '("sft"))
 (setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${note:*}")))
 (setq bibtex-completion-additional-search-fields '("note"))
+(setq initial-buffer-choice (lambda () (get-buffer "*Messages*")))
 
 (after! core-keybinds
   (add-to-list 'doom-evil-state-alist '(?s . sticky))

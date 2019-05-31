@@ -2624,7 +2624,7 @@ the current state and point position."
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
 (after! magit
-  (magit-auto-revert-mode +1)
+  ;; (magit-auto-revert-mode +1)
   (setq
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect nil
@@ -3618,9 +3618,43 @@ as small) as possible, but don't signal an error."
           (run-window-configuration-change-hook frame))))))
 (advice-add #'window--resize-mini-window :override #'+amos*window--resize-mini-window)
 
+(defvar +amos-swiper-recomputed nil)
+(defun +amos*swiper--add-properties (faces adder-fn)
+  ;; add recompute here
+  (unless +amos-swiper-recomputed
+    (swiper--recompute-background-faces)
+    (setq +amos-swiper-recomputed t))
+
+  (let ((mb (match-beginning 0))
+        (me (match-end 0)))
+    (unless (> (- me mb) 2017)
+      (funcall adder-fn
+               mb me
+               (if (zerop ivy--subexps)
+                   (cadr faces)
+                 nil)  ; change to nil
+               0)))
+  (let ((i 1)
+        (j 0))
+    (while (<= (cl-incf j) ivy--subexps)
+      (let ((bm (match-beginning j))
+            (em (match-end j)))
+        (when (and (integerp em)
+                   (integerp bm))
+          (while (and (< j ivy--subexps)
+                      (integerp (match-beginning (+ j 1)))
+                      (= em (match-beginning (+ j 1))))
+            (setq em (match-end (cl-incf j))))
+          (funcall adder-fn
+                   bm em
+                   (nth (1+ (mod (+ i 2) (1- (length faces))))
+                        faces)
+                   i)
+          (cl-incf i))))))
+(advice-add #'swiper--add-properties :override #'+amos*swiper--add-properties)
+
 (defun +amos/swiper ()
   (interactive)
-  ;; (swiper-helm)
   (if (eq major-mode 'ivy-occur-grep-mode)
       (save-restriction
         (save-excursion
@@ -4402,6 +4436,13 @@ inside or just after a citation command, only adds KEYS to it."
   (setq doom-modeline-buffer-file-name-style 'truncate-with-project)
   (advice-add #'doom-modeline--active :override (lambda () t)))
 
+;; (after! swiper
+;;   (setq swiper-faces '(swiper-isearch-current-match
+;;                        swiper-match-face-2
+;;                        swiper-match-face-3
+;;                        swiper-match-face-4)))
+
+
 (evil-define-motion +amos/evil-next-visual-line (count)
   "Move the cursor COUNT screen lines down."
   :type exclusive
@@ -4416,147 +4457,19 @@ inside or just after a citation command, only adds KEYS to it."
         (temporary-goal-column))
     (evil-line-move (- (or count 1)))))
 
-(defun +amos*ivy--insert-minibuffer (text)
-  "Insert TEXT into minibuffer with appropriate cleanup."
-  (let ((resize-mini-windows nil)
-        (update-fn (ivy-state-update-fn ivy-last))
-        (old-mark (marker-position (mark-marker)))
-        deactivate-mark)
-    (ivy--cleanup)
-    (when (and update-fn (not (memq this-command '(ivy-call +amos/swiper-isearch-forward +amos/swiper-isearch-backward))))
-      (funcall update-fn))
-    (ivy--insert-prompt)
-    ;; Do nothing if while-no-input was aborted.
-    (when (stringp text)
-      (if ivy-display-function
-          (funcall ivy-display-function text)
-        (ivy-display-function-fallback text)))
-    (unless (frame-root-window-p (minibuffer-window))
-      (with-selected-window (minibuffer-window)
-        (set-window-text-height nil
-                                (+ ivy-height
-                                   (if ivy-add-newline-after-prompt
-                                       1
-                                     0)))))
-    ;; prevent region growing due to text remove/add
-    (when (region-active-p)
-      (set-mark old-mark))))
-(advice-add #'ivy--insert-minibuffer :override #'+amos*ivy--insert-minibuffer)
-
-(defun +amos*swiper-isearch-function (str)
-  "Collect STR matches in the current buffer for `swiper-isearch'."
-  (let* ((re-full (funcall ivy--regex-function str))
-         (re (ivy-re-to-str re-full)))
-    (unless (string= re "")
-      (let ((re (if (string-match "\\`\\(.*\\)[\\]|\\'" re)
-                    (match-string 1 re)
-                  re))
-            (pt-hist (cdr (assoc str swiper--isearch-point-history)))
-            cands
-            idx-found
-            (prev-lb -1)
-            prev-line
-            (i 0)
-            (idx 0))
-        (with-ivy-window
-          (save-excursion
-            (goto-char (point-min))
-            (while (re-search-forward re nil t)
-              (unless idx-found
-                (when (or
-                       (eq (match-beginning 0) pt-hist)
-                       (>= (match-beginning 0) (cdar swiper--isearch-point-history)))
-                  (push (cons str (match-beginning 0)) swiper--isearch-point-history)
-                  (setq idx-found idx)))
-              (let* ((lb (line-beginning-position))
-                     (line
-                      (if (= lb prev-lb)
-                          prev-line
-                        (setq i 0)
-                        (buffer-substring
-                         lb
-                         (line-end-position)))))
-                (put-text-property i (1+ i) 'point (point) line)
-                (put-text-property 0 1 'num i line)
-                (when (= i 0)
-                  (cl-incf idx)
-                  (push line cands)
-                  (setq prev-lb lb)
-                  (setq prev-line line))
-                (cl-incf i)))))
-        (setq ivy--old-re re)
-        (when idx-found
-          (ivy-set-index idx-found))
-        (setq ivy--old-cands (nreverse cands))))))
-
-(defvar-local +amos-swiper-isearch-last-line nil)
-(defvar-local +amos-swiper-isearch-last-point nil)
-
-(defun +amos-swiper-isearch-forward (x)
-  (let ((i 1)
-        (l (length x))
-        (p (get-text-property 0 'point x)))
-    (goto-char p)
-    (when (and +amos-swiper-isearch-last-line (= +amos-swiper-isearch-last-line (line-beginning-position)))
-      ;; finding the right pos
-      (while (and p +amos-swiper-isearch-last-point (<= p +amos-swiper-isearch-last-point) (< i l))
-        (setq p (get-text-property i 'point x))
-        (cl-incf i))
-      (if p (goto-char p)))
-    (setq +amos-swiper-isearch-last-line (line-beginning-position))
-    (setq +amos-swiper-isearch-last-point p)))
-
-(defun +amos-swiper-isearch-backward (x)
-  (let* ((l (length x))
-         (i (get-text-property 0 'num x))
-         (p (get-text-property i 'point x))
-         (lb (progn (goto-char p) (line-beginning-position))))
-    (while (and p +amos-swiper-isearch-last-point (>= p +amos-swiper-isearch-last-point) (<= 0 i))
-      (cl-decf i)
-      (setq p (if (< i 0) nil (get-text-property i 'point x))))
-    (if p
-        (progn
-          (goto-char p)
-          (setq +amos-swiper-isearch-last-line (line-beginning-position))
-          (setq +amos-swiper-isearch-last-point p))
-      (setq +amos-swiper-isearch-last-line nil)
-      (setq +amos-swiper-isearch-last-point nil))))
-
-(defun +amos-ivy-done ()
-  (eq ivy-exit 'done))
-
-(defun +amos-swiper-isearch-action (x)
-  "Move to X for `swiper-isearch'."
-  (if (> (length x) 0)
-      (with-ivy-window
-        (if (+amos-ivy-done)
-            (setq evil-ex-search-pattern `(,ivy-text t t)
-                  evil-ex-search-direction 'forward)
-          (if (string= "C-r" (key-description (this-command-keys)))
-              (+amos-swiper-isearch-backward x)
-            (+amos-swiper-isearch-forward x)))
-        (isearch-range-invisible (line-beginning-position)
-                                 (line-end-position))
-        (unless (+amos-ivy-done)
-          (swiper--cleanup)
-          (swiper--add-overlays (ivy--regex ivy-text))
-          (swiper--add-cursor-overlay (ivy-state-window ivy-last))))
-    (swiper--cleanup)))
-
 (defun +amos/swiper-isearch-forward ()
   (interactive)
-  (ivy-call)
-  (unless (with-ivy-window +amos-swiper-isearch-last-point)
-    (let ((ivy-calling t))
-      (ivy-next-line-or-history))))
+  (when (timerp swiper--isearch-highlight-timer)
+    (cancel-timer swiper--isearch-highlight-timer)
+    (setq swiper--isearch-highlight-timer nil))
+  (ivy-next-line-or-history))
 
 (defun +amos/swiper-isearch-backward ()
   (interactive)
-  (ivy-call)
-  (unless (with-ivy-window +amos-swiper-isearch-last-point)
-    (let ((ivy-calling t))
-      (ivy-previous-line-or-history 1))))
-(advice-add #'swiper--init :before (lambda! (setq +amos-swiper-isearch-last-point nil +amos-swiper-isearch-last-line nil)))
+  (when (timerp swiper--isearch-highlight-timer)
+    (cancel-timer swiper--isearch-highlight-timer)
+    (setq swiper--isearch-highlight-timer nil))
+  (ivy-previous-line-or-history 1))
 
 (setq scratch-file-name (concat "~/.emacs.d/persistent-scratch-" server-name))
 
@@ -4585,9 +4498,6 @@ inside or just after a citation command, only adds KEYS to it."
   (let ((buf-count (length (buffer-list))))
     (if (or (interactive-p) display-anyway)
         (message "%d buffers in this Emacs" buf-count)) buf-count))
-
-(after! autorevert
-  (global-auto-revert-mode -1))
 
 (defun +amos/revert-buffer ()
   (interactive)

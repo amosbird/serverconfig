@@ -77,10 +77,10 @@ function fish_user_key_bindings
         end
         set cmd (string join -- ' ' $cmd)
 
-        set -l complist (complete -C$cmd)
+        set -l complist (complete -C -- $cmd)
         set -l result
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
-        string join -- \n $complist | sort | fzf -m --height $FZF_TMUX_HEIGHT --reverse --select-1 --exit-0 --header (commandline) | cut -f1 | while read -l r; set result $result $r; end
+        string join -- \n $complist | sort | fzf -m --height $FZF_TMUX_HEIGHT --reverse --select-1 --exit-0 | cut -f1 | while read -l r; set result $result $r; end
         set prefix (string sub -s 1 -l 1 -- (commandline -t))
         for i in (seq (count $result))
             set -l r $result[$i]
@@ -272,7 +272,7 @@ function fish_user_key_bindings
     bind \cq gdb-commandline
     bind \em ls-commandline
     bind \cr fzf-history-token-widget
-    bind \ci fzf-complete
+    bind \ci __fzf_complete
     bind \eG open-magit
     bind \ep updir
     bind \en elvish-nav
