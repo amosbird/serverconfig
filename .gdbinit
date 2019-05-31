@@ -1115,17 +1115,17 @@ class Threads(Dashboard.Module):
             if thread.name:
                 info += ' name {}'.format(ansi(thread.name, style))
             # switch thread to fetch info (unless is running in non-stop mode)
-            try:
-                thread.switch()
-                frame = gdb.newest_frame()
-                info += ' ' + Stack.get_pc_line(frame, style)
-            except gdb.error:
-                info += ' (running)'
+            # try:
+            #     thread.switch()
+            #     frame = gdb.newest_frame()
+            #     info += ' ' + Stack.get_pc_line(frame, style)
+            # except gdb.error:
+            #     info += ' (running)'
             out.append(info)
         # restore thread and frame
-        selected_thread.switch()
-        if restore_frame:
-            selected_frame.select()
+        # selected_thread.switch()
+        # if restore_frame:
+        #     selected_frame.select()
         if selected_thread.is_running():
             style = R.style_selected_1
             number = ansi(str(selected_thread.num), style)
