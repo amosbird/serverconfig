@@ -1559,7 +1559,7 @@ it will restore the window configuration to prior to full-framing."
 
 (defun git-gutter-maybe ()
   (interactive)
-  (when git-gutter-mode (ignore (git-gutter)))
+  (when git-gutter-mode (ignore (call-interactively #'git-gutter)))
   nil)
 
 (add-hook 'doom-escape-hook #'save-buffer-maybe)
@@ -4826,3 +4826,39 @@ See `project-local-get' for the parameter PROJECT."
   (let ((url (shell-command-to-string "wandbox . snippet.cpp")))
     (kill-new url)
     (osc-command "notify-send OSC52Command '\nWandBox Uploaded'")))
+
+(defun +amos/swiper-isearch-backward ()
+  (interactive)
+  (let ((i (- ivy--index 1))
+        (min-index 0)
+        (cands  ivy--old-cands)
+        (current (ivy-state-current ivy-last)))
+    (with-current-buffer (ivy-state-buffer ivy-last)
+      (while (and (>= i 0)
+                  (swiper--isearch-same-line-p
+                   (swiper--line-at-point (nth i cands))
+                   (swiper--line-at-point current)))
+        (cl-decf i)))
+    (if (< i min-index)
+        (if ivy-wrap
+            (ivy-end-of-buffer)
+          (ivy-set-index min-index))
+      (ivy-set-index i))))
+
+(defun +amos/swiper-isearch-forward ()
+  (interactive)
+  (let ((i (+ ivy--index 1))
+        (max-index (1- ivy--length))
+        (cands  ivy--old-cands)
+        (current (ivy-state-current ivy-last)))
+    (with-current-buffer (ivy-state-buffer ivy-last)
+      (while (and (< i ivy--length)
+                  (swiper--isearch-same-line-p
+                   (swiper--line-at-point (nth i cands))
+                   (swiper--line-at-point current)))
+        (cl-incf i))
+      (if (> i max-index)
+          (if ivy-wrap
+              (ivy-beginning-of-buffer)
+            (ivy-set-index max-index))
+        (ivy-set-index i)))))

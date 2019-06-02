@@ -6,7 +6,7 @@
 
 ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
-gw=$(ip r g 13.75.109.155 | cut -d" " -f3)
+gw=$(ip r g 168.63.201.221 | cut -d" " -f3)
 
 sudo -u amos tun
 
@@ -129,7 +129,10 @@ ip r a 168.235.97.16/32 via $gw table cn
 # ip r a 23.20.92.3/32 via $gw table cn
 
 # azure
-ip r a 13.75.109.155/32 via $gw
+ip r a 168.63.201.221/32 via $gw
+
+# sg
+ip r a 195.123.239.48/32 via $gw
 
 # if ! pgrep -f 'https-dns'
 # then

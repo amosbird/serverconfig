@@ -485,8 +485,10 @@
       ;; ivy
       (:after ivy
         :map swiper-map
-        "C-s" #'+amos/swiper-isearch-forward
-        "C-r"    #'+amos/swiper-isearch-backward
+        "C-j" #'+amos/swiper-isearch-forward
+        "C-k" #'+amos/swiper-isearch-backward
+        "C-s" #'ivy-next-line
+        "C-r" #'ivy-previous-line
 
         :map ivy-minibuffer-map
         "C-SPC" #'ivy-restrict-to-matches
