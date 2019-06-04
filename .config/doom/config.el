@@ -4862,3 +4862,7 @@ See `project-local-get' for the parameter PROJECT."
               (ivy-beginning-of-buffer)
             (ivy-set-index max-index))
         (ivy-set-index i)))))
+
+(defun +amos*ediff-copy-diff (func &rest args)
+  (mkr! (apply func args)))
+(advice-add #'ediff-copy-diff :around #'+amos*ediff-copy-diff)

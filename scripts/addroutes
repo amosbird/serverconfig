@@ -160,5 +160,5 @@ ip r a 195.123.239.48/32 via $gw
 # ip r a 0.0.0.0/1 via 172.23.10.1
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
-sudo -u amos tunv4
+sudo -u amos tunv6
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"

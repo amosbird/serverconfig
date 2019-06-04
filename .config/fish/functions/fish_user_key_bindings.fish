@@ -220,16 +220,16 @@ function fish_user_key_bindings
     end
 
     function sudo-commandline -d "execute commandline using sudo"
-        if string match -q -r '^ *$' (commandline)
+        if string match -q -r '^ *$' -- (commandline)
             return
-        else if string match -q -r '^sudo ' (commandline)
+        else if string match -q -r '^sudo ' -- (commandline)
             commandline -f execute
-        else if string match -q -r '^e ' (commandline)
+        else if string match -q -r '^e ' -- (commandline)
             set -l cmd (commandline)
             commandline (string replace -r '^e ' 'E ' -- $cmd)
             commandline -f execute
         else
-            commandline "sudo -Es "(commandline)
+            commandline "sudo "(commandline)
             commandline -f execute
         end
     end
@@ -310,11 +310,11 @@ function fish_user_key_bindings
         set -e __fish_paste_quoted
         set -l cmdline (string trim -N -- (commandline | string split0) | string split0)
         set -l x (string sub -N -l $__fish_amos_cursor -- $__fish_amos_cmd | string split0)
-        if not test -n "$x"
+        if test -z "$x"
             set x ""
         end
-        set -l y (string sub -N -s (math $__fish_amos_cursor + 1) -- $__fish_amos_cmd | string split0 )
-        if not test -n "$y"
+        set -l y (string sub -N -s (math $__fish_amos_cursor + 1) -l (math (string length -- $__fish_amos_cmd) - $__fish_amos_cursor - 1) -- $__fish_amos_cmd | string split0)
+        if test -z "$y"
             set y ""
         end
         commandline -r -- $x$cmdline$y
