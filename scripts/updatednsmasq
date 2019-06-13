@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# curl -s https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts | sudo tee /etc/.hostnames.txt >/dev/null
 curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/hostnames.txt | sudo tee /etc/.hostnames.txt >/dev/null
 curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/domains.txt | sudo tee /etc/.domains.txt >/dev/null
 
@@ -9,8 +10,8 @@ port=53
 no-resolv
 no-poll
 min-cache-ttl=3600
-# conf-file=/etc/.domains.txt
-# addn-hosts=/etc/.hostnames.txt
+conf-file=/etc/.domains.txt
+addn-hosts=/etc/.hostnames.txt
 #server=127.0.0.1#5300
 server=8.8.8.8
 server=/ict.ac.cn/159.226.8.6
