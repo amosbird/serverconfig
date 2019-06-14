@@ -53,7 +53,7 @@ c.hints.prev_regexes = [
 
 c.bindings.commands["normal"] = {
     "<Escape>": c.bindings.default["normal"]["<Escape>"]
-    + ";; fake-key <Escape> ;; jseval --quiet document.getSelection().empty()",
+                + ";; fake-key <Escape> ;; jseval --quiet document.getSelection().empty()",
     "<ctrl-Space>": "spawn i3-msg focus right",
     "<Space>": "fake-key <Space>",
     "<ctrl-b>": "navigate prev",

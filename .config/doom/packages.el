@@ -75,6 +75,7 @@
 (package! help-fns+ :recipe (:fetcher github :repo "emacsmirror/help-fns-plus"))
 (package! hl-line+ :recipe (:fetcher github :repo "emacsmirror/hl-line-plus"))
 (package! ivy-rich :recipe (:fetcher github :repo "Yevgnen/ivy-rich"))
+(package! lsp-python-ms :recipe (:fetcher github :repo "emacs-lsp/lsp-python-ms"))
 (package! sync-recentf :recipe (:fetcher github :repo "ffevotte/sync-recentf"))
 (package! osc :recipe (:fetcher github :repo "amosbird/osc.el"))
 (package! rainbow-mode :recipe (:fetcher github :repo "amosbird/rainbow-mode"))

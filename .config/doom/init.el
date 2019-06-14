@@ -46,7 +46,8 @@
        (sh +fish)
        ;; rust
        (ocaml +lsp)
-       (python +lsp)
+       ;; (python +lsp)
+       python
        go
        :private
        amos-cc

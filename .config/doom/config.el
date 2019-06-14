@@ -4866,3 +4866,14 @@ See `project-local-get' for the parameter PROJECT."
 (defun +amos*ediff-copy-diff (func &rest args)
   (mkr! (apply func args)))
 (advice-add #'ediff-copy-diff :around #'+amos*ediff-copy-diff)
+
+(def-package! lsp-python-ms
+  :ensure nil
+  :hook (python-mode . lsp)
+  :config
+  ;; for dev build of language server
+  (setq lsp-python-ms-dir
+        (expand-file-name "~/git/python-language-server/output/bin/release/"))
+  ;; for executable of language server, if it's not symlinked on your PATH
+  (setq lsp-python-ms-executable
+        "~/git/python-language-server/output/bin/release/Microsoft.Python.LanguageServer"))
