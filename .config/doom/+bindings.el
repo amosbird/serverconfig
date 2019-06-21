@@ -191,7 +191,7 @@
       :i "M-\""                   (lambda! (+amos-surround-with-pair ?\"))
       :i "M-p"                    (lambda! (+amos-surround-with-pair ?\" t))
       :i "M-R"                    #'sp-forward-barf-sexp
-      :n "M-e"                    #'counsel-dash-at-point
+      :n "M-e"                    #'+lookup/in-docsets
       :n "M-i"                    #'yasdcv-translate-at-point
       :v "M-i"                    #'+amos/evil-visual-insert-snippet
       :genvi "M-h"                #'evil-window-left
@@ -409,6 +409,7 @@
         :n "M-p" #'+amos/dired-up-directory
         :n "M-o" #'+amos/dired-prev-history
         :n "M-i" #'+amos/dired-next-history
+        :n "!"   #'dired-do-shell-command
         :n "j"   #'dired-next-line
         :n "k"   #'dired-previous-line
         :n "p"   #'dired-ranger-paste

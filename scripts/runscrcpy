@@ -7,6 +7,6 @@ pkill -f "$id"
 cd /home/amos/git/scrcpy
 exec {lockfd}>/tmp/scrcpy.lock && flock "$lockfd" || exit
 while :; do
-    adb wait-for-device && ./run release -x "$id"
+    adb wait-for-device && ./run release -x "$id" -b 1024M
     sleep 0.2
 done

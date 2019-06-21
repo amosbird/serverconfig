@@ -399,53 +399,25 @@
 (def-package! chinese-yasdcv
   :commands yasdcv-translate-at-point)
 
-(after! helm-dash
-  :init
-  (setq
-   helm-dash-docsets-path "~/.docsets"
-   helm-dash-docsets-url "https://raw.github.com/Kapeli/feeds/master"
-   helm-dash-min-length 2
-   helm-dash-candidate-format "%d %n (%t)"
-   helm-dash-enable-debugging t
-   helm-dash-browser-func (lambda (url) (interactive) (browse-url url t))
-   helm-dash-ignored-docsets nil)
-  (add-hook! fish-mode (setq-local helm-dash-docsets '("fish" "Linux_Man_Pages")))
-  (add-hook! sh-mode (setq-local helm-dash-docsets '("Bash" "Linux_Man_Pages")))
-  (add-hook! go-mode (setq-local helm-dash-docsets '("Go")))
-  (add-hook! cmake-mode (setq-local helm-dash-docsets '("CMake")))
-  (add-hook! java-mode (setq-local helm-dash-docsets '("Java")))
-  (add-hook! rust-mode (setq-local helm-dash-docsets '("Rust")))
-  (add-hook! lua-mode (setq-local helm-dash-docsets '("Lua_5.1")))
-  (add-hook! c-mode (setq-local helm-dash-docsets '("C" "Linux_Man_Pages")))
-  (add-hook! c++-mode (setq-local helm-dash-docsets '("C" "C++" "Linux_Man_Pages" "Boost")))
-  (add-hook! python-mode (setq-local helm-dash-docsets '("Python_3" "Python_2")))
-  (add-hook! emacs-lisp-mode (setq-local helm-dash-docsets '("Emacs_Lisp"))))
+(setq
+ dash-docs-docsets-path "~/.docsets"
+ dash-docs-docsets-url "https://raw.github.com/Kapeli/feeds/master"
+ dash-docs-min-length 2
+ dash-docs-candidate-format "%d %n (%t)"
+ dash-docs-enable-debugging t
+ dash-docs-browser-func (lambda (url) (interactive) (browse-url url t))
+ dash-docs-ignored-docsets nil)
 
-(def-package! counsel-dash
-  :commands counsel-dash
-  :init
-  (setq
-   dash-docs-docsets-path "~/.docsets"
-   dash-docs-docsets-url "https://raw.github.com/Kapeli/feeds/master"
-   dash-docs-min-length 2
-   dash-docs-candidate-format "%d %n (%t)"
-   dash-docs-enable-debugging t
-   dash-docs-browser-func (lambda (url) (interactive) (browse-url url t))
-   dash-docs-ignored-docsets nil)
-  (defun counsel-dash-at-point ()
-    (interactive)
-    (counsel-dash (thing-at-point 'symbol)))
-  (add-hook! fish-mode (setq-local helm-dash-docsets '("fish" "Linux_Man_Pages")))
-  (add-hook! sh-mode (setq-local helm-dash-docsets '("Bash" "Linux_Man_Pages")))
-  (add-hook! go-mode (setq-local helm-dash-docsets '("Go")))
-  (add-hook! cmake-mode (setq-local helm-dash-docsets '("CMake")))
-  (add-hook! java-mode (setq-local helm-dash-docsets '("Java")))
-  (add-hook! rust-mode (setq-local helm-dash-docsets '("Rust")))
-  (add-hook! lua-mode (setq-local helm-dash-docsets '("Lua_5.1")))
-  (add-hook! c-mode (setq-local helm-dash-docsets '("C" "Linux_Man_Pages")))
-  (add-hook! c++-mode (setq-local helm-dash-docsets '("C" "C++" "Linux_Man_Pages" "Boost")))
-  (add-hook! python-mode (setq-local helm-dash-docsets '("Python_3" "Python_2")))
-  (add-hook! emacs-lisp-mode (setq-local helm-dash-docsets '("Emacs_Lisp"))))
+(set-docsets! 'fish-mode "fish" "Linux_Man_Pages")
+(set-docsets! 'sh-mode "Bash" "Linux_Man_Pages")
+(set-docsets! 'go-mode "Go")
+(set-docsets! 'cmake-mode "CMake")
+(set-docsets! 'java-mode "Java")
+(set-docsets! 'rust-mode "Rust")
+(set-docsets! 'lua-mode "Lua_5.1")
+(set-docsets! 'c-mode "C" "Linux_Man_Pages")
+(set-docsets! 'c++-mode "C" "C++" "Linux_Man_Pages" "Boost")
+(set-docsets! 'python-mode "Python_3" "Python_2")
 
 (setq-hook! 'lua-mode-hook flycheck-highlighting-mode 'lines)
 
@@ -4868,7 +4840,6 @@ See `project-local-get' for the parameter PROJECT."
 (advice-add #'ediff-copy-diff :around #'+amos*ediff-copy-diff)
 
 (def-package! lsp-python-ms
-  :ensure nil
   :hook (python-mode . lsp)
   :config
   ;; for dev build of language server
