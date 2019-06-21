@@ -4785,6 +4785,14 @@ See `project-local-get' for the parameter PROJECT."
 
 (setq whitespace-style '(face tabs tab-mark trailing))
 
+(setq whitespace-display-mappings
+  '(
+    (space-mark   ?\     [?·]     [?.])		; space - middle dot
+    (space-mark   ?\xA0  [?¤]     [?_])		; hard space - currency sign
+    (newline-mark ?\n    [?$ ?\n])			; eol - dollar sign
+    )
+  )
+
 ;; TODO font face for space characters?
 (defun +amos*whitespace-space-after-tab-regexp (&optional kind)
   (format (car whitespace-space-after-tab-regexp) 1))
