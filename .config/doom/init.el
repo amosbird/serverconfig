@@ -48,7 +48,7 @@
        (ocaml +lsp)
        ;; (python +lsp)
        python
-       go
+       (go +lsp)
        :private
        amos-cc
        ;; amos-java

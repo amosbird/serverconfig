@@ -46,14 +46,10 @@ ip -batch - <<EOF
 $(sed "s/GATEWAY/$gw/" /home/amos/.routefile)
 EOF
 
+ip r a 10.0.0.0/8 via $gw
+ip r a 192.168.0.0/16 via $gw
+
 # extra non-cn routes
-
-# bing.com
-# ip r a 13.107.21.200/32 via $gw table cn
-# ip r a 204.79.197.200/32 via $gw table cn
-
-# v2ex.com
-ip r a 23.251.126.133/32 via $gw table cn
 
 # zerotier
 ip r a 188.166.94.177/32 via $gw table cn
@@ -71,24 +67,6 @@ ip r a 159.203.2.154/32 via $gw table cn
 
 # ali
 ip r a 47.90.50.109/32 via $gw table cn
-
-# ieee.org
-# ip r a 140.98.0.0/16 via $gw table cn
-# acm.org
-# ip r a 216.87.128.0/19 via $gw table cn
-# dl.acm.org
-# ip r a 64.238.147.0/24 via $gw table cn
-# ip r a 104.17.80.0/24 via $gw table cn
-# delivery.acm.org
-# ip r a 23.192.0.0/11 via $gw table cn
-# staticieeexplore.ieee.org
-# ip r a 38.0.0.0/8 via $gw table cn
-
-# link.springer.com
-ip r a 151.101.128.95/32 via $gw table cn
-ip r a 151.101.192.95/32 via $gw table cn
-ip r a 151.101.0.95/32 via $gw table cn
-ip r a 151.101.64.95/32 via $gw table cn
 
 # local
 # ip r a 10.60.0.0/16 via $gw table cn
@@ -129,10 +107,7 @@ ip r a 168.235.97.16/32 via $gw table cn
 # ip r a 23.20.92.3/32 via $gw table cn
 
 # azure
-ip r a 168.63.201.221/32 via $gw
-
-# sg
-ip r a 195.123.239.48/32 via $gw
+ip r a 40.83.99.220/32 via $gw
 
 # if ! pgrep -f 'https-dns'
 # then
