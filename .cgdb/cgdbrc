@@ -5,6 +5,7 @@ set tabstop=2
 
 set winsplit=src_big
 
+map / ib<Space>/
 map e :set<Space>nodis<CR>
 map a :set<Space>dis<CR>
 map m istepi&<CR>

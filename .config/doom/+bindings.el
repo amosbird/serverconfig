@@ -399,10 +399,8 @@
         :n "M-n" #'+amos/counsel-jumpfile-function
         :n "M-v" #'peep-dired-scroll-page-up
         :n "S"   #'hydra-dired-quick-sort/body
-        :n "W"   (lambda! (dired-copy-filename-as-kill 0))
-        :n "c"   (lambda! (dired-ranger-copy t) (+amos/dired-print-clipboard))
-        :n "C"   #'+amos/dired-copy-to-clipboard
         :n "d"   #'dired-flag-file-deletion
+        :n "D"   #'dired-do-delete
         :n "f"   #'counsel-find-file
         :n "F"   #'dired-do-copy
         :n "h"   #'+amos/dired-up-directory
@@ -414,6 +412,11 @@
         :n "k"   #'dired-previous-line
         :n "p"   #'dired-ranger-paste
         :n "r"   #'dired-ranger-move
+        :n "R"   #'dired-do-rename
+        :n "w"   #'dired-copy-filename-as-kill
+        :n "W"   (lambda! (dired-copy-filename-as-kill 0))
+        :n "c"   (lambda! (dired-ranger-copy t) (+amos/dired-print-clipboard))
+        :n "C"   #'+amos/dired-copy-to-clipboard
         :n "y"   (lambda! (dired-ranger-copy nil) (+amos/dired-print-clipboard))
         :n "Y"   (lambda! (dired-ranger-copy nil) (+amos/dired-copy-to-clipboard) (+amos/dired-print-clipboard))
         :n "a"   #'+amos/dired-rsync

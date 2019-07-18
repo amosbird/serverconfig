@@ -53,7 +53,7 @@ xkb_symbols "basic" {
     key <AB09> {	[    period,	greater		]	};
     key <AB10> {	[     slash,	question	]	};
 
-    key <BKSL> {	[ apostrophe,   apostrophe	]	};
+    key <BKSL> {	[ apostrophe,   colon	]	};
 };
 
 partial alphanumeric_keys

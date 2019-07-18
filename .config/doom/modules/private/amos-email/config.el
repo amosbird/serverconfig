@@ -289,7 +289,7 @@ default/fallback account."
           (:map mu4e~update-mail-mode-map
             :n "q" #'mu4e-interrupt-update-mail)))
 
-  (setq mu4e-user-mail-address-list '("amosbird@gmail.com" "zhengtianqi@software.ict.ac.cn" "zhengtianqi@golaxy.cn"))
+  (setq mu4e-user-mail-address-list '("amosbird@gmail.com" "zhengtianqi@ict.ac.cn" "zhengtianqi12@mails.ict.ac.cn"))
 
   (setq mu4e-contexts
         `( ,(make-mu4e-context
@@ -299,23 +299,24 @@ default/fallback account."
              :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "amosbird@gmail.com")))
              :vars '(( user-mail-address       . "amosbird@gmail.com" )
                      ( user-full-name          . "Amos Bird" )
-                     ( mu4e-compose-signature  . "Amos Bird\namosbird@gmail.com\n")))
+                     ( mu4e-compose-signature  . nil)))
            ,(make-mu4e-context
              :name "ict"
              :enter-func (lambda () (mu4e-message "Switch to the ict context"))
              ;; :leave-func (lambda () (mu4e-clear-caches))
              :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi@ict.ac.cn")))
              :vars '(( user-mail-address       . "zhengtianqi@ict.ac.cn" )
-                     ( user-full-name          . "郑天祺" )
-                     ( mu4e-compose-signature  . "郑天祺\n中科院计算所网络数据实验室\n")))
+                     ( user-full-name          . "Tianqi Zheng" )
+                     ( mu4e-compose-signature  . nil)))
            ,(make-mu4e-context
-             :name "work"
-             :enter-func (lambda () (mu4e-message "Switch to the golaxy context"))
+             :name "ucas"
+             :enter-func (lambda () (mu4e-message "Switch to the ucas context"))
              ;; :leave-func (lambda () (mu4e-clear-caches))
-             :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi@golaxy.cn")))
-             :vars '(( user-mail-address       . "zhengtianqi@golaxy.cn" )
-                     ( user-full-name          . "郑天祺" )
-                     ( mu4e-compose-signature  . "郑天祺\n中科天玑数据科技股份有限公司\n"))))))
+             :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi12@mails.ict.ac.cn")))
+             :vars '(( user-mail-address       . "zhengtianqi12@mails.ict.ac.cn" )
+                     ( user-full-name          . "Tianqi Zheng" )
+                     ( mu4e-compose-signature  . nil)))
+           )))
 
 ;; (def-package! mu4e-maildirs-extension
 ;;   :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")

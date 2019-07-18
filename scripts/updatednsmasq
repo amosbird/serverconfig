@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # curl -s https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts | sudo tee /etc/.hostnames.txt >/dev/null
-curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/hostnames.txt | sudo tee /etc/.hostnames.txt >/dev/null
-curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/domains.txt | sudo tee /etc/.domains.txt >/dev/null
+# curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/hostnames.txt | sudo tee /etc/.hostnames.txt >/dev/null
+# curl -s https://raw.githubusercontent.com/notracking/hosts-blocklists/master/domains.txt | sudo tee /etc/.domains.txt >/dev/null
 
 {
     echo '
@@ -14,13 +14,12 @@ min-cache-ttl=3600
 # addn-hosts=/etc/.hostnames.txt
 #server=127.0.0.1#5300
 server=8.8.8.8
-server=/ict.ac.cn/159.226.8.6
+server=/ac.cn/159.226.8.6
 ipset=/ieee.org/gfwlist
 ipset=/acm.org/gfwlist
 ipset=/sciencedirect.com/gfwlist
-ipset=/cn/gfwlist
 '
-    curl -s https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf
+    curl -s https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf | perl -ne '$o = $_; /.*\/(.*)\/.*/; print $o; print "ipset=/".$1."/gfwlist\n"'
 } | sudo tee /etc/dnsmasq.conf >/dev/null
 
 sudo systemctl restart dnsmasq

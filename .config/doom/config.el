@@ -2138,7 +2138,7 @@ representation of `NUMBER' is smaller."
   "Copy the current buffer's filename with line number to the kill ring."
   (interactive)
   (if-let* ((filename (or buffer-file-name (bound-and-true-p list-buffers-directory))))
-      (message (kill-new (concat "b" filename ":" (number-to-string (line-number-at-pos)) "\n")))
+      (message (kill-new (concat filename ":" (number-to-string (line-number-at-pos)) "\n")))
     (error "Couldn't find filename in current buffer")))
 
 (defun +amos/evil-insert-line-above (count)
@@ -3085,7 +3085,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (defun +amos/reset-cursor ()
   (interactive)
   (evil-refresh-cursor)
-  (realign-windows))
+  (realign-windows)
+  ;; (if buffer-file-name (+amos/revert-buffer))
+  )
 
 (remove-hook 'find-file-hook #'+file-templates|check)
 (defun +amos*find-file (filename &optional wildcards)
@@ -3218,6 +3220,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 ;; debugging eldoc
 (defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
 (stupid_function)
+(setq resize-mini-windows 'grow-only)
 
 (defun +amos/find-file-at-point ()
   (interactive)
@@ -4473,7 +4476,7 @@ inside or just after a citation command, only adds KEYS to it."
 
 (defun +amos/revert-buffer ()
   (interactive)
-  (revert-buffer :ignore-auto :noconfirm))
+  (revert-buffer :ignore-auto (not (buffer-modified-p))))
 
 (defun +amos/revert-all-buffers ()
   "Refresh all open buffers from their respective files."
@@ -4783,7 +4786,7 @@ See `project-local-get' for the parameter PROJECT."
   (dolist (env '("itemize" "enumerate" "description"))
     (delete `(,env +latex/LaTeX-indent-item) LaTeX-indent-environment-list)))
 
-(setq whitespace-style '(face tabs tab-mark trailing))
+(setq-default whitespace-style '(face tabs tab-mark trailing))
 
 (setq whitespace-display-mappings
   '(
@@ -4799,7 +4802,7 @@ See `project-local-get' for the parameter PROJECT."
 (advice-add #'whitespace-space-after-tab-regexp :override #'+amos*whitespace-space-after-tab-regexp)
 
 (global-whitespace-mode +1)
-;; (advice-add #'doom|highlight-non-default-indentation :override #'ignore)
+(advice-add #'doom|highlight-non-default-indentation :override #'ignore)
 
 (defun +amos/upload-wandbox ()
   (interactive)

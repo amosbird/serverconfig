@@ -55,7 +55,6 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         # if there is only one option dont open fzf
         set result "$complist"
     else
-
         set -l query
         string join -- \n $complist \
         | sort \
@@ -66,11 +65,11 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
             # first line is the user entered query
             if test -z "$query"
                 set query $r
-            # rest of lines are selected candidates
+                # rest of lines are selected candidates
             else
                 set result $result $r
             end
-          end
+        end
 
         # exit if user canceled
         if test -z "$query" ;and test -z "$result"
@@ -152,8 +151,9 @@ function __fzf_complete_opts_3 -d 'multi selection with preview'
 end
 
 function __fzf_complete_opts -d 'fzf options for fish tab completion'
-    __fzf_complete_opts_0
-    if set -q FZF_COMPLETE_OPTS
-        echo $FZF_COMPLETE_OPTS
-    end
+    # __fzf_complete_opts_0
+    # if set -q FZF_COMPLETE_OPTS
+    #     echo $FZF_COMPLETE_OPTS
+    # end
+    echo --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i
 end

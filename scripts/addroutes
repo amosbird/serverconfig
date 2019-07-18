@@ -6,7 +6,7 @@
 
 ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
-gw=$(ip r g 168.63.201.221 | cut -d" " -f3)
+gw=$(ip r g 123.206.66.49 | cut -d" " -f3)
 
 sudo -u amos tun
 
@@ -48,6 +48,7 @@ EOF
 
 ip r a 10.0.0.0/8 via $gw
 ip r a 192.168.0.0/16 via $gw
+ip r a 123.206.66.49 via $gw
 
 # extra non-cn routes
 
@@ -109,6 +110,9 @@ ip r a 168.235.97.16/32 via $gw table cn
 # azure
 ip r a 40.83.99.220/32 via $gw
 
+# aws
+ip r a 13.113.251.5 via $gw
+
 # if ! pgrep -f 'https-dns'
 # then
 #     sudo -u amos https-dns_linux_amd64 -d 8.8.8.8 --edns 159.226.39.0/24 -U &
@@ -135,5 +139,8 @@ ip r a 40.83.99.220/32 via $gw
 # ip r a 0.0.0.0/1 via 172.23.10.1
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
-sudo -u amos tunv6
+# sudo -u amos tunv6
+ip r a 192.168.1.0/24 via 172.26.155.23
+ip r c default via 172.26.239.59
+ip r a default via 172.26.239.59
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"

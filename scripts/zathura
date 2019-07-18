@@ -5,6 +5,7 @@
 args=()
 sync=
 pdf=
+shopt -s nocasematch
 while (($#)); do
     case "$1" in
     --synctex-forward)

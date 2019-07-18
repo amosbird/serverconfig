@@ -1,0 +1,19 @@
+#!/usr/bin/env fish
+
+function start
+    cnee --record --events-to-record 1000 --mouse --keyboard -o /tmp/xnee.xns -e /tmp/xnee.log -str 5 &
+    echo (jobs -pl) > /tmp/xnee.pid
+end
+
+function stop
+    set a (cat /tmp/xnee.pid)
+    if ps -p $a -o comm= 2>/dev/null | grep -q cnee
+        kill $a
+    end
+end
+
+function replay
+    cnee --replay -f /tmp/xnee.xns -e /tmp/xnee.log -ns
+end
+
+$argv[1]
