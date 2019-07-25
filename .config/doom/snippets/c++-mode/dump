@@ -1,5 +1,7 @@
 # -*- mode: snippet -*-
 # name: dump
 # key: dump
+# type: command
 # --
-DUMP($0);
+(+amos/add-include "Core/iostream_debug_helpers.h")
+(yas-expand-snippet "DUMP($0);")

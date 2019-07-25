@@ -2598,6 +2598,7 @@ the current state and point position."
 (after! magit
   ;; (magit-auto-revert-mode +1)
   (setq
+   magit-refresh-status-buffer nil
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
    magit-display-buffer-noselect nil
    magit-repository-directories '(("~/git" . 2))

@@ -403,3 +403,17 @@ If called with `universal-argument' (C-u), ask for username.
 (defun +amos/dired-feh-current-dir ()
   (interactive)
   (shell-command! (format "feh --scale-down --auto-zoom '%s'" default-directory)))
+
+;;;###autoload
+(defun +amos/dired-git-checkout ()
+  (interactive)
+  (let ((file (ignore-errors (dired-get-file-for-visit))))
+    (start-process "git-checkout" nil
+                   "git" "checkout" (file-truename file))))
+
+;;;###autoload
+(defun +amos/dired-git-add ()
+  (interactive)
+  (let ((file (ignore-errors (dired-get-file-for-visit))))
+    (start-process "git-add" nil
+                   "git" "add" (file-truename file))))
