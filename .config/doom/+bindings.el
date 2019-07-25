@@ -1,10 +1,5 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
-(defun +amos-ivy-call-action-key (key)
-  (lambda ()
-    (interactive)
-    (ivy-exit-with-action (cadr (assoc key (cdr (ivy-state-action ivy-last)))))))
-
 (map! :leader
       :desc "sticky"                          :nv "DEL" #'evil-sticky-state
       :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
@@ -493,6 +488,9 @@
         "C-k" #'+amos/swiper-isearch-backward
         "C-s" #'ivy-next-line
         "C-r" #'ivy-previous-line
+
+        :map ivy-switch-buffer-map
+        "C-k"  #'ivy-previous-line
 
         :map ivy-minibuffer-map
         "C-SPC" #'ivy-restrict-to-matches

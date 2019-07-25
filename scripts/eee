@@ -3,5 +3,5 @@
 if [[ $session == "gui" ]]; then
     emacsclient -s mu4e -c --frame-parameters='(quote (name . "emacs-editor"))' -q -u --display $DISPLAY "$@"
 else
-    emacsclient -nw -c -q -u $@
+    emacsclient -nw --frame-parameters='(quote (name . "emacs-editor"))' -q -u $@
 fi

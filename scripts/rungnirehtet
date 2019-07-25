@@ -3,4 +3,4 @@
 fuser -k /tmp/gnirehtet.lock
 pkill gnirehtet
 exec {lockfd}>/tmp/gnirehtet.lock && flock "$lockfd" || exit
-gnirehtet autorun -d 10.0.2.2
+sudo -u gnirehtet gnirehtet autorun -d 10.0.2.2

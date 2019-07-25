@@ -3729,19 +3729,6 @@ When capture groups are present in the input, print them instead of lines."
       (while (re-search-forward "[^[:ascii:]]" nil t)
         (replace-match "")))))
 
-(evil-define-command +amos/fish-editor (file &optional pos)
-  (find-file file)
-  (if pos
-      (goto-char pos))
-  (fish-mode)
-  (setq buffer-offer-save nil)
-  (setq mode-line-format nil)
-  (general-define-key
-   :states '(normal insert)
-   :keymaps 'local
-   "C-c C-c" (lambda! (save-buffer) (+amos/kill-current-buffer) (delete-frame))
-   "C-c C-k" (lambda! (delete-region (point-min) (point-max)) (save-buffer) (+amos/kill-current-buffer) (delete-frame))))
-
 (defun +amos/launch ()
   (interactive)
   (let ((default-directory (doom-project-root)))
@@ -4755,31 +4742,34 @@ See `project-local-get' for the parameter PROJECT."
 (advice-add #'kill-buffer :around #'+amos*kill-buffer)
 
 (defun +amos|server-switch-hook ()
-  (when (current-local-map)
-    (use-local-map (copy-keymap (current-local-map))))
-  (when server-buffer-clients
-    (setq display-line-numbers 'relative)
-    (setq-local require-final-newline nil)
-    (local-set-key (kbd "C-c C-c")
-                   (lambda!
-                    (evil-normal-state)
-                    (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
-                              ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
-                              ((symbol-function 'map-y-or-n-p) #'+amos*yes)
-                              ((symbol-function 'yes-or-no-p) #'+amos*yes))
-                      (call-interactively #'server-edit))))
-    (local-set-key (kbd "C-c C-k")
-                   (lambda!
-                    (evil-normal-state)
-                    (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
-                              ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
-                              ((symbol-function 'map-y-or-n-p) #'+amos*yes)
-                              ((symbol-function 'yes-or-no-p) #'+amos*yes))
-                      (call-interactively #'delete-frame))))))
+  (when (string= "emacs-editor" (frame-parameter nil 'name))
+    (when (current-local-map)
+      (use-local-map (copy-keymap (current-local-map))))
+    (when server-buffer-clients
+      (setq display-line-numbers 'relative)
+      (setq-local require-final-newline nil)
+      (local-set-key (kbd "C-c C-c")
+                     (lambda!
+                      (evil-normal-state)
+                      (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
+                                ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
+                                ((symbol-function 'map-y-or-n-p) #'+amos*yes)
+                                ((symbol-function 'yes-or-no-p) #'+amos*yes))
+                        (call-interactively #'server-edit))))
+      (local-set-key (kbd "C-c C-k")
+                     (lambda!
+                      (evil-normal-state)
+                      (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
+                                ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
+                                ((symbol-function 'map-y-or-n-p) #'+amos*yes)
+                                ((symbol-function 'yes-or-no-p) #'+amos*yes))
+                        (call-interactively #'delete-frame)))))))
 (add-hook 'server-switch-hook #'+amos|server-switch-hook)
 
 (defun +amos|server-visit-hook ()
-  (setq-local server-visit-file t))
+  (when (or (string= "emacs-editor" (frame-parameter nil 'name))
+            (string= "popup" (frame-parameter nil 'name)))
+    (setq-local server-visit-file t)))
 (add-hook 'server-visit-hook #'+amos|server-visit-hook)
 
 (after! latex
