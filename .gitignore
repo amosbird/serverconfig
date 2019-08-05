@@ -36,3 +36,4 @@ fishd.*
 /.auctex-auto
 /.config/doom/.authinfo.gpg
 *.tmp
+/.config/copyq/copyq-commands.ini.new.bak

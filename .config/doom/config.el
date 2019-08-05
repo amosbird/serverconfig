@@ -3627,7 +3627,7 @@ as small) as possible, but don't signal an error."
                         faces)
                    i)
           (cl-incf i))))))
-(advice-add #'swiper--add-properties :override #'+amos*swiper--add-properties)
+;; (advice-add #'swiper--add-properties :override #'+amos*swiper--add-properties)
 
 (defun +amos/swiper ()
   (interactive)
