@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 # id="2717:ff48"
-id="18d1:4ee7"
+id="18d1:4ee7" # Charging
+# id="2717:ff18" # PTP
 fuser -k /tmp/scrcpy.lock
 pkill -f "$id"
 cd /home/amos/git/scrcpy

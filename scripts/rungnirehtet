@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
 
-fuser -k /tmp/gnirehtet.lock
-pkill gnirehtet
-exec {lockfd}>/tmp/gnirehtet.lock && flock "$lockfd" || exit
+sudo pkill -9 gnirehtet
 sudo -u gnirehtet gnirehtet autorun -d 10.0.2.2

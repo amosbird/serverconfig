@@ -263,6 +263,7 @@ cpanm URL::Search Perl::Tidy Regexp::Common Dir::ls Clipboard File::Find::Rule I
 /etc/udev/hwdb.d/90-custom-keyboard.hwdb
 /etc/udev/rules.d/99-thinkfan.rules
 /etc/udev/rules.d/99-trackpoint.rules
+/etc/pulse/default.pa
 
 cd
 sudo cp -r .terminfo /root

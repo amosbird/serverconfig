@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 
+die() { echo "$*" 1>&2 ; exit 1; }
+
 ((UID == 0)) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
+
+ip r d 0.0.0.0/1 via 172.26.239.59
+ip r d 128.0.0.0/1 via 172.26.239.59
 
 # updateroutes
 
 ip r d 0.0.0.0/1
 ip r d 128.0.0.0/1
-gw=$(ip r g 123.206.66.49 | cut -d" " -f3)
+
+read -r _ _ gw _ < <(ip r g 123.206.66.49) || die "Cannot get default gw"
 
 sudo -u amos tun
 
@@ -57,7 +63,6 @@ EOF
 
 ip r a 10.0.0.0/8 via $gw
 ip r a 192.168.0.0/16 via $gw
-ip r a 123.206.66.49 via $gw
 
 # extra non-cn routes
 
@@ -150,6 +155,8 @@ ip r a 13.113.251.5 via $gw
 
 # sudo -u amos tunv6
 ip r a 192.168.1.0/24 via 172.26.155.23
-ip r c default via 172.26.239.59
-ip r a default via 172.26.239.59
+ip r a 0.0.0.0/1 via 172.26.239.59
+ip r a 128.0.0.0/1 via 172.26.239.59
+
+systemctl restart dnsmasq
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"

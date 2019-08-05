@@ -134,7 +134,7 @@ function fish_user_key_bindings
     function elvish-nav -d ""
         tput smcup
         elvish | read -l result
-        [ "$result" ]; and cd $result
+        [ "$result" ]; and eval cd "$result"
         tput rmcup
         commandline -f repaint
         eval (direnv export fish);
