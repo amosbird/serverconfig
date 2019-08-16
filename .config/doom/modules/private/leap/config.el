@@ -319,7 +319,7 @@ POS defaults to point."
            (jump-list (leap--get-struct-jump-list struct))
            (idx (leap-jump-list-struct-idx struct)))
       (cl-loop repeat idx
-               do (ring-remove jump-list))
+               do (ring-remove jump-list 0))
       (setf (leap-jump-list-struct-idx struct) -1)
       (setf (leap-jump-list-struct-marker struct) nil))
     (save-excursion
