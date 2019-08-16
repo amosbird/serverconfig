@@ -58,6 +58,7 @@ c.bindings.commands["normal"] = {
     "<Space>": "fake-key <Space>",
     "<ctrl-b>": "navigate prev",
     "<ctrl-f>": "navigate next",
+    "<ctrl-p>": "nop",
     "<ctrl-i>": "forward",
     "<ctrl-o>": "back",
     "<ctrl-r>": "undo",
