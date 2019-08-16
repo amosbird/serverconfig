@@ -56,6 +56,7 @@
        ;; amos-go
        amos-modeline
        amos-org
+       leap
        ;; amos-python
        ;; amos-sh
        )

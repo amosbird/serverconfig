@@ -11,8 +11,9 @@
 
 (defun +amos/recenter (&rest _)
   (interactive)
-  (recenter)
-  (+nav-flash/blink-cursor))
+  (ignore-errors
+    (recenter)
+    (+nav-flash/blink-cursor)))
 
 (defvar +amos-dir (file-name-directory load-file-name))
 (defvar +amos-snippets-dir (expand-file-name "snippets/" +amos-dir))
@@ -844,7 +845,7 @@ With a prefix ARG, invalidate the cache first."
   (ivy-read (projectile-prepend-project-name "Find file: ")
             (+amos/projectile-current-project-files)
             ;; (projectile-current-project-files)
-            :matcher counsel-projectile-find-file-matcher
+            ;; :matcher counsel-projectile-find-file-matcher
             :require-match t
             :sort t
             :action counsel-projectile-find-file-action
@@ -1058,9 +1059,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                         (ivy--cd-maybe)))))
 
 (defun +amos/smart-jumper (&optional f)
-  (unless (or (eq last-command '+amos/smart-jumper-backward)
-              (eq last-command '+amos/smart-jumper-forward))
-    (evil-set-jump))
   (let* ((dir (if f -1 (forward-char) 1))
          (c (point))
          quote
@@ -1621,11 +1619,8 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
         (with-slots (summary location) xref
           (let* ((marker (xref-location-marker location))
                  (buf (marker-buffer marker)))
-            (evil-set-jump)
             (switch-to-buffer buf)
-            (goto-char marker)
-            (evil-set-jump)
-            (+amos/recenter))))
+            (goto-char marker))))
     (let ((xref-pos (point))
           (xref-buffer (current-buffer))
           (default-directory (doom-project-root))
@@ -1634,22 +1629,17 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
                 :unwind (lambda ()
                           (unless success
                             (switch-to-buffer xref-buffer)
-                            (goto-char xref-pos)
-                            (+amos/recenter)))
+                            (goto-char xref-pos)))
                 :action (lambda (x)
                           (let ((location (cdr x)))
                             (let* ((marker (xref-location-marker location))
                                    (buf (marker-buffer marker)))
-                              (evil-set-jump)
                               (switch-to-buffer buf)
                               (with-ivy-window
-                                (goto-char marker)
-                                (+amos/recenter))
+                                (goto-char marker))
                               (unless (eq 'ivy-call this-command)
-                                (evil-set-jump)
                                 (setq success t)))))
-                :caller '+amos-ivy-xref
-                ))))
+                :caller '+amos-ivy-xref))))
 
 (defun +amos*xref--find-xrefs (input kind arg display-action)
   (let ((xrefs (funcall (intern (format "xref-backend-%s" kind))
@@ -1667,7 +1657,66 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (after! recentf
   (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local")))
 
+(defun +amos-swiper--line-at-point (pt)
+  (save-excursion
+    (goto-char pt)
+    (let ((s (concat (buffer-substring
+                      (line-beginning-position)
+                      (line-end-position)) "\n")))
+      (put-text-property 0 1 'point pt s)
+      (ivy-cleanup-string s))))
+
+(defun +amos*swiper--isearch-format (index length cands regex current buffer)
+  (let* ((half-height (/ ivy-height 2))
+         (i (1- index))
+         (j 0)
+         (len 0)
+         res s)
+    (with-current-buffer buffer
+      (while (and (>= i 0)
+                  (swiper--isearch-same-line-p
+                   (swiper--line-at-point (nth i cands))
+                   (swiper--line-at-point current)))
+        (cl-decf i)
+        (cl-incf j))
+      (while (and (>= i 0)
+                  (< len half-height))
+        (setq s (+amos-swiper--line-at-point (nth i cands)))
+        (unless (swiper--isearch-same-line-p s (car res))
+          (push (swiper--isearch-highlight s) res)
+          (cl-incf len))
+        (cl-decf i))
+      (setq res (nreverse res))
+      (let ((current-str
+             (+amos-swiper--line-at-point current))
+            (start 0))
+        (dotimes (_ (1+ j))
+          (string-match regex current-str start)
+          (setq start (match-end 0)))
+        (swiper--isearch-highlight current-str j)
+        (font-lock-append-text-property
+         0 (length current-str)
+         'face 'swiper-line-face current-str)
+        (push current-str res))
+      (cl-incf len)
+      (setq i (1+ index))
+      (while (and (< i length)
+                  (swiper--isearch-same-line-p
+                   (swiper--line-at-point (nth i cands))
+                   (swiper--line-at-point current)))
+        (cl-incf i))
+      (while (and (< i length)
+                  (< len ivy-height))
+        (setq s (+amos-swiper--line-at-point (nth i cands)))
+        (unless (swiper--isearch-same-line-p s (car res))
+          (push (swiper--isearch-highlight s) res)
+          (cl-incf len))
+        (cl-incf i))
+      (mapconcat #'identity (nreverse res) ""))))
+(advice-add #'swiper--isearch-format :override #'+amos*swiper--isearch-format)
+
 (after! ivy
+  (setcdr (assq t ivy-format-functions-alist) #'ivy-format-function-line)
   (setf (alist-get t ivy-re-builders-alist) 'ivy--regex-plus)
   (dolist (command '(ccls/includes))
     (setf (alist-get command ivy-re-builders-alist) 'ivy--regex-fuzzy))
@@ -2048,77 +2097,83 @@ representation of `NUMBER' is smaller."
                   t)))))
 (advice-add #'evil-visual-paste :override #'+amos*evil-visual-paste)
 
-(defun +amos*+lookup-set-jump (orig-fun &rest args)
-  (evil-set-jump)
-  (condition-case nil
-      (apply orig-fun args)
-    (error nil))
-  (condition-case nil
-      (+amos/recenter)
-    (error nil)))
-(advice-add #'+lookup/definition :around #'+amos*+lookup-set-jump)
-(advice-add #'+lookup/references :around #'+amos*+lookup-set-jump)
+(defun +amos*+lookup--jump-to (prop identifier &optional display-fn arg)
+  (let* (leaped
+         (origin (point-marker))
+         (handlers (plist-get (list :definition '+lookup-definition-functions
+                                    :references '+lookup-references-functions
+                                    :documentation '+lookup-documentation-functions
+                                    :file '+lookup-file-functions)
+                              prop))
+         (result
+          (if arg
+              (if-let*
+                  ((handler (intern-soft
+                             (completing-read "Select lookup handler: "
+                                              (remq t (append (symbol-value handlers)
+                                                              (default-value handlers)))
+                                              nil t))))
+                  (+lookup--run-handlers handler identifier origin)
+                (user-error "No lookup handler selected"))
+            (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin))))
+    (when (cond ((null result)
+                 (message "No lookup handler could find %S" identifier)
+                 nil)
+                ((markerp result)
+                 (funcall (or display-fn #'switch-to-buffer)
+                          (marker-buffer result))
+                 (goto-char result)
+                 result)
+                (result))
+      (unless leaped
+        (with-current-buffer (marker-buffer origin)
+          (leap-set-jump (marker-position origin)))
+        (run-hooks 'leap-post-jump-hook))
+      result)))
 
-(defun +amos*evil--jumps-push ()
-  (+amos-clean-evil-jump-list)
-  (unless (eq this-command 'ivy-call)
-    (let ((target-list (evil--jumps-get-window-jump-list)))
-      (let ((file-name (buffer-file-name))
-            (buffer-name (buffer-name))
-            (current-pos (point-marker))
-            (first-pos nil)
-            (first-file-name nil)
-            (excluded nil))
-        (when (and (not file-name)
-                   (string-match-p evil--jumps-buffer-targets buffer-name))
-          (setq file-name buffer-name))
-        (when file-name
-          (dolist (pattern evil-jumps-ignored-file-patterns)
-            (when (string-match-p pattern file-name)
-              (setq excluded t)))
-          (unless excluded
-            (unless (ring-empty-p target-list)
-              (setq first-pos (car (ring-ref target-list 0)))
-              (setq first-file-name (car (cdr (ring-ref target-list 0)))))
-            (unless (and (equal first-file-name file-name)
-                         (save-excursion
-                           (let ((a (progn (goto-char first-pos) (end-of-line) (point)))
-                                 (b (progn (goto-char current-pos) (end-of-line) (point))))
-                             (= a b))))
-              (ring-insert target-list `(,current-pos ,file-name)))))))))
-(advice-add #'evil--jumps-push :override #'+amos*evil--jumps-push)
+(defvar is-swiper-occur nil)
+(defun +amos*set-jump-point-maybe ()
+  (unless is-swiper-occur
+    (with-demoted-errors "Error: %S"
+      (when (and
+             (markerp +amos-ivy--origin)
+             (eq ivy-exit 'done)
+             (not (equal (with-ivy-window (point-marker)) +amos-ivy--origin)))
+        (with-ivy-window
+          (with-current-buffer (marker-buffer +amos-ivy--origin)
+            (leap-set-jump +amos-ivy--origin))
+          (run-hooks 'leap-post-jump-hook)))
+      (unless ivy-exit
+        (with-ivy-window
+          (run-hooks 'leap-post-jump-hook))))
+    (setq +amos-ivy--origin nil
+          leaped t))
+  (setq is-swiper-occur nil))
 
-(defun +amos*evil--jumps-jump (idx shift)
-  (+amos-clean-evil-jump-list)
-  (let ((target-list (evil--jumps-get-window-jump-list)))
-    (let* ((current-file-name (or (buffer-file-name) (buffer-name)))
-           (size (ring-length target-list)))
-      ;; jump back to the idx line first, if already on the same line, shift
-      (let* ((place (ring-ref target-list idx))
-             (pos (car place))
-             (target-file-name (cadr place)))
-        (if (and (equal target-file-name current-file-name)
-                 (save-excursion
-                   (let* ((a (progn (end-of-line) (point)))
-                          (b (progn (goto-char pos) (end-of-line) (point))))
-                     (= a b))))
-            (setq idx (+ idx shift))))
-      (when (and (< idx size) (>= idx 0))
-        ;; actual jump
-        (run-hooks 'evil-jumps-pre-jump-hook)
-        (let* ((place (ring-ref target-list idx))
-               (pos (car place))
-               (file-name (cadr place)))
-          (setq evil--jumps-jumping t)
-          (if (string-match-p evil--jumps-buffer-targets file-name)
-              (switch-to-buffer file-name)
-            (find-file file-name))
-          (setq evil--jumps-jumping nil)
-          (goto-char pos)
-          (setf (evil-jumps-struct-idx (evil--jumps-get-current)) idx)
-          (run-hooks 'evil-jumps-post-jump-hook))))))
-(add-hook 'evil-jumps-post-jump-hook #'+amos/recenter)
-(advice-add #'evil--jumps-jump :override #'+amos*evil--jumps-jump)
+(defun +amos|record-position-maybe ()
+  (with-ivy-window
+    (setq +amos-ivy--origin (point-marker))))
+
+(after! ivy
+  (setq ivy-hooks-alist '((t . +amos|record-position-maybe))))
+
+(advice-add #'ivy-call :after #'+amos*set-jump-point-maybe)
+(advice-add #'+lookup--jump-to :override #'+amos*+lookup--jump-to)
+(advice-add #'better-jumper-jump-forward :override #'leap-jump-forward)
+(advice-add #'better-jumper-jump-backward :override #'leap-jump-backward)
+(advice-add #'better-jumper-set-jump :override #'ignore)
+(advice-add #'doom*set-jump :override #'ignore)
+(advice-add #'doom*recenter :override #'ignore)
+(advice-add #'elisp-def--flash-region :override #'ignore)
+;; (ad-disable-advice 'switch-to-buffer 'before 'evil-jumps)
+;; (ad-activate 'switch-to-buffer)  ;; stupid api
+(add-hook 'leap-post-jump-hook #'+amos/recenter)
+
+(defun +amos/debug ()
+  (interactive)
+  (message "run"))
+;; (advice-add 'recenter :override #'+amos/debug)
+
 
 (defun +amos/yank-buffer-filename ()
   "Copy the current buffer's path to the kill ring."
@@ -2262,46 +2317,6 @@ the current state and point position."
   (save-some-buffers nil t)
   (kill-emacs))
 
-(defun +amos*lsp--xref-make-item (filename range)
-  "Return a xref-item from a RANGE in FILENAME."
-  (let* ((pos-start (gethash "start" range))
-         (pos-end (gethash "end" range))
-         (line (lsp--extract-line-from-buffer pos-start))
-         (start (gethash "character" pos-start))
-         (end (gethash "character" pos-end))
-         (len (length line)))
-    (add-face-text-property (max (min start len) 0)
-                            (max (min end len) 0)
-                            'ivy-minibuffer-match-face-2 t line) ;; NOTE change face
-    ;; LINE is nil when FILENAME is not being current visited by any buffer.
-    (xref-make (or line filename)
-               (xref-make-file-location filename
-                                        (1+ (gethash "line" pos-start))
-                                        (gethash "character" pos-start)))))
-(advice-add #'lsp--xref-make-item :override #'+amos*lsp--xref-make-item)
-
-(defun +amos*xref--collect-matches-1 (regexp file line line-beg line-end syntax-needed)
-  (let (matches)
-    (when syntax-needed
-      (syntax-propertize line-end))
-    ;; FIXME: This results in several lines with the same
-    ;; summary. Solve with composite pattern?
-    (while (and
-            ;; REGEXP might match an empty string.  Or line.
-            (or (null matches)
-                (> (point) line-beg))
-            (re-search-forward regexp line-end t))
-      (let* ((beg-column (- (match-beginning 0) line-beg))
-             (end-column (- (match-end 0) line-beg))
-             (loc (xref-make-file-location file line beg-column))
-             (summary (buffer-substring-no-properties line-beg line-end)))
-        (add-face-text-property beg-column end-column 'ivy-minibuffer-match-face-2
-                                t summary)
-        (push (xref-make-match summary loc (- end-column beg-column))
-              matches)))
-    (nreverse matches)))
-(advice-add #'xref--collect-matches-1 :override #'+amos*xref--collect-matches-1)
-
 (defun comp-buffer-name (maj-mode)
   (concat "*" (downcase maj-mode) " " default-directory "*"))
 (setq compilation-buffer-name-function #'comp-buffer-name)
@@ -2315,13 +2330,24 @@ the current state and point position."
 (defvar +amos-frame-stack nil)
 (defvar +amos-tmux-need-switch nil)
 
-;; vertical bar
-(add-hook! 'doom-load-theme-hook
-  (set-face-background 'vertical-border "#282c34")
+
+(defun +amos/set-face ()
+
+  (after! swiper
+    (set-face-attribute 'swiper-line-face nil :inherit 'unspecified :background 'unspecified :foreground 'unspecified :underline t))
+  (after! ivy
+    (set-face-attribute 'ivy-current-match nil :inherit 'unspecified :distant-foreground 'unspecified
+                        :weight 'unspecified :background 'unspecified :foreground 'unspecified :underline t))
+  (after! xref
+    (set-face-attribute 'xref-match nil :inherit 'unspecified :distant-foreground 'unspecified
+                        :weight 'unspecified :background 'unspecified :foreground 'unspecified :weight 'ultra-bold))
+  (set-face-background 'vertical-border 'unspecified)
   (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil))
+
+;; vertical bar
+(add-hook! 'doom-load-theme-hook #'+amos/set-face)
 (add-hook! 'after-make-frame-functions
-  (set-face-background 'vertical-border "#282c34")
-  (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil)
+  (+amos/set-face)
   (unless +amos-frame-list
     (setq +amos-frame-list (+amos--frame-list-without-daemon))))
 (defsubst +amos--is-frame-daemons-frame (f)
@@ -2439,9 +2465,7 @@ the current state and point position."
 
 (define-advice dired-revert (:after (&rest _) +amos*dired-revert)
   "Call `recenter' after `dired-revert'."
-  (condition-case nil
-      (+amos/recenter)
-    (error nil)))
+  (with-demoted-errors "Errors: %S" (+amos/recenter)))
 
 (after! wdired
   (evil-set-initial-state 'wdired-mode 'normal))
@@ -3116,8 +3140,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
          (when line-number
            ;; goto-line is for interactive use
            (goto-char (point-min))
-           (forward-line (1- line-number))
-           (+amos/recenter))
+           (forward-line (1- line-number)))
          buffer)))))
 (advice-add 'find-file :override #'+amos*find-file)
 
@@ -3170,6 +3193,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
  "+amos/shell"
  "+amos/smart-jumper"
  "+amos/swiper"
+ "+amos/swiper-symbol"
  "+amos/switch-buffer"
  "+amos/tmux"
  "+amos/toggle-mc"
@@ -3444,7 +3468,6 @@ In Insert state, insert a newline."
               company-tooltip-limit 14
               company-dabbrev-downcase nil
               company-dabbrev-ignore-case nil
-              company-dabbrev-code-other-buffers t
               company-dabbrev-code-time-limit 0.3
               company-dabbrev-ignore-buffers "\\`[ *]"
               company-tooltip-align-annotations t
@@ -3594,41 +3617,6 @@ as small) as possible, but don't signal an error."
           (run-window-configuration-change-hook frame))))))
 (advice-add #'window--resize-mini-window :override #'+amos*window--resize-mini-window)
 
-(defvar +amos-swiper-recomputed nil)
-(defun +amos*swiper--add-properties (faces adder-fn)
-  ;; add recompute here
-  (unless +amos-swiper-recomputed
-    (swiper--recompute-background-faces)
-    (setq +amos-swiper-recomputed t))
-
-  (let ((mb (match-beginning 0))
-        (me (match-end 0)))
-    (unless (> (- me mb) 2017)
-      (funcall adder-fn
-               mb me
-               (if (zerop ivy--subexps)
-                   (cadr faces)
-                 nil)  ; change to nil
-               0)))
-  (let ((i 1)
-        (j 0))
-    (while (<= (cl-incf j) ivy--subexps)
-      (let ((bm (match-beginning j))
-            (em (match-end j)))
-        (when (and (integerp em)
-                   (integerp bm))
-          (while (and (< j ivy--subexps)
-                      (integerp (match-beginning (+ j 1)))
-                      (= em (match-beginning (+ j 1))))
-            (setq em (match-end (cl-incf j))))
-          (funcall adder-fn
-                   bm em
-                   (nth (1+ (mod (+ i 2) (1- (length faces))))
-                        faces)
-                   i)
-          (cl-incf i))))))
-;; (advice-add #'swiper--add-properties :override #'+amos*swiper--add-properties)
-
 (defun +amos/swiper ()
   (interactive)
   (if (eq major-mode 'ivy-occur-grep-mode)
@@ -3640,15 +3628,27 @@ as small) as possible, but don't signal an error."
         (swiper-isearch))
     (swiper-isearch)))
 
+(defun +amos/swiper-search-symbol ()
+  (interactive)
+  (if (and (stringp (ivy-state-current ivy-last)) (string-empty-p (ivy-state-current ivy-last)))
+      (let ((text (ignore-errors (with-ivy-window (symbol-name (symbol-at-point))))))
+        (if text (insert (setf (ivy-state-current ivy-last) text))))
+    (ivy-next-line)))
+
+(defun +amos/swiper-symbol ()
+  (interactive)
+  (swiper-isearch (ignore-errors (symbol-name (symbol-at-point)))))
+
 (defun +amos/wgrep-occur ()
   "Invoke the search+replace wgrep buffer on the current ag/rg search results."
   (interactive)
   (unless (window-minibuffer-p)
     (user-error "No completion session is active"))
   (require 'wgrep)
+  (setq is-swiper-occur (eq (ivy-state-caller ivy-last) 'swiper-isearch))
   (let* ((ob (ivy-state-buffer ivy-last))
          (caller (ivy-state-caller ivy-last))
-         (xref (eq caller '+lookup/references))
+         (xref (eq caller '+amos-ivy-xref))
          (recursive (and (eq (with-current-buffer ob major-mode) 'ivy-occur-grep-mode)
                          (eq caller 'swiper-isearch)))
          (occur-fn (plist-get ivy--occurs-list caller))
@@ -3680,29 +3680,31 @@ as small) as possible, but don't signal an error."
           (pop-to-buffer ,buffer))
         (ivy-wgrep-change-to-wgrep-mode)))))
 
+(defun +amos-swiper--occur-cands (cands)
+  (when cands
+    (with-current-buffer (ivy-state-buffer ivy-last)
+      (setq cands (mapcar #'swiper--line-at-point cands))
+      (mapcar (lambda (x) (cdr x)) (swiper--isearch-occur-cands cands)))))
+
 (defun +amos/swiper-occur (&optional revert)
   "Generate a custom occur buffer for `swiper'.
 When REVERT is non-nil, regenerate the current *ivy-occur* buffer.
 When capture groups are present in the input, print them instead of lines."
   (let* ((buffer (ivy-state-buffer ivy-last))
-         (fname (propertize
-                 (with-ivy-window
-                   (if (buffer-file-name buffer)
-                       (file-name-nondirectory
-                        (buffer-file-name buffer))
-                     (buffer-name buffer)))
-                 'face
-                 'ivy-grep-info))
-         (ivy-text (and (string-match "\"\\(.*\\)\"" (buffer-name))
-                        (match-string 1 (buffer-name))))
+         (ivy-text (progn (string-match "\"\\(.*\\)\"" (buffer-name))
+                          (match-string 1 (buffer-name))))
          (re (mapconcat #'identity (ivy--split ivy-text) ".*?"))
          (cands
-          (if (not revert)
-              ivy--old-cands
-            (setq ivy--old-re nil)
-            (save-window-excursion
-              (switch-to-buffer buffer)
-              (swiper-isearch-function ivy-text)))))
+          (+amos-swiper--occur-cands
+           (if (not revert)
+               ivy--old-cands
+             (setq ivy--old-re nil)
+             (save-window-excursion
+               (switch-to-buffer buffer)
+               (if (eq (ivy-state-caller ivy-last) 'swiper)
+                   (let ((ivy--regex-function 'swiper--re-builder))
+                     (ivy--filter re (swiper--candidates)))
+                 (swiper-isearch-function ivy-text)))))))
     (if (string-match-p "\\\\(" re)
         (insert
          (mapconcat #'identity
@@ -3711,7 +3713,8 @@ When capture groups are present in the input, print them instead of lines."
                           (swiper--candidates)))
                     "\n"))
       (unless (eq major-mode 'ivy-occur-grep-mode)
-        (ivy-occur-grep-mode))
+        (ivy-occur-grep-mode)
+        (font-lock-mode -1))
       (setq swiper--current-window-start nil)
       (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
                       default-directory))
@@ -4330,13 +4333,11 @@ inside or just after a citation command, only adds KEYS to it."
                                     (if widen-automatically
                                         (widen)
                                       (error "Position of selected mark outside accessible part of buffer")))
-                                  (goto-char pos)
-                                  (+amos/recenter))))
+                                  (goto-char pos))))
                     :unwind (lambda ()
                               (unless success
                                 (switch-to-buffer buffer)
-                                (goto-char pos)
-                                (+amos/recenter)))
+                                (goto-char pos)))
                     :caller '+amos/counsel-view-marks))
       (message "Mark ring is empty"))))
 
@@ -4612,12 +4613,29 @@ Return the pasted text as a string."
   (unless (vc-git-registered file)
     (error "This file is not git tracked")))
 
+(defun +amos/ediff-copy-A-to-C (ofun &rest args)
+  (interactive "P")
+  (mkr! (apply ofun args)))
+(advice-add #'ediff-copy-A-to-C :around #'+amos/ediff-copy-A-to-C)
+
+(defun +amos/ediff-copy-B-to-C (ofun &rest args)
+  (interactive "P")
+  (mkr! (apply ofun args)))
+(advice-add #'ediff-copy-B-to-C :around #'+amos/ediff-copy-B-to-C)
+
+(defun +amos/ediff-restore-diff-in-merge-buffer (ofun &rest args)
+  (interactive "P")
+  (mkr! (apply ofun args)))
+(advice-add #'ediff-restore-diff-in-merge-buffer :around #'+amos/ediff-restore-diff-in-merge-buffer)
+
+
 (defun +amos/ediff-copy-both-to-C ()
   (interactive)
-  (ediff-copy-diff ediff-current-difference nil 'C nil
-                   (concat
-                    (ediff-get-region-contents ediff-current-difference 'A ediff-control-buffer)
-                    (ediff-get-region-contents ediff-current-difference 'B ediff-control-buffer))))
+  (mkr!
+   (ediff-copy-diff ediff-current-difference nil 'C nil
+                    (concat
+                     (ediff-get-region-contents ediff-current-difference 'A ediff-control-buffer)
+                     (ediff-get-region-contents ediff-current-difference 'B ediff-control-buffer)))))
 
 (after! ediff
   (add-hook! 'ediff-keymap-setup-hook
@@ -4673,9 +4691,6 @@ Return the pasted text as a string."
                do (when-let (str (overlay-get overlay 'flycheck-warning))
                     (kill-new (flycheck-error-message str))
                     (throw 'return nil))))))
-
-(advice-add #'better-jumper-jump-forward :override #'evil-jump-forward)
-(advice-add #'better-jumper-jump-backward :override #'evil-jump-backward)
 
 (defvar project-local--obarrays nil
   "Plist of obarrays for each project.")
@@ -4780,24 +4795,29 @@ See `project-local-get' for the parameter PROJECT."
 (setq-default whitespace-style '(face tabs tab-mark trailing))
 
 (setq whitespace-display-mappings
-  '(
-    (space-mark   ?\     [?·]     [?.])		; space - middle dot
-    (space-mark   ?\xA0  [?¤]     [?_])		; hard space - currency sign
-    (newline-mark ?\n    [?$ ?\n])			; eol - dollar sign
-    )
-  )
+      '(
+        (space-mark   ?\     [?·]     [?.])		; space - middle dot
+        (space-mark   ?\xA0  [?¤]     [?_])		; hard space - currency sign
+        (newline-mark ?\n    [?$ ?\n])			; eol - dollar sign
+        )
+      )
 
 ;; TODO font face for space characters?
 (defun +amos*whitespace-space-after-tab-regexp (&optional kind)
   (format (car whitespace-space-after-tab-regexp) 1))
 (advice-add #'whitespace-space-after-tab-regexp :override #'+amos*whitespace-space-after-tab-regexp)
 
+(defun prevent-whitespace-mode-for-magit ()
+  (not (derived-mode-p 'magit-mode)))
+(after! whitespace
+  (add-function :before-while whitespace-enable-predicate 'prevent-whitespace-mode-for-magit))
 (global-whitespace-mode +1)
+
 (advice-add #'doom|highlight-non-default-indentation :override #'ignore)
 
 (defun +amos/upload-wandbox ()
   (interactive)
-  (let ((url (shell-command-to-string "wandbox . snippet.cpp")))
+  (let ((url (string-trim-right (shell-command-to-string "wandbox . snippet.cpp"))))
     (kill-new url)
     (osc-command "notify-send OSC52Command '\nWandBox Uploaded'")))
 
@@ -4850,3 +4870,5 @@ See `project-local-get' for the parameter PROJECT."
   ;; for executable of language server, if it's not symlinked on your PATH
   (setq lsp-python-ms-executable
         "~/git/python-language-server/output/bin/release/Microsoft.Python.LanguageServer"))
+
+;; (setq font-lock-maximum-decoration '((c-mode . 1) (c++-mode . 1) (t . t)))

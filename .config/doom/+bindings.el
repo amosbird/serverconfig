@@ -249,6 +249,8 @@
       :n "P"                      #'evil-paste-before
       :n "K"                      #'evil-paste-pop
       :n "L"                      #'evil-paste-pop-next
+      :n "#"                      #'+amos/swiper-symbol
+      :n "*"                      #'+amos/swiper-symbol
       :n "("                      #'+amos/smart-jumper-backward
       :n ")"                      #'+amos/smart-jumper-forward
       :v "<"                      #'+evil/visual-dedent
@@ -486,7 +488,7 @@
         :map swiper-map
         "C-j" #'+amos/swiper-isearch-forward
         "C-k" #'+amos/swiper-isearch-backward
-        "C-s" #'ivy-next-line
+        "C-s" #'+amos/swiper-search-symbol
         "C-r" #'ivy-previous-line
 
         :map ivy-switch-buffer-map
@@ -634,7 +636,7 @@
 
       (:after helpful
         :map helpful-mode-map
-        :gn "o" #'ace-link-help
+        :gn "o" #'link-hint-open-link
         :gn "q" #'+amos/kill-current-buffer)
 
       (:after magit-blame
