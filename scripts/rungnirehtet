@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 
+sudo adb start-server
 sudo pkill -9 gnirehtet
 sudo -u gnirehtet gnirehtet autorun -d 10.0.2.2
