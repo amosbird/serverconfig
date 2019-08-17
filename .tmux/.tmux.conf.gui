@@ -44,9 +44,9 @@ bind C-c detach-client
 bind r source-file ~/.tmux/.tmux.conf.gui \; display '~/.tmux/.tmux.conf.gui sourced'
 bind c new-window
 bind d kill-pane
-bind e run-shell /home/amos/scripts/edittmuxpane
-bind u run-shell /home/amos/scripts/uploadtmuxpane
-bind k run-shell /home/amos/scripts/tmuxkillwindow
+bind e run-shell $HOME/scripts/edittmuxpane
+bind u run-shell $HOME/scripts/uploadtmuxpane
+bind k run-shell $HOME/scripts/tmuxkillwindow
 
 bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection

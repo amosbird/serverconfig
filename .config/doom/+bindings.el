@@ -249,8 +249,8 @@
       :n "P"                      #'evil-paste-before
       :n "K"                      #'evil-paste-pop
       :n "L"                      #'evil-paste-pop-next
-      :n "#"                      #'+amos/swiper-symbol
-      :n "*"                      #'+amos/swiper-symbol
+      ;; :n "#"                      #'+amos/swiper-symbol
+      ;; :n "*"                      #'+amos/swiper-symbol
       :n "("                      #'+amos/smart-jumper-backward
       :n ")"                      #'+amos/smart-jumper-forward
       :v "<"                      #'+evil/visual-dedent

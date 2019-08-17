@@ -12,13 +12,12 @@ set -x VISUAL eee
 set -x DIRENV_LOG_FORMAT ""
 set -x UID (id -u)
 set -x GPG_TTY (tty)
-set -x PREFIX ~/.local
 set -x NODE_PATH ~/.local/lib/node_modules/
 
-set -x PERL5LIB /home/amos/perl5/lib/perl5
-set -x PERL_LOCAL_LIB_ROOT /home/amos/perl5
-set -x PERL_MB_OPT "--install_base \"/home/amos/perl5\""
-set -x PERL_MM_OPT "INSTALL_BASE=/home/amos/perl5"
+set -x PERL5LIB $HOME/perl5/lib/perl5
+set -x PERL_LOCAL_LIB_ROOT $HOME/perl5
+set -x PERL_MB_OPT "--install_base \"$HOME/perl5\""
+set -x PERL_MM_OPT "INSTALL_BASE=$HOME/perl5"
 
 set -e LS_COLORS
 alias l "exa"

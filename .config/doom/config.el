@@ -537,6 +537,10 @@ Skip buffers that match `ivy-ignore-buffers'."
          (setf (window-parameter window 'my-last-buffer) new-buffer))))))
 (add-hook! 'window-configuration-change-hook #'+amos|update-window-buffer-list)
 
+(defun +amos*evil-ex-search-before (&rest _)
+  (if (thing-at-point 'symbol) (leap-set-jump)))
+(advice-add #'evil-ex-start-word-search :before #'+amos*evil-ex-search-before)
+
 (defun +amos/counsel-rg-projectile ()
   (interactive)
   (unless (doom-project-p)

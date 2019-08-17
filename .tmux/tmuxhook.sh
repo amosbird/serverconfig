@@ -19,6 +19,6 @@ elif [[ $1 -eq 2 ]]; then
     if [[ $2 == emacs ]]; then
         tmux send f12
     else
-        /home/amos/scripts/setcursor.sh $(tmux display -p "#{pane_tty}")
+        $HOME/scripts/setcursor.sh $(tmux display -p "#{pane_tty}")
     fi
 fi
