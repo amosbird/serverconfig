@@ -1,11 +1,3 @@
 [user]
-	name = Amos Bird
 	email = amosbird@gmail.com
-[pull]
-	rebase = true
-[color]
-	ui = auto
-[core]
-	excludesfile = ~/.gitignore_global
-[github]
-	user = amosbird
+	name = Amos Bird

@@ -205,8 +205,6 @@ set opaque-type-resolution off
 set history filename ~/.gdb_history
 set history save on
 set history remove-duplicates 5000
-alias -a w = dashboard expressions watch
-alias -a W = dashboard expressions unwatch
 
 # handle SIGTSTP noprint nostop pass
 # handle SIGQUIT noprint nostop pass
