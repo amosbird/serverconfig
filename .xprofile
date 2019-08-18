@@ -25,4 +25,5 @@ fish -c sxhkd > /tmp/sxhkd.log &
 fish -c copyq &
 fish -c runscrcpy &
 fish -c rungnirehtet &
+parcellite &
 udiskie &

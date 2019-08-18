@@ -109,8 +109,13 @@ super + w
 
 # float toggle
 super + i
-	bspc query --nodes -n focused.tiled && state=floating || state=tiled; \
-	bspc node --state \~$state
+    if [ -z "$(bspc query -N -n focused.floating)" ]; then \
+        bspc node focused -t floating; \
+        bspc node focused -g hidden=off; \
+        bspc node focused -l above; \
+    else \
+        bspc node focused -t tiled; \
+    fi
 
 # move desktop
 super + {Up,Down,Left,Right}

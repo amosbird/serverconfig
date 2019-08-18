@@ -13,7 +13,9 @@ if pgrep obs >/dev/null; then
         bspc node "$id" -t floating
         bspc node "$id" -g hidden=off -f
     fi
-    read -r w h < <(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q')
+    wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
+    w=${wh[0]}
+    h=${wh[1]}
     x=$((w / 8))
     y=80
     w=$((w * 3 / 4))

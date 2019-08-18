@@ -13,7 +13,9 @@ if pgrep mpv >/dev/null; then
         bspc node "$id" -t floating
         bspc node "$id" -g hidden=off -f
     fi
-    read -r w h < <(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q')
+    wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
+    w=${wh[0]}
+    h=${wh[1]}
     read -r x y < <(xwininfo -id "$id" | perl -ne 'print $1, " " if /(?:Width|Height): (.*)/')
     x=$(((w - x) / 2))
     y=$(((h - y) / 2))

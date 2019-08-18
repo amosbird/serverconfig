@@ -7,7 +7,7 @@ title=$(xprop -id "$wid" WM_NAME | perl -ne 'print /"(.*)"/')
 echo $class >/tmp/wowow
 
 fc() {
-    wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+    wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
     w=${wh[0]}
     h=${wh[1]}
     x=$((w * 3 / 16))
@@ -118,7 +118,7 @@ TelegramDesktop)
     echo "sticky=on state=floating"
     ;;
 Soffice)
-    wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+    wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
     w=${wh[0]}
     h=${wh[1]}
     x=$((w * 3 / 16))
@@ -137,7 +137,7 @@ Emacs)
         fc
         ;;
     emacs-editor)
-        wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+        wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
         w=${wh[0]}
         h=${wh[1]}
         x=$((w * 3 / 12))

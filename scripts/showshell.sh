@@ -21,7 +21,7 @@ else
     if [ "$workspace" = h ]; then
         exit 0
     fi
-    wh=($(xdpyinfo | grep dimensions | sed -r '/^[^0-9]*([0-9]+)x([0-9]+).*/!d;s//\1 \2/;q'))
+    wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
     w=${wh[0]}
     h=${wh[1]}
     w=$((w / 2 - 7))
