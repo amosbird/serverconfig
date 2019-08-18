@@ -3,3 +3,9 @@
 	name = Amos Bird
 [pull]
 	rebase = true
+[color]
+	ui = auto
+[core]
+	excludesfile = ~/.gitignore_global
+[github]
+	user = amosbird
