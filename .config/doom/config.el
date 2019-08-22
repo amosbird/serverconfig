@@ -2146,12 +2146,12 @@ representation of `NUMBER' is smaller."
         (with-ivy-window
           (with-current-buffer (marker-buffer +amos-ivy--origin)
             (leap-set-jump +amos-ivy--origin))
-          (run-hooks 'leap-post-jump-hook)))
+          (run-hooks 'leap-post-jump-hook))
+        (setq +amos-ivy--origin nil
+              leaped t))
       (unless ivy-exit
         (with-ivy-window
-          (run-hooks 'leap-post-jump-hook))))
-    (setq +amos-ivy--origin nil
-          leaped t))
+          (run-hooks 'leap-post-jump-hook)))))
   (setq is-swiper-occur nil))
 
 (defun +amos|record-position-maybe ()
@@ -2818,9 +2818,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
