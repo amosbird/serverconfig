@@ -1,3 +1,5 @@
+Xcursor.size: 16
+
 URxvt.font: xft:Ubuntu Mono:size=14,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1
 URxvt.italicFont: xft:Ubuntu Mono:size=14,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1
 URxvt.boldItalicFont: xft:Ubuntu Mono:size=14:Bold,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true:Bold,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1:Bold
