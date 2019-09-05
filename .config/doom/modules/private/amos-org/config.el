@@ -11,11 +11,11 @@
 ;; Plugins
 ;;
 
-(def-package! toc-org
+(use-package! toc-org
   :commands toc-org-enable
   :init (add-hook 'org-mode-hook #'toc-org-enable))
 
-(def-package! org-crypt ; built-in
+(use-package! org-crypt ; built-in
   :commands org-crypt-use-before-save-magic
   :init (add-hook 'org-load-hook #'org-crypt-use-before-save-magic)
   :config
@@ -23,11 +23,11 @@
         org-crypt-key user-mail-address
         epa-file-encrypt-to user-mail-address))
 
-(def-package! org-bullets
+(use-package! org-bullets
   :commands org-bullets-mode
   :init (add-hook 'org-mode-hook #'org-bullets-mode))
 
-(def-package! evil-org
+(use-package! evil-org
   :after org
   :config
   (add-hook! org-mode (evil-org-mode))
@@ -88,7 +88,7 @@
   (setq evil-auto-indent nil)
   (visual-line-mode +1)
   (org-indent-mode -1)
-  (doom|disable-line-numbers)
+  (doom-disable-line-numbers-h)
 
   ;; show-paren-mode causes problems for org-indent-mode, so disable it
   (set (make-local-variable 'show-paren-mode) nil)
@@ -201,7 +201,7 @@
 
 (add-hook 'org-load-hook #'+org-export|init t)
 
-                                        ;(def-package! ox-pandoc
+                                        ;(use-package! ox-pandoc
                                         ;  :config
                                         ;  (unless (executable-find "pandoc")
                                         ;    (warn "org-export: couldn't find pandoc, disabling pandoc export"))
@@ -247,13 +247,13 @@
   (add-hook! 'org-export-before-processing-hook #'+org-export|delete-org-comments))
 
 
-(def-package! ox-twbs
+(use-package! ox-twbs
   :after ox)
 
-(def-package! ox-hugo
+(use-package! ox-hugo
   :after ox)
 
-(def-package! org-projectile
+(use-package! org-projectile
   :after org
   :config
   (org-projectile-per-project)

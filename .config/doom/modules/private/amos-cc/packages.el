@@ -8,4 +8,4 @@
 (package! clang-format)
 (package! modern-cpp-font-lock)
 (package! opencl-mode)
-(package! ccls :recipe (:fetcher github :repo "MaskRay/emacs-ccls"))
+(package! ccls :recipe (:host github :repo "MaskRay/emacs-ccls"))

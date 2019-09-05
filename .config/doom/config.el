@@ -1,13 +1,295 @@
 ;;; private/amos/config.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
-(add-to-list '+evil-collection-disabled-list 'mu4e 'mu4e-conversation)
-
 (load! "+bindings")
 (require 'dash)
+(require 'ivy)
 (require 'evil-multiedit)
-(require 'company)
-(require 'company-lsp)
-(require 'counsel)
+(require 'company) ; it loads company-lsp which loads lsp
+
+(use-package! speed-type
+  :defer
+  :config
+  (map!
+   :map speed-type--completed-keymap
+   :ni "q" #'kill-this-buffer
+   :ni "r" #'speed-type--replay
+   :ni "n" #'speed-type--play-next))
+
+(use-package! flyspell-lazy
+  :config
+  (add-to-list 'ispell-extra-args "--sug-mode=ultra")
+  (flyspell-lazy-mode +1))
+
+(use-package! quick-peek
+  :defer)
+
+(use-package! flycheck
+  :after-call (doom-switch-buffer-hook after-find-file)
+  :config
+  ;; Emacs feels snappier without checks on newline
+  (setq flycheck-check-syntax-automatically '(save idle-change mode-enabled))
+  (after! evil
+    (defun +syntax-checkers|flycheck-buffer ()
+      "Flycheck buffer on ESC in normal mode."
+      (when flycheck-mode
+        (ignore-errors (flycheck-buffer))
+        nil))
+    (add-hook 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
+  (global-flycheck-inline-mode +1)
+  (global-flycheck-mode +1)
+  (advice-add #'flycheck-inline-display-errors :around #'+amos-flycheck-inline-display-errors-a)
+  ;; (advice-add #'flycheck-display-error-messages :override #'flycheck-inline-display-errors)
+  (setq flycheck-highlighting-mode 'columns
+        flycheck-check-syntax-automatically '(save mode-enabled)
+        flycheck-indication-mode nil
+        ;; flycheck-inline-display-function
+        ;; (lambda (msg pos)
+        ;;   (let* ((ov (quick-peek-overlay-ensure-at pos))
+        ;;          (contents (quick-peek-overlay-contents ov)))
+        ;;     (setf (quick-peek-overlay-contents ov)
+        ;;           (concat contents (when contents "\n") msg))
+        ;;     (quick-peek-update ov)))
+        ;; flycheck-inline-clear-function #'quick-peek-hide
+        flycheck-display-errors-delay 0))
+
+(use-package! dired-open
+  :after dired
+  :config
+  (push #'+amos/dired-open-callgrind dired-open-functions))
+
+(use-package! dired-quick-sort
+  :after dired
+  :config
+  (dired-quick-sort-setup))
+
+(use-package! direnv
+  :config
+  (setq direnv-show-paths-in-summary nil)
+  (direnv-mode +1)
+  (add-hook! 'after-save-hook (if (string= (file-name-nondirectory buffer-file-name) ".envrc") (direnv-update-environment)))
+  (defun +amos/direnv-reload ()
+    (interactive)
+    (shell-command! "direnv allow")
+    (direnv-update-environment)
+    (direnv-mode +1)))
+
+(use-package! cc-playground
+  :init
+  (put 'cc-exec 'safe-local-variable #'stringp)
+  (put 'cc-flags 'safe-local-variable #'stringp)
+  (put 'cc-links 'safe-local-variable #'stringp)
+  (dolist (x '(cc-playground-exec cc-playground-debug cc-playground-exec-test cc-playground-bench))
+    (advice-add x :before #'evil-normal-state))
+  :bind (:map cc-playground-mode-map
+          ("<f8>" . cc-playground-rm) ; terminal
+          ("S-RET" . cc-playground-rm) ; gui
+          ("C-c r" . cc-playground-add-or-modify-tag)
+          ("C-c b" . cc-playground-bench)
+          ("C-c d" . cc-playground-debug)
+          ("C-c t" . cc-playground-debug-test)
+          ("C-c l" . cc-playground-ivy-add-library-link)
+          ("C-c c" . cc-playground-change-compiler)
+          ("C-c o" . cc-playground-switch-optimization-flag)
+          ("C-c f" . cc-playground-add-compilation-flags))
+  :config
+  (add-hook! 'cc-playground-rm-hook
+    (doom-with-advice (y-or-n-p #'ignore) (lsp-shutdown-workspace))))
+
+(use-package! sync-recentf)
+
+(use-package! rainbow-mode
+  :defer)
+
+(use-package! google-translate
+  :defer)
+
+(use-package! kurecolor
+  :init
+  ;; | color    | toggle                     | meaning      |
+  ;; |----------+----------------------------+--------------|
+  ;; | red      |                            | persist      |
+  ;; | blue     | :exit t                    | transient    |
+  ;; | amaranth | :foreign-keys warn         | persist w    |
+  ;; | teal     | :foreign-keys warn :exit t | transient w  |
+  ;; | pink     | :foreign-keys run          | nested       |
+  (defhydra +rgb@kurecolor (:color red :hint nil)
+    "
+Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
+    ("w" kurecolor-decrease-brightness-by-step)
+    ("W" kurecolor-increase-brightness-by-step)
+    ("d" kurecolor-decrease-saturation-by-step)
+    ("D" kurecolor-increase-saturation-by-step)
+    ("e" kurecolor-decrease-hue-by-step)
+    ("E" kurecolor-increase-hue-by-step)
+    ("q" nil "cancel" :color blue))
+  (advice-add #'+rgb@kurecolor/body :before (lambda (&rest _) (rainbow-mode +1)))
+  :defer)
+
+(use-package! lsp-mode
+  :init
+  (setq
+   lsp-prefer-flymake nil
+   lsp-enable-indentation nil
+   lsp-enable-file-watchers nil
+   lsp-auto-guess-root t)
+  :defer
+  :config
+  (add-hook! 'kill-emacs-hook (setq lsp-restart 'ignore))
+  (add-hook! 'lsp-after-open-hook #'lsp-enable-imenu))
+
+(use-package! lsp-ui
+  :init
+  (setq lsp-ui-sideline-enable nil
+        lsp-ui-sideline-show-diagnostics nil)
+  (add-hook! 'lsp-ui-mode-hook
+    (defun +amos-init-ui-flycheck-h ()
+      (require 'lsp-ui-flycheck)
+      (lsp-ui-flycheck-enable t)))
+  :defer)
+
+(use-package! go-playground
+  :defer
+  :bind (:map go-playground-mode-map
+          ("<f8>" . go-playground-rm)))
+
+(use-package! rust-playground
+  :defer
+  :bind (:map rust-playground-mode-map
+          ("<f8>" . rust-playground-rm)))
+
+(use-package! py-playground
+  :defer
+  :config
+  (dolist (x '(py-playground-exec py-playground-debug))
+    (advice-add x :before #'evil-normal-state))
+  :bind (:map py-playground-mode-map
+          ("<f8>" . py-playground-rm) ; terminal
+          ("S-RET" . py-playground-rm) ; gui
+          ("C-c r" . py-playground-add-or-modify-tag)
+          ("C-c d" . py-playground-debug)))
+
+(use-package! gitattributes-mode
+  :defer)
+
+(use-package! gitconfig-mode
+  :defer)
+
+(use-package! gitignore-mode
+  :defer)
+
+;; way slower
+;; (use-package! magit-svn
+;;   :commands turn-on-magit-svn
+;;   :init (add-hook 'magit-mode-hook 'turn-on-magit-svn))
+
+(use-package! page-break-lines
+  :init
+  (global-page-break-lines-mode +1))
+
+(use-package! adoc-mode
+  :mode "\\.adoc$")
+
+(use-package! hl-line+
+  :config
+  (global-hl-line-mode +1))
+
+(use-package! unfill
+  :config
+  (global-set-key [remap fill-paragraph] #'unfill-toggle))
+
+(use-package! easy-hugo
+  :defer
+  :config
+  (evil-set-initial-state 'easy-hugo-mode 'emacs)
+  (add-hook! 'easy-hugo-mode-hook (setq-local amos-browse t))
+  (setq
+   easy-hugo-basedir "~/sites/blog"
+   easy-hugo-url "https://wentropy.com"
+   easy-hugo-sshdomain "blog"
+   easy-hugo-root "/var/www/blog/"
+   easy-hugo-previewtime "300"
+   easy-hugo-default-ext ".org"))
+
+(use-package! lispyville
+  :defer)
+
+(use-package! move-text
+  :defer)
+
+(use-package! ws-butler
+  :config
+  (ws-butler-global-mode +1))
+
+(use-package! syntactic-close
+  :defer)
+
+(use-package! realign-mode
+  :config
+  ;; (add-hook! 'realign-hooks #'recenter)
+  (defun amos-special-window-p (window)
+    (let* ((buffer (window-buffer window))
+           (framename (frame-parameter (window-frame window) 'name))
+           (buffname (string-trim (buffer-name buffer))))
+      (or (equal buffname "*doom*")
+          (with-current-buffer buffer server-visit-file)
+          (equal buffname "*flycheck-posframe-buffer*")
+          (equal buffname "*Ediff Control Panel*")
+          (equal (with-current-buffer buffer major-mode) 'mu4e-view-mode)
+          (equal (with-current-buffer buffer major-mode) 'mu4e-compose-mode)
+          (equal (with-current-buffer buffer major-mode) 'pdf-view-mode))))
+  (push #'amos-special-window-p realign-ignore-window-predicates))
+
+(use-package! narrow-reindent
+  :config
+  (defun narrow-reindent-mode-maybe ()
+    (if (not (minibufferp))
+        (narrow-reindent-mode +1)))
+  (define-global-minor-mode global-narrow-reindent-mode
+    narrow-reindent-mode narrow-reindent-mode-maybe
+    :group 'narrow-reindent)
+  (global-narrow-reindent-mode +1))
+
+(use-package! git-gutter
+  :config
+  (defface +amos:modified
+    '((t (:foreground "chocolate" :weight bold :inherit default)))
+    "Face of modified")
+
+  (defface +amos:added
+    '((t (:foreground "ForestGreen" :weight bold :inherit default)))
+    "Face of added")
+
+  (defface +amos:deleted
+    '((t (:foreground "DarkRed" :weight bold :inherit default)))
+    "Face of deleted")
+
+  (global-git-gutter-mode +1)
+  (advice-add #'git-gutter:set-window-margin :override #'ignore)
+  (defun +amos-git-gutter:before-string-a (sign)
+    (let* ((gutter-sep (concat " " (make-string (- (if (car (window-margins)) (car (window-margins)) 4) 2) ? ) sign))
+           (face (pcase sign
+                   ("=" '+amos:modified)
+                   ("+" '+amos:added)
+                   ("-" '+amos:deleted)))
+           (ovstring (propertize gutter-sep 'face face)))
+      (propertize " " 'display `((margin left-margin) ,ovstring))))
+
+  (defun +amos-git-gutter:start-git-diff-process-a (file proc-buf)
+    (let ((arg (git-gutter:git-diff-arguments file)))
+      (apply #'start-file-process "git-gutter" proc-buf
+             "git" "--no-pager" "-c" "diff.autorefreshindex=0"
+             "diff" "--no-color" "--no-ext-diff" "--relative" "-U0" "--"
+             arg)))
+  (advice-add #'git-gutter:put-signs :before (lambda (&rest _) (realign-windows)))
+  (advice-add #'git-gutter:before-string :override #'+amos-git-gutter:before-string-a)
+  (advice-add #'git-gutter:start-git-diff-process :override #'+amos-git-gutter:start-git-diff-process-a)
+  (add-hook 'window-configuration-change-hook #'git-gutter:update-all-windows))
+
+(use-package! evil-textobj-line
+  :after evil)
+
+(use-package! chinese-yasdcv
+  :defer)
 
 (defun +amos/recenter (&rest _)
   (interactive)
@@ -118,11 +400,11 @@
       c-tab-always-indent t
       auth-sources (list (expand-file-name ".authinfo.gpg" +amos-dir)))
 
-(defun +amos*no-authinfo-for-tramp (orig-fn &rest args)
+(defun +amos-no-authinfo-for-tramp-a (orig-fn &rest args)
   "Don't look into .authinfo for local sudo TRAMP buffers."
   (let ((auth-sources (if (equal tramp-current-method "sudo") nil auth-sources)))
     (apply orig-fn args)))
-(advice-add #'tramp-read-passwd :around #'+amos*no-authinfo-for-tramp)
+(advice-add #'tramp-read-passwd :around #'+amos-no-authinfo-for-tramp-a)
 
 (defmacro +amos-make-special-indent-fn! (keyword)
   `(let* ((sname (symbol-name ,keyword))
@@ -272,22 +554,6 @@
                                         (browse-url-osc url _new-window)))))
 
 (defvar server-visit-file nil)
-(def-package! realign-mode
-  :commands realign-mode realign-windows
-  :config
-  ;; (add-hook! 'realign-hooks #'recenter)
-  (defun amos-special-window-p (window)
-    (let* ((buffer (window-buffer window))
-           (framename (frame-parameter (window-frame window) 'name))
-           (buffname (string-trim (buffer-name buffer))))
-      (or (equal buffname "*doom*")
-          (with-current-buffer buffer server-visit-file)
-          (equal buffname "*flycheck-posframe-buffer*")
-          (equal buffname "*Ediff Control Panel*")
-          (equal (with-current-buffer buffer major-mode) 'mu4e-view-mode)
-          (equal (with-current-buffer buffer major-mode) 'mu4e-compose-mode)
-          (equal (with-current-buffer buffer major-mode) 'pdf-view-mode))))
-  (push #'amos-special-window-p realign-ignore-window-predicates))
 
 (setq recenter-redisplay nil)
 (remove-hook! 'kill-emacs-query-functions #'doom-quit-p)
@@ -324,57 +590,6 @@
       (replace-match "")
       (ad-set-arg 1 (- (ad-get-arg 1) 2)))))
 
-(def-package! narrow-reindent
-  :demand
-  :config
-  (defun narrow-reindent-mode-maybe ()
-    (if (not (minibufferp))
-        (narrow-reindent-mode +1)))
-  (define-global-minor-mode global-narrow-reindent-mode
-    narrow-reindent-mode narrow-reindent-mode-maybe
-    :group 'narrow-reindent)
-  (global-narrow-reindent-mode +1))
-
-(def-package! git-gutter
-  :config
-  (defface +amos:modified
-    '((t (:foreground "chocolate" :weight bold :inherit default)))
-    "Face of modified")
-
-  (defface +amos:added
-    '((t (:foreground "ForestGreen" :weight bold :inherit default)))
-    "Face of added")
-
-  (defface +amos:deleted
-    '((t (:foreground "DarkRed" :weight bold :inherit default)))
-    "Face of deleted")
-
-  (global-git-gutter-mode +1)
-  (advice-add #'git-gutter:set-window-margin :override #'ignore)
-  (defun +amos*git-gutter:before-string (sign)
-    (let* ((gutter-sep (concat " " (make-string (- (if (car (window-margins)) (car (window-margins)) 4) 2) ? ) sign))
-           (face (pcase sign
-                   ("=" '+amos:modified)
-                   ("+" '+amos:added)
-                   ("-" '+amos:deleted)))
-           (ovstring (propertize gutter-sep 'face face)))
-      (propertize " " 'display `((margin left-margin) ,ovstring))))
-
-  (defun +amos*git-gutter:start-git-diff-process (file proc-buf)
-    (let ((arg (git-gutter:git-diff-arguments file)))
-      (apply #'start-file-process "git-gutter" proc-buf
-             "git" "--no-pager" "-c" "diff.autorefreshindex=0"
-             "diff" "--no-color" "--no-ext-diff" "--relative" "-U0" "--"
-             arg)))
-  (advice-add #'git-gutter:put-signs :before (lambda (&rest _) (realign-windows)))
-  (advice-add #'git-gutter:before-string :override #'+amos*git-gutter:before-string)
-  (advice-add #'git-gutter:start-git-diff-process :override #'+amos*git-gutter:start-git-diff-process)
-  (add-hook 'window-configuration-change-hook #'git-gutter:update-all-windows)
-  )
-
-(def-package! evil-textobj-line
-  :after evil)
-
 (unless window-system
   (require 'evil-terminal-cursor-changer)
   (xterm-mouse-mode +1)
@@ -396,9 +611,6 @@
                     (interactive)
                     (evil-scroll-line-down 3)))
   (etcc-on))
-
-(def-package! chinese-yasdcv
-  :commands yasdcv-translate-at-point)
 
 (setq
  dash-docs-docsets-path "~/.docsets"
@@ -422,39 +634,15 @@
 
 (setq-hook! 'lua-mode-hook flycheck-highlighting-mode 'lines)
 
-(defun advice-browse-url (ofun &rest candidate)
+(defun +amos-browse-url-a (ofun &rest candidate)
   (if (boundp 'amos-browse)
       (apply 'browse-url-firefox candidate)
     (apply ofun candidate)))
-(advice-add 'browse-url :around #'advice-browse-url)
+(advice-add 'browse-url :around #'+amos-browse-url-a)
 
 (defadvice run-skewer (around +amos*run-skewer activate)
   (setq-local amos-browse t)
   ad-do-it)
-
-(def-package! easy-hugo
-  :commands easy-hugo
-  :config
-  (evil-set-initial-state 'easy-hugo-mode 'emacs)
-  (add-hook! 'easy-hugo-mode-hook (setq-local amos-browse t))
-  (setq
-   easy-hugo-basedir "~/sites/blog"
-   easy-hugo-url "https://wentropy.com"
-   easy-hugo-sshdomain "blog"
-   easy-hugo-root "/var/www/blog/"
-   easy-hugo-previewtime "300"
-   easy-hugo-default-ext ".org"))
-
-(def-package! lispyville
-  :commands lispyville-mode)
-
-(def-package! move-text
-  :commands move-text-up move-text-down)
-
-(def-package! ws-butler
-  :demand
-  :config
-  (ws-butler-global-mode))
 
 (defun my-create-newline-and-enter-sexp (&rest _ignored)
   "Open a new brace or bracket expression, with relevant newlines and indent."
@@ -493,7 +681,7 @@
   (let (evil-mode-map-alist)
     (call-interactively (key-binding (this-command-keys)))))
 
-(defun +amos*switch-buffer-matcher (regexp candidates)
+(defun +amos-switch-buffer-matcher-a (regexp candidates)
   "Return REGEXP matching CANDIDATES.
 Skip buffers that match `ivy-ignore-buffers'."
   (let ((res (ivy--re-filter regexp candidates)))
@@ -512,20 +700,10 @@ Skip buffers that match `ivy-ignore-buffers'."
            res)
           (and (eq ivy-use-ignore t)
                res)))))
-(advice-add #'ivy--switch-buffer-matcher :override #'+amos*switch-buffer-matcher)
-
-(def-package! hl-line+
-  :demand
-  :config
-  (global-hl-line-mode +1))
-
-(def-package! unfill
-  :commands (unfill-region unfill-paragraph unfill-toggle)
-  :init
-  (global-set-key [remap fill-paragraph] #'unfill-toggle))
+(advice-add #'ivy--switch-buffer-matcher :override #'+amos-switch-buffer-matcher-a)
 
 ;; recenter buffer when switching windows
-(defun +amos|update-window-buffer-list ()
+(defun +amos-update-window-buffer-list-h ()
   (walk-window-tree
    (lambda (window)
      (let ((old-buffer (window-parameter window 'my-last-buffer))
@@ -535,11 +713,11 @@ Skip buffers that match `ivy-ignore-buffers'."
          ;; a new window has been added to this frame.
          ;; (+amos/recenter)
          (setf (window-parameter window 'my-last-buffer) new-buffer))))))
-(add-hook! 'window-configuration-change-hook #'+amos|update-window-buffer-list)
+(add-hook! 'window-configuration-change-hook #'+amos-update-window-buffer-list-h)
 
-(defun +amos*evil-ex-search-before (&rest _)
+(defun +amos-evil-ex-search-before-a (&rest _)
   (if (thing-at-point 'symbol) (leap-set-jump)))
-(advice-add #'evil-ex-start-word-search :before #'+amos*evil-ex-search-before)
+(advice-add #'evil-ex-start-word-search :before #'+amos-evil-ex-search-before-a)
 
 (defun +amos/counsel-rg-projectile ()
   (interactive)
@@ -552,7 +730,7 @@ Skip buffers that match `ivy-ignore-buffers'."
   (let ((counsel-rg-base-command "rg -uu -S --no-heading --line-number --color never %s ."))
     (counsel-rg nil default-directory)))
 
-(def-package! yapfify
+(use-package! yapfify
   :after python)
 
 ;; from spacemacs
@@ -750,35 +928,7 @@ using a visual block/rectangle selection."
 (after! evil-surround
   (setq-default evil-surround-pairs-alist (append '((?` . ("`" . "`")) (?~ . ("~" . "~"))) evil-surround-pairs-alist)))
 
-(def-package! gitattributes-mode
-  :defer t)
-
-(def-package! gitconfig-mode
-  :defer t)
-
-(def-package! gitignore-mode
-  :defer t)
-
-;; way slower
-;; (def-package! magit-svn
-;;   :commands turn-on-magit-svn
-;;   :init (add-hook 'magit-mode-hook 'turn-on-magit-svn))
-
-(def-package! page-break-lines
-  :commands global-page-break-lines-mode
-  :init
-  (global-page-break-lines-mode +1))
-
-;; (defun amos*page-break-lines--update-display-tables  (&optional _)
-;;   "Function called for updating display table in windows of current selected frame."
-;;   (unless (minibufferp)
-;;     (mapc 'page-break-lines--update-display-table (window-list nil 'no-minibuffer))))
-;; (advice-add 'page-break-lines--update-display-tables :override #'amos*page-break-lines--update-display-tables)
-
-(def-package! adoc-mode
-  :mode "\\.adoc$")
-
-(defun +amos*ivy-rich-switch-buffer-pad (str len &optional left)
+(defun +amos-ivy-rich-switch-buffer-pad-a (str len &optional left)
   "Improved version of `ivy-rich-switch-buffer-pad' that truncates long inputs."
   (let ((real-len (length str)))
     (cond
@@ -790,7 +940,7 @@ using a visual block/rectangle selection."
      (t (concat (substring str 0 (- len 1)) "…")))))
 
 ;; Override the original function using advice
-(advice-add 'ivy-rich-switch-buffer-pad :override #'+amos*ivy-rich-switch-buffer-pad)
+(advice-add 'ivy-rich-switch-buffer-pad :override #'+amos-ivy-rich-switch-buffer-pad-a)
 
 (evil-define-motion +amos*evil-beginning-of-line ()
   "Move the cursor to the beginning of the current line."
@@ -906,30 +1056,6 @@ This function should be hooked to `buffer-list-update-hook'."
 
 (add-hook! 'after-save-hook #'executable-make-buffer-file-executable-if-script-p)
 
-(def-package! go-playground
-  :commands (go-playground go-playground-mode)
-  :bind (:map go-playground-mode-map
-          ("<f8>" . go-playground-rm)))
-
-(def-package! rust-playground
-  :commands (rust-playground rust-playground-mode)
-  :bind (:map rust-playground-mode-map
-          ("<f8>" . rust-playground-rm)))
-
-
-
-(def-package! py-playground
-  :commands py-playground py-playground-mode py-playground-find-snippet
-  :load-path (lambda () (interactive) (if (string= (system-name) "t450s") "~/git/py-playground"))
-  :init
-  (dolist (x '(py-playground-exec py-playground-debug))
-    (advice-add x :before #'evil-normal-state))
-  :bind (:map py-playground-mode-map
-          ("<f8>" . py-playground-rm) ; terminal
-          ("S-RET" . py-playground-rm) ; gui
-          ("C-c r" . py-playground-add-or-modify-tag)
-          ("C-c d" . py-playground-debug)))
-
 (defvar +amos--ivy-regex-hash
   (make-hash-table :test #'equal)
   "Store pre-computed regex.")
@@ -990,32 +1116,6 @@ When GREEDY is non-nil, join words in a greedy way."
 
 (advice-add #'ivy-toggle-regexp-quote :override #'+amos*ivy-toggle-regexp-quote)
 (advice-add #'ivy--regex :override #'+amos*ivy-regex-half-quote)
-
-(def-package! rainbow-mode)
-
-(def-package! google-translate
-  :commands google-translate-at-point google-translate-query-translate)
-
-(def-package! kurecolor
-  :after rainbow-mode
-  :config
-  ;; | color    | toggle                     | meaning      |
-  ;; |----------+----------------------------+--------------|
-  ;; | red      |                            | persist      |
-  ;; | blue     | :exit t                    | transient    |
-  ;; | amaranth | :foreign-keys warn         | persist w    |
-  ;; | teal     | :foreign-keys warn :exit t | transient w  |
-  ;; | pink     | :foreign-keys run          | nested       |
-  (defhydra +rgb@kurecolor (:color red :hint nil)
-    "
-Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
-    ("w" kurecolor-decrease-brightness-by-step)
-    ("W" kurecolor-increase-brightness-by-step)
-    ("d" kurecolor-decrease-saturation-by-step)
-    ("D" kurecolor-increase-saturation-by-step)
-    ("e" kurecolor-decrease-hue-by-step)
-    ("E" kurecolor-increase-hue-by-step)
-    ("q" nil "cancel" :color blue)))
 
 (evil-define-command ab-char-inc ()
   (save-excursion
@@ -1094,8 +1194,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (+amos/smart-jumper))
 
 (evil-define-command +amos/complete ()
-  (require 'thingatpt)
-  (require 'company)
   (if (/= (point)
           (save-excursion
             (if (bounds-of-thing-at-point 'symbol)
@@ -1367,29 +1465,15 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
                (point))))
       (evil-range s e type :expanded t))))
 
-(def-package! subword
-  :commands subword-forward subword-backward)
-
 (after! xref
   (add-to-list 'xref-prompt-for-identifier '+lookup/definition :append)
   (add-to-list 'xref-prompt-for-identifier '+lookup/references :append)
   (add-to-list 'xref-prompt-for-identifier 'xref-find-references :append))
 
-(def-package! lsp-mode
-  :init
-  (setq
-   lsp-prefer-flymake nil
-   lsp-enable-indentation nil
-   lsp-enable-file-watchers nil
-   lsp-auto-guess-root t)
-  :config
-  (add-hook 'lsp-after-open-hook #'lsp-enable-imenu))
-
 (defun +amos/lsp-highlight-symbol ()
   (interactive)
   (let ((url (thing-at-point 'url)))
     (if url (goto-address-at-point)
-      (require 'lsp-mode)
       (let ((inhibit-message t))
         (setq-local +amos--lsp-maybe-highlight-symbol t)
         (lsp--document-highlight)))))
@@ -1417,18 +1501,17 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
         (evil-surround-region e b t c))
       (forward-char 1))))
 
-(defun +amos/lsp-shutdown-workspace ()
-  "Shutdown language server."
-  (interactive)
-  (require 'lsp-mode)
-  (--when-let (pcase (lsp-workspaces)
-                (`nil (user-error "There are no active servers in the current buffer"))
-                (`(,workspace) workspace)
-                (workspaces (lsp--completing-read "Select server: "
-                                                  workspaces
-                                                  'lsp--workspace-print nil t)))
-    (setf (lsp--workspace-shutdown-action it) 'shutdown)
-    (with-lsp-workspace it (lsp--shutdown-workspace))))
+;; (defun +amos/lsp-shutdown-workspace ()
+;;   "Shutdown language server."
+;;   (interactive)
+;;   (--when-let (pcase (lsp-workspaces)
+;;                 (`nil (user-error "There are no active servers in the current buffer"))
+;;                 (`(,workspace) workspace)
+;;                 (workspaces (lsp--completing-read "Select server: "
+;;                                                   workspaces
+;;                                                   'lsp--workspace-print nil t)))
+;;     (setf (lsp--workspace-shutdown-action it) 'shutdown)
+;;     (with-lsp-workspace it (lsp--shutdown-workspace))))
 
 (cl-defun +amos-lsp-find-custom (kind method &optional extra &key display-action)
   "Send request named METHOD and get cross references of the symbol under point.
@@ -1446,12 +1529,6 @@ EXTRA is a plist of extra parameters."
 (defun +amos/references ()
   (interactive)
   (+amos-lsp-find-custom 'references "textDocument/references"))
-
-(def-package! lsp-ui
-  :config
-  (setq lsp-ui-sideline-enable nil
-        lsp-ui-sideline-show-diagnostics nil)
-  )
 
 (defun +amos*lsp--position-to-point (params)
   "Convert Position object in PARAMS to a point."
@@ -1536,9 +1613,9 @@ it will restore the window configuration to prior to full-framing."
   (when git-gutter-mode (ignore (call-interactively #'git-gutter)))
   nil)
 
-(add-hook 'doom-escape-hook #'save-buffer-maybe)
-(add-hook 'doom-escape-hook #'diagnostic-maybe)
-(add-hook 'doom-escape-hook #'git-gutter-maybe)
+(add-hook! 'doom-escape-hook #'save-buffer-maybe)
+(add-hook! 'doom-escape-hook #'diagnostic-maybe)
+(add-hook! 'doom-escape-hook #'git-gutter-maybe)
 
 (defun my-reload-dir-locals-for-all-buffer-in-this-directory ()
   "For every buffer with the same `default-directory` as the
@@ -1556,15 +1633,13 @@ current buffer's, reload dir-locals."
   (let ((enable-local-variables :all))
     (hack-dir-local-variables-non-file-buffer)))
 
-(add-hook 'emacs-lisp-mode-hook
-          (defun enable-autoreload-for-dir-locals ()
-            (when (and (buffer-file-name)
-                       (equal dir-locals-file
-                              (file-name-nondirectory (buffer-file-name))))
-              (add-hook (make-variable-buffer-local 'after-save-hook)
-                        'my-reload-dir-locals-for-all-buffer-in-this-directory))))
-
-(advice-remove #'counsel-ag-function #'+ivy*counsel-ag-function)
+(add-hook! 'emacs-lisp-mode-hook
+  (defun enable-autoreload-for-dir-locals ()
+    (when (and (buffer-file-name)
+               (equal dir-locals-file
+                      (file-name-nondirectory (buffer-file-name))))
+      (add-hook! (make-variable-buffer-local 'after-save-hook)
+                 #'my-reload-dir-locals-for-all-buffer-in-this-directory))))
 
 (defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.
@@ -1623,6 +1698,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
         (with-slots (summary location) xref
           (let* ((marker (xref-location-marker location))
                  (buf (marker-buffer marker)))
+            (leap-set-jump)
             (switch-to-buffer buf)
             (goto-char marker))))
     (let ((xref-pos (point))
@@ -1726,8 +1802,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
     (setf (alist-get command ivy-re-builders-alist) 'ivy--regex-fuzzy))
   (defun amos-recentf ()
     (interactive)
-    (require 'recentf)
-    (recentf-mode)
+    (recentf-mode +1)
     (ivy-read "Recentf: " (mapcar #'substring-no-properties recentf-list)
               :action (lambda (f)
                         (with-ivy-window
@@ -1896,18 +1971,6 @@ representation of `NUMBER' is smaller."
   (setq +amos--gcd-count count)
   (evil-apply-on-block #'+amos/dec start end nil))
 
-(def-package! direnv
-  :config
-  (setq direnv-show-paths-in-summary nil)
-  (direnv-mode))
-(add-hook! 'after-save-hook (if (string= (file-name-nondirectory buffer-file-name) ".envrc") (direnv-update-environment)))
-
-(defun +amos/direnv-reload ()
-  (interactive)
-  (shell-command! "direnv allow")
-  (direnv-update-environment)
-  (direnv-mode +1))
-
 (setq +amos-end-of-statement-regex nil)
 (defun set-eos! (modes &rest plist)
   (dolist (mode (doom-enlist modes))
@@ -1973,7 +2036,6 @@ representation of `NUMBER' is smaller."
   (interactive)
   (if (and (boundp 'cc-playground-mode) cc-playground-mode)
       (cc-switch-between-src-and-test)
-    (require 'projectile)
     (projectile-find-other-file)))
 
 (setq interprogram-paste-function #'x-get-selection)
@@ -2014,7 +2076,7 @@ representation of `NUMBER' is smaller."
   '(("^\\*Completions"
      :slot -1 :vslot -2 :ttl 0)
     ("^\\*Warning*"
-     :actions (+popup-display-buffer-stacked-side-window))
+     :actions (+popup-display-buffer-stacked-side-window-fn))
     ("^\\*git-gutter*"
      :side right :size 0.5)
     ("^\\*Flycheck"
@@ -2166,8 +2228,9 @@ representation of `NUMBER' is smaller."
 (advice-add #'better-jumper-jump-forward :override #'leap-jump-forward)
 (advice-add #'better-jumper-jump-backward :override #'leap-jump-backward)
 (advice-add #'better-jumper-set-jump :override #'ignore)
-(advice-add #'doom*set-jump :override #'ignore)
-(advice-add #'doom*recenter :override #'ignore)
+(advice-add #'doom-set-jump-a :override #'ignore)
+(advice-add #'doom-set-jump-h :override #'ignore)
+(advice-add #'doom-recenter-a :override #'ignore)
 (advice-add #'elisp-def--flash-region :override #'ignore)
 ;; (ad-disable-advice 'switch-to-buffer 'before 'evil-jumps)
 ;; (ad-activate 'switch-to-buffer)  ;; stupid api
@@ -2334,9 +2397,7 @@ the current state and point position."
 (defvar +amos-frame-stack nil)
 (defvar +amos-tmux-need-switch nil)
 
-
 (defun +amos/set-face ()
-
   (after! swiper
     (set-face-attribute 'swiper-line-face nil :inherit 'unspecified :background 'unspecified :foreground 'unspecified :underline t))
   (after! ivy
@@ -2350,17 +2411,18 @@ the current state and point position."
 
 ;; vertical bar
 (add-hook! 'doom-load-theme-hook #'+amos/set-face)
-(add-hook! 'after-make-frame-functions
+
+(defun +amos-after-make-frame-functions-h (&rest _)
   (+amos/set-face)
   (unless +amos-frame-list
     (setq +amos-frame-list (+amos--frame-list-without-daemon))))
-(defsubst +amos--is-frame-daemons-frame (f)
-  (and (daemonp) (eq f terminal-frame)))
+(add-hook! 'after-make-frame-functions #'+amos-after-make-frame-functions-h)
 
+(defun +amos--is-frame-daemons-frame (f)
+  (and (daemonp) (eq f terminal-frame)))
 (defun +amos--frame-list-without-daemon ()
   (if (daemonp)
-      (filtered-frame-list
-       #'(lambda (f) (not (+amos--is-frame-daemons-frame f))))
+      (filtered-frame-list (lambda (f) (not (+amos--is-frame-daemons-frame f))))
     (frame-list)))
 
 (defun +amos/workspace-new ()
@@ -2447,16 +2509,6 @@ the current state and point position."
 (defadvice +popup-display-buffer (around +amos*popup-display-buffer activate)
   (doom-with-advice (get-window-with-predicate (lambda (orig-fun f &rest _) (funcall orig-fun f)))
       ad-do-it))
-
-(def-package! dired-open
-  :after dired
-  :config
-  (push #'+amos/dired-open-callgrind dired-open-functions))
-
-(def-package! dired-quick-sort
-  :after dired
-  :config
-  (dired-quick-sort-setup))
 
 (after! dired-x
   (setq dired-omit-files
@@ -2618,8 +2670,6 @@ the current state and point position."
   (sp-beginning-of-sexp)
   (evil-backward-char))
 
-(def-package! syntactic-close)
-
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
@@ -2645,45 +2695,12 @@ the current state and point position."
 (after! recentf
   (setq recentf-max-saved-items 10000))
 
-(def-package! quick-peek)
-
-(defun +amos*flycheck-inline-display-errors (ofun &rest candidate)
+(defun +amos-flycheck-inline-display-errors-a (ofun &rest candidate)
   (if (or (eq last-command 'flycheck-previous-error)
           (eq last-command 'flycheck-next-error)
           (eq last-command '+amos/yank-flycheck-error)
           (eq last-input-event 29))
       (apply ofun candidate)))
-
-(def-package! flycheck
-  :commands (flycheck-list-errors flycheck-buffer)
-  :after-call (doom-enter-buffer-hook after-find-file)
-  :config
-  ;; Emacs feels snappier without checks on newline
-  (setq flycheck-check-syntax-automatically '(save idle-change mode-enabled))
-  (after! evil
-    (defun +syntax-checkers|flycheck-buffer ()
-      "Flycheck buffer on ESC in normal mode."
-      (when flycheck-mode
-        (ignore-errors (flycheck-buffer))
-        nil))
-    (add-hook 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
-  (global-flycheck-inline-mode +1)
-  (global-flycheck-mode +1)
-  (advice-add #'flycheck-inline-display-errors :around #'+amos*flycheck-inline-display-errors)
-  ;; (advice-add #'flycheck-display-error-messages :override #'flycheck-inline-display-errors)
-  (setq flycheck-highlighting-mode 'columns
-        flycheck-check-syntax-automatically '(save mode-enabled)
-        flycheck-indication-mode nil
-        ;; flycheck-inline-display-function
-        ;; (lambda (msg pos)
-        ;;   (let* ((ov (quick-peek-overlay-ensure-at pos))
-        ;;          (contents (quick-peek-overlay-contents ov)))
-        ;;     (setf (quick-peek-overlay-contents ov)
-        ;;           (concat contents (when contents "\n") msg))
-        ;;     (quick-peek-update ov)))
-        ;; flycheck-inline-clear-function #'quick-peek-hide
-        flycheck-display-errors-delay 0)
-  (require 'lsp-ui-flycheck))
 
 (after! counsel
   (setq counsel-rg-base-command "rg -S --no-heading --line-number --color never %s ."))
@@ -2763,7 +2780,7 @@ By default the last line."
       (+amos-clean-evil-jump-list (current-buffer)))
   (or (and kill (kill-current-buffer)) (bury-buffer)))
 
-(defun +amos*undo-tree (ofun &rest arg)
+(defun +amos-undo-tree-a (ofun &rest arg)
   (if (and (not defining-kbd-macro)
            (not executing-kbd-macro))
       (if (not (memq major-mode '(c-mode c++-mode)))
@@ -2773,8 +2790,8 @@ By default the last line."
         ;; (+amos|iedit-mode-end-hook)
         )
     (message "cannot use undo when recording/executing a macro!")))
-(advice-add #'undo-tree-undo :around #'+amos*undo-tree)
-(advice-add #'undo-tree-redo :around #'+amos*undo-tree)
+(advice-add #'undo-tree-undo :around #'+amos-undo-tree-a)
+(advice-add #'undo-tree-redo :around #'+amos-undo-tree-a)
 
 (add-hook! 'eval-expression-minibuffer-setup-hook
   (define-key minibuffer-local-map "\C-p" #'previous-line-or-history-element)
@@ -2784,7 +2801,7 @@ By default the last line."
   (setq-local truncate-lines t)
   (setq-local inhibit-message t))
 
-(setq window-adjust-process-window-size-smallest #'ignore)
+(advice-add #'window-adjust-process-window-size-smallest :override #'ignore)
 (advice-add #'set-process-window-size :override #'ignore)
 (advice-add #'evil-escape-mode :override #'ignore)
 (advice-add #'dired-k--highlight-by-file-attribyte :override #'ignore)
@@ -2792,6 +2809,14 @@ By default the last line."
 (advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))
 (advice-add #'magit-blame--update-margin :override #'ignore)
 (advice-add #'evil-visual-update-x-selection :override #'ignore)
+
+(defun +amos-magit-blob-next-a ()
+  "Visit the next blob which modified the current file."
+  (interactive)
+  (if-let ((file (and magit-buffer-file-name (magit-blob-successor magit-buffer-revision magit-buffer-file-name))))
+      (magit-blob-visit file)
+    (user-error "You have reached the previous end of time")))
+(advice-add #'magit-blob-next :override #'+amos-magit-blob-next-a)
 
 (defun +amos/avy-goto-url()
   "Use avy to go to an URL in the buffer."
@@ -2818,9 +2843,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -2937,7 +2962,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
              (t 0)))))
       (+ shift (min lua-indent-level add)))))
 
-(defun +amos*lua-calculate-indentation (&optional parse-start)
+(defun +amos-lua-calculate-indentation-a (&optional parse-start)
   "Return appropriate indentation for current line as Lua code."
   ;; Algorithm: indentation is computed from current line and previous line.
   ;; Current line:
@@ -2973,7 +2998,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                0))
         ;; If there's no previous line, indentation is 0.
         0))))
-(advice-add #'lua-calculate-indentation :override #'+amos*lua-calculate-indentation)
+(advice-add #'lua-calculate-indentation :override #'+amos-lua-calculate-indentation-a)
 
 (global-page-break-lines-mode +1)
 
@@ -3031,8 +3056,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (let ((fit-window-to-buffer-horizontally 'only))
         (fit-window-to-buffer win))
       (window-resize win 20 t))))
-
-(def-package! color-moccur)
 
 (defun +amos/toggle-mc ()
   (interactive)
@@ -3118,8 +3141,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   ;; (if buffer-file-name (+amos/revert-buffer))
   )
 
-(remove-hook 'find-file-hook #'+file-templates|check)
-(defun +amos*find-file (filename &optional wildcards)
+(defun +amos-find-file-a (filename &optional wildcards)
   "Turn files like file.cpp:14 into file.cpp and going to the 14-th line."
   (pcase (file-name-extension filename)
     ("zip" (+amos/compress-view filename))
@@ -3135,18 +3157,18 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                    (if (and parent-directory (not (file-exists-p parent-directory)))
                        (make-directory parent-directory t))))
               (buffer
-               (let ((value (find-file-noselect filename nil nil wildcards)))
+               (let* ((value (find-file-noselect filename nil nil wildcards)))
                  (if (listp value)
                      (mapcar 'pop-to-buffer-same-window (nreverse value))
                    (pop-to-buffer-same-window value))
-                 (+file-templates|check)
+                 (+file-templates-check-h)
                  value)))
          (when line-number
            ;; goto-line is for interactive use
            (goto-char (point-min))
            (forward-line (1- line-number)))
          buffer)))))
-(advice-add 'find-file :override #'+amos*find-file)
+(advice-add 'find-file :override #'+amos-find-file-a)
 
 (mapc #'evil-declare-change-repeat
       '(
@@ -3288,7 +3310,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (shell-command-to-string (concat "upload " filename " out"))))
     (if tmp (delete-file filename))))
 
-(advice-add #'semantic-mode :around #'doom*shut-up)
+(advice-add #'semantic-mode :around #'doom-shut-up-a)
 
 (defun my-inhibit-semantic-p ()
   (not (or (equal major-mode 'c-mode) (equal major-mode 'c++-mode))))
@@ -3307,14 +3329,16 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (replace-match (format "{%s}" (match-string 1))))))
 
 (add-hook! 'comint-mode-hook
-  (add-hook! :local 'evil-insert-state-entry-hook
-    (setq comint-move-point-for-output 'this)
-    (goto-char (point-max)))
-  (add-hook! :local 'evil-insert-state-exit-hook
-    (setq comint-move-point-for-output nil)))
+  (add-hook! 'evil-insert-state-entry-hook :local
+    (defun +amos|comint-scroll-to-bottom ()
+      (setq comint-move-point-for-output 'this)
+      (goto-char (point-max))))
+  (add-hook! 'evil-insert-state-exit-hook :local
+    (defun +amos|comint-stop-scroll ()
+      (setq comint-move-point-for-output nil))))
 
-(remove-hook '+lookup-definition-functions #'+lookup-dumb-jump-backend)
-(remove-hook '+lookup-definition-functions #'+lookup-project-search-backend)
+(remove-hook '+lookup-definition-functions #'+lookup-dumb-jump-backend-fn)
+(remove-hook '+lookup-definition-functions #'+lookup-project-search-backend-fn)
 
 (defun +amos/clear-yasnippet ()
   (interactive)
@@ -3325,15 +3349,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (yas--skip-and-clear target-field)
       (setq target-field (yas--find-next-field 1 snippet target-field)))
     (yas-exit-snippet snippet)))
-
-(def-package! flyspell-lazy
-  :config
-  (add-to-list 'ispell-extra-args "--sug-mode=ultra"))
-
-(def-package! smart-forward)
-
-(def-package! symbol-overlay
-  :commands (symbol-overlay-put))
 
 ;; unwind flycheck backtrace
 ;; (defun doom*flycheck-buffer ()
@@ -3381,7 +3396,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 ;; (setq git-link-default-branch "master")
 ;; (advice-add #'git-link--select-remote :override #'+amos*git-link--select-remote)
 
-(evil-define-command +amos*evil-scroll-down (count)
+(evil-define-command +amos-evil-scroll-down-a (count)
   "Scrolls the window and the cursor COUNT lines downwards.
 If COUNT is not specified the function scrolls down
 `evil-scroll-count', which is the last used count.
@@ -3421,9 +3436,9 @@ If the scroll count is zero the command scrolls half the screen."
           (end-of-buffer
            (goto-char (point-max))
            (recenter (- (max 1 scroll-margin)))))))))
-(advice-add #'evil-scroll-down :override #'+amos*evil-scroll-down)
+(advice-add #'evil-scroll-down :override #'+amos-evil-scroll-down-a)
 
-(defun +amos*evil-insert-newline-below ()
+(defun +amos-evil-insert-newline-below-a ()
   "Inserts a new line below point and places point in that line
 with regard to indentation."
   (evil-narrow-to-field
@@ -3434,9 +3449,9 @@ with regard to indentation."
       (insert (if use-hard-newlines hard-newline "\n"))
       (backward-char 1))
     (back-to-indentation)))
-(advice-add #'evil-insert-newline-below :override #'+amos*evil-insert-newline-below)
+(advice-add #'evil-insert-newline-below :override #'+amos-evil-insert-newline-below-a)
 
-(evil-define-motion +amos*evil-ret (count)
+(evil-define-motion +amos-evil-ret-a (count)
   "Move the cursor COUNT lines down.
 If point is on a widget or a button, click on it.
 In Insert state, insert a newline."
@@ -3447,23 +3462,23 @@ In Insert state, insert a newline."
         (if nl (forward-char 1))
         (evil-ret-gen count nil)
         (if nl (backward-char 1))))))
-(advice-add #'evil-ret :override #'+amos*evil-ret)
+(advice-add #'evil-ret :override #'+amos-evil-ret-a)
 
-(defun +amos*git-gutter:search-near-diff-index (diffinfos is-reverse)
+(defun +amos-git-gutter:search-near-diff-index-a (diffinfos is-reverse)
   (let ((lines (--map (git-gutter-hunk-start-line it) diffinfos)))
     (if is-reverse
         (--find-last-index (> (line-number-at-pos) it) lines)
       (--find-index (< (line-number-at-pos) it) lines))))
-(advice-add #'git-gutter:search-near-diff-index :override #'+amos*git-gutter:search-near-diff-index)
+(advice-add #'git-gutter:search-near-diff-index :override #'+amos-git-gutter:search-near-diff-index-a)
 
-(defun +amos-company--insert-candidate (candidate)
+(defun +amos-company--insert-candidate-a (candidate)
   (when (> (length candidate) 0)
     (setq candidate (substring-no-properties candidate))
     (let* ((prefix (s-shared-start company-prefix candidate))
            (non-prefix (substring company-prefix (length prefix))))
       (delete-region (- (point) (length non-prefix)) (point))
       (insert (substring candidate (length prefix))))))
-(advice-add #'company--insert-candidate :override #'+amos-company--insert-candidate)
+(advice-add #'company--insert-candidate :override #'+amos-company--insert-candidate-a)
 
 ;; company
 
@@ -3569,15 +3584,16 @@ There is no need to advice `company-select-previous' because it calls
 
 (defun company-tng--supress-post-completion (command &rest args)
   (when (eq command 'post-completion)
-    (advice-remove 'company-call-backend 'company-tng--supress-post-completion)
+    (advice-remove #'company-call-backend #'company-tng--supress-post-completion)
     t))
 
-(defun +amos*doom-buffer-frame-predicate (buf)
+;; ignore buffers for switching
+(defun +amos-doom-buffer-frame-predicate-a (buf)
   (let ((mode (with-current-buffer buf major-mode)))
     (pcase mode
       ;; ('dired-mode nil)
       (_ t))))
-(advice-add #'doom-buffer-frame-predicate :override #'+amos*doom-buffer-frame-predicate)
+(advice-add #'doom-buffer-frame-predicate :override #'+amos-doom-buffer-frame-predicate-a)
 
 (defun +amos-display-buffer-no-reuse-window (&rest _) nil)
 
@@ -3588,7 +3604,7 @@ There is no need to advice `company-select-previous' because it calls
             :caller '+amos-exec-shell-command))
 
 ;; get rid of minibuffer resize limitation
-(defun +amos*window--resize-mini-window (window delta)
+(defun +amos-window--resize-mini-window-a (window delta)
   "Resize minibuffer window WINDOW by DELTA pixels.
 If WINDOW cannot be resized by DELTA pixels make it as large (or
 as small) as possible, but don't signal an error."
@@ -3619,7 +3635,7 @@ as small) as possible, but don't signal an error."
         (when (resize-mini-window-internal window)
           (window--pixel-to-total frame)
           (run-window-configuration-change-hook frame))))))
-(advice-add #'window--resize-mini-window :override #'+amos*window--resize-mini-window)
+(advice-add #'window--resize-mini-window :override #'+amos-window--resize-mini-window-a)
 
 (defun +amos/swiper ()
   (interactive)
@@ -3672,9 +3688,12 @@ as small) as possible, but don't signal an error."
                             default-directory))
             (insert (format "%d candidates:\n" (length +amos-last-xref-list)))
             (ivy--occur-insert-lines +amos-last-xref-list))))
-      (setf (ivy-state-text ivy-last) ivy-text)
+      ;; (setf (ivy-state-text ivy-last) ivy-text)
       (setq ivy-occur-last ivy-last)
-      (setq-local ivy--directory ivy--directory))
+      (setq-local ivy--directory ivy--directory)
+      (goto-char 1)
+      (forward-line 4)
+      )
     (ivy-exit-with-action
      `(lambda (_)
         (if ,recursive
@@ -3684,11 +3703,24 @@ as small) as possible, but don't signal an error."
           (pop-to-buffer ,buffer))
         (ivy-wgrep-change-to-wgrep-mode)))))
 
+(defun +amos-swiper--isearch-occur-cands (cands)
+  (let* ((last-pt (get-text-property 0 'point (car cands)))
+         (line (1+ (line-number-at-pos last-pt)))
+         res pt)
+    (dolist (cand cands)
+      (setq pt (get-text-property 0 'point cand))
+      (let ((lines (1- (count-lines last-pt pt))))
+        (when (< 0 lines)
+          (cl-incf line lines)
+          (push (cons line cand) res)
+          (setq last-pt pt))))
+    (nreverse res)))
+
 (defun +amos-swiper--occur-cands (cands)
   (when cands
     (with-current-buffer (ivy-state-buffer ivy-last)
       (setq cands (mapcar #'swiper--line-at-point cands))
-      (mapcar (lambda (x) (cdr x)) (swiper--isearch-occur-cands cands)))))
+      (mapcar (lambda (x) (cdr x)) (+amos-swiper--isearch-occur-cands cands)))))
 
 (defun +amos/swiper-occur (&optional revert)
   "Generate a custom occur buffer for `swiper'.
@@ -3841,19 +3873,10 @@ will be killed."
 (set-keymap-parent evil-struct-state-map (make-composed-keymap evil-motion-state-map evil-normal-state-map))
 (add-hook! 'evil-struct-state-exit-hook #'+amos/reset-cursor)
 
-(def-package! speed-type
-  :commands (speed-type-text)
-  :config
-  (map!
-   :map speed-type--completed-keymap
-   :ni "q" #'kill-this-buffer
-   :ni "r" #'speed-type--replay
-   :ni "n" #'speed-type--play-next))
-
-(remove-hook 'after-change-major-mode-hook #'doom|highlight-non-default-indentation)
+(remove-hook 'after-change-major-mode-hook #'doom-highlight-non-default-indentation-h)
 
 ;; for remapped escape key
-(defun +amos*read-char-choice (prompt chars &optional inhibit-keyboard-quit)
+(defun +amos-read-char-choice-a (prompt chars &optional inhibit-keyboard-quit)
   "Read and return one of CHARS, prompting for PROMPT.
 Any input that is not one of CHARS is ignored.
 
@@ -3899,7 +3922,7 @@ keyboard-quit events while waiting for a valid input."
     ;; Display the question with the answer.  But without cursor-in-echo-area.
     (message "%s%s" prompt (char-to-string char))
     char))
-(advice-add #'read-char-choice :override #'+amos*read-char-choice)
+(advice-add #'read-char-choice :override #'+amos-read-char-choice-a)
 
 (defun make-set ()
   (make-hash-table))
@@ -3932,15 +3955,15 @@ keyboard-quit events while waiting for a valid input."
     (cd (file-name-directory file))
     (setq-local +amos-compressed-file file)))
 
-(defun +amos|kill-buffer-hook()
+(defun +amos-kill-buffer-h()
   (if (in-set-p (current-buffer) compress-view-set) (remove-from-set (current-buffer) compress-view-set))
   (if (in-set-p (current-buffer) compile-set) (remove-from-set (current-buffer) compile-set)))
-(add-hook! 'kill-buffer-hook #'+amos|kill-buffer-hook)
+(add-hook! 'kill-buffer-hook #'+amos-kill-buffer-h)
 
-(defun +amos|buffer-list-update-hook()
+(defun +amos-buffer-list-update-h()
   (maphash (lambda (buffer _) (unless (get-buffer-window buffer t) (kill-buffer buffer))) compress-view-set)
   (maphash (lambda (buffer _) (unless (get-buffer-window buffer t) (kill-buffer buffer))) compile-set))
-(add-hook! 'buffer-list-update-hook #'+amos|buffer-list-update-hook)
+(add-hook! 'buffer-list-update-hook #'+amos-buffer-list-update-h)
 
 (defun +amos/decompress-file (&optional file)
   (interactive)
@@ -4048,10 +4071,6 @@ inside or just after a citation command, only adds KEYS to it."
               candidates
               :caller #'+amos/ivy-reftex
               :action #'+amos-bibtex-completion-format-ref)))
-
-(def-package! ascii-art-to-unicode)
-
-(setq interprogram-paste-function nil)
 
 (evil-define-operator +amos/evil-substitute (beg end type)
   "Change a character."
@@ -4173,32 +4192,7 @@ inside or just after a citation command, only adds KEYS to it."
  "company-"
  )
 
-(def-package! cc-playground
-  :commands cc-playground cc-playground-mode cc-playground-find-snippet cc-playground-leetcode
-  :load-path (lambda () (interactive) (if gui-p "~/git/cc-playground"))
-  :init
-  (put 'cc-exec 'safe-local-variable #'stringp)
-  (put 'cc-flags 'safe-local-variable #'stringp)
-  (put 'cc-links 'safe-local-variable #'stringp)
-  (dolist (x '(cc-playground-exec cc-playground-debug cc-playground-exec-test cc-playground-bench))
-    (advice-add x :before #'evil-normal-state))
-  :bind (:map cc-playground-mode-map
-          ("<f8>" . cc-playground-rm) ; terminal
-          ("S-RET" . cc-playground-rm) ; gui
-          ("C-c r" . cc-playground-add-or-modify-tag)
-          ("C-c b" . cc-playground-bench)
-          ("C-c d" . cc-playground-debug)
-          ("C-c t" . cc-playground-debug-test)
-          ("C-c l" . cc-playground-ivy-add-library-link)
-          ("C-c c" . cc-playground-change-compiler)
-          ("C-c o" . cc-playground-switch-optimization-flag)
-          ("C-c f" . cc-playground-add-compilation-flags))
-  :config
-  (add-hook 'cc-playground-rm-hook #'+amos/lsp-shutdown-workspace))
-
-(def-package! sync-recentf)
-
-(defun +amos*evil-yank (beg end &optional type register yank-handler)
+(defun +amos-evil-yank-a (beg end &optional type register yank-handler)
   "Saves the characters in motion into the kill-ring."
   (interactive
    (let*
@@ -4248,7 +4242,7 @@ inside or just after a citation command, only adds KEYS to it."
              (t
               (evil-yank-characters beg end register yank-handler))))))
     (setq evil-inhibit-operator-value nil)))
-(advice-add #'evil-yank :override #'+amos*evil-yank)
+(advice-add #'evil-yank :override #'+amos-evil-yank-a)
 
 (defun +amos--minibuffer-yank-by (fn &rest args)
   (require 'ivy)
@@ -4345,7 +4339,7 @@ inside or just after a citation command, only adds KEYS to it."
                     :caller '+amos/counsel-view-marks))
       (message "Mark ring is empty"))))
 
-(defun +amos|swap-out-markers ()
+(defun +amos-swap-out-markers-h ()
   "Turn markers into file references when the buffer is killed."
   (when buffer-file-name
     (dolist ((car entry) +amos-marker-list)
@@ -4366,7 +4360,7 @@ inside or just after a citation command, only adds KEYS to it."
 (defun +amos/push-mark (&optional global)
   (interactive)
   (+amos/recenter)
-  (add-hook 'kill-buffer-hook #'+amos|swap-out-markers nil t)
+  (add-hook! 'kill-buffer-hook :local #'+amos-swap-out-markers-h)
   (save-excursion
     (move-beginning-of-line 1)
     (let ((marker-list (if global +amos-marker-list (project-local-getq +amos-marker-list)))
@@ -4381,7 +4375,7 @@ inside or just after a citation command, only adds KEYS to it."
           (set-marker marker (point)))))))
 
 ;; do not truncate the last dir
-(defun +amos*shrink-path--dirs-internal (full-path &optional truncate-all)
+(defun +amos-shrink-path--dirs-internal-a (full-path &optional truncate-all)
   (let* ((home (getenv "HOME"))
          (path (replace-regexp-in-string
                 (s-concat "^" home) "~" full-path))
@@ -4397,19 +4391,12 @@ inside or just after a citation command, only adds KEYS to it."
     (s-concat (unless (s-matches? (rx bos (or "~" "/")) shrunk) "/")
               shrunk
               (unless (s-ends-with? "/" shrunk) "/"))))
-(advice-add #'shrink-path--dirs-internal :override #'+amos*shrink-path--dirs-internal)
+(advice-add #'shrink-path--dirs-internal :override #'+amos-shrink-path--dirs-internal-a)
 
 (after! doom-modeline
   (setq doom-modeline-icon nil)
   (setq doom-modeline-buffer-file-name-style 'truncate-with-project)
   (advice-add #'doom-modeline--active :override (lambda () t)))
-
-;; (after! swiper
-;;   (setq swiper-faces '(swiper-isearch-current-match
-;;                        swiper-match-face-2
-;;                        swiper-match-face-3
-;;                        swiper-match-face-4)))
-
 
 (evil-define-motion +amos/evil-next-visual-line (count)
   "Move the cursor COUNT screen lines down."
@@ -4441,13 +4428,13 @@ inside or just after a citation command, only adds KEYS to it."
 
 (setq scratch-file-name (concat "~/.emacs.d/persistent-scratch-" server-name))
 
-(defun save-persistent-scratch ()
+(defun +amos-save-persistent-scratch-h ()
   "Write the contents of *scratch* to the file name
 `persistent-scratch-file-name'."
   (with-current-buffer (get-buffer-create "*scratch*")
     (write-region (point-min) (point-max) scratch-file-name)))
 
-(defun load-persistent-scratch ()
+(defun +amos-load-persistent-scratch-h ()
   "Load the contents of `persistent-scratch-file-name' into the
   scratch buffer, clearing its contents first."
   (if (file-exists-p scratch-file-name)
@@ -4455,10 +4442,10 @@ inside or just after a citation command, only adds KEYS to it."
         (delete-region (point-min) (point-max))
         (insert-file-contents scratch-file-name))))
 
-(add-hook 'after-init-hook 'load-persistent-scratch)
-(add-hook 'kill-emacs-hook 'save-persistent-scratch)
-
-(if (not (boundp 'my/save-persistent-scratch-timer)) (setq my/save-persistent-scratch-timer (run-with-idle-timer 300 t 'save-persistent-scratch)))
+(add-hook! 'after-init-hook '+amos-load-persistent-scratch-h)
+(add-hook! 'kill-emacs-hook '+amos-save-persistent-scratch-h)
+(if (not (boundp 'my/save-persistent-scratch-timer))
+    (setq my/save-persistent-scratch-timer (run-with-idle-timer 300 t '+amos-save-persistent-scratch-h)))
 
 (defun +amos/count-buffers (&optional display-anyway)
   "Display or return the number of buffers."
@@ -4484,9 +4471,11 @@ inside or just after a citation command, only adds KEYS to it."
             (with-current-buffer buffer
               (+amos/revert-buffer)))))))
 
-;; important! to make edebug keymap take effect
+;; important! to make keymap take effect
 (after! edebug
-  (add-hook 'edebug-mode-hook #'evil-normalize-keymaps))
+  (add-hook! 'edebug-mode-hook #'evil-normalize-keymaps))
+(after! magit-files
+  (add-hook! 'magit-blob-mode-hook #'evil-normalize-keymaps))
 
 ;; (setq-local +amos-window-start nil)
 ;; (add-hook! 'minibuffer-setup-hook #'+amos|record-window-start)
@@ -4508,7 +4497,7 @@ inside or just after a citation command, only adds KEYS to it."
 ;;           (with-current-buffer buffer
 ;;             (set-window-start +amos-window-start)))))))
 
-(defun +amos*xterm--pasted-text ()
+(defun +amos-xterm--pasted-text-a ()
   "Handle the rest of a terminal paste operation.
 Return the pasted text as a string."
   (let ((end-marker-length (length xterm-paste-ending-sequence)))
@@ -4530,7 +4519,7 @@ Return the pasted text as a string."
           (setq xterm-paste-urllist nil)
           text)))))
 
-(advice-add #'xterm--pasted-text :override #'+amos*xterm--pasted-text)
+(advice-add #'xterm--pasted-text :override #'+amos-xterm--pasted-text-a)
 (after! xterm
   (define-key xterm-rxvt-function-map "\e[290~" #'xterm-translate-bracketed-paste))
 
@@ -4753,15 +4742,15 @@ See `project-local-get' for the parameter PROJECT."
       (setq project-local--obarrays
             (delq project (delq obarray project-local--obarrays))))))
 
-(defun +amos*kill-buffer (orig-func &rest args)
+(defun +amos-kill-buffer-a (orig-func &rest args)
   (interactive)
   (if server-buffer-clients
       (cl-letf* (((symbol-function 'y-or-n-p) #'+amos*yes))
         (apply orig-func args))
     (apply orig-func args)))
-(advice-add #'kill-buffer :around #'+amos*kill-buffer)
+(advice-add #'kill-buffer :around #'+amos-kill-buffer-a)
 
-(defun +amos|server-switch-hook ()
+(defun +amos-server-switch-h ()
   (when (string= "emacs-editor" (frame-parameter nil 'name))
     (when (current-local-map)
       (use-local-map (copy-keymap (current-local-map))))
@@ -4784,13 +4773,13 @@ See `project-local-get' for the parameter PROJECT."
                                 ((symbol-function 'map-y-or-n-p) #'+amos*yes)
                                 ((symbol-function 'yes-or-no-p) #'+amos*yes))
                         (call-interactively #'delete-frame)))))))
-(add-hook 'server-switch-hook #'+amos|server-switch-hook)
+(add-hook! 'server-switch-hook #'+amos-server-switch-h)
 
-(defun +amos|server-visit-hook ()
+(defun +amos-server-visit-h ()
   (when (or (string= "emacs-editor" (frame-parameter nil 'name))
             (string= "popup" (frame-parameter nil 'name)))
     (setq-local server-visit-file t)))
-(add-hook 'server-visit-hook #'+amos|server-visit-hook)
+(add-hook! 'server-visit-hook #'+amos-server-visit-h)
 
 (after! latex
   (dolist (env '("itemize" "enumerate" "description"))
@@ -4817,7 +4806,7 @@ See `project-local-get' for the parameter PROJECT."
   (add-function :before-while whitespace-enable-predicate 'prevent-whitespace-mode-for-magit))
 (global-whitespace-mode +1)
 
-(advice-add #'doom|highlight-non-default-indentation :override #'ignore)
+(advice-add #'doom-highlight-non-default-indentation-h :override #'ignore)
 
 (defun +amos/upload-wandbox ()
   (interactive)
@@ -4861,18 +4850,18 @@ See `project-local-get' for the parameter PROJECT."
             (ivy-set-index max-index))
         (ivy-set-index i)))))
 
-(defun +amos*ediff-copy-diff (func &rest args)
+(defun +amos-ediff-copy-diff-a (func &rest args)
   (mkr! (apply func args)))
-(advice-add #'ediff-copy-diff :around #'+amos*ediff-copy-diff)
+(advice-add #'ediff-copy-diff :around #'+amos-ediff-copy-diff-a)
 
-(def-package! lsp-python-ms
-  :hook (python-mode . lsp)
-  :config
-  ;; for dev build of language server
-  (setq lsp-python-ms-dir
-        (expand-file-name "~/git/python-language-server/output/bin/release/"))
-  ;; for executable of language server, if it's not symlinked on your PATH
-  (setq lsp-python-ms-executable
-        "~/git/python-language-server/output/bin/release/Microsoft.Python.LanguageServer"))
+;; (use-package! lsp-python-ms
+;;   :hook (python-mode . lsp)
+;;   :config
+;;   ;; for dev build of language server
+;;   (setq lsp-python-ms-dir
+;;         (expand-file-name "~/git/python-language-server/output/bin/release/"))
+;;   ;; for executable of language server, if it's not symlinked on your PATH
+;;   (setq lsp-python-ms-executable
+;;         "~/git/python-language-server/output/bin/release/Microsoft.Python.LanguageServer"))
 
 ;; (setq font-lock-maximum-decoration '((c-mode . 1) (c++-mode . 1) (t . t)))

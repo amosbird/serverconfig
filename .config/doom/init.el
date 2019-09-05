@@ -1,6 +1,5 @@
 ;;;  -*- lexical-binding: t; no-byte-compile: t; -*-
 
-(require 'use-package)
 (doom! :completion
        company
        ;; (helm +fuzzy)
@@ -25,7 +24,7 @@
        ;; syntax-checker
 
        :emacs
-       dired
+       ;; dired
        electric
        vc
 
@@ -49,6 +48,7 @@
        ;; (python +lsp)
        python
        (go +lsp)
+
        :private
        amos-cc
        ;; amos-java
@@ -142,6 +142,7 @@
 (setq dired-open-find-file-function #'+amos/find-file)
 (setq dired-recursive-copies 'always)
 (setq dired-recursive-deletes 'always)
+(setq eldoc-message-function (lambda (&rest args) (let ((message-truncate-lines t)) (apply #'eldoc-minibuffer-message args))))
 (setq evil-cjk-emacs-word-boundary t)
 (setq evil-esc-delay 0.001)
 (setq evil-ex-substitute-global t)
@@ -154,10 +155,12 @@
 (setq explicit-shell-file-name "/bin/bash")
 (setq find-file-visit-truename t)
 (setq inhibit-compacting-font-caches nil)
+(setq flycheck-disabled-checkers '(c/c++-clang c/c++-gcc c/c++-cppcheck))
 (setq fringes-outside-margins t)
 ;; (setq global-auto-revert-non-file-buffers t)
-(setq initial-buffer-choice t)
 (setq indent-tabs-mode t)
+(setq initial-buffer-choice t)
+(setq interprogram-paste-function nil)
 (setq ivy-do-completion-in-region nil)
 (setq ivy-fixed-height-minibuffer t)
 (setq ivy-format-function 'ivy-format-function-line)
@@ -172,6 +175,7 @@
 (setq lsp-response-timeout 5)
 (setq lsp-enable-symbol-highlighting nil)
 (setq lsp-ui-doc-enable nil)
+(setq lsp-signature-render-all nil)
 (setq nav-flash-delay 0.3)
 (setq org-M-RET-may-split-line '((default)))
 (setq org-agenda-files '("~/org/todo.org"))
@@ -296,11 +300,11 @@
   (add-to-list 'doom-evil-state-alist '(?s . sticky))
   (add-to-list 'doom-evil-state-alist '(?t . struct)))
 
-(advice-add #'doom|init-clipboard-in-tty-emacs :override #'ignore)
+(advice-add #'doom-init-clipboard-in-tty-emacs-h :override #'ignore)
 
-(defun +amos*+evil-collection-init (orig-fun module)
-  (unless (memq (or (car-safe module) module) '(edebug dired))
-    (apply orig-fun (list module))))
+(defun +amos*+evil-collection-init (orig-fun module &optional disabled-list)
+  (unless (memq (or (car-safe module) module) '(edebug dired mu4e mu4e-conversation))
+    (apply orig-fun (list module disabled-list))))
 (advice-add #'+evil-collection-init :around #'+amos*+evil-collection-init)
 
 (ignore-errors
@@ -309,36 +313,15 @@
   (modify-category-entry (cons ?A ?Z) ?U)
   (modify-category-entry (cons ?a ?z) ?u))
 
-(def-package-hook! nav-flash
-  :pre-init
-  (advice-add #'windmove-do-window-select :after #'+nav-flash/blink-cursor)
-  (after! evil
-    (advice-add #'evil--jumps-jump :after (lambda (&rest _) (recenter)))
-    (advice-add #'evil-switch-to-windows-last-buffer :after (lambda (&rest _) (recenter))))
-  nil)
-
 (require 'server)
 (setq server-name (getenv "EMACS_SERVER_NAME"))
 (if (not server-name) (setq server-name "server"))
-(add-hook 'emacs-startup-hook
-          (lambda ()
-            (with-temp-file (concat "/tmp/emacs-" server-name)
-              (erase-buffer)
-              (insert (number-to-string (emacs-pid))))))
+(add-hook! 'emacs-startup-hook
+  (defun +amos-emacs-lock-file-h()
+    (with-temp-file (concat "/tmp/emacs-" server-name)
+      (erase-buffer)
+      (insert (number-to-string (emacs-pid))))))
 (unless (server-running-p server-name)
   (server-start))
 ;; disable this fucking stupid feature by masking
 (provide 'smartparens-lua)
-(custom-set-variables
- ;; custom-set-variables was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- '(command-log-mode-auto-show nil)
- '(global-command-log-mode t))
-(custom-set-faces
- ;; custom-set-faces was added by Custom.
- ;; If you edit it by hand, you could mess it up, so be careful.
- ;; Your init file should contain only one such instance.
- ;; If there is more than one, they won't work right.
- )

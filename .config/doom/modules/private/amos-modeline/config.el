@@ -46,7 +46,7 @@
   (setq keycast--this-command-keys (this-command-keys))
   (setq keycast--this-command this-command))
 
-(add-hook 'pre-command-hook 'keycast-mode-line-update t)
+(add-hook! 'pre-command-hook :append #'keycast-mode-line-update)
 
 (doom-modeline-def-segment keycast
   (let* ((key (ignore-errors
@@ -82,10 +82,10 @@
   '(bar amos-matches buffer-info buffer-position selection-info frame)
   '(keycast host buffer-encoding major-mode vcs checker))
 
-(defun +amos|setup-custom-doom-modeline ()
+(defun +amos-setup-custom-doom-modeline-h ()
   (doom-modeline-set-modeline 'amos 'default))
 
-(add-hook 'doom-modeline-mode-hook '+amos|setup-custom-doom-modeline)
+(add-hook! 'doom-modeline-mode-hook #'+amos-setup-custom-doom-modeline-h)
 (advice-add #'doom-modeline-set-pdf-modeline :override #'ignore)
 (advice-add #'doom-modeline-set-special-modeline :override #'ignore)
 (advice-add #'doom-modeline-set-media-modeline :override #'ignore)

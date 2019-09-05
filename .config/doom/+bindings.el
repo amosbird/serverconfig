@@ -646,12 +646,26 @@
         :map magit-blame-read-only-mode-map
         "SPC" nil
         :gn [return]  #'magit-show-commit
+        :gn "RET"  #'magit-show-commit
         :gn "k" #'magit-blame-previous-chunk
         :gn "K" #'magit-blame-previous-chunk-same-commit
         :gn "j" #'magit-blame-next-chunk
         :gn "J" #'magit-blame-next-chunk-same-commit
         :gn "i" #'magit-blame-toggle-headings
         :gn "q" #'magit-blame-quit)
+
+      (:after magit-files
+        :map magit-blob-mode-map
+        "p" nil
+        "n" nil
+        "b" nil
+        "f" nil
+        :gn "q" 'magit-kill-this-buffer
+        :gn "C-k" 'magit-blob-previous
+        :gn "C-j" 'magit-blob-next
+        :gn "a" 'magit-blame-addition
+        :gn "d" 'magit-blame-removal
+        :gn "r" 'magit-blame-reverse)
 
       (:after magit-status
         :map magit-status-mode-map

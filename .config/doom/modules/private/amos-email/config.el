@@ -47,7 +47,7 @@ default/fallback account."
 ;; Plugins
 ;;
 
-(def-package! mu4e
+(use-package! mu4e
   :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
   :load-path "/usr/local/share/emacs/site-lisp/mu4e"
   :commands (mu4e mu4e-compose-new browse-url-mail)
@@ -318,7 +318,7 @@ default/fallback account."
                      ( mu4e-compose-signature  . nil)))
            )))
 
-;; (def-package! mu4e-maildirs-extension
+;; (use-package! mu4e-maildirs-extension
 ;;   :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
 ;;   :after mu4e
 ;;   :config
@@ -326,14 +326,14 @@ default/fallback account."
 ;;   (setq mu4e-maildirs-extension-title nil)
 ;;   (add-hook #'mu4e-view-mode-hook (lambda () (hl-line-mode +1))))
 
-;; (def-package! notmuch
+;; (use-package! notmuch
 ;;   :init
 ;;   (add-to-list 'auto-mode-alist '("amosbird@gmail.com" . notmuch-message-mode))
 ;;   :config
 ;;   (require 'notmuch-company)
 ;;   (require 'notmuch-mua))
 
-;; (def-package! org-mu4e
+;; (use-package! org-mu4e
 ;;   :hook (mu4e-compose-mode . org-mu4e-compose-org-mode)
 ;;   :config
 ;;   (setq org-mu4e-link-query-in-headers-mode nil

@@ -57,9 +57,9 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
   },
   "workspaceSymbol": { "caseSensitivity": 0, "maxNum": 2000 },
   "diagnostics": {
-    "onChange": 1000,
+    "onChange": -1,
     "onOpen": 1000,
-    "onSave": 1000,
+    "onSave": 200,
     "blacklist": ["~$"]
   },
   "completion": {

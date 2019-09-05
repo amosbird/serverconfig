@@ -4,8 +4,7 @@
   "Fallback major mode for .h files if all other heuristics fail (in
 `+cc-c-c++-objc-mode').")
 
-(def-package! cc-mode
-  :commands (c-mode c++-mode objc-mode java-mode)
+(use-package! cc-mode
   :mode ("\\.mm\\'" . objc-mode)
   :init
   (setq-default c-basic-offset tab-width
@@ -53,13 +52,11 @@
                        :yield "#require")
 
   ;;; Better fontification (also see `modern-cpp-font-lock')
-  (add-hook 'c-mode-common-hook #'rainbow-delimiters-mode)
+  (add-hook! 'c-mode-common-hook
+    (modify-syntax-entry ?_ "w")
+    (rainbow-delimiters-mode +1))
   (add-hook! (c-mode c++-mode) #'+cc|fontify-constants)
-
-
   (setq-default c-noise-macro-names '("constexpr"))
-  (add-hook 'c-mode-common-hook #'(lambda () (modify-syntax-entry ?_ "w")))
-
 
   ;; (c-set-offset 'innamespace           0)
   ;; (c-set-offset 'block-open            0)
@@ -94,29 +91,61 @@
   (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
     (sp-local-pair "/*!" "*/" :post-handlers '(("||\n[i]" "RET") ("[d-1]< | " "SPC")))))
 
-(def-package! cmake-mode
+(use-package! cmake-mode
+  :defer
   :mode
   (("/CMakeLists\\.txt\\'" . cmake-mode)
    ("\\.cmake\\'" . cmake-mode)))
 
-(def-package! disaster :commands disaster)
+(use-package! disaster
+  :defer
+  :commands disaster)
 
-(def-package! cuda-mode :mode "\\.cuh?$")
+(use-package! cuda-mode
+  :defer
+  :mode "\\.cuh?$")
 
-(def-package! opencl-mode :mode "\\.cl$")
+(use-package! opencl-mode
+  :defer
+  :mode "\\.cl$")
 
-(def-package! demangle-mode
-  :commands demangle-mode
-  :init (add-hook 'llvm-mode-hook #'demangle-mode))
+(use-package! demangle-mode
+  :init (add-hook! 'llvm-mode-hook #'demangle-mode)
+  :defer)
 
-(def-package! clang-format
-  :commands clang-format-buffer clang-format)
+(use-package! modern-cpp-font-lock
+  :hook (c++-mode . modern-c++-font-lock-mode)
+  :defer)
 
-(def-package! modern-cpp-font-lock
-  :hook (c++-mode . modern-c++-font-lock-mode))
+(defun +amos-ccls-enable-h ()
+  (interactive)
+  (require 'ccls)
+  (let ((name (buffer-name)))
+    (unless (or (string-prefix-p "timemachine:" name)
+                (string-suffix-p "~" name))
+      (require 'lsp-mode)
+      (flycheck-mode +1)
+      ;; (eldoc-mode -1)
+      (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
+        (c-set-style "gnu"))
+      (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
+      (direnv-update-environment)
+      (condition-case nil
+          (lsp)
+        (user-error nil))
+      (setq-local ccls-enabled t)
+      (setq-local flycheck-checker 'lsp-ui)
+      (lsp-ui-flycheck-add-mode major-mode)
+      (add-to-list 'flycheck-checkers 'lsp-ui)
+      (setq-local lsp-ui-flycheck-live-reporting nil)
+      (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
+        (setq flycheck-checkers (delq c flycheck-checkers))))))
 
-(def-package! ccls
-  :after lsp-mode
+(add-hook! (c-mode c++-mode) #'+amos-ccls-enable-h)
+
+(use-package! ccls
+  ;; :commands (+amos-ccls-enable-h)  ; autoload fails
+  :defer
   :init
   (setq
    ;; ccls-sem-highlight-method 'font-lock
@@ -124,6 +153,7 @@
    ccls-sem-highlight-method nil
    )
 
+  :config
   (defun ccls/workspace-symbol (pattern)
     (interactive (list (read-string
                         "workspace/symbol: "
@@ -158,7 +188,7 @@
      (list :textDocument (lsp--text-document-identifier))))
   (defun ccls/inheritances ()
     (interactive)
-    (+amos-lsp-find-custom 'inheritances "$ccls/inheritances"))
+    (+amos-lsp-find-custom 'inheritances "$ccls/inheritance" `(:levels 1000 :derived t)))
   (defun ccls/callee ()
     (interactive)
     (+amos-lsp-find-custom 'callee "$ccls/call" '(:callee t)))
@@ -221,8 +251,7 @@
     (+amos-lsp-find-custom
      'write "textDocument/references"
      (plist-put (lsp--text-document-position-params) :context
-                '(:role 16))))
-  )
+                '(:role 16)))))
 
 (defun +amos/add-include (h &rest others)
   "Add an #include line for `h' near top of file, avoiding duplicates."
@@ -242,30 +271,6 @@
       '("/usr/local/include"
         "/usr/include"
         ))
-
-(add-hook! (c-mode c++-mode)
-  (let ((name (buffer-name)))
-    (unless (or (string-prefix-p "timemachine:" name)
-                (string-suffix-p "~" name))
-      (flycheck-mode +1)
-      ;; (eldoc-mode -1)
-      (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
-        (c-set-style "gnu"))
-      (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
-      (ccls//enable))))
-
-(defun ccls//enable ()
-  (direnv-update-environment)
-  (condition-case nil
-      (lsp)
-    (user-error nil))
-  (setq-local ccls-enabled t)
-  (setq-local flycheck-checker 'lsp-ui)
-  (lsp-ui-flycheck-add-mode major-mode)
-  (add-to-list 'flycheck-checkers 'lsp-ui)
-  (setq-local lsp-ui-flycheck-live-reporting nil)
-  (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
-    (setq flycheck-checkers (delq c flycheck-checkers))))
 
 (c-add-style "amos"
              '("cc-mode"

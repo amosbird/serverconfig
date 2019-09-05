@@ -175,6 +175,8 @@ simpler."
                       "\\|" "#include"  ws-maybe "<\\(?:string\\|iostream\\|map\\)>"
                       "\\)")))
            (c++-mode))
+          ((< (buffer-size) 2)
+           (c++-mode))
           ((functionp +cc-default-header-file-mode)
            (funcall +cc-default-header-file-mode))
           ((c-mode)))))
