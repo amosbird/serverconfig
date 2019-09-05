@@ -3,7 +3,7 @@
 (disable-packages! centered-window-mode
                    company-prescient
                    evil-escape
-                   evil-matchit
+                   ;; evil-matchit
                    evil-numbers
                    git-gutter-fringe
                    magithub
@@ -23,6 +23,7 @@
 (package! counsel-dash)
 (package! dired-quick-sort)
 (package! easy-hugo)
+(package! evil-nerd-commenter)
 (package! evil-magit)
 (package! fcitx)
 (package! flycheck)
@@ -55,6 +56,7 @@
 (package! ws-butler)
 (package! visual-fill-column)
 (package! yapfify)
+
 
 (package! cc-playground :recipe (:host github :repo "amosbird/cc-playground" :files ("*.el" "templates")))
 (package! py-playground :recipe (:host github :repo "amosbird/py-playground" :files ("*.el" "templates")))

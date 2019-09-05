@@ -266,6 +266,7 @@
         (default       . bibtex-completion-format-citation-default)))
 (setq ivy-bibtex-default-action 'ivy-bibtex-insert-citation)
 
+;; (setq redisplay-dont-pause t)
 (setq require-final-newline t)
 (setq save-interprogram-paste-before-kill nil)
 (setq shell-file-name "/bin/bash")

@@ -1721,18 +1721,18 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
                                 (setq success t)))))
                 :caller '+amos-ivy-xref))))
 
-(defun +amos*xref--find-xrefs (input kind arg display-action)
+(defun +amos-xref--find-xrefs-a (input kind arg display-action)
   (let ((xrefs (funcall (intern (format "xref-backend-%s" kind))
                         (xref-find-backend)
                         arg)))
     (unless xrefs
       (user-error "No %s found for: %s" (symbol-name kind) input))
     (+amos-ivy-xref xrefs kind)))
-(advice-add #'xref--find-xrefs :override #'+amos*xref--find-xrefs)
+(advice-add #'xref--find-xrefs :override #'+amos-xref--find-xrefs-a)
 
-(defun +amos*ivy-xref-show-xrefs (xrefs alist)
+(defun +amos-ivy-xref-show-xrefs-a (xrefs alist)
   (+amos-ivy-xref xrefs 'xref))
-(advice-add #'ivy-xref-show-xrefs :override #'+amos*ivy-xref-show-xrefs)
+(advice-add #'ivy-xref-show-xrefs :override #'+amos-ivy-xref-show-xrefs-a)
 
 (after! recentf
   (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local")))
@@ -1746,7 +1746,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
       (put-text-property 0 1 'point pt s)
       (ivy-cleanup-string s))))
 
-(defun +amos*swiper--isearch-format (index length cands regex current buffer)
+(defun +amos-swiper--isearch-format-a (index length cands regex current buffer)
   (let* ((half-height (/ ivy-height 2))
          (i (1- index))
          (j 0)
@@ -1793,7 +1793,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
           (cl-incf len))
         (cl-incf i))
       (mapconcat #'identity (nreverse res) ""))))
-(advice-add #'swiper--isearch-format :override #'+amos*swiper--isearch-format)
+(advice-add #'swiper--isearch-format :override #'+amos-swiper--isearch-format-a)
 
 (after! ivy
   (setcdr (assq t ivy-format-functions-alist) #'ivy-format-function-line)

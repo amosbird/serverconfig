@@ -18,7 +18,7 @@
       :desc "Next diff hunk"                  :nv "j"   #'git-gutter:next-hunk
       :desc "Previous diff hunk"              :nv "k"   #'git-gutter:previous-hunk
       :desc "Switch workspace buffer"         :nv "b"   #'switch-to-buffer
-      :desc "Comment"                         :nv "l"   #'evil-commentary-line
+      :desc "Comment"                         :nv "l"   #'evilnc-comment-or-uncomment-lines
       :desc "Dired"                           :nv "o"   #'+amos/dired-jump
       :desc "Scratch"                         :nv "i"   (lambda! (switch-to-buffer "*scratch*"))
 
@@ -265,9 +265,8 @@
       :n "gp"                     #'+evil/reselect-paste
       :n "gr"                     #'+lookup/references
       :v "gR"                     #'+eval:replace-region
-      :m "gy"                     #'evil-commentary-yank
-      :m "gc"                     #'evil-commentary
-      :m "gl"                     #'evil-commentary-line
+      :m "gy"                     #'evilnc-copy-and-comment-lines
+      :m "gl"                     #'evilnc-comment-or-uncomment-lines
       :n "m"                      #'+amos/push-mark
       :n "M"                      (lambda! (+amos/push-mark t))
       :n "M-9"                    #'+amos/counsel-view-marks

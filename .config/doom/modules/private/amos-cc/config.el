@@ -131,7 +131,7 @@
       (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
       (direnv-update-environment)
       (condition-case nil
-          (lsp)
+          (doom-with-advice (lsp--info #'ignore) (lsp))
         (user-error nil))
       (setq-local ccls-enabled t)
       (setq-local flycheck-checker 'lsp-ui)
