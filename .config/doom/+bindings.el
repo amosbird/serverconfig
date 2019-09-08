@@ -142,8 +142,8 @@
       :n "M-a"                    #'+amos/mark-whole-buffer
       :n "M-g"                    #'+amos/counsel-jumpdir-function
       :i "M-i"                    #'yas-insert-snippet
-      :n "M-,"                    #'flycheck-previous-error
-      :n "M-."                    #'flycheck-next-error
+      :n "M-,"                    #'+amos/flycheck-previous-error
+      :n "M-."                    #'+amos/flycheck-next-error
       :n "M-p"                    #'evil-multiedit-match-symbol-and-prev
       :n "M-n"                    #'evil-multiedit-match-symbol-and-next
       :n "M-y"                    #'+amos/yank-flycheck-error

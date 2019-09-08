@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+window=""
+if [ -n "$1" ]
+then
+   window="-t $1"
+fi
+
 if [ Debug = "$(tmux display-message -p '#W')" ]; then
     :
     # ttys=$(tmux list-panes -F "#{pane_tty}")
@@ -9,7 +15,7 @@ if [ Debug = "$(tmux display-message -p '#W')" ]; then
     #     fuser -s -k -9 $tty
     # done
 else
-    current_panes=$(tmux list-panes -F "#{pane_id}")
+    current_panes=$(tmux list-panes $window -F "#{pane_id}")
     SAVEIFS="$IFS"
     IFS=$'\n'
     array=($current_panes)
@@ -19,4 +25,4 @@ else
         tmux send-keys -t "${array[$i]}" C-c C-c
     done
 fi
-tmux kill-window
+tmux kill-window $window

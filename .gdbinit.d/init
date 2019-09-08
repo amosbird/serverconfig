@@ -216,6 +216,7 @@ set history remove-duplicates 5000
 # set scheduler-locking off
 
 # set auto-solib-add off
+set basenames-may-differ 1
 set target-async 1
 set non-stop on
 set confirm off

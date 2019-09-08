@@ -34,10 +34,10 @@
       (when flycheck-mode
         (ignore-errors (flycheck-buffer))
         nil))
-    (add-hook 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
+    (add-hook! 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
   (global-flycheck-inline-mode +1)
   (global-flycheck-mode +1)
-  (advice-add #'flycheck-inline-display-errors :around #'+amos-flycheck-inline-display-errors-a)
+
   ;; (advice-add #'flycheck-display-error-messages :override #'flycheck-inline-display-errors)
   (setq flycheck-highlighting-mode 'columns
         flycheck-check-syntax-automatically '(save mode-enabled)
@@ -93,7 +93,7 @@
           ("C-c f" . cc-playground-add-compilation-flags))
   :config
   (add-hook! 'cc-playground-rm-hook
-    (doom-with-advice (y-or-n-p #'ignore) (lsp-shutdown-workspace))))
+    (doom-with-advice (y-or-n-p (lambda (&rest _) t)) (ignore-errors (lsp-shutdown-workspace)))))
 
 (use-package! sync-recentf)
 
@@ -1594,11 +1594,11 @@ it will restore the window configuration to prior to full-framing."
 
 (defun save-buffer-maybe ()
   (interactive)
+  ;; (garbage-collect)
   (when (and (buffer-file-name)
              (not defining-kbd-macro)
              (buffer-modified-p))
-    (save-buffer)
-    )
+    (save-buffer))
   nil)
 
 (setq ccls-enabled nil)
@@ -2354,7 +2354,7 @@ the current state and point position."
   (interactive)
   (+amos-store-jump-history)
   (if command
-      (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux if-shell \\\"tmux new-window -t $envprompt -k -n $envprompt -c %s\\\" '' \\\"new-window -n $envprompt -c %s\\\"; tmux send-keys %s C-m\"" default-directory default-directory command))
+      (shell-command! (format-spec "tmux switch-client -t amos; tmuxkillwindow amos:%a; tmux run -t amos \"tmux new-window -n %a -c %b; tmux send-keys %c C-m\"" `((?a . ,(getenv "envprompt")) (?b . ,default-directory) (?c . ,command))))
     (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
 
 (defun +amos/tmux-source ()
@@ -2696,11 +2696,14 @@ the current state and point position."
   (setq recentf-max-saved-items 10000))
 
 (defun +amos-flycheck-inline-display-errors-a (ofun &rest candidate)
-  (if (or (eq last-command 'flycheck-previous-error)
-          (eq last-command 'flycheck-next-error)
-          (eq last-command '+amos/yank-flycheck-error)
+  (if (or (memq this-command '(+amos/flycheck-previous-error
+                               +amos/flycheck-next-error
+                               flycheck-previous-error
+                               flycheck-next-error
+                               +amos/yank-flycheck-error))
           (eq last-input-event 29))
       (apply ofun candidate)))
+(advice-add #'flycheck-inline-display-errors :around #'+amos-flycheck-inline-display-errors-a)
 
 (after! counsel
   (setq counsel-rg-base-command "rg -S --no-heading --line-number --color never %s ."))
@@ -4865,3 +4868,28 @@ See `project-local-get' for the parameter PROJECT."
 ;;         "~/git/python-language-server/output/bin/release/Microsoft.Python.LanguageServer"))
 
 ;; (setq font-lock-maximum-decoration '((c-mode . 1) (c++-mode . 1) (t . t)))
+
+(defun +amos-set-evil-move-beyond-eol-nil-h (&rest _)
+  (setq evil-move-beyond-eol nil)
+  (evil-adjust-cursor)
+  (advice-remove #'flycheck-perform-deferred-syntax-check #'+amos-set-evil-move-beyond-eol-nil-h))
+
+(defun +amos/flycheck-next-error ()
+  (interactive)
+  (setq evil-move-beyond-eol t)
+  (call-interactively #'flycheck-next-error)
+  (advice-add #'flycheck-perform-deferred-syntax-check :after #'+amos-set-evil-move-beyond-eol-nil-h))
+
+(defun +amos/flycheck-previous-error ()
+  (interactive)
+  (setq evil-move-beyond-eol t)
+  (call-interactively #'flycheck-previous-error)
+  (advice-add #'flycheck-perform-deferred-syntax-check :after #'+amos-set-evil-move-beyond-eol-nil-h))
+
+(defun +amos-flycheck-display-error-at-point-soon-a ()
+  (when (flycheck-overlays-at (point))
+    (with-demoted-errors "Flycheck error display error: %s"
+      (when flycheck-mode
+        (-when-let (errors (flycheck-overlay-errors-at (point)))
+          (flycheck-display-errors errors))))))
+(advice-add #'flycheck-display-error-at-point-soon :override #'+amos-flycheck-display-error-at-point-soon-a)

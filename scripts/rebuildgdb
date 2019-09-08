@@ -2,5 +2,5 @@
 
 rm -rf * .*
 ../binutils-gdb/configure --prefix=/home/amos/gentoo/usr/local/ --disable-binutils --disable-gold --disable-ld --disable-gas --disable-gprof
-make -j40
+bear make -j40
 make install
