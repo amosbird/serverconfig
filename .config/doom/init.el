@@ -62,6 +62,7 @@
        )
 
 (setq so-long-target-modes '(css-mode sgml-mode nxml-mode))
+(setq load-prefer-newer t)
 (setq shr-width 100)
 (setq all-the-icons-scale-factor 1.0)
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))

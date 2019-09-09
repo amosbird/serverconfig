@@ -38,3 +38,5 @@ fishd.*
 *.tmp
 /.config/copyq/copyq-commands.ini.new.bak
 /.config/copyq/copyq-commands.ini.bak
+/Thumbs.db
+/Thumbs.db:encryptable
