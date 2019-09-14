@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+tmux splitw -h
+tmux select-pane -t 1
+tmux splitw -v "sleep infinity"
+tmux splitw -v "sleep infinity"
+tmux swap-pane -s 3 -t 1
+tmux select-pane -t 2
+tmux splitw -h "sleep infinity"
+# tmux splitw -h "sleep infinity" #2
+tty1=$(tmux display -t 1 -p "#{pane_tty}")
+tty2=$(tmux display -t 2 -p "#{pane_tty}")
+tty3=$(tmux display -t 3 -p "#{pane_tty}")
+tmux select-layout "328c,211x50,0,0{105x50,0,0[105x18,0,0,337,105x18,0,19{52x18,0,19,340,52x18,53,19,341},105x12,0,38,339],105x50,106,0,338}"
+
+# -l 10000 -ex set sysroot / -x /proc/123495/fd/4 -ex target extended-remote 127.0.0.1:57960 /home/amos/.local/share/rr/ccls-0/mmap_hardlink_3_ccls
+proc=$6
+ip=$8
+tmux select-pane -t 5
+tmux send-keys "cgdb -r -- -nh -x ~/.gdbinit -x ~/git/serverconfig/rrgdbinit -ex \"dashboard threads -output $tty1\" -ex \"dashboard stack -output $tty1\" -ex \"dashboard expression -output $tty3\" -ex \"dashboard registers -output $tty2\" -ex \"set sysroot /\" -x \"$proc\" -ex \"$ip\""
+tmux send-keys C-m
+sleep infinity

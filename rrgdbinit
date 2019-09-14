@@ -1,0 +1,77 @@
+# requires: https://github.com/cyrus-and/gdb-dashboard
+#
+python
+import time
+
+class AmosCommand(gdb.Command):
+
+    def __init__(self):
+        gdb.Command.__init__(self, 'amos',
+                             gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+
+    def invoke(self, arg, from_tty):
+        return
+AmosCommand()
+
+class BirdCommand(gdb.Command):
+    def __init__(self):
+        gdb.Command.__init__(self, 'bird', gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+
+    def invoke(self, arg, from_tty):
+        return
+BirdCommand()
+
+class RedashCommand(gdb.Command):
+    def __init__(self):
+        gdb.Command.__init__(self, 'redash', gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+
+    def invoke(self, arg, from_tty):
+        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+            if thread.is_valid() and thread.is_stopped():
+                return
+        gdb.execute("dashboard", from_tty=True)
+RedashCommand()
+
+end
+
+
+dashboard -layout stack expressions threads registers
+dashboard -style syntax_highlighting 'monokai'
+dashboard stack -style compact True
+dashboard stack -style limit 3
+dashboard threads -style skip-running True
+
+# enable auto-load
+set auto-load safe-path /
+set auto-load scripts-directory ~/.cgdb
+set disassembly-flavor intel
+set opaque-type-resolution off
+set history filename ~/.gdb_history
+set history save on
+set history remove-duplicates 5000
+
+# handle SIGTSTP noprint nostop pass
+# handle SIGQUIT noprint nostop pass
+# handle SIGINT noprint nostop pass
+
+# set $dlopen = (void*(*)(char*, int)) dlopen
+# call $dlopen("/home/amos/git/luakit/lualib.so", 1)
+
+# set scheduler-locking off
+
+# set auto-solib-add off
+set basenames-may-differ on
+# set target-async on
+# set non-stop on
+set target-async off
+set non-stop off
+set confirm off
+# Finally, turn it on!
+
+skip -gfi usr/include/c++/*/*/*
+skip -gfi usr/local/include/c++/*/*/*
+
+# vim: filetype=python
+# Local Variables:
+# mode: python
+# End:

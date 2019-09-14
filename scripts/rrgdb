@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+tmux neww -a -n RRDebug "rr replay -d tmuxrrgdb"
+tmux set -w pane-border-status off

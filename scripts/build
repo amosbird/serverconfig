@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 
-mkdir -p release && pushd release || exit 1
+if [[ "$1" == deb || "$1" == llvm-debug ]]
+then
+   mkdir -p debug && pushd debug || exit 1
+else
+   mkdir -p release && pushd release || exit 1
+fi
 
 if [[ "$1" == install ]]; then
     ninja && sudo ninja install
@@ -11,10 +16,21 @@ else
         target=../llvm
         cmake_args=(
             -DLLVM_TARGETS_TO_BUILD='X86'
-            -DLLVM_CCACHE_BUILD=On
+            -DLLVM_CCACHE_BUILD=1
             -DLLVM_ENABLE_PROJECTS='clang;libcxx;libcxxabi;compiler-rt;lld'
             -DCMAKE_BUILD_TYPE=Release
-            -DLLVM_BUILD_LLVM_DYLIB=On
+            -DLLVM_BUILD_LLVM_DYLIB=1
+            -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1'
+        )
+        ;;
+    llvm-debug)
+        target=../llvm
+        cmake_args=(
+            -DLLVM_TARGETS_TO_BUILD='X86'
+            -DLLVM_CCACHE_BUILD=1
+            -DLLVM_ENABLE_PROJECTS='clang;libcxx;libcxxabi;compiler-rt;lld'
+            -DCMAKE_BUILD_TYPE=Debug
+            -DLLVM_BUILD_LLVM_DYLIB=1
             -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1'
         )
         ;;

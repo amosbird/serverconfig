@@ -722,7 +722,7 @@ Skip buffers that match `ivy-ignore-buffers'."
 (defun +amos/counsel-rg-projectile ()
   (interactive)
   (unless (doom-project-p)
-    (user-error "You’re not in a project"))
+    (user-error "You're not in a project"))
   (counsel-rg nil (doom-project-root)))
 
 (defun +amos/counsel-rg-cur-dir ()
@@ -942,11 +942,16 @@ using a visual block/rectangle selection."
 ;; Override the original function using advice
 (advice-add 'ivy-rich-switch-buffer-pad :override #'+amos-ivy-rich-switch-buffer-pad-a)
 
-(evil-define-motion +amos*evil-beginning-of-line ()
+(evil-define-motion +amos-evil-beginning-of-line-a ()
   "Move the cursor to the beginning of the current line."
   :type exclusive
-  (doom/backward-to-bol-or-indent))
-(advice-add 'evil-beginning-of-line :override #'+amos*evil-beginning-of-line)
+  (if (bolp)
+      (back-to-indentation)
+    (let ((p (point)))
+      (back-to-indentation)
+      (if (<= p (point))
+          (beginning-of-line)))))
+(advice-add 'evil-beginning-of-line :override #'+amos-evil-beginning-of-line-a)
 
 (defun +amos/save-buffer-without-dtw ()
   (interactive)
@@ -1006,8 +1011,6 @@ With a prefix ARG, invalidate the cache first."
             :caller #'+amos/projectile-find-file))
 
 (advice-add #'projectile-cache-files-find-file-hook :override #'ignore)
-;; TODO prevent projectile clear caches when removing files, following doesn't work anymore
-;; (add-hook! 'projectile-mode-hook (ad-deactivate 'delete-file))
 (after! projectile
   (advice-remove 'delete-file #'delete-file-projectile-remove-from-cache))
 
@@ -1478,7 +1481,7 @@ When GREEDY is non-nil, join words in a greedy way."
         (setq-local +amos--lsp-maybe-highlight-symbol t)
         (lsp--document-highlight)))))
 
-(defun +amos|lsp-remove-highlight ()
+(defun +amos-lsp-remove-highlight-h ()
   (interactive)
   (when (and (boundp '+amos--lsp-maybe-highlight-symbol) +amos--lsp-maybe-highlight-symbol)
     (--each (lsp-workspaces)
@@ -1486,7 +1489,7 @@ When GREEDY is non-nil, join words in a greedy way."
         (lsp--remove-cur-overlays)))
     (setq-local +amos--lsp-maybe-highlight-symbol nil)))
 
-(add-hook 'doom-escape-hook #'+amos|lsp-remove-highlight)
+(add-hook 'doom-escape-hook #'+amos-lsp-remove-highlight-h)
 
 (defun +amos-surround-with-pair (c &optional back)
   (let* ((e (save-excursion
@@ -1500,18 +1503,6 @@ When GREEDY is non-nil, join words in a greedy way."
       (save-excursion
         (evil-surround-region e b t c))
       (forward-char 1))))
-
-;; (defun +amos/lsp-shutdown-workspace ()
-;;   "Shutdown language server."
-;;   (interactive)
-;;   (--when-let (pcase (lsp-workspaces)
-;;                 (`nil (user-error "There are no active servers in the current buffer"))
-;;                 (`(,workspace) workspace)
-;;                 (workspaces (lsp--completing-read "Select server: "
-;;                                                   workspaces
-;;                                                   'lsp--workspace-print nil t)))
-;;     (setf (lsp--workspace-shutdown-action it) 'shutdown)
-;;     (with-lsp-workspace it (lsp--shutdown-workspace))))
 
 (cl-defun +amos-lsp-find-custom (kind method &optional extra &key display-action)
   "Send request named METHOD and get cross references of the symbol under point.
@@ -1530,20 +1521,19 @@ EXTRA is a plist of extra parameters."
   (interactive)
   (+amos-lsp-find-custom 'references "textDocument/references"))
 
-(defun +amos*lsp--position-to-point (params)
+(defun +amos-lsp--position-to-point-a (params)
   "Convert Position object in PARAMS to a point."
   (save-excursion
     (save-restriction
       (widen)
       (goto-char (point-min))
-      ;; The next line calculs the point from the LSP position.
       ;; We use `goto-char' to ensure that we return a point inside the buffer
       ;; to avoid out of range error
       (goto-char (+ (line-beginning-position (1+ (gethash "line" params)))
                     (gethash "character" params)))
       (point))))
 
-(advice-add #'lsp--position-to-point :override #'+amos*lsp--position-to-point)
+(advice-add #'lsp--position-to-point :override #'+amos-lsp--position-to-point-a)
 (advice-add #'lsp-ui-sideline--diagnostics-changed :override #'ignore)
 
 (defun +amos/create-fish-function (name)
@@ -1553,7 +1543,6 @@ EXTRA is a plist of extra parameters."
         (user-error "Function with the same name already exists!"))
     (find-file full-name)
     (evil-initialize-state 'insert)))
-
 
 (defvar zygospore-spore-formation-register-name
   "zygospore-windows-time-machine"
@@ -1601,20 +1590,12 @@ it will restore the window configuration to prior to full-framing."
     (save-buffer))
   nil)
 
-(setq ccls-enabled nil)
-(defun diagnostic-maybe ()
-  (interactive)
-  (when ccls-enabled
-    (ccls/diagnostic))
-  nil)
-
 (defun git-gutter-maybe ()
   (interactive)
   (when git-gutter-mode (ignore (call-interactively #'git-gutter)))
   nil)
 
 (add-hook! 'doom-escape-hook #'save-buffer-maybe)
-(add-hook! 'doom-escape-hook #'diagnostic-maybe)
 (add-hook! 'doom-escape-hook #'git-gutter-maybe)
 
 (defun my-reload-dir-locals-for-all-buffer-in-this-directory ()
@@ -1641,7 +1622,7 @@ current buffer's, reload dir-locals."
       (add-hook! (make-variable-buffer-local 'after-save-hook)
                  #'my-reload-dir-locals-for-all-buffer-in-this-directory))))
 
-(defun +amos*helm-dash-result-url (docset-name filename &optional anchor)
+(defun +amos-helm-dash-result-url-a (docset-name filename &optional anchor)
   "Return the full, absolute URL to documentation.
 Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
  of spaces or a http(s):// URL formed as-is if FILENAME is a full HTTP(S) URL."
@@ -1656,7 +1637,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
         "file:///"
         (expand-file-name "Contents/Resources/Documents/" (helm-dash-docset-path docset-name))
         path)))))
-(advice-add #'helm-dash-result-url :override #'+amos*helm-dash-result-url)
+(advice-add #'helm-dash-result-url :override #'+amos-helm-dash-result-url-a)
 
 (setq tmux-p (getenv "TMUX"))
 (setq gui-p (getenv "GUI"))
@@ -1740,9 +1721,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (defun +amos-swiper--line-at-point (pt)
   (save-excursion
     (goto-char pt)
-    (let ((s (concat (buffer-substring
-                      (line-beginning-position)
-                      (line-end-position)) "\n")))
+    (let ((s (concat (buffer-substring (line-beginning-position) (line-end-position)) "\n")))
       (put-text-property 0 1 'point pt s)
       (ivy-cleanup-string s))))
 
@@ -2054,7 +2033,6 @@ representation of `NUMBER' is smaller."
 ;;   (advice-add #'fcitx--activate-proc :override #'+amos/fcitx--activate-proc)
 ;;   (advice-add #'fcitx--deactivate-proc :override #'+amos/fcitx--deactivate-proc))
 
-
 (when gui-p
   (require 'fcitx)
   (fcitx-aggressive-setup))
@@ -2113,7 +2091,7 @@ representation of `NUMBER' is smaller."
      :side right :size 0.9 :select t :quit nil))
   '(("^\\*Backtrace" :side right :size 0.5 :quit nil)))
 
-(evil-define-command +amos*evil-visual-paste (count &optional register)
+(evil-define-command +amos-evil-visual-paste-a (count &optional register)
   "Paste over Visual selection."
   :suppress-operator t
   (interactive "P<x>")
@@ -2161,9 +2139,9 @@ representation of `NUMBER' is smaller."
                   (nth 3 evil-last-paste)
                   (nth 4 evil-last-paste)
                   t)))))
-(advice-add #'evil-visual-paste :override #'+amos*evil-visual-paste)
+(advice-add #'evil-visual-paste :override #'+amos-evil-visual-paste-a)
 
-(defun +amos*+lookup--jump-to (prop identifier &optional display-fn arg)
+(defun +amos-+lookup--jump-to-a (prop identifier &optional display-fn arg)
   (let* (leaped
          (origin (point-marker))
          (handlers (plist-get (list :definition '+lookup-definition-functions
@@ -2196,9 +2174,10 @@ representation of `NUMBER' is smaller."
           (leap-set-jump (marker-position origin)))
         (run-hooks 'leap-post-jump-hook))
       result)))
+(advice-add #'+lookup--jump-to :override #'+amos-+lookup--jump-to-a)
 
 (defvar is-swiper-occur nil)
-(defun +amos*set-jump-point-maybe ()
+(defun +amos-set-jump-point-maybe-a ()
   (unless is-swiper-occur
     (with-demoted-errors "Error: %S"
       (when (and
@@ -2215,6 +2194,7 @@ representation of `NUMBER' is smaller."
         (with-ivy-window
           (run-hooks 'leap-post-jump-hook)))))
   (setq is-swiper-occur nil))
+(advice-add #'ivy-call :after #'+amos-set-jump-point-maybe-a)
 
 (defun +amos|record-position-maybe ()
   (with-ivy-window
@@ -2223,8 +2203,6 @@ representation of `NUMBER' is smaller."
 (after! ivy
   (setq ivy-hooks-alist '((t . +amos|record-position-maybe))))
 
-(advice-add #'ivy-call :after #'+amos*set-jump-point-maybe)
-(advice-add #'+lookup--jump-to :override #'+amos*+lookup--jump-to)
 (advice-add #'better-jumper-jump-forward :override #'leap-jump-forward)
 (advice-add #'better-jumper-jump-backward :override #'leap-jump-backward)
 (advice-add #'better-jumper-set-jump :override #'ignore)
@@ -2235,12 +2213,6 @@ representation of `NUMBER' is smaller."
 ;; (ad-disable-advice 'switch-to-buffer 'before 'evil-jumps)
 ;; (ad-activate 'switch-to-buffer)  ;; stupid api
 (add-hook 'leap-post-jump-hook #'+amos/recenter)
-
-(defun +amos/debug ()
-  (interactive)
-  (message "run"))
-;; (advice-add 'recenter :override #'+amos/debug)
-
 
 (defun +amos/yank-buffer-filename ()
   "Copy the current buffer's path to the kill ring."
@@ -2362,22 +2334,6 @@ the current state and point position."
   (interactive)
   (shell-command! "tmux source-file ~/.tmux/.tmux.conf.emacs"))
 
-(evil-define-operator +amos/evil-commentary-yank-line (beg end type)
-  "Saves whole lines into the kill-ring."
-  :motion evil-line
-  :move-point nil
-  (interactive "<R>")
-  (let* ((beg (save-excursion (beginning-of-line) (point)))
-         (end (save-excursion (end-of-line) (point)))
-         (column (evil-column))
-         (line (buffer-substring-no-properties beg end)))
-    (evil-commentary-line beg end)
-    (end-of-line)
-    (open-line 1)
-    (forward-line 1)
-    (insert line)
-    (move-to-column column)))
-
 (defun +amos/prompt-kill-emacs ()
   "Prompt to save changed buffers and exit Spacemacs"
   (interactive)
@@ -2387,11 +2343,10 @@ the current state and point position."
 (defun comp-buffer-name (maj-mode)
   (concat "*" (downcase maj-mode) " " default-directory "*"))
 (setq compilation-buffer-name-function #'comp-buffer-name)
-(defun +amos/normalize-compilation-buffer (buffer msg)
-  (interactive)
+(defun +amos-normalize-compilation-buffer-h (buffer msg)
   (with-current-buffer buffer
     (evil-normal-state)))
-(add-hook! 'compilation-finish-functions #'+amos/normalize-compilation-buffer)
+(add-hook! 'compilation-finish-functions #'+amos-normalize-compilation-buffer-h)
 
 (defvar +amos-frame-list nil)
 (defvar +amos-frame-stack nil)

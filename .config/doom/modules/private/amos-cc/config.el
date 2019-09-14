@@ -117,6 +117,14 @@
   :hook (c++-mode . modern-c++-font-lock-mode)
   :defer)
 
+(setq ccls-enabled nil)
+(defun +amos-diagnostic-maybe-h ()
+  (interactive)
+  (when ccls-enabled
+    (ccls/diagnostic))
+  nil)
+(add-hook! 'doom-escape-hook :local #'+amos-diagnostic-maybe-h)
+
 (defun +amos-ccls-enable-h ()
   (interactive)
   (require 'ccls)
