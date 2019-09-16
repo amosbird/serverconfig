@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+echo "$1" | perl -ne 'if (/\/pull\/(\d+)/) { system("git fetch origin +refs/pull/$1/head"); system("git checkout -b pr$1 FETCH_HEAD") if ($? >> 8) == 0; } else { print "invalid pull request url.\n"; exit 1; }'
