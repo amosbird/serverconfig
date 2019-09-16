@@ -4,32 +4,7 @@
 (defvar +org-dir (expand-file-name "~/org/")
   "The directory where org files are kept.")
 
-(add-hook 'org-load-hook #'+org|init)
-(add-hook 'org-mode-hook #'+org|hook)
-
-;;
-;; Plugins
-;;
-
-(use-package! toc-org
-  :commands toc-org-enable
-  :init (add-hook 'org-mode-hook #'toc-org-enable))
-
-(use-package! org-crypt ; built-in
-  :commands org-crypt-use-before-save-magic
-  :init (add-hook 'org-load-hook #'org-crypt-use-before-save-magic)
-  :config
-  (setq org-tags-exclude-from-inheritance '("crypt")
-        org-crypt-key user-mail-address
-        epa-file-encrypt-to user-mail-address))
-
-(use-package! org-bullets
-  :commands org-bullets-mode
-  :init (add-hook 'org-mode-hook #'org-bullets-mode))
-
-(use-package! evil-org
-  :after org
-  :config
+(after! evil-org
   (add-hook! org-mode (evil-org-mode))
   (evil-org-set-key-theme '(navigation textobjects))
 
@@ -79,173 +54,114 @@
           :g "C-c C-j"       #'counsel-org-goto
           :g "C-c C-S-l"     #'+org/remove-link)))
 
-;;
-;; Hooks & bootstraps
-;;
+(after! org
+  (setq-default org-M-RET-may-split-line '((default))
+                org-adapt-indentation nil
+                org-agenda-dim-blocked-tasks nil
+                org-agenda-files (concat +org-dir "/todo.org")
+                org-agenda-inhibit-startup t
+                org-agenda-skip-unavailable-files nil
+                org-blank-before-new-entry '((heading . t) (plain-list-item . t))
+                org-cycle-include-plain-lists t
+                org-cycle-separator-lines 1
+                org-default-notes-file (concat +org-dir "/note.org")
+                org-ellipsis " ◢ "
+                org-emphasis-alist '(("*" bold) ("/" italic) ("_" underline) ("=" org-verbatim verbatim) ("~" org-code verbatim) ("+" alert-urgent-face))
+                org-entities-user '(("flat"  "\\flat" nil "" "" "266D" "♭") ("sharp" "\\sharp" nil "" "" "266F" "♯"))
+                org-fontify-done-headline t
+                org-fontify-quote-and-verse-blocks t
+                org-fontify-whole-heading-line t
+                org-footnote-auto-label 'plain
+                org-hidden-keywords nil
+                org-hide-emphasis-markers nil
+                org-hide-leading-stars t
+                org-hide-leading-stars-before-indent-mode t
+                org-highlight-latex-and-related '(latex)
+                org-image-actual-width '(200)
+                org-image-actual-width nil
+                org-indent-indentation-per-level 2
+                org-indent-mode-turns-on-hiding-stars t
+                org-latex-compiler "xelatex"
+                org-latex-listings t
+                org-startup-folded nil
+                org-pretty-entities nil
+                org-pretty-entities-include-sub-superscripts t
+                org-priority-faces
+                `((?a . ,(face-foreground 'error))
+                  (?b . ,(face-foreground 'warning))
+                  (?c . ,(face-foreground 'success)))
+                org-refile-targets '((nil :level . 1))
+                org-reverse-note-order t
+                org-startup-indented t
+                org-startup-truncated nil
+                org-startup-with-inline-images nil
+                org-tags-column 0
+                org-todo-keywords '((sequence "TODO(T)" "|" "DONE(D)"))
+                org-use-sub-superscripts '{}
+                outline-blank-line t
 
-(defun +org|hook ()
-  (setq line-spacing 1)
-  (setq evil-auto-indent nil)
-  (visual-line-mode +1)
-  (org-indent-mode -1)
-  (doom-disable-line-numbers-h)
-
-  ;; show-paren-mode causes problems for org-indent-mode, so disable it
-  (set (make-local-variable 'show-paren-mode) nil)
-
-  (unless org-agenda-inhibit-startup
-    ;; My version of the 'overview' #+STARTUP option: expand first-level
-    ;; headings. Expands the first level, but no further.
-    (when (eq org-startup-folded t)
-      (outline-hide-sublevels 2))
-
-    ;; If saveplace places the point in a folded position, unfold it on load
-    (when (outline-invisible-p)
-      (ignore-errors
-        (save-excursion
-          (outline-previous-visible-heading 1)
-          (org-show-subtree))))))
-
-(defun +org|init ()
-  "Run once, when org is first loaded."
-  (+org-init-ui)
-  (+org-hacks))
-
-;;
-(defun +org-init-ui ()
-  "Configures the UI for `org-mode'."
-  (setq-default
-   org-M-RET-may-split-line '((default))
-   org-adapt-indentation nil
-   org-agenda-dim-blocked-tasks nil
-   org-agenda-files (concat +org-dir "/todo.org")
-   org-agenda-inhibit-startup t
-   org-agenda-skip-unavailable-files nil
-   org-blank-before-new-entry '((heading . t) (plain-list-item . t))
-   org-cycle-include-plain-lists t
-   org-cycle-separator-lines 1
-   org-default-notes-file (concat +org-dir "/note.org")
-   org-ellipsis " ◢ "
-   org-emphasis-alist '(("*" bold) ("/" italic) ("_" underline) ("=" org-verbatim verbatim) ("~" org-code verbatim) ("+" alert-urgent-face))
-   org-entities-user '(("flat"  "\\flat" nil "" "" "266D" "♭") ("sharp" "\\sharp" nil "" "" "266F" "♯"))
-   org-fontify-done-headline t
-   org-fontify-quote-and-verse-blocks t
-   org-fontify-whole-heading-line t
-   org-footnote-auto-label 'plain
-   org-hidden-keywords nil
-   org-hide-emphasis-markers nil
-   org-hide-leading-stars t
-   org-hide-leading-stars-before-indent-mode t
-   org-highlight-latex-and-related '(latex)
-   org-image-actual-width '(200)
-   org-image-actual-width nil
-   org-indent-indentation-per-level 2
-   org-indent-mode-turns-on-hiding-stars t
-   org-latex-compiler "xelatex"
-   org-latex-listings t
-   org-startup-folded nil
-   org-pretty-entities nil
-   org-pretty-entities-include-sub-superscripts t
-   org-priority-faces
-   `((?a . ,(face-foreground 'error))
-     (?b . ,(face-foreground 'warning))
-     (?c . ,(face-foreground 'success)))
-   org-refile-targets '((nil :level . 1))
-   org-reverse-note-order t
-   org-startup-indented t
-   org-startup-with-inline-images nil
-   org-tags-column 0
-   ;; org-todo-keywords '((sequence "[ ](t)" "[-](p)" "[?](m)" "|" "[X](d)")
-   ;;                     (sequence "TODO(T)" "|" "DONE(D)")
-   ;;                     (sequence "IDEA(i)" "NEXT(n)" "ACTIVE(a)" "WAITING(w)" "LATER(l)" "|" "CANCELLED(c)"))
-   org-use-sub-superscripts '{}
-   outline-blank-line t
-
-   ;; LaTeX previews are too small and usually render to light backgrounds, so
-   ;; this enlargens them and ensures their background (and foreground) match the
-   ;; current theme.
-   org-format-latex-options (plist-put org-format-latex-options :scale 1.5)
-   org-format-latex-options
-   (plist-put org-format-latex-options
-              :background (face-attribute (or (cadr (assq 'default face-remapping-alist))
-                                              'default)
-                                          :background nil t)))
+                ;; LaTeX previews are too small and usually render to light backgrounds, so
+                ;; this enlargens them and ensures their background (and foreground) match the
+                ;; current theme.
+                org-format-latex-options (plist-put org-format-latex-options :scale 1.5)
+                org-format-latex-options
+                (plist-put org-format-latex-options
+                           :background (face-attribute (or (cadr (assq 'default face-remapping-alist))
+                                                           'default)
+                                                       :background nil t)))
 
   ;; Use ivy/helm if either is available
   (when (or (featurep! :completion ivy)
             (featurep! :completion helm))
     (setq-default org-completion-use-ido nil
-                  org-outline-path-complete-in-steps nil)))
+                  org-outline-path-complete-in-steps nil))
 
-;;
-(defun +org-hacks ()
-  "Getting org to behave."
-  ;; Don't open separate windows
-  (cl-pushnew '(file . find-file) org-link-frame-setup)
-
-  ;; Let OS decide what to do with files when opened
   (setq org-file-apps
         `(("\\.org$" . emacs)
           ("\\.cpp$" . emacs)
           ("\\.odt$" . "winopen %s")
           (system . default)
           (t . ,(cond (IS-MAC "open -R %s")
-                      (IS-LINUX "xdg-open \"%s\"")))))
+                      (IS-LINUX "xdg-open \"%s\""))))))
+(after! ol
+  (cl-pushnew '(file . find-file) org-link-frame-setup))
 
-  (defun +org|remove-occur-highlights ()
-    "Remove org occur highlights on ESC in normal mode."
-    (when (and (derived-mode-p 'org-mode)
-               org-occur-highlights)
-      (org-remove-occur-highlights)))
-  (add-hook '+evil-esc-hook #'+org|remove-occur-highlights))
+(defun +amos-org-remove-occur-highlights-h ()
+  "Remove org occur highlights on ESC in normal mode."
+  (when (and (derived-mode-p 'org-mode)
+             org-occur-highlights)
+    (org-remove-occur-highlights)))
+(add-hook 'doom-escape-hook #'+amos-org-remove-occur-highlights-h)
 
-(add-hook 'org-load-hook #'+org-export|init t)
+(defun +amos-org-export-clear-single-linebreak-in-cjk-string-h (string &rest _)
+  "clear single line-break between cjk characters that is usually soft line-breaks"
+  (let* ((regexp "\\([\u4E00-\u9FA5]\\)\n\\([\u4E00-\u9FA5]\\)")
+         (start (string-match regexp string)))
+    (while start
+      (setq string (replace-match "\\1\\2" nil nil string)
+            start (string-match regexp string start))))
+  string)
+(after! ox
+  (add-to-list 'org-export-filter-final-output-functions
+               '+amos-org-export-clear-single-linebreak-in-cjk-string-h))
 
-                                        ;(use-package! ox-pandoc
-                                        ;  :config
-                                        ;  (unless (executable-find "pandoc")
-                                        ;    (warn "org-export: couldn't find pandoc, disabling pandoc export"))
-                                        ;  (setq org-pandoc-options
-                                        ;        '((standalone . t)
-                                        ;          (mathjax . t)
-                                        ;          (parse-raw . t))))
 
-(defun +org-export|init ()
-  (setq org-export-directory (expand-file-name "export" +org-dir)
-        org-export-backends '(ascii html latex md beamer odt)
-        org-export-with-toc t
-        org-export-with-author t)
+(defun +amos-org-export-output-file-name-a (args)
+  "Return a centralized export location."
+  (unless (nth 2 args)
+    (setq args (append args (list org-export-directory))))
+  args)
+(advice-add #'org-export-output-file-name :filter-args #'+amos-org-export-output-file-name-a)
 
-  ;; Always export to a central location
-  (unless (file-directory-p org-export-directory)
-    (make-directory org-export-directory t))
-  (defun +org*export-output-file-name (args)
-    "Return a centralized export location."
-    (unless (nth 2 args)
-      (setq args (append args (list org-export-directory))))
-    args)
-  (advice-add #'org-export-output-file-name
-              :filter-args #'+org*export-output-file-name)
-
-  (defun +org-export|clear-single-linebreak-in-cjk-string (string &rest _)
-    "clear single line-break between cjk characters that is usually soft line-breaks"
-    (let* ((regexp "\\([\u4E00-\u9FA5]\\)\n\\([\u4E00-\u9FA5]\\)")
-           (start (string-match regexp string)))
-      (while start
-        (setq string (replace-match "\\1\\2" nil nil string)
-              start (string-match regexp string start))))
-    string)
-
-  ;; remove comments from org document for use with export hook
-  ;; https://emacs.stackexchange.com/questions/22574/orgmode-export-how-to-prevent-a-new-line-for-comment-lines
-  (defun +org-export|delete-org-comments (_)
-    (loop for comment in (reverse (org-element-map (org-element-parse-buffer)
-                                      'comment 'identity))
-          do
-          (setf (buffer-substring (org-element-property :begin comment)
-                                  (org-element-property :end comment)) "")))
-  (add-hook! 'org-export-before-processing-hook #'+org-export|delete-org-comments))
-
+;; remove comments from org document for use with export hook
+;; https://emacs.stackexchange.com/questions/22574/orgmode-export-how-to-prevent-a-new-line-for-comment-lines
+(defun +amos-org-export-delete-org-comments-h (_)
+  (loop for comment in (reverse (org-element-map (org-element-parse-buffer)
+                                    'comment 'identity))
+        do
+        (setf (buffer-substring (org-element-property :begin comment)
+                                (org-element-property :end comment)) "")))
+(add-hook! 'org-export-before-processing-hook #'+amos-org-export-delete-org-comments-h)
 
 (use-package! ox-twbs
   :after ox)
@@ -275,10 +191,6 @@
                                                          :strategy org-projectile-strategy
                                                          :options nil))))
       (switch-to-buffer (marker-buffer marker)))))
-
-(after! ox
-  (add-to-list 'org-export-filter-final-output-functions
-               '+org-export|clear-single-linebreak-in-cjk-string))
 
 (defun +org*mu4e-mime-switch-headers-or-body ()
   "Switch the buffer to either mu4e-compose-mode (when in headers)
@@ -341,7 +253,7 @@ This function uses the same logic as `org-beginning-of-line' when
   "Is point at an *empty* description list item?"
   (org-list-at-regexp-after-bullet-p "[ \t\r\n\v\f]"))
 
-(defun +amos*org-return (ofun &rest args)
+(defun +amos-org-return-a (ofun &rest args)
   "Wraps the org-return function to allow the Return key to
 automatically insert new list items."
   (if (and (org-at-item-p)
@@ -351,9 +263,9 @@ automatically insert new list items."
                  (eq 'org-link (get-text-property (point) 'face)))))
       (org-meta-return)
     (apply ofun args)))
-(advice-add #'org-return :around #'+amos*org-return)
+(advice-add #'org-return :around #'+amos-org-return-a)
 
-(defun +amos*org-delete-backward-char (ofun &rest args)
+(defun +amos-org-delete-backward-char-a (ofun &rest args)
   "Wraps the org-delete-backward-char function to allow the Backspace
 key to automatically delete list prefixes."
   (if (and (eq major-mode 'org-mode)
@@ -363,8 +275,8 @@ key to automatically delete list prefixes."
                      (save-excursion (back-to-indentation)
                                      (point)))
     (apply ofun args)))
-(advice-add #'org-delete-backward-char :around #'+amos*org-delete-backward-char)
-(advice-add #'+amos/backward-delete-word :around #'+amos*org-delete-backward-char)
+(advice-add #'org-delete-backward-char :around #'+amos-org-delete-backward-char-a)
+(advice-add #'+amos/backward-delete-word :around #'+amos-org-delete-backward-char-a)
 
 (defun +amos/list-todo ()
   (interactive)
@@ -385,7 +297,8 @@ key to automatically delete list prefixes."
   (evil-insert nil)
   (end-of-visual-line)
   (let ((suffix (if (org-get-todo-state) "TODO " "")))
-    (org-insert-heading-after-current)
+    (org-back-to-heading)
+    (org-insert-heading)
     (insert suffix)))
 
 (defun +amos/org-meta-return (&optional arg)
@@ -410,8 +323,8 @@ key to automatically delete list prefixes."
       (end-of-line)
       (newline))))
 
-(advice-add #'org-previous-visible-heading :before #'evil-set-jump)
-(advice-add #'outline-up-heading :before #'evil-set-jump)
+(advice-add #'org-previous-visible-heading :before #'leap-set-jump)
+(advice-add #'outline-up-heading :before #'leap-set-jump)
 
 (after! recentf
   ;; Don't clobber recentf with agenda files
@@ -458,7 +371,7 @@ key to automatically delete list prefixes."
            fill-column)))
     (call-interactively 'org-fill-paragraph)))
 
-(eval-after-load "ox-latex"
+(after! ox-latex
 
   ;; update the list of LaTeX classes and associated header (encoding, etc.)
   ;; and structure

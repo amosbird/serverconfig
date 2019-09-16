@@ -45,6 +45,7 @@
        (sh +fish)
        ;; rust
        (ocaml +lsp)
+       (org +pandoc)
        ;; (python +lsp)
        python
        (go +lsp)
@@ -118,6 +119,7 @@
         ("mp3" . "xdg-open")
         ("mp4" . "xdg-open")
         ("mpg" . "xdg-open")
+        ("webm" . "xdg-open")
         ("flac" . "xdg-open")
         ("m4a" . "xdg-open")
         ("mp4" . "xdg-open")
@@ -251,6 +253,7 @@
         (underline . "<span class=\"underline\">%s</span>")
         (verbatim . "<code>%s</code>")))
 (setq osc-http-addr (concat (string-trim-right (shell-command-to-string "ztaddr")) ":8866"))
+(setq org-use-fast-todo-selection nil)
 (setq package-check-signature nil)
 (setq password-cache-expiry nil)
 (setq process-environment initial-environment)

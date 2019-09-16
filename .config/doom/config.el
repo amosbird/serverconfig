@@ -1063,7 +1063,7 @@ This function should be hooked to `buffer-list-update-hook'."
   (make-hash-table :test #'equal)
   "Store pre-computed regex.")
 
-(defun +amos*ivy-regex-half-quote (str &optional greedy)
+(defun +amos-ivy-regex-half-quote-a (str &optional greedy)
   "Re-build regex pattern from STR in case it has a space.
 When GREEDY is non-nil, join words in a greedy way."
   (let ((hashed (unless greedy
@@ -1080,45 +1080,82 @@ When GREEDY is non-nil, join words in a greedy way."
                         (cons (setq ivy--subexps (length subs))
                               (mapconcat (lambda (s) (format "\\(%s\\)" (regexp-quote s))) subs (if greedy ".*" ".*?")))))
                     +amos--ivy-regex-hash)))))
+(advice-add #'ivy--regex :override #'+amos-ivy-regex-half-quote-a)
 
-(defun +amos--old-ivy-regex (str &optional greedy)
+(defun +amos-escape-ivy-string (str)
+  (pcase str
+    ("\\" "\\\\")
+    ("." "\\.")
+    ("*" "\\*")
+    ("[" "\\[")
+    ("]" "\\]")))
+
+(defun +amos-escape-counsel-string (str)
+  (pcase str
+    ("\\" "\\\\")
+    ("'" "\\'")
+    ("\"" "\\\"")
+    ("." "\\\\\\.")
+    ("*" "\\\\\\*")
+    ("[" "\\\\[")
+    ("]" "\\\\]")
+    ("{" "\\\\{")
+    ("}" "\\\\}")
+    (")" "\\\\\\)")
+    ("(" "\\\\\\(")))
+
+(defun +amos-counsel-ag-regex (str &optional greedy)
   "Re-build regex pattern from STR in case it has a space.
 When GREEDY is non-nil, join words in a greedy way."
   (let ((hashed (unless greedy
                   (gethash str ivy--regex-hash))))
     (if hashed
-        (prog1 (cdr hashed)
-          (setq ivy--subexps (car hashed)))
-      (when (string-match "\\([^\\]\\|^\\)\\\\$" str)
-        (setq str (substring str 0 -1)))
+        (progn
+          (setq ivy--subexps (car hashed))
+          (cdr hashed))
+      (setq str (ivy--trim-trailing-re str))
       (cdr (puthash str
                     (let ((subs (ivy--split str)))
                       (if (= (length subs) 1)
-                          (cons
-                           (setq ivy--subexps 0)
-                           (car subs))
+                          (progn
+                            (setq ivy--old-re (replace-regexp-in-string "[].*[]" #'+amos-escape-ivy-string (car subs) t t))
+                            (message ivy--old-re)
+                            (cons
+                             (setq ivy--subexps 0)
+                             (replace-regexp-in-string "[]'\"\\.*[({)}]" #'+amos-escape-counsel-string (car subs) t t)))
+                        (setq ivy--old-re (mapconcat
+                                           (lambda (x)
+                                             (format "\\(%s\\)" (replace-regexp-in-string "[].*[]" #'+amos-escape-ivy-string x t t)))
+                                           subs
+                                           (if greedy ".*" ".*?")))
+                        (message ivy--old-re)
                         (cons
                          (setq ivy--subexps (length subs))
                          (mapconcat
                           (lambda (x)
-                            (if (string-match "\\`\\\\([^?].*\\\\)\\'" x)
-                                x
-                              (format "\\(%s\\)" x)))
+                            (setq x (replace-regexp-in-string "[]'\"\\.*[({)}]" #'+amos-escape-counsel-string x t t)))
                           subs
-                          (if greedy
-                              ".*"
-                            ".*?")))))
+                          (if greedy ".*" ".*?")))))
                     ivy--regex-hash)))))
 
-(defvar +amos--old-ivy-regex-function '+amos--old-ivy-regex)
-(defun +amos*ivy-toggle-regexp-quote ()
-  "Toggle the regexp quoting."
-  (interactive)
-  (setq ivy--old-re nil)
-  (cl-rotatef ivy--regex-function +amos--old-ivy-regex-function ivy--regexp-quote))
+(defun +amos-counsel-ag-function-a (string)
+  "Grep in the current directory for STRING."
+  (let* ((command-args (counsel--split-command-args string))
+         (search-term (cdr command-args)))
+    (or
+     (let ((ivy-text search-term))
+       (ivy-more-chars))
+     (let* ((default-directory (ivy-state-directory ivy-last))
+            (regex (concat "-- " (+amos-counsel-ag-regex search-term)))
+            (switches (concat (car command-args)
+                              (counsel--ag-extra-switches regex)
+                              (and (ivy--case-fold-p string) " -i ")))
+            (command (counsel--format-ag-command switches regex)))
+       ;; (setq ivy--old-re (replace-regexp-in-string "[].*[]" #'+amos-escape-ivy-string search-term t t))
+       (counsel--async-command command)
+       nil))))
 
-(advice-add #'ivy-toggle-regexp-quote :override #'+amos*ivy-toggle-regexp-quote)
-(advice-add #'ivy--regex :override #'+amos*ivy-regex-half-quote)
+(advice-add #'counsel-ag-function :override #'+amos-counsel-ag-function-a)
 
 (evil-define-command ab-char-inc ()
   (save-excursion

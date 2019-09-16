@@ -487,13 +487,19 @@
 
       ;; ivy
       (:after ivy
+        :map counsel-git-grep-map
+        "M-q" #'ivy-toggle-regexp-quote
+        :map counsel-ag-map
+        "M-q" #'ivy-toggle-regexp-quote
         :map swiper-map
+        "M-q" #'ivy-toggle-regexp-quote
         "C-j" #'+amos/swiper-isearch-forward
         "C-k" #'+amos/swiper-isearch-backward
         "C-s" #'+amos/swiper-search-symbol
         "C-r" #'ivy-previous-line
 
         :map ivy-switch-buffer-map
+        "M-q"  #'ivy-toggle-regexp-quote
         "C-k"  #'ivy-previous-line
 
         :map ivy-minibuffer-map
@@ -526,6 +532,7 @@
         "M-F"    #'+amos/forward-subword-insert
         "M-g"    #'+amos/ivy-complete-dir
         "M-r"    #'ivy-toggle-fuzzy
+        "M-q"    #'ivy-toggle-regexp-quote
         "M-z"    #'undo
         "S-<f7>"      #'+amos/delete-backward-subword
         "S-<insert>"    #'+amos/paste-from-gui

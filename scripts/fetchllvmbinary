@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+cd /home/amos/git
+rsync -a --exclude=tg --exclude=debug 201.nobida.cn:git/llvm-project .
+fd -t f . llvm-project/release/bin -x patchelf --set-interpreter '/lib64/ld-linux-x86-64.so.2'
+
+rsync -a 201.nobida.cn:git/ccls .
+patchelf --set-interpreter '/lib64/ld-linux-x86-64.so.2' ccls/release/ccls

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 sudo adb start-server
-id="2717:ff48"
-# id="18d1:4ee7" # Charging
+# id="2717:ff48"
+id="18d1:4ee7" # Charging
 # id="2717:ff18" # PTP
 fuser -k -9 /tmp/scrcpy.lock
 pkill -9 release/app/scrcpy
