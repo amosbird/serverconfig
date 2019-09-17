@@ -1104,6 +1104,48 @@ When GREEDY is non-nil, join words in a greedy way."
     (")" "\\\\\\)")
     ("(" "\\\\\\(")))
 
+(defun +amos-ivy-split (str)
+  "Split STR into list of substrings bounded by spaces.
+Single spaces act as splitting points.  Consecutive spaces
+\"quote\" their preceding spaces, i.e., guard them from being
+split.  This allows the literal interpretation of N spaces by
+inputting N+1 spaces.  Any substring not constituting a valid
+regexp is passed to `regexp-quote'."
+  (let ((len (length str))
+        start0
+        (start1 0)
+        res s
+        match-len)
+    (while (and (string-match " +" str start1)
+                (< start1 len))
+      (if (and (> (match-beginning 0) 2)
+               (string= "[^" (substring
+                              str
+                              (- (match-beginning 0) 2)
+                              (match-beginning 0))))
+          (progn
+            (setq start0 start1)
+            (setq start1 (match-end 0)))
+        (setq match-len (- (match-end 0) (match-beginning 0)))
+        (if (= match-len 1)
+            (progn
+              (when start0
+                (setq start1 start0)
+                (setq start0 nil))
+              (push (substring str start1 (match-beginning 0)) res)
+              (setq start1 (match-end 0)))
+          (setq str (replace-match
+                     (make-string (1- match-len) ?\ )
+                     nil nil str))
+          (setq start0 (or start0 start1))
+          (setq start1 (1- (match-end 0))))))
+    (if start0
+        (push (substring str start0) res)
+      (setq s (substring str start1))
+      (unless (= (length s) 0)
+        (push s res)))
+    (nreverse res)))
+
 (defun +amos-counsel-ag-regex (str &optional greedy)
   "Re-build regex pattern from STR in case it has a space.
 When GREEDY is non-nil, join words in a greedy way."
@@ -1115,25 +1157,17 @@ When GREEDY is non-nil, join words in a greedy way."
           (cdr hashed))
       (setq str (ivy--trim-trailing-re str))
       (cdr (puthash str
-                    (let ((subs (ivy--split str)))
+                    (let ((subs (+amos-ivy-split str)))
                       (if (= (length subs) 1)
                           (progn
-                            (setq ivy--old-re (replace-regexp-in-string "[].*[]" #'+amos-escape-ivy-string (car subs) t t))
-                            (message ivy--old-re)
                             (cons
                              (setq ivy--subexps 0)
-                             (replace-regexp-in-string "[]'\"\\.*[({)}]" #'+amos-escape-counsel-string (car subs) t t)))
-                        (setq ivy--old-re (mapconcat
-                                           (lambda (x)
-                                             (format "\\(%s\\)" (replace-regexp-in-string "[].*[]" #'+amos-escape-ivy-string x t t)))
-                                           subs
-                                           (if greedy ".*" ".*?")))
-                        (message ivy--old-re)
+                             (setq x (replace-regexp-in-string "[]['\"\\.*({)}]" #'+amos-escape-counsel-string (car subs) t t))))
                         (cons
                          (setq ivy--subexps (length subs))
                          (mapconcat
                           (lambda (x)
-                            (setq x (replace-regexp-in-string "[]'\"\\.*[({)}]" #'+amos-escape-counsel-string x t t)))
+                            (replace-regexp-in-string "[]['\"\\.*({)}]" #'+amos-escape-counsel-string x t t))
                           subs
                           (if greedy ".*" ".*?")))))
                     ivy--regex-hash)))))
@@ -1150,8 +1184,12 @@ When GREEDY is non-nil, join words in a greedy way."
             (switches (concat (car command-args)
                               (counsel--ag-extra-switches regex)
                               (and (ivy--case-fold-p string) " -i ")))
-            (command (counsel--format-ag-command switches regex)))
-       ;; (setq ivy--old-re (replace-regexp-in-string "[].*[]" #'+amos-escape-ivy-string search-term t t))
+            (command (counsel--format-ag-command switches regex))
+            (subs (+amos-ivy-split search-term)))
+       (setq ivy--old-re (mapconcat
+                          (lambda (x)
+                            (format "\\(%s\\)" (replace-regexp-in-string "[].*[]" #'+amos-escape-ivy-string x t t)))
+                          subs ".*"))
        (counsel--async-command command)
        nil))))
 
