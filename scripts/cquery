@@ -20,7 +20,7 @@ for i in $ccls_include_dirs; do
     cxx_flags="${cxx_flags}, \"-I$i\""
 done
 
-cxx_flags="${cxx_flags}]"
+cxx_flags="${cxx_flags}, \"--sysroot=$HOME/gentoo\"]"
 
 blacklist='["/tmp"'
 for i in $ccls_blacklist; do
@@ -67,10 +67,11 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
     "include": {
         "whitelist": ["ccutils", "/usr/(local/)?include/(sys/)?[^/]+\\.h$"],
         "blacklist": [
-          "(x86_64-redhat-linux|x86_64-pc-linux-gnu)/(32|bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
-          "^/usr/(local/)?include/c\\+\\+/[0-9\\.]+/(bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
-          "^/usr/(local/)?include/c\\+\\+/v1/",
-          "^/usr/(local/)?include/(?!c\\+\\+).+"
+          "(x86_64-redhat-linux|x86_64-pc-linux-gnu)/([^/]+/){0,3}(32|bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
+          "/usr/(local/)?include/[^/]+/(bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
+          "/usr/(local/)?include/c\\+\\+/v1/",
+          "/clang/[^/]+/include/",
+          "/usr/(local/)?include/(?!c\\+\\+).+"
         ]
     }
   },

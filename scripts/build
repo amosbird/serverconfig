@@ -37,7 +37,14 @@ else
     ccls)
         cmake_args=(
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
-            -DSYSTEM_CLANG=On
+            -DUSE_SHARED_LLVM=On
+            -DCMAKE_PREFIX_PATH="$HOME/git/llvm-project/release;$HOME/git/llvm-project/release/tools/clang;$HOME/git/llvm-project/llvm;$HOME/git/llvm-project/clang"
+        )
+
+        ;;
+    ccls-debug)
+        cmake_args=(
+            -DCMAKE_BUILD_TYPE=Debug
             -DUSE_SHARED_LLVM=On
             -DCMAKE_PREFIX_PATH="$HOME/git/llvm-project/release;$HOME/git/llvm-project/release/tools/clang;$HOME/git/llvm-project/llvm;$HOME/git/llvm-project/clang"
         )
