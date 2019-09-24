@@ -27,9 +27,9 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         set first (string sub -s 1 -l 1 -- $cmd_lastw)
         if test $first = '"' -o $first = "'"
             set quote $first
-            set initial_query --query=(string sub -s 2 -- $cmd_lastw)
+            set initial_query (string sub -s 2 -- $cmd_lastw)
         else
-            set initial_query --query=$cmd_lastw
+            set initial_query $cmd_lastw
         end
     end
 
@@ -46,7 +46,7 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
     else
         set -l query
         string join -- \n $complist | sort | uniq \
-        | fzf --print-query --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i $initial_query \
+        | fzf --print-query --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query \
         | cut -f1 | while read -l r
             # first line is the user entered query
             if test -z "$query"
