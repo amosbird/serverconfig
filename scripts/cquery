@@ -20,8 +20,6 @@ for i in $ccls_include_dirs; do
     cxx_flags="${cxx_flags}, \"-I$i\""
 done
 
-cxx_flags="${cxx_flags}, \"--sysroot=$HOME/gentoo\"]"
-
 blacklist='["/tmp"'
 for i in $ccls_blacklist; do
     blacklist="${blacklist}, \"$i\""
@@ -33,6 +31,12 @@ if [[ -z "$ccls_suffix" ]]; then
 fi
 if [[ ! -z "$ccls_suffix" ]]; then
     ccls_suffix=-"$ccls_suffix"
+fi
+
+if [ "$ccls_suffix" = "-tdesktop" ]; then
+  cxx_flags="${cxx_flags}, \"--sysroot=/\"]"
+else
+  cxx_flags="${cxx_flags}, \"--sysroot=$HOME/gentoo\"]"
 fi
 
 multi=0
@@ -82,7 +86,7 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
 }')
 
 if [ "$ccls_suffix" = "-tdesktop" ]; then
-    exec docker run -i --cap-add=SYS_PTRACE -v /data/.ccls_cached_index:/home/amos/.cache/.ccls_cached_index -v /home/amos/cclstmp:/tmp -v /home/amos/git/docker-tdesktop:/home/amos/git/docker-tdesktop -v /home/amos/git:/home/amos/git amosbird/telegram /home/amos/git/ccls/tg/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" -v 2 "$@"
+    exec docker run -i --cap-add=SYS_PTRACE -v /data/.ccls_cached_index:/home/amos/.cache/.ccls_cached_index -v /home/amos/cclstmp:/tmp -v /home/amos/git:/home/amos/git amosbird/tdesktop-16.04-with-deps /home/amos/git/ccls/tg/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"
 else
     exec ~/git/ccls/release/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"
 fi

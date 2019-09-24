@@ -318,7 +318,7 @@ POS defaults to point."
     (let* ((struct (leap--get-struct))
            (jump-list (leap--get-struct-jump-list struct))
            (idx (leap-jump-list-struct-idx struct)))
-      (cl-loop repeat idx
+      (cl-loop repeat (+ 1 idx)
                do (ring-remove jump-list 0))
       (setf (leap-jump-list-struct-idx struct) -1)
       (setf (leap-jump-list-struct-marker struct) nil))
@@ -334,8 +334,7 @@ If COUNT is nil then defaults to 1."
   (interactive)
   (let* ((count (or count 1))
          (struct (leap--get-struct))
-         (idx (leap-jump-list-struct-idx struct))
-         )
+         (idx (leap-jump-list-struct-idx struct)))
     (if (= idx -1)
         (setf (leap-jump-list-struct-marker struct) (point-marker)))
     (leap--jump idx count)))
@@ -347,20 +346,26 @@ If COUNT is nil then defaults to 1."
   (interactive)
   (let* ((count (or count 1))
          (struct (leap--get-struct))
-         (idx (leap-jump-list-struct-idx struct))
-         (marker (leap-jump-list-struct-marker struct)))
-    (unless (= idx -1)
-      (if (>= (- idx count) 0)
-          (leap--jump idx (- 0 count))
-        (if (and marker (marker-position marker) (marker-buffer marker))
-            (switch-to-buffer (marker-buffer marker))
-          (goto-char marker))
-        (setf (leap-jump-list-struct-idx struct) -1)
-        (setf (leap-jump-list-struct-marker struct) nil)
-        (run-hooks 'leap-post-jump-hook)))))
+         (idx (leap-jump-list-struct-idx struct)))
+    (if (>= (- idx count) 0)
+        (leap--jump idx (- 0 count))
+      (leap-jump-top))))
 
 ;;;###autoload
-(defun leap-get-jumps (window-or-buffer)
+(defun leap-jump-top ()
+  "Jump to the latest position that initiates the current jump list."
+  (interactive)
+  (let* ((struct (leap--get-struct))
+         (marker (leap-jump-list-struct-marker struct)))
+    (when (and marker (marker-position marker) (marker-buffer marker))
+        (switch-to-buffer (marker-buffer marker))
+        (goto-char marker))
+    (setf (leap-jump-list-struct-idx struct) -1)
+    (setf (leap-jump-list-struct-marker struct) nil)
+    (run-hooks 'leap-post-jump-hook)))
+
+;;;###autoload
+(defun leap-get-jumps (&optional window-or-buffer)
   "Get jumps for WINDOW-OR-BUFFER.
 The argument should be either a window or buffer depending on the context."
   (let* ((struct (leap--get-struct window-or-buffer))

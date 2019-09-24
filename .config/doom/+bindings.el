@@ -1,5 +1,15 @@
 ;;; private/amos/+bindings.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
+(setq evil-collection-key-blacklist
+      (list "gd" "gf" "K" "[" "]" "gz" "<escape>"
+            doom-leader-key doom-localleader-key
+            doom-leader-alt-key doom-localleader-alt-key))
+
+(defadvice! +default-evil-collection-disable-blacklist-a (orig-fn)
+  :around #'evil-collection-vterm-toggle-send-escape  ; allow binding to ESC
+  (let (evil-collection-key-blacklist)
+    (apply orig-fn)))
+
 (map! :leader
       :desc "sticky"                          :nv "DEL" #'evil-sticky-state
       :desc "Find file in cwd"                :nv "m"   #'+amos/list-file

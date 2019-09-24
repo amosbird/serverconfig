@@ -718,6 +718,7 @@ Skip buffers that match `ivy-ignore-buffers'."
 (defun +amos-evil-ex-search-before-a (&rest _)
   (if (thing-at-point 'symbol) (leap-set-jump)))
 (advice-add #'evil-ex-start-word-search :before #'+amos-evil-ex-search-before-a)
+(advice-add #'evil-visualstar/begin-search :before #'+amos-evil-ex-search-before-a)
 
 (defun +amos/counsel-rg-projectile ()
   (interactive)
@@ -727,7 +728,7 @@ Skip buffers that match `ivy-ignore-buffers'."
 
 (defun +amos/counsel-rg-cur-dir ()
   (interactive)
-  (let ((counsel-rg-base-command "rg -uu -S --no-heading --line-number --color never %s ."))
+  (let ((counsel-rg-args '("rg" "-uu" "-S" "--no-heading" "--line-number" "--color" "never" "-i" "--")))
     (counsel-rg nil default-directory)))
 
 (use-package! yapfify
@@ -1082,27 +1083,34 @@ When GREEDY is non-nil, join words in a greedy way."
                     +amos--ivy-regex-hash)))))
 (advice-add #'ivy--regex :override #'+amos-ivy-regex-half-quote-a)
 
+(defvar +amos-escape-ivy-regex "[]^$?+.*[]")
 (defun +amos-escape-ivy-string (str)
   (pcase str
     ("\\" "\\\\")
+    ("^" "\\^")
+    ("$" "\\$")
     ("." "\\.")
+    ("+" "\\+")
+    ("?" "\\?")
     ("*" "\\*")
     ("[" "\\[")
     ("]" "\\]")))
 
+(defvar +amos-escape-counsel-regex "[]^[$+?.*({)}]")
 (defun +amos-escape-counsel-string (str)
   (pcase str
-    ("\\" "\\\\")
-    ("'" "\\'")
-    ("\"" "\\\"")
-    ("." "\\\\\\.")
-    ("*" "\\\\\\*")
-    ("[" "\\\\[")
-    ("]" "\\\\]")
-    ("{" "\\\\{")
-    ("}" "\\\\}")
-    (")" "\\\\\\)")
-    ("(" "\\\\\\(")))
+    ("." "\\.")
+    ("^" "\\^")
+    ("*" "\\*")
+    ("?" "\\?")
+    ("$" "\\$")
+    ("+" "\\+")
+    ("[" "\\[")
+    ("]" "\\]")
+    ("{" "\\{")
+    ("}" "\\}")
+    (")" "\\)")
+    ("(" "\\(")))
 
 (defun +amos-ivy-split (str)
   "Split STR into list of substrings bounded by spaces.
@@ -1162,12 +1170,12 @@ When GREEDY is non-nil, join words in a greedy way."
                           (progn
                             (cons
                              (setq ivy--subexps 0)
-                             (setq x (replace-regexp-in-string "[]['\"\\.*({)}]" #'+amos-escape-counsel-string (car subs) t t))))
+                             (setq x (replace-regexp-in-string +amos-escape-counsel-regex #'+amos-escape-counsel-string (car subs) t t))))
                         (cons
                          (setq ivy--subexps (length subs))
                          (mapconcat
                           (lambda (x)
-                            (replace-regexp-in-string "[]['\"\\.*({)}]" #'+amos-escape-counsel-string x t t))
+                            (replace-regexp-in-string +amos-escape-counsel-regex #'+amos-escape-counsel-string x t t))
                           subs
                           (if greedy ".*" ".*?")))))
                     ivy--regex-hash)))))
@@ -1180,20 +1188,18 @@ When GREEDY is non-nil, join words in a greedy way."
      (let ((ivy-text search-term))
        (ivy-more-chars))
      (let* ((default-directory (ivy-state-directory ivy-last))
-            (regex (concat "-- " (+amos-counsel-ag-regex search-term)))
-            (switches (concat (car command-args)
-                              (counsel--ag-extra-switches regex)
-                              (and (ivy--case-fold-p string) " -i ")))
-            (command (counsel--format-ag-command switches regex))
+            (regex (+amos-counsel-ag-regex search-term))
             (subs (+amos-ivy-split search-term)))
        (setq ivy--old-re (mapconcat
                           (lambda (x)
-                            (format "\\(%s\\)" (replace-regexp-in-string "[].*[]" #'+amos-escape-ivy-string x t t)))
+                            (format "\\(%s\\)" (replace-regexp-in-string +amos-escape-ivy-regex #'+amos-escape-ivy-string x t t)))
                           subs ".*"))
-       (counsel--async-command command)
+       (counsel--async-command (append counsel-rg-args `(,regex ".")))
        nil))))
 
 (advice-add #'counsel-ag-function :override #'+amos-counsel-ag-function-a)
+
+(defvar counsel-rg-args '("rg" "-S" "--no-heading" "--line-number" "--color" "never" "-i" "--"))
 
 (evil-define-command ab-char-inc ()
   (save-excursion
@@ -2216,6 +2222,7 @@ representation of `NUMBER' is smaller."
                   t)))))
 (advice-add #'evil-visual-paste :override #'+amos-evil-visual-paste-a)
 
+(defvar leaped nil)
 (defun +amos-+lookup--jump-to-a (prop identifier &optional display-fn arg)
   (let* (leaped
          (origin (point-marker))
@@ -2232,9 +2239,11 @@ representation of `NUMBER' is smaller."
                                               (remq t (append (symbol-value handlers)
                                                               (default-value handlers)))
                                               nil t))))
-                  (+lookup--run-handlers handler identifier origin)
+                  (let ((leap--jumping t))
+                    (+lookup--run-handlers handler identifier origin))
                 (user-error "No lookup handler selected"))
-            (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin))))
+            (let ((leap--jumping t))
+              (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin)))))
     (when (cond ((null result)
                  (message "No lookup handler could find %S" identifier)
                  nil)
@@ -2244,7 +2253,7 @@ representation of `NUMBER' is smaller."
                  (goto-char result)
                  result)
                 (result))
-      (unless leaped
+      (unless (or leaped (null result))
         (with-current-buffer (marker-buffer origin)
           (leap-set-jump (marker-position origin)))
         (run-hooks 'leap-post-jump-hook))
@@ -2284,6 +2293,14 @@ representation of `NUMBER' is smaller."
 (advice-add #'doom-set-jump-a :override #'ignore)
 (advice-add #'doom-set-jump-h :override #'ignore)
 (advice-add #'doom-recenter-a :override #'ignore)
+(dolist (fn '(evil-visualstar/begin-search-forward
+              evil-visualstar/begin-search-backward
+              evil-ex-search-word-backward
+              evil-ex-search-word-backward
+              evil-ex-search-forward
+              evil-ex-search-backward))
+  (advice-remove fn #'doom-recenter-a))
+
 (advice-add #'elisp-def--flash-region :override #'ignore)
 ;; (ad-disable-advice 'switch-to-buffer 'before 'evil-jumps)
 ;; (ad-activate 'switch-to-buffer)  ;; stupid api
@@ -2876,9 +2893,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -4923,3 +4940,11 @@ See `project-local-get' for the parameter PROJECT."
         (-when-let (errors (flycheck-overlay-errors-at (point)))
           (flycheck-display-errors errors))))))
 (advice-add #'flycheck-display-error-at-point-soon :override #'+amos-flycheck-display-error-at-point-soon-a)
+
+
+
+
+(defun evil-visualstar/begin-search-forward (&optional beg end)
+  "Search for the visual selection forwards."
+  (interactive (evil-operator-range))
+  (evil-visualstar/begin-search beg end t))
