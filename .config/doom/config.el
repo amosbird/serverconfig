@@ -2893,9 +2893,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -4637,6 +4637,39 @@ Return the pasted text as a string."
 (defun +amos-git-timemachine--next-revision (revisions)
   (or (cadr (cl-member (car +amos-git-timemachine-revision) revisions :key #'car :test #'string=))
       (car (reverse revisions))))
+
+(defun +amos-git-timemachine-show-revision-a (revision)
+  (when revision
+    (let ((current-position (point))
+          (commit (car revision))
+          (revision-file-name (nth 1 revision))
+          (commit-index (nth 2 revision))
+          (date-relative (nth 3 revision))
+          (date-full (nth 4 revision))
+          (subject (nth 5 revision))
+          (old-size (buffer-size)))
+      (setq buffer-read-only nil)
+      (setq inhibit-modification-hooks t)
+      (run-hook-with-args 'before-change-functions (point-min) (point-max))
+      (erase-buffer)
+      (let ((default-directory git-timemachine-directory)
+            (process-coding-system-alist (list (cons "" (cons buffer-file-coding-system default-process-coding-system)))))
+        (git-timemachine--process-file "show" (concat commit ":" revision-file-name)))
+      (run-hook-with-args 'after-change-functions (point-min) (point-max) old-size)
+      (setq inhibit-modification-hooks nil)
+      (setq buffer-read-only t)
+      (set-buffer-modified-p nil)
+      (let* ((revisions (git-timemachine--revisions))
+             (n-of-m (format "(%d/%d %s)" commit-index (length revisions) date-relative)))
+        (setq mode-line-buffer-identification
+              (list (propertized-buffer-identification "%12b") "@"
+                    (propertize (git-timemachine-abbreviate commit) 'face 'git-timemachine-commit) " name:" revision-file-name" " n-of-m)))
+      (setq git-timemachine-revision revision)
+      (goto-char current-position)
+      (when git-timemachine-show-minibuffer-details
+        (git-timemachine--show-minibuffer-details revision))
+      (git-timemachine--erm-workaround))))
+(advice-add #'git-timemachine-show-revision :override #'+amos-git-timemachine-show-revision-a)
 
 (defun +amos/ediff-previous-revision ()
   (interactive)
