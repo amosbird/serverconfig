@@ -154,11 +154,10 @@ ip r a 13.113.251.5 via $gw
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
 # sudo -u amos tunv6
-ip r a 192.168.1.0/24 via 172.26.155.23
 ip r a 0.0.0.0/1 via 172.26.239.59
 ip r a 128.0.0.0/1 via 172.26.239.59
 
 systemctl restart dnsmasq
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"
 
-gpg -d ~/passwords/ztq.gpg | sudo openconnect --user amos --passwd-on-stdin 2001:cc0:2020:2013:9610:3eff:fe10:6dfa:45556 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c &
+sudo -u amos gpg -d /home/amos/passwords/ztq.gpg | openconnect --user amos --passwd-on-stdin 2001:cc0:2020:2013:9610:3eff:fe10:6dfa:45556 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c &

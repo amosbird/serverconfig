@@ -1,23 +1,3 @@
-##
-# Use fzf as fish completion widget.
-#
-#
-# When FZF_COMPLETE variable is set, fzf is used as completion
-# widget for the fish shell by binding the TAB key.
-#
-# FZF_COMPLETE can have some special numeric values:
-#
-#   `set FZF_COMPLETE 0` basic widget accepts with TAB key
-#   `set FZF_COMPLETE 1` extends 0 with candidate preview window
-#   `set FZF_COMPLETE 2` same as 1 but TAB walks on candidates
-#   `set FZF_COMPLETE 3` multi TAB selection, RETURN accepts selected ones.
-#
-# Any other value of FZF_COMPLETE is given directly as options to fzf.
-#
-# If you prefer to set more advanced options, take a look at the
-# `__fzf_complete_opts` function and override that in your environment.
-
-
 # modified from https://github.com/junegunn/fzf/wiki/Examples-(fish)#completion
 function __fzf_complete -d 'fzf completion and print selection back to commandline'
     # As of 2.6, fish's "complete" function does not understand
@@ -42,7 +22,16 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
     set cmd (string join -- ' ' $cmd)
 
     set -l initial_query ''
-    test -n "$cmd_lastw"; and set initial_query --query="$cmd_lastw"
+    set -l quote ''
+    if test -n "$cmd_lastw"
+        set first (string sub -s 1 -l 1 -- $cmd_lastw)
+        if test $first = '"' -o $first = "'"
+            set quote $first
+            set initial_query --query=(string sub -s 2 -- $cmd_lastw)
+        else
+            set initial_query --query=$cmd_lastw
+        end
+    end
 
     set -l complist (complete -C$cmd)
     set -l result
@@ -56,12 +45,9 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         set result "$complist"
     else
         set -l query
-        string join -- \n $complist \
-        | sort \
-        | uniq \
-        | eval (__fzfcmd) $initial_query --print-query (__fzf_complete_opts) \
-        | cut -f1 \
-        | while read -l r
+        string join -- \n $complist | sort | uniq \
+        | fzf --print-query --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i $initial_query \
+        | cut -f1 | while read -l r
             # first line is the user entered query
             if test -z "$query"
                 set query $r
@@ -83,77 +69,21 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         end
     end
 
-    set prefix (string sub -s 1 -l 1 -- (commandline -t))
-    for i in (seq (count $result))
-        set -l r $result[$i]
-        switch $prefix
-            case "'"
-                commandline -t -- (string escape -- $r)
-            case '"'
-                if string match '*"*' -- $r >/dev/null
-                    commandline -t --  (string escape -- $r)
-                else
-                    commandline -t -- '"'$r'"'
-                end
-            case '~'
-                commandline -t -- (string sub -s 2 (string escape -n -- $r))
-            case '*'
-                commandline -t -- (string escape -n -- $r)
+    if test -n $quote
+        for i in (seq (count $result))
+            set -l r $result[$i]
+            set -l stage1 (string replace -a -- \\ \\\\ $r)
+            if [ $i -eq 1 ]
+                commandline -t -- $quote(string replace -a -- $quote \\$quote $stage1)
+            else
+                commandline -t -- (string replace -a -- $quote \\$quote $stage1)
+            end
+            [ $i -lt (count $result) ]; and commandline -i ' '
         end
-        [ $i -lt (count $result) ]; and commandline -i ' '
+    else
+        commandline -t -- (string escape -n -- $result)
     end
 
     commandline -f repaint
 end
 
-function __fzf_complete_opts_common
-    if set -q FZF_DEFAULT_OPTS
-        echo $FZF_DEFAULT_OPTS
-    end
-    echo --cycle --reverse --inline-info
-end
-
-function __fzf_complete_opts_tab_accepts
-    echo --bind tab:accept,btab:cancel
-end
-
-function __fzf_complete_opts_tab_walks
-    echo --bind tab:down,btab:up
-end
-
-function __fzf_complete_opts_preview
-    set -l file (status -f)
-    echo --with-nth=1 --preview-window=right:wrap --preview="fish\ '$file'\ __fzf_complete_preview\ '{1}'\ '{2..}'"
-end
-
-test "$argv[1]" = "__fzf_complete_preview"; and __fzf_complete_preview $argv[2..3]
-
-function __fzf_complete_opts_0 -d 'basic single selection with tab accept'
-    __fzf_complete_opts_common
-    echo --no-multi --height 40% --reverse --select-1 --exit-0
-    __fzf_complete_opts_tab_accepts
-end
-
-function __fzf_complete_opts_1 -d 'single selection with preview and tab accept'
-    __fzf_complete_opts_0
-    __fzf_complete_opts_preview
-end
-
-function __fzf_complete_opts_2 -d 'single selection with preview and tab walks'
-    __fzf_complete_opts_1
-    __fzf_complete_opts_tab_walks
-end
-
-function __fzf_complete_opts_3 -d 'multi selection with preview'
-    __fzf_complete_opts_common
-    echo --multi
-    __fzf_complete_opts_preview
-end
-
-function __fzf_complete_opts -d 'fzf options for fish tab completion'
-    # __fzf_complete_opts_0
-    # if set -q FZF_COMPLETE_OPTS
-    #     echo $FZF_COMPLETE_OPTS
-    # end
-    echo --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i
-end
