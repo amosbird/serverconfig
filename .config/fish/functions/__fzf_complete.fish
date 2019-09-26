@@ -23,65 +23,71 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
 
     set -l initial_query ''
     set -l quote ''
+    set -l other ''
     if test -n "$cmd_lastw"
         set first (string sub -s 1 -l 1 -- $cmd_lastw)
         if test $first = '"' -o $first = "'"
             set quote $first
             set initial_query (string sub -s 2 -- $cmd_lastw)
-        else
+        else if test $first = '{'
+            set other $first
+            set initial_query $cmd_lastw
+        else if test $first = '~'
+            set other $first
             set initial_query $cmd_lastw
         end
     end
 
     set -l complist (complete -C$cmd)
-    set -l result
 
     # do nothing if there is nothing to select from
     test -z "$complist"; and return
+    set -l result
 
-    set -l compwc (echo $complist | wc -w)
+    set -l compwc (count $complist)
     if test $compwc -eq 1
         # if there is only one option dont open fzf
-        set result "$complist"
+        set result $complist
     else
-        set -l query
         string join -- \n $complist | sort | uniq \
-        | fzf --print-query --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query \
-        | cut -f1 | while read -l r
-            # first line is the user entered query
-            if test -z "$query"
-                set query $r
-                # rest of lines are selected candidates
-            else
-                set result $result $r
-            end
-        end
+        | fzf --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query | read -a -z result
 
-        # exit if user canceled
-        if test -z "$query" ;and test -z "$result"
-            commandline -f repaint
-            return
-        end
-
-        # if user accepted but no candidate matches, use the input as result
         if test -z "$result"
-            set result $query
+            set result $initial_query
         end
     end
 
     if test -n $quote
+        set -l cmdline
         for i in (seq (count $result))
             set -l r $result[$i]
             set -l stage1 (string replace -a -- \\ \\\\ $r)
             if [ $i -eq 1 ]
-                commandline -t -- $quote(string replace -a -- $quote \\$quote $stage1)
+                set cmdline $cmdline $quote(string replace -a -- $quote \\$quote $stage1)
             else
-                commandline -t -- (string replace -a -- $quote \\$quote $stage1)
+                set cmdline $cmdline (string replace -a -- $quote \\$quote $stage1)
             end
+        end
+        commandline -t -- (string join ' ' -- $cmdline)
+    else if test $other = '~'
+        for i in (seq (count $result))
+            commandline -t -- (string sub -s 2 (string escape -n -- $result[$i]))
             [ $i -lt (count $result) ]; and commandline -i ' '
         end
+    else if test $other = '{'
+        set -l cmdline
+        for i in (seq (count $result))
+            # NOTE it breaks when completion contains comma
+            set -l r (string escape -n -- (string sub -s 2 $result[$i]))
+            if [ $i -eq 1 ]
+                set cmdline $cmdline $other$r
+            else
+                set cmdline $cmdline (string split , -- $r)[-1]
+            end
+        end
+        commandline -t -- (string join ',' -- $cmdline)
     else
-        commandline -t -- (string escape -n -- $result)
+        commandline -t -- (string trim (string join ' ' (string escape -n -- $result)))
     end
 
     commandline -f repaint

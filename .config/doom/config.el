@@ -1300,6 +1300,13 @@ When GREEDY is non-nil, join words in a greedy way."
 (evil-define-command +amos/delete-char()
   (mkr! (delete-char 1 1)))
 
+(evil-define-operator +amos/evil-change
+  (beg end type register yank-handler delete-func)
+  (interactive "<R><x><y>")
+  (if (evil-visual-state-p)
+      (mkr! (evil-change beg end type register yank-handler delete-func))
+    (evil-change beg end type register yank-handler delete-func)))
+
 (evil-define-command +amos/delete-backward-char()
   (mkr! (backward-delete-char-untabify 1 1)))
 
@@ -2492,15 +2499,15 @@ the current state and point position."
 
 (defun +amos/workspace-delete ()
   (interactive)
-  (when +amos-tmux-need-switch
-    (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
-    (setq +amos-tmux-need-switch nil))
   (let ((f (selected-frame)))
     (setq +amos-frame-list (--remove (eq f it) +amos-frame-list))
     (setq +amos-frame-stack (-uniq (--remove (eq f it) +amos-frame-stack)))
     (if +amos-frame-stack
         (+amos/workspace-switch-to-frame (car +amos-frame-stack)))
-    (delete-frame f)))
+    (delete-frame f))
+  (when +amos-tmux-need-switch
+    (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
+    (setq +amos-tmux-need-switch nil)))
 
 (defun +amos/workspace-switch-to-frame (frame)
   (setq +amos-tmux-need-switch nil)
@@ -2893,9 +2900,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 

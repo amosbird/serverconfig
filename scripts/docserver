@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
+#!/usr/bin/env fish
 
-nohup httpfolder -i "$(ztaddr)" -p 8866 / >/dev/null 2>&1 &
-disown
+daemonize httpfolder -i (ztaddr) -p 8866 /

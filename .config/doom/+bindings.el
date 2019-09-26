@@ -161,6 +161,7 @@
       :v "M-n"                    #'evil-multiedit-match-and-next
       :i "M-n"                    #'next-line
       :i "M-p"                    #'previous-line
+      :m "c"                      #'+amos/evil-change
       :m "-"                      #'evil-end-of-line
       :m "N"                      #'evil-ex-search-previous
       :m "W"                      #'+amos/evil-forward-subword-begin

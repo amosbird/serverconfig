@@ -58,52 +58,6 @@ function fish_user_key_bindings
         commandline -f repaint
     end
 
-    function fzf-complete -d 'fzf completion and print selection back to commandline'
-        # As of 2.6, fish's "complete" function does not understand
-        # subcommands. Instead, we use the same hack as __fish_complete_subcommand and
-        # extract the subcommand manually.
-        set -l cmd (commandline -co) (commandline -ct)
-        switch $cmd[1]
-            case env sudo
-                for i in (seq 2 (count $cmd))
-                    switch $cmd[$i]
-                        case '-*'
-                        case '*=*'
-                        case '*'
-                            set cmd $cmd[$i..-1]
-                            break
-                    end
-                end
-        end
-        set cmd (string join -- ' ' $cmd)
-
-        set -l complist (complete -C -- $cmd)
-        set -l result
-        set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
-        string join -- \n $complist | sort | fzf -m --height $FZF_TMUX_HEIGHT --reverse --select-1 --exit-0 | cut -f1 | while read -l r; set result $result $r; end
-        set prefix (string sub -s 1 -l 1 -- (commandline -t))
-        for i in (seq (count $result))
-            set -l r $result[$i]
-            switch $prefix
-                case "'"
-                    commandline -t -- (string escape -- $r)
-                case '"'
-                    if string match '*"*' -- $r >/dev/null
-                        commandline -t -- (string escape -- $r)
-                    else
-                        commandline -t -- '"'$r'"'
-                    end
-                case '~'
-                    commandline -t -- (string sub -s 2 (string escape -n -- $r))
-                case '*'
-                    commandline -t -- (string escape -n -- $r)
-            end
-            [ $i -lt (count $result) ]; and commandline -i ' '
-        end
-
-        commandline -f repaint
-    end
-
     function fzf-history-widget -d "Show command history"
         set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
         begin
@@ -138,16 +92,6 @@ function fish_user_key_bindings
         tput rmcup
         commandline -f repaint
         eval (direnv export fish);
-    end
-
-    function __fzfcmd
-        set -q FZF_TMUX; or set FZF_TMUX 0
-        set -q FZF_TMUX_HEIGHT; or set FZF_TMUX_HEIGHT 40%
-        if [ $FZF_TMUX -eq 1 ]
-            echo "fzf-tmux -d$FZF_TMUX_HEIGHT"
-        else
-            echo "fzf"
-        end
     end
 
     function fzf-command-go -d "Execute current command line and filter results by fzf"
@@ -238,7 +182,7 @@ function fish_user_key_bindings
         if string match -r '^ *$' (commandline) > /dev/null 2>&1
             return
         else
-            commandline "tmuxgdb -ex=start -args "(commandline)
+            commandline "tmuxgdb "(commandline)
             commandline -f execute
         end
     end
@@ -337,6 +281,20 @@ function fish_user_key_bindings
         tmux select-pane $o  > /dev/null 2>&1
     end
 
+    function insert-last-arg
+        set -l a (commandline -co)[-1]
+        test -n "$a"
+        and commandline -t -- $a
+    end
+
+    function insert-last-line
+        set -l a (string escape -n -- (string trim -- (tmux capture-pane -p | rg -v '^$|^ ❯.*' | tail -1)))
+        test -n "$a"
+        and commandline -t -- $a
+    end
+
+    bind \e\> 'insert-last-arg'
+    bind \e\< 'insert-last-line'
     bind \e1 'select-window 1'
     bind \e2 'select-window 2'
     bind \e3 'select-window 3'
