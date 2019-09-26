@@ -12,12 +12,6 @@ set -x VISUAL eee
 set -x DIRENV_LOG_FORMAT ""
 set -x UID (id -u)
 set -x GPG_TTY (tty)
-set -x NODE_PATH ~/.local/lib/node_modules/
-
-set -x PERL5LIB $HOME/perl5/lib/perl5
-set -x PERL_LOCAL_LIB_ROOT $HOME/perl5
-set -x PERL_MB_OPT "--install_base \"$HOME/perl5\""
-set -x PERL_MM_OPT "INSTALL_BASE=$HOME/perl5"
 
 set -e LS_COLORS
 alias l "exa"
@@ -61,7 +55,7 @@ if not set -q fish_initialized
     set -U fish_pager_color_prefix 'white'  '--bold'  '--underline'
     set -U fish_pager_color_progress 'brwhite'  '--background=cyan'
 
-    set -U fish_user_paths $HOME/scripts $HOME/.local/bin $HOME/perl5/bin
+    set -U fish_user_paths $HOME/scripts $HOME/.local/bin
     set -U fish_initialized 1
 end
 
