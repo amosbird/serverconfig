@@ -33,6 +33,8 @@
 #LC_ALL=C
 
 
+export PATH=/bin:/usr/bin:$PATH
+
 scriptVersion="3.8.0"
 
 ######################
