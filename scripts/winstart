@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Dependencies: wmctrl
 
 # In your VM, share the root host location "/" in $drive

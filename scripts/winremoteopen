@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Based on http://tinyurl.com/jmze5lw with some additions
 # Dependencies: detox wmctrl
 

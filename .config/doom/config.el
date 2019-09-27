@@ -1199,6 +1199,14 @@ When GREEDY is non-nil, join words in a greedy way."
 
 (advice-add #'counsel-ag-function :override #'+amos-counsel-ag-function-a)
 
+(defun +amos-counsel-ag-occur-a ()
+  (ivy-occur-grep-mode)
+  (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
+                  default-directory))
+  (insert (format "%d candidates:\n" (length ivy--all-candidates)))
+  (ivy--occur-insert-lines ivy--all-candidates))
+(advice-add #'counsel-ag-occur :override #'+amos-counsel-ag-occur-a)
+
 (defvar counsel-rg-args '("rg" "-S" "--no-heading" "--line-number" "--color" "never" "-i" "--"))
 
 (evil-define-command ab-char-inc ()
@@ -2758,10 +2766,6 @@ the current state and point position."
           (eq last-input-event 29))
       (apply ofun candidate)))
 (advice-add #'flycheck-inline-display-errors :around #'+amos-flycheck-inline-display-errors-a)
-
-(after! counsel
-  (setq counsel-rg-base-command "rg -S --no-heading --line-number --color never %s ."))
-
 (advice-add #'evil-multiedit--cycle :after #'+amos/recenter)
 (advice-add #'evil-multiedit-match-and-next :after #'+amos/recenter)
 (advice-add #'edebug-overlay-arrow :after #'realign-windows)
@@ -2900,9 +2904,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -3749,8 +3753,7 @@ as small) as possible, but don't signal an error."
       (setq ivy-occur-last ivy-last)
       (setq-local ivy--directory ivy--directory)
       (goto-char 1)
-      (forward-line 4)
-      )
+      (forward-line 4))
     (ivy-exit-with-action
      `(lambda (_)
         (if ,recursive

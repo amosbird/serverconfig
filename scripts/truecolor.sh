@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Based on: https://gist.github.com/XVilka/8346728
 
 awk -v term_cols="${width:-$(tput cols || echo 80)}" 'BEGIN{

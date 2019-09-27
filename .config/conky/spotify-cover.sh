@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Written by Demetrio Ferro <ferrodemetrio@gmail.com> <https://twitter.com/DemetrioFerro>
 # Distributed under license GPLv3+ GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>

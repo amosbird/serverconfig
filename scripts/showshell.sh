@@ -3,7 +3,7 @@
 if pgrep -f urxvt_scratchpad; then
     :
 else
-    termite -t urxvt_scratchpad -e 'fish -c "env SHELL=/usr/local/bin/fish tmux -L gui new -A -s gui"' &
+    termite -t urxvt_scratchpad -e 'bash -c "env SHELL=/home/amos/gentoo/usr/local/bin/fish tmux -L gui new -A -s gui"' &
     sleep 0.5 # sleep for show shell logic
 fi
 

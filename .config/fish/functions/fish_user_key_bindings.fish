@@ -288,7 +288,7 @@ function fish_user_key_bindings
     end
 
     function insert-last-line
-        set -l a (string escape -n -- (string trim -- (tmux capture-pane -p | rg -v '^$|^ ❯.*' | tail -1)))
+        set -l a (string escape -n -- (string trim -- (tmux capture-pane -p | rg -v '^$|^ ❯.*|^\\[' | tail -1)))
         test -n "$a"
         and commandline -t -- $a
     end

@@ -113,7 +113,7 @@ git clone https://aur.archlinux.org/trizen-git.git
 cd trizen-git
 makepkg -si
 
-trizen -S ntfs-3g shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua conky-lua cpanminus cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exa exfat-utils expect fcitx-cloudpinyin fcitx-configtool fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fd fd-rs fzf gconf gdb getmail giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls moreutils mpv mtr ncdu ncurses net-tools netease-cloud-music ninja ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin paps parallel pavucontrol pdfjs perf perl-file-find-rule perl-ipc-run3 perl-clipboard perl-regexp-common perl-tidy pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi ripgrep rofi rslsync rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-lang texlive-most texlive-slashbox thinkfan tidy time tokei ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zbar zenity zerotier-one zip --noconfirm --needed
+trizen -S ntfs-3g shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua conky-lua cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exa exfat-utils expect fcitx-cloudpinyin fcitx-configtool fcitx-gtk2 fcitx-gtk3 fcitx-qt4 fcitx-qt5 fcitx-rime fd fd-rs fzf gconf gdb getmail giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls moreutils mpv mtr ncdu ncurses net-tools netease-cloud-music ninja ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin paps parallel pavucontrol pdfjs perf pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi ripgrep rofi rslsync rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-bin texlive-lang texlive-most texlive-slashbox thinkfan tidy time tokei ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zbar zenity zerotier-one zip --noconfirm --needed
 
 trizen -S mimi-git
 
@@ -136,40 +136,16 @@ export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/
 BUILD=/home/amos/git/serverconfig/scripts/build
 
 cd ~/git
-git clone git@github.com:amosbird/cgdb
-cd cgdb && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/tmux
-cd tmux && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
-
-cd ~/git
 git clone git@github.com:amosbird/libvte
 cd libvte && meson _build && ninja -C _build && ln -sf _build/compile_commands.json && sudo ninja -C _build install
 
 cd ~/git
-git clone git@github.com:amosbird/emacs
-cd emacs && ./autogen.sh && ./configure --with-modules && make -j`nproc` && sudo make install
-
-cd ~/git
-git clone https://github.com/djcb/mu
-cd mu && ./autogen.sh && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/htop-vim
-cd htop-vim && ./autogen.sh && ./configure && bear make -j`nproc` && sudo make install
+git clone --recursive git@github.com:amosbird/termite
+cd termite && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/bspwm
 cd bspwm && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone git@github.com:amosbird/reptyr
-cd reptyr && bear make -j`nproc` && sudo make install
-
-cd ~/git
-git clone --recursive git@github.com:amosbird/termite
-cd termite && bear make -j`nproc` && sudo make install
 
 cd ~/git
 git clone git@github.com:amosbird/xcape
@@ -192,18 +168,6 @@ git clone git@github.com:amosbird/obs-studio
 cd obs-studio && $BUILD obs install
 
 cd ~/git
-git clone git@github.com:amosbird/fish-shell
-cd fish-shell && $BUILD rel install
-
-cd ~/git
-git clone https://github.com/llvm/llvm-project
-cd llvm-project && $BUILD llvm
-
-cd ~/git
-git clone --recursive git@github.com:amosbird/ccls
-cd ccls && $BUILD ccls
-
-cd ~/git
 git clone git@github.com:amosbird/fcitx
 cd fcitx/pkg
 makepkg -si
@@ -212,19 +176,19 @@ cd ~/git
 git clone git@github.com:amosbird/qutebrowser
 
 cd ~/git
+git clone git@github.com:amosbird/llpp
+cd llpp && ./build.bash build
+
+cd ~/git
 git clone git@github.com:amosbird/cc-playground
 
 git clone git@github.com:amosbird/cc-snippets cc-playground
 
 git clone https://github.com/amosbird/doom-emacs -b amos ~/.emacs.d
+
 cd ~/.emacs.d && make quickstart
 open emacs and do M-x all-the-icons-install-fonts
 
-go get -d github.com/elves/elvish
-cd ~/go/src/github.com/elves/elvish
-git remote add amos git@github.com:amosbird/elvish
-git fetch amos master
-git checkout -b amos amos/master
 #+END_SRC
 
 ** post
@@ -260,6 +224,8 @@ git checkout -b amos amos/master
 /usr/local/bin/obfs-local
 /usr/local/bin/openconnect
 /usr/local/bin/gnirehtet
+/usr/local/bin/netns-exec
+/usr/local/bin/netns-exec-dbus
 /usr/local/bin/client_linux_amd64
 /etc/thinkfan.conf
 /etc/modprobe.d/modprobe.conf
@@ -291,6 +257,5 @@ systemctl enable docker
 
 ccache -M 50G
 sudo pkgfile --update
-systemctl enable org.cups.cupsd.service
 updateroutes
 updatednsmasq

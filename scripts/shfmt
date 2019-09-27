@@ -1,5 +1,4 @@
 #!/usr/bin/env fish
 
 cd (dirname (status -f)) || exit 1
-. ./path_for_wrapper.sh
-shfmt -i 4 $argv
+/home/amos/gentoo/usr/bin/shfmt -i 4 $argv

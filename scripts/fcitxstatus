@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
-export DBUS_SESSION_BUS_ADDRESS=tcp:host=172.26.100.36,port=55556
+export DBUS_SESSION_BUS_ADDRESS=tcp:host=172.26.178.148,port=55556
 fcitx-remote

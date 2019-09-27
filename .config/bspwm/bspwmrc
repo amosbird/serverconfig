@@ -1,4 +1,4 @@
-#!/usr/local/bin/fish
+#!/usr/bin/env fish
 
 # if test -e "$BSPWM_STATE"
 # 	bspc wm -l "$BSPWM_STATE"

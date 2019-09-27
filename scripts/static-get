@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-#!/bin/sh
 #description: get static linux binaries from s.minos.io and mirrors
 #usage: static-get package
 

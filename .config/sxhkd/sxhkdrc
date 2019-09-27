@@ -31,9 +31,9 @@ mod3+t
 mod3+shift+r
   teiler
 mod3+g
-  fish -c 'url "www.google.com/search?q="'
+  url "www.google.com/search?q="
 mod3+s
-  fish -c 'url "scholar.google.com/scholar?q="'
+  url "scholar.google.com/scholar?q="
 super+z
   slock
 super+q

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 statusname="/proc/$1/status"
 smapsname="/proc/$1/smaps"

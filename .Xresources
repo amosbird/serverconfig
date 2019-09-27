@@ -125,7 +125,7 @@ URxvt*color15:      #fcfcfc
 ! These options only take effect on startup.
 st.termname:     st-256color
 ! if you do not set shell, precedence is: -e arg, utmp option, SHELL env var, /etc/passwd shell
-st.shell:        /usr/local/bin/fish
+st.shell:        fish
 
 ! The following options options can be reloaded via USR1 signal.
 st.font:         monospace:pixelsize=18:antialias=true:autohint=true;

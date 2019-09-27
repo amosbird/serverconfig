@@ -55,7 +55,7 @@ if not set -q fish_initialized
     set -U fish_pager_color_prefix 'white'  '--bold'  '--underline'
     set -U fish_pager_color_progress 'brwhite'  '--background=cyan'
 
-    set -U fish_user_paths $HOME/scripts $HOME/.local/bin
+    set -U fish_user_paths $HOME/scripts $HOME/.local/bin $HOME/gentoo/usr/local/bin
     set -U fish_initialized 1
 end
 

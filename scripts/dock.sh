@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # wait for the dock state to change
 sleep 1
 export DISPLAY=:0

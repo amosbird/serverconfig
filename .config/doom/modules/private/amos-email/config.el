@@ -48,8 +48,7 @@ default/fallback account."
 ;;
 
 (use-package! mu4e
-  :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
-  :load-path "/usr/local/share/emacs/site-lisp/mu4e"
+  :load-path "~/gentoo/usr/local/share/emacs/site-lisp/mu4e"
   :commands (mu4e mu4e-compose-new browse-url-mail)
   :config
   (setq
@@ -319,7 +318,7 @@ default/fallback account."
            )))
 
 ;; (use-package! mu4e-maildirs-extension
-;;   :if (file-directory-p "/usr/local/share/emacs/site-lisp/mu4e")
+;;   :if (file-directory-p "~/gentoo/usr/local/share/emacs/site-lisp/mu4e")
 ;;   :after mu4e
 ;;   :config
 ;;   (mu4e-maildirs-extension)

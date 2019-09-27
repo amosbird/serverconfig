@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # lightsOn.sh
 
 # Original version by iye.cba at gmail com
