@@ -106,38 +106,38 @@
 
 ;; Q U M H
 (map! (:map override
-        "C-h d"         (lambda!
-                         (xref-find-definitions
-                          (let* ((backend (xref-find-backend)))
-                            (completing-read "Find definitions of: "
-                                             (xref-backend-identifier-completion-table backend)
-                                             nil nil nil
-                                             'xref--read-identifier-history nil))))
-        "<xterm-paste>" #'+amos/xterm-paste
-        "<f12>"         #'+amos/reset-cursor
-        "<f11>"         #'+amos/dump-evil-jump-list
-        "M-x"           #'execute-extended-command
-        "M-X"           #'+amos/exec-shell-command
-        "C-M-u"         #'+amos/avy-open-url
-        "<f1>"          #'+amos/reset-zoom
-        "<f2>"          #'+amos/decrease-zoom
-        "<f3>"          #'+amos/increase-zoom
-        "S-<insert>"    #'+amos/paste-from-gui
-        "M-1"           #'+amos/workspace-switch-to-1
-        "M-2"           #'+amos/workspace-switch-to-2
-        "M-3"           #'+amos/workspace-switch-to-3
-        "M-4"           #'+amos/workspace-switch-to-4
-        "M-5"           #'+amos/workspace-switch-to-5
-        "M-6"           #'+amos/workspace-switch-to-6
-        "M-7"           #'+amos/workspace-switch-to-7
-        "M-8"           #'+amos/workspace-switch-to-8
-        ;; "M-9"           #'+amos/workspace-switch-to-9
-        "S-<f9>"        #'+amos/workspace-switch-left
-        "S-<f10>"       #'+amos/workspace-switch-right
-        "C-,"           #'+amos/workspace-switch-left
-        "C-."           #'+amos/workspace-switch-right
-        "C-<comma>"     #'+amos/workspace-switch-left
-        "C-<period>"    #'+amos/workspace-switch-right
+        :gnemv "C-h d"         (lambda!
+                                (xref-find-definitions
+                                 (let* ((backend (xref-find-backend)))
+                                   (completing-read "Find definitions of: "
+                                                    (xref-backend-identifier-completion-table backend)
+                                                    nil nil nil
+                                                    'xref--read-identifier-history nil))))
+        :gnemv "<xterm-paste>" #'+amos/xterm-paste
+        :gnemv "<f12>"         #'+amos/reset-cursor
+        :gnemv "<f11>"         #'+amos/dump-evil-jump-list
+        :gnemv "M-x"           #'execute-extended-command
+        :gnemv "M-X"           #'+amos/exec-shell-command
+        :gnemv "C-M-u"         #'+amos/avy-open-url
+        :gnemv "<f1>"          #'+amos/reset-zoom
+        :gnemv "<f2>"          #'+amos/decrease-zoom
+        :gnemv "<f3>"          #'+amos/increase-zoom
+        :gnemv "S-<insert>"    #'+amos/paste-from-gui
+        :gnemv "M-1"           #'+amos/workspace-switch-to-1
+        :gnemv "M-2"           #'+amos/workspace-switch-to-2
+        :gnemv "M-3"           #'+amos/workspace-switch-to-3
+        :gnemv "M-4"           #'+amos/workspace-switch-to-4
+        :gnemv "M-5"           #'+amos/workspace-switch-to-5
+        :gnemv "M-6"           #'+amos/workspace-switch-to-6
+        :gnemv "M-7"           #'+amos/workspace-switch-to-7
+        :gnemv "M-8"           #'+amos/workspace-switch-to-8
+        ;; :gnemv "M-9"           #'+amos/workspace-switch-to-9
+        :gnemv "S-<f9>"        #'+amos/workspace-switch-left
+        :gnemv "S-<f10>"       #'+amos/workspace-switch-right
+        :gnemv "C-,"           #'+amos/workspace-switch-left
+        :gnemv "C-."           #'+amos/workspace-switch-right
+        :gnemv "C-<comma>"     #'+amos/workspace-switch-left
+        :gnemv "C-<period>"    #'+amos/workspace-switch-right
         )
 
       :gn "M-W"                   #'+amos/kill-current-buffer
