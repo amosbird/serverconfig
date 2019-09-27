@@ -1,5 +1,17 @@
 #!/usr/bin/env bash
 
-mkdir -p ~/gentoo/usr/local/portage/"$1"/"$2"
-cp "$3" ~/gentoo/usr/local/portage/"$1"/"$2"/
-cd ~/gentoo/usr/local/portage/"$1"/"$2" && repoman manifest
+p=$(equery which "$1")
+if test -n "$p"
+then
+    trim=${p%/*/*/*};
+    cd "$trim" || exit 1
+    if test -e "$(dirname "../localrepo/${p#$trim/}")"
+    then
+        echo "localrepo already has it!"
+        exit 1
+    fi
+    rsync -aR "${p#$trim/}" ../localrepo/
+    e "$PWD/../localrepo/${p#$trim/}"
+else
+    exit 1
+fi
