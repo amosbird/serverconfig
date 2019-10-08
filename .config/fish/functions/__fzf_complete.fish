@@ -28,15 +28,15 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         set first (string sub -s 1 -l 1 -- $cmd_lastw)
         if test $first = '"' -o $first = "'"
             set quote $first
-            set initial_query (string sub -s 2 -- $cmd_lastw)
+            set initial_query (string unescape -- (string sub -s 2 -- $cmd_lastw))
         else if test $first = '{'
             set other $first
-            set initial_query $cmd_lastw
+            set initial_query (string unescape -- $cmd_lastw)
         else if test $first = '~'
             set other $first
-            set initial_query $cmd_lastw
+            set initial_query (string unescape -- $cmd_lastw)
         else
-            set initial_query $cmd_lastw
+            set initial_query (string unescape -- $cmd_lastw)
         end
     end
 
@@ -89,7 +89,8 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         end
         commandline -t -- (string join ',' -- $cmdline)
     else
-        commandline -t -- (string trim (string join ' ' (string escape -n -- $result)))
+        set -l r (string trim (string join ' ' (string escape -n -- $result)))
+        commandline -t -- (string replace -a -- ' ' '\\ ' $r)
     end
 
     commandline -f repaint

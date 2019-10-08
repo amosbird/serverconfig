@@ -28,13 +28,14 @@ bspc rule -a copyq state=floating
 bspc rule -a Screenkey manage=off
 bspc rule -a Arandr sticky=on state=floating
 bspc rule -a Deadbeef state=floating
+bspc rule -a Transmission-remote-gtk state=floating
 bspc rule -a Zathura state=tiled
 bspc rule -a netease-cloud-music desktop=o follow=on
 bspc rule -a xfreerdp desktop=w follow=on
 bspc rule -a Luakit desktop=f follow=on
 bspc rule -a Skype desktop=o state=fullscreen
 
-# stalonetray &
+stalonetray &
 xsetroot -cursor_name left_ptr
 startconky
 setbg.sh
