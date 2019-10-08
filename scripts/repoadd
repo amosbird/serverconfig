@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+p=$(equery which "$1")
+if test -n "$p"
+then
+    repo=${p%/*};
+    trim=${p%/*/*/*};
+    cd "$trim" || exit 1
+    if test -e "$(dirname "../localrepo/${p#$trim/}")"
+    then
+        echo "localrepo already has it!"
+        exit 1
+    fi
+    rsync -aR "${repo#$trim/}" ../localrepo/
+    e "$PWD/../localrepo/${p#$trim/}"
+else
+    exit 1
+fi

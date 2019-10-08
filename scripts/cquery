@@ -80,7 +80,7 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
     }
   },
   "clang": {
-    "excludeArgs": ["-fno-tree-loop-distribute-patterns", "-fwhole-program", "-Wno-maybe-uninitialized", "-Wno-unused-but-set-variable"],
+    "excludeArgs": ["-fsanitize", "-fno-tree-loop-distribute-patterns", "-fwhole-program", "-Wno-maybe-uninitialized", "-Wno-unused-but-set-variable"],
     "extraArgs": $cxx_flags
   }
 }')

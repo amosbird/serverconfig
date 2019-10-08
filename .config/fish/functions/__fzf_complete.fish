@@ -35,6 +35,8 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         else if test $first = '~'
             set other $first
             set initial_query $cmd_lastw
+        else
+            set initial_query $cmd_lastw
         end
     end
 
@@ -49,11 +51,11 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         # if there is only one option dont open fzf
         set result $complist
     else
-        string join -- \n $complist | sort | uniq \
-        | fzf --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query | read -a -z result
-
+        string join -- \n $complist | rg -v '^\s+|^$' | cut -f1 | sort -u |
+        fzf --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query | read -a -z result
         if test -z "$result"
-            set result $initial_query
+            commandline -f repaint
+            return
         end
     end
 

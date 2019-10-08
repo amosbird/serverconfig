@@ -728,8 +728,7 @@ Skip buffers that match `ivy-ignore-buffers'."
 
 (defun +amos/counsel-rg-cur-dir ()
   (interactive)
-  (let ((counsel-rg-args '("rg" "-uu" "-S" "--no-heading" "--line-number" "--color" "never" "-i" "--")))
-    (counsel-rg nil default-directory)))
+  (counsel-rg nil default-directory t))
 
 (use-package! yapfify
   :after python)
@@ -1180,7 +1179,7 @@ When GREEDY is non-nil, join words in a greedy way."
                           (if greedy ".*" ".*?")))))
                     ivy--regex-hash)))))
 
-(defun +amos-counsel-ag-function-a (string)
+(defun +amos-counsel-rg-function (string)
   "Grep in the current directory for STRING."
   (let* ((command-args (counsel--split-command-args string))
          (search-term (cdr command-args)))
@@ -1194,10 +1193,31 @@ When GREEDY is non-nil, join words in a greedy way."
                           (lambda (x)
                             (format "\\(%s\\)" (replace-regexp-in-string +amos-escape-ivy-regex #'+amos-escape-ivy-string x t t)))
                           subs ".*"))
-       (counsel--async-command (append counsel-rg-args `(,regex ".")))
+       (counsel--async-command (append counsel-rg-args `("--" ,regex ".")))
        nil))))
 
-(advice-add #'counsel-ag-function :override #'+amos-counsel-ag-function-a)
+(cl-defun +amos-counsel-rg-a (&optional initial-input initial-directory extra-ag-args ag-prompt &key caller)
+  (interactive)
+  (setq counsel--regex-look-around t)
+  (let ((default-directory (or initial-directory (counsel--git-root) default-directory))
+        (ivy-use-selectable-prompt nil))
+    (ivy-read "amos-rg: "
+              (if extra-ag-args
+                  (lambda (string)
+                    (let ((counsel-rg-args (append counsel-rg-args '("-uu"))))
+                      (+amos-counsel-rg-function string)))
+                #'+amos-counsel-rg-function)
+              :initial-input initial-input
+              :dynamic-collection t
+              :keymap counsel-ag-map
+              :history 'counsel-git-grep-history
+              :action #'counsel-git-grep-action
+              :unwind (lambda ()
+                        (counsel-delete-process)
+                        (swiper--cleanup))
+              :caller (or caller 'counsel-rg))))
+
+(advice-add #'counsel-rg :override #'+amos-counsel-rg-a)
 
 (defun +amos-counsel-ag-occur-a ()
   (ivy-occur-grep-mode)
@@ -1207,7 +1227,7 @@ When GREEDY is non-nil, join words in a greedy way."
   (ivy--occur-insert-lines ivy--all-candidates))
 (advice-add #'counsel-ag-occur :override #'+amos-counsel-ag-occur-a)
 
-(defvar counsel-rg-args '("rg" "-S" "--no-heading" "--line-number" "--color" "never" "-i" "--"))
+(defvar counsel-rg-args '("rg" "-S" "-M" "150" "--no-heading" "--line-number" "--color" "never"))
 
 (evil-define-command ab-char-inc ()
   (save-excursion
@@ -1812,7 +1832,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (advice-add #'ivy-xref-show-xrefs :override #'+amos-ivy-xref-show-xrefs-a)
 
 (after! recentf
-  (setq recentf-exclude '("/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "/var" "/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local")))
+  (setq recentf-exclude '("^/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
 
 (defun +amos-swiper--line-at-point (pt)
   (save-excursion
@@ -2859,6 +2879,7 @@ By default the last line."
   (define-key minibuffer-local-map "\C-n" #'next-line-or-history-element))
 
 (add-hook! 'minibuffer-setup-hook
+  (buffer-disable-undo)
   (setq-local truncate-lines t)
   (setq-local inhibit-message t))
 
@@ -2904,9 +2925,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -4984,10 +5005,28 @@ See `project-local-get' for the parameter PROJECT."
           (flycheck-display-errors errors))))))
 (advice-add #'flycheck-display-error-at-point-soon :override #'+amos-flycheck-display-error-at-point-soon-a)
 
+(defun +amos-ivy-scroll-up-command-a ()
+  "Scroll the candidates upward by the minibuffer height."
+  (interactive)
+  (let ((cand (1- (+ ivy--index ivy-height))))
+    (ivy-set-index (if (/= ivy--index (1- ivy--length)) (min (1- ivy--length) cand)
+                     (if ivy-wrap 0 (1- ivy--length))))))
+;; (advice-add #'ivy-scroll-up-command :override #'+amos-ivy-scroll-up-command-a)
 
+(defun +amos-ivy-scroll-down-command-a ()
+  "Scroll the candidates downward by the minibuffer height."
+  (interactive)
+  (let ((cand (1+ (- ivy--index ivy-height))))
+    (ivy-set-index (if (/= 0 ivy--index) (max 0 cand)
+                     (if ivy-wrap (1- ivy--length) 0)))))
+;; (advice-add #'ivy-scroll-down-command :override #'+amos-ivy-scroll-down-command-a)
 
-
-(defun evil-visualstar/begin-search-forward (&optional beg end)
-  "Search for the visual selection forwards."
-  (interactive (evil-operator-range))
-  (evil-visualstar/begin-search beg end t))
+(defun +amos/git-link ()
+  (interactive)
+  (ivy-read "Remote branch: " (split-string (shell-command-to-string "gittrackedremote") "\n")
+            :action (lambda (cand)
+                      (cl-destructuring-bind (remote branch) (split-string cand "~")
+                        (let ((git-link-default-remote remote)
+                              (git-link-default-branch branch))
+                          (call-interactively #'git-link))))
+            :caller '+amos/git-link))

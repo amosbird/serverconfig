@@ -303,6 +303,7 @@
         :g "c"       #'+amos/workspace-new
         :g "C"       #'+amos/workspace-new-scratch
         :g "k"       #'+amos/workspace-delete
+        :g "C-x"     #'+amos/workspace-delete
         :g "o"       #'+amos/tmux-fork-window
         :g "l"       #'+amos/launch
         :gnemv "r"   #'+amos/tmux-source

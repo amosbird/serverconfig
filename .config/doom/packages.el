@@ -70,7 +70,6 @@
 (package! google-translate :recipe (:host github :repo "atykhonov/google-translate"))
 (package! help-fns+ :recipe (:host github :repo "emacsmirror/help-fns-plus"))
 (package! hl-line+ :recipe (:host github :repo "emacsmirror/hl-line-plus"))
-(package! ivy-rich :recipe (:host github :repo "Yevgnen/ivy-rich"))
 (package! lsp-python-ms :recipe (:host github :repo "emacs-lsp/lsp-python-ms"))
 (package! sync-recentf :recipe (:host github :repo "ffevotte/sync-recentf"))
 (package! osc :recipe (:host github :repo "amosbird/osc.el"))

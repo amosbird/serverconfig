@@ -123,7 +123,7 @@
   (when ccls-enabled
     (ccls/diagnostic))
   nil)
-(add-hook! 'doom-escape-hook :local #'+amos-diagnostic-maybe-h)
+(add-hook! 'doom-escape-hook #'+amos-diagnostic-maybe-h)
 
 (defun +amos-ccls-enable-h ()
   (interactive)

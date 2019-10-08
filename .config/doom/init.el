@@ -146,6 +146,8 @@
 (setq dired-open-find-file-function #'+amos/find-file)
 (setq dired-recursive-copies 'always)
 (setq dired-recursive-deletes 'always)
+(setq dired-auto-revert-buffer t)
+(setq global-auto-revert-non-file-buffers t)
 (setq eldoc-message-function (lambda (&rest args) (let ((message-truncate-lines t)) (apply #'eldoc-minibuffer-message args))))
 (setq evil-cjk-emacs-word-boundary t)
 (setq evil-esc-delay 0.001)
