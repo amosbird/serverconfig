@@ -3,7 +3,9 @@
 # /sound /audio-mode:0  #client
 # /sound /audio-mode:1  #server
 # /audio-mode:2  #disable
-xfreerdp +aero +menu-anims +window-drag /rfx /gfx:avc444 /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:Administrator /p:$(gpg -d ~/passwords/Ztq.gpg) /v:172.24.10.1:3389
+# xfreerdp +aero +menu-anims +window-drag /rfx /gfx:avc444 /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:Administrator /p:$(gpg -d ~/passwords/Ztq.gpg) /v:172.24.10.1:3389
+# xfreerdp +aero +menu-anims +window-drag /rfx /gfx:avc444 /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amosbird@gmail.com /p:$(gpg -d ~/passwords/Ztq.gpg) /v:192.168.56.101:3389
+xfreerdp +aero +menu-anims +window-drag /rfx /gfx /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amosbird@gmail.com /p:$(gpg -d ~/passwords/Ztq.gpg) /v:192.168.122.109:3389
 # xfreerdp +aero +menu-anims +window-drag /rfx /gfx:avc444 /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amosbird@gmail.com /p:$(gpg -d ~/passwords/Ztq.gpg) /v:172.24.10.88:3389
 # xfreerdp +aero +menu-anims +window-drag /rfx /gfx /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:Administrator /p:$(gpg -d ~/passwords/Ztq.gpg) /v:172.24.10.1:3389
 
