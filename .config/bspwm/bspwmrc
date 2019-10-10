@@ -1,4 +1,4 @@
-#!/usr/bin/env fish
+#!/usr/bin/env bash
 
 # if test -e "$BSPWM_STATE"
 # 	bspc wm -l "$BSPWM_STATE"
@@ -6,18 +6,18 @@
 # end
 
 bspc monitor -d w e d f v n i o c h
-if [ (hostname) = "abt480" ]
+if [ "$(hostname)" = "abt480" ]; then
     bspc monitor DP2 -r
 else
     bspc monitor DP2-2 -r
-end
+fi
 
-bspc config border_width         0
-bspc config window_gap           0
-bspc config split_ratio          0.52
-bspc config borderless_monocle   true
-bspc config swallow_first_click  true
-bspc config gapless_monocle      false
+bspc config border_width 0
+bspc config window_gap 0
+bspc config split_ratio 0.52
+bspc config borderless_monocle true
+bspc config swallow_first_click true
+bspc config gapless_monocle false
 bspc config focus_follows_pointer false
 bspc config pointer_follows_focus false
 bspc config pointer_modifier shift
@@ -37,8 +37,8 @@ bspc rule -a Skype desktop=o state=fullscreen
 
 stalonetray &
 xsetroot -cursor_name left_ptr
-startconky
-setbg.sh
+~/scripts/startconky
+~/scripts/setbg.sh
 
 # Program Workspaces
 
