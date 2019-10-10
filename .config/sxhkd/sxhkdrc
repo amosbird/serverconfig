@@ -179,3 +179,6 @@ super + shift + r
   restartbspwm.sh
 super + shift + q
   restartbspwm.sh 1
+
+super + F5
+  redshiftctl

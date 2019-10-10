@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+function on() {
+    redshift -P -O 4500
+    echo "on" >/tmp/gamma
+}
+
+function off() {
+    redshift -x
+    echo "off" >/tmp/gamma
+}
+
+function toggle() {
+    current=off
+    if [ -f /tmp/gamma ]; then
+        current=$(cat /tmp/gamma)
+    fi
+
+    if [ "$current" != "off" ]; then
+        off
+    else
+        on
+    fi
+}
+
+case $1 in
+on)
+    on
+    ;;
+off)
+    off
+    ;;
+*)
+    toggle
+    ;;
+esac
