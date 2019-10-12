@@ -54,8 +54,9 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         string join -- \n $complist | rg -v '^\s+|^$' | sort -u |
         fzf --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query | read -d\n -z -a result
         for i in (seq (count $result))
-            set result[$i] (echo $result[$i] | cut -f1)
+            set result[$i] (string split " " -- $result[$i])
         end
+        set result $result[1..-2]
         if test -z "$result"
             commandline -f repaint
             return
