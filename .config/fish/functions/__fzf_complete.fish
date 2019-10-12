@@ -51,8 +51,11 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         # if there is only one option dont open fzf
         set result $complist
     else
-        string join -- \n $complist | rg -v '^\s+|^$' | cut -f1 | sort -u |
-        fzf --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query | read -a -z result
+        string join -- \n $complist | rg -v '^\s+|^$' | sort -u |
+        fzf --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query | read -d\n -z -a result
+        for i in (seq (count $result))
+            set result[$i] (echo $result[$i] | cut -f1)
+        end
         if test -z "$result"
             commandline -f repaint
             return
@@ -89,8 +92,8 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
         end
         commandline -t -- (string join ',' -- $cmdline)
     else
-        set -l r (string trim (string join ' ' (string escape -n -- $result)))
-        commandline -t -- (string replace -a -- ' ' '\\ ' $r)
+        set -l r (string trim -- (string join ' ' -- (string escape -n -- $result)))
+        commandline -t -- $r
     end
 
     commandline -f repaint

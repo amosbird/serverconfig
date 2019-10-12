@@ -2,10 +2,14 @@
 
 # set -l options -x 'f,F' -x 'F,s' 'h/help' 'f/file' 'F/fifo' 's/suffix=' 'T-testing'
 # argparse -n psub --max-args=0 $options -- $argv
-argparse -n perfflame 'h/help' 'p=' -- $argv || exit 1
+argparse -n perfflame 'h/help' 's/sudo' 'p=' -- $argv || exit 1
 if set -q _flag_h
     echo 'Usage: perfflame [-h|--help] ...'
     exit 1
+end
+
+if set -q _flag_s
+    set sudo sudo
 end
 
 if test 1 -le $_flag_p > /dev/null 2> /dev/null
@@ -26,7 +30,7 @@ if test 1 -le $_flag_p > /dev/null 2> /dev/null
     echo $msg
     echo
     # need time to resume execution, hacky
-    time sw $clock $df $ds perf record -F 99 -g -p $_flag_p -o $df ^ /dev/null
+    time sw $clock $df $ds $sudo perf record -F 99 -g -p $_flag_p -o $df ^ /dev/null
     tput rmcup
     popd
 end
