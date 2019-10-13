@@ -51,6 +51,7 @@ rm -rf "$HOME/.tmux.conf"
 ln -sf "$DIR/.tmux" "$HOME"/
 ln -sf "$DIR/.tmux/.tmux.conf" "$HOME"/
 
+mkdir -p "$HOME"/.local/share/
 ln -sf "$HOME/gentoo/usr/share/grc" "$HOME"/.local/share/
 
 sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
