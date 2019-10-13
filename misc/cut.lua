@@ -1,5 +1,3 @@
--- weechat lua cut script
-
 local w = weechat
 local g = {
     script = {
@@ -46,10 +44,14 @@ function command_cb(_, buffer, _)
     input_pos = w.buffer_get_integer(buffer, "input_pos")
     input_line = string.sub(line, 0, input_pos + 1)
     -- w.hook_process("bash -c 'echo " .. input_line .. " | osc52clip'", 10 * 1000, "", "")
-    os.execute("echo " .. input_line .. " | osc52clip")
+    local f = assert(io.open("/tmp/s", "w"))
+    assert(f:write(input_line))
+    assert(f:close())
+    assert(os.execute("osc52clip < /tmp/s"))
     w.buffer_set(buffer, "input", string.sub(line, input_pos + 1))
     w.buffer_set(buffer, "input_pos", "0")
     return w.WEECHAT_RC_OK
 end
 
 setup()
+
