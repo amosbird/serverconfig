@@ -54,6 +54,13 @@ ln -sf "$DIR/.tmux/.tmux.conf" "$HOME"/
 mkdir -p "$HOME"/.local/share/
 ln -sf "$HOME/gentoo/usr/share/grc" "$HOME"/.local/share/
 
+mkdir -p -m 700 "$HOME"/.ssh
+cp id_rsa.pub "$HOME"/.ssh/
+
+git clone git@github.com:amosbird/pass-store "$HOME"/.password-store
+
 sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
 
 setxkbmap us
+
+echo 'Restored!'

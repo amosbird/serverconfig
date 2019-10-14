@@ -132,6 +132,16 @@ sudo usermod -aG docker amos
 ** builds
 
 #+BEGIN_SRC bash
+
+set -e
+
+cd ~/git
+
+git clone https://github.com/amosbird/serverconfig
+cd serverconfig
+git remote set-url origin git@github.com:amosbird/serverconfig
+sh restore.sh
+
 export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/lib64/pkgconfig
 BUILD=/home/amos/git/serverconfig/scripts/build
 
@@ -184,7 +194,7 @@ git clone git@github.com:amosbird/cc-playground
 
 git clone git@github.com:amosbird/cc-snippets cc-playground
 
-git clone https://github.com/amosbird/doom-emacs -b amos ~/.emacs.d
+git clone https://github.com/hlissner/doom-emacs -b develop ~/.emacs.d
 
 cd ~/.emacs.d && make quickstart
 open emacs and do M-x all-the-icons-install-fonts
