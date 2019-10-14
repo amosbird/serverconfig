@@ -49,12 +49,12 @@ function __fzf_complete -d 'fzf completion and print selection back to commandli
     set -l compwc (count $complist)
     if test $compwc -eq 1
         # if there is only one option dont open fzf
-        set result $complist
+        set result (string split \t -- $complist)[1]
     else
         string join -- \n $complist | rg -v '^\s+|^$' | sort -u |
         fzf --cycle --reverse --inline-info --multi --height 40% --reverse --select-1 --exit-0 -i --query=$initial_query | read -d\n -z -a result
         for i in (seq (count $result))
-            set result[$i] (string split " " -- $result[$i])
+            set result[$i] (string split \t -- $result[$i])[1]
         end
         set result $result[1..-2]
         if test -z "$result"
