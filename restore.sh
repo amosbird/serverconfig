@@ -63,4 +63,7 @@ sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
 
 setxkbmap us
 
+gpg --recv-keys 80D430DCBECFEDB4
+gpg --recv-keys C3BFA922206F41DA
+
 echo 'Restored!'
