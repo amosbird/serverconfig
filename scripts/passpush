@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+if [ ! "$(hostname)" = "abt480" ]
+then
+    echo "Can only push pass store on abt480!"
+    exit 1
+fi
+
+pass git push
