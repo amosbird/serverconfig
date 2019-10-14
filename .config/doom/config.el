@@ -1227,7 +1227,7 @@ When GREEDY is non-nil, join words in a greedy way."
   (ivy--occur-insert-lines ivy--all-candidates))
 (advice-add #'counsel-ag-occur :override #'+amos-counsel-ag-occur-a)
 
-(defvar counsel-rg-args '("rg" "-S" "-M" "150" "--no-heading" "--line-number" "--color" "never"))
+(defvar counsel-rg-args '("rg" "-S" "-M" "500" "--no-heading" "--line-number" "--color" "never"))
 
 (evil-define-command ab-char-inc ()
   (save-excursion
