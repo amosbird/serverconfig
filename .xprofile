@@ -25,5 +25,5 @@ fcitx
 ~/gentoo/usr/local/bin/fish -c copyq &
 ~/gentoo/usr/local/bin/fish -c runscrcpy &
 ~/gentoo/usr/local/bin/fish -c rungnirehtet &
-parcellite &
+# parcellite &
 udiskie &

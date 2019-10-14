@@ -182,3 +182,6 @@ super + shift + q
 
 super + F5
   redshiftctl
+
+super+t
+  transgui

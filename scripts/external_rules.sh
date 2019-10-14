@@ -148,4 +148,7 @@ Emacs)
         ;;
     esac
     ;;
+"Transmission Remote GUI"*)
+    echo "sticky=on state=floating"
+    ;;
 esac
