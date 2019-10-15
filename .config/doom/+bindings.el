@@ -22,6 +22,7 @@
       :desc "Shell command"                   :nv "E"   #'+amos/shell-command-on-buffer
       :desc "Elisp command"                   :nv "RET" #'eval-expression
       :desc "Ivy resume"                      :nv "r"   #'+amos/revert-buffer
+      :desc "Revert buffers"                  :nv "p"   #'+amos/revert-projectile-buffers
       :desc "Revert buffers"                  :nv "R"   #'+amos/revert-all-buffers
       :desc "Universal argument"              :nv "u"   #'universal-argument
       :desc "Save current file"               :nv "w"   #'save-buffer
