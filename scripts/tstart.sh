@@ -7,10 +7,10 @@ if test "$SSH_AUTH_SOCK"; then
 fi
 export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
 
-PATH=/home/amos/gentoo/usr/local/bin
-tmux -u new -d -s htop htop
-if ! tmux list-sessions | grep -q -F emacs; then
+TMUX=/home/amos/gentoo/usr/local/bin/tmux
+$TMUX -u new -d -s htop htop
+if ! $TMUX list-sessions | grep -q -F emacs; then
     fuser -k /tmp/emacs.lock # sometimes emacs daemon doesn't quit
 fi
-tmux -u new -d -s emacs fish -i -c startemacs
-tmux -u new-session -A -s amos
+$TMUX -u new -d -s emacs $SHELL -i -c startemacs
+$TMUX -u new-session -A -s amos
