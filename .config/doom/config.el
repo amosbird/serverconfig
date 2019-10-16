@@ -2133,7 +2133,6 @@ representation of `NUMBER' is smaller."
       (cc-switch-between-src-and-test)
     (projectile-find-other-file)))
 
-(setq interprogram-paste-function #'x-get-selection)
 (advice-add #'hide-mode-line-mode :override #'ignore)
 
 ;; (defun +amos/fcitx--activate-proc ()
