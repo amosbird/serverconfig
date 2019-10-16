@@ -78,7 +78,10 @@ ctrl+alt+h
 ctrl+alt+m
   showmusicbox.sh
 ctrl+alt+x
-  for i in $(bspc query -N -n .floating); do bspc node $i -g hidden=on; done
+  > /tmp/hidden_windows; \
+  for i in $(bspc query -N -n .floating); do echo $i >> /tmp/hidden_windows; bspc node $i -g hidden=on; done
+ctrl+alt+comma
+  while read i; do bspc node $i -g hidden=off; done < /tmp/hidden_windows;
 super+Home
   movehome
 super+End
