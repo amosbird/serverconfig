@@ -5030,3 +5030,10 @@ See `project-local-get' for the parameter PROJECT."
                               (git-link-default-branch branch))
                           (call-interactively #'git-link))))
             :caller '+amos/git-link))
+
+(defun +amos/yank-pop()
+  (interactive)
+  (let ((kill-ring my-kill-ring))
+    (if (eq last-command 'yank)
+        (yank-pop)
+      (yank))))

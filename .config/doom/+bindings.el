@@ -216,8 +216,7 @@
       :n "S-<f5>"                 #'+amos/counsel-rg-cur-dir ;; terminal
       :nv "S-<f11>"               #'+amos/format-buffer ;; terminal
       :n "C-y"                    #'+amos/yank-buffer-filename-with-line-position
-      :i "C-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank)))
-      :i "M-y"                    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
+      :i "M-y"                    #'+amos/yank-pop
       :i "C-a"                    #'evil-beginning-of-line
       :n "C-a"                    #'evil-numbers/inc-at-pt
       :n "C-q"                    #'evil-numbers/dec-at-pt
@@ -535,8 +534,7 @@
         "C-r"    #'evil-paste-from-register
         "C-u"    #'+amos/backward-kill-to-bol-and-indent
         "C-w"    #'ivy-yank-word
-        "C-y"    (lambda! (let ((kill-ring my-kill-ring)) (yank)))
-        "M-y"    (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
+        "M-y"    #'+amos/yank-pop
         "M-b"    #'+amos/backward-word-insert
         "M-d"    #'+amos/delete-forward-word
         "M-f"    #'+amos/forward-word-insert
@@ -733,8 +731,7 @@
         "C-o"         #'+amos/kill-line
         "C-r"         #'evil-paste-from-register
         "C-u"         #'+amos/backward-kill-to-bol-and-indent
-        "C-y"         (lambda! (let ((kill-ring my-kill-ring)) (yank)))
-        "M-y"         (lambda! (let ((kill-ring my-kill-ring)) (yank-pop)))
+        "M-y"         #'+amos/yank-pop
         "M-'"         (lambda! (insert ?\') (insert ?\{) (insert ?\}) (insert ?\') (backward-char 2))
         "M-b"         #'+amos/backward-word-insert
         "M-d"         #'+amos/delete-forward-word

@@ -66,6 +66,7 @@
 (setq load-prefer-newer t)
 (setq shr-width 100)
 (setq all-the-icons-scale-factor 1.0)
+(setq cmake-tab-width 4)
 (setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
 (setq doom-modeline-icon nil)
 (setq display-line-numbers-type 'relative)
