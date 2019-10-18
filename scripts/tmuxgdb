@@ -29,7 +29,7 @@ if [ "$1" = "-p" ]; then
 else
     program=$1
     shift
-    tmux send-keys "reptyr -l sh -c 'tmux select-pane -t 5; tmux send-keys \"cgdb -- -tty \$REPTYR_PTY -ex \\\"dashboard threads -output $tty1\\\" -ex \\\"dashboard stack -output $tty1\\\" -ex \\\"dashboard expression -output $tty3\\\" -ex \\\"dashboard registers -output $tty2\\\" -ex \\\"set exec-wrapper env LD_LIBRARY_PATH=\\\"\\\\\$cc_ld_library_path\\\" LD_PRELOAD=\\\"\\\\\$cc_ld_preload -ex \\\"start $*\\\" $program\"  C-m'" C-m
+    tmux send-keys "reptyr -l sh -c 'tmux select-pane -t 5; tmux send-keys \"cgdb -- -tty \$REPTYR_PTY -ex \\\"dashboard threads -output $tty1\\\" -ex \\\"dashboard stack -output $tty1\\\" -ex \\\"dashboard expression -output $tty3\\\" -ex \\\"dashboard registers -output $tty2\\\" -ex \\\"set exec-wrapper env LD_LIBRARY_PATH=\\\\\$cc_ld_library_path LD_PRELOAD=\\\\\$cc_ld_preload\\\" -ex \\\"start $*\\\" $program\"  C-m'" C-m
 fi
 sleep 0.2
 tmux send -R -t 4
