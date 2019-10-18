@@ -1,6 +1,7 @@
 [user]
 	email = amosbird@gmail.com
 	name = Amos Bird
+	signingkey = 80D430DCBECFEDB4
 [pull]
 	rebase = true
 [color]
