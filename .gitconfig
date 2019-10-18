@@ -10,3 +10,5 @@
 	excludesfile = ~/.gitignore_global
 [github]
 	user = amosbird
+[commit]
+	gpgsign = true
