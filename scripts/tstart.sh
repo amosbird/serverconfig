@@ -7,6 +7,8 @@ if test "$SSH_AUTH_SOCK"; then
 fi
 export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
 
+export PATH=/usr/bin:/usr/sbin
+
 TMUX=/home/amos/gentoo/usr/local/bin/tmux
 $TMUX -u new -d -s htop htop
 if ! $TMUX list-sessions | grep -q -F emacs; then
