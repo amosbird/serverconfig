@@ -5022,6 +5022,7 @@ See `project-local-get' for the parameter PROJECT."
 
 (defun +amos/git-link ()
   (interactive)
+  (require 'git-link)
   (ivy-read "Remote branch: " (split-string (shell-command-to-string "gittrackedremote") "\n")
             :action (lambda (cand)
                       (cl-destructuring-bind (remote branch) (split-string cand "~")
