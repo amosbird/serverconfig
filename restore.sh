@@ -58,6 +58,7 @@ mkdir -p -m 700 "$HOME"/.ssh
 cp id_rsa.pub "$HOME"/.ssh/
 
 git clone git@github.com:amosbird/pass-store "$HOME"/.password-store
+( cd "$HOME"/.password-store && git pull )
 
 sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
 
