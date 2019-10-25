@@ -123,6 +123,7 @@ bind-key -T amos WheelDownStatus  next-window
 bind-key -T amos C-l send-keys C-l
 bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
 bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
+bind-key -T amos Enter run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -f -t$T "clickhouse client -mn$" &> /dev/null; then tmux send-key ";"\; send-key Enter; else tmux send-keys Enter; fi'
 
 bind-key -T amos M-0 run-shell $HOME/scripts/switch-to-emacs-session.sh
 bind-key -T amos M-= switch-client -t htop
@@ -135,5 +136,7 @@ bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
 bind-key -T amos M-- set synchronize-panes
 bind-key -T amos M-"'" send-keys "'"{}"'" Left Left
 
-set word-separators "‘’ ='`;+|[](){},?\\\\\"⏎❯"
+set word-separators "‘’ ='`;+|[](){},?-\\\\\"⏎❯"
 bind-key -T amos MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\; send -X copy-pipe-and-cancel "echo"\; set-buffer -b "amos" -a " "\; paste-buffer -b "amos"
+
+bind-key -T amos C-Space run-shell 'fish -c tmuxtokenize.pl'

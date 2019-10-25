@@ -1,3 +1,3 @@
 #!/usr/bin/env fish
 
-upload (tmux capture-pane -S - -E - -p | psub -f)
+upload (tmux capture-pane -J -S - -E - -p | psub -f)
