@@ -2,6 +2,7 @@
 
 (disable-packages! centered-window-mode
                    company-prescient
+                   doom-snippets
                    evil-escape
                    ;; evil-matchit
                    evil-numbers

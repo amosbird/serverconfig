@@ -531,7 +531,7 @@
         "C-k"    #'ivy-previous-line
         "C-l"    #'ivy-alt-done
         "C-o"    #'+amos/kill-line
-        "C-r"    #'evil-paste-from-register
+        "C-r"    #'counsel-minibuffer-history
         "C-u"    #'+amos/backward-kill-to-bol-and-indent
         "C-w"    #'ivy-yank-word
         "M-y"    #'+amos/yank-pop
@@ -723,13 +723,15 @@
              read-expression-map)
         [escape]      #'abort-recursive-edit
         "C-w"         #'+amos/minibuffer-yank-word
+        "C-k"         #'previous-line-or-history-element
+        "C-j"         #'next-line-or-history-element
         "C-n"         #'next-line-or-history-element
         "C-p"         #'previous-line-or-history-element
         "C-a"         #'move-beginning-of-line
         "C-b"         #'backward-char
         "C-d"         #'+amos/delete-char
         "C-o"         #'+amos/kill-line
-        "C-r"         #'evil-paste-from-register
+        "C-r"         #'counsel-minibuffer-history
         "C-u"         #'+amos/backward-kill-to-bol-and-indent
         "M-y"         #'+amos/yank-pop
         "M-'"         (lambda! (insert ?\') (insert ?\{) (insert ?\}) (insert ?\') (backward-char 2))

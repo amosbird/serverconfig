@@ -2273,11 +2273,9 @@ representation of `NUMBER' is smaller."
                                               (remq t (append (symbol-value handlers)
                                                               (default-value handlers)))
                                               nil t))))
-                  (let ((leap--jumping t))
-                    (+lookup--run-handlers handler identifier origin))
+                  (+lookup--run-handlers handler identifier origin)
                 (user-error "No lookup handler selected"))
-            (let ((leap--jumping t))
-              (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin)))))
+            (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin))))
     (when (cond ((null result)
                  (message "No lookup handler could find %S" identifier)
                  nil)
@@ -2308,7 +2306,7 @@ representation of `NUMBER' is smaller."
           (run-hooks 'leap-post-jump-hook))
         (setq +amos-ivy--origin nil
               leaped t))
-      (unless ivy-exit
+      (unless (or ivy-exit ivy-recursive-last)
         (with-ivy-window
           (run-hooks 'leap-post-jump-hook)))))
   (setq is-swiper-occur nil))
@@ -2924,9 +2922,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
