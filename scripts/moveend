@@ -13,4 +13,5 @@ case $(hostname) in
         ~/.screenlayout/default.sh
         ;;
 esac
+redshiftctl on
 killall -SIGUSR1 conky

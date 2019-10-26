@@ -13,4 +13,5 @@ case $(hostname) in
         ~/.screenlayout/inversed.sh
         ;;
 esac
+redshiftctl on
 killall -SIGUSR1 conky
