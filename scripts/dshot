@@ -11,4 +11,4 @@ W=$(round $W)
 H=$(round $H)
 ffmpeg_display=$(echo $DISPLAY)
 ffmpeg_offset=$(echo $(xininfo -mon-x),$(xininfo -mon-y))
-ffmpeg -f x11grab -show_region 1 -s "$W"x"$H" -ss $delay -i $ffmpeg_display+$X,$Y -framerate 1 -vframes 1 -f singlejpeg - > /dev/null
+ffmpeg -f x11grab -show_region 1 -s "$W"x"$H" -ss $delay -i $ffmpeg_display+$X,$Y -framerate 1 -vframes 1 -f singlejpeg -
