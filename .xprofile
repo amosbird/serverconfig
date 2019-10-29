@@ -22,10 +22,10 @@ xset s off -dpms
 xset b off
 compton -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
-fcitx
 ~/gentoo/usr/local/bin/fish -c sxhkd > /tmp/sxhkd.log &
 ~/gentoo/usr/local/bin/fish -c copyq &
 ~/gentoo/usr/local/bin/fish -c runscrcpy &
 ~/gentoo/usr/local/bin/fish -c rungnirehtet &
+fcitx
 # parcellite &
 udiskie &
