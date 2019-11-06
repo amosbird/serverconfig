@@ -58,7 +58,7 @@
 (package! visual-fill-column)
 (package! yapfify)
 
-
+(package! rmsbolt :recipe (:host gitlab :repo "jgkamat/rmsbolt"))
 (package! cc-playground :recipe (:host github :repo "amosbird/cc-playground" :files ("*.el" "templates")))
 (package! py-playground :recipe (:host github :repo "amosbird/py-playground" :files ("*.el" "templates")))
 (package! dired-hacks :recipe (:host github :repo "Fuco1/dired-hacks"))

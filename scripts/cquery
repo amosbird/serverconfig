@@ -54,7 +54,7 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
   "client": { "snippetSupport": true },
   "index": {
     "multiVersion": $multi,
-    "trackDependency": 2,
+    "trackDependency": 1,
     "comments": 0,
     "initialBlacklist": $blacklist,
     "blacklist": ["~$"]
