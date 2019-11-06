@@ -134,3 +134,5 @@ bind-key -T gui M-"'" send-keys "'"{}"'" Left Left
 
 set word-separators "‘’ ='`;+|[](){},?\\\\\"⏎❯"
 bind-key -T gui MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\; send -X copy-pipe-and-cancel "echo"\; set-buffer -b "amos" -a " "\; paste-buffer -b "amos"
+
+bind-key -T gui C-Space run-shell 'fish -c tmuxtokenize.pl'
