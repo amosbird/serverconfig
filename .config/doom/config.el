@@ -3280,6 +3280,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
  "+amos/dump-evil-jump-list"
  "+amos/exec-shell-command"
  "+amos/format-buffer"
+ "+amos/flycheck"
  "+amos/increase-zoom"
  "+amos/kill-current-buffer"
  "+amos/launch"
@@ -3304,7 +3305,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
  "+amos/toggle-mc"
  "+amos/wipe-current-buffer"
  "+amos/workspace"
- "+amos/yank-buffer-filename"
+ "+amos/yank"
  "+eval/buffer"
  "+eval/region-and-replace"
  "+evil:delete-this-file"
@@ -4510,7 +4511,8 @@ inside or just after a citation command, only adds KEYS to it."
   "Write the contents of *scratch* to the file name
 `persistent-scratch-file-name'."
   (with-current-buffer (get-buffer-create "*scratch*")
-    (write-region (point-min) (point-max) scratch-file-name)))
+    (let ((inhibit-message t))
+      (write-region (point-min) (point-max) scratch-file-name))))
 
 (defun +amos-load-persistent-scratch-h ()
   "Load the contents of `persistent-scratch-file-name' into the
@@ -5035,3 +5037,6 @@ See `project-local-get' for the parameter PROJECT."
     (if (eq last-command 'yank)
         (yank-pop)
       (yank))))
+
+(use-package! rmsbolt
+  :defer)

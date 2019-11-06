@@ -22,7 +22,7 @@ else
     # Restore IFS
     IFS=$SAVEIFS
     for ((i = 0; i < ${#array[@]}; i++)); do
-        kill -INT $(pgrep -t${array[$i]})
+        kill -9 $(pgrep -t${array[$i]})
     done
 fi
 tmux kill-window $window
