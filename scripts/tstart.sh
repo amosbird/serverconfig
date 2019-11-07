@@ -7,12 +7,14 @@ if test "$SSH_AUTH_SOCK"; then
 fi
 export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
 
-export PATH=/home/amos/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin
+if [ -z "$1" ]; then
+    export PATH=/home/amos/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+fi
 
 TMUX=/home/amos/gentoo/usr/local/bin/tmux
 $TMUX -u new -d -s htop htop
 if ! $TMUX list-sessions | grep -q -F emacs; then
-    fuser -k /tmp/emacs.lock # sometimes emacs daemon doesn't quit
+    fuser -k /tmp/emacs.lock &>/dev/null # sometimes emacs daemon doesn't quit
 fi
 $TMUX -u new -d -s emacs $SHELL -i -c startemacs
 $TMUX -u new-session -A -s amos

@@ -21,8 +21,8 @@ else
     array=($current_panes)
     # Restore IFS
     IFS=$SAVEIFS
+    tmux kill-window $window
     for ((i = 0; i < ${#array[@]}; i++)); do
-        kill -9 $(pgrep -t${array[$i]})
+        kill -9 $(pgrep -t${array[$i]}) || true
     done
 fi
-tmux kill-window $window
