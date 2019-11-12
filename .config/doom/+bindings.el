@@ -385,6 +385,10 @@
         "M-j"      #'ivy-next-line
         "M-k"      #'ivy-previous-line)
 
+      (:after files
+        :map ctl-x-map
+        :g "C-d" #'+amos/direnv-reload)
+
       (:after dired
         :map dired-mode-map
         "SPC" nil

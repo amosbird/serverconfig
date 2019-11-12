@@ -3,26 +3,12 @@
 window=""
 if [ -n "$1" ]
 then
-   window="-t $1"
+   window=$1
 fi
 
-if [ Debug = "$(tmux display-message -p '#W')" ]; then
-    :
-    # ttys=$(tmux list-panes -F "#{pane_tty}")
-    # for tty in ${ttys[@]}
-    # do
-    #     echo "fuser -s -k -9 $tty" >> /tmp/ll
-    #     fuser -s -k -9 $tty
-    # done
-else
-    current_panes=$(tmux list-panes $window -F "#{pane_tty}" | sed "s=/dev/==")
-    SAVEIFS="$IFS"
-    IFS=$'\n'
-    array=($current_panes)
-    # Restore IFS
-    IFS=$SAVEIFS
-    tmux kill-window $window
-    for ((i = 0; i < ${#array[@]}; i++)); do
-        kill -9 $(pgrep -t${array[$i]}) || true
-    done
-fi
+mapfile -t array < <(tmux list-panes -t "$window" -F "#{pane_tty}" | sed "s=/dev/==")
+mapfile -t pp < <( for a in "${array[@]}" ; do pgrep -t "$a" ; done )
+tmux kill-window -t "$window"
+for p in "${pp[@]}" ; do
+    kill -9 "$p" &> /dev/null || true
+done
