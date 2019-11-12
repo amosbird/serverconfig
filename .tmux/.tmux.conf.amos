@@ -47,6 +47,7 @@ bind d kill-pane
 bind e run-shell $HOME/scripts/edittmuxpane
 bind u run-shell $HOME/scripts/uploadtmuxpane
 bind k run-shell $HOME/scripts/tmuxkillwindow
+bind C-k run-shell $HOME/scripts/tmuxkillwindow
 
 bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection

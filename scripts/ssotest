@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+dir=/data/ClickHouse/data/data/default/terms
+# # for file in term1 term2 term4 term8 term16 term24 term48; do
+# for file in term16 term24 term48; do
+# # for file in term48; do
+#     printf "%s" $file
+#     /data/ClickHouse/build/string_hash_map <"$dir"/"$file".bin 2>&1
+#     echo
+# done
+
+dir=/data/ClickHouse/data/data/default
+/data/ClickHouse/build/string_hash_map "$dir"/terms10m/term.bin "$dir"/terms100m/term.bin 2>&1

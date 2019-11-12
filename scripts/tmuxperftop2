@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+usage () {
+    echo "Usage: $0 pid1 pid2"
+    exit 1
+}
+
+if [ "$#" -ne 2 ]; then
+    usage
+fi
+
+re='^[0-9]+$'
+if ! [[ $1 =~ $re && $2 =~ $re ]]; then
+    usage
+fi
+
+if ! kill -0 $1 $2 &> /dev/null; then
+    usage
+fi
+
+tmux neww -a -n PerfTopDiff "sleep 1; perf top -p $1"
+tmux splitw -h "perf top -p $2"
