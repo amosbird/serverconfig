@@ -92,6 +92,7 @@
           ("C-c o" . cc-playground-switch-optimization-flag)
           ("C-c f" . cc-playground-add-compilation-flags))
   :config
+  (add-hook! 'cc-playground-mode-hook (rmsbolt-mode +1))
   (add-hook! 'cc-playground-rm-hook
     (doom-with-advice (y-or-n-p (lambda (&rest _) t)) (ignore-errors (lsp-shutdown-workspace)))))
 
@@ -1834,62 +1835,6 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
 (after! recentf
   (setq recentf-exclude '("^/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
 
-(defun +amos-swiper--line-at-point (pt)
-  (save-excursion
-    (goto-char pt)
-    (let ((s (concat (buffer-substring (line-beginning-position) (line-end-position)) "\n")))
-      (put-text-property 0 1 'point pt s)
-      (ivy-cleanup-string s))))
-
-(defun +amos-swiper--isearch-format-a (index length cands regex current buffer)
-  (let* ((half-height (/ ivy-height 2))
-         (i (1- index))
-         (j 0)
-         (len 0)
-         res s)
-    (with-current-buffer buffer
-      (while (and (>= i 0)
-                  (swiper--isearch-same-line-p
-                   (swiper--line-at-point (nth i cands))
-                   (swiper--line-at-point current)))
-        (cl-decf i)
-        (cl-incf j))
-      (while (and (>= i 0)
-                  (< len half-height))
-        (setq s (+amos-swiper--line-at-point (nth i cands)))
-        (unless (swiper--isearch-same-line-p s (car res))
-          (push (swiper--isearch-highlight s) res)
-          (cl-incf len))
-        (cl-decf i))
-      (setq res (nreverse res))
-      (let ((current-str
-             (+amos-swiper--line-at-point current))
-            (start 0))
-        (dotimes (_ (1+ j))
-          (string-match regex current-str start)
-          (setq start (match-end 0)))
-        (swiper--isearch-highlight current-str j)
-        (font-lock-append-text-property
-         0 (length current-str)
-         'face 'swiper-line-face current-str)
-        (push current-str res))
-      (cl-incf len)
-      (setq i (1+ index))
-      (while (and (< i length)
-                  (swiper--isearch-same-line-p
-                   (swiper--line-at-point (nth i cands))
-                   (swiper--line-at-point current)))
-        (cl-incf i))
-      (while (and (< i length)
-                  (< len ivy-height))
-        (setq s (+amos-swiper--line-at-point (nth i cands)))
-        (unless (swiper--isearch-same-line-p s (car res))
-          (push (swiper--isearch-highlight s) res)
-          (cl-incf len))
-        (cl-incf i))
-      (mapconcat #'identity (nreverse res) ""))))
-(advice-add #'swiper--isearch-format :override #'+amos-swiper--isearch-format-a)
-
 (after! ivy
   (setcdr (assq t ivy-format-functions-alist) #'ivy-format-function-line)
   (setf (alist-get t ivy-re-builders-alist) 'ivy--regex-plus)
@@ -1925,7 +1870,7 @@ Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
      cmd
      '(("f" switch-to-buffer-other-frame "other frame")))))
 
-(defun +amos/redisplay-and-recenter ()
+(defun +amos/redisplay-and-recenter (&rest _)
   (interactive)
   (if (> (window-hscroll) 0)
       (evil-scroll-left 10))
@@ -2170,6 +2115,10 @@ representation of `NUMBER' is smaller."
      :slot -1 :vslot -2 :ttl 0)
     ("^\\*Warning*"
      :actions (+popup-display-buffer-stacked-side-window-fn))
+    ("^\\*rmsbolt-output*"
+     :side right :size 0.5 :ttl 0 :select nil :quit t)
+    ;; :side right :size 0.5 :ttl 0 :select nil :quit current)
+    ;; :side right :size 0.5 :ttl 0 :select nil :quit other)
     ("^\\*git-gutter*"
      :side right :size 0.5)
     ("^\\*Flycheck"
@@ -2337,6 +2286,13 @@ representation of `NUMBER' is smaller."
 ;; (ad-disable-advice 'switch-to-buffer 'before 'evil-jumps)
 ;; (ad-activate 'switch-to-buffer)  ;; stupid api
 (add-hook 'leap-post-jump-hook #'+amos/recenter)
+
+(defun +amos-leap-jump-h (&optional command)
+  "Set jump point if COMMAND has a non-nil :jump property."
+  (setq command (or command this-command))
+  (when (evil-get-command-property command :jump)
+    (leap-set-jump)))
+(add-hook 'pre-command-hook #'+amos-leap-jump-h)
 
 (defun +amos/yank-buffer-filename ()
   "Copy the current buffer's path to the kill ring."
@@ -2575,14 +2531,16 @@ the current state and point position."
           (kill-buffer buffer))))))
 (add-to-list 'delete-frame-functions #'+amos|maybe-delete-frame-buffer)
 
-(defun +amos*flycheck-next-error-function (n reset)
+(defun +amos-flycheck-next-error-function-a (n reset)
   (-if-let* ((pos (flycheck-next-error-pos n reset))
              (err (get-char-property pos 'flycheck-error))
              (filename (flycheck-error-filename err))
              (dummy (string= buffer-file-name filename)))
-      (flycheck-jump-to-error err)
+      (progn
+        (leap-set-jump)
+        (flycheck-jump-to-error err))
     (user-error "No more Flycheck errors")))
-(advice-add #'flycheck-next-error-function :override #'+amos*flycheck-next-error-function)
+(advice-add #'flycheck-next-error-function :override #'+amos-flycheck-next-error-function-a)
 
 ;; only reuse current frame's popup
 (defadvice +popup-display-buffer (around +amos*popup-display-buffer activate)
@@ -3950,6 +3908,44 @@ will be killed."
   :tag " <Struct> ")
 
 (set-keymap-parent evil-struct-state-map (make-composed-keymap evil-motion-state-map evil-normal-state-map))
+
+(defmacro scrollall! (command)
+  `(defun ,(intern (concat "scroll-all-" (symbol-name command))) (arg)
+     (interactive "p")
+     (save-selected-window
+       (dolist (walk-windows-window (window-list-1))
+         (with-selected-window walk-windows-window
+           (with-current-buffer (window-buffer walk-windows-window)
+             (call-interactively #',command arg)
+             (ccm-position-cursor)))))))
+
+(scrollall! evil-next-line)
+(scrollall! evil-previous-line)
+(scrollall! evil-scroll-up)
+(scrollall! evil-scroll-down)
+(scrollall! evil-goto-first-line)
+(scrollall! +amos/evil-goto-line)
+(scrollall! +amos/redisplay-and-recenter)
+
+(general-define-key
+ :states 'struct
+ "gg"             #'scroll-all-evil-goto-first-line
+ "G"              #'scroll-all-+amos/evil-goto-line
+ "k"              #'scroll-all-evil-previous-line
+ "j"              #'scroll-all-evil-next-line
+ "C-l"            #'scroll-all-+amos/redisplay-and-recenter
+ "C-u"            #'scroll-all-evil-scroll-up
+ "C-d"            #'scroll-all-evil-scroll-down)
+
+(defun +amos/toggle-centered-cursor-mode-all-window ()
+  (interactive "p")
+  (require 'centered-cursor-mode)
+  (save-selected-window
+    (dolist (walk-windows-window (window-list-1))
+      (with-selected-window walk-windows-window
+        (with-current-buffer (window-buffer walk-windows-window)
+          (ccm-first-start (interactive-p)))))))
+(add-hook! 'evil-struct-state-entry-hook #'+amos/toggle-centered-cursor-mode-all-window)
 (add-hook! 'evil-struct-state-exit-hook #'+amos/reset-cursor)
 
 (remove-hook 'after-change-major-mode-hook #'doom-highlight-non-default-indentation-h)
@@ -4014,8 +4010,9 @@ keyboard-quit events while waiting for a valid input."
 
 (defvar compile-set (make-set))
 (defun +amos*add-compile-buffer-to-set (&rest _)
-  (add-to-set next-error-last-buffer compress-view-set))
-(advice-add #'compilation-start :after #'+amos*add-compile-buffer-to-set)
+  (unless (s-starts-with? "*rmsbolt" (buffer-name))
+    (add-to-set next-error-last-buffer compress-view-set)))
+;; (advice-add #'compilation-start :after #'+amos*add-compile-buffer-to-set)
 
 (defvar compress-view-set (make-set))
 (defvar-local +amos-compressed-file nil)
@@ -5039,4 +5036,28 @@ See `project-local-get' for the parameter PROJECT."
       (yank))))
 
 (use-package! rmsbolt
+  :defer
+  :config
+  (add-hook! 'rmsbolt-mode-hook (setq-local rmsbolt-command (shell-command-to-string "printf \"%s %s\" \"$CXX\" \"$CXXFLAGS\""))))
+
+(use-package! centered-cursor-mode
   :defer)
+
+(defun +amos-swiper-isearch-a (orig-fn &rest args)
+  "Don't look into .authinfo for local sudo TRAMP buffers."
+  (let (evil-ex-search-persistent-highlight)
+    (apply orig-fn args)))
+(advice-add #'swiper-isearch :around #'+amos-swiper-isearch-a)
+
+(defmacro leapify! (command)
+  `(progn
+     (defun ,(intern (concat "+amos-" (symbol-name command) "-a")) (orig-func &rest args)
+       (let ((origin (point-marker)))
+         (apply orig-func args)
+         (unless (equal (point-marker) origin)
+           (with-current-buffer (marker-buffer origin)
+             (leap-set-jump origin)))))
+     (advice-add #',command :around #',(intern (concat "+amos-" (symbol-name command) "-a")))))
+
+(leapify! goto-last-change)
+(leapify! evil-insert-resume)

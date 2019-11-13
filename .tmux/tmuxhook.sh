@@ -21,7 +21,7 @@ elif [[ $1 -eq 2 ]]; then
     elif [[ $2 == htop ]]; then
         tmux send -X cancel
     else
-        $HOME/scripts/setcursor.sh $(tmux display -p "#{pane_tty}")
+        /home/amos/scripts/setcursor.sh $(tmux display -p "#{pane_tty}")
     fi
 elif [[ $1 -eq 3 ]]; then
     if [[ $2 == htop ]]; then
