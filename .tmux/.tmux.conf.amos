@@ -41,13 +41,13 @@ bind 2 split-window -v -c '#{pane_current_path}'
 bind 3 split-window -h -c '#{pane_current_path}'
 bind C-x send-prefix
 bind C-c detach-client
-bind r source-file ~/.tmux/.tmux.conf.amos \; display '~/.tmux/.tmux.conf.amos sourced'
+bind r source-file /home/amos/.tmux/.tmux.conf.amos \; display '/home/amos/.tmux/.tmux.conf.amos sourced'
 bind c new-window
 bind d kill-pane
-bind e run-shell $HOME/scripts/edittmuxpane
-bind u run-shell $HOME/scripts/uploadtmuxpane
-bind k run-shell $HOME/scripts/tmuxkillwindow
-bind C-k run-shell $HOME/scripts/tmuxkillwindow
+bind e run-shell /home/amos/scripts/edittmuxpane
+bind u run-shell /home/amos/scripts/uploadtmuxpane
+bind k run-shell /home/amos/scripts/tmuxkillwindow
+bind C-k run-shell /home/amos/scripts/tmuxkillwindow
 
 bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection
@@ -125,7 +125,7 @@ bind-key -T amos C-l send-keys C-l
 bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
 bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
 
-bind-key -T amos M-0 run-shell $HOME/scripts/switch-to-emacs-session.sh
+bind-key -T amos M-0 run-shell /home/amos/scripts/switch-to-emacs-session.sh
 bind-key -T amos M-= switch-client -t htop
 
 bind-key -T amos M-u copy-mode\; send -X cursor-up\; send -X search-backward ❯

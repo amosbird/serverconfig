@@ -95,7 +95,7 @@
 (defvar better-jumper--jumping nil
   "Flag inidicating jump in progress to prevent recording unnecessary jumps.")
 
-(defvar leap--buffer-targets "\\*\\(new\\|scratch\\)\\*"
+(defvar leap--buffer-targets "\\*\\(new\\|scratch\\|rmsbolt.*\\)\\*"
   "Regexp to match against `buffer-name' to determine whether it's a valid jump target.")
 
 (defvar-local leap--jump-struct nil

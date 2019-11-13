@@ -19,6 +19,7 @@
 
 (package! adoc-mode)
 (package! bind-map)
+(package! centered-cursor-mode)
 (package! chinese-yasdcv)
 (package! company-lsp)
 (package! counsel-dash)

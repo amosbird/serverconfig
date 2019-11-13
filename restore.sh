@@ -2,7 +2,7 @@
 
 mkdir -p ~/.config
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p ~/.lc
 ln -sf "$DIR"/lc/config.json "$HOME"/.lc/
@@ -55,16 +55,18 @@ mkdir -p "$HOME"/.local/share/
 ln -sf "$HOME/gentoo/usr/share/grc" "$HOME"/.local/share/
 
 mkdir -p -m 700 "$HOME"/.ssh
-cp id_rsa.pub "$HOME"/.ssh/
+cp "$DIR"/id_rsa.pub "$HOME"/.ssh/
 
-git clone git@github.com:amosbird/pass-store "$HOME"/.password-store
-( cd "$HOME"/.password-store && git pull )
+if [[ $# == 0 ]]; then
+    git clone git@github.com:amosbird/pass-store "$HOME"/.password-store
+    (cd "$HOME"/.password-store && git pull)
 
-sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
+    sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
 
-setxkbmap us
+    setxkbmap us
 
-gpg --recv-keys 80D430DCBECFEDB4
-gpg --recv-keys C3BFA922206F41DA
+    gpg --recv-keys 80D430DCBECFEDB4
+    gpg --recv-keys C3BFA922206F41DA
+fi
 
 echo 'Restored!'
