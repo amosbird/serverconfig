@@ -1337,7 +1337,7 @@ When GREEDY is non-nil, join words in a greedy way."
     (evil-change beg end type register yank-handler delete-func)))
 
 (evil-define-command +amos/delete-backward-char()
-  (mkr! (backward-delete-char-untabify 1 1)))
+  (mkr! (with-no-warnings (delete-backward-char 1 1))))
 
 (evil-define-command +amos/kill-line ()
   (mkr! (kill-region (point)
@@ -2247,6 +2247,7 @@ representation of `NUMBER' is smaller."
     (with-demoted-errors "Error: %S"
       (when (and
              (markerp +amos-ivy--origin)
+             (marker-buffer +amos-ivy--origin)
              (eq ivy-exit 'done)
              (not (equal (with-ivy-window (point-marker)) +amos-ivy--origin)))
         (with-ivy-window
@@ -5061,3 +5062,5 @@ See `project-local-get' for the parameter PROJECT."
 
 (leapify! goto-last-change)
 (leapify! evil-insert-resume)
+
+(electric-indent-mode -1)

@@ -1,5 +1,9 @@
-function __fish_clickhouse_get_query_tests
-    bash -c "cd $CLICKHOUSE_QUERY_TESTS_DIR && command fd '.(sql|sh)\$'"
+function __fish_clickhouse_get_stateless_query_tests
+    bash -c "cd $CLICKHOUSE_STATELESS_QUERY_TESTS_DIR && command fd '.(sql|sh)\$'"
+end
+
+function __fish_clickhouse_get_stateful_query_tests
+    bash -c "cd $CLICKHOUSE_STATEFUL_QUERY_TESTS_DIR && command fd '.(sql|sh)\$'"
 end
 
 function __fish_clickhouse_get_performance_tests
@@ -32,7 +36,8 @@ complete -f -c limits -a '(__fish_complete_user_pids)'
 complete -f -c heapstat -a '(__fish_complete_user_pids)'
 complete -f -c btpid -a '(__fish_complete_user_pids)'
 
-complete -f -c tq -a '(__fish_clickhouse_get_query_tests)'
+complete -f -c tq -a '(__fish_clickhouse_get_stateless_query_tests)'
+complete -f -c ts -a '(__fish_clickhouse_get_stateful_query_tests)'
 complete -f -c tp -a '(__fish_clickhouse_get_performance_tests)'
 complete -f -c tp1 -a '(__fish_clickhouse_get_performance_tests)'
 

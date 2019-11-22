@@ -20,11 +20,15 @@ for i in $ccls_include_dirs; do
     cxx_flags="${cxx_flags}, \"-I$i\""
 done
 
-blacklist='["/tmp"'
+init_blacklist='["/tmp"'
 for i in $ccls_blacklist; do
-    blacklist="${blacklist}, \"$i\""
+    init_blacklist="${init_blacklist}, \"$i\""
 done
+blacklist=$init_blacklist
+blacklist="${blacklist}, \"~$\""
 blacklist="${blacklist}]"
+
+init_blacklist="${init_blacklist}]"
 
 if [[ -z "$ccls_suffix" ]]; then
     ccls_suffix=$(basename "$(git rev-parse --show-toplevel)")
@@ -47,7 +51,7 @@ multi=0
 #     multi=1
 # fi
 #
-init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argjson cxx_flags "$cxx_flags" '
+init=$(jq -c -n --argjson multi "$multi" --argjson init_blacklist "$init_blacklist" --argjson blacklist "$blacklist" --argjson cxx_flags "$cxx_flags" '
 {
   "highlight": { "largeFileSize": 131072 },
   "cache": { "directory": "/home/amos/.cache/.ccls_cached_index" },
@@ -56,8 +60,8 @@ init=$(jq -c -n --argjson multi "$multi" --argjson blacklist "$blacklist" --argj
     "multiVersion": $multi,
     "trackDependency": 1,
     "comments": 0,
-    "initialBlacklist": $blacklist,
-    "blacklist": ["~$"]
+    "initialBlacklist": $init_blacklist,
+    "blacklist": $blacklist
   },
   "workspaceSymbol": { "caseSensitivity": 0, "maxNum": 2000 },
   "diagnostics": {
