@@ -18,13 +18,16 @@ alias l "exa"
 
 status --is-interactive;
 and function __jump_add --on-variable PWD
-  status --is-command-substitution; and return
-  jump chdir
+    status --is-command-substitution; and return
+    jump chdir
 end
 
 status --is-interactive;
 and function __direnv_export_eval --on-event fish_prompt;
-  eval (direnv export fish);
+    if count $TMUX > /dev/null
+        tmux refresh-client -S
+    end
+    eval (direnv export fish);
 end
 
 if not set -q fish_initialized

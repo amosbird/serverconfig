@@ -183,6 +183,7 @@
 (setq lsp-enable-symbol-highlighting nil)
 (setq lsp-ui-doc-enable nil)
 (setq lsp-signature-render-all nil)
+(setq lsp-enable-on-type-formatting nil)
 (setq nav-flash-delay 0.3)
 (setq org-M-RET-may-split-line '((default)))
 (setq org-agenda-files '("~/org/todo.org"))

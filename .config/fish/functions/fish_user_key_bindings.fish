@@ -91,6 +91,9 @@ function fish_user_key_bindings
         [ "$result" ]; and eval cd "$result"
         tput rmcup
         commandline -f repaint
+        if count $TMUX > /dev/null
+            tmux refresh-client -S
+        end
         eval (direnv export fish);
     end
 

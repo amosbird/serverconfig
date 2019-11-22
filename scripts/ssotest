@@ -10,4 +10,6 @@ dir=/data/ClickHouse/data/data/default/terms
 # done
 
 dir=/data/ClickHouse/data/data/default
-/data/ClickHouse/build/string_hash_map "$dir"/terms10m/term.bin "$dir"/terms100m/term.bin 2>&1
+# /data/ClickHouse/build/string_hash_map "$dir"/terms10m/term.bin "$dir"/terms100m/term.bin 2>&1
+
+numactl --membind=0 taskset -c 18 /data/ClickHouse/build/string_hash_map "$dir"/terms/term0.bin "$dir"/terms/term0.bin 2>&1

@@ -58,9 +58,6 @@
   (add-hook! (c-mode c++-mode) #'+cc|fontify-constants)
   (setq-default c-noise-macro-names '("constexpr"))
 
-  ;; (c-set-offset 'innamespace           0)
-  ;; (c-set-offset 'block-open            0)
-  ;; (c-set-offset 'statement-block-intro '+)
 
   ;;; Keybindings
   (map! (:map (c-mode-map c++-mode-map)
@@ -150,6 +147,7 @@
         (setq flycheck-checkers (delq c flycheck-checkers))))))
 
 (add-hook! (c-mode c++-mode) #'+amos-ccls-enable-h)
+(add-hook! (c-mode c++-mode) (electric-indent-local-mode -1))
 
 (use-package! ccls
   ;; :commands (+amos-ccls-enable-h)  ; autoload fails
