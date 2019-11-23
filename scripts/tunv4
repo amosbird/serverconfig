@@ -7,4 +7,4 @@ sudo pkill -9 -F /tmp/ocv4.pid
 obfs-local -f /tmp/obfs.pid -s 168.63.201.221 -p 4555 -l 4555 --obfs http --obfs-host www.bing.com
 sleep 2
 
-gpg -d ~/passwords/ztq.gpg | sudo openconnect -i tunv4 --no-dtls -b --pid-file /tmp/ocv4.pid --user amos --passwd-on-stdin 127.0.0.1:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
+pass show misc/ztq | sudo openconnect -i tunv4 --no-dtls -b --pid-file /tmp/ocv4.pid --user amos --passwd-on-stdin 127.0.0.1:4555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+root="$HOME/.password-store"
+
+# get all password files and create an array
+list_passwords() {
+    cd "${root}" || exit
+    pw_list=($(fd -E 'docker-credential-helpers' 'gpg$'))
+    printf '%s\n' "${pw_list[@]%.gpg}" | sort -n
+}
+
+selected_password="$(list_passwords 2>/dev/null | rofi -dmenu -p "pass > ")"
+
+rofi_exit=$?
+if [[ $rofi_exit -eq 1 ]]; then
+    exit
+fi
+
+fcitx-remote -w "$(pass show "$selected_password")"

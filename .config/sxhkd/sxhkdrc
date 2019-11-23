@@ -5,11 +5,11 @@ mod3+b
 mod3+f
   copyq toggle
 mod3+1
-  sleep 0.1 && fcitx-remote -w 127.0.0.1
+  sleep 0.3 && fcitx-remote -w 127.0.0.1
 mod3+2
-  sleep 0.1 && fcitx-remote -w amosbird@gmail.com
+  sleep 0.3 && fcitx-remote -w amosbird@gmail.com
 mod3+3
-  sleep 0.1 && fcitx-remote -w 20A1D24c1a79B177
+  rofipass
 mod3+d
   dshot | xclip -selection clipboard -t image/png
 mod3+D

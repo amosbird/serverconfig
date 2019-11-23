@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
 sudo pkill -9 -F /tmp/ocv66.pid
-# gpg -d ~/passwords/ztq.gpg | sudo openconnect -i tunv66 -b --pid-file /tmp/ocv66.pid --user amos --passwd-on-stdin [2604:180:3:28::c542]:45556 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
+# pass show misc/ztq | sudo openconnect -i tunv66 -b --pid-file /tmp/ocv66.pid --user amos --passwd-on-stdin [2604:180:3:28::c542]:45556 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
 
-gpg -d ~/passwords/ztq.gpg | sudo openconnect -m 1600 -i tunv66 -b --pid-file /tmp/ocv66.pid --user amos --passwd-on-stdin [2a01:111:f102:8001::1761:4cf8]:45555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
+pass show misc/ztq | sudo openconnect -m 1600 -i tunv66 -b --pid-file /tmp/ocv66.pid --user amos --passwd-on-stdin [2a01:111:f102:8001::1761:4cf8]:45555 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c
