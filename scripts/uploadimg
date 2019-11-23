@@ -8,5 +8,5 @@ errlog() {
 }
 set -o pipefail
 
-(curl -u "$(awk '{$1=$1};1' ~/.userpass)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null | perl -pe 'chomp if eof; $_.=".png"' | copyq add - && copyq select 0) || errlog
+(curl -u "$(pass show misc/pastebin)" -F c=@"$1" "https://la.wentropy.com/?u=1" 2>/dev/null | perl -pe 'chomp if eof; $_.=".png"' | copyq add - && copyq select 0) || errlog
 notify-send -a "teiler" "Text Uploaded" "$(copyq clipboard)"
