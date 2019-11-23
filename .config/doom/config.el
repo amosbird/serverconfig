@@ -3347,6 +3347,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
     (kill-new
      (string-trim-right
       (shell-command-to-string (concat "upload " filename " out"))))
+    (osc-command "notify-send OSC52Command '\nText Uploaded'")
     (if tmp (delete-file filename))))
 
 (advice-add #'semantic-mode :around #'doom-shut-up-a)
