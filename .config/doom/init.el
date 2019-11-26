@@ -179,6 +179,7 @@
 (setq ivy-use-selectable-prompt t)
 (setq ivy-use-virtual-buffers nil)
 (setq ivy-virtual-abbreviate 'full)
+(setq google-translate-translation-directions-alist '(("en" . "zh-CN")))
 (setq lsp-response-timeout 5)
 (setq lsp-enable-symbol-highlighting nil)
 (setq lsp-ui-doc-enable nil)

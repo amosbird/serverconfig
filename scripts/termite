@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-/home/amos/gentoo/usr/bin/termite "$@"

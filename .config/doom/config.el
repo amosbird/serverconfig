@@ -2881,9 +2881,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
@@ -5065,3 +5065,48 @@ See `project-local-get' for the parameter PROJECT."
 (leapify! evil-insert-resume)
 
 (electric-indent-mode -1)
+
+(defun +amos/google-translate ()
+  (interactive)
+  (require 'google-translate)
+  (setq google-translate-translation-direction-query
+        (if (use-region-p)
+            (google-translate--strip-string
+             (buffer-substring-no-properties (region-beginning) (region-end)))
+          (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
+  (setq google-translate-current-translation-direction 0)
+  (let* (
+         ;; (text (google-translate-query-translate-using-directions)) ;;
+         (text google-translate-translation-direction-query) ;;
+         (source-language (google-translate--current-direction-source-language))
+         (target-language (google-translate--current-direction-target-language)))
+    (when (null source-language)
+      (setq source-language (google-translate-read-source-language)))
+    (when (null target-language)
+      (setq target-language (google-translate-read-target-language)))
+    (let* ((json (google-translate-request source-language target-language text)))
+      (if (null json) (message "Nothing to translate.")
+        (let* ((detailed-translation
+                (google-translate-json-detailed-translation json))
+               (detailed-definition
+                (google-translate-json-detailed-definition json))
+               (gtos
+                (make-gtos
+                 :source-language source-language
+                 :target-language target-language
+                 :auto-detected-language (aref json 2)
+                 :text text
+                 :text-phonetic (google-translate-json-text-phonetic json)
+                 :translation (google-translate-json-translation json)
+                 :translation-phonetic (google-translate-json-translation-phonetic json)
+                 :detailed-translation detailed-translation
+                 :detailed-definition detailed-definition
+                 :suggestion (when (null detailed-translation)
+                               (google-translate-json-suggestion json)))))
+          (when (use-region-p)
+            (goto-char (region-end))
+            (evil-normal-state))
+          (evil-insert-newline-below)
+          (evil-insert-newline-below)
+          (save-excursion
+            (insert (gtos-translation gtos))))))))
