@@ -2,4 +2,4 @@
 
 set -e
 cd
-rsync -aR 201.nobida.cn:'git/llvm-project/release/lib/clang/*/include' 201.nobida.cn:git/ccls/release/ccls .
+rsync -aR 201.nobida.cn:git/llvm-project/release/bin/clang-format 201.nobida.cn:'git/llvm-project/release/lib/clang/*/include' 201.nobida.cn:git/ccls/release/ccls .

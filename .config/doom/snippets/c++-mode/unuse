@@ -1,0 +1,10 @@
+# -*- mode: snippet -*-
+# name: unuse
+# key: unuse
+# type: command
+# --
+(let* ((text (if yas-wrap-around-region (evil-get-register yas-wrap-around-region) ""))
+       (stmt (string-trim-right text "[; \t\n\r]+"))
+       (yas-wrap-around-region))
+    (message stmt)
+    (yas-expand-snippet (format "asm volatile(\"\" : : \"r,m\"($0%s) : \"memory\")" stmt)))
