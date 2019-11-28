@@ -83,10 +83,8 @@
   '(keycast host buffer-encoding major-mode vcs checker))
 
 (defun +amos-setup-custom-doom-modeline-h ()
-  (doom-modeline-set-modeline 'amos 'default))
+  (doom-modeline-set-modeline 'amos 'default)
+  (with-current-buffer "*Messages*" (doom-modeline-set-modeline 'amos))
+  (advice-add #'doom-modeline-set-modeline :override #'ignore))
 
 (add-hook! 'doom-modeline-mode-hook #'+amos-setup-custom-doom-modeline-h)
-(advice-add #'doom-modeline-set-pdf-modeline :override #'ignore)
-(advice-add #'doom-modeline-set-special-modeline :override #'ignore)
-(advice-add #'doom-modeline-set-media-modeline :override #'ignore)
-(advice-add #'doom-modeline-set-project-modeline :override #'ignore)

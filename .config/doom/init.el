@@ -306,6 +306,7 @@
 (setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${note:*}")))
 (setq bibtex-completion-additional-search-fields '("note"))
 (setq initial-buffer-choice (lambda () (get-buffer "*Messages*")))
+(defun hide-mode-line-mode(&rest_)) ;; never hide modeline
 
 (after! core-keybinds
   (add-to-list 'doom-evil-state-alist '(?s . sticky))

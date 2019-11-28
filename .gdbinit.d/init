@@ -161,6 +161,27 @@ class RedashCommand(gdb.Command):
 
 RedashCommand()
 
+class FunctionFinishBreakpoint(gdb.FinishBreakpoint):
+    def __init__ (self):
+        gdb.FinishBreakpoint.__init__(self, gdb.newest_frame(),
+                                      internal=True)
+        self.silent = True
+
+    def stop(self):
+        #print("after: {}".format(int(self.return_value)))
+        return not int(self.return_value)
+
+class FunctionBreakpoint(gdb.Breakpoint):
+    def __init__ (self, spec):
+        gdb.Breakpoint.__init__(self, spec)
+        self.silent = True
+
+    def stop (self):
+        #print("before")
+        FunctionFinishBreakpoint() # set breakpoint on function return
+
+        return False # do not stop at function entry
+
 end
 
 define hookpost-finish
