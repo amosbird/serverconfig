@@ -1,0 +1,13 @@
+# -*- mode: snippet -*-
+# name: time
+# key: time
+# type: command
+# --
+(+amos/add-include "chrono")
+(+amos/add-include "iostream")
+(yas-expand-snippet "{
+    auto start = std::chrono::steady_clock::now();
+    $0
+    auto t = std::chrono::steady_clock::now();
+    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(t - start).count() << std::endl;
+}")

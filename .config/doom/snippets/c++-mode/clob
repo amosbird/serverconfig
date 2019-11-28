@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: clob
+# key: clob
+# --
+asm volatile("" : : : "memory");

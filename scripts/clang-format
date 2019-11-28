@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+/home/amos/git/llvm-project/release/bin/clang-format "$@"
