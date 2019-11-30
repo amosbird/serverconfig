@@ -16,4 +16,4 @@ if [[ $rofi_exit -eq 1 ]]; then
     exit
 fi
 
-fcitx-remote -w "$(pass show "$selected_password")"
+inputstr "$(pass show "$selected_password")"

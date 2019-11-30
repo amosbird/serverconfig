@@ -5,9 +5,9 @@ mod3+b
 mod3+f
   copyq toggle
 mod3+1
-  sleep 0.3 && fcitx-remote -w 127.0.0.1
+  sleep 0.3 && inputstr 127.0.0.1
 mod3+2
-  sleep 0.3 && fcitx-remote -w amosbird@gmail.com
+  sleep 0.3 && inputstr amosbird@gmail.com
 mod3+3
   rofipass
 mod3+d

@@ -40,7 +40,8 @@ fi
 if [ "$ccls_suffix" = "-tdesktop" ]; then
   cxx_flags="${cxx_flags}, \"--sysroot=/\"]"
 else
-  cxx_flags="${cxx_flags}, \"--sysroot=$HOME/gentoo\"]"
+  # cxx_flags="${cxx_flags}, \"--sysroot=$HOME/gentoo\"]"
+  cxx_flags="${cxx_flags}]"
 fi
 
 multi=0
