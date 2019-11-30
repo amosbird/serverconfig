@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+# NEED OPENSSH >= 6.7 TO FORWARD GPG SOCKET
 set -x
 pattern='^(([[:alnum:]]+)@)?([^:^@]+)(:([[:digit:]]+))?$'
 if [[ "$1" =~ $pattern ]]; then

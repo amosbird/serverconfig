@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+# flatpak run com.github.hluk.copyq "$@"
+/usr/bin/copyq "$@"
+# /usr/local/bin/copyq "$@"
