@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
+# /home/amos/git/llvm-project/debug/bin/clang-format "$@"
 /home/amos/git/llvm-project/release/bin/clang-format "$@"
+# /home/amos/gentoo/usr/lib/llvm/9/bin/clang-format "$@"

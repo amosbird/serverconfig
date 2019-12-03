@@ -3,16 +3,16 @@
 if [[ $1 -eq 1 ]]; then
     case "$2" in
     emacs)
-        tmux source ~/.tmux/.tmux.conf.emacs
+        tmux source -t emacs ~/.tmux/.tmux.conf.emacs
         ;;
     htop)
-        tmux source ~/.tmux/.tmux.conf.htop
+        tmux source -t htop ~/.tmux/.tmux.conf.htop
         ;;
     amos)
-        tmux source ~/.tmux/.tmux.conf.amos
+        tmux source -t amos ~/.tmux/.tmux.conf.amos
         ;;
     gui)
-        tmux source ~/.tmux/.tmux.conf.gui
+        tmux source -t gui ~/.tmux/.tmux.conf.gui
         ;;
     esac
 elif [[ $1 -eq 2 ]]; then
