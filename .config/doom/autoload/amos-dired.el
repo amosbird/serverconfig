@@ -73,6 +73,7 @@
       (setq +amos-dired-history-index goto-idx)
       (+amos/find-file jump-history t))))
 
+;;;###autoload
 (defun +amos--get-all-jump-dirs ()
   (unless (file-directory-p default-directory)
     (cd "~"))
