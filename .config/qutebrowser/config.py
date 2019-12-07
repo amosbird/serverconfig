@@ -1,5 +1,6 @@
 from qutebrowser.config.configfiles import ConfigAPI  # noqa: F401
 from qutebrowser.config.config import ConfigContainer  # noqa: F401
+import sys, os
 
 config = config  # type: ConfigAPI # noqa: F821 pylint: disable=E0602,C0103
 c = c  # type: ConfigContainer # noqa: F821 pylint: disable=E0602,C0103
@@ -126,7 +127,5 @@ c.bindings.commands["insert"] = {
     "<ctrl+x>": ":jseval --quiet --file ./ctrlk.js",
 }
 
-try:
-    config.source("adblock-yt.py")
-except ImportError:
-    pass
+sys.path.append(os.path.join(sys.path[0], 'jblock'))
+config.source("jblock/jblock/integrations/qutebrowser.py")
