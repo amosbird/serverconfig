@@ -113,7 +113,7 @@ git clone https://aur.archlinux.org/trizen-git.git
 cd trizen-git
 makepkg -si
 
-trizen -S ntfs-3g libjpeg6 shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua conky-lua copyq cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exa exfat-utils expect fcitx fcitx-cloudpinyin fcitx-configtool fcitx-gtk2 fcitx-gtk3 fcitx-qt5 fcitx-rime fd fd-rs fzf gconf gdb getmail giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls moreutils mpv mtr ncdu ncurses net-tools netease-cloud-music ninja ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin paps parallel pavucontrol pdfjs perf pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi ripgrep rofi rofi-dmenu rslsync rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-bin texlive-lang texlive-most texlive-slashbox thinkfan tidy time tokei ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zbar zenity zerotier-one zip --noconfirm --needed
+trizen -S ntfs-3g meson redshift bspwm netctl pass libjpeg6 shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua conky-lua copyq cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exa exfat-utils expect fcitx fcitx-cloudpinyin fcitx-configtool fcitx-gtk2 fcitx-gtk3 fcitx-qt5 fcitx-rime fd fd-rs fzf gconf gdb getmail giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls moreutils mpv mtr ncdu ncurses net-tools netease-cloud-music ninja ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin paps parallel pavucontrol pdfjs perf pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi ripgrep rofi rofi-dmenu rslsync rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-bin texlive-lang texlive-most texlive-slashbox thinkfan tidy time tokei ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zbar zenity zerotier-one zip --noconfirm --needed
 
 trizen -S mimi-git
 
@@ -199,18 +199,17 @@ open emacs and do M-x all-the-icons-install-fonts
 ** post
 
 # copy these files from the old box
-~/passwords
 ~/.terminfo
-~/.userpass
 ~/.gnupg
+~/.ssh
 ~/.getmail
 ~/.msmtprc
 ~/.stardict
 # might need to remove simsun.ttc mingliu.ttc for tdesktop and emacs-gui
 ~/.local/share/fonts
-~/.local/share/qutebrowser/greasemonkey
-~/.local/share/qutebrowser/userscripts
+~/.local/share/qutebrowser
 /etc/ld.so.conf.d/99-user-local.conf
+/etc/sddm.conf
 /etc/hosts
 /etc/netns/zt/resolv.conf
 /etc/samba/smb.conf
@@ -226,8 +225,6 @@ open emacs and do M-x all-the-icons-install-fonts
 /etc/udev/hwdb.d
 /usr/local/bin/Telegram
 /usr/local/bin/getcursorpos
-/usr/local/bin/obfs-local
-/usr/local/bin/openconnect
 /usr/local/bin/gnirehtet
 /usr/local/bin/netns-exec
 /usr/local/bin/netns-exec-dbus
@@ -245,10 +242,6 @@ sudo cp -r .terminfo /root
 
 mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Screencasts Music Books org/todos Documents/pdfs Documents/ppts Documents/docs
 
-sddm --example-config | sudo tee /etc/sddm.conf
-sudo vim /etc/sddm.conf
-User=amos
-Session=bspwm.desktop
 systemctl enable sddm
 systemctl enable org.cups.cupsd.service
 systemctl enable dnsmasq

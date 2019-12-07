@@ -1,3 +1,7 @@
 #!/usr/bin/env fish
 
-copyq copyUriList (string join \n $PWD/$argv | string collect)
+set files $argv
+for i in (seq (count $files))
+    set files[$i] (realpath $files[$i])
+end
+copyq copyUriList (string join \n $files | string collect)

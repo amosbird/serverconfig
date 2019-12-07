@@ -5,4 +5,12 @@ netctl stop-all
 sudo ip r d default
 sudo ip r f table cn
 sudo netctl switch-to "$1"
+if [ $? -ne 0 ]; then
+    systemctl stop zerotier-one
+    systemctl stop dnsmasq
+    sleep 5
+    systemctl start zerotier-one
+    systemctl start dnsmasq
+fi
+
 # addroutes

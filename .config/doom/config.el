@@ -3161,7 +3161,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
     (let ((files (split-string uri-list "[\0\r\n]" t)))
       (--each files
         (let ((file-name (string-remove-prefix "file://" it)))
-          (+amos-paste-file file-name))))
+          (+amos-paste-file file-name)))
+      (revert-buffer t t t))
     t)
    (t
     nil)))
