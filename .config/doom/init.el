@@ -123,6 +123,7 @@
         ("webm" . "xdg-open")
         ("flac" . "xdg-open")
         ("m4a" . "xdg-open")
+        ("aac" . "xdg-open")
         ("mp4" . "xdg-open")
         ("mov" . "xdg-open")
         ("ps" . "xdg-open")
