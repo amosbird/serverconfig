@@ -137,7 +137,7 @@ git remote set-url origin git@github.com:amosbird/serverconfig
 sh restore.sh
 
 cd ~/git/serverconfig/aurs
-find -name PKGBUILD -execdir sh -c 'makepkg -si --noconfirm' \;
+find -name PKGBUILD | sort -r | xargs -I '{}' bash -c 'cd $(dirname "{}"); makepkg -si --noconfirm'
 
 cd ~/git
 git clone git@github.com:amosbird/qutebrowser
