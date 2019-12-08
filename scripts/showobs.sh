@@ -26,6 +26,5 @@ if pgrep obs >/dev/null; then
 else
     rm /tmp/obs
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    cd /usr/local/bin/64bit
-    ./obs
+    obs
 fi

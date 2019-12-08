@@ -36,7 +36,7 @@ else
     mkfifo $fifoname
     trap "rm -rf $fifoname" 0
     export EDITOR=eeee
-    /home/amos/git/llpp/build/llpp -remote $fifoname -- "$pdf" &
+    llpp -remote $fifoname -- "$pdf" &
 fi
 
 if [ -n "$sync" ]; then
