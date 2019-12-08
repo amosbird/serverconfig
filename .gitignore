@@ -42,3 +42,4 @@ fishd.*
 /Thumbs.db:encryptable
 /.config/copyq/copyq.pub
 /.config/copyq/copyq-filter.ini
+/aurs
