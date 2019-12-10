@@ -5070,6 +5070,7 @@ See `project-local-get' for the parameter PROJECT."
 (defun +amos/google-translate ()
   (interactive)
   (require 'google-translate)
+  (require 'google-translate-smooth-ui)
   (setq google-translate-translation-direction-query
         (if (use-region-p)
             (google-translate--strip-string
@@ -5091,23 +5092,11 @@ See `project-local-get' for the parameter PROJECT."
                 (google-translate-json-detailed-translation json))
                (detailed-definition
                 (google-translate-json-detailed-definition json))
-               (gtos
-                (make-gtos
-                 :source-language source-language
-                 :target-language target-language
-                 :auto-detected-language (aref json 2)
-                 :text text
-                 :text-phonetic (google-translate-json-text-phonetic json)
-                 :translation (google-translate-json-translation json)
-                 :translation-phonetic (google-translate-json-translation-phonetic json)
-                 :detailed-translation detailed-translation
-                 :detailed-definition detailed-definition
-                 :suggestion (when (null detailed-translation)
-                               (google-translate-json-suggestion json)))))
+               (translation (google-translate-json-translation json)))
           (when (use-region-p)
             (goto-char (region-end))
             (evil-normal-state))
           (evil-insert-newline-below)
           (evil-insert-newline-below)
           (save-excursion
-            (insert (gtos-translation gtos))))))))
+            (insert translation)))))))

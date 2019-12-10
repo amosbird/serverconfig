@@ -1,5 +1,5 @@
 pkgname=(termite-git termite-terminfo-git)
-pkgver=13.r24.g4dff62b
+pkgver=13.r25.gf7aa2d5
 pkgrel=1
 
 pkgdesc="A simple VTE-based terminal"
