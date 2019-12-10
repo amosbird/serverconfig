@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 if [[ $3 -gt 700 ]]; then
-    path=$(rofi -levenshtein-sort -dmenu -i -p '> ' -width 16 -theme-str "#mainbox { children: [listview, message, inputbar]; } #listview { reverse: true; } #window { location: north west; anchor: south west; x-offset: $2; y-offset: $(($3 + 30)); }")
+    path=$(rofi -matching fuzzy -sort -sorting-method fzf -dmenu -i -p '> ' -width 16 -theme-str "#mainbox { children: [listview, message, inputbar]; } #listview { reverse: true; } #window { location: north west; anchor: south west; x-offset: $2; y-offset: $(($3 + 30)); }")
 else
-    path=$(rofi -levenshtein-sort -dmenu -i -p '> ' -width 16 -theme-str "#mainbox { children: [inputbar, message, listview]; } #listview { reverse: false; } #window { location: north west; anchor: north west; x-offset: $2; y-offset: $3; }")
+    path=$(rofi -matching fuzzy -sort -sorting-method fzf -dmenu -i -p '> ' -width 16 -theme-str "#mainbox { children: [inputbar, message, listview]; } #listview { reverse: false; } #window { location: north west; anchor: north west; x-offset: $2; y-offset: $3; }")
 fi
 gdbus call --session --dest com.wentropy.termite.PID-"$1" --object-path / --method com.wentropy.termite.input "$path" &>/dev/null &
