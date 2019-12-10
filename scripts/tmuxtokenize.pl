@@ -31,9 +31,9 @@ for my $pane (@panes) {
     $lines = $lines.$line;
 }
 
-my %hash = map { $_ => 1 } split ' ', decode("utf8", $lines) =~ s/[\s❯]+/ /gmr;
+my %hash = map { $_ => 1 } split ' ', decode("utf8", $lines) =~ s/[\s❯⏎]+/ /gmr;
 my @unique = keys %hash;
-my $s = join "\n", @unique;
+my $s = join "\n",  grep { length $_ > 3 } @unique;
 
 $s = encode_base64(encode("utf8", $s), "");
 open(TTY, ">".$tty);
