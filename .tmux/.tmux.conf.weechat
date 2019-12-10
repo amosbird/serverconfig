@@ -98,3 +98,5 @@ bind-key -T root C-] send-keys Escape
 bind-key -T root M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
 bind-key -Tcopy-mode-vi M-s command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
 bind-key -T root MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\; send -X copy-pipe-and-cancel "echo"\; set-buffer -b "amos" -a " "\; paste-buffer -b "amos"
+
+bind-key -T root C-Space run-shell 'fish -c tmuxtokenize.pl'
