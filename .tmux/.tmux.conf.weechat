@@ -61,10 +61,6 @@ bind-key -T root S-F6 send-keys C-j
 bind-key -T root S-F7 send-keys M-BSpace
 # URxvt.keysym.Shift-Return:  \033[5;30012~
 bind-key -T root S-F8 send-keys Enter
-# URxvt.keysym.C-comma:       \033[5;30013~
-bind-key -T root S-F9 previous-window
-# URxvt.keysym.C-period:      \033[5;30014~
-bind-key -T root S-F10 next-window
 
 bind-key -T root S-F12 send-keys C-]
 
