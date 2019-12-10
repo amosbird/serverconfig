@@ -11,6 +11,8 @@ export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
 
 if [ -z "$1" ]; then
     export PATH=/home/amos/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+else
+    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 fi
 
 TMUX=/home/amos/gentoo/usr/local/bin/tmux

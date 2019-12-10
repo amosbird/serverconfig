@@ -133,6 +133,10 @@ bind-key -T amos M-s copy-mode\; command-prompt -i -p "(search up)" "send -X sea
 bind-key -Tcopy-mode-vi M-s command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
 bind-key -Tcopy-mode-vi M-u send -X search-backward ❯
 bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
+bind-key -Tcopy-mode-vi M-j send -X cursor-down
+bind-key -Tcopy-mode-vi M-k send -X cursor-up
+bind-key -Tcopy-mode-vi M-h send -X cursor-left
+bind-key -Tcopy-mode-vi M-l send -X cursor-right
 bind-key -T amos M-- set synchronize-panes
 bind-key -T amos M-"'" send-keys "'"{}"'" Left Left
 
