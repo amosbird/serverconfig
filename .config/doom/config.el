@@ -333,16 +333,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
         ("-test\\.el$" :mode emacs-ert-mode)
         (emacs-lisp-mode :trigger "__initfile")
         (snippet-mode)
-        ;; C/C++
-        ("/main\\.c\\(?:c\\|pp\\)$"   :trigger "__main.cpp"    :mode c++-mode)
-        ("/win32_\\.c\\(?:c\\|pp\\)$" :trigger "__winmain.cpp" :mode c++-mode)
-        ("\\.c\\(?:c\\|pp\\)$"        :trigger "__cpp" :mode c++-mode)
-        ("\\.h\\(?:h\\|pp\\|xx\\)$"   :trigger "__hpp" :mode c++-mode)
-        ("\\.h$" :trigger "__h" :mode c-mode)
-        (c-mode  :trigger "__c")
-        ;; go
-        ("/main\\.go$" :trigger "__main.go" :mode go-mode :project t)
-        (go-mode :trigger "__.go")
         ;; web-mode
         ("/normalize\\.scss$" :trigger "__normalize.scss" :mode scss-mode)
         ("/master\\.scss$" :trigger "__master.scss" :mode scss-mode)
@@ -1603,7 +1593,7 @@ When GREEDY is non-nil, join words in a greedy way."
   (when (and (boundp '+amos--lsp-maybe-highlight-symbol) +amos--lsp-maybe-highlight-symbol)
     (--each (lsp-workspaces)
       (with-lsp-workspace it
-        (lsp--remove-cur-overlays)))
+        (lsp--remove-overlays 'lsp-highlight)))
     (setq-local +amos--lsp-maybe-highlight-symbol nil)))
 
 (add-hook 'doom-escape-hook #'+amos-lsp-remove-highlight-h)
