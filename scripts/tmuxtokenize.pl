@@ -1,8 +1,10 @@
 #!/usr/bin/env perl
 
+use utf8;
 use IPC::Run3;
 use MIME::Base64;
 use List::Util qw/first/;
+use Encode;
 
 run3 [ "tmux", "list-windows", "-F", "#{window_id}:#{window_active}" ], \undef, \my $windows_input, \undef;
 
@@ -29,13 +31,13 @@ for my $pane (@panes) {
     $lines = $lines.$line;
 }
 
-my %hash = map { $_ => 1 } split ' ', $lines =~ s/[\s❯]+/ /gmr;
+my %hash = map { $_ => 1 } split ' ', decode("utf8", $lines) =~ s/[\s❯]+/ /gmr;
 my @unique = keys %hash;
-my $s = join ' ', @unique;
+my $s = join "\n", @unique;
 
+$s = encode_base64(encode("utf8", $s), "");
 open(TTY, ">".$tty);
 *STDOUT = *TTY;
-$s = encode_base64($s, "");
 my $osc52 = "\033]52;o;".$s."\07";
 my $esc = "\033Ptmux;\033".$osc52."\033\\"; # tmux
 print $esc;
