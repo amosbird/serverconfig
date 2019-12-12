@@ -11,7 +11,7 @@ mod3+2
 mod3+3
   rofipass
 mod3+d
-  dshot | xclip -selection clipboard -t image/png
+  dshot | copyq copyImage -
 mod3+D
   dshot | uploadimg -
 mod3+i
@@ -23,7 +23,7 @@ mod3+o
 mod3+c
   cliprectangle
 mod3+p
-  maim -s | xclip -selection clipboard -t image/png
+  maim -s | copyq copyImage -
 mod3+shift+p
   maim -s | uploadimg -
 mod3+t

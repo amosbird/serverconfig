@@ -1,5 +1,6 @@
 #!/usr/bin/env perl
 
+use strict;
 use utf8;
 use IPC::Run3;
 use MIME::Base64;
@@ -27,6 +28,7 @@ $pane_b = substr( $pane_b, 0, rindex( $pane_b, ":" ));
 my $lines;
 
 for my $pane (@panes) {
+    my $line;
     run3 [ "tmux", "capture-pane", "-pJS", "0", "-t", substr( $pane, 0, rindex( $pane, ":" )) ], \undef, \$line, \undef;
     $lines = $lines.$line;
 }
@@ -41,3 +43,4 @@ open(TTY, ">".$tty);
 my $osc52 = "\033]52;o;".$s."\07";
 my $esc = "\033Ptmux;\033".$osc52."\033\\"; # tmux
 print $esc;
+close(TTY);

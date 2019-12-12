@@ -113,7 +113,7 @@ git clone https://aur.archlinux.org/trizen-git.git
 cd trizen-git
 makepkg -si
 
-trizen -S openh264 caps-indicator ntfs-3g meson redshift bspwm netctl pass libjpeg6 shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exfat-utils expect fcitx fcitx-cloudpinyin fcitx-configtool fcitx-gtk2 fcitx-gtk3 fcitx-qt5 fcitx-rime fcitx-dbus-commit-string gconf getmail giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls moreutils mpv mtr ncdu ncurses net-tools ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin paps parallel pavucontrol pdfjs pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi rofi rofi-dmenu rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-bin texlive-lang texlive-most texlive-slashbox thinkfan tidy time ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zbar zenity zerotier-one zip --noconfirm --needed
+trizen -S openh264 bspwm-git copyq-git feh-git freerdp-git llpp-git netevent-git obs-studio-git termite-git vte3-git xcape-git caps-indicator ntfs-3g meson redshift netctl pass libjpeg6 shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exfat-utils expect fcitx fcitx-cloudpinyin fcitx-configtool fcitx-gtk2 fcitx-gtk3 fcitx-qt5 fcitx-rime fcitx-dbus-commit-string gconf getmail giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls moreutils mpv mtr ncdu ncurses net-tools ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin paps parallel pavucontrol pdfjs pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi rofi rofi-dmenu rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-bin texlive-lang texlive-most texlive-slashbox thinkfan tidy time ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zbar zenity zerotier-one zip --noconfirm --needed
 
 trizen -S mimi-git
 
@@ -136,8 +136,9 @@ cd serverconfig
 git remote set-url origin git@github.com:amosbird/serverconfig
 sh restore.sh
 
-cd ~/git/serverconfig/aurs
-find -name PKGBUILD | sort -r | xargs -I '{}' bash -c 'cd $(dirname "{}"); makepkg -si --noconfirm'
+# switch to git insteadOf workflow
+# cd ~/git/serverconfig/aurs
+# find -name PKGBUILD | sort -r | xargs -I '{}' bash -c 'cd $(dirname "{}"); makepkg -si --noconfirm'
 
 cd ~/git
 git clone git@github.com:amosbird/qutebrowser
@@ -214,3 +215,5 @@ ccache -M 50G
 sudo pkgfile --update
 updateroutes
 updatednsmasq
+
+https://gist.github.com/Informatic/49bd034d43e054bd1d8d4fec38c305ec

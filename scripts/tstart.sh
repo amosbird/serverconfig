@@ -15,10 +15,9 @@ else
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 fi
 
-TMUX=/home/amos/gentoo/usr/local/bin/tmux
-$TMUX -u new -d -s htop htop
-if ! $TMUX list-sessions | grep -q -F emacs; then
+tmux -u new -d -s htop htop
+if ! tmux list-sessions | grep -q -F emacs; then
     fuser -k /tmp/emacs.lock &>/dev/null # sometimes emacs daemon doesn't quit
 fi
-$TMUX -u new -d -s emacs $SHELL -i -c startemacs
-$TMUX -u new-session -A -s amos
+tmux -u new -d -s emacs $SHELL -i -c startemacs
+tmux -u new-session -A -s amos

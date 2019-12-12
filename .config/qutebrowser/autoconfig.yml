@@ -86,12 +86,9 @@ settings:
     - https://easylist.to/easylist/easyprivacy.txt
     - https://testpages.adblockplus.org/en/abp-testcase-subscription.txt
   content.javascript.can_access_clipboard:
-    github.com: true
     global: true
   content.notifications:
     global: false
-    https://blog.csdn.net: false
-    https://www.bilibili.com: false
   content.pdfjs:
     global: false
   content.ssl_strict:

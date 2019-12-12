@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+set -e
+cd /home/amos/git/bc
+
+PIDFILE=blive.pid
+if [ -e "${PIDFILE}" ]; then
+    PID=$(cat ${PIDFILE})
+    kill ${PID} || true
+    rm -rf ${PIDFILE}
+fi
+
+bash -c "node index.js &"
