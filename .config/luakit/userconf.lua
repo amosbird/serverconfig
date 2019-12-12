@@ -2,7 +2,7 @@
 
 
 local proxy = require "proxy"
-proxy.set_active()
+-- proxy.set_active()
 
 require "vertical_tabs"
 require "follow_selected"

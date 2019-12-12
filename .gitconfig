@@ -12,3 +12,23 @@
 	user = amosbird
 [commit]
 	gpgsign = true
+[url "https://github.com/amosbird/xcape-git-aur"]
+	insteadOf ="https://aur.archlinux.org/xcape-git.git"
+[url "https://github.com/amosbird/bspwm-git-aur"]
+	insteadOf ="https://aur.archlinux.org/bspwm-git.git"
+[url "https://github.com/amosbird/copyq-git-aur"]
+	insteadOf ="https://aur.archlinux.org/copyq-git.git"
+[url "https://github.com/amosbird/llpp-git-aur"]
+	insteadOf ="https://aur.archlinux.org/llpp-git.git"
+[url "https://github.com/amosbird/vte3-git-aur"]
+	insteadOf ="https://aur.archlinux.org/vte3-git.git"
+[url "https://github.com/amosbird/termite-git-aur"]
+	insteadOf ="https://aur.archlinux.org/termite-git.git"
+[url "https://github.com/amosbird/feh-git-aur"]
+	insteadOf ="https://aur.archlinux.org/feh-git.git"
+[url "https://github.com/amosbird/freerdp-git-aur"]
+	insteadOf ="https://aur.archlinux.org/freerdp-git.git"
+[url "https://github.com/amosbird/obs-studio-git-aur"]
+	insteadOf ="https://aur.archlinux.org/obs-studio-git.git"
+[url "https://github.com/amosbird/netevent-git-aur"]
+	insteadOf ="https://aur.archlinux.org/netevent-git.git"

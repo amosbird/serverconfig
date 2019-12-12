@@ -1,23 +1,28 @@
-#!/usr/bin/env bash
-# Dependencies: wmctrl
+#!/usr/bin/env perl
 
-# In your VM, share the root host location "/" in $drive
+use utf8;
+use strict;
+use Encode;
+use Net::SSH::Perl;
 
-vmname=w7
+my %progs;
+# $progs{'qq'} = '"C:\\Users\\amosb\\Timwp.exe"';
+$progs{'qq'} = "C:\\Program` Files` `(x86`)\\Tencent\\TIM\\Bin\\timwp.exe";
+# $progs{'ww'} = "C:\\Users\\amosb\\WWCmd.exe";
+$progs{'ww'} = "C:\\Program` Files` `(x86`)\\AliWangWang\\9.12.10C\\WWCmd.exe";
+my $prog = shift;
+my $prog_name = $progs{$prog};
 
-# Start vm if not running already
-if [ $(VBoxManage list runningvms | wc -l) = 0 ]; then
-    VBoxManage startvm "$vmname"
-    sleep 5s
-fi
+my $ssh = Net::SSH::Perl->new("192.168.122.109", debug=>0);
+$ssh->login("amosb");
+$_ = "\"$_\"" for @ARGV;
+my $cmd = encode("gbk", ".\\psexec -i 2 $prog_name --% " . join(" ", @ARGV));
+my ($stdout,$stderr,$exit) = $ssh->cmd($cmd);
+open (my $fh, '>', '/tmp/winstart.log');
+print $fh decode("gbk", $cmd);
+print $fh decode("gbk", $stdout);
+print $fh decode("gbk", $stderr);
+print $fh decode("gbk", $exit);
+close $fh;
 
-# Wait until graphics are available
-until VBoxManage showvminfo "$vmname" | grep '"Graphics Mode": active/running' >/dev/null; do
-    sleep 0.5s
-done
-
-# Start application in VirtualBox
-VBoxManage guestcontrol "$vmname" run --exe "cmd.exe" --username "amos" --password "1" -- cmd /c start "$@" &
-
-# Change window manager focus to VM
-wmctrl -a "$vmname"
+system "bspc desktop --focus w";

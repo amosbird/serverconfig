@@ -14,8 +14,6 @@ config.load_autoconfig()
 # aliases, while the values are the commands they map to.
 # Type: Dict
 c.aliases = {"q": "quit", "w": "session-save", "wq": "quit --save"}
-c.content.host_blocking.whitelist = ["piwik.org"]
-# c.url.searchengines = { 'DEFAULT': 'http://localhost:8888/?q={}', 'google': 'http://localhost:8888/?q={}', 'github': 'https://github.com/search?q={}', 'searx': 'https://searx.me/?q={}'}
 c.url.searchengines = {
     "DEFAULT": "https://google.com/search?q={}",
     "google": "https://google.com/search?q={}",
@@ -25,7 +23,6 @@ c.url.searchengines = {
 }
 c.tabs.last_close = "close"
 c.tabs.title.format = "{index}: {current_title}"
-
 
 # import glob
 
@@ -54,7 +51,7 @@ c.hints.prev_regexes = [
 
 c.bindings.commands["normal"] = {
     "<Escape>": c.bindings.default["normal"]["<Escape>"]
-                + ";; fake-key <Escape> ;; jseval --quiet document.getSelection().empty()",
+    + ";; fake-key <Escape> ;; clear-messages ;; jseval --quiet document.getSelection().empty()",
     "<ctrl-Space>": "spawn i3-msg focus right",
     "<Space>": "fake-key <Space>",
     "<ctrl-b>": "navigate prev",
@@ -127,5 +124,5 @@ c.bindings.commands["insert"] = {
     "<ctrl+x>": ":jseval --quiet --file ./ctrlk.js",
 }
 
-sys.path.append(os.path.join(sys.path[0], 'jblock'))
+sys.path.append(os.path.join(sys.path[0], "jblock"))
 config.source("jblock/jblock/integrations/qutebrowser.py")
