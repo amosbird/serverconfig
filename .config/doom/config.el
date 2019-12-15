@@ -2139,8 +2139,6 @@ representation of `NUMBER' is smaller."
      :slot 2 :vslot 2 :size 0.45 :select t)
     ("\\*TeX" :side right :size 0.4)
     ("^\\(?:\\*magit\\|magit:\\)" :ignore t)
-    ("^\\*ivy-occur"
-     :side right :size 0.9 :select t :ttl 0)
     ("\\[ Table \\]\\*"
      :side right :size 0.9 :select t :quit nil))
   '(("^\\*Backtrace" :side right :size 0.5 :quit nil)))
@@ -2733,6 +2731,10 @@ the current state and point position."
       (apply ofun candidate)))
 (advice-add #'flycheck-inline-display-errors :around #'+amos-flycheck-inline-display-errors-a)
 (advice-add #'evil-multiedit--cycle :after #'+amos/recenter)
+(advice-add #'wgrep-abort-changes :after #'kill-buffer)
+(advice-add #'wgrep-finish-edit :after #'kill-buffer)
+(advice-remove #'wgrep-abort-changes #'+popup-close-a)
+(advice-remove #'wgrep-finish-edit #'+popup-close-a)
 (advice-add #'evil-multiedit-match-and-next :after #'+amos/recenter)
 (advice-add #'edebug-overlay-arrow :after #'realign-windows)
 
@@ -2805,7 +2807,7 @@ By default the last line."
   (interactive)
   (if wipe
       (+amos-clean-evil-jump-list (current-buffer)))
-  (or (and kill (kill-current-buffer)) (bury-buffer)))
+  (if kill (kill-buffer)))
 
 (defun +amos-undo-tree-a (ofun &rest arg)
   (if (and (not defining-kbd-macro)
@@ -3213,90 +3215,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
   (if (use-region-p)
       (call-interactively #'+format/region)
     (call-interactively #'+format/buffer)))
-
-(defun +amos-ignore-repeat (&rest names)
-  (dolist (name names)
-    (dolist (command (all-completions name obarray 'commandp))
-      (evil-declare-ignore-repeat (intern command)))))
-
-(+amos-ignore-repeat
- "+amos/align"
- "+amos/all-substitute"
- "+amos/avy"
- "+amos/counsel"
- "+amos/decrease-zoom"
- "+amos/dired"
- "+amos/direnv-reload"
- "+amos/dump-evil-jump-list"
- "+amos/exec-shell-command"
- "+amos/format-buffer"
- "+amos/flycheck"
- "+amos/increase-zoom"
- "+amos/kill-current-buffer"
- "+amos/launch"
- "+amos/line-substitute"
- "+amos/lsp"
- "+amos/maybe-add-end-of-statement"
- "+amos/other-window"
- "+amos/paste-from-gui"
- "+amos/projectile"
- "+amos/redisplay-and-recenter"
- "+amos/region-substitute"
- "+amos/rename-current-buffer-file"
- "+amos/replace"
- "+amos/reset"
- "+amos/revert"
- "+amos/shell"
- "+amos/smart-jumper"
- "+amos/swiper"
- "+amos/swiper-symbol"
- "+amos/switch-buffer"
- "+amos/tmux"
- "+amos/toggle-mc"
- "+amos/wipe-current-buffer"
- "+amos/workspace"
- "+amos/yank"
- "+eval/buffer"
- "+eval/region-and-replace"
- "+evil:delete-this-file"
- "cc-playground"
- "ccls"
- "counsel"
- "dired"
- "direnv"
- "doom/sudo-this-file"
- "doom/toggle-fullscreen"
- "easy-hugo"
- "editorconfig-find-current-editorconfig"
- "eval-defun"
- "evil-commentary-line"
- "evil-multiedit"
- "evil-next-line"
- "evil-previous-line"
- "+amos/evil-previous-visual-line"
- "+amos/evil-next-visual-line"
- "execute-extended-command"
- "find-file"
- "flycheck"
- "git-gutter"
- "git-timemachine"
- "highlight-indentation-"
- "ivy-resume"
- "lsp"
- "magit"
- "move-text"
- "pp-eval-last-sexp"
- "rainbow"
- "rotate-text"
- "save-buffer"
- "split-window"
- "switch-to-buffer"
- "toggle-truncate-lines"
- "undo-tree"
- "vc-revert"
- "whitespace-mode"
- "yasdcv-translate-at-point"
- "zygospore-toggle-delete-other-windows")
 
 ;; debugging eldoc
 (defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
@@ -3724,13 +3642,15 @@ as small) as possible, but don't signal an error."
       (setq-local ivy--directory ivy--directory)
       (goto-char 1)
       (forward-line 4))
+    (with-selected-window (ivy-state-window ivy-last)
+      (goto-char swiper--opoint))
     (ivy-exit-with-action
      `(lambda (_)
         (if ,recursive
             (progn
               (switch-to-buffer ,buffer)
               (kill-buffer ,ob))
-          (pop-to-buffer ,buffer))
+          (switch-to-buffer ,buffer))
         (ivy-wgrep-change-to-wgrep-mode)))))
 
 (defun +amos-swiper--isearch-occur-cands (cands)
@@ -5090,3 +5010,87 @@ See `project-local-get' for the parameter PROJECT."
           (evil-insert-newline-below)
           (save-excursion
             (insert translation)))))))
+
+(defun +amos-ignore-repeat (&rest names)
+  (dolist (name names)
+    (dolist (command (all-completions name obarray 'commandp))
+      (evil-declare-ignore-repeat (intern command)))))
+
+;; should be at last
+(+amos-ignore-repeat
+ "+amos/align"
+ "+amos/all-substitute"
+ "+amos/avy"
+ "+amos/counsel"
+ "+amos/decrease-zoom"
+ "+amos/dired"
+ "+amos/direnv-reload"
+ "+amos/dump-evil-jump-list"
+ "+amos/exec-shell-command"
+ "+amos/format-buffer"
+ "+amos/flycheck"
+ "+amos/increase-zoom"
+ "+amos/kill-current-buffer"
+ "+amos/launch"
+ "+amos/line-substitute"
+ "+amos/lsp"
+ "+amos/maybe-add-end-of-statement"
+ "+amos/other-window"
+ "+amos/paste-from-gui"
+ "+amos/projectile"
+ "+amos/redisplay-and-recenter"
+ "+amos/region-substitute"
+ "+amos/rename-current-buffer-file"
+ "+amos/replace"
+ "+amos/reset"
+ "+amos/revert"
+ "+amos/shell"
+ "+amos/smart-jumper"
+ "+amos/swiper"
+ "+amos/switch-buffer"
+ "+amos/tmux"
+ "+amos/toggle-mc"
+ "+amos/wipe-current-buffer"
+ "+amos/workspace"
+ "+amos/yank"
+ "+eval/buffer"
+ "+eval/region-and-replace"
+ "+evil:delete-this-file"
+ "cc-playground"
+ "ccls"
+ "counsel"
+ "dired"
+ "direnv"
+ "doom/sudo-this-file"
+ "doom/toggle-fullscreen"
+ "easy-hugo"
+ "editorconfig-find-current-editorconfig"
+ "eval-defun"
+ "evil-commentary-line"
+ "evil-multiedit"
+ "evil-next-line"
+ "evil-previous-line"
+ "+amos/evil-previous-visual-line"
+ "+amos/evil-next-visual-line"
+ "execute-extended-command"
+ "find-file"
+ "flycheck"
+ "git-gutter"
+ "git-timemachine"
+ "highlight-indentation-"
+ "ivy-resume"
+ "lsp"
+ "magit"
+ "move-text"
+ "pp-eval-last-sexp"
+ "rainbow"
+ "rotate-text"
+ "save-buffer"
+ "split-window"
+ "switch-to-buffer"
+ "toggle-truncate-lines"
+ "undo-tree"
+ "vc-revert"
+ "whitespace-mode"
+ "yasdcv-translate-at-point"
+ "zygospore-toggle-delete-other-windows")
