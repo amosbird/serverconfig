@@ -10,4 +10,4 @@ if [ -e "${PIDFILE}" ]; then
     rm -rf ${PIDFILE}
 fi
 
-bash -c "node index.js &"
+bash -c "node index.js &> /dev/null &"

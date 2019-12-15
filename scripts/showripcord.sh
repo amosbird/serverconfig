@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep Telegram >/dev/null; then
-    id=$(head -1 /tmp/telegram)
+if pgrep ripcord >/dev/null; then
+    id=$(head -1 /tmp/ripcord)
     if [ -z "$id" ]; then
         exit 0
     fi
@@ -24,7 +24,7 @@ if pgrep Telegram >/dev/null; then
     xdo resize -w $w -h $h "$id"
     bspc node "$id" -l above
 else
-    rm /tmp/telegram
+    rm /tmp/ripcord
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    bash -c "Telegram &"
+    bash -c "ripcord &"
 fi

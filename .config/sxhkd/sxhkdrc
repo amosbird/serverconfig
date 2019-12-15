@@ -61,6 +61,8 @@ ctrl+alt+9
   showdict.sh
 ctrl+alt+0
   showtele.sh
+ctrl+alt+minus
+  showripcord.sh
 ctrl+alt+p
   showpopup.sh
 super+s
