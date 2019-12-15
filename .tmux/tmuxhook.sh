@@ -11,9 +11,6 @@ if [[ $1 -eq 1 ]]; then
     amos)
         tmux source ~/.tmux/.tmux.conf.amos
         ;;
-    gui)
-        tmux source ~/.tmux/.tmux.conf.gui
-        ;;
     esac
 elif [[ $1 -eq 2 ]]; then
     if [[ $2 == emacs ]]; then

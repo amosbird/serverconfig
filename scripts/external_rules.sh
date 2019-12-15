@@ -117,6 +117,10 @@ TelegramDesktop)
     echo "$wid" >>/tmp/telegram # appending so that sub windows don't overwrite
     echo "sticky=on state=floating"
     ;;
+Ripcord)
+    echo "$wid" >>/tmp/ripcord # appending so that sub windows don't overwrite
+    echo "sticky=on state=floating"
+    ;;
 Soffice)
     wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
     w=${wh[0]}

@@ -1,41 +1,58 @@
 #' -*- mode:conf -*-
 
-set -s history-limit 10000
-set -s set-titles off
-set -s mouse on
-set -s mode-keys vi
-set -s repeat-time 600
-set -s renumber-windows on
-set -s display-panes-time 800
-set -s display-time 1000
-set -s monitor-activity on
-set -s visual-activity off
-set -s wrap-search off
-set -s status-interval 1
+set -g default-terminal "xterm-tmux-24bits"
+set -ga terminal-overrides ",xterm-*:Tc"
+set -g escape-time 0
+set -g focus-events on
+set -g xterm-keys on
+set -g base-index 1
+set -g pane-base-index 1
+set -g automatic-rename on
+set -g aggressive-resize on
+set -g visual-bell off
 
-set -s mode-style "bg=colour0, fg=colour6"
-set -s message-style "bg=#00346e, fg=#ffffd7"
-set -s status-style "bg=#222222, fg=#ffffd7"
-set -s status-left "#[bg=#009aff] ❐ #S "
-set -s status-left-length 400
-set -s status-right "#{?client_prefix, #[bg=#778833] PREFIX,}#{?pane_synchronized, #[bg=#008844] SYNC,} #[bg=#009aff] #(whoami)@#h #[bg=#881100] %Y-%m-%d %H:%M "
-set -s status-right-length 600
+set-option -g update-environment "DIRENV_DIFF DIRENV_DIR DIRENV_WATCHES"
+set-environment -gu DIRENV_DIFF
+set-environment -gu DIRENV_DIR
+set-environment -gu DIRENV_WATCHES
+set-environment -gu DIRENV_LAYOUT
 
-set -s window-status-format " #I #W#{?window_zoomed_flag, [max],} "
-set -s window-status-current-format " #I #W#{?window_zoomed_flag, [max],} "
-set -s window-status-separator ""
-set -s window-status-current-style "bg=#881100"
-set -s window-status-last-style "fg=#ee4488"
-set -s window-status-activity-style "underscore"
-set -s window-active-style 'bg=#141414'
+set -g history-limit 10000
+set -g set-titles off
+set -g mouse on
+set -g mode-keys vi
+set -g repeat-time 600
+set -g renumber-windows on
+set -g display-panes-time 800
+set -g display-time 1000
+set -g monitor-activity on
+set -g visual-activity off
+set -g wrap-search off
+set -g status-interval 1
 
-set -s pane-active-border-style "fg=#009aff"
-set -s pane-border-style "fg=#585858"
-set -s pane-border-status top
-set -s pane-border-format "#{?#{==:#{pane_current_command},ssh},ssh session,#[bold,fg=#dddddd,bg=#009aff]#{pane_current_path}}"
+set -g mode-style "bg=colour0, fg=colour6"
+set -g message-style "bg=#00346e, fg=#ffffd7"
+set -g status-style "bg=#222222, fg=#ffffd7"
+set -g status-left "#[bg=#009aff] ❐ #S "
+set -g status-left-length 400
+set -g status-right "#{?client_prefix, #[bg=#778833] PREFIX,}#{?pane_synchronized, #[bg=#008844] SYNC,} #[bg=#009aff] #(whoami)@#h #[bg=#881100] %Y-%m-%d %H:%M "
+set -g status-right-length 600
 
-set -s prefix C-x
-set -s prefix2 C-x
+set -g window-status-format " #I #W#{?window_zoomed_flag, [max],} "
+set -g window-status-current-format " #I #W#{?window_zoomed_flag, [max],} "
+set -g window-status-separator ""
+set -g window-status-current-style "bg=#881100"
+set -g window-status-last-style "fg=#ee4488"
+set -g window-status-activity-style "underscore"
+set -g window-active-style 'bg=#141414'
+
+set -g pane-active-border-style "fg=#009aff"
+set -g pane-border-style "fg=#585858"
+set -g pane-border-status top
+set -g pane-border-format "#{?#{==:#{pane_current_command},ssh},ssh session,#[bold,fg=#dddddd,bg=#009aff]#{pane_current_path}}"
+
+set -g prefix C-x
+set -g prefix2 C-x
 bind 1 resize-pane -Z
 bind 2 split-window -v -c '#{pane_current_path}'
 bind 3 split-window -h -c '#{pane_current_path}'
@@ -66,9 +83,9 @@ bind -Tcopy-mode-vi L resize-pane -R 5
 bind -Tcopy-mode-vi C-g send -X cancel
 
 # need to add all needed root table's key bindings
-set -s key-table gui
+set -g key-table gui
 
-set -s user-keys[0] "\e[70~"
+set -g user-keys[0] "\e[70~"
 # URxvt.keysym.C-Return:      \033[5;30010~
 bind-key -T gui User0 send-keys Enter
 # URxvt.keysym.C-S:           \033[5;30015~
@@ -133,7 +150,7 @@ bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
 bind-key -T gui M-- set synchronize-panes
 bind-key -T gui M-"'" send-keys "'"{}"'" Left Left
 
-set word-separators "‘’ ='`;+|[](){},?\\\\\"⏎❯"
+set -g word-separators "‘’ ='`;+|[](){},?\\\\\"⏎❯"
 bind-key -T gui MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\; send -X copy-pipe-and-cancel "echo"\; set-buffer -b "amos" -a " "\; paste-buffer -b "amos"
 
 bind-key -T gui C-Space run-shell 'fish -c tmuxtokenize.pl'
