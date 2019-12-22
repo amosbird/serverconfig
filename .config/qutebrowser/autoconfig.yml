@@ -97,8 +97,10 @@ settings:
     global: bold 12pt monospace
   fonts.keyhint:
     global: 12pt monospace
+  hints.leave_on_load:
+    global: false
   input.insert_mode.leave_on_load:
-    global: true
+    global: false
   tabs.background:
     global: true
   tabs.new_position.unrelated:
