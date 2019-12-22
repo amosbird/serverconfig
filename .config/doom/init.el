@@ -154,6 +154,8 @@
 (setq evil-cjk-emacs-word-boundary t)
 (setq evil-esc-delay 0.001)
 (setq evil-ex-substitute-global t)
+(setq evil-args-openers '("(" "{" "[" "<"))
+(setq evil-args-closers '(")" "}" "]" ">"))
 (setq evil-kill-on-visual-paste nil)
 (setq evil-mc-cursor-overlay-priority 10000)
 (setq evil-shift-round nil)
