@@ -202,14 +202,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   :defer
   :config
   (evil-set-initial-state 'easy-hugo-mode 'emacs)
-  (add-hook! 'easy-hugo-mode-hook (setq-local amos-browse t))
-  (setq
-   easy-hugo-basedir "~/sites/blog"
-   easy-hugo-url "https://wentropy.com"
-   easy-hugo-sshdomain "blog"
-   easy-hugo-root "/var/www/blog/"
-   easy-hugo-previewtime "300"
-   easy-hugo-default-ext ".org"))
+  (add-hook! 'easy-hugo-mode-hook (setq-local amos-browse t)))
 
 (use-package! lispyville
   :defer)
@@ -1218,7 +1211,7 @@ When GREEDY is non-nil, join words in a greedy way."
   (ivy--occur-insert-lines ivy--all-candidates))
 (advice-add #'counsel-ag-occur :override #'+amos-counsel-ag-occur-a)
 
-(defvar counsel-rg-args '("rg" "-S" "-M" "500" "--no-heading" "--line-number" "--color" "never"))
+(defvar counsel-rg-args '("rgemacs" "-S" "-M" "500" "--no-messages" "--no-heading" "--line-number" "--color" "never"))
 
 (evil-define-command ab-char-inc ()
   (save-excursion
@@ -2114,7 +2107,7 @@ representation of `NUMBER' is smaller."
     ("^\\*Flycheck"
      :side bottom :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*Compil\\(?:ation\\|e-Log\\)"
-     :side right :size 0.5 :select t :ttl 0 :quit t)
+     :side right :size 0.5 :select t :ttl kill-buffer :quit t)
     ("^\\*temp\\*"
      :side right :size 0.5 :select t :ttl 0 :quit t)
     ("^\\*\\(?:scratch\\|Messages\\)"
@@ -2873,9 +2866,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
+                (avy--process
+                 (avy--read-candidates)
+                 (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 
