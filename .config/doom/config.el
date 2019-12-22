@@ -2807,7 +2807,7 @@ By default the last line."
   (interactive)
   (if wipe
       (+amos-clean-evil-jump-list (current-buffer)))
-  (if kill (kill-buffer)))
+  (if kill (kill-buffer) (bury-buffer)))
 
 (defun +amos-undo-tree-a (ofun &rest arg)
   (if (and (not defining-kbd-macro)

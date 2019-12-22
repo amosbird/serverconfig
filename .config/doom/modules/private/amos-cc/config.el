@@ -288,7 +288,7 @@
                                    (substatement-open . 0)
                                    (inlambda . 0)
                                    (inline-open . 0)
-                                   (member-init-intro . ++)
+                                   (member-init-intro . +)
                                    (statement-cont . +cc-llvm-lineup-statement)))))
 
 

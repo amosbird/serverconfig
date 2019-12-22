@@ -276,7 +276,7 @@
       :n "gp"                     #'+evil/reselect-paste
       :n "gr"                     #'+lookup/references
       :v "gR"                     #'+eval:replace-region
-      :m "gy"                     #'evilnc-copy-and-comment-lines
+      :nm "gy"                     #'evilnc-copy-and-comment-lines
       :m "gl"                     #'evilnc-comment-or-uncomment-lines
       :n "m"                      #'+amos/push-mark
       :n "M"                      (lambda! (+amos/push-mark t))

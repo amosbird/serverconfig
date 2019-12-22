@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -e
+path=$1
+url=$(cd "$path" && git remote -v | awk '/(fetch)/{print $2}')
+git submodule add -f "$url"
