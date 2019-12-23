@@ -86,7 +86,14 @@
                    :post-handlers '(("| " "SPC"))))
 
   (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
+    (sp-local-pair "{" nil :post-handlers '(:add +amos-cc-brace-indent))
     (sp-local-pair "/*!" "*/" :post-handlers '(("||\n[i]" "RET") ("[d-1]< | " "SPC")))))
+
+(defun +amos-cc-brace-indent (id action _)
+  (when (and (eq action 'insert))
+    (save-excursion
+      (if (string-match "^[[:blank:]]*$" (buffer-substring (line-beginning-position) (- (point) (length id))))
+          (indent-according-to-mode)))))
 
 (use-package! cmake-mode
   :defer

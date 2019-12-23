@@ -418,11 +418,28 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
     (setq evil-in-single-undo nil)
     (evil-end-undo-step)))
 
+(defun sp-point-after-same-p (id action _context)
+  "Return t if point is followed by ID, nil otherwise.
+This predicate is only tested on \"insert\" action."
+  (when (eq action 'insert)
+    (save-excursion
+      (backward-char 1) ; go before current inserted quote
+      (sp--looking-back-p (regexp-quote id)))))
+
+(defun +amos-sp-point-after-bol-p (id action _context)
+  "Return t if point follows beginning of line and possibly white spaces, nil otherwise.
+This predicate is only tested on \"insert\" action."
+  (when (eq action 'insert)
+    (save-excursion
+      (backward-char 1) ; go before current inserted quote
+      (sp--looking-back-p (concat "^\\s-*" (regexp-quote id))))))
+
 (after! smartparens
   ;; Auto-close more conservatively
   (let ((unless-list '(sp-point-before-word-p
                        sp-point-after-word-p
-                       sp-point-before-same-p)))
+                       sp-point-before-same-p
+                       sp-point-after-same-p)))
     (sp-pair "'"  nil :unless unless-list)
     (sp-pair "\"" nil :unless unless-list))
   (sp-pair "{" nil :post-handlers '(("||\n[i]" "RET") ("| " " "))
@@ -2094,46 +2111,28 @@ representation of `NUMBER' is smaller."
 (set-popup-rules!
   '(("^\\*"  :slot 1 :vslot -1 :select t)
     ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit))
-  '(("^\\*Completions"
-     :slot -1 :vslot -2 :ttl 0)
-    ("^\\*Warning*"
-     :actions (+popup-display-buffer-stacked-side-window-fn))
-    ("^\\*rmsbolt-output*"
-     :side right :size 0.5 :ttl 0 :select nil :quit t)
-    ;; :side right :size 0.5 :ttl 0 :select nil :quit current)
-    ;; :side right :size 0.5 :ttl 0 :select nil :quit other)
-    ("^\\*git-gutter*"
-     :side right :size 0.5)
-    ("^\\*Flycheck"
-     :side bottom :size 0.5 :select t :ttl 0 :quit t)
-    ("^\\*Compil\\(?:ation\\|e-Log\\)"
-     :side right :size 0.5 :select t :ttl kill-buffer :quit t)
-    ("^\\*temp\\*"
-     :side right :size 0.5 :select t :ttl 0 :quit t)
-    ("^\\*\\(?:scratch\\|Messages\\)"
-     :autosave t :ttl nil)
-    ("^\\*Man "
-     :size 0.45 :vslot -6 :ttl 0 :quit t :select t)
-    ("^\\*doom \\(?:term\\|eshell\\)"
-     :size 0.25 :vslot -10 :select t :quit nil :ttl 0)
-    ("^\\*doom:"
-     :vslot -20 :size 0.35 :autosave t :select t :modeline t :quit nil)
-    ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)"
-     :size +popup-shrink-to-fit :side right :ttl 0 :select ignore)
+  '(("^\\*Completions" :slot -1 :vslot -2 :ttl kill-buffer)
+    ("^\\*Warning*" :actions (+popup-display-buffer-stacked-side-window-fn))
+    ("^\\*rmsbolt-output*" :side right :size 0.5 :ttl kill-buffer :select nil :quit t)
+    ("^\\*git-gutter*" :side right :size 0.5)
+    ("^\\*Flycheck" :side bottom :size 0.5 :select t :ttl kill-buffer :quit t)
+    ("^\\*Compil\\(?:ation\\|e-Log\\)" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
+    ("^\\*temp\\*" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
+    ("^\\*\\(?:scratch\\|Messages\\)" :autosave t :ttl nil)
+    ("^\\*Man " :size 0.45 :vslot -6 :ttl kill-buffer :quit t :select t)
+    ("^\\*doom \\(?:term\\|eshell\\)" :size 0.25 :vslot -10 :select t :quit nil :ttl kill-buffer)
+    ("^\\*doom:" :vslot -20 :size 0.35 :autosave t :select t :modeline t :quit nil)
+    ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)" :size +popup-shrink-to-fit :side right :ttl kill-buffer :select ignore)
     ("^\\*Customize" :ignore t)
     ("^amos-compress-view" :ignore t)
-    ("^ \\*undo-tree\\*"
-     :slot 2 :side left :size 20 :select t :quit t)
+    ("^ \\*undo-tree\\*" :slot 2 :side left :size 20 :select t :ttl kill-buffer :quit t)
     ;; `help-mode', `helpful-mode'
-    ("^\\*[Hh]elp"
-     :side right :size 0.5 :select t)
+    ("^\\*[Hh]elp" :side right :size 0.5 :ttl kill-buffer :select t)
     ;; `Info-mode'
-    ("^\\*info\\*$"
-     :slot 2 :vslot 2 :size 0.45 :select t)
-    ("\\*TeX" :side right :size 0.4)
+    ("^\\*info\\*$" :slot 2 :vslot 2 :size 0.45 :ttl kill-buffer :select t)
+    ("\\*TeX" :side right :size 0.4 :ttl kill-buffer)
     ("^\\(?:\\*magit\\|magit:\\)" :ignore t)
-    ("\\[ Table \\]\\*"
-     :side right :size 0.9 :select t :quit nil))
+    ("\\[ Table \\]\\*" :side right :size 0.9 :select t :quit nil))
   '(("^\\*Backtrace" :side right :size 0.5 :quit nil)))
 
 (evil-define-command +amos-evil-visual-paste-a (count &optional register)
@@ -3636,7 +3635,7 @@ as small) as possible, but don't signal an error."
       (goto-char 1)
       (forward-line 4))
     (with-selected-window (ivy-state-window ivy-last)
-      (goto-char swiper--opoint))
+      (goto-char +amos-ivy--origin))
     (ivy-exit-with-action
      `(lambda (_)
         (if ,recursive
