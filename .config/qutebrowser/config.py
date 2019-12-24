@@ -53,6 +53,7 @@ c.bindings.commands["normal"] = {
     "<Escape>": c.bindings.default["normal"]["<Escape>"]
     + ";; fake-key <Escape> ;; clear-messages ;; jseval --quiet document.getSelection().empty()",
     "<ctrl-Space>": "spawn i3-msg focus right",
+    "<ctrl-s>": "set-cmd-text /",
     "<Space>": "fake-key <Space>",
     "<ctrl-b>": "navigate prev",
     "<ctrl-f>": "navigate next",
