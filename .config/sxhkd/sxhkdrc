@@ -1,3 +1,15 @@
+mod3 + e
+  rofi -show emoji -modi emoji
+
+mod3 + a
+  env LC_MONETARY=zh_CN.UTF-8 rofi -show calc -modi calc -no-show-match -no-sort -calc-command -no-history "printf ' %s' '{result}' | xclip"
+
+mod3 + c
+  colorinsert
+
+# mod3+c
+#   cliprectangle
+
 mod3+w
   restartxcape.sh
 mod3+b
@@ -5,9 +17,9 @@ mod3+b
 mod3+f
   copyq toggle
 mod3+1
-  sleep 0.3 && inputstr 127.0.0.1
+  sleep 0.1 && inputstr 127.0.0.1
 mod3+2
-  sleep 0.3 && inputstr amosbird@gmail.com
+  sleep 0.1 && inputstr amosbird@gmail.com
 mod3+3
   rofipass
 mod3+d
@@ -20,8 +32,6 @@ mod3+I
   teiler --quick fullscreen
 mod3+o
   lang=$(echo -e "chi_sim\neng\nchi_sim+eng\njpn" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
-mod3+c
-  cliprectangle
 mod3+p
   maim -s | copyq copyImage -
 mod3+shift+p
@@ -34,6 +44,9 @@ mod3+g
   url "www.google.com/search?q="
 mod3+s
   url "scholar.google.com/scholar?q="
+
+
+
 super+z
   slock
 super+q
@@ -176,9 +189,6 @@ XF86MonBrightnessUp
 ctrl+Eisu_toggle
   echo 'connect 04:52:C7:02:E5:FD' | bluetoothctl
   # trackpointspeed
-
-mod3 + e
-  xdg-open "$(xclip -o)"
 
 super + shift + r
   restartbspwm.sh

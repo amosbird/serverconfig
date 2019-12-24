@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
 while true; do
-    bspwm -c $HOME/.config/bspwm/bspwmrc || break
+    /home/amos/git/bspwm/bspwm -c $HOME/.config/bspwm/bspwmrc || break
 done

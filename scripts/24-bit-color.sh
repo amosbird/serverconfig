@@ -14,7 +14,7 @@ setBackgroundColor() {
 }
 
 resetOutput() {
-    echo -en "\x1b[0m\n"
+    echo -e "\x1b[0m\n"
 }
 
 # Gives a color $1/255 % along HSV
@@ -48,44 +48,44 @@ rainbowColor() {
 
 for i in $(seq 0 127); do
     setBackgroundColor $i 0 0
-    echo -en " "
+    echo -e "                           "
 done
 resetOutput
 for i in $(seq 255 -1 128); do
     setBackgroundColor $i 0 0
-    echo -en " "
+    echo -e "                           "
 done
 resetOutput
 
 for i in $(seq 0 127); do
     setBackgroundColor 0 $i 0
-    echo -n " "
+    echo - "                           "
 done
 resetOutput
 for i in $(seq 255 -1 128); do
     setBackgroundColor 0 $i 0
-    echo -n " "
+    echo - "                           "
 done
 resetOutput
 
 for i in $(seq 0 127); do
     setBackgroundColor 0 0 $i
-    echo -n " "
+    echo - "                           "
 done
 resetOutput
 for i in $(seq 255 -1 128); do
     setBackgroundColor 0 0 $i
-    echo -n " "
+    echo - "                           "
 done
 resetOutput
 
 for i in $(seq 0 127); do
     setBackgroundColor $(rainbowColor $i)
-    echo -n " "
+    echo - "                           "
 done
 resetOutput
 for i in $(seq 255 -1 128); do
     setBackgroundColor $(rainbowColor $i)
-    echo -n " "
+    echo - "                           "
 done
 resetOutput

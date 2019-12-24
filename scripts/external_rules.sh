@@ -97,6 +97,10 @@ Termite)
         echo "$wid" >/tmp/vim
         echo "state=floating"
         ;;
+    colorinsert)
+        echo "$wid" >/tmp/colorinsert
+        echo "state=floating"
+        ;;
     urxvt_scratchpad)
         echo "$wid" >/tmp/urxvt_scratchpad
         echo "state=floating hidden=on" # hidden for show shell logic
