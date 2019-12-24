@@ -55,6 +55,8 @@ ln -sf "$DIR/.tmux/.tmux.conf" /home/amos/
 mkdir -p /home/amos/.local/share/
 ln -sf /home/amos/gentoo/usr/share/grc /home/amos/.local/share/
 
+lesskey "$DIR/lesskey"
+
 mkdir -p -m 700 /home/amos/.ssh
 cp "$DIR"/id_rsa.pub /home/amos/.ssh/
 

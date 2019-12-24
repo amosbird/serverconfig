@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
+opt=$1
+shift
+create=
 if ! pgrep -f 'sdcv' >/dev/null; then
     termite -t stardict -e dict.sh &
     sleep 0.5
+    create=1
 fi
 
 workspace=$(bspc query -D -d focused --names)
@@ -12,8 +16,25 @@ if [[ -z $id ]]; then
     exit 0
 fi
 
-if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"; then
+case "$opt" in
+1)
+    less <<<$(synonyms "$1" | sed 's//\n/g' | fold -s -w 100)
+    exit 0
+    ;;
+2)
     bspc node "$id" -g hidden -f
+    less <<<$(synonyms "$1" | sed 's//\n/g' | fold -s -w 100)
+    exit 0
+    ;;
+3)
+    bspc node "$id" -g hidden -f
+    exit 0
+    ;;
+esac
+
+if [[ -z $create ]] && bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"; then
+    bspc node "$id" -g hidden -f
+    exit 0
 else
     bspc node "$id" --to-desktop "$workspace"
     bspc node "$id" -t floating
