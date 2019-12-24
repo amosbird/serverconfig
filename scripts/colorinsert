@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+
+set -x
+exec 2>/tmp/log
+opt=$1
+shift
+create=
+if ! pgrep -f 'fzf --prompt=Color Input' >/dev/null; then
+    termite -t colorinsert -e colorfzf.sh &
+    sleep 0.5
+    create=1
+fi
+
+workspace=$(bspc query -D -d focused --names)
+
+id=$(cat /tmp/colorinsert)
+if [[ -z $id ]]; then
+    exit 0
+fi
+
+case "$opt" in
+1)
+    bspc node "$id" -g hidden -f
+    inputstr "$(echo $1 | cut -d " " -f 1)"
+    exit 0
+    ;;
+2)
+    bspc node "$id" -g hidden -f
+    inputstr "$(echo $1 | cut -d " " -f 2)"
+    exit 0
+    ;;
+3)
+    bspc node "$id" -g hidden -f
+    exit 0
+    ;;
+esac
+
+if [[ -z $create ]] && bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"; then
+    bspc node "$id" -g hidden -f
+    exit 0
+else
+    bspc node "$id" --to-desktop "$workspace"
+    bspc node "$id" -t floating
+    bspc node "$id" -g hidden=off -f
+fi
+
+wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
+w=${wh[0]}
+h=${wh[1]}
+x=$((w / 4))
+y=150
+w=$((w / 2))
+h=$((h - 300))
+xdo move -x "$x" -y "$y" "$id"
+xdo resize -w "$w" -h "$h" "$id"
+bspc node "$id" -l above

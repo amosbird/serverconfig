@@ -958,9 +958,9 @@ using a visual block/rectangle selection."
   (interactive)
   (let ((b (current-buffer)))   ; memorize the buffer
     (with-temp-buffer ; new temp buffer to bind the global value of before-save-hook
-      (let ((before-save-hook (remove 'delete-trailing-whitespace before-save-hook)))
+      (let ((before-save-hook (remove 'ws-butler-before-save before-save-hook)))
         (with-current-buffer b  ; go back to the current buffer, before-save-hook is now buffer-local
-          (let ((before-save-hook (remove 'delete-trailing-whitespace before-save-hook)))
+          (let ((before-save-hook (remove 'ws-butler-before-save before-save-hook)))
             (save-buffer)))))))
 
 (defun +amos/counsel-projectile-switch-project ()
