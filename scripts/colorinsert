@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-set -x
-exec 2>/tmp/log
 opt=$1
 shift
 create=

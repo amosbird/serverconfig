@@ -34,6 +34,7 @@
 (package! flycheck-inline)
 (package! general)
 (package! git-gutter)
+(package! git-link)
 (package! git-timemachine)
 (package! gitattributes-mode)
 (package! gitconfig-mode)

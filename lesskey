@@ -1,0 +1,13 @@
+#command
+\035 quit
+\033 quit
+\023 forw-search
+
+#env
+# Make lesss use case-insensitive search by default (-i)
+# and display color (-R).
+LESS = -i -R
+# Source: https://ascending.wordpress.com/2011/02/11/unix-tip-make-less-more-friendly/
+
+# Turn off command and search history.
+LESSHISTFILE = -
