@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+LC_MONETARY=zh_CN.UTF-8 rofi -kb-accept-entry Control-Return -kb-accept-custom Return,KP_Enter -show calc -modi calc -no-show-match -no-sort -calc-command "printf '%s' '{result}' | xclip"

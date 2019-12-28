@@ -38,6 +38,11 @@ Conky)
     # setbg.sh reset_conky
     echo "desktop=n"
     ;;
+jupyterlab)
+    echo "$wid" >/tmp/jupyter
+    # setbg.sh reset_tray
+    echo "desktop=o"
+    ;;
 stalonetray)
     echo "$wid" >/tmp/stalonetray
     # setbg.sh reset_tray

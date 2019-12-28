@@ -429,6 +429,7 @@
         :n "w"   #'dired-copy-filename-as-kill
         :n "i"   #'dired-create-directory
         :nv "m"  #'dired-mark
+        :nv "u"  #'dired-unmark
         :n "W"   (lambda! (dired-copy-filename-as-kill 0))
         :n "c"   (lambda! (dired-ranger-copy t) (+amos/dired-print-clipboard))
         :n "C"   (lambda! (dired-ranger-copy t) (+amos/dired-copy-to-clipboard) (+amos/dired-print-clipboard))

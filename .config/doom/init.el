@@ -36,6 +36,7 @@
        flyspell
 
        :lang
+       javascript
        assembly
        data
        emacs-lisp
@@ -65,7 +66,10 @@
 ;; (setq TeX-command "pdftex")
 ;; (setq LaTeX-command "pdflatex")
 ;; (setq-default TeX-engine 'xetex)
-(setq so-long-target-modes '(css-mode sgml-mode nxml-mode))
+(setq bidi-inhibit-bpa t)
+(setq so-long-max-lines 1024)
+(setq-default bidi-display-reordering nil)
+;; (setq so-long-target-modes '(css-mode sgml-mode nxml-mode))
 (setq load-prefer-newer t)
 (setq shr-width 100)
 (setq all-the-icons-scale-factor 1.0)

@@ -1301,9 +1301,11 @@ When GREEDY is non-nil, join words in a greedy way."
     (if (< 0 dir) (backward-char))))
 
 (evil-define-command +amos/smart-jumper-backward ()
+  (leap-set-jump)
   (+amos/smart-jumper t))
 
 (evil-define-command +amos/smart-jumper-forward ()
+  (leap-set-jump)
   (+amos/smart-jumper))
 
 (evil-define-command +amos/complete ()
@@ -2015,7 +2017,7 @@ representation of `NUMBER' is smaller."
 (defun set-eos! (modes &rest plist)
   (dolist (mode (doom-enlist modes))
     (push (cons mode plist) +amos-end-of-statement-regex)))
-(set-eos! '(c-mode c++-mode java-mode perl-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
+(set-eos! '(c-mode c++-mode java-mode perl-mode js2-mode typescript-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
 (set-eos! '(sql-mode) :regex-char '("[ \t\r\n\v\f]" ";" ?\;))
 (set-eos! '(emacs-lisp-mode) :regex-char "[ \t\r\n\v\f]")
 
@@ -3136,7 +3138,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (goto-char (point-max))
       (let ((files (split-string uri-list "[\0\r\n]" t)))
         (--each files
-          (let ((file-name (string-remove-prefix "file://" it)))
+          (let ((file-name (url-unhex-string (string-remove-prefix "file://" it))))
             (when (and (file-exists-p file-name)
                        (not (file-directory-p file-name)))
               (mail-add-attachment file-name))))))
