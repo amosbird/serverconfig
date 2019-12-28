@@ -100,7 +100,7 @@ settings:
   hints.leave_on_load:
     global: false
   input.insert_mode.leave_on_load:
-    global: false
+    global: true
   tabs.background:
     global: true
   tabs.new_position.unrelated:

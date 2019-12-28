@@ -29,6 +29,7 @@ configs=(
     .perltidyrc
     .wgetrc
     .npmrc
+    .prettierrc
     .bash_profile
     .chisels
     .gitignore_global

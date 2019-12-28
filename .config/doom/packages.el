@@ -13,7 +13,6 @@
                    smerge-mode
                    dired-k
                    forge
-                   so-long
                    solaire-mode
                    stripe-buffer
                    vi-tilde-fringe

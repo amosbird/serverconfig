@@ -2,7 +2,7 @@ mod3 + e
   rofi -show emoji -modi emoji
 
 mod3 + a
-  env LC_MONETARY=zh_CN.UTF-8 rofi -show calc -modi calc -no-show-match -no-sort -calc-command -no-history "printf ' %s' '{result}' | xclip"
+  roficalc
 
 mod3 + c
   colorinsert

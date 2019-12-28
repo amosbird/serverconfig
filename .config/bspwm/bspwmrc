@@ -20,7 +20,10 @@ bspc config swallow_first_click true
 bspc config gapless_monocle false
 bspc config focus_follows_pointer false
 bspc config pointer_follows_focus false
-bspc config pointer_modifier shift
+bspc config pointer_modifier lock
+# bspc config ignore_ewmh_fullscreen true # ignore application full screen request
+# bspc config pointer_action3 move
+# Action performed when pressing pointer_modifier + button<n>. Accept the following values: move, resize_side, resize_corner, focus, none.
 bspc config external_rules_command /home/amos/scripts/external_rules.sh
 
 bspc rule -a "*" split_dir=east

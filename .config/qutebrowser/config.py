@@ -55,6 +55,7 @@ c.bindings.commands["normal"] = {
     "<ctrl-Space>": "spawn i3-msg focus right",
     "<ctrl-s>": "set-cmd-text /",
     "<Space>": "fake-key <Space>",
+    "<alt-a>": "fake-key <ctrl+a>",
     "<ctrl-b>": "navigate prev",
     "<ctrl-f>": "navigate next",
     "<ctrl-p>": "nop",
