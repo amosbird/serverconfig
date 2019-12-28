@@ -127,7 +127,7 @@ bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/
 bind-key -T amos C-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key C-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageDown; else tmux copy-mode; fi'
 
 bind-key -T amos M-0 run-shell /home/amos/scripts/switch-to-emacs-session.sh
-bind-key -T amos M-= switch-client -t htop
+bind-key -T amos M-= switch-client -t htop -Z
 
 bind-key -T amos M-u copy-mode\; send -X cursor-up\; send -X search-backward ❯
 bind-key -T amos M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""

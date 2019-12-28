@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
 
-{ echo "$(git config --get remote.pushdefault)/$(git branch --show-current)"; git for-each-ref --format='%(upstream:short)'; } |
+{
+    # do we need master be shown?
+    r=$(git config --get remote.pushdefault)
+    if [[ -n "$r" ]]; then
+        echo "$r/$(git branch --show-current)"
+    fi
+    git for-each-ref --format='%(upstream:short)'
+} |
     perl -MList::Util=uniq -ne 'if (/\//) { substr $_, rindex($_, "/"), 1, "~"; push @remote, $_;} END { print uniq @remote }'
