@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+tmux new-window -c ~ genact
+tmux split-window -h -c / genact
+tmux split-window -h -c / genact
+tmux split-window -v -c / genact
+tmux split-window -v -c / genact
+tmux select-pane -t 1
+tmux split-window -v -c / genact
+tmux split-window -h -c / genact
+tmux select-pane -t 1
+tmux split-window -h -c / genact
+tmux split-window -v -c / genact
+tmux split-window -v -c / genact

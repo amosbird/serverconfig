@@ -141,6 +141,7 @@ bind-key -T gui WheelDownStatus  next-window
 bind-key -T gui C-l send-keys C-l
 bind-key -T gui M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
 bind-key -T gui C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
+bind-key -T gui C-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key C-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageDown; else tmux copy-mode; fi'
 
 bind-key -T gui M-u copy-mode\; send -X cursor-up\; send -X search-backward ❯
 bind-key -T gui M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""

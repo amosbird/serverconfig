@@ -5,4 +5,4 @@ if ! tmux list-sessions | grep -q -F emacs; then
     kill -9 "$(cat /tmp/emacs-server)"
     tmux new -d -s emacs fish -i -c startemacs
 fi
-tmux switch-client -t emacs
+tmux switch-client -t emacs -Z
