@@ -51,7 +51,8 @@ else
         ;;
     obs)
         cmake_args=(
-            -DUNIX_STRUCTURE=0
+            -DCMAKE_INSTALL_PREFIX=/usr
+            -DCMAKE_INSTALL_LIBDIR=lib
         )
         ;;
     deb)

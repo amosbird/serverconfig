@@ -50,6 +50,7 @@
 
 #element {
    padding: 2px 15px;
+   children: [element-index, element-icon, element-text ];
 }
 
 #element.normal.normal {
