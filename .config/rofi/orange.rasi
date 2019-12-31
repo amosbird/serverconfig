@@ -40,7 +40,7 @@
 
 #listview {
    fixed-height: false;
-   dynamic: true;
+   dynamic: false;
    scrollbar: false;
    spacing: 0px;
    padding: 1px 0px 0px 0px;
