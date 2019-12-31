@@ -2,9 +2,13 @@
 
 sudo adb start-server
 # id="2717:ff48"
-id="18d1:4ee7" # Charging
+# id="18d1:4ee7" # Charging
+id="2a70:4ee7" # one plus 7 pro
 # id="2717:ff18" # PTP
 # fuser -k -9 /tmp/scrcpy.lock
+pkill autoadb
+pkill scrcpy
+sleep 1
 # pkill -9 release/app/scrcpy
 cd /home/amos/git/scrcpy
 # exec {lockfd}>/tmp/scrcpy.lock && flock "$lockfd" || exit
@@ -13,4 +17,4 @@ cd /home/amos/git/scrcpy
 #     sleep 0.2
 # done
 
-autoadb ./run release -s {} -x "$id" -b 1024M
+autoadb ./run release -s {} -x "$id" -b 24M

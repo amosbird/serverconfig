@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
 sudo adb start-server
-sudo pkill -9 gnirehtet
+sudo pkill gnirehtet
+sleep 1
 sudo -u gnirehtet gnirehtet autorun
