@@ -9,11 +9,20 @@ if test "$SSH_AUTH_SOCK"; then
 fi
 export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
 
-if [ -z "$1" ]; then
+case $1 in
+android)
+    export PATH=$PATH:/system/bin:/system/xbin:/system/sbin:/data/adb/modules/ssh/usr/bin
+    ;;
+local)
     export PATH=/home/amos/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-else
+    ;;
+prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-fi
+    ;;
+*)
+    echo "tstart.sh android|local|prefix"
+    exit 1
+esac
 
 tmux -u new -d -s htop htop
 if ! tmux list-sessions | grep -q -F emacs; then
