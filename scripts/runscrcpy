@@ -17,4 +17,5 @@ cd /home/amos/git/scrcpy
 #     sleep 0.2
 # done
 
-autoadb ./run release -s {} -x "$id" -b 24M
+autoadb ./run release -s {} -x "$id"
+# -b 24M
