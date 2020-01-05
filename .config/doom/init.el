@@ -68,6 +68,7 @@
 ;; (setq-default TeX-engine 'xetex)
 (setq bidi-inhibit-bpa t)
 (setq so-long-max-lines 1024)
+(setq so-long-threshold 1024)
 (setq-default bidi-display-reordering nil)
 ;; (setq so-long-target-modes '(css-mode sgml-mode nxml-mode))
 (setq load-prefer-newer t)
