@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
 # chromium --user-data-dir=/home/amos/.jupyterlab-user-data --class="jupyterlab" http://127.0.0.1:8888
-chromium --user-data-dir=/home/amos/.jupyterlab-user-data --class="jupyterlab" --window-size=7000,7000 --kiosk http://127.0.0.1:8888
+chromium --user-data-dir=/home/amos/.jupyterlab-user-data --class="jupyterlab" --window-size=7000,7000 --kiosk http://172.26.178.148:8888
