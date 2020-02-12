@@ -16,6 +16,8 @@ mod3+b
   baidupan.sh
 mod3+f
   copyq toggle
+mod3+0
+  sleep 0.1 && inputstr 0.0.0.0
 mod3+1
   sleep 0.1 && inputstr 127.0.0.1
 mod3+2
@@ -102,8 +104,7 @@ super+Home
 super+End
   moveend
 super+Insert
-  xrandr --output VIRTUAL1 --off --output eDP1 --off --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --primary --mode 1920x1080 --pos 0x0 --output DP2 --off; \
-  bspc monitor HDMI1 -o w e d f v n i o c h;
+  movesecond
 super+Delete
   lxrandr
 ctrl+alt+r

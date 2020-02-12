@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+
+die() { echo "$*" 1>&2 ; exit 1; }
+
+((UID == 0)) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
+
+# updateroutes
+
+ip r d 0.0.0.0/1
+ip r d 128.0.0.0/1
+
+read -r _ _ gw _ < <(ip r g 123.206.66.49) || die "Cannot get default gw"
+
+ip rule add table cn pref 30000
+
+ip -batch - <<EOF
+$(sed "s/GATEWAY/$gw/" /home/amos/.routefile)
+EOF
+
+ip r a 172.22.0.0/16 via $gw
+ip r a 10.0.0.0/8 via $gw
+ip r a 192.168.0.0/16 via $gw
+
+# extra non-cn routes
+
+# zerotier
+ip r a 188.166.94.177/32 via $gw table cn
+ip r a 154.66.197.33/32 via $gw table cn
+ip r a 159.203.97.171/32 via $gw table cn
+ip r a 169.57.143.104/32 via $gw table cn
+ip r a 107.170.197.14/32 via $gw table cn
+ip r a 128.199.197.217/32 via $gw table cn
+ip r a 45.32.198.130/32 via $gw table cn
+ip r a 46.101.160.249/32 via $gw table cn
+ip r a 107.191.46.210/32 via $gw table cn
+ip r a 45.32.246.179/32 via $gw table cn
+ip r a 45.32.248.87/32 via $gw table cn
+ip r a 159.203.2.154/32 via $gw table cn
+
+# ali
+ip r a 47.90.50.109/32 via $gw table cn
+
+# local
+# ip r a 10.60.0.0/16 via $gw table cn
+# ip r a 10.61.0.0/16 via $gw table cn
+
+# la.wentropy.com
+ip r a 168.235.105.19/32 via $gw table cn
+
+# cl.wentropy.com
+ip r a 168.235.97.16/32 via $gw table cn
+
+# lab
+# ip r a 10.0.0.0/8 via $gw table cn
+# ip r a 172.26.72.26 via 172.26.59.244
+
+# github
+
+# ip r a 192.30.252.0/22 via $gw table cn
+# ip r a 185.199.108.0/22 via $gw table cn
+# ip r a 140.82.112.0/22 via $gw table cn
+# ip r a 192.30.252.0/22 via $gw table cn
+# ip r a 185.199.108.0/22 via $gw table cn
+# ip r a 140.82.112.0/20 via $gw table cn
+# ip r a 13.229.188.59/32 via $gw table cn
+# ip r a 13.250.177.223/32 via $gw table cn
+# ip r a 18.194.104.89/32 via $gw table cn
+# ip r a 18.195.85.27/32 via $gw table cn
+# ip r a 35.159.8.160/32 via $gw table cn
+# ip r a 52.74.223.119/32 via $gw table cn
+# ip r a 192.30.252.153/32 via $gw table cn
+# ip r a 192.30.252.154/32 via $gw table cn
+# ip r a 185.199.108.153/32 via $gw table cn
+# ip r a 185.199.109.153/32 via $gw table cn
+# ip r a 185.199.110.153/32 via $gw table cn
+# ip r a 185.199.111.153/32 via $gw table cn
+# ip r a 54.87.5.173/32 via $gw table cn
+# ip r a 54.166.52.62/32 via $gw table cn
+# ip r a 23.20.92.3/32 via $gw table cn
+
+# azure
+ip r a 40.83.99.220/32 via $gw
+
+# aws
+ip r a 13.113.251.5 via $gw
+
+# if ! pgrep -f 'https-dns'
+# then
+#     sudo -u amos https-dns_linux_amd64 -d 8.8.8.8 --edns 159.226.39.0/24 -U &
+# fi
+
+# sudo -u amos tun
+#ip r a 0.0.0.0/1 via 172.26.133.192
+#ip r a 128.0.0.0/1 via 172.26.133.192
+
+#ip r a 0.0.0.0/1 via 172.26.189.83
+#ip r a 128.0.0.0/1 via 172.26.189.83
+#ip r a 0.0.0.0/1 via 172.26.234.42
+#ip r a 128.0.0.0/1 via 172.26.234.42
+
+# govpn
+# ip r a 0.0.0.0/1 via 172.16.0.1
+# ip r a 128.0.0.0/1 via 172.16.0.1
+
+# wireguard
+# ip r a 0.0.0.0/1 via 172.25.10.1
+# ip r a 128.0.0.0/1 via 172.25.10.1
+
+# kcptun + socat
+# ip r a 0.0.0.0/1 via 172.23.10.1
+# ip r a 128.0.0.0/1 via 172.23.10.1
+
+# sudo -u amos tunv6
+ip r a 0.0.0.0/1 via 172.26.178.148
+ip r a 128.0.0.0/1 via 172.26.178.148
+
+# systemctl restart dnsmasq
+sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"
+
+# sudo -u amos pass show misc/ztq | openconnect --user amos --passwd-on-stdin 2001:cc0:2020:2013:9610:3eff:fe10:6dfa:45556 --servercert sha256:d502bac18673ede25881585d42c20933a511c50cf41ba34b84e6083d6539786c &

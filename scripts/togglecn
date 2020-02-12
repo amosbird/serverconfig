@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+usage() {
+    echo "Usage: $0 local|pro|mini|phone|t480"
+    exit 1
+}
+
+ip=
+case "$1" in
+local)
+    if sudo iptables -t nat -C OUTPUT -p tcp --dport 53 -j DNAT --to 223.5.5.5 &> /dev/null
+    then
+        sudo iptables -t nat -D OUTPUT -p tcp --dport 53 -j DNAT --to 223.5.5.5
+        sudo iptables -t nat -D OUTPUT -p udp --dport 53 -j DNAT --to 223.5.5.5
+        sudo ip r c default dev tun0 table 42069
+        echo "NO CN"
+    else
+        sudo iptables -t nat -I OUTPUT -p tcp --dport 53 -j DNAT --to 223.5.5.5
+        sudo iptables -t nat -I OUTPUT -p udp --dport 53 -j DNAT --to 223.5.5.5
+        sudo ip r c default via 172.26.97.5 dev zt0 table 42069
+        echo "CN"
+    fi
+    exit 0
+    ;;
+pro)
+    ip=192.168.50.117
+    ;;
+mini)
+    ip=192.168.50.131
+    ;;
+phone)
+    ip=192.168.50.53
+    ;;
+t480)
+    ip=192.168.50.106
+    ;;
+*)
+    usage
+esac
+
+if sudo iptables -t nat -C PREROUTING -s $ip -p tcp --dport 53 -j DNAT --to 223.5.5.5 &> /dev/null
+then
+    sudo iptables -t nat -D PREROUTING -s $ip -p tcp --dport 53 -j DNAT --to 223.5.5.5
+    sudo iptables -t nat -D PREROUTING -s $ip -p udp --dport 53 -j DNAT --to 223.5.5.5
+    sudo iptables -t mangle -D PREROUTING -s $ip -j MARK --set-xmark 0x1/0xffffffff
+    echo "NO CN"
+else
+    sudo iptables -t nat -I PREROUTING -s $ip -p tcp --dport 53 -j DNAT --to 223.5.5.5
+    sudo iptables -t nat -I PREROUTING -s $ip -p udp --dport 53 -j DNAT --to 223.5.5.5
+    sudo iptables -t mangle -I PREROUTING -s $ip -j MARK --set-xmark 0x1/0xffffffff
+    echo "CN"
+fi
