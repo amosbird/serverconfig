@@ -19,6 +19,19 @@ patch:
   translator:
     dictionary: luna_pinyin.extended
     enable_charset_filter: true
+    disable_user_dict_for_patterns:
+      - ^[a-z]$
+
+  custom_phrase:
+    dictionary: ""
+    user_dict: custom_phrase
+    db_class: stabledb
+    enable_completion: false
+    enable_sentence: false
+    initial_quality: 1
+
+  "engine/translators/@4": table_translator@custom_phrase
+
 
   key_binder/bindings:
       - {accept: Control+k, send: Up, when: composing}
