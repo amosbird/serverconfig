@@ -21,7 +21,8 @@ prefix=($root/${^doc[@]}.docset/Contents/Resources/Documents/) # zsh feature
 sql="select name || ' ' || type || char(10) || '%s' || path from searchIndex"
 
 if [ -n "$search" ]; then
-    sql=$sql" where name like '%%$search%%'"
+    # sql=$sql" where name like '%%$search%%' collate nocase"
+    sql=$sql" where name = '$search' collate nocase"
 fi
 
 for i in {1..${#db[@]}}
