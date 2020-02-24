@@ -41,7 +41,7 @@ bspc rule -a Skype desktop=o state=fullscreen
 
 stalonetray &
 xsetroot -cursor_name left_ptr
-~/scripts/startconky
+# ~/scripts/startconky
 ~/scripts/setbg.sh
 
 # Program Workspaces

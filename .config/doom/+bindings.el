@@ -198,7 +198,7 @@
       :i "M-\""                   (lambda! (+amos-surround-with-pair ?\"))
       :i "M-p"                    (lambda! (+amos-surround-with-pair ?\" t))
       :i "M-R"                    #'sp-forward-barf-sexp
-      :n "M-e"                    #'+lookup/in-docsets
+      :n "M-e"                    #'+amos/lookup-docsets
       :n "M-i"                    #'yasdcv-translate-at-point
       :v "M-i"                    #'+amos/evil-visual-insert-snippet
       :genvi "M-h"                #'evil-window-left
