@@ -337,6 +337,8 @@
     (apply orig-fun (list module disabled-list))))
 (advice-add #'+evil-collection-init :around #'+amos*+evil-collection-init)
 
+(advice-add #'hide-mode-line-mode :override #'ignore)
+
 (ignore-errors
   (define-category ?U "Uppercase")
   (define-category ?u "Lowercase")
