@@ -7,7 +7,6 @@
                    ;; evil-matchit
                    evil-numbers
                    git-gutter-fringe
-                   hide-mode-line
                    magithub
                    magit-todos
                    smerge-mode
