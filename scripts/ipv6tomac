@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+ipv6calc --action ipv6tomac --in ipv6addr --out mac $1
