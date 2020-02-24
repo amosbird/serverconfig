@@ -613,25 +613,31 @@ This predicate is only tested on \"insert\" action."
                     (evil-scroll-line-down 3)))
   (etcc-on))
 
-(setq
- dash-docs-docsets-path "~/.docsets"
- dash-docs-docsets-url "https://raw.github.com/Kapeli/feeds/master"
- dash-docs-min-length 2
- dash-docs-candidate-format "%d %n (%t)"
- dash-docs-enable-debugging t
- dash-docs-browser-func (lambda (url) (interactive) (browse-url url t))
- dash-docs-ignored-docsets nil)
+(defun +amos/lookup-docsets (&optional query)
+  (interactive)
+  (let* ((query (or query (+lookup-symbol-or-region) ""))
+         (search (if (string= query "") "" (concat "-s " query))))
+    (when-let* ((plist (cdr (assq major-mode +amos-docsets))))
+      (when-let* ((docs (s-join " " (doom-enlist (plist-get plist :docs)))))
+        (let ((cmd (format "rofidoc %s %s" search docs)))
+          (message cmd)
+          (osc-command cmd))))))
 
-(set-docsets! 'fish-mode "fish" "Linux_Man_Pages")
-(set-docsets! 'sh-mode "Bash" "Linux_Man_Pages")
-(set-docsets! 'go-mode "Go")
-(set-docsets! 'cmake-mode "CMake")
-(set-docsets! 'java-mode "Java")
-(set-docsets! 'rust-mode "Rust")
-(set-docsets! 'lua-mode "Lua_5.1")
-(set-docsets! 'c-mode "C" "Linux_Man_Pages")
-(set-docsets! 'c++-mode "C" "C++" "Linux_Man_Pages" "Boost")
-(set-docsets! 'python-mode "Python_3" "Python_2")
+(setq +amos-docsets nil)
+(defun +amos-set-docsets (mode &rest plist)
+  (push (cons mode plist) +amos-docsets))
+
+(+amos-set-docsets 'fish-mode :docs '("fish" "Linux_Man_Pages"))
+(+amos-set-docsets 'sh-mode :docs '("Bash" "Linux_Man_Pages"))
+(+amos-set-docsets 'go-mode :docs "Go")
+(+amos-set-docsets 'cmake-mode :docs "CMake")
+(+amos-set-docsets 'java-mode :docs "Java")
+(+amos-set-docsets 'rust-mode :docs "Rust")
+(+amos-set-docsets 'lua-mode :docs '("Lua_5.1" "Lua_5.3"))
+(+amos-set-docsets 'c-mode :docs '("C" "Linux_Man_Pages"))
+(+amos-set-docsets 'c++-mode :docs '("C" "C++" "Linux_Man_Pages" "Boost"))
+(+amos-set-docsets 'python-mode :docs '("Python_3" "Python_2" "NumPy" "SciPy"))
+(+amos-set-docsets 'emacs-lisp-mode :docs "Emacs_Lisp")
 
 (setq-hook! 'lua-mode-hook flycheck-highlighting-mode 'lines)
 
@@ -1740,23 +1746,6 @@ current buffer's, reload dir-locals."
                       (file-name-nondirectory (buffer-file-name))))
       (add-hook! (make-variable-buffer-local 'after-save-hook)
                  #'my-reload-dir-locals-for-all-buffer-in-this-directory))))
-
-(defun +amos-helm-dash-result-url-a (docset-name filename &optional anchor)
-  "Return the full, absolute URL to documentation.
-Either a file:/// URL joining DOCSET-NAME, FILENAME & ANCHOR with sanitization
- of spaces or a http(s):// URL formed as-is if FILENAME is a full HTTP(S) URL."
-  (let* ((clean-filename (replace-regexp-in-string "<dash_entry_.*>" "" filename))
-         (path (format "%s%s" clean-filename (if anchor (replace-regexp-in-string "%2E" "%252E" (format "#%s" anchor)) ""))))
-    (if (string-match-p "^https?://" path)
-        path
-      (replace-regexp-in-string
-       " "
-       "%20"
-       (concat
-        "file:///"
-        (expand-file-name "Contents/Resources/Documents/" (helm-dash-docset-path docset-name))
-        path)))))
-(advice-add #'helm-dash-result-url :override #'+amos-helm-dash-result-url-a)
 
 (setq tmux-p (getenv "TMUX"))
 (setq gui-p (getenv "GUI"))
@@ -4799,6 +4788,7 @@ See `project-local-get' for the parameter PROJECT."
 (add-hook! 'server-visit-hook #'+amos-server-visit-h)
 
 (after! latex
+  ;; (remove-hook 'TeX-mode-hook #'visual-line-mode)
   (dolist (env '("itemize" "enumerate" "description"))
     (delete `(,env +latex/LaTeX-indent-item) LaTeX-indent-environment-list)))
 

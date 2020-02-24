@@ -57,8 +57,8 @@ rofi.display-ssh:
 rofi.display-drun:
 rofi.display-combi:
 rofi.display-keys:
-rofi.kb-primary-paste: Control+V,Shift+Insert
-rofi.kb-secondary-paste: Control+v,Insert
+rofi.kb-primary-paste: Shift+Insert
+rofi.kb-secondary-paste: Insert
 rofi.kb-clear-line:
 rofi.kb-move-front: Control+a
 rofi.kb-move-end: Control+e
@@ -83,8 +83,8 @@ rofi.kb-row-right: Control+Page_Down
 rofi.kb-row-up: Control+k
 rofi.kb-row-down: Control+j
 rofi.kb-row-tab: Tab
-rofi.kb-page-prev: Page_Up
-rofi.kb-page-next: Page_Down
+rofi.kb-page-prev: Alt+v,Page_Up
+rofi.kb-page-next: Control+v,Page_Down
 rofi.kb-row-first: Home,KP_Home
 rofi.kb-row-last: End,KP_End
 rofi.kb-row-select: Control+space

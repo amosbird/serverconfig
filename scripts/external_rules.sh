@@ -4,7 +4,6 @@ wid=$1
 class=$2
 instance=$3
 title=$(xprop -id "$wid" WM_NAME | perl -ne 'print /"(.*)"/')
-echo $class >/tmp/wowow
 
 fc() {
     wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))

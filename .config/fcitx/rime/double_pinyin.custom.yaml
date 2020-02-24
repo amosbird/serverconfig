@@ -1,5 +1,5 @@
 patch:
-  'punctuator/import_preset': alternative
+  # 'punctuator/import_preset': alternative
   'key_binder/import_preset': alternative
   "translator/preedit_format": {}
   "recognizer/patterns/reverse_lookup": {}
@@ -14,6 +14,7 @@ patch:
       reset: 1
       states: [ 漢字, 汉字 ]
     - name: ascii_punct
+      reset: 0
       states: [ 。，, ．， ]
 
   translator:
