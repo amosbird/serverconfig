@@ -27,6 +27,6 @@ compton -b
 ~/gentoo/usr/local/bin/fish -c "sxhkd > /tmp/sxhkd.log &"
 ~/gentoo/usr/local/bin/fish -c "copyq &"
 ~/gentoo/usr/local/bin/fish -c "runscrcpy &"
-~/gentoo/usr/local/bin/fish -c "rungnirehtet &"
+# ~/gentoo/usr/local/bin/fish -c "rungnirehtet &"
 ~/gentoo/usr/local/bin/fish -c "udiskie &"
 fcitx
