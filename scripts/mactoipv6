@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+ipv6calc --action prefixmac2ipv6 --in prefix+mac --out ipv6addr fe80:: $1
