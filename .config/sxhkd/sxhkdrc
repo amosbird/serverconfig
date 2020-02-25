@@ -46,9 +46,8 @@ mod3+g
   url "www.google.com/search?q="
 mod3+s
   url "scholar.google.com/scholar?q="
-
-
-
+mod3+v
+  translate
 super+z
   slock
 super+q

@@ -1,0 +1,9 @@
+#!/usr/bin/env perl
+
+use Clipboard;
+use IPC::Run3;
+my $url    = Clipboard->paste;
+$url =~ s/^\s+|\s+$//g;
+$url =~ s/([^A-Za-z0-9])/sprintf("%%%02X", ord($1))/seg;
+$url = "https://translate.google.com/#view=home&op=translate&sl=auto&tl=en&text="."$url";
+run3 [ 'luakit', $url ];
