@@ -31,8 +31,15 @@ patch:
     enable_sentence: false
     initial_quality: 1
 
-  "engine/translators/@4": table_translator@custom_phrase
+  "engine/translators/@before 0": lua_translator@date_translator
+  "engine/translators/@after last": table_translator@custom_phrase
 
+  # "engine/filters/@before 0": lua_filter@charset_filter
+  "engine/filters/@before 0": charset_filter@gbk
+
+  # "engine/filters/@before 0": lua_filter@charset_comment_filter
+
+  "engine/processors/@before 0": lua_processor@cloud
 
   key_binder/bindings:
       - {accept: Control+k, send: Up, when: composing}

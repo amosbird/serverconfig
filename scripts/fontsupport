@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+luakit https://www.fileformat.info/info/unicode/char/$1/fontsupport.htm
