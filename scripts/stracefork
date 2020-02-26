@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+strace -e fork,vfork,clone,execve -fb execve "$@"
