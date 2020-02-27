@@ -10,15 +10,20 @@ settings:
     global:
       command:
         <Ctrl+d>: rl-delete-char
+        <Ctrl+i>: completion-item-focus next
         <Ctrl+j>: completion-item-focus next
         <Ctrl+k>: completion-item-focus prev
         <Ctrl+o>: rl-kill-line
       insert:
-        <Alt+Backspace>: fake-key <Ctrl+Left>;; fake-key <Ctrl+Delete>
-        <Alt+a>: fake-key <Ctrl+a>
-        <Alt+b>: fake-key <Ctrl+Left>
-        <Alt+d>: fake-key <Ctrl+Delete>
-        <Alt+f>: fake-key <Ctrl+Right>
+        '"<Escape>"': '"jseval -q document.activeElement.dispatchEvent(new KeyboardEvent(''keydown'',
+          {''key'': ''Escape''})); document.activeElement.dispatchEvent(new KeyboardEvent(''keyup'',
+          {''key'': ''Escape''}))"'
+        <Alt+Backspace>: fake-key <ctrl+shift+Left>;; fake-key <BackSpace>
+        <Alt+a>: fake-key <ctrl+a>
+        <Alt+b>: fake-key <ctrl+Left>
+        <Alt+d>: fake-key <ctrl+Delete>
+        <Alt+f>: fake-key <ctrl+Right>
+        <Ctrl+Shift+a>: fake-key <ctrl+a>
         <Ctrl+a>: fake-key <Home>
         <Ctrl+b>: fake-key <Left>
         <Ctrl+d>: fake-key <Delete>
@@ -27,30 +32,51 @@ settings:
         <Ctrl+i>: fake-key <Tab>
         <Ctrl+j>: fake-key <Down>
         <Ctrl+k>: fake-key <Up>
-        <Ctrl+o>: fake-key <Ctrl+Shift+End>;; fake-key <Shift+Delete>
-        <Ctrl+u>: fake-key <Ctrl+Shift+Home>;; fake-key <Shift+Delete>
-        <Ctrl+w>: fake-key <Ctrl+Left>;; fake-key <Ctrl+Delete>
+        <Ctrl+o>: fake-key <Shift+End>;; fake-key <Delete>
+        <Ctrl+q>: :jseval --quiet --file ./ctrlu.js
+        <Ctrl+u>: fake-key <Shift+Home>;; fake-key <BackSpace>
+        <Ctrl+w>: fake-key <ctrl+shift+Left>;; fake-key <BackSpace>
+        <Ctrl+x>: :jseval --quiet --file ./ctrlk.js
+        <Enter>: fake-key <Return>
+        <Escape>: fake-key <Escape>;; leave-mode;; jseval -q document.activeElement.blur()
       normal:
+        <Alt+a>: fake-key <ctrl+a>
+        <Ctrl+Alt+u>: spawn --userscript pbpst
+        <Ctrl+Shift+a>: fake-key <ctrl+a>
         <Ctrl+Space>: spawn i3-msg focus right
         <Ctrl+b>: navigate prev
         <Ctrl+f>: navigate next
         <Ctrl+i>: forward
         <Ctrl+o>: back
+        <Ctrl+p>: nop
         <Ctrl+r>: undo
+        <Ctrl+s>: set-cmd-text /
+        <Escape>: clear-keychain ;; search ;; fullscreen --leave;; fake-key <Escape>
+          ;; clear-messages ;; jseval -q document.getSelection().empty()
+        <Shift+Ins>: open -t -- {clipboard}
         <Space>: fake-key <Space>
-        O: set-cmd-text :open {url:pretty}
-        T: set-cmd-text :open -t -r {url:pretty}
+        D: null
+        I: tab-close
+        O: spawn fcitx-remote -c ;; set-cmd-text :open {url:pretty}
+        S: 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t scholar '
+        T: spawn fcitx-remote -c ;; set-cmd-text :open -t -r {url:pretty}
+        cC: download-copy-all
+        cc: download-copy
+        co: download-open;; download-remove
         d: scroll-page 0 0.5
-        gs: 'set-cmd-text -s :open -t github '
+        gi: enter-mode insert
+        gs: 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t github '
+        i: hint inputs --last --visible
         j: scroll-page 0 0.1
         k: scroll-page 0 -0.1
         p: open -t -- {clipboard}
-        s: 'set-cmd-text -s :open -t google '
-        t: set-cmd-text -s :open -t
+        s: 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t google '
+        t: spawn fcitx-remote -c ;; set-cmd-text -s :open -t
         u: scroll-page 0 -0.5
         y: yank
       prompt:
         <Ctrl+d>: rl-delete-char
+        <Ctrl+i>: prompt-item-focus next
         <Ctrl+j>: prompt-item-focus next
         <Ctrl+k>: prompt-item-focus prev
         <Ctrl+o>: rl-kill-line
@@ -77,7 +103,8 @@ settings:
   content.geolocation:
     global: false
   content.headers.user_agent:
-    global: null
+    global: Mozilla/5.0 ({os_info}) AppleWebKit/{webkit_version} (KHTML, like Gecko)
+      {qt_key}/{qt_version} {upstream_browser_key}/{upstream_browser_version} Safari/{webkit_version}
   content.host_blocking.enabled:
     global: false
   content.host_blocking.lists:
@@ -94,9 +121,9 @@ settings:
   content.ssl_strict:
     global: false
   fonts.hints:
-    global: bold 12pt monospace
+    global: bold 12pt default_family
   fonts.keyhint:
-    global: 12pt monospace
+    global: 12pt default_family
   hints.leave_on_load:
     global: false
   input.insert_mode.leave_on_load:
