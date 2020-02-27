@@ -24,6 +24,8 @@ c.url.searchengines = {
 c.tabs.last_close = "close"
 c.tabs.title.format = "{index}: {current_title}"
 
+c.hints.selectors['inputs'].append('[contenteditable=true]')
+
 # import glob
 
 # c.content.user_stylesheets = glob.glob('/home/amos/css/*.user.css')
@@ -51,7 +53,7 @@ c.hints.prev_regexes = [
 
 c.bindings.commands["normal"] = {
     "<Escape>": c.bindings.default["normal"]["<Escape>"]
-    + ";; fake-key <Escape> ;; clear-messages ;; jseval --quiet document.getSelection().empty()",
+    + ";; fake-key <Escape> ;; clear-messages ;; jseval -q document.getSelection().empty()",
     "<ctrl-Space>": "spawn i3-msg focus right",
     "<ctrl-s>": "set-cmd-text /",
     "<Space>": "fake-key <Space>",
@@ -71,7 +73,7 @@ c.bindings.commands["normal"] = {
     "d": "scroll-page 0 0.5",
     "k": "scroll-page 0 -0.1",
     "j": "scroll-page 0 0.1",
-    "i": "hint inputs --first --visible",
+    "i": "hint inputs --last --visible",
     "gi": "enter-mode insert",
     "y": "yank",
     "co": "download-open;; download-remove",
@@ -104,7 +106,7 @@ c.bindings.commands["prompt"] = {
 }
 
 c.bindings.commands["insert"] = {
-    "<Escape>": "leave-mode ;; fake-key <Escape>",
+    "<Escape>": "fake-key <Escape> ;; leave-mode",
     "<Enter>": "fake-key <Return>",
     "<ctrl+a>": "fake-key <Home>",
     "<ctrl+shift+a>": "fake-key <ctrl+a>",
@@ -113,8 +115,11 @@ c.bindings.commands["insert"] = {
     "<alt+b>": "fake-key <ctrl+Left>",
     "<alt+f>": "fake-key <ctrl+Right>",
     "<alt+d>": "fake-key <ctrl+Delete>",
-    "<alt+backspace>": "fake-key <ctrl+shift+Left>;; fake-key <BackSpace>",
-    "<ctrl+w>": "fake-key <ctrl+shift+Left>;; fake-key <BackSpace>",
+    # why we are not using ctrl backspace?
+    # "<alt+backspace>": "fake-key <ctrl+shift+Left>;; fake-key <BackSpace>",
+    # "<ctrl+w>": "fake-key <ctrl+shift+Left>;; fake-key <BackSpace>",
+    "<alt+backspace>": "fake-key <ctrl+BackSpace>",
+    "<ctrl+w>": "fake-key <ctrl+BackSpace>",
     "<ctrl+d>": "fake-key <Delete>",
     "<ctrl+b>": "fake-key <Left>",
     "<ctrl+f>": "fake-key <Right>",

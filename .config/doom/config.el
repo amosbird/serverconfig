@@ -637,6 +637,7 @@ This predicate is only tested on \"insert\" action."
 (+amos-set-docsets 'c-mode :docs '("C" "Linux_Man_Pages"))
 (+amos-set-docsets 'c++-mode :docs '("C" "C++" "Linux_Man_Pages" "Boost"))
 (+amos-set-docsets 'python-mode :docs '("Python_3" "Python_2" "NumPy" "SciPy"))
+(+amos-set-docsets 'js2-mode :docs "JavaScript")
 (+amos-set-docsets 'emacs-lisp-mode :docs "Emacs_Lisp")
 
 (setq-hook! 'lua-mode-hook flycheck-highlighting-mode 'lines)
