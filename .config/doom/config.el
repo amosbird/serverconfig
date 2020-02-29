@@ -4147,7 +4147,8 @@ inside or just after a citation command, only adds KEYS to it."
          (frame-list)))
 
 (after! tex
-  (setq-default TeX-master t))
+  (setq-default TeX-master t)
+  (setq-default TeX-command-extra-options "-shell-escape"))
 
 (defun +amos*evil-insert (&rest _)
   (evil-insert-state))
