@@ -2,4 +2,4 @@
 
 set -e
 trizen -Syyuu -r --noconfirm
-trizen -Sua --devel --needed
+trizen -Sua --devel --needed --noconfirm
