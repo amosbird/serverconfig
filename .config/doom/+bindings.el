@@ -277,7 +277,7 @@
       :n "gr"                     #'+lookup/references
       :v "gR"                     #'+eval:replace-region
       :nm "gy"                     #'evilnc-copy-and-comment-lines
-      :m "gl"                     #'evilnc-comment-or-uncomment-lines
+      :nm "gl"                     #'evilnc-comment-or-uncomment-lines
       :n "m"                      #'+amos/push-mark
       :n "M"                      (lambda! (+amos/push-mark t))
       :n "M-9"                    #'+amos/counsel-view-marks

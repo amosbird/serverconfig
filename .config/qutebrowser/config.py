@@ -31,8 +31,9 @@ c.hints.selectors['inputs'].append('[contenteditable=true]')
 # c.content.user_stylesheets = glob.glob('/home/amos/css/*.user.css')
 
 c.hints.next_regexes = [
+    r"^\s»\s*$",
     r"^\s*next\s*$",
-    r"^\s*more\s*$",
+    # r"^\s*more\s*$",
     r"^\s*newer\s*$",
     r"^\s*[>\u2192\u226B]\s*$",
     r"^\s*(>>|\xBB)\s*$",

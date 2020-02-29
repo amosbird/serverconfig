@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+
+adb shell input tap 1167 1250
+
+sleep 2
+
+adb shell input tap 1167 2350
+
+sleep 2
+
+unlockphone
+
+sleep 5
+
+adb shell input tap 1167 850
+
+sleep 2
+
+adb shell input tap 980 680
+
+sleep 2
+
+adb shell input keyevent BACK
+
+sleep 1
+
+adb shell input keyevent BACK
+
+sleep 1
