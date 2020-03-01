@@ -146,12 +146,12 @@
                '+amos-org-export-clear-single-linebreak-in-cjk-string-h))
 
 
-(defun +amos-org-export-output-file-name-a (args)
-  "Return a centralized export location."
-  (unless (nth 2 args)
-    (setq args (append args (list org-export-directory))))
-  args)
-(advice-add #'org-export-output-file-name :filter-args #'+amos-org-export-output-file-name-a)
+;; (defun +amos-org-export-output-file-name-a (args)
+;;   "Return a centralized export location."
+;;   (unless (nth 2 args)
+;;     (setq args (append args (list org-export-directory))))
+;;   args)
+;; (advice-add #'org-export-output-file-name :filter-args #'+amos-org-export-output-file-name-a)
 
 ;; remove comments from org document for use with export hook
 ;; https://emacs.stackexchange.com/questions/22574/orgmode-export-how-to-prevent-a-new-line-for-comment-lines

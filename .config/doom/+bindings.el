@@ -403,6 +403,7 @@
         "C-o" nil
         "C-i" nil
         :n "q"   #'quit-window
+        :n "z"   #'dired-do-compress
         :n "C-f" #'dired-omit-mode
         :n "C-i" #'peep-dired-toggle
         :n "C-v" #'peep-dired-scroll-page-down
