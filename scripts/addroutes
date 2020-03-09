@@ -16,47 +16,48 @@ read -r _ _ gw _ < <(ip r g 123.206.66.49) || die "Cannot get default gw"
 
 gw=${1:-$gw}
 
-sudo -u amos tun
-
-ip netns add zt
-ip l a veth0 type veth peer name veth1 netns zt
-ip a a 10.0.8.1/30 dev veth0
-ip l s veth0 up
-ip -n zt a a 10.0.8.2/30 dev veth1
-ip -n zt l s veth1 up
-ip -n zt l s lo up
-ip -n zt r a default via 10.0.8.1
-
-ip netns add cn
-ip l a veth2 type veth peer name veth3 netns cn
-ip a a 10.0.9.1/30 dev veth2
-ip l s veth2 up
-ip -n cn a a 10.0.9.2/30 dev veth3
-ip -n cn l s veth3 up
-ip -n cn l s lo up
-ip -n cn r a default via 10.0.9.1
-
-ip r f table direct
-ip r f table zerotier
 ip r f table cn
-ip r a 0.0.0.0/0 via $gw table direct
-for i in $(seq 1 10)
-do
-    if ip a | grep -q tunv6
-    then
-        break
-    fi
-    sleep 0.2
-done
-if ! ip a | grep -q tunv6
-then
-    sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "tunv6 cannot be created"
-fi
-ip r a default via 172.25.88.1 dev tunv6 table zerotier
+
+# sudo -u amos tun
+#
+# ip netns add zt
+# ip l a veth0 type veth peer name veth1 netns zt
+# ip a a 10.0.8.1/30 dev veth0
+# ip l s veth0 up
+# ip -n zt a a 10.0.8.2/30 dev veth1
+# ip -n zt l s veth1 up
+# ip -n zt l s lo up
+# ip -n zt r a default via 10.0.8.1
+#
+# ip netns add cn
+# ip l a veth2 type veth peer name veth3 netns cn
+# ip a a 10.0.9.1/30 dev veth2
+# ip l s veth2 up
+# ip -n cn a a 10.0.9.2/30 dev veth3
+# ip -n cn l s veth3 up
+# ip -n cn l s lo up
+# ip -n cn r a default via 10.0.9.1
+#
+# ip r f table direct
+# ip r f table zerotier
+# ip r a 0.0.0.0/0 via $gw table direct
+# for i in $(seq 1 10)
+# do
+#     if ip a | grep -q tunv6
+#     then
+#         break
+#     fi
+#     sleep 0.2
+# done
+# if ! ip a | grep -q tunv6
+# then
+#     sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "tunv6 cannot be created"
+# fi
+# ip r a default via 172.25.88.1 dev tunv6 table zerotier
 # ip r a 0.0.0.0/0 via 172.26.133.192 table zerotier
 # ip r a 172.26.0.0/16 dev $(zerotier-cli listnetworks | perl -ne 'print +(split / /)[7] if /abnetwork/') table zerotier
+# ip rule add fwmark 0x14 table zerotier pref 20000
 ip rule add fwmark 0x8 table direct pref 20000
-ip rule add fwmark 0x14 table zerotier pref 20000
 ip rule add table cn pref 30000
 
 ip -batch - <<EOF
