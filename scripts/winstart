@@ -1,28 +1,30 @@
-#!/usr/bin/env perl
+#!/usr/bin/env bash
 
-use utf8;
-use strict;
-use Encode;
-use Net::SSH::Perl;
+# bash logging
+# set -x
+# exec 3>&1 4>&2
+# trap 'exec 2>&4 1>&3' 0 1 2 3
+# exec 1>>/tmp/winstart.log 2>&1
 
-my %progs;
-# $progs{'qq'} = '"C:\\Users\\amosb\\Timwp.exe"';
-$progs{'qq'} = "C:\\Program` Files` `(x86`)\\Tencent\\TIM\\Bin\\timwp.exe";
-# $progs{'ww'} = "C:\\Users\\amosb\\WWCmd.exe";
-$progs{'ww'} = "C:\\Program` Files` `(x86`)\\AliWangWang\\9.12.10C\\WWCmd.exe";
-my $prog = shift;
-my $prog_name = $progs{$prog};
+qq='"C:\Program Files (x86)\Tencent\TIM\Bin\Timwp.exe"'
+ww='"C:\Program Files (x86)\AliWangWang\9.12.10C\WWCmd.exe"'
 
-my $ssh = Net::SSH::Perl->new("192.168.122.109", debug=>0);
-$ssh->login("amosb");
-$_ = "\"$_\"" for @ARGV;
-my $cmd = encode("gbk", ".\\psexec -i 2 $prog_name --% " . join(" ", @ARGV));
-my ($stdout,$stderr,$exit) = $ssh->cmd($cmd);
-open (my $fh, '>', '/tmp/winstart.log');
-print $fh decode("gbk", $cmd);
-print $fh decode("gbk", $stdout);
-print $fh decode("gbk", $stderr);
-print $fh decode("gbk", $exit);
-close $fh;
+case "$1" in
+    qq)
+        cmd=$qq
+        ;;
+    ww)
+        cmd=$ww
+        ;;
+    *)
+        echo error
+        exit 1
+esac
 
-system "bspc desktop --focus w";
+url=${2//&/^&}
+
+cmd=( "$cmd" "$url" )
+
+echo -n "${cmd[@]}" > /dev/udp/192.168.122.109/11000
+
+bspc desktop --focus w
