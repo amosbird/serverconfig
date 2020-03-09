@@ -15,9 +15,14 @@ min-cache-ttl=3600
 #server=127.0.0.1#5300
 server=8.8.8.8
 server=/ac.cn/159.226.8.6
+ipset=/lenovo.com/us
+ipset=/extstars.com/us
+ipset=/163.com/gfwlist
+ipset=/126.com/gfwlist
+ipset=/sciencedirect.com/gfwlist
 ipset=/ieee.org/gfwlist
 ipset=/acm.org/gfwlist
-ipset=/sciencedirect.com/gfwlist
+ipset=/webofknowledge.com/gfwlist
 '
     curl -s https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf | perl -ne '$o = $_; /.*\/(.*)\/.*/; print $o; print "ipset=/".$1."/gfwlist\n"'
 } | sudo tee /etc/dnsmasq.conf >/dev/null

@@ -92,10 +92,10 @@ ip r a 47.90.50.109/32 via $gw table cn
 # ip r a 10.61.0.0/16 via $gw table cn
 
 # la.wentropy.com
-ip r a 168.235.105.19/32 via $gw table cn
+# ip r a 168.235.105.19/32 via $gw table cn
 
 # cl.wentropy.com
-ip r a 168.235.97.16/32 via $gw table cn
+# ip r a 168.235.97.16/32 via $gw table cn
 
 # lab
 # ip r a 10.0.0.0/8 via $gw table cn
