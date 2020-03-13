@@ -14,21 +14,26 @@ qq='"C:\Program Files (x86)\Tencent\TIM\Bin\Timwp.exe"'
 ww='"C:\Program Files (x86)\AliWangWang\9.12.10C\WWCmd.exe"'
 
 case "$1" in
-    qq)
-        cmd=$qq
-        ;;
-    ww)
-        cmd=$ww
-        ;;
-    *)
-        echo error
-        exit 1
+qq)
+    cmd=$qq
+    ;;
+ww)
+    cmd=$ww
+    ;;
+*)
+    echo error
+    exit 1
+    ;;
 esac
 
 url=${2//&/^&}
 
-cmd=( "$cmd" "$url" )
+cmd=("$cmd" "$url")
 
-echo -n "${cmd[@]}" > /dev/udp/172.26.178.148/11000
+if sudo virsh list | grep -q win10; then
+    echo -n "${cmd[@]}" >/dev/udp/192.168.122.109/11000
+else
+    echo -n "${cmd[@]}" >/dev/udp/172.26.178.148/11000
+fi
 
 bspc desktop --focus w
