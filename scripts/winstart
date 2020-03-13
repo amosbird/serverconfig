@@ -6,6 +6,10 @@
 # trap 'exec 2>&4 1>&3' 0 1 2 3
 # exec 1>>/tmp/winstart.log 2>&1
 
+if ! pgrep freerdp >/dev/null; then
+    winremote &
+fi
+
 qq='"C:\Program Files (x86)\Tencent\TIM\Bin\Timwp.exe"'
 ww='"C:\Program Files (x86)\AliWangWang\9.12.10C\WWCmd.exe"'
 
@@ -25,6 +29,6 @@ url=${2//&/^&}
 
 cmd=( "$cmd" "$url" )
 
-echo -n "${cmd[@]}" > /dev/udp/192.168.122.109/11000
+echo -n "${cmd[@]}" > /dev/udp/172.26.178.148/11000
 
 bspc desktop --focus w
