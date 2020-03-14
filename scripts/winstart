@@ -16,17 +16,21 @@ ww='"C:\Program Files (x86)\AliWangWang\9.12.10C\WWCmd.exe"'
 case "$1" in
 qq)
     cmd=$qq
+    url=${2//&/^&}
     ;;
 ww)
     cmd=$ww
+    url=${2//&/^&}
     ;;
 *)
-    echo error
-    exit 1
+    if echo "$1" | grep '^/' >/dev/null; then
+        TARGETPATH=$1
+    else
+        TARGETPATH=$PWD'/'$1
+    fi
+    url=$(printf "%s" "$(echo "$TARGETPATH" | sed 's/^\/home\/amos/\\\\tsclient\\home/' | sed 's/\//\\/g')")
     ;;
 esac
-
-url=${2//&/^&}
 
 cmd=("$cmd" "$url")
 
