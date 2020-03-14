@@ -5,7 +5,7 @@
 # /audio-mode:2  #disable
 
 if sudo virsh list | grep -q win10; then
-    xfreerdp +aero +menu-anims +window-drag /rfx /gfx /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amosbird@gmail.com /p:$(pass show misc/Ztq) /v:192.168.122.109:3389
+    xfreerdp +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse,format:1,quality:high /microphone /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amosbird@gmail.com /p:$(pass show misc/Ztq) /v:192.168.122.109:3389
 else
     xfreerdp +aero +menu-anims +window-drag /rfx /gfx /audio-mode:2 /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amosbird@gmail.com /p:$(pass show misc/Ztq) /v:172.26.178.148:3389
 fi

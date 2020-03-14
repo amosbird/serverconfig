@@ -53,6 +53,7 @@ c.hints.prev_regexes = [
 # Bindings for normal mode
 
 c.bindings.commands["normal"] = {
+    "<F12>": "inspector",
     "<Escape>": c.bindings.default["normal"]["<Escape>"]
     + ";; fake-key <Escape> ;; clear-messages ;; jseval -q document.getSelection().empty()",
     "<ctrl-Space>": "spawn i3-msg focus right",
