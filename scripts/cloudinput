@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+input=$1
+
+curl "http://olime.baidu.com/py?input=$input&inputtype=py&bg=0&ed=5&result=hanzi&resultcoding=utf-8&ch_en=0&clientinfo=web&version=1"

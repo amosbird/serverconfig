@@ -34,3 +34,5 @@
 	insteadOf ="https://aur.archlinux.org/netevent-git.git"
 [url "https://github.com/amosbird/rofi-emoji-aur"]
 	insteadOf ="https://aur.archlinux.org/rofi-emoji.git"
+[url "https://github.com/amosbird/librime-git-aur"]
+	insteadOf ="https://aur.archlinux.org/librime-git.git"
