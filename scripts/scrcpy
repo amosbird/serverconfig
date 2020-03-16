@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+/home/amos/git/scrcpy/run /home/amos/git/scrcpy/release -x 2a70:4ee7
