@@ -88,6 +88,8 @@ ip r a 159.203.2.154/32 via $gw table cn
 ip r a 47.90.50.109/32 via $gw table cn
 
 ip r a 192.144.138.253 via 192.168.50.1 table cn
+ip r a 40.83.99.220 via 192.168.50.1 table cn
+ip r a 13.113.251.5 via 192.168.50.1 table cn
 
 # local
 # ip r a 10.60.0.0/16 via $gw table cn
@@ -128,10 +130,9 @@ ip r a 192.144.138.253 via 192.168.50.1 table cn
 # ip r a 23.20.92.3/32 via $gw table cn
 
 # azure
-ip r a 40.83.99.220/32 via $gw
 
 # aws
-ip r a 13.113.251.5 via $gw
+# ip r a 13.113.251.5 via $gw
 
 # if ! pgrep -f 'https-dns'
 # then
@@ -160,8 +161,13 @@ ip r a 13.113.251.5 via $gw
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
 # sudo -u amos tunv6
-ip r a 0.0.0.0/1 via 172.26.239.59
-ip r a 128.0.0.0/1 via 172.26.239.59
+# ip r a 0.0.0.0/1 via 172.26.239.59
+# ip r a 128.0.0.0/1 via 172.26.239.59
+ip r a 0.0.0.0/1 via 172.26.133.192
+ip r a 128.0.0.0/1 via 172.26.133.192
+# ip r a 0.0.0.0/1 via 192.168.192.254
+# ip r a 128.0.0.0/1 via 192.168.192.254
+
 
 systemctl restart dnsmasq
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"
