@@ -412,6 +412,7 @@ local code = {
 local function translator(input, seg, env)
     local input2 = ""
     local dictstr = ""
+    local len = 0
     for i = 1, #input, 2 do
         local w = input:sub(i, i + 1)
         local w2 = code[w]
@@ -422,20 +423,15 @@ local function translator(input, seg, env)
             input2 = input2 .. w
             dictstr = dictstr .. w .. " "
         end
+        len = len + 1
     end
-    local f = assert(io.popen("cloudinput " .. input2, "r"))
+    local f = assert(io.popen("cloudinput " .. input2 .. " " .. len, "r"))
     local s = assert(f:read("*a"))
     f:close()
-    local _, j = pcall(json.decode, s)
-    if j and j.status == "T" and j.result and j.result[1] then
-        for _, v in ipairs(j.result[1]) do
-            local c = Candidate("phrase", seg.start, seg.start + v[2], v[1], dictstr)
-            c.quality = 2
-            if string.gsub(v[3].pinyin, "'", "") == string.sub(input, 1, v[2]) then
-                c.preedit = string.gsub(v[3].pinyin, "'", " ")
-            end
-            yield(c)
-        end
+    for word in s:gmatch("%S+") do
+        local c = Candidate("phrase", seg.start, seg.start + #input, word, dictstr)
+        c.quality = 2
+        yield(c)
     end
 end
 

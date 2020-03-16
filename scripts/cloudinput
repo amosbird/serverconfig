@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
 input=$1
+len=$2
 
-curl "http://olime.baidu.com/py?input=$input&inputtype=py&bg=0&ed=5&result=hanzi&resultcoding=utf-8&ch_en=0&clientinfo=web&version=1"
+# curl "http://olime.baidu.com/py?input=$input&inputtype=py&bg=0&ed=5&result=hanzi&resultcoding=utf-8&ch_en=0&clientinfo=web&version=1"
+
+curl -s "https://www.baidu.com/sugrec?prod=pc&wd=$input" | jq '.g[]|.q' | perl -MEncode -MList::Util=uniq -nE 'if (decode("UTF-8", $_) =~ /^"(\p{Han}{'$len'})/) {push @words, encode("UTF-8", $1)} END { $,=" "; print uniq @words }'
