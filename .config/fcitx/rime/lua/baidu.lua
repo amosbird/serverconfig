@@ -1,4 +1,4 @@
-local json = require("dkjson")
+local json = require("json")
 local io = require("io")
 
 local code = {

@@ -19,7 +19,6 @@ local function make(trig_key, trig_translator)
     end
 
     local function translator(input, seg, env)
-        -- local s_orig = context:get_commit_text()
         if flag then
             flag = false
             trig_translator(input, seg, env)
