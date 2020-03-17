@@ -38,9 +38,9 @@ ip r f table cn
 # ip -n cn l s lo up
 # ip -n cn r a default via 10.0.9.1
 #
-# ip r f table direct
-# ip r f table zerotier
-# ip r a 0.0.0.0/0 via $gw table direct
+ip r f table direct
+ip r f table zerotier
+ip r a 0.0.0.0/0 via $gw table direct
 # for i in $(seq 1 10)
 # do
 #     if ip a | grep -q tunv6
@@ -56,7 +56,7 @@ ip r f table cn
 # ip r a default via 172.25.88.1 dev tunv6 table zerotier
 # ip r a 0.0.0.0/0 via 172.26.133.192 table zerotier
 # ip r a 172.26.0.0/16 dev $(zerotier-cli listnetworks | perl -ne 'print +(split / /)[7] if /abnetwork/') table zerotier
-# ip rule add fwmark 0x14 table zerotier pref 20000
+ip rule add fwmark 0x14 table zerotier pref 20000
 ip rule add fwmark 0x8 table direct pref 20000
 ip rule add table cn pref 30000
 
@@ -161,10 +161,10 @@ ip r a 13.113.251.5 via 192.168.50.1 table cn
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
 # sudo -u amos tunv6
-# ip r a 0.0.0.0/1 via 172.26.239.59
-# ip r a 128.0.0.0/1 via 172.26.239.59
-ip r a 0.0.0.0/1 via 172.26.133.192
-ip r a 128.0.0.0/1 via 172.26.133.192
+ip r a 0.0.0.0/1 via 172.26.239.59
+ip r a 128.0.0.0/1 via 172.26.239.59
+# ip r a 0.0.0.0/1 via 172.26.133.192
+# ip r a 128.0.0.0/1 via 172.26.133.192
 # ip r a 0.0.0.0/1 via 192.168.192.254
 # ip r a 128.0.0.0/1 via 192.168.192.254
 
