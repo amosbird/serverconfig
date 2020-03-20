@@ -27,7 +27,7 @@ fi
 
 for i in {1..${#db[@]}}
 do
-    cmds=(${cmds[@]} ${(f)"$(printf "sqlite3 -cmd '.load /usr/lib/sqlite3/pcre.so' \"${db[$i]}\" \"$sql\"" ${@[$i]} ${prefix[$i]})"})
+    cmds=(${cmds[@]} ${(f)"$(printf "sqlite3 -cmd '.load /usr/lib/sqlite3/pcre.so' \"${db[$i]}\" \"$sql\"" ${doc[$i]} ${prefix[$i]})"})
 done
 
 for cmd in ${cmds[@]}

@@ -70,7 +70,7 @@ ctrl+alt+5
   showobs.sh
   # echo c | nc -U /tmp/scrcpy.socket
 ctrl+alt+8
-  rofiman
+  rofidoc
 ctrl+alt+9
   showdict.sh
 ctrl+alt+0

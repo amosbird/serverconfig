@@ -5011,6 +5011,8 @@ See `project-local-get' for the parameter PROJECT."
     (dolist (command (all-completions name obarray 'commandp))
       (evil-declare-ignore-repeat (intern command)))))
 
+(remove-hook 'text-mode-hook #'auto-fill-mode)
+
 ;; should be at last
 (+amos-ignore-repeat
  "+amos/align"

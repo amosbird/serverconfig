@@ -32,8 +32,8 @@ if ! pgrep -f qutebrowser >/dev/null; then
     find /run/user/1000/qutebrowser/ -type f -delete
     cd /home/amos/git/qutebrowser/
     # /usr/bin/python -m qutebrowser -l vdebug &
-    # /usr/bin/python -m qutebrowser &
-    /usr/bin/python -m qutebrowser >/tmp/qb.log 2>&1 &
+    /usr/bin/python -m qutebrowser &
+    # /usr/bin/python -m qutebrowser >/tmp/qb.log 2>&1 &
     mkdir -p /run/user/1000/qutebrowser
     while read -r && [[ $REPLY != *ATTRIB\ ipc-* ]]; do break; done < <(inotifywait -m -t 5 -e create /run/user/1000/qutebrowser)
 fi
