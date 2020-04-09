@@ -5,6 +5,7 @@ set FISH_CLIPBOARD_CMD cat
 
 set -x CORES (getconf _NPROCESSORS_ONLN)
 set -x MAKEFLAGS -j$CORES
+set -x PKG_CONFIG_PATH /home/amos/gentoo/usr/local/lib64/pkgconfig /home/amos/gentoo/usr/local/lib/pkgconfig  $PKG_CONFIG_PATH
 set -x FZF_DEFAULT_OPTS "--ansi --multi --bind=ctrl-v:half-page-down,alt-v:half-page-up,ctrl-l:accept"
 set -x SHELL /bin/bash
 set -x EDITOR eee

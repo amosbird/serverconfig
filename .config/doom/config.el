@@ -616,7 +616,7 @@ This predicate is only tested on \"insert\" action."
 (defun +amos/lookup-docsets (identifier &optional arg)
   (interactive (list (doom-thing-at-point-or-region)
                      current-prefix-arg))
-  (let* ((search (if (string= identifier "") "" (concat "-s " identifier))))
+  (let* ((search (if (not identifier) "" (concat "-s " identifier))))
     (when-let* ((plist (cdr (assq major-mode +amos-docsets))))
       (when-let* ((docs (s-join " " (doom-enlist (plist-get plist :docs)))))
         (let ((cmd (format "rofidoc %s %s" search docs)))
@@ -2260,12 +2260,19 @@ representation of `NUMBER' is smaller."
 ;; (ad-activate 'switch-to-buffer)  ;; stupid api
 (add-hook 'leap-post-jump-hook #'+amos/recenter)
 
-(defun +amos-leap-jump-h (&optional command)
+(defun +amos*evil--jump-hook (&optional command)
   "Set jump point if COMMAND has a non-nil :jump property."
   (setq command (or command this-command))
-  (when (evil-get-command-property command :jump)
-    (leap-set-jump)))
-(add-hook 'pre-command-hook #'+amos-leap-jump-h)
+  (unless
+      (and
+       (or (eq last-command 'evil-multiedit-match-symbol-and-prev)
+           (eq last-command 'evil-multiedit-match-symbol-and-next))
+       (or (eq command 'evil-multiedit-match-symbol-and-prev)
+           (eq command 'evil-multiedit-match-symbol-and-next)))
+    (when
+        (evil-get-command-property command :jump)
+      (leap-set-jump))))
+(advice-add #'evil--jump-hook :override #'+amos*evil--jump-hook)
 
 (defun +amos/yank-buffer-filename ()
   "Copy the current buffer's path to the kill ring."
@@ -4400,6 +4407,41 @@ inside or just after a citation command, only adds KEYS to it."
     (setq swiper--isearch-highlight-timer nil))
   (ivy-previous-line-or-history 1))
 
+(defun +amos/swiper-isearch-backward ()
+  (interactive)
+  (let ((i (- ivy--index 1))
+        (min-index 0)
+        (cands  ivy--all-candidates)
+        (current (ivy-state-current ivy-last)))
+    (with-current-buffer (ivy-state-buffer ivy-last)
+      (while (and (>= i 0)
+                  (swiper--isearch-same-line-p
+                   (swiper--line-at-point (nth i cands))
+                   (swiper--line-at-point current)))
+        (cl-decf i)))
+    (if (< i min-index)
+        (if ivy-wrap
+            (ivy-end-of-buffer)
+          (ivy-set-index min-index))
+      (ivy-set-index i))))
+
+(defun +amos/swiper-isearch-forward ()
+  (interactive)
+  (let ((i (+ ivy--index 1))
+        (max-index (1- ivy--length))
+        (cands  ivy--all-candidates)
+        (current (ivy-state-current ivy-last)))
+    (with-current-buffer (ivy-state-buffer ivy-last)
+      (while (and (< i ivy--length)
+                  (swiper--isearch-same-line-p
+                   (swiper--line-at-point (nth i cands))
+                   (swiper--line-at-point current)))
+        (cl-incf i))
+      (if (> i max-index)
+          (if ivy-wrap
+              (ivy-beginning-of-buffer)
+            (ivy-set-index max-index))
+        (ivy-set-index i)))))
 (setq scratch-file-name (concat "~/.emacs.d/persistent-scratch-" server-name))
 
 (defun +amos-save-persistent-scratch-h ()
@@ -4823,42 +4865,6 @@ See `project-local-get' for the parameter PROJECT."
     (kill-new url)
     (osc-command "notify-send OSC52Command '\nWandBox Uploaded'")))
 
-(defun +amos/swiper-isearch-backward ()
-  (interactive)
-  (let ((i (- ivy--index 1))
-        (min-index 0)
-        (cands  ivy--old-cands)
-        (current (ivy-state-current ivy-last)))
-    (with-current-buffer (ivy-state-buffer ivy-last)
-      (while (and (>= i 0)
-                  (swiper--isearch-same-line-p
-                   (swiper--line-at-point (nth i cands))
-                   (swiper--line-at-point current)))
-        (cl-decf i)))
-    (if (< i min-index)
-        (if ivy-wrap
-            (ivy-end-of-buffer)
-          (ivy-set-index min-index))
-      (ivy-set-index i))))
-
-(defun +amos/swiper-isearch-forward ()
-  (interactive)
-  (let ((i (+ ivy--index 1))
-        (max-index (1- ivy--length))
-        (cands  ivy--old-cands)
-        (current (ivy-state-current ivy-last)))
-    (with-current-buffer (ivy-state-buffer ivy-last)
-      (while (and (< i ivy--length)
-                  (swiper--isearch-same-line-p
-                   (swiper--line-at-point (nth i cands))
-                   (swiper--line-at-point current)))
-        (cl-incf i))
-      (if (> i max-index)
-          (if ivy-wrap
-              (ivy-beginning-of-buffer)
-            (ivy-set-index max-index))
-        (ivy-set-index i)))))
-
 (defun +amos-ediff-copy-diff-a (func &rest args)
   (mkr! (apply func args)))
 (advice-add #'ediff-copy-diff :around #'+amos-ediff-copy-diff-a)
@@ -5013,6 +5019,21 @@ See `project-local-get' for the parameter PROJECT."
 
 (remove-hook 'text-mode-hook #'auto-fill-mode)
 
+(after! format-all
+  (progn
+    (puthash 'sqlformat "sqlformat" format-all--executable-table)
+    (puthash 'sqlformat nil format-all--install-table)
+    (format-all--pushhash 'sql-mode (cons 'sqlformat nil) format-all--mode-table)
+    (puthash 'sqlformat (lambda (executable mode-result)
+                          (ignore mode-result)
+                          (format-all--buffer-easy executable))
+             format-all--format-table)
+    'sqlformat))
+
+(after! so-long
+  (setq so-long-max-lines 1024)
+  (setq so-long-threshold 1024))
+
 ;; should be at last
 (+amos-ignore-repeat
  "+amos/align"
@@ -5072,6 +5093,7 @@ See `project-local-get' for the parameter PROJECT."
  "execute-extended-command"
  "find-file"
  "flycheck"
+ "format"
  "git-gutter"
  "git-timemachine"
  "highlight-indentation-"

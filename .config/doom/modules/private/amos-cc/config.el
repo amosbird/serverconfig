@@ -86,6 +86,7 @@
                    :post-handlers '(("| " "SPC"))))
 
   (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
+    (sp-local-pair "<" ">" :actions :rem)
     (sp-local-pair "{" nil :post-handlers '(:add +amos-cc-brace-indent))
     (sp-local-pair "/*!" "*/" :post-handlers '(("||\n[i]" "RET") ("[d-1]< | " "SPC")))))
 
@@ -274,7 +275,9 @@
       (save-excursion
         (if (search-backward incl nil t)
             nil
-          (when (search-backward "#include" nil 'stop-at-top)
+          (when (re-search-backward "\\(#include\\|#pragma once\\)" nil t)
+            (if (looking-at "#pragma once")
+                (forward-line))
             (forward-line)
             (beginning-of-line))
           (insert incl)

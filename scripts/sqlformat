@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# exec /home/amos/gentoo/usr/bin/pg_format "$@"
+exec /mnt/disk5/ClickHouse/bin/clickhouse-format "$@"
