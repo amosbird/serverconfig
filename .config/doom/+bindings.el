@@ -703,6 +703,10 @@
         :g "j" #'evil-snipe-repeat
         :g "k" #'evil-snipe-repeat-reverse)
 
+      (:after re-builder
+        :map reb-mode-map
+        :g "C-c C-k" #'reb-quit)
+
       (:map key-translation-map
         "\035"          (kbd "<escape>")
         [S-iso-lefttab] [backtab]

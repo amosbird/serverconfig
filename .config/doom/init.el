@@ -321,8 +321,8 @@
 (setq-default line-spacing 0.1)
 (setq reftex-label-ignored-macros-and-environments '("enumerate" "itemize"))
 (setq reftex-insert-label-flags '("sft"))
-(setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${note:*}")))
-(setq bibtex-completion-additional-search-fields '("note"))
+(setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${_note:*}")))
+(setq bibtex-completion-additional-search-fields '("_note"))
 (setq initial-buffer-choice (lambda () (get-buffer "*Messages*")))
 (defun hide-mode-line-mode(&rest_)) ;; never hide modeline
 

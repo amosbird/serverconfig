@@ -4958,7 +4958,6 @@ See `project-local-get' for the parameter PROJECT."
   :defer)
 
 (defun +amos-swiper-isearch-a (orig-fn &rest args)
-  "Don't look into .authinfo for local sudo TRAMP buffers."
   (let (evil-ex-search-persistent-highlight)
     (apply orig-fn args)))
 (advice-add #'swiper-isearch :around #'+amos-swiper-isearch-a)
@@ -5113,3 +5112,9 @@ See `project-local-get' for the parameter PROJECT."
  "whitespace-mode"
  "yasdcv-translate-at-point"
  "zygospore-toggle-delete-other-windows")
+
+;; debug a function in a post-command-hook
+;; (defadvice ivy--queue-exhibit (around intercept activate)
+  ;; (condition-case err
+      ;; ad-do-it
+    ;; ((debug error) (signal (car err) (cdr err)))))
