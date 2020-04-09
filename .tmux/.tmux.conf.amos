@@ -124,13 +124,14 @@ bind-key -T amos C-l send-keys C-l
 bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux send-key M-v; fi'
 # bind-key -T amos M-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key M-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageUp; else tmux copy-mode; fi'
 bind-key -T amos C-o run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "cgdb|vim|gdb|kui_driver" &> /dev/null; then tmux send-key C-o; else tmux send-keys C-k; fi'
-bind-key -T amos C-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "fzf|vim|elvish" &> /dev/null; then tmux send-key C-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageDown; else tmux copy-mode; fi'
+bind-key -T amos C-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "emacs|fzf|vim|elvish" &> /dev/null; then tmux send-key C-v; elif pgrep -t$T "gdb" &> /dev/null; then tmux send-key PageDown; else tmux copy-mode; fi'
+bind-key -T amos M-s run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "emacs|fzf|vim|elvish" &> /dev/null; then tmux send-key M-s; else tmux copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""; fi'
 
 bind-key -T amos M-0 run-shell /home/amos/scripts/switch-to-emacs-session.sh
 bind-key -T amos M-= switch-client -t htop -Z
 
 bind-key -T amos M-u copy-mode\; send -X cursor-up\; send -X search-backward ❯
-bind-key -T amos M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
+# bind-key -T amos M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
 bind-key -Tcopy-mode-vi M-s command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
 bind-key -Tcopy-mode-vi M-u send -X search-backward ❯
 bind-key -Tcopy-mode-vi M-n send -X search-forward ❯
