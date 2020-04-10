@@ -24,7 +24,7 @@ prefix)
     exit 1
 esac
 
-tmux -u new -d -s htop htop
+tmux -u new -d -s htop fish -c 'exec htop'
 if ! tmux list-sessions | grep -q -F emacs; then
     fuser -k /tmp/emacs.lock &>/dev/null # sometimes emacs daemon doesn't quit
 fi
