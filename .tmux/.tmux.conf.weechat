@@ -34,6 +34,8 @@ bind -Tcopy-mode-vi C-] send -X copy-selection-and-cancel
 bind -Tcopy-mode-vi y send -X copy-selection
 bind -Tcopy-mode-vi q send -X clear-selection
 unbind -Tcopy-mode-vi MouseDragEnd1Pane
+unbind -Tcopy-mode-vi DoubleClick1Pane
+bind -Tcopy-mode-vi SecondClick1Pane send -X select-word
 bind -Tcopy-mode-vi TripleClick1Pane send -X select-line
 bind -Tcopy-mode-vi v send-keys -X begin-selection
 bind -Tcopy-mode-vi C-v send-keys -X rectangle-toggle
@@ -65,7 +67,9 @@ bind-key -T root S-F8 send-keys Enter
 bind-key -T root S-F12 send-keys C-]
 
 bind-key -T root f12 display
-bind-key -T root DoubleClick1Pane copy-mode\; send -X select-word
+unbind-key -Troot DoubleClick1Pane
+bind-key -T root SecondClick1Pane copy-mode\; send -X select-word
+bind-key -T root TripleClick1Pane copy-mode\; send -X select-line
 bind-key -T root C-] send-keys Escape
 bind-key -T root C-j send-keys Down
 bind-key -T root C-k send-keys Up
