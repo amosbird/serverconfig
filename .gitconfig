@@ -36,3 +36,5 @@
 	insteadOf ="https://aur.archlinux.org/rofi-emoji.git"
 [url "https://github.com/amosbird/librime-git-aur"]
 	insteadOf ="https://aur.archlinux.org/librime-git.git"
+[url "https://github.com/amosbird/xbanish-git-aur"]
+	insteadOf ="https://aur.archlinux.org/xbanish-git.git"
