@@ -154,8 +154,8 @@ ctrl + alt + {w,e,d,f,v,n,i,o,c}
 	bspc desktop --focus {w,e,d,f,v,n,i,o,c}
 
 # Focus left/right occupied desktop, used to find missing node
-ctrl + alt + {Left,Right}
-	bspc desktop --focus {prev,next}.occupied
+# ctrl + alt + {Left,Right}
+# 	bspc desktop --focus {prev,next}.occupied
 
 alt + F1
   echo m | nc -U /tmp/scrcpy.socket

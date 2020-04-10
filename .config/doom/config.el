@@ -1718,7 +1718,7 @@ it will restore the window configuration to prior to full-framing."
 
 (defun git-gutter-maybe ()
   (interactive)
-  (when git-gutter-mode (ignore (call-interactively #'git-gutter)))
+  ;; (when git-gutter-mode (ignore (call-interactively #'git-gutter)))
   nil)
 
 (add-hook! 'doom-escape-hook #'save-buffer-maybe)
