@@ -1,0 +1,5 @@
+#!/usr/bin/env fish
+
+trap '' SIGUSR1 SIGUSR2
+export HTOP_SUSPEND=1
+htop

@@ -3,5 +3,5 @@
 window=""
 mapfile -t pp < <(tmux list-panes -t "$window" -F "#{pane_pid}")
 for p in "${pp[@]}"; do
-    kill -"$1" "$p" &> /dev/null || true
+    kill -"$1" -"$p" &> /dev/null || true
 done
