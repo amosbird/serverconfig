@@ -219,3 +219,12 @@ updateroutes
 updatednsmasq
 
 https://gist.github.com/Informatic/49bd034d43e054bd1d8d4fec38c305ec
+
+rm -R /etc/pacman.d/gnupg/
+rm -R /root/.gnupg/
+rm -R /var/cache/pacman/pkg/
+gpg --refresh-keys
+pacman-key --init
+pacman-key --populate archlinux
+pacman-key --refresh-keys
+pacman -Syyu
