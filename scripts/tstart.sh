@@ -24,9 +24,9 @@ prefix)
     exit 1
 esac
 
-tmux -u new -d -s htop fish -c 'exec htop'
+tmux -u new -d -s htop "exec starthtop"
 if ! tmux list-sessions | grep -q -F emacs; then
     fuser -k /tmp/emacs.lock &>/dev/null # sometimes emacs daemon doesn't quit
 fi
-tmux -u new -d -s emacs $SHELL -i -c startemacs
+tmux -u new -d -s emacs "exec startemacs"
 tmux -u new-session -A -s amos
