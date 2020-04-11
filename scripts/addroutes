@@ -16,6 +16,9 @@ read -r _ _ gw _ < <(ip r g 123.206.66.49) || die "Cannot get default gw"
 
 gw=${1:-$gw}
 
+d="172.26.239.59"
+d=${2:-$d}
+
 ip r f table cn
 
 # sudo -u amos tun
@@ -161,12 +164,8 @@ ip r a 13.113.251.5 via 192.168.50.1 table cn
 # ip r a 128.0.0.0/1 via 172.23.10.1
 
 # sudo -u amos tunv6
-ip r a 0.0.0.0/1 via 172.26.239.59
-ip r a 128.0.0.0/1 via 172.26.239.59
-# ip r a 0.0.0.0/1 via 172.26.133.192
-# ip r a 128.0.0.0/1 via 172.26.133.192
-# ip r a 0.0.0.0/1 via 192.168.192.254
-# ip r a 128.0.0.0/1 via 192.168.192.254
+ip r a 0.0.0.0/1 via $d
+ip r a 128.0.0.0/1 via $d
 
 
 systemctl restart dnsmasq
