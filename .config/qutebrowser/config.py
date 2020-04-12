@@ -62,13 +62,20 @@ c.bindings.commands["normal"] = {
     "<alt-a>": "fake-key <ctrl+a>",
     "<ctrl-b>": "navigate prev",
     "<ctrl-f>": "navigate next",
+    "<Alt-F6>": "navigate prev",
+    "<Alt-F7>": "navigate next",
+    "<Alt-F8>": "scroll-to-perc 0",
     "<ctrl-p>": "nop",
     "<ctrl-i>": "forward",
     "<ctrl-o>": "back",
     "<ctrl-r>": "undo",
+    "<ctrl-,>": "tab-prev",
+    "<ctrl-.>": "tab-next",
     "<ctrl-alt-u>": "spawn --userscript pbpst",
     "<ctrl+shift+a>": "fake-key <ctrl+a>",
     "I": "tab-close",
+    "<Alt-F4>": "tab-close",
+    "<Alt-F5>": "undo",
     "p": "open -t -- {clipboard}",
     "<Shift-Insert>": "open -t -- {clipboard}",
     "u": "scroll-page 0 -0.5",
@@ -92,6 +99,11 @@ c.bindings.commands["normal"] = {
 config.unbind("D")
 
 c.bindings.commands["command"] = {
+    "<Alt-F4>": "tab-close",
+    "<Alt-F5>": "undo",
+    "<Alt-F6>": "navigate prev",
+    "<Alt-F7>": "navigate next",
+    "<Alt-F8>": "scroll-to-perc 0",
     "<ctrl-D>": "rl-delete-char",
     "<ctrl-i>": "completion-item-focus next",
     "<ctrl-J>": "completion-item-focus next",
@@ -100,6 +112,11 @@ c.bindings.commands["command"] = {
 }
 
 c.bindings.commands["prompt"] = {
+    "<Alt-F4>": "tab-close",
+    "<Alt-F5>": "undo",
+    "<Alt-F6>": "navigate prev",
+    "<Alt-F7>": "navigate next",
+    "<Alt-F8>": "scroll-to-perc 0",
     "<ctrl-D>": "rl-delete-char",
     "<ctrl-J>": "prompt-item-focus next",
     "<ctrl-K>": "prompt-item-focus prev",
@@ -108,6 +125,11 @@ c.bindings.commands["prompt"] = {
 }
 
 c.bindings.commands["insert"] = {
+    "<Alt-F4>": "tab-close",
+    "<Alt-F5>": "undo",
+    "<Alt-F6>": "navigate prev",
+    "<Alt-F7>": "navigate next",
+    "<Alt-F8>": "scroll-to-perc 0",
     "<Escape>": "fake-key <Escape> ;; leave-mode",
     "<Enter>": "fake-key <Return>",
     "<ctrl+a>": "fake-key <Home>",

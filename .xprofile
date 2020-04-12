@@ -22,8 +22,8 @@ cap-indicator
 xset s off -dpms
 xset b off
 compton -b
-# unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
-~/gentoo/usr/local/bin/fish -c "xbanish -m se &"
+unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
+# ~/gentoo/usr/local/bin/fish -c "xbanish -m se &"
 ~/gentoo/usr/local/bin/fish -c "sxhkd &> /tmp/sxhkd.log &"
 ~/gentoo/usr/local/bin/fish -c "copyq &> /dev/null &"
 ~/gentoo/usr/local/bin/fish -c "runscrcpy  &> /dev/null &"
