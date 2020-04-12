@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+if [[ -z $GUI ]]; then
+    source ~/.xprofile
+fi
 while true; do
-    /home/amos/git/bspwm/bspwm -c $HOME/.config/bspwm/bspwmrc || break
+    bspwm -c $HOME/.config/bspwm/bspwmrc || break
 done

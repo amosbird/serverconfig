@@ -136,7 +136,8 @@ cd serverconfig
 git remote set-url origin git@github.com:amosbird/serverconfig
 sh restore.sh
 
-trizen -S librime-git rofi-emoji bspwm-git copyq-git feh-git freerdp-git llpp-git netevent-git obs-studio-git termite-git vte3-git xcape-git caps-indicator  --noconfirm --needed
+trizen -S vte3-git librime-git
+trizen -S librime-git rofi-emoji bspwm-git copyq-git feh-git freerdp-git llpp-git netevent-git obs-studio-git vte3-git termite-git xcape-git caps-indicator  --noconfirm --needed
 
 # switch to git insteadOf workflow
 # cd ~/git/serverconfig/aurs
@@ -220,6 +221,7 @@ updatednsmasq
 
 https://gist.github.com/Informatic/49bd034d43e054bd1d8d4fec38c305ec
 
+# fix keyring error
 rm -R /etc/pacman.d/gnupg/
 rm -R /root/.gnupg/
 rm -R /var/cache/pacman/pkg/
