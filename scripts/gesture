@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+
+id=$(xdotool getmouselocation | awk -F "window:" '{print $2}')
+class=$(xprop -id $id WM_CLASS | awk -F ", \"" '{print substr($2, 1, length($2)-1)}')
+swipe3left() {
+    case "$class" in
+    qutebrowser)
+        xdotool key --window $id ctrl+o
+        ;;
+    esac
+}
+
+swipe3right() {
+    case "$class" in
+    qutebrowser)
+        xdotool key --window $id ctrl+i
+        ;;
+    esac
+}
+
+swipe3up() {
+    case "$class" in
+    qutebrowser)
+        # xdotool key --window $id alt+F6
+        xdotool key --window $id alt+F8
+        ;;
+    esac
+}
+
+swipe3down() {
+    case "$class" in
+    qutebrowser)
+        xdotool key --window $id alt+F7
+        # xdotool key --window $id G
+        ;;
+    esac
+}
+
+swipe4left() {
+    case "$class" in
+    qutebrowser|jupyterlab|discord)
+        xdotool key --window $id ctrl+comma
+        ;;
+    esac
+}
+
+swipe4right() {
+    case "$class" in
+    qutebrowser|jupyterlab|discord)
+        xdotool key --window $id ctrl+period
+        ;;
+    esac
+}
+
+swipe4up() {
+    case "$class" in
+    qutebrowser)
+        xdotool key --window $id alt+F5
+        ;;
+    esac
+}
+
+swipe4down() {
+    case "$class" in
+    qutebrowser)
+        xdotool key --window $id alt+F4
+        ;;
+    esac
+}
+
+pinch_clockwise() {
+    case "$class" in
+    qutebrowser)
+        xdotool key --window $id alt+F7
+        ;;
+    esac
+}
+
+pinch_anticlockwise() {
+    case "$class" in
+    qutebrowser)
+        xdotool key --window $id alt+F6
+        ;;
+    esac
+}
+
+$1
