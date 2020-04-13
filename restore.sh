@@ -35,7 +35,6 @@ configs=(
     .gitignore_global
     .fakevimrc
     .terminfo
-    libinput-gestures.conf
     scripts
 )
 
