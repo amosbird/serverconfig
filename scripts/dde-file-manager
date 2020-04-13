@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+if [ "$1" == "--show-item" ]
+then
+    file=$(dirname "$2")
+fi
+
+exec /usr/bin/thunar "$file"
+exec /usr/bin/dde-file-manager "$@"
