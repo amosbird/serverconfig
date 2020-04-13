@@ -25,6 +25,8 @@ c.tabs.last_close = "close"
 c.tabs.title.format = "{index}: {current_title}"
 
 c.hints.selectors['inputs'].append('[contenteditable=true]')
+c.hints.selectors['links'].append('button')
+c.hints.selectors['links'].append('div[class="ytp-miniplayer-ui"][style="display: none;"]')
 
 # import glob
 

@@ -68,6 +68,22 @@ swipe4down() {
     esac
 }
 
+pinch_in() {
+    case "$class" in
+    qutebrowser)
+        xdotool click --window $id 6
+        ;;
+    esac
+}
+
+pinch_out() {
+    case "$class" in
+    qutebrowser)
+        xdotool click --window $id 7
+        ;;
+    esac
+}
+
 pinch_clockwise() {
     case "$class" in
     qutebrowser)

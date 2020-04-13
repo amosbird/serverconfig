@@ -2,7 +2,7 @@
 
 workspace=$(bspc query -D -d focused --names)
 if pgrep -f WeChat &>/dev/null; then
-    id=$(sed -n '4p' /tmp/wechat)
+    id=$(sed -n '2p' /tmp/wechat)
     if [ -z "$id" ]; then
         exit 0
     fi
