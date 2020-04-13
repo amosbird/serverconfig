@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
 
-echo "1" | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
-echo 100 | sudo tee /sys/devices/system/cpu/intel_pstate/min_perf_pct
+if [ -z "$1" ]; then
+    echo "1" | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
+    echo 100 | sudo tee /sys/devices/system/cpu/intel_pstate/min_perf_pct
+else
+    echo "0" | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo
+    echo 11 | sudo tee /sys/devices/system/cpu/intel_pstate/min_perf_pct
+fi

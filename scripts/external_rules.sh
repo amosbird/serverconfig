@@ -51,6 +51,25 @@ stalonetray)
     # setbg.sh reset_tray
     echo "desktop=n layer=above"
     ;;
+dde-file-manager)
+    echo "$wid" >> /tmp/dde
+    echo "state=floating sticky=on"
+    ;;
+Thunar)
+    echo "$wid" >> /tmp/thunar
+    echo "state=floating sticky=on"
+    ;;
+Wine)
+    case "$instance" in
+    tim)
+        echo "$wid" >> /tmp/tim
+        ;;
+    wechat.exe)
+        echo "$wid" >> /tmp/wechat
+        ;;
+    esac
+    echo "state=floating sticky=on"
+    ;;
 qutebrowser)
     case "$title" in
     qbdaemon*)
