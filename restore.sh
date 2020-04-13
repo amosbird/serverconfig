@@ -35,6 +35,7 @@ configs=(
     .gitignore_global
     .fakevimrc
     .terminfo
+    .xsettingsd
     scripts
 )
 
