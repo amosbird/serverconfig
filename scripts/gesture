@@ -5,7 +5,7 @@ class=$(xprop -id $id WM_CLASS | awk -F ", \"" '{print substr($2, 1, length($2)-
 swipe3left() {
     case "$class" in
     qutebrowser)
-        xdotool key --window $id ctrl+o
+        xdotool key --window $id alt+F9
         ;;
     esac
 }
@@ -13,7 +13,7 @@ swipe3left() {
 swipe3right() {
     case "$class" in
     qutebrowser)
-        xdotool key --window $id ctrl+i
+        xdotool key --window $id alt+F10
         ;;
     esac
 }
