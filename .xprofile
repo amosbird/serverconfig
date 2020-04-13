@@ -30,4 +30,5 @@ unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 # ~/gentoo/usr/local/bin/fish -c "rungnirehtet &"
 ~/gentoo/usr/local/bin/fish -c "udiskie  &> /dev/null &"
 ~/gentoo/usr/local/bin/fish -c "autokey-gtk &> /dev/null &"
+~/gentoo/usr/local/bin/fish -c "libinput-gestures-setup start &> /dev/null &"
 ~/gentoo/usr/local/bin/fish -c "fcitx &> /dev/null"

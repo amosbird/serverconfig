@@ -8,11 +8,12 @@
 
 WINEPREFIX="$HOME/.deepinwine/Deepin-WeChat"
 APPDIR="/opt/deepinwine/apps/Deepin-WeChat"
-APPVER="2.6.2.31deepin0"
+APPVER="2.6.8.65deepin0"
 WECHAT_INSTALLER="WeChatSetup"
+WECHAT_VER="2.8.0.133"
 APPTAR="files.7z"
 PACKAGENAME="com.wechat"
-WINE_CMD="deepin-wine"
+WINE_CMD="wine"
 
 HelpApp()
 {
@@ -27,12 +28,16 @@ CallApp()
 	if [ ! -f "$WINEPREFIX/reinstalled" ]
 	then
 		touch $WINEPREFIX/reinstalled
-		env WINEDLLOVERRIDES="winemenubuilder.exe=d" WINEPREFIX="$WINEPREFIX" $WINE_CMD $APPDIR/$WECHAT_INSTALLER.exe
+		env WINEDLLOVERRIDES="winemenubuilder.exe=d" WINEPREFIX="$WINEPREFIX" $WINE_CMD $APPDIR/$WECHAT_INSTALLER-$WECHAT_VER.exe &
 	else
         #Support use native file dialog
         export ATTACH_FILE_DIALOG=1
 
         env WINEPREFIX="$WINEPREFIX" WINEDEBUG=-msvcrt $WINE_CMD "c:\\Program Files\\Tencent\\WeChat\\WeChat.exe" &
+	fi
+	# run 'shadow.exe' if process not exist
+	if [[ -z "$(ps -e | grep -o 'shadow.exe')" ]]; then
+		env WINEPREFIX="$WINEPREFIX" WINEDEBUG=-msvcrt $WINE_CMD "c:\\shadow.exe" &
 	fi
 }
 ExtractApp()
@@ -76,16 +81,12 @@ UpdateApp()
 }
 RunApp()
 {
-	if [[ -z "$(ps -e | grep -o xsettingsd)" ]]
-	then
-		/usr/bin/xsettingsd &
-	fi
-	if [ -d "$WINEPREFIX" ]; then
-		UpdateApp
-	else
-		DeployApp
-	fi
-	CallApp
+ 	if [ -d "$WINEPREFIX" ]; then
+ 		UpdateApp
+ 	else
+ 		DeployApp
+ 	fi
+ 	CallApp
 }
 
 CreateBottle()
@@ -112,17 +113,15 @@ SwitchToDeepinWine()
 			$PACKAGE_MANAGER="yaourt"
 		fi
     fi
-	$PACKAGE_MANAGER -S deepin-wine gnome-settings-daemon lib32-freetype2-infinality-ultimate --needed
+	$PACKAGE_MANAGER -S deepin-wine xsettingsd lib32-freetype2-infinality-ultimate --needed
 	touch -f $WINEPREFIX/deepin
 	echo "Done."
 }
 
 # Init
-if [ -f "$WINEPREFIX/deepin" ]; then
-	WINE_CMD="deepin-wine"
-	if [[ -z "$(ps -e | grep -o gsd-xsettings)" ]]; then
-		/usr/lib/gsd-xsettings &
-	fi
+WINE_CMD="deepin-wine"
+if [[ -z "$(ps -e | grep -o xsettingsd)" ]]; then
+	/usr/bin/xsettingsd &
 fi
 
 if [ -z $1 ]; then
