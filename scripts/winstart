@@ -21,6 +21,8 @@ qq)
 ww)
     cmd=$ww
     url=${2//&/^&}
+    "/opt/deepinwine/apps/Deepin-WangWang/run.sh" -u "$url"
+    exit 0
     ;;
 *)
     if echo "$1" | grep '^/' >/dev/null; then
