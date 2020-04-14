@@ -67,6 +67,18 @@ Wine)
     wechat.exe)
         echo "$wid" >> /tmp/wechat
         ;;
+    aliim.exe)
+        echo "$wid" >> /tmp/aliim
+        case "$title" in
+        阿里旺旺\ -\ ztq_小名)
+            echo "$wid" >> /tmp/aliim2
+            # echo "hidden = off "
+            ;;
+        阿里旺旺)
+            # echo "hidden = on "
+            ;;
+        esac
+        ;;
     esac
     echo "state=floating sticky=on"
     ;;

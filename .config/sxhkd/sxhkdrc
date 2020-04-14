@@ -97,7 +97,8 @@ ctrl+alt+x
   > /tmp/hidden_windows; \
   for i in $(bspc query -N -n .floating); do echo $i >> /tmp/hidden_windows; bspc node $i -g hidden=on; done
 ctrl+alt+comma
-  while read i; do bspc node $i -g hidden=off; done < /tmp/hidden_windows;
+  showwangwang.sh
+  # while read i; do bspc node $i -g hidden=off; done < /tmp/hidden_windows;
 ctrl+alt+period
   showwechat.sh
 super+Home
