@@ -1,6 +1,6 @@
 {
     "type": "script",
-    "description": "word-bs",
+    "description": "back",
     "store": {},
     "modes": [
         3
@@ -21,10 +21,10 @@
         "modifiers": [
             "<ctrl>"
         ],
-        "hotKey": "w"
+        "hotKey": "k"
     },
     "filter": {
-        "regex": "wechat.exe.Wine",
+        "regex": "aliim.exe.Wine",
         "isRecursive": false
     }
 }

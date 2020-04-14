@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep -f WeChat &>/dev/null; then
-    id=$(sed -n '4p' /tmp/wechat)
+if pgrep -f TIM &>/dev/null; then
+    id=$(tail -1 /tmp/tim)
     if [ -z "$id" ]; then
         exit 0
     fi
     wid=$(bspc query -N -n "$id")
     if [ -z "$wid" ]; then
-        wechat.sh &>/dev/null
+        exit 0
     elif bspc query -N -n focused | grep -q "$wid"; then
         bspc node "$id" -g hidden -f
         exit 0
@@ -28,7 +28,7 @@ if pgrep -f WeChat &>/dev/null; then
     xdo resize -w $w -h $h "$id"
     bspc node "$id" -l above
 else
-    rm /tmp/wechat
+    rm /tmp/tim
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    bash -c "wechat.sh &> /dev/null"
+    bash -c "tim.sh &> /dev/null"
 fi

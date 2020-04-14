@@ -61,8 +61,13 @@ Thunar)
     ;;
 Wine)
     case "$instance" in
-    tim)
-        echo "$wid" >> /tmp/tim
+    tim.exe)
+        case "$title" in
+        TIM)
+            echo "$wid" >> /tmp/tim
+            # echo "hidden = off "
+            ;;
+        esac
         ;;
     wechat.exe)
         echo "$wid" >> /tmp/wechat

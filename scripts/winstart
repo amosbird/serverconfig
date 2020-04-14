@@ -20,8 +20,10 @@ qq)
     ;;
 ww)
     cmd=$ww
-    url=${2//&/^&}
+    # url=${2//&/^&}
+    url=$2
     "/opt/deepinwine/apps/Deepin-WangWang/run.sh" -u "$url"
+    showwangwang.sh
     exit 0
     ;;
 *)
