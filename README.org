@@ -183,16 +183,15 @@ doom install
 /etc/netctl
 /etc/udev/hwdb.d
 /etc/udev/rules.d
+/etc/sysconfig/libvirt-guests
 /etc/systemd/system/thinkfan.service.d
 /etc/systemd/system/transmission.service.d
 /etc/systemd/system/zerotier-one.service.d
 /etc/systemd/system/getty@tty1.service.d
-/usr/local/bin/Telegram
 /usr/local/bin/getcursorpos
 /usr/local/bin/gnirehtet
 /usr/local/bin/netns-exec
 /usr/local/bin/netns-exec-dbus
-/usr/local/bin/client_linux_amd64
 /etc/thinkfan.conf
 /etc/modprobe.d
 /etc/modules-load.d
