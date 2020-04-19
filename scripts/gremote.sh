@@ -24,11 +24,11 @@ if [[ "$1" =~ $pattern ]]; then
         remote_sock=$(ssh $user@$host -p $port '/home/amos/gentoo/usr/bin/gpgconf --create-socketdir; file=$(/home/amos/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file;')
 
         # always use local HOME so that prefix might be shared for other users
-        termite -t $1 -e "ssh -A -t $user@$host -p $port -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" /home/amos/gentoo/startprefix'"
+        termite -t $1 -e "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -A -t $user@$host -p $port -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" /home/amos/gentoo/startprefix'"
     else
         # notify-send -a "$0" "Currently not supported"
         # exit 1
         # termite -t $1 -e "ssh -t $user@$host -p $port 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" /home/amos/gentoo/startprefix'"
-        termite -t $1 -e "ssh -t $user@$host -p $port 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" /home/amos/gentoo/startprefix'"
+        termite -t $1 -e "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -t $user@$host -p $port 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" /home/amos/gentoo/startprefix'"
     fi
 fi

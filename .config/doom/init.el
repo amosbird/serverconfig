@@ -42,7 +42,7 @@
        assembly
        data
        emacs-lisp
-       (latex +latexmk +zathura)
+       (latex +latexmk)
        lua
        markdown
        (sh +fish)

@@ -28,7 +28,8 @@ if pgrep -f AliIM.exe &>/dev/null; then
     xdo resize -w $w -h $h "$id"
     bspc node "$id" -l above
 else
+    rm /tmp/aliim
     rm /tmp/aliim2
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    # bash -c "wechat.sh &> /dev/null"
+    bash -c "wangwang.sh &> /dev/null"
 fi

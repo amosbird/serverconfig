@@ -7,6 +7,10 @@ swipe3left() {
     qutebrowser)
         xdotool key --window $id alt+F9
         ;;
+    llpp)
+        # xdotool key --window $id alt+F6
+        xdotool key --window $id ctrl+o
+        ;;
     esac
 }
 
@@ -14,6 +18,10 @@ swipe3right() {
     case "$class" in
     qutebrowser)
         xdotool key --window $id alt+F10
+        ;;
+    llpp)
+        # xdotool key --window $id alt+F6
+        xdotool key --window $id ctrl+i
         ;;
     esac
 }
@@ -24,6 +32,10 @@ swipe3up() {
         # xdotool key --window $id alt+F6
         xdotool key --window $id alt+F8
         ;;
+    llpp)
+        # xdotool key --window $id alt+F6
+        xdotool key --window $id g
+        ;;
     esac
 }
 
@@ -32,6 +44,10 @@ swipe3down() {
     qutebrowser)
         xdotool key --window $id alt+F7
         # xdotool key --window $id G
+        ;;
+    llpp)
+        # xdotool key --window $id alt+F6
+        xdotool key --window $id G
         ;;
     esac
 }

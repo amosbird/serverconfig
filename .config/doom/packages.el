@@ -60,6 +60,9 @@
 (package! visual-fill-column)
 (package! yapfify)
 
+(package! helm-bibtex
+  :recipe (:host github :repo "tmalsburg/helm-bibtex") :pin "3cff6bd702e61ed658ada07c88b7550d0dd836fd")
+
 (package! rmsbolt :recipe (:host gitlab :repo "jgkamat/rmsbolt"))
 (package! cc-playground :recipe (:host github :repo "amosbird/cc-playground" :files ("*.el" "templates")))
 (package! py-playground :recipe (:host github :repo "amosbird/py-playground" :files ("*.el" "templates")))
