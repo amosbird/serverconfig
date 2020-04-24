@@ -3421,14 +3421,19 @@ In Insert state, insert a newline."
 (advice-add #'company--insert-candidate :override #'+amos-company--insert-candidate-a)
 
 ;; company
-
-(setq-default company-idle-delay (lambda () (if (company-in-string-or-comment) nil 0.3))
+(setq-default
+              ;; company-idle-delay (lambda () (if (company-in-string-or-comment) nil 0.3))
+              company-idle-delay nil
               company-auto-complete nil ; this is actually company-auto-finish
               company-tooltip-limit 14
               company-dabbrev-downcase nil
               company-dabbrev-ignore-case nil
-              company-dabbrev-code-time-limit 0.3
               company-dabbrev-ignore-buffers "\\`[ *]"
+              ;; company-dabbrev-other-buffers t
+              ;; company-dabbrev-ignore-buffers (lambda (buffer) (not (projectile-project-buffer-p buffer (projectile-project-root))))
+              ;; company-dabbrev-code-time-limit 0.3
+              ;; company-dabbrev-code-ignore-case t
+              ;; company-dabbrev-code-everywhere t
               company-tooltip-align-annotations t
               company-require-match 'never
               company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
@@ -3437,6 +3442,7 @@ In Insert state, insert a newline."
               company-transformers nil
               company-lsp-async t
               company-lsp-cache-candidates nil
+              company-show-numbers t
               company-search-regexp-function 'company-search-flex-regexp)
 (defvar-local company-fci-mode-on-p nil)
 (defun company-turn-off-fci (&rest ignore)
