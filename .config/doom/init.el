@@ -44,7 +44,6 @@
 
        :lang
        javascript
-       assembly
        data
        emacs-lisp
        (latex +latexmk)

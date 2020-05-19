@@ -32,8 +32,7 @@
                ("class" "struct")))
 
   (set-company-backend!
-    '(c-mode c++-mode objc-mode)
-    'company-lsp)
+    '(c-mode c++-mode objc-mode))
 
   (set-pretty-symbols! '(c-mode c++-mode)
                        ;; Functional
