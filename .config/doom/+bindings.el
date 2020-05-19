@@ -266,8 +266,6 @@
       :n ")"                      #'+amos/smart-jumper-forward
       :v "<"                      #'+evil/visual-dedent
       :v ">"                      #'+evil/visual-indent
-      :v "@"                      #'+evil:macro-on-all-lines
-      :n "g@"                     #'+evil:macro-on-all-lines
       :n "gx"                     #'evil-exchange
       :n "gf"                     #'+amos/find-file-at-point
       :n "gd"                     #'+lookup/definition
