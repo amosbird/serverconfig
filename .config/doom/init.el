@@ -21,10 +21,12 @@
        rotate-text
        multiple-cursors
        snippets
+       lispy
        ;; syntax-checker
 
        :checkers
        spell
+       syntax
 
        :emacs
        ;; dired
@@ -32,9 +34,12 @@
        vc
 
        :tools
+       lsp
        eval
        make
        magit
+       rgb
+       biblio
        (lookup)
 
        :lang
@@ -52,6 +57,9 @@
        ;; (python +lsp)
        python
        (go +lsp)
+
+       :config
+       default
 
        :private
        amos-cc

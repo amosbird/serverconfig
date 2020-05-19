@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-gremote.sh 201.nobida.cn
+gremote-jump.sh 10.170.130.31
