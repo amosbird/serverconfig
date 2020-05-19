@@ -3462,7 +3462,7 @@ In Insert state, insert a newline."
               company-require-match 'never
               company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
               company-frontends (append '(company-tng-frontend) company-frontends)
-              company-backends '(company-lsp company-capf company-dabbrev company-ispell company-yasnippet)
+              company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
               company-transformers nil
               company-lsp-async t
               company-lsp-cache-candidates nil
