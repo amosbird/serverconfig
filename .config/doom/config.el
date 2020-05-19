@@ -2869,6 +2869,30 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                  (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
+;;
+
+(defun +amos*avy-handler-default (char)
+  "The default handler for a bad CHAR."
+  (let (dispatch)
+    (cond ((setq dispatch (assoc char avy-dispatch-alist))
+           (unless (eq avy-style 'words)
+             (setq avy-action (cdr dispatch)))
+           (throw 'done 'restart))
+          ((eq char [escape])
+           ;; exit silently
+           (throw 'done 'abort))
+          ((memq char '(?\e ?\C-g))
+           ;; exit silently
+           (throw 'done 'abort))
+          ((eq char ??)
+           (avy-show-dispatch-help)
+           (throw 'done 'restart))
+          ((mouse-event-p char)
+           (signal 'user-error (list "Mouse event not handled" char)))
+          (t
+           (message "No such candidate: %s, hit `C-g' to quit."
+                    (if (characterp char) (string char) char))))))
+(advice-add #'avy-handler-default :override #'+amos*avy-handler-default)
 
 (defun lua-busted-fuckups-fix ()
   (save-excursion
