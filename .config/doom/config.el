@@ -2108,7 +2108,7 @@ representation of `NUMBER' is smaller."
     ("^\\*rmsbolt-output*" :side right :size 0.5 :ttl kill-buffer :select nil :quit t)
     ("^\\*git-gutter*" :side right :size 0.5)
     ("^\\*Flycheck" :side bottom :size 0.5 :select t :ttl kill-buffer :quit t)
-    ("^\\*Compil\\(?:ation\\|e-Log\\)" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
+    ("^\\*compil\\(?:ation\\|e-Log\\)" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
     ("^\\*temp\\*" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
     ("^\\*\\(?:scratch\\|Messages\\)" :autosave t :ttl nil)
     ("^\\*Man " :size 0.45 :vslot -6 :ttl kill-buffer :quit t :select t)
