@@ -227,6 +227,8 @@ set history filename ~/.gdb_history
 set history save on
 set history remove-duplicates 5000
 
+handle SIGUSR1 noprint nostop pass
+handle SIGUSR2 noprint nostop pass
 # handle SIGTSTP noprint nostop pass
 # handle SIGQUIT noprint nostop pass
 # handle SIGINT noprint nostop pass
