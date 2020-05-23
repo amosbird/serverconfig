@@ -706,7 +706,7 @@
         :g "C-c C-k" #'reb-quit)
 
       (:map key-translation-map
-        "\035"          (kbd "<escape>")
+        ;; "\035"          (kbd "<escape>")
         [S-iso-lefttab] [backtab]
         "C-1"           (kbd "1")
         "C-2"           (kbd "2")

@@ -172,12 +172,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (use-package! gitattributes-mode
   :defer)
 
-(use-package! gitconfig-mode
-  :defer)
-
-(use-package! gitignore-mode
-  :defer)
-
 ;; way slower
 ;; (use-package! magit-svn
 ;;   :commands turn-on-magit-svn
@@ -203,9 +197,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   :config
   (evil-set-initial-state 'easy-hugo-mode 'emacs)
   (add-hook! 'easy-hugo-mode-hook (setq-local amos-browse t)))
-
-(use-package! lispyville
-  :defer)
 
 (use-package! move-text
   :defer)
@@ -2878,7 +2869,7 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
            (unless (eq avy-style 'words)
              (setq avy-action (cdr dispatch)))
            (throw 'done 'restart))
-          ((eq char [escape])
+          ((eq char 'escape)
            ;; exit silently
            (throw 'done 'abort))
           ((memq char '(?\e ?\C-g))
@@ -2892,7 +2883,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
           (t
            (message "No such candidate: %s, hit `C-g' to quit."
                     (if (characterp char) (string char) char))))))
-(advice-add #'avy-handler-default :override #'+amos*avy-handler-default)
+;; (advice-add #'avy-handler-default :override #'+amos*avy-handler-default)
+(define-key key-translation-map "\035" [escape])
 
 (defun lua-busted-fuckups-fix ()
   (save-excursion

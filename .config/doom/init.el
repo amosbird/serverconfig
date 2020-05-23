@@ -21,7 +21,6 @@
        rotate-text
        multiple-cursors
        snippets
-       lispy
        ;; syntax-checker
 
        :checkers
