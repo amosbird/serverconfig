@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
-gremote.sh 139.9.113.62
+gremote.sh 36.158.226.84
+# gremote.sh -h 36.158.226.84
