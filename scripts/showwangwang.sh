@@ -2,7 +2,7 @@
 
 workspace=$(bspc query -D -d focused --names)
 if pgrep -f AliIM.exe &>/dev/null; then
-    id=$(tail -1 /tmp/aliim2)
+    id=$(tail -1 /tmp/aliim)
     if [ -z "$id" ]; then
         exit 0
     fi
