@@ -308,7 +308,7 @@ key to automatically delete list prefixes."
   (or (run-hook-with-args-until-success 'org-metareturn-hook)
       (call-interactively (cond (arg #'org-insert-heading)
                                 ((org-at-table-p) #'org-table-wrap-region)
-                                ((org-in-item-p) (lambda! (org-beginning-of-item)
+                                ((org-in-item-p) (cmd! (org-beginning-of-item)
                                                           (end-of-line)
                                                           (if (org-at-item-checkbox-p)
                                                               (org-insert-item 'checkbox)
