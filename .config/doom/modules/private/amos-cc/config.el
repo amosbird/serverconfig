@@ -68,17 +68,17 @@
           :n "C-e"      #'+amos/maybe-add-end-of-statement
           :n "M-v"      #'+amos/lsp-ui-imenu
           :n "gs"       #'ccls/workspace-symbol
-          :n "gS"       (lambda! (setq current-prefix-arg t) (call-interactively #'ccls/workspace-symbol))
+          :n "gS"       (cmd! (setq current-prefix-arg t) (call-interactively #'ccls/workspace-symbol))
           :n "gh"       #'ccls-call-hierarchy
           :n "gR"       #'ccls/callers
           :n "gb"       #'ccls/inheritances
-          :n "gt"       (lambda! (ccls/inheritance t))
+          :n "gt"       (cmd! (ccls/inheritance t))
           :n "gT"       #'ccls/inheritance
           :n "ge"       #'lsp-execute-code-action
           :n "M-u"      #'ccls-code-lens-mode
           :n "M-o"      #'lsp-ui-sideline-mode
           "C-c i"       #'ccls/includes
-          "C-c I"       (lambda! (ccls/includes t))))
+          "C-c I"       (cmd! (ccls/includes t))))
   (sp-with-modes '(c++-mode objc-mode)
     (sp-local-pair "<" ">"
                    :when '(+cc-sp-point-is-template-p +cc-sp-point-after-include-p)

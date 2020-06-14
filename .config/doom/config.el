@@ -2571,7 +2571,7 @@ the current state and point position."
 
 (general-define-key
  :states 'lisp
- "<escape>"       (lambda! (evil-normal-state) (unless (bolp) (backward-char)))
+ "<escape>"       (cmd! (evil-normal-state) (unless (bolp) (backward-char)))
  "M-o"            #'lisp-state-toggle-lisp-state
  "M-U"            #'+amos/replace-defun
  "M-u"            #'eval-defun
@@ -2598,7 +2598,7 @@ the current state and point position."
  "M-("            #'sp-wrap-round
  "M-{"            #'sp-wrap-curly
  "M-["            #'sp-wrap-square
- "M-\""           (lambda! (sp-wrap-with-pair "\"")))
+ "M-\""           (cmd! (sp-wrap-with-pair "\"")))
 
 (defun lisp-state-toggle-lisp-state ()
   "Toggle the lisp state."
@@ -4830,7 +4830,7 @@ See `project-local-get' for the parameter PROJECT."
       (setq display-line-numbers 'relative)
       (setq-local require-final-newline nil)
       (local-set-key (kbd "C-c C-c")
-                     (lambda!
+                     (cmd!
                       (evil-normal-state)
                       (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
                                 ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)
@@ -4838,7 +4838,7 @@ See `project-local-get' for the parameter PROJECT."
                                 ((symbol-function 'yes-or-no-p) #'+amos*yes))
                         (call-interactively #'server-edit))))
       (local-set-key (kbd "C-c C-k")
-                     (lambda!
+                     (cmd!
                       (evil-normal-state)
                       (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
                                 ((symbol-function 'y-or-n-p-with-timeout) #'+amos*yes)

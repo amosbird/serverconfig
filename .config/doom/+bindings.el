@@ -15,7 +15,7 @@
       :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
       :desc "Ivy resume"                      :nv "SPC" #'ivy-resume
       :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
-      :desc "Find file in project (no cache)" :nv ">"   (lambda! (setq current-prefix-arg t) (call-interactively #'+amos/projectile-find-file))
+      :desc "Find file in project (no cache)" :nv ">"   (cmd! (setq current-prefix-arg t) (call-interactively #'+amos/projectile-find-file))
       :desc "Find recent file"                :nv ","   #'counsel-recentf
       :desc "Find recent file (no cache)"     :nv "<"   #'+amos/counsel-recentf-no-cache
       :desc "Shell command replace"           :nv "e"   #'+amos/shell-command-or-region
@@ -31,7 +31,7 @@
       :desc "Switch workspace buffer"         :nv "b"   #'switch-to-buffer
       :desc "Comment"                         :nv "l"   #'evilnc-comment-or-uncomment-lines
       :desc "Dired"                           :nv "o"   #'+amos/dired-jump
-      :desc "Scratch"                         :nv "i"   (lambda! (switch-to-buffer "*scratch*"))
+      :desc "Scratch"                         :nv "i"   (cmd! (switch-to-buffer "*scratch*"))
 
       (:prefix "f"
         :desc "File file"                     :nv "f" #'find-file
@@ -76,7 +76,7 @@
       (:prefix "n"
         :desc "Rust playground"               :nv "r" #'rust-playground
         :desc "Go playground"                 :nv "g" #'go-playground
-        :desc "C++ playground"                :nv "c" (lambda! (+amos/workspace-new) (cc-playground))
+        :desc "C++ playground"                :nv "c" (cmd! (+amos/workspace-new) (cc-playground))
         :desc "C++ playground"                :nv "l" #'cc-playground-find-snippet
         :desc "Elisp playground"              :nv "e" #'+amos/new-empty-elisp-buffer
         :desc "Open org agenda"               :nv "a" #'+amos/list-todo
@@ -107,7 +107,7 @@
 
 ;; Q U M H
 (map! (:map override
-        :gnemv "C-h d"         (lambda!
+        :gnemv "C-h d"         (cmd!
                                 (xref-find-definitions
                                  (let* ((backend (xref-find-backend)))
                                    (completing-read "Find definitions of: "
@@ -146,7 +146,7 @@
       :gn "C-w"                   #'+amos/close-current-buffer ;; bury
       :gniv "M-m"                 #'+amos/switch-buffer
       :n "%"                      #'anzu-multiedit
-      :n "R"                      (lambda! (evil-multiedit-match-all) (iedit-show/hide-unmatched-lines))
+      :n "R"                      (cmd! (evil-multiedit-match-all) (iedit-show/hide-unmatched-lines))
       :nv "G"                     #'+amos/evil-goto-line
       :n "M-RET"                  #'+amos/toggle-mc
       :i "M-RET"                  #'+amos/close-block
@@ -184,19 +184,19 @@
       :i "C-w"                    #'+amos/delete-backward-word
       :i "M-r"                    #'sp-slurp-hybrid-sexp
       :i "M-R"                    #'sp-forward-barf-sexp
-      :i "M-{"                    (lambda! (+amos-surround-with-pair ?} t))
-      :i "M-}"                    (lambda! (+amos-surround-with-pair ?}))
-      :i "M-("                    (lambda! (+amos-surround-with-pair ?\) t))
-      :i "M-)"                    (lambda! (+amos-surround-with-pair ?\)))
-      :i "M-,"                    (lambda! (+amos-surround-with-pair ?> t))
-      :i "M-."                    (lambda! (+amos-surround-with-pair ?>))
+      :i "M-{"                    (cmd! (+amos-surround-with-pair ?} t))
+      :i "M-}"                    (cmd! (+amos-surround-with-pair ?}))
+      :i "M-("                    (cmd! (+amos-surround-with-pair ?\) t))
+      :i "M-)"                    (cmd! (+amos-surround-with-pair ?\)))
+      :i "M-,"                    (cmd! (+amos-surround-with-pair ?> t))
+      :i "M-."                    (cmd! (+amos-surround-with-pair ?>))
       ;; these will break terminal
-      ;; :i "M-["                    (lambda! (+amos-surround-with-pair ?\] t))
-      ;; :i "M-]"                    (lambda! (+amos-surround-with-pair ?\]))
-      :i "M-'"                    (lambda! (+amos-surround-with-pair ?\'))
-      :i "M-_"                    (lambda! (+amos-surround-with-pair ?\' t))
-      :i "M-\""                   (lambda! (+amos-surround-with-pair ?\"))
-      :i "M-p"                    (lambda! (+amos-surround-with-pair ?\" t))
+      ;; :i "M-["                    (cmd! (+amos-surround-with-pair ?\] t))
+      ;; :i "M-]"                    (cmd! (+amos-surround-with-pair ?\]))
+      :i "M-'"                    (cmd! (+amos-surround-with-pair ?\'))
+      :i "M-_"                    (cmd! (+amos-surround-with-pair ?\' t))
+      :i "M-\""                   (cmd! (+amos-surround-with-pair ?\"))
+      :i "M-p"                    (cmd! (+amos-surround-with-pair ?\" t))
       :i "M-R"                    #'sp-forward-barf-sexp
       :n "M-e"                    #'+amos/lookup-docsets
       :n "M-i"                    #'yasdcv-translate-at-point
@@ -277,13 +277,13 @@
       :vnm "gy"                   #'evilnc-copy-and-comment-lines
       :vnm "gl"                   #'evilnc-comment-or-uncomment-lines
       :n "m"                      #'+amos/push-mark
-      :n "M"                      (lambda! (+amos/push-mark t))
+      :n "M"                      (cmd! (+amos/push-mark t))
       :n "M-9"                    #'+amos/counsel-view-marks
-      :m "gs"                     (lambda! (evil-goto-mark ?s))
-      :m "gb"                     (lambda! (evil-goto-mark ?b))
-      :m "gm"                     (lambda! (evil-goto-mark ?m))
-      :m "g<"                     (lambda! (evil-goto-mark ?<))
-      :m "g>"                     (lambda! (evil-goto-mark ?>))
+      :m "gs"                     (cmd! (evil-goto-mark ?s))
+      :m "gb"                     (cmd! (evil-goto-mark ?b))
+      :m "gm"                     (cmd! (evil-goto-mark ?m))
+      :m "g<"                     (cmd! (evil-goto-mark ?<))
+      :m "g>"                     (cmd! (evil-goto-mark ?>))
       :m "g."                     #'goto-last-change
       :n ",,"                     #'+amos/projectile-find-other-file
       :m "gs"                     #'+evil/easymotion
@@ -359,7 +359,7 @@
         "C-k"        #'company-select-previous
         "C-n"        #'company-search-repeat-forward
         "C-p"        #'company-search-repeat-backward
-        "C-s"        (lambda! (company-complete-common) (company-filter-candidates))
+        "C-s"        (cmd! (company-complete-common) (company-filter-candidates))
         "SPC"        #'+amos/company-search-abort
         ";"          #'+amos/company-search-abort
         "_"          #'+amos/company-search-abort
@@ -429,11 +429,11 @@
         :n "i"   #'dired-create-directory
         :nv "m"  #'dired-mark
         :nv "u"  #'dired-unmark
-        :n "W"   (lambda! (dired-copy-filename-as-kill 0))
-        :n "c"   (lambda! (dired-ranger-copy t) (+amos/dired-print-clipboard))
-        :n "C"   (lambda! (dired-ranger-copy t) (+amos/dired-copy-to-clipboard) (+amos/dired-print-clipboard))
-        :n "y"   (lambda! (dired-ranger-copy nil) (+amos/dired-print-clipboard))
-        :n "Y"   (lambda! (dired-ranger-copy nil) (+amos/dired-copy-to-clipboard) (+amos/dired-print-clipboard))
+        :n "W"   (cmd! (dired-copy-filename-as-kill 0))
+        :n "c"   (cmd! (dired-ranger-copy t) (+amos/dired-print-clipboard))
+        :n "C"   (cmd! (dired-ranger-copy t) (+amos/dired-copy-to-clipboard) (+amos/dired-print-clipboard))
+        :n "y"   (cmd! (dired-ranger-copy nil) (+amos/dired-print-clipboard))
+        :n "Y"   (cmd! (dired-ranger-copy nil) (+amos/dired-copy-to-clipboard) (+amos/dired-print-clipboard))
         :n "a"   #'+amos/dired-rsync
         :n "RET" #'dired-open-file
         :n "C-<return>" #'+amos/dired-xdg-open
@@ -475,14 +475,14 @@
 
       (:after evil-multiedit
         :map evil-multiedit-state-map
-        [backspace] (lambda! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
-        "DEL" (lambda! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
-        "RET" (lambda! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-next))
+        [backspace] (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
+        "DEL" (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
+        "RET" (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-next))
         "j"   #'evil-multiedit-next
         "k"   #'evil-multiedit-prev
         "C-f" #'iedit-show/hide-unmatched-lines
         "#"   #'iedit-number-occurrences
-        "$"   (lambda! (evil-multiedit--goto-overlay-end) (backward-char))
+        "$"   (cmd! (evil-multiedit--goto-overlay-end) (backward-char))
         :map (evil-multiedit-state-map iedit-mode-occurrence-keymap)
         "M-p" #'evil-multiedit-match-and-prev
         "M-n" #'evil-multiedit-match-and-next
@@ -601,7 +601,7 @@
       (:after debug
         ;; For elisp debugging
         :map debugger-mode-map
-        :n "q"   (lambda! (top-level) (doom/kill-this-buffer))
+        :n "q"   (cmd! (top-level) (doom/kill-this-buffer))
         :n "RET" #'debug-help-follow
         :n "e"   #'debugger-eval-expression
         :n "n"   #'debugger-step-through
@@ -742,7 +742,7 @@
         "C-r"         #'counsel-minibuffer-history
         "C-u"         #'+amos/backward-kill-to-bol-and-indent
         "M-y"         #'+amos/yank-pop
-        "M-'"         (lambda! (insert ?\') (insert ?\{) (insert ?\}) (insert ?\') (backward-char 2))
+        "M-'"         (cmd! (insert ?\') (insert ?\{) (insert ?\}) (insert ?\') (backward-char 2))
         "M-b"         #'+amos/backward-word-insert
         "M-d"         #'+amos/delete-forward-word
         "M-f"         #'+amos/forward-word-insert
