@@ -54,6 +54,7 @@
        (org +pandoc)
        ;; (python +lsp)
        python
+       (java +lsp)
        (go +lsp)
 
        :config
