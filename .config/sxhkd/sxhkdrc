@@ -88,7 +88,7 @@ ctrl+alt+l
 ctrl+alt+h
   showshell.sh 0
 ctrl+alt+m
-  showtim.sh
+  showmusicbox.sh
 ctrl+alt+x
   > /tmp/hidden_windows; \
   for i in $(bspc query -N -n .floating); do echo $i >> /tmp/hidden_windows; bspc node $i -g hidden=on; done
@@ -96,7 +96,7 @@ ctrl+alt+comma
   showwechat.sh
   # while read i; do bspc node $i -g hidden=off; done < /tmp/hidden_windows;
 ctrl+alt+period
-  showmusicbox.sh
+  showwangwang.sh
 super+Home
   movehome
 super+End
