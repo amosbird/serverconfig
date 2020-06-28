@@ -25,12 +25,6 @@ if [ -f $(which realpath) ]; then
 fi
 
 ./core \
-    -tunAddr $TUN_ADDR \
-    -tunGw $TUN_GW \
-    -tunMask $TUN_MASK \
     -sendThrough $ORIG_ST \
-    -vconfig $CONFIG_FILE \
     -proxyType v2ray \
-    -udpTimeout 1m0s \
-    -relayICMP \
     -loglevel debug

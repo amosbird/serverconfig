@@ -32,6 +32,10 @@ feh)
     echo "$wid" >/tmp/feh
     echo "state=floating sticky=on"
     ;;
+Blueberry.py)
+    echo "$wid" >/tmp/blueberry
+    echo "state=floating sticky=on"
+    ;;
 obs)
     echo "$wid" >>/tmp/obs
     fc
