@@ -147,7 +147,7 @@
         (user-error nil))
       (setq-local ccls-enabled t)
       (setq-local flycheck-checker 'lsp-ui)
-      (lsp-ui-flycheck-add-mode major-mode)
+      (lsp-flycheck-add-mode major-mode)
       (add-to-list 'flycheck-checkers 'lsp-ui)
       (setq-local lsp-ui-flycheck-live-reporting nil)
       (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
