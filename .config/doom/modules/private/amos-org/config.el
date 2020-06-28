@@ -337,8 +337,8 @@ key to automatically delete list prefixes."
 (defun +amos/org-todo ()
   (interactive)
   (cond
-   ((org-at-item-checkbox-p) (+org/toggle-checkbox))
-   ((org-at-item-p) (+org/toggle-checkbox))
+   ((org-at-item-checkbox-p) (org-toggle-checkbox))
+   ((org-at-item-p) (org-toggle-checkbox))
    (t (org-todo))))
 
 (defun +amos/ivy-bibtex (&optional arg)

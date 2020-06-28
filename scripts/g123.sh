@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-gremote-jump.sh 10.61.2.123
+gremote.sh 172.26.97.5

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sudo zerotier-cli peers | perl -E '
+my @lines=<>;
+my %ip = (
+   "0439cc4a31" => ["72:9d:f8:d0:d4:4b", "172.26.100.36", "t450s"],
+   "0ff855964d" => ["72:96:39:49:08:37", "172.26.127.86", "t480s-win"],
+   "13f9b99122" => ["72:8a:38:a5:0f:58", "172.26.126.87", "ict206"],
+   "2c3fe70da1" => ["72:b5:fe:fb:93:db", "172.26.205.87", "abbox"],
+   "3319c77cbc" => ["72:aa:d8:db:e2:c6", "172.26.202.18", "arm"],
+   "3f25949522" => ["72:a6:e4:88:0b:58", "172.26.5.226", "bijun226"],
+   "45c1f2558f" => ["72:dc:00:ee:cb:f5", "172.26.155.108", "oracle"],
+   "5317413ffc" => ["72:ca:d6:5d:a1:86", "172.26.133.192", "la"],
+   "5628f73a07" => ["72:cf:e9:eb:a4:7d", "172.26.180.237", "t"],
+   "65d84629bb" => ["72:fc:19:5a:b7:c1", "172.26.178.148", "abt480"],
+   "7cf0171eef" => ["72:e5:31:0b:80:95", "172.26.239.59", "azure"],
+   "82f3bb85ca" => ["72:1b:32:a7:1b:b0", "172.26.97.5", "i123"],
+   "e4465b2ccc" => ["72:7d:87:47:b2:b6", "172.26.255.222", "nobida201"],
+   "f8a7f21cad" => ["72:61:66:ee:82:d7", "172.26.20.138", "aws"]
+);
+my @data;
+foreach(@lines[2 .. $#lines]) {my @elems = split; my $key = $elems[0]; $elems[0] = $ip{$key}[1]; unshift(@elems, $ip{$key}[2]); push(@data, \@elems)};
+my @header = ("<name>", "<addr>", "<ver>", "<role>", "<lat>", "<link>", "<lastTX>", "<lastRX>", "<path>");
+unshift(@data, \@header);
+my @width;
+foreach my $col (0..$#{$data[0]}) {
+    my $len = 0;
+    foreach my $elems (@data) {
+        if ( length(${$elems}[$col]) > $len ) { $len = length(${$elems}[$col]); }
+    };
+    push (@width, $len + 2);
+};
+foreach my $elemref (@data) {foreach my $col (0..$#{$elemref}) {printf "%-".$width[$col]."s", ${$elemref}[$col];} print "\n"}'
