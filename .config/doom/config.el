@@ -1655,7 +1655,7 @@ EXTRA is a plist of extra parameters."
 
 (defun +amos/create-fish-function (name)
   (interactive "sNew function's name: ")
-  (let ((full-name (expand-file-name (concat name ".fish") "/home/amos/.config/fish/functions/")))
+  (let ((full-name (expand-file-name (concat name ".fish") "$HOME/.config/fish/functions/")))
     (if (file-exists-p full-name)
         (user-error "Function with the same name already exists!"))
     (find-file full-name)
@@ -2458,7 +2458,7 @@ the current state and point position."
         (+amos/workspace-switch-to-frame (car +amos-frame-stack)))
     (delete-frame f))
   (when +amos-tmux-need-switch
-    (shell-command! "tmux switch-client -t amos\; run-shell -t amos '/home/amos/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
+    (shell-command! "tmux switch-client -t amos\; run-shell -t amos '$HOME/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
     (setq +amos-tmux-need-switch nil)))
 
 (defun +amos/workspace-switch-to-frame (frame)
@@ -4889,7 +4889,7 @@ See `project-local-get' for the parameter PROJECT."
 
 (defun +amos/org-journal ()
   (interactive)
-  (find-file "/home/amos/git/work/journal.org")
+  (find-file (expand-file-name "~/git/work/journal.org"))
   (goto-char (point-min))
   (outline-next-heading))
 
