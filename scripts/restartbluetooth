@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+sudo rfkill block bluetooth
+sleep 1
+sudo rfkill unblock bluetooth
+sleep 1
+sudo systemctl restart bluetooth

@@ -118,6 +118,8 @@ settings:
     global: false
   content.pdfjs:
     global: false
+  content.proxy:
+    global: system
   content.ssl_strict:
     global: false
   fonts.hints:

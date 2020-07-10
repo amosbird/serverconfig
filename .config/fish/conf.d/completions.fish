@@ -29,6 +29,7 @@ complete -f -c ncswitch -a '(__fish_netctl_get_profiles)'
 
 complete -f -c topnet -a '(__fish_complete_pids)'
 complete -f -c topfiles -a '(__fish_complete_pids)'
+complete -f -c sedit -a '(systemctl --no-legend --no-pager --all list-units $passflags | string replace -r "(?: +(\S+)){4}" \t\'$1\')'
 
 complete -f -c tmuxperftop2 -a '(__fish_complete_user_pids)'
 complete -f -c procenv -a '(__fish_complete_user_pids)'

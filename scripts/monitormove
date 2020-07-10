@@ -18,4 +18,5 @@ fi
 bspc monitor "$2" -r
 bspc monitor "$1" -d w e d f v n i o p c h
 bspc desktop --focus "$od"
+bspc desktop v --layout monocle
 setbg.sh
