@@ -69,14 +69,15 @@ if [[ $# == 0 ]]; then
     fi
     (cd $HOME/.password-store && git pull)
 
-    sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
-
-    setxkbmap us
-
     gpg --recv-keys 80D430DCBECFEDB4
     echo -e "5\ny\n" | gpg --command-fd 0 --expert --edit-key 80D430DCBECFEDB4 trust
     gpg --recv-keys C3BFA922206F41DA
     echo -e "5\ny\n" | gpg --command-fd 0 --expert --edit-key C3BFA922206F41DA trust
+fi
+
+if [[ -n $GUI ]]; then
+    sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
+    setxkbmap us
 fi
 
 echo 'Restored!'
