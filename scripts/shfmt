@@ -1,4 +1,4 @@
 #!/usr/bin/env fish
 
 cd (dirname (status -f)) || exit 1
-/home/amos/gentoo/usr/bin/shfmt -i 4 $argv
+$HOME/gentoo/usr/bin/shfmt -i 4 $argv

@@ -2,7 +2,7 @@
 
 p=$(equery which "$1")
 if test -n "$p"; then
-    localrepo=/home/amos/gentoo/var/db/repos/localrepo
+    localrepo=$HOME/gentoo/var/db/repos/localrepo
     repo=${p%/*}
     trim=${p%/*/*/*}
     cd "$trim" || exit 1

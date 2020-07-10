@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 set -e
-cd /home/amos/git/bc
+cd $HOME/git/bc
 
 PIDFILE=blive.pid
 if [ -e "${PIDFILE}" ]; then

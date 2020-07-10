@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
-mkdir -p /home/amos/.config
+mkdir -p $HOME/.config
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-mkdir -p /home/amos/.lc
-ln -sf "$DIR"/lc/config.json /home/amos/.lc/
+mkdir -p $HOME/.lc
+ln -sf "$DIR"/lc/config.json $HOME/.lc/
 
 configs=(
     .globalrc
@@ -40,34 +40,34 @@ configs=(
 )
 
 for config in "${configs[@]}"; do
-    rm -rf "/home/amos/$config"
-    ln -sf "$DIR/$config" /home/amos/
+    rm -rf "$HOME/$config"
+    ln -sf "$DIR/$config" $HOME/
 done
 
 for dotconfig in "$DIR/.config/"*; do
-    rm -rf "/home/amos/.config/$(basename "$dotconfig")"
-    ln -sf "$dotconfig" /home/amos/.config/
+    rm -rf "$HOME/.config/$(basename "$dotconfig")"
+    ln -sf "$dotconfig" $HOME/.config/
 done
 
-rm -rf /home/amos/.tmux
-rm -rf /home/amos/.tmux.conf
-ln -sf "$DIR/.tmux" /home/amos/
-ln -sf "$DIR/.tmux/.tmux.conf" /home/amos/
+rm -rf $HOME/.tmux
+rm -rf $HOME/.tmux.conf
+ln -sf "$DIR/.tmux" $HOME/
+ln -sf "$DIR/.tmux/.tmux.conf" $HOME/
 
-mkdir -p /home/amos/.local/share/
-ln -sf /home/amos/gentoo/usr/share/grc /home/amos/.local/share/
+mkdir -p $HOME/.local/share/
+ln -sf $HOME/gentoo/usr/share/grc $HOME/.local/share/
 
 lesskey "$DIR/lesskey"
 
-mkdir -p -m 700 /home/amos/.ssh
-cp "$DIR"/id_rsa.pub /home/amos/.ssh/
+mkdir -p -m 700 $HOME/.ssh
+cp "$DIR"/id_rsa.pub $HOME/.ssh/
 
 if [[ $# == 0 ]]; then
-    if [ ! -d /home/amos/.password-store/.git ]; then
-        rm -rf /home/amos/.password-store
-        git clone git@github.com:amosbird/pass-store /home/amos/.password-store
+    if [ ! -d $HOME/.password-store/.git ]; then
+        rm -rf $HOME/.password-store
+        git clone git@github.com:amosbird/pass-store $HOME/.password-store
     fi
-    (cd /home/amos/.password-store && git pull)
+    (cd $HOME/.password-store && git pull)
 
     sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
 
