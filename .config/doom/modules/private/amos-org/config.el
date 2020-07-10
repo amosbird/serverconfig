@@ -52,6 +52,8 @@
           :n "M-q"           #'+amos/org-unfill-toggle
           :g "C-c e"         #'org-edit-special
           :g "C-c C-j"       #'counsel-org-goto
+          :nv "C-S-f"        #'+amos/org-format ;; gui
+          :nv "S-<f11>"      #'+amos/org-format ;; terminal
           :g "C-c C-S-l"     #'+org/remove-link)))
 
 (after! org
@@ -90,7 +92,7 @@
                 `((?a . ,(face-foreground 'error))
                   (?b . ,(face-foreground 'warning))
                   (?c . ,(face-foreground 'success)))
-                org-refile-targets '((nil :level . 1))
+                org-refile-targets '((nil :maxlevel . 2))
                 org-reverse-note-order t
                 org-startup-indented t
                 org-startup-truncated nil
@@ -340,6 +342,23 @@ key to automatically delete list prefixes."
    ((org-at-item-checkbox-p) (org-toggle-checkbox))
    ((org-at-item-p) (org-toggle-checkbox))
    (t (org-todo))))
+
+(defun +amos/org-format ()
+  (interactive)
+  (save-excursion
+    (goto-char (point-min))
+    (let ((last-line-is-empty t))
+      (while (not (eobp))
+        (let ((line-is-empty (looking-at-p "[ \t]*$"))
+              (line-is-header (org-at-heading-or-item-p)))
+          (if (and line-is-header (not last-line-is-empty))
+               (save-excursion (end-of-line 0) (open-line 1)))
+          (if (and last-line-is-empty line-is-empty)
+              (delete-region
+               (point)
+               (progn (forward-visible-line 1) (point)))
+            (forward-line 1)
+            (setq last-line-is-empty line-is-empty)))))))
 
 (defun +amos/ivy-bibtex (&optional arg)
   (interactive "P")

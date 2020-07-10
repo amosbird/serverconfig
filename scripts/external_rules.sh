@@ -36,6 +36,10 @@ Blueberry.py)
     echo "$wid" >/tmp/blueberry
     echo "state=floating sticky=on"
     ;;
+Blueman-manager)
+    echo "$wid" >/tmp/blueman
+    echo "state=floating sticky=on"
+    ;;
 obs)
     echo "$wid" >>/tmp/obs
     fc
@@ -47,8 +51,11 @@ Conky)
     ;;
 jupyterlab)
     echo "$wid" >/tmp/jupyter
-    # setbg.sh reset_tray
     echo "desktop=o"
+    ;;
+mail)
+    echo "$wid" >/tmp/mail
+    echo "desktop=v"
     ;;
 stalonetray)
     echo "$wid" >/tmp/stalonetray

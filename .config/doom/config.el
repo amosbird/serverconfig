@@ -4887,6 +4887,12 @@ See `project-local-get' for the parameter PROJECT."
     (kill-new url)
     (osc-command "notify-send OSC52Command '\nWandBox Uploaded'")))
 
+(defun +amos/org-journal ()
+  (interactive)
+  (find-file "/home/amos/git/work/journal.org")
+  (goto-char (point-min))
+  (outline-next-heading))
+
 (defun +amos-ediff-copy-diff-a (func &rest args)
   (mkr! (apply func args)))
 (advice-add #'ediff-copy-diff :around #'+amos-ediff-copy-diff-a)

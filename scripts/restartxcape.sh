@@ -10,4 +10,4 @@ g) TMUXGDB="tmuxgdb"; DEBUG="-d" ;;
 esac
 
 # $TMUXGDB xcape $DEBUG
-$TMUXGDB xcape $DEBUG -e '#37=Escape;#62=Return;#108=Shift_L|Insert;#100=BackSpace'
+$TMUXGDB xcape $DEBUG -e '#62=Return;#108=Shift_L|Insert;#100=BackSpace'

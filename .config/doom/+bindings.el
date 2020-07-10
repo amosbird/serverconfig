@@ -309,7 +309,8 @@
         :g "p"       #'doom/other-popup)
 
       (:prefix "C-c"
-        "C-SPC" #'easy-hugo)
+        ;; "C-SPC" #'easy-hugo)
+        "C-SPC" #'+amos/org-journal)
 
       (:after evil-easymotion
         :map evilem-map

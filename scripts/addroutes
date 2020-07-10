@@ -4,8 +4,11 @@ die() { echo "$*" 1>&2 ; exit 1; }
 
 ((UID == 0)) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
 
-ip r d 0.0.0.0/1 via 172.26.239.59
-ip r d 128.0.0.0/1 via 172.26.239.59
+pkill core
+runproxy
+rm=10.255.0.2
+ip r d 0.0.0.0/1 via $rm
+ip r d 128.0.0.0/1 via $rm
 
 # updateroutes
 
@@ -16,7 +19,7 @@ read -r _ _ gw _ < <(ip r g 123.206.66.49) || die "Cannot get default gw"
 
 gw=${1:-$gw}
 
-d="172.26.239.59"
+d="$rm"
 d=${2:-$d}
 
 ip r f table cn

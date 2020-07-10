@@ -111,8 +111,6 @@ super+0
   pkill -SIGUSR1 sxhkd
 ctrl+F12
   systemctl suspend
-ctrl+F10
-  dunstctl.sh; pkill -SIGRTMIN+11 i3blocks
 ctrl + alt + {j, k}
   bspc node -f 'last.floating.local' || bspc node -f {next,prev}.local
 
@@ -170,6 +168,8 @@ ctrl + F3
   pulseaudio-ctl up 3
 ctrl + F4
   pavucontrol
+ctrl + F10
+  blueman-manager
 XF86AudioLowerVolume
   pulseaudio-ctl down 3
 XF86AudioRaiseVolume
@@ -186,7 +186,7 @@ XF86MonBrightnessUp
 #   bspc node --state tiled
 
 ctrl+Eisu_toggle
-  echo 'connect 04:52:C7:02:E5:FD' | bluetoothctl
+  echo 'connect 94:16:25:25:D2:5D' | bluetoothctl
   # trackpointspeed
 
 super + shift + r

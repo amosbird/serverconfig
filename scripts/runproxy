@@ -11,9 +11,9 @@ CONFIG_FILE=cfg.json
 TUN_GW=10.255.0.1
 TUN_ADDR=10.255.0.2
 TUN_MASK=255.255.255.0
-ORIG_GW=$(ip route get 1 | awk '{print $3;exit}')
-ORIG_ST_SCOPE=$(ip route get 1 | awk '{print $5;exit}')
-ORIG_ST=$(ip route get 1 | awk '{print $7;exit}')
+ORIG_GW=$(ip route get 10 | awk '{print $3;exit}')
+ORIG_ST_SCOPE=$(ip route get 10 | awk '{print $5;exit}')
+ORIG_ST=$(ip route get 10 | awk '{print $7;exit}')
 
 echo "Original send through address $ORIG_ST (It should be a valid IP address)"
 echo "Original send through scope $ORIG_ST_SCOPE (It should be a valid network interface name)"
@@ -24,7 +24,4 @@ if [ -f $(which realpath) ]; then
     echo "Using config file $CONFIG_FULL_PATH"
 fi
 
-./core \
-    -sendThrough $ORIG_ST \
-    -proxyType v2ray \
-    -loglevel debug
+bash -c "./core -sendThrough $ORIG_ST -proxyType v2ray -loglevel debug &> /tmp/mellow.log &"

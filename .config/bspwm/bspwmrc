@@ -12,6 +12,8 @@ else
     bspc monitor DP2-2 -r
 fi
 
+bspc desktop v --layout monocle
+
 bspc config border_width 0
 bspc config window_gap 0
 bspc config split_ratio 0.52
@@ -33,6 +35,7 @@ bspc rule -a Screenkey manage=off
 bspc rule -a Arandr sticky=on state=floating
 bspc rule -a Deadbeef state=floating
 bspc rule -a Transmission-remote-gtk state=floating
+bspc rule -a flameshot manage=off
 bspc rule -a Zathura state=tiled
 bspc rule -a netease-cloud-music desktop=o follow=on
 bspc rule -a xfreerdp desktop=w follow=on
