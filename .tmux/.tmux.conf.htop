@@ -10,8 +10,8 @@ bind-key -T htop C-] send-keys Escape
 bind-key -T htop C-j send-keys Down
 bind-key -T htop C-k send-keys Up
 # bind-key -T htop C-s send-keys \\
-bind-key -T htop M-0 run-shell "/home/amos/scripts/tmuxsuspend USR1" \; switch-client -l
-bind-key -T htop M-= run-shell "/home/amos/scripts/tmuxsuspend USR1" \; switch-client -l
+bind-key -T htop M-0 run-shell "$HOME/scripts/tmuxsuspend USR1" \; switch-client -l
+bind-key -T htop M-= run-shell "$HOME/scripts/tmuxsuspend USR1" \; switch-client -l
 
 # bind -T htop 3 split-window -v -c '#{pane_current_path}'
 
