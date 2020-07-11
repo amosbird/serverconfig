@@ -1,1 +1,88 @@
-/home/amos/git/serverconfig/scripts/cquery
+#!/usr/bin/env bash
+
+# if [[ -z "${ccls_include_dirs}" ]]; then
+#     exec ~/git/ccls/build/release/bin/ccls --log-file=/tmp/cq.txt "$@"
+# fi
+
+# export CCLS_TRACEME=1
+# export CCLS_CRASH_RECOVERY=0
+
+cxx_flags='[
+      "-xobjective-c++-header",
+      "-D__cpp_deduction_guides=0",
+      "-Wno-macro-redefined"'
+
+for i in $ccls_cxx_flags; do
+    cxx_flags="${cxx_flags}, \"$i\""
+done
+
+for i in $ccls_include_dirs; do
+    cxx_flags="${cxx_flags}, \"-I$i\""
+done
+
+init_blacklist='["/tmp"'
+for i in $ccls_blacklist; do
+    init_blacklist="${init_blacklist}, \"$i\""
+done
+blacklist=$init_blacklist
+blacklist="${blacklist}, \"~$\""
+blacklist="${blacklist}]"
+
+init_blacklist="${init_blacklist}]"
+
+if [[ -z "$ccls_suffix" ]]; then
+    ccls_suffix=$(basename "$(git rev-parse --show-toplevel)")
+fi
+if [[ ! -z "$ccls_suffix" ]]; then
+    ccls_suffix=-"$ccls_suffix"
+fi
+
+cxx_flags="${cxx_flags}, \"--sysroot=$HOME/gentoo\"]"
+
+multi=0
+# if [[ -z "$ccls_multi" ]]
+# then
+#     multi=0
+# else
+#     multi=1
+# fi
+#
+init=$(jq -c -n --argjson multi "$multi" --argjson init_blacklist "$init_blacklist" --argjson blacklist "$blacklist" --argjson cxx_flags "$cxx_flags" --argjson home \"$HOME/.cache/.ccls_cached_index\" '
+{
+  "highlight": { "largeFileSize": 131072 },
+  "cache": { "directory": $home },
+  "client": { "snippetSupport": true },
+  "index": {
+    "multiVersion": $multi,
+    "trackDependency": 1,
+    "comments": 0,
+    "initialBlacklist": $init_blacklist,
+    "blacklist": $blacklist
+  },
+  "workspaceSymbol": { "caseSensitivity": 0, "maxNum": 2000 },
+  "diagnostics": {
+    "onChange": -1,
+    "onOpen": 1000,
+    "onSave": 200,
+    "blacklist": ["~$"]
+  },
+  "completion": {
+    "detailedLabel": false,
+    "include": {
+        "whitelist": ["ccutils", "/usr/(local/)?include/(sys/)?[^/]+\\.h$"],
+        "blacklist": [
+          "(x86_64-redhat-linux|x86_64-pc-linux-gnu)/([^/]+/){0,3}(32|bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
+          "/usr/(local/)?include/[^/]+/(bits|tr1|tr2|parallel|experimental|profile|ext|debug)/",
+          "/usr/(local/)?include/c\\+\\+/v1/",
+          "/clang/[^/]+/include/",
+          "/usr/(local/)?include/(?!c\\+\\+).+"
+        ]
+    }
+  },
+  "clang": {
+    "excludeArgs": ["-fsanitize", "-fno-tree-loop-distribute-patterns", "-fwhole-program", "-Wno-maybe-uninitialized", "-Wno-unused-but-set-variable"],
+    "extraArgs": $cxx_flags
+  }
+}')
+
+exec $HOME/git/ccls/release/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"
