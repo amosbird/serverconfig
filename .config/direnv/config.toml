@@ -1,5 +1,6 @@
 [whitelist]
-prefix = ["$HOME/cc/playground", "$HOME/cc-playground", "$HOME/py/playground", "$HOME/py-playground"]
+prefix = ["/home/zhengtianqi/cc/playground", "/home/zhengtianqi/cc-playground", "/home/zhengtianqi/py/playground", "/home/zhengtianqi/py-playground",
+          "/home/amos/cc/playground", "/home/amos/cc-playground", "/home/amos/py/playground", "/home/amos/py-playground"]
 exact = [
     "/Users/adam/code/bar",
     "/Users/adam/code/quux/.envrc"
