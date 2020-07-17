@@ -1790,17 +1790,20 @@ current buffer's, reload dir-locals."
                 :unwind (lambda ()
                           (unless success
                             (switch-to-buffer xref-buffer)
-                            (goto-char xref-pos)))
-                :action (lambda (x)
-                          (let ((location (cdr x)))
-                            (let* ((marker (xref-location-marker location))
-                                   (buf (marker-buffer marker)))
-                              (switch-to-buffer buf)
-                              (with-ivy-window
-                                (goto-char marker))
-                              (unless (eq 'ivy-call this-command)
-                                (setq success t)))))
-                :caller '+amos-ivy-xref))))
+                            (goto-char xref-pos)
+                            (+amos/recenter)))
+                :action #'+amos-ivy-xref-action
+                :caller #'+amos-ivy-xref))))
+
+(defun +amos-ivy-xref-action (x)
+  (let ((location (cdr x)))
+    (let* ((marker (xref-location-marker location))
+           (buf (marker-buffer marker)))
+      (switch-to-buffer buf)
+      (with-ivy-window
+        (goto-char marker))
+      (unless (eq 'ivy-call this-command)
+        (setq success t)))))
 
 (defun +amos-xref--find-xrefs-a (input kind arg display-action)
   (let ((xrefs (funcall (intern (format "xref-backend-%s" kind))
