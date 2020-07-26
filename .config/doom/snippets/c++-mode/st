@@ -1,0 +1,5 @@
+# -*- mode: snippet -*-
+# name: stacktrace
+# key: st
+# --
+std::cerr << StackTrace().toString() << std::endl;
