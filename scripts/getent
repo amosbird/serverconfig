@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+getent=$(which -a getent | tail -n1)
+exec "$getent" "$@"

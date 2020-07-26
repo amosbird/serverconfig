@@ -12,6 +12,10 @@ if [[ "$1" == install ]]; then
 else
     target=..
     case "$1" in
+    ozone)
+        # This will build an ozone-<version>.tar.gz in your target directory.
+        mvn clean package -DskipTests=true -Dmaven.javadoc.skip=true -Phdds -Pdist -Dtar -DskipShade
+        ;;
     llvm)
         target=../llvm
         cmake_args=(
