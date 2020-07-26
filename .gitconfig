@@ -11,7 +11,7 @@
 [github]
 	user = amosbird
 [commit]
-	gpgsign = true
+	# gpgsign = true
 [url "https://github.com/amosbird/xcape-git-aur"]
 	insteadOf ="https://aur.archlinux.org/xcape-git.git"
 [url "https://github.com/amosbird/bspwm-git-aur"]
