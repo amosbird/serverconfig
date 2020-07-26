@@ -130,6 +130,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   :init
   (setq
    lsp-prefer-flymake nil
+   lsp-log-io t
    lsp-enable-indentation nil
    lsp-enable-file-watchers nil
    lsp-auto-guess-root t)
@@ -138,14 +139,27 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (add-hook! 'kill-emacs-hook (setq lsp-restart 'ignore))
   (add-hook! 'lsp-after-open-hook #'lsp-enable-imenu))
 
+;; (defun lsp-java-suggest-project-root ()
+;;   (and (memq major-mode '(java-mode))
+;;        (when-let (dir (cl-some  #'(lambda (file) (locate-dominating-file default-directory file)) '("pom.xml")))
+;;          (expand-file-name dir))))
+
+;; (advice-add 'lsp--suggest-project-root :before-until #'lsp-java-suggest-project-root)
+
+
+(use-package! thrift-mode
+  :config
+  (add-to-list 'auto-mode-alist '("\\.thrift\\'" . thrift-mode)))
+
 (use-package! lsp-ui
   :init
   (setq lsp-ui-sideline-enable nil
         lsp-ui-sideline-show-diagnostics nil)
-  (add-hook! 'lsp-ui-mode-hook
-    (defun +amos-init-ui-flycheck-h ()
-      (require 'lsp-ui-flycheck)
-      (lsp-ui-flycheck-enable t)))
+  ;; (add-hook! 'lsp-ui-mode-hook
+  ;;   (defun +amos-init-ui-flycheck-h ()
+  ;;     (require 'lsp-ui-flycheck)
+  ;;     (lsp-ui-flycheck-enable t)))
+
   :defer)
 
 (use-package! go-playground
