@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-ip rule add fwmark 0x1 table kwai pref 20000
-
 #
 # Originally part of vpnc source code:
 # © 2005-2012 Maurice Massar, Jörg Mayer, Antonio Borneo et al.
@@ -237,6 +235,7 @@ if [ -n "$IPROUTE" ]; then
 
 	set_default_route() {
 		$IPROUTE route add default dev "$TUNDEV" table kwai
+		$IPROUTE route add 10.62.136.41 dev "$TUNDEV"
 		$IPROUTE route flush cache 2>/dev/null
 	}
 

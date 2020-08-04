@@ -24,6 +24,8 @@ mod3+2
   sleep 0.1 && inputstr amosbird@gmail.com
 mod3+3
   rofipass
+mod3+4
+  rofihosts
 mod3+d
   dshot | copyq copyImage -
 mod3+D
@@ -31,9 +33,9 @@ mod3+D
 mod3+o
   lang=$(echo -e "chi_sim\neng\nchi_sim+eng\njpn" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
 mod3+p
-  flameshot gui
+  node=$(bspc query -N -n); flameshot gui -r | copyq copyImage - ; bspc node -f $node
 mod3+shift+p
-  flameshot gui -r | uploadimg -
+  node=$(bspc query -N -n); flameshot gui -r | uploadimg - ; bspc node -f $node
 mod3+t
   xclip -out | upload -
 mod3+shift+r
@@ -45,7 +47,7 @@ mod3+s
 mod3+v
   translate
 super+z
-  slock
+  lockscreen
 super+q
   bspc node -c
 # alt+F4
@@ -95,8 +97,8 @@ ctrl+alt+x
 ctrl+alt+comma
   showwechat.sh
   # while read i; do bspc node $i -g hidden=off; done < /tmp/hidden_windows;
-ctrl+alt+period
-  showwangwang.sh
+# ctrl+alt+period
+#   showwangwang.sh
 super+Home
   movehome
 super+End

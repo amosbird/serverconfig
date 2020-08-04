@@ -103,8 +103,9 @@ settings:
   content.geolocation:
     global: false
   content.headers.user_agent:
-    global: Mozilla/5.0 ({os_info}) AppleWebKit/{webkit_version} (KHTML, like Gecko)
-      {qt_key}/{qt_version} {upstream_browser_key}/{upstream_browser_version} Safari/{webkit_version}
+    global: Kim/0.8.107 Mozilla/5.0 ({os_info}) AppleWebKit/{webkit_version} (KHTML,
+      like Gecko) {qt_key}/{qt_version} {upstream_browser_key}/{upstream_browser_version}
+      Safari/{webkit_version}
   content.host_blocking.enabled:
     global: false
   content.host_blocking.lists:

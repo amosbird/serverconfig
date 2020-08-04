@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+selected_host="$(pass show hosts | rofi -dmenu -p "host > ")"
+
+rofi_exit=$?
+if [[ $rofi_exit -eq 1 ]]; then
+    exit
+fi
+
+inputstr "$selected_host"
