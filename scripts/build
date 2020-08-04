@@ -7,6 +7,8 @@ else
    mkdir -p release && pushd release || exit 1
 fi
 
+mkdir install
+
 if [[ "$1" == install ]]; then
     ninja && sudo ninja install
 else
@@ -25,6 +27,7 @@ else
             -DCMAKE_BUILD_TYPE=Release
             -DLLVM_BUILD_LLVM_DYLIB=1
             -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1'
+            -DCMAKE_INSTALL_PREFIX=$PWD/install
         )
         ;;
     llvm-debug)
@@ -36,6 +39,7 @@ else
             -DCMAKE_BUILD_TYPE=Debug
             -DLLVM_BUILD_LLVM_DYLIB=1
             -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1'
+            -DCMAKE_INSTALL_PREFIX=$PWD/install
         )
         ;;
     ccls)

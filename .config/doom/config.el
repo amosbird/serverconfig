@@ -1828,8 +1828,13 @@ current buffer's, reload dir-locals."
     (+amos-ivy-xref xrefs kind)))
 (advice-add #'xref--find-xrefs :override #'+amos-xref--find-xrefs-a)
 
-(defun +amos-ivy-xref-show-xrefs-a (xrefs alist)
-  (+amos-ivy-xref xrefs 'xref))
+(defun +amos-ivy-xref-show-xrefs-a (fetcher alist)
+  (let* ((xrefs (if (functionp fetcher)
+                    ;; Emacs 27
+                    (or (assoc-default 'fetched-xrefs alist)
+                        (funcall fetcher))
+                  fetcher)))
+    (+amos-ivy-xref xrefs 'xref)))
 (advice-add #'ivy-xref-show-xrefs :override #'+amos-ivy-xref-show-xrefs-a)
 
 (after! recentf
@@ -4380,7 +4385,7 @@ inside or just after a citation command, only adds KEYS to it."
 (defun +amos/push-mark (&optional global)
   (interactive)
   (+amos/recenter)
-  (add-hook! 'kill-buffer-hook :local #'+amos-swap-out-markers-h)
+  ;; (add-hook! 'kill-buffer-hook :local #'+amos-swap-out-markers-h)
   (save-excursion
     (move-beginning-of-line 1)
     (let ((marker-list (if global +amos-marker-list (project-local-getq +amos-marker-list)))

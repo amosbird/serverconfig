@@ -69,9 +69,9 @@ if [[ $# == 0 ]]; then
     fi
     (cd $HOME/.password-store && git pull)
 
-    gpg --recv-keys 80D430DCBECFEDB4
+    gpg --keyserver keyserver.ubuntu.com --recv-keys 80D430DCBECFEDB4
     echo -e "5\ny\n" | gpg --command-fd 0 --expert --edit-key 80D430DCBECFEDB4 trust
-    gpg --recv-keys C3BFA922206F41DA
+    gpg --keyserver keyserver.ubuntu.com --recv-keys C3BFA922206F41DA
     echo -e "5\ny\n" | gpg --command-fd 0 --expert --edit-key C3BFA922206F41DA trust
 fi
 
