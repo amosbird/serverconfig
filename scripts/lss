@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+arg=$1
+
+bold=$(tput bold)
+blue=$(tput setaf 4)
+green=$(tput setaf 2)
+cyan=$(tput setaf 6)
+reset=$(tput sgr0)
+
+function printdir {
+    printf '%s%s%s%s\n' "$blue" "$bold" "$1" "$reset"
+}
+function printlink {
+    printf '%s%s%s\n' "$cyan" "$1" "$reset"
+}
+function printexec {
+    printf '%s%s%s%s\n' "$green" "$bold" "$1" "$reset"
+}
+
+function printfile {
+    local f=$1
+    if [ -d "$f" ]; then
+        printdir "$f"
+    elif [ -h "$f" ]; then
+        printlink "$f"
+    elif [ -x "$f" ]; then
+        printexec "$f"
+    else
+        echo "$f"
+    fi
+}
+
+if [[ $arg == /* ]]; then
+    prefix=
+else
+    prefix=$PWD/
+fi
+if [[ -d "$arg" ]]; then
+    if [[ $arg = */ ]]; then
+        for f in "$arg"*; do
+            printfile "$prefix""$f"
+        done
+        exit 0
+    fi
+fi
+printfile "$prefix""$arg"
