@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-exec $HOME/gentoo/miniconda3/bin/black -l 80 "$@"

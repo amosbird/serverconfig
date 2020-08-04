@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-exec ~/gentoo/miniconda3/bin/cmake-format "$@"
