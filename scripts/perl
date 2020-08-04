@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-exec $HOME/gentoo/usr/bin/perl "$@"
