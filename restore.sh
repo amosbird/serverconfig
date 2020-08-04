@@ -36,6 +36,7 @@ configs=(
     .fakevimrc
     .terminfo
     .xsettingsd
+    .proxychains
     scripts
 )
 
