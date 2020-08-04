@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+objdump -x $1 | perl -ne 'my @parts = split /\s+/; my @parts4 = split /@@/, $parts[4]; print $parts4[1]."\t".$parts[4]."\n" if $parts4[1] =~ /^GLIBC/;' | sort

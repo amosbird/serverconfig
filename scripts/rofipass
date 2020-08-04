@@ -6,7 +6,7 @@ root="$HOME/.password-store"
 list_passwords() {
     cd "${root}" || exit
     pw_list=($(fd -E 'docker-credential-helpers' 'gpg$'))
-    printf '%s\n' "${pw_list[@]%.gpg}" | sort -n
+    printf '%s\n' "${pw_list[@]%.gpg}" "otp" | sort -n
 }
 
 selected_password="$(list_passwords 2>/dev/null | rofi -dmenu -p "pass > ")"
@@ -16,4 +16,8 @@ if [[ $rofi_exit -eq 1 ]]; then
     exit
 fi
 
-inputstr "$(pass show "$selected_password")"
+if [[ "$selected_password" = "otp" ]]; then
+    inputstr $(pass show scripts/otp | bash)
+else
+    inputstr "$(pass show "$selected_password")"
+fi

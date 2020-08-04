@@ -12,30 +12,13 @@ pattern='^(([[:alnum:]]+)@)?([^:^@]+)(:([[:digit:]]+))?$'
 if [[ "$1" =~ $pattern ]]; then
     user=${BASH_REMATCH[2]}
     host=${BASH_REMATCH[3]}
-    port=${BASH_REMATCH[5]}
+    port=${BASH_REMATCH[5]:-22}
 
-    if [ -z "$user" ]
-    then
-        user=$USER
-    fi
-    if [ -z "$port" ]
-    then
-        port=22
-    fi
+    ssh $host -p $port '$HOME/gentoo/usr/bin/gpgconf --create-socketdir; sleep 10;' &
 
-    # if [ "$user" = "$USER" ]
-    if [ "" = "" ]
-    then
-        ssh $user@$host -p $port '$HOME/gentoo/usr/bin/gpgconf --create-socketdir; sleep 10;' &
+    remote_sock=$(ssh $host -p $port '$HOME/gentoo/usr/bin/gpgconf --create-socketdir; file=$($HOME/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file;')
 
-        remote_sock=$(ssh $user@$host -p $port '$HOME/gentoo/usr/bin/gpgconf --create-socketdir; file=$($HOME/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file;')
-
-        # always use local HOME so that prefix might be shared for other users
-        termite $a -t $1 -e "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -A -t $user@$host -p $port -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" \$HOME/gentoo/startprefix'"
-    else
-        # notify-send -a "$0" "Currently not supported"
-        # exit 1
-        # termite -t $1 -e "ssh -t $user@$host -p $port 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" $HOME/gentoo/startprefix'"
-        termite $a -t $1 -e "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -t $user@$host -p $port 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" \$HOME/gentoo/startprefix'"
-    fi
+    # ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -A -t $host -p $port -R $remote_sock:$(gpgconf --list-dir agent-extra-socket)
+    termite $a -t $1 -e "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -A -t $host -p $port -R 10000:localhost:8080 -L 9000:localhost:19000 -L 8123:localhost:18123 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" \$HOME/gentoo/startprefix'"
+    # termite $a -t $1 -e "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -A -t $host -R 9874:127.0.0.1:9874 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" \$HOME/gentoo/startprefix'"
 fi

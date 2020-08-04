@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-gremote.sh zhengtianqi@dev20.corp.kuaishou.com
+gremote.sh 172.29.4.154

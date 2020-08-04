@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+pkill compton
+i3lock -n -i ~/git/serverconfig/lock.png
+compton -b

@@ -1,16 +1,11 @@
-# default.custom.yaml
-# save it to: 
-#   ~/.config/ibus/rime  (linux)
-#   ~/Library/Rime       (macos)
-#   %APPDATA%\Rime       (windows)
-
 patch:
   "menu/page_size": 5
 
+  "ascii_composer/good_old_caps_lock": true
   "ascii_composer/switch_key":
-    # commit_code commit_text clear inline_ascii
     Shift_L: noop
     Shift_R: noop
+    Caps_Lock: commit_code
 
   Caps_Lock: noop
   Control_L: noop
