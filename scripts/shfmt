@@ -1,4 +1,0 @@
-#!/usr/bin/env fish
-
-cd (dirname (status -f)) || exit 1
-$HOME/gentoo/usr/local/bin/shfmt -i 4 $argv

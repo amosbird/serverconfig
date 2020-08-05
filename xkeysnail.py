@@ -56,7 +56,7 @@ define_keymap(
         K("LM-d"): [K("RC-delete"), set_mark(False)],
         K("C-space"): set_mark(True),
         K("C-g"): [K("esc"), set_mark(False)],
-        K("LM-henkan"): K("RC-backspace"),
+        K("LM-backspace"): K("RC-backspace"),
         K("LM-d"): K("RC-delete"),
         K("C-comma"): K("RM-up"),
         K("C-dot"): K("RM-down"),

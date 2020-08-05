@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
+# if pgrep telegram-deskto >/dev/null; then
 if pgrep Telegram >/dev/null; then
     id=$(head -1 /tmp/telegram)
     if [ -z "$id" ]; then
@@ -26,5 +27,6 @@ if pgrep Telegram >/dev/null; then
 else
     rm /tmp/telegram
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
+    # bash -c "telegram-desktop &"
     bash -c "Telegram &"
 fi
