@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 
-input=$1
-len=$2
+input=$1 # required
+len=$2   # required
 
-# curl "http://olime.baidu.com/py?input=$input&inputtype=py&bg=0&ed=5&result=hanzi&resultcoding=utf-8&ch_en=0&clientinfo=web&version=1"
+if [ -z "$len" ]; then
+	echo" $(basename "$0") <input> <len>"
+	exit 1
+fi
 
-curl --max-time 1 -s "https://www.baidu.com/sugrec?prod=pc&wd=$input" | jq '.g[]|.q' | perl -MEncode -MList::Util=uniq -nE 'if (decode("UTF-8", $_) =~ /^"(\p{Han}{'$len'})/) {push @words, encode("UTF-8", $1)} END { $,=" "; print uniq @words }'
+curl -s "https://www.baidu.com/sugrec?prod=pc&wd=$input" | jq -r '.g[]|.q' | perl -MEncode -MList::Util=uniq -nE 'if (decode("UTF-8", $_) =~ /^(\p{Han}{'$len'})/) {push @words, encode("UTF-8", $1)} END { $,=" "; print uniq @words }'

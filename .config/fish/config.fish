@@ -5,7 +5,6 @@ set FISH_CLIPBOARD_CMD cat
 
 set -x CORES (getconf _NPROCESSORS_ONLN)
 set -x MAKEFLAGS -j$CORES
-set -x PKG_CONFIG_PATH $HOME/gentoo/usr/local/lib64/pkgconfig $HOME/gentoo/usr/local/lib/pkgconfig $PKG_CONFIG_PATH
 set -x FZF_DEFAULT_OPTS "--ansi --multi --bind=ctrl-v:half-page-down,alt-v:half-page-up,ctrl-l:accept"
 set -x SHELL /bin/bash
 set -x EDITOR eee
@@ -59,7 +58,7 @@ if not set -q fish_initialized
     set -U fish_pager_color_prefix white --bold --underline
     set -U fish_pager_color_progress brwhite '--background=cyan'
 
-    set -U fish_user_paths $HOME/scripts $HOME/.emacs.d/bin $HOME/.local/bin $HOME/gentoo/usr/local/bin $HOME/.npm-packages/bin
+    set -U fish_user_paths $HOME/scripts $HOME/.emacs.d/bin $HOME/.local/bin $HOME/.npm-packages/bin
     set -U fish_initialized 1
 end
 

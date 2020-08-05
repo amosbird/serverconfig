@@ -18,5 +18,5 @@ if [[ "$1" =~ $pattern ]]; then
 
     remote_sock=$(ssh $host -p $port '/tmp/gentoo/usr/bin/gpgconf --create-socketdir; file=$(/tmp/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file;')
 
-    termite $a -t $1 -e "ssh -A -t $host -p $port -R 10000:localhost:8080 -L 9000:localhost:19000 -L 8123:localhost:18123 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) '/tmp/gentoo/startprefix'"
+    termite $a -t $1 -e "ssh -A -t $host -p $port -R 10000:localhost:8080 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) '/tmp/gentoo/startprefix'"
 fi

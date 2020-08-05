@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 
+if [ -z "$TUNDEV" ]
+then
+   pass show vpn | bash &
+   exit 0
+fi
+
 #
 # Originally part of vpnc source code:
 # © 2005-2012 Maurice Massar, Jörg Mayer, Antonio Borneo et al.
