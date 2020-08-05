@@ -56,7 +56,7 @@ init=$(jq -c -n --argjson multi "$multi" --argjson init_blacklist "$init_blackli
     "multiVersion": $multi,
     "trackDependency": 1,
     "comments": 0,
-    "threads": 16,
+    "threads": 32,
     "initialBlacklist": $init_blacklist,
     "blacklist": $blacklist
   },
