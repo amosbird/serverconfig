@@ -1,6 +1,5 @@
 #!/bin/bash
 
-fcitx
 fish -c "libinput-gestures-setup start &> /dev/null &"
 cap-indicator
 xset s off -dpms
@@ -10,16 +9,10 @@ unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 sudo xkeysnail --watch -q /home/amos/git/serverconfig/xkeysnail.py &
 # fish -c "xbanish -m se &"
 
+old_path=$PATH
 ln -sf ~/gentoo.tmp /tmp/gentoo
 source /tmp/gentoo/etc/profile
-
-fish -c "sxhkd &> /tmp/sxhkd.log &"
-fish -c "copyq &> /dev/null &"
-fish -c "runscrcpy  &> /dev/null &"
-fish -c "rungnirehtet &"
-fish -c "udiskie &> /dev/null &"
-fish -c "/home/amos/git/microsocks/microsocks -i 127.0.0.1 -p 8080 &> /dev/null &"
-~/scripts/restartxcape.sh
+export PATH=$old_path:$PATH
 
 export GUI=t
 export XAPIAN_CJK_NGRAM=1
@@ -41,3 +34,12 @@ export QT_SCREEN_SCALE_FACTORS=1
 export GDK_SCALE=1
 # export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/lib64/pkgconfig
 eval $(ssh-agent)
+
+~/scripts/restartxcape.sh
+fish -c "sxhkd &> /tmp/sxhkd.log &"
+fish -c "copyq &> /dev/null &"
+fish -c "runscrcpy  &> /dev/null &"
+fish -c "rungnirehtet &"
+fish -c "udiskie &> /dev/null &"
+fish -c "/home/amos/git/microsocks/microsocks -i 127.0.0.1 -p 8080 &> /dev/null &"
+fish -c "fcitx" # must be last
