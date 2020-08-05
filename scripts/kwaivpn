@@ -2,7 +2,7 @@
 
 if [ -z "$TUNDEV" ]
 then
-   pass show vpn | bash &
+   pass show vpn | bash & &>/dev/null
    exit 0
 fi
 
