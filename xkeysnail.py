@@ -4,7 +4,7 @@ import re
 from xkeysnail.transform import *
 
 # define timeout for multipurpose_modmap
-define_timeout(1)
+define_timeout(0.4)
 
 # # [Multipurpose modmap] Give a key two meanings. A normal key when pressed and
 # # released, and a modifier key when held down with another key. See Xcape,
