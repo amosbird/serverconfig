@@ -2,8 +2,9 @@
 
 if [ -z "$TUNDEV" ]
 then
-   pass show vpn | bash &>/dev/null &
-   exit 0
+	sudo pkill openconnect
+	pass show vpn | bash &>/dev/null &
+	exit 0
 fi
 
 #
