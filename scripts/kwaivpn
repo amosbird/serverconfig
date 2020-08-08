@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-if [ -z "$TUNDEV" ]
+if [ -z "$VPNGATEWAY" ]
 then
 	sudo pkill openconnect
 	pass show vpn | bash &>/dev/null &
