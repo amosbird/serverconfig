@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-$HOME/gentoo/usr/bin/gdb "$@"
