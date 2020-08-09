@@ -96,6 +96,7 @@ define_keymap(
         K("C-g"): [K("esc"), set_mark(False)],
         K("LM-backspace"): K("RC-backspace"),
         K("LM-d"): K("RC-delete"),
+        K("LM-j"): [K("end"), K("Shift-slash"), K("enter"), set_mark(False)],
         K("C-s"): [K("RC-f"), set_mark(False)],
     },
     "Wechat Emacs-like keys",

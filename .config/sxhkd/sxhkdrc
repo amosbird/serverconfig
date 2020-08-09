@@ -25,6 +25,8 @@ mod3+2
 mod3+3
   rofipass
 mod3+4
+  rofich
+mod3+h
   rofihosts
 mod3+d
   dshot | copyq copyImage -
