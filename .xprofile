@@ -1,9 +1,11 @@
 #!/bin/bash
 
 old_path=$PATH
+old_man_path=$MANPATH
 ln -sf ~/gentoo.tmp /tmp/gentoo
 source /tmp/gentoo/etc/profile
 export PATH=$old_path:$PATH
+export MANPATH=$old_man_path:$MANPATH
 export XDG_DATA_DIRS=/usr/share
 
 cap-indicator
