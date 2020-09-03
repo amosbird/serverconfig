@@ -1,57 +1,40 @@
 #!/usr/bin/env bash
 
-# flashso="/usr/lib/PepperFlash/libpepflashplayer.so"
-# flashversion=`strings $flashso 2> /dev/null | grep LNX | cut -d ' ' -f 2 | sed -e "s/,/./g"`
-# vivaldi-snapshot --ppapi-flash-path=$flashso --ppapi-flash-version="$flashversion" --proxy-pac-url="file:///home/amos/dotfiles/pac.js" --user-data-dir=/home/amos/.config/vivaldi "$@"
-
-# /home/amos/softwares/qt59env/bin/python -m qutebrowser --backend webengine "$@"
-
-# if [ "$#" -ge 2 ]
-# then
-#     luakit "$2"
-# elif [ "$#" -ge 1 ]
-# then
-#     luakit "$1"
-# else
-#     luakit
-# fi
-# exit 0
-
 url=$1
-
-# if [[ "$url" = /tmp/* ]]
-# then
-#     mv "${url}" "${url}".qb
-#     url="${url}".qb
-#     trap "rm -rf ${url}" EXIT
-# fi
 
 exists() { [[ -e "$1" ]]; }
 shopt -s nullglob
 if ! pgrep -f qutebrowser >/dev/null; then
-    find /run/user/1000/qutebrowser/ -type f -delete
-    cd /home/amos/git/qutebrowser/
-    # /usr/bin/python -m qutebrowser -l vdebug &
-    /usr/bin/python -m qutebrowser &
-    # /usr/bin/python -m qutebrowser >/tmp/qb.log 2>&1 &
-    mkdir -p /run/user/1000/qutebrowser
-    while read -r && [[ $REPLY != *ATTRIB\ ipc-* ]]; do break; done < <(inotifywait -m -t 5 -e create /run/user/1000/qutebrowser)
+	find /run/user/1000/qutebrowser/ -type f -delete
+	cd /home/amos/git/qutebrowser/
+	# /usr/bin/python -m qutebrowser -l vdebug &
+	/usr/bin/python -m qutebrowser &
+	# /usr/bin/python -m qutebrowser >/tmp/qb.log 2>&1 &
+	mkdir -p /run/user/1000/qutebrowser
+	while read -r && [[ $REPLY != *ATTRIB\ ipc-* ]]; do break; done < <(inotifywait -m -t 5 -e create /run/user/1000/qutebrowser)
 fi
 
 socket=(/run/user/1000/qutebrowser/*)
 flag=no
 while read -r wid; do
-    str=$(xprop -id $wid WM_CLASS 2>/dev/null)
-    if [[ $str == *qutebrowser* ]]; then
-        flag="last"
-        break
-    fi
+	str=$(xprop -id "$wid" WM_CLASS 2>/dev/null)
+	if [[ $str == *qutebrowser* ]]; then
+		flag="last"
+		break
+	fi
 done < <(bspc query -N -d focused -n .!hidden)
 
 if [ -n "$2" ]; then
-    ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"tab-silent\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"
+	type=tab-silent
 elif [[ "$flag" == last ]]; then
-    ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"last-focused\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"
+	type=last-visible
 else
-    ruby -r json -e 'printf "{\"args\":%s, \"target_arg\":\"window\", \"protocol_version\":1}\n", JSON.generate(ARGV)' -- "$url" | socat - UNIX-CONNECT:"${socket[0]}"
+	type=window
 fi
+
+jq -c -n --argjson url "\"$url\"" --argjson type "\"$type\"" '
+{
+    "args":[$url],
+    "target_arg":$type,
+    "protocol_version":1
+}' | socat - UNIX-CONNECT:"${socket[0]}"

@@ -62,7 +62,7 @@ c.bindings.commands["normal"] = {
     "<Alt-F8>": "scroll-to-perc 0",
     "<Alt-F9>": "back",
     "<Alt-F10>": "forward",
-    "<F12>": "inspector",
+    "<F12>": "devtools",
     "<Escape>": c.bindings.default["normal"]["<Escape>"]
     + ";; fake-key <Escape> ;; clear-messages ;; jseval -q document.getSelection().empty()",
     "<ctrl-Space>": "spawn i3-msg focus right",

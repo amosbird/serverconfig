@@ -6,6 +6,9 @@
 (require 'evil-multiedit)
 (require 'company) ; it loads company-lsp which loads lsp
 
+(setq tmux-p (getenv "TMUX"))
+(setq gui-p (getenv "GUI"))
+
 (use-package! speed-type
   :defer
   :config
@@ -81,16 +84,16 @@
   (dolist (x '(cc-playground-exec cc-playground-debug cc-playground-exec-test cc-playground-bench))
     (advice-add x :before #'evil-normal-state))
   :bind (:map cc-playground-mode-map
-          ("<f8>" . cc-playground-rm) ; terminal
-          ("S-RET" . cc-playground-rm) ; gui
-          ("C-c r" . cc-playground-add-or-modify-tag)
-          ("C-c b" . cc-playground-bench)
-          ("C-c d" . cc-playground-debug)
-          ("C-c t" . cc-playground-debug-test)
-          ("C-c l" . cc-playground-ivy-add-library-link)
-          ("C-c c" . cc-playground-change-compiler)
-          ("C-c o" . cc-playground-switch-optimization-flag)
-          ("C-c f" . cc-playground-add-compilation-flags))
+         ("<f8>" . cc-playground-rm) ; terminal
+         ("S-RET" . cc-playground-rm) ; gui
+         ("C-c r" . cc-playground-add-or-modify-tag)
+         ("C-c b" . cc-playground-bench)
+         ("C-c d" . cc-playground-debug)
+         ("C-c t" . cc-playground-debug-test)
+         ("C-c l" . cc-playground-ivy-add-library-link)
+         ("C-c c" . cc-playground-change-compiler)
+         ("C-c o" . cc-playground-switch-optimization-flag)
+         ("C-c f" . cc-playground-add-compilation-flags))
   :config
   (add-hook! 'cc-playground-mode-hook (rmsbolt-mode +1))
   (add-hook! 'cc-playground-rm-hook
@@ -165,12 +168,12 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (use-package! go-playground
   :defer
   :bind (:map go-playground-mode-map
-          ("<f8>" . go-playground-rm)))
+         ("<f8>" . go-playground-rm)))
 
 (use-package! rust-playground
   :defer
   :bind (:map rust-playground-mode-map
-          ("<f8>" . rust-playground-rm)))
+         ("<f8>" . rust-playground-rm)))
 
 (use-package! py-playground
   :defer
@@ -178,10 +181,10 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (dolist (x '(py-playground-exec py-playground-debug))
     (advice-add x :before #'evil-normal-state))
   :bind (:map py-playground-mode-map
-          ("<f8>" . py-playground-rm) ; terminal
-          ("S-RET" . py-playground-rm) ; gui
-          ("C-c r" . py-playground-add-or-modify-tag)
-          ("C-c d" . py-playground-debug)))
+         ("<f8>" . py-playground-rm) ; terminal
+         ("S-RET" . py-playground-rm) ; gui
+         ("C-c r" . py-playground-add-or-modify-tag)
+         ("C-c d" . py-playground-debug)))
 
 (use-package! gitattributes-mode
   :defer)
@@ -543,6 +546,22 @@ This predicate is only tested on \"insert\" action."
       (+amos|init-frame)
     (add-hook! 'after-make-frame-functions #'+amos|init-frame)))
 
+(defmacro with-x-environment (&rest body)
+  `(let ((process-environment
+          (cons (concat "DISPLAY=" (getenv "DISPLAY" (selected-frame)))
+                process-environment)))
+     (if (getenv "XAUTHORITY" (selected-frame))
+         (setq process-environment
+               (cons (concat "XAUTHORITY=" (getenv "XAUTHORITY" (selected-frame)))
+                     process-environment)))
+     ,@body))
+
+(defun +amos-x-select-text (text &rest _)
+  (with-temp-buffer
+    (insert text)
+    (with-x-environment
+     (call-process-region (point-min) (point-max) "xclip"))))
+
 (use-package osc
   :demand
   :init
@@ -551,8 +570,10 @@ This predicate is only tested on \"insert\" action."
     (if (display-graphic-p)
         (i3-nav-right)
       (osc-nav-right)))
-  (setq interprogram-cut-function 'osc-select-text
-        browse-url-browser-function (lambda (url &optional _new-window)
+  (if gui-p
+      (setq interprogram-cut-function '+amos-x-select-text)
+    (setq interprogram-cut-function 'osc-select-text))
+  (setq browse-url-browser-function (lambda (url &optional _new-window)
                                       (if (display-graphic-p)
                                           (if _new-window
                                               (browse-url-chrome url)
@@ -641,7 +662,7 @@ This predicate is only tested on \"insert\" action."
 (+amos-set-docsets 'lua-mode :docs '("Lua_5.1" "Lua_5.3"))
 (+amos-set-docsets 'c-mode :docs '("C" "Linux_Man_Pages"))
 (+amos-set-docsets 'c++-mode :docs '("C" "C++" "Linux_Man_Pages" "Boost"))
-(+amos-set-docsets 'python-mode :docs '("Python_3" "Python_2" "NumPy" "SciPy"))
+(+amos-set-docsets 'python-mode :docs '("Python_3" "Python_2"))
 (+amos-set-docsets 'js2-mode :docs "JavaScript")
 (+amos-set-docsets 'emacs-lisp-mode :docs "Emacs_Lisp")
 
@@ -1617,7 +1638,7 @@ When GREEDY is non-nil, join words in a greedy way."
   (when (and (boundp '+amos--lsp-maybe-highlight-symbol) +amos--lsp-maybe-highlight-symbol)
     (--each (lsp-workspaces)
       (with-lsp-workspace it
-        (lsp--remove-overlays 'lsp-highlight)))
+                          (lsp--remove-overlays 'lsp-highlight)))
     (setq-local +amos--lsp-maybe-highlight-symbol nil)))
 
 (add-hook 'doom-escape-hook #'+amos-lsp-remove-highlight-h)
@@ -1753,13 +1774,10 @@ current buffer's, reload dir-locals."
       (add-hook! (make-variable-buffer-local 'after-save-hook)
                  #'my-reload-dir-locals-for-all-buffer-in-this-directory))))
 
-(setq tmux-p (getenv "TMUX"))
-(setq gui-p (getenv "GUI"))
-
 (unless tmux-p
   (map!
    (:map key-translation-map
-     "\033"          (kbd "<escape>"))))
+    "\033"          (kbd "<escape>"))))
 
 (when tmux-p
   (let ((create-lockfiles t))
@@ -3460,28 +3478,28 @@ In Insert state, insert a newline."
 
 ;; company
 (setq-default
-              ;; company-idle-delay (lambda () (if (company-in-string-or-comment) nil 0.3))
-              company-idle-delay nil
-              company-auto-complete nil ; this is actually company-auto-finish
-              company-tooltip-limit 14
-              company-dabbrev-downcase nil
-              company-dabbrev-ignore-case nil
-              company-dabbrev-ignore-buffers "\\`[ *]"
-              ;; company-dabbrev-other-buffers t
-              ;; company-dabbrev-ignore-buffers (lambda (buffer) (not (projectile-project-buffer-p buffer (projectile-project-root))))
-              ;; company-dabbrev-code-time-limit 0.3
-              ;; company-dabbrev-code-ignore-case t
-              ;; company-dabbrev-code-everywhere t
-              company-tooltip-align-annotations t
-              company-require-match 'never
-              company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
-              company-frontends (append '(company-tng-frontend) company-frontends)
-              company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
-              company-transformers nil
-              company-lsp-async t
-              company-lsp-cache-candidates nil
-              company-show-numbers t
-              company-search-regexp-function 'company-search-flex-regexp)
+ ;; company-idle-delay (lambda () (if (company-in-string-or-comment) nil 0.3))
+ company-idle-delay nil
+ company-auto-complete nil ; this is actually company-auto-finish
+ company-tooltip-limit 14
+ company-dabbrev-downcase nil
+ company-dabbrev-ignore-case nil
+ company-dabbrev-ignore-buffers "\\`[ *]"
+ ;; company-dabbrev-other-buffers t
+ ;; company-dabbrev-ignore-buffers (lambda (buffer) (not (projectile-project-buffer-p buffer (projectile-project-root))))
+ ;; company-dabbrev-code-time-limit 0.3
+ ;; company-dabbrev-code-ignore-case t
+ ;; company-dabbrev-code-everywhere t
+ company-tooltip-align-annotations t
+ company-require-match 'never
+ company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
+ company-frontends (append '(company-tng-frontend) company-frontends)
+ company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
+ company-transformers nil
+ company-lsp-async t
+ company-lsp-cache-candidates nil
+ company-show-numbers t
+ company-search-regexp-function 'company-search-flex-regexp)
 (defvar-local company-fci-mode-on-p nil)
 (defun company-turn-off-fci (&rest ignore)
   (when (boundp 'fci-mode)
@@ -5165,6 +5183,6 @@ See `project-local-get' for the parameter PROJECT."
 
 ;; debug a function in a post-command-hook
 ;; (defadvice ivy--queue-exhibit (around intercept activate)
-  ;; (condition-case err
-      ;; ad-do-it
-    ;; ((debug error) (signal (car err) (cdr err)))))
+;; (condition-case err
+;; ad-do-it
+;; ((debug error) (signal (car err) (cdr err)))))
