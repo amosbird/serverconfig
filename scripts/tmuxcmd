@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+tmux_name="tcmd"
+tmux_session=$(tmux display-message -p '#S')
+n=0
+while tmux list-windows -F "#W" | grep -q "${tmux_name}-${n}" 2>/dev/null; do n=$(($n + 1)); done
+tmux_window="${tmux_name}-${n}"
+tmux_window_options="-n ${tmux_window}"
+
+while read -r cmd; do
+    if [[ x"$cmd" != x\#* ]]; then
+        if ! tmux list-windows -F "#W" | grep -q "${tmux_window}" >/dev/null; then
+            tmux new-window ${tmux_window_options}
+            tmux send-keys "$cmd"
+        else
+            tmux split-window -t "${tmux_session}" -t ${tmux_window}
+            tmux send-keys "$cmd"
+            tmux select-layout -t "${tmux_session}" tiled
+        fi
+    fi
+done < $1
+
+tmux set-window-option -t "${tmux_window}" synchronize-panes on
