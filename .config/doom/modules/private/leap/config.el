@@ -308,9 +308,7 @@ Uses current context if CONTEXT is nil."
 (defun leap-set-jump (&optional pos)
   "Set jump point at POS.
 POS defaults to point."
-  (unless (or (region-active-p)
-              (and (boundp 'evil-visual-state-p)
-                   (evil-visual-state-p)))
+  (unless (or (region-active-p) (evil-visual-state-p))
     (push-mark (if (markerp pos) (marker-position pos) pos) t))
 
   (unless (or leap--jumping better-jumper--jumping)
