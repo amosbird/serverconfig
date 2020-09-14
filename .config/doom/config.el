@@ -133,7 +133,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   :init
   (setq
    lsp-prefer-flymake nil
-   lsp-log-io t
+   lsp-log-io nil
    lsp-enable-indentation nil
    lsp-enable-file-watchers nil
    lsp-auto-guess-root t)
