@@ -103,9 +103,8 @@ settings:
   content.geolocation:
     global: false
   content.headers.user_agent:
-    global: Kim/0.8.107 Mozilla/5.0 ({os_info}) AppleWebKit/{webkit_version} (KHTML,
-      like Gecko) {qt_key}/{qt_version} {upstream_browser_key}/{upstream_browser_version}
-      Safari/{webkit_version}
+    global: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)
+      Chrome/85.0.4183.121 Safari/537.36
   content.host_blocking.enabled:
     global: false
   content.host_blocking.lists:
@@ -115,6 +114,8 @@ settings:
     - https://testpages.adblockplus.org/en/abp-testcase-subscription.txt
   content.javascript.can_access_clipboard:
     global: true
+  content.media.video_capture:
+    https://meet.google.com: true
   content.notifications:
     global: false
   content.pdfjs:
