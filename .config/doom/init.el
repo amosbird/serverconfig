@@ -321,6 +321,7 @@
 (setq bibtex-completion-display-formats '((t . "${author:36} ${title:100} ${_note:*}")))
 (setq bibtex-completion-additional-search-fields '("_note"))
 (setq initial-buffer-choice (lambda () (get-buffer "*Messages*")))
+(setq word-wrap-by-category t)
 (defun hide-mode-line-mode(&rest_)) ;; never hide modeline
 
 (after! core-keybinds

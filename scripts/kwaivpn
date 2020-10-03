@@ -242,8 +242,8 @@ if [ -n "$IPROUTE" ]; then
 
 	set_default_route() {
 		$IPROUTE route add default dev "$TUNDEV" table kwai
-		$IPROUTE route add 10.62.136.41 dev "$TUNDEV"
-		$IPROUTE route add 10.48.50.8 dev "$TUNDEV"
+		# $IPROUTE route add 10.62.136.41 dev "$TUNDEV"
+		# $IPROUTE route add 10.48.50.8 dev "$TUNDEV"
 		$IPROUTE route flush cache 2>/dev/null
 	}
 

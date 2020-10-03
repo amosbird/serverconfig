@@ -24,7 +24,7 @@ else
             -DLLVM_TARGETS_TO_BUILD='X86'
             -DLLVM_CCACHE_BUILD=1
             -DLLVM_ENABLE_PROJECTS='clang;libcxx;libcxxabi;compiler-rt;lld'
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
             -DLLVM_BUILD_LLVM_DYLIB=1
             -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1'
             -DCMAKE_INSTALL_PREFIX=$PWD/install
