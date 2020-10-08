@@ -25,7 +25,11 @@ else
             -DLLVM_CCACHE_BUILD=1
             -DLLVM_ENABLE_PROJECTS='clang;libcxx;libcxxabi;compiler-rt;lld'
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            -DGCC_INSTALL_PREFIX='/tmp/gentoo/usr'
             -DLLVM_BUILD_LLVM_DYLIB=1
+            -DCLANG_DEFAULT_CXX_STDLIB=libc++
+            # -DCLANG_DEFAULT_RTLIB=compiler-rt
+            -DCLANG_DEFAULT_LINKER=lld
             -DCMAKE_CXX_FLAGS='-D_GLIBCXX_USE_CXX11_ABI=1'
             -DCMAKE_INSTALL_PREFIX=$PWD/install
         )
