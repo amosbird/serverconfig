@@ -34,7 +34,7 @@
   (set-company-backend!
     '(c-mode c++-mode objc-mode))
 
-  (set-pretty-symbols! '(c-mode c++-mode)
+  (set-ligatures! '(c-mode c++-mode)
                        ;; Functional
                        ;; :def "void "
                        ;; Types
