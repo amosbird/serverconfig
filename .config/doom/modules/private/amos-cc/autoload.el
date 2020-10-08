@@ -169,8 +169,10 @@ simpler."
             (let ((id "[a-zA-Z0-9_]+") (ws "[ \t\r]+") (ws-maybe "[ \t\r]*"))
               (concat "^" ws-maybe "\\(?:"
                       "using" ws "\\(?:namespace" ws "std;\\|std::\\)"
+                      ; TODO id does not cover foo::bar namespace
                       "\\|" "namespace" "\\(?:" ws id "\\)?" ws-maybe "[{\n]"
                       "\\|" "class"     ws id ws-maybe "[:{\n]"
+                      "\\|" "enum class"     ws id ws-maybe "[:{\n]"
                       "\\|" "template"  ws-maybe "<.*>"
                       "\\|" "#include"  ws-maybe "<\\(?:string\\|iostream\\|map\\)>"
                       "\\)")))
