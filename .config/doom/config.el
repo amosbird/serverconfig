@@ -136,7 +136,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
    lsp-log-io nil
    lsp-enable-indentation nil
    lsp-enable-file-watchers nil
-   lsp-auto-guess-root t)
+   lsp-auto-guess-root nil)
   :defer
   :config
   (add-hook! 'kill-emacs-hook (setq lsp-restart 'ignore))
@@ -3775,7 +3775,7 @@ When capture groups are present in the input, print them instead of lines."
 (defun +amos/launch ()
   (interactive)
   (let ((default-directory (doom-project-root)))
-    (+amos/tmux-fork-window "launch.sh")))
+    (+amos/tmux-fork-window " launch.sh")))
 
 (defun +amos/list-file (&optional initial-input)
   (interactive)
