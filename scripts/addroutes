@@ -6,6 +6,7 @@ die() { echo "$*" 1>&2 ; exit 1; }
 
 runproxy
 rm=10.255.0.2
+# rm=192.168.252.1
 # rm=172.26.239.59
 ip r d 0.0.0.0/1 via $rm
 ip r d 128.0.0.0/1 via $rm
@@ -97,6 +98,7 @@ ip r a 140.238.34.37 via $gw table cn
 ip r a 192.144.138.253 via $gw table cn
 ip r a 40.83.99.220 via $gw table cn
 ip r a 13.113.251.5 via $gw table cn
+ip r a 23.98.37.89 via $gw table cn
 
 # local
 # ip r a 10.60.0.0/16 via $gw table cn
