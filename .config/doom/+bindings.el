@@ -782,7 +782,7 @@
 (after! fish-mode
   (define-key fish-mode-map (kbd "<C-return>") #'+amos/run-script))
 
-(after! python-mode
+(after! python
   (define-key python-mode-map (kbd "<C-return>") #'+amos/run-script))
 
 (after! lua-mode
