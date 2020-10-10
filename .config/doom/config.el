@@ -4931,6 +4931,7 @@ See `project-local-get' for the parameter PROJECT."
   (interactive)
   (find-file (expand-file-name "~/git/work/journal.org"))
   (goto-char (point-min))
+  (require 'outline)
   (outline-next-heading))
 
 (defun +amos-ediff-copy-diff-a (func &rest args)
