@@ -24,7 +24,7 @@
        ;; syntax-checker
 
        :checkers
-       spell
+       ;; spell
        syntax
 
        :emacs

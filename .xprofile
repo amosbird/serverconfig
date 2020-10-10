@@ -35,7 +35,7 @@ export QT_AUTO_SCREEN_SCALE_FACTOR=0
 export QT_SCREEN_SCALE_FACTORS=1
 export GDK_SCALE=1
 # export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/lib64/pkgconfig
-eval $(ssh-agent)
+eval "$(ssh-agent)"
 
 ~/scripts/restartxcape.sh
 fish -c "dunst &> /tmp/dunst.log &"
@@ -43,9 +43,10 @@ fish -c "sxhkd &> /tmp/sxhkd.log &"
 fish -c "copyq &> /dev/null &"
 fish -c "runscrcpy  &> /dev/null &"
 fish -c "rungnirehtet &"
-fish -c "udiskie &> /dev/null &"
-fish -c "/home/amos/git/microsocks/microsocks -i 127.0.0.1 -p 8080 &> /dev/null &"
-fish -c "libinput-gestures-setup start &> /dev/null &"
+fish -c "udiskie &> /tmp/udiskie.log &"
+fish -c "/home/amos/git/microsocks/microsocks -i 127.0.0.1 -p 8080 &> /tmp/microsocks.log &"
+fish -c "libinput-gestures-setup start &> /tmp/gestures.log &"
 fish -c "clipserver -S &"
+fish -c "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
 fish -c "flameshot &> /tmp/flameshot.log &"
 fish -c "fcitx &> /tmp/fcitx.log"
