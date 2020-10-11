@@ -7,6 +7,7 @@ if [ "$1" = "-h" ]; then
 	a="--hold"
 	shift
 fi
+a="--hold"
 pattern='^(([[:alnum:]]+)@)?([^:^@]+)(:([[:digit:]]+))?$'
 if [[ "$1" =~ $pattern ]]; then
 	user=${BASH_REMATCH[2]}
