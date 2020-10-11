@@ -3,13 +3,13 @@
 if [[ $1 -eq 1 ]]; then # new session
     case "$2" in
     emacs)
-        tmux source ~/.tmux/.tmux.conf.emacs
+        tmux source $HOME/.tmux/.tmux.conf.emacs
         ;;
     htop)
-        tmux source ~/.tmux/.tmux.conf.htop
+        tmux source $HOME/.tmux/.tmux.conf.htop
         ;;
     amos)
-        tmux source ~/.tmux/.tmux.conf.amos
+        tmux source $HOME/.tmux/.tmux.conf.amos
         ;;
     esac
 elif [[ $1 -eq 2 ]]; then # session change
@@ -25,5 +25,5 @@ elif [[ $1 -eq 3 ]]; then # detach
         tmux run-shell "$HOME/scripts/tmuxsuspend USR1"
     fi
 elif [[ $1 -eq 4 ]]; then # new window
-    tmux source ~/.tmux/.tmux.conf.amos
+    tmux source "$HOME/.tmux/.tmux.conf.amos"
 fi

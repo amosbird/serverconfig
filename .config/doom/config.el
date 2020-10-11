@@ -562,6 +562,12 @@ This predicate is only tested on \"insert\" action."
     (with-x-environment
      (call-process-region (point-min) (point-max) "xclip"))))
 
+(defun +amos-tui-select-text (text &rest _)
+  (with-temp-buffer
+    (insert text)
+    (with-x-environment
+     (call-process-region (point-min) (point-max) "clipserver"))))
+
 (use-package osc
   :demand
   :init
@@ -572,7 +578,7 @@ This predicate is only tested on \"insert\" action."
       (osc-nav-right)))
   (if gui-p
       (setq interprogram-cut-function '+amos-x-select-text)
-    (setq interprogram-cut-function 'osc-select-text))
+    (setq interprogram-cut-function '+amos-tui-select-text))
   (setq browse-url-browser-function (lambda (url &optional _new-window)
                                       (if (display-graphic-p)
                                           (if _new-window
