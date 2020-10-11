@@ -32,7 +32,7 @@ while (1) {
     write;
     $~ = "COLUMNS";
 
-    for my $cols ( sort { $a->[0] cmp $b->[0] } @lines ) {
+    for my $cols ( sort { $a->[2] cmp $b->[2] } @lines ) {
         $device = $cols->[2];
         $rmb    = $cols->[5] / 1000;
         $wmb    = $cols->[6] / 1000;
