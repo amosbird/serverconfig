@@ -4,6 +4,7 @@ function fish_user_key_bindings
         commandline -f repaint
         if count $TMUX > /dev/null
             tmux refresh-client -S
+            tmux refresh-client -S
         end
         eval (direnv export fish);
     end
@@ -13,6 +14,7 @@ function fish_user_key_bindings
         commandline -f repaint
         if count $TMUX > /dev/null
             tmux refresh-client -S
+            tmux refresh-client -S
         end
         eval (direnv export fish);
     end
@@ -21,6 +23,7 @@ function fish_user_key_bindings
         nextd > /dev/null 2>&1
         commandline -f repaint
         if count $TMUX > /dev/null
+            tmux refresh-client -S
             tmux refresh-client -S
         end
         eval (direnv export fish);
@@ -44,6 +47,7 @@ function fish_user_key_bindings
         end
         commandline -f repaint
         if count $TMUX > /dev/null
+            tmux refresh-client -S
             tmux refresh-client -S
         end
         eval (direnv export fish);
@@ -92,6 +96,7 @@ function fish_user_key_bindings
         tput rmcup
         commandline -f repaint
         if count $TMUX > /dev/null
+            tmux refresh-client -S
             tmux refresh-client -S
         end
         eval (direnv export fish);

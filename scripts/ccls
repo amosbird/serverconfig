@@ -20,7 +20,7 @@ for i in $ccls_include_dirs; do
     cxx_flags="${cxx_flags}, \"-I$i\""
 done
 
-init_blacklist='["/tmp"'
+init_blacklist='["/dev"'
 for i in $ccls_blacklist; do
     init_blacklist="${init_blacklist}, \"$i\""
 done
@@ -37,7 +37,7 @@ if [[ ! -z "$ccls_suffix" ]]; then
     ccls_suffix=-"$ccls_suffix"
 fi
 
-cxx_flags="${cxx_flags}, \"--sysroot=$HOME/gentoo\"]"
+cxx_flags="${cxx_flags}, \"--sysroot=/tmp/gentoo\"]"
 
 multi=0
 # if [[ -z "$ccls_multi" ]]
