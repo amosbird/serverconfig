@@ -3,4 +3,4 @@
 host=${1:-201.nobida.cn}
 set -e
 cd
-rsync -aHSR $host:git/llvm-project/release/bin/clang-format $host:'git/llvm-project/release/lib/clang/*/include' $host:git/ccls/release/ccls .
+rsync -aHSR $host:git/llvm-project/release/bin/clang-format $host:'/tmp/gentoo/home/amos/git/llvm-project/release/lib/clang/*/include' $host:/tmp/gentoo/home/amos/git/ccls/release/ccls .
