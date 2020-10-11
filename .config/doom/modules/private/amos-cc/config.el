@@ -136,23 +136,18 @@
     (unless (or (string-prefix-p "timemachine:" name)
                 (string-suffix-p "~" name))
       (require 'lsp-mode)
-      (flycheck-mode +1)
+      ;; (flycheck-mode +1)
       (global-eldoc-mode -1)
       (eldoc-mode -1)
       (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
         (c-set-style "gnu"))
-      (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
+      ;; (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
       (direnv-update-environment)
       (condition-case nil
           (doom-with-advice (lsp--info #'ignore) (lsp))
         (user-error nil))
       (setq-local ccls-enabled t)
-      (setq-local flycheck-checker 'lsp-ui)
-      (lsp-flycheck-add-mode major-mode)
-      (add-to-list 'flycheck-checkers 'lsp-ui)
-      (setq-local lsp-ui-flycheck-live-reporting nil)
-      (dolist (c '(c/c++-clang c/c++-gcc c/c++-cppcheck))
-        (setq flycheck-checkers (delq c flycheck-checkers))))))
+      )))
 
 (add-hook! (c-mode c++-mode) #'+amos-ccls-enable-h)
 (add-hook! (c-mode c++-mode) (electric-indent-local-mode -1))
@@ -165,6 +160,7 @@
    ;; ccls-sem-highlight-method 'font-lock
    ;; ccls-sem-highlight-method 'overlay
    ccls-sem-highlight-method nil
+   ccls-root-files '(".ccls" ".ccls-root" "compile_commands.json")
    )
 
   :config

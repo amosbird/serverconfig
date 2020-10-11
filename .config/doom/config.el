@@ -136,7 +136,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
    lsp-log-io nil
    lsp-enable-indentation nil
    lsp-enable-file-watchers nil
-   lsp-auto-guess-root nil)
+   lsp-auto-guess-root t)
   :defer
   :config
   (add-hook! 'kill-emacs-hook (setq lsp-restart 'ignore))
@@ -4964,13 +4964,18 @@ See `project-local-get' for the parameter PROJECT."
 (defun +amos/flycheck-next-error ()
   (interactive)
   (setq evil-move-beyond-eol t)
-  (call-interactively #'flycheck-next-error)
+  (flycheck-next-error-function 1 nil)
+  (recenter)
+  (flycheck-display-error-at-point-soon)
   (advice-add #'flycheck-perform-deferred-syntax-check :after #'+amos-set-evil-move-beyond-eol-nil-h))
 
 (defun +amos/flycheck-previous-error ()
   (interactive)
   (setq evil-move-beyond-eol t)
   (call-interactively #'flycheck-previous-error)
+  (flycheck-next-error-function -1 nil)
+  (recenter)
+  (flycheck-display-error-at-point-soon)
   (advice-add #'flycheck-perform-deferred-syntax-check :after #'+amos-set-evil-move-beyond-eol-nil-h))
 
 (defun +amos-flycheck-display-error-at-point-soon-a ()
