@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+perl -pi -e 'my $uid=$>; my ($gid) = split " ", $(; s/amos:x:\K(\d+)/$uid/; s/amos:x:\d+:\K(\d+)/$gid/' /tmp/gentoo/etc/passwd
