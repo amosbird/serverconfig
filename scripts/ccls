@@ -86,4 +86,4 @@ init=$(jq -c -n --argjson multi "$multi" --argjson init_blacklist "$init_blackli
   }
 }')
 
-exec $HOME/git/ccls/release/ccls --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"
+exec $HOME/git/ccls/release/ccls -v=2 --log-file=/tmp/cq.txt$ccls_suffix --init="$init" "$@"

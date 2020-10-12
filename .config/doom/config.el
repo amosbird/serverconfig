@@ -29,21 +29,23 @@
 (use-package! flycheck
   :after-call (doom-switch-buffer-hook after-find-file)
   :config
+  (advice-add #'+syntax-check-buffer-h :override #'ignore)
+  ;; (setq flycheck-check-syntax-automatically nil)
   ;; Emacs feels snappier without checks on newline
-  (setq flycheck-check-syntax-automatically '(save idle-change mode-enabled))
-  (after! evil
-    (defun +syntax-checkers|flycheck-buffer ()
-      "Flycheck buffer on ESC in normal mode."
-      (when flycheck-mode
-        (ignore-errors (flycheck-buffer))
-        nil))
-    (add-hook! 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
+  (setq flycheck-check-syntax-automatically '(save mode-enabled))
+  ;; (after! evil
+  ;;   (defun +syntax-checkers|flycheck-buffer ()
+  ;;     "Flycheck buffer on ESC in normal mode."
+  ;;     (when flycheck-mode
+  ;;       (ignore-errors (flycheck-buffer))
+  ;;       nil))
+  ;;   (add-hook! 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
   (global-flycheck-inline-mode +1)
   (global-flycheck-mode +1)
 
   ;; (advice-add #'flycheck-display-error-messages :override #'flycheck-inline-display-errors)
   (setq flycheck-highlighting-mode 'columns
-        flycheck-check-syntax-automatically '(save mode-enabled)
+        ;; flycheck-check-syntax-automatically '(save mode-enabled)
         flycheck-indication-mode nil
         ;; flycheck-inline-display-function
         ;; (lambda (msg pos)
