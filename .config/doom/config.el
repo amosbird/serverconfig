@@ -562,13 +562,15 @@ This predicate is only tested on \"insert\" action."
   (with-temp-buffer
     (insert text)
     (with-x-environment
-     (call-process-region (point-min) (point-max) "xclip"))))
+     (call-process-region (point-min) (point-max) "xclip")))
+  text)
 
 (defun +amos-tui-select-text (text &rest _)
   (with-temp-buffer
     (insert text)
     (with-x-environment
-     (call-process-region (point-min) (point-max) "clipserver"))))
+     (call-process-region (point-min) (point-max) "clipserver")))
+  text)
 
 (use-package osc
   :demand
