@@ -242,8 +242,12 @@ if [ -n "$IPROUTE" ]; then
 
 	set_default_route() {
 		$IPROUTE route add default dev "$TUNDEV" table kwai
-		# $IPROUTE route add 10.62.136.41 dev "$TUNDEV"
-		# $IPROUTE route add 10.48.50.8 dev "$TUNDEV"
+		$IPROUTE route add 10.62.136.41 dev "$TUNDEV"
+		$IPROUTE route add 10.48.50.8 dev "$TUNDEV"
+		$IPROUTE route add 172.17.1.166 dev "$TUNDEV"
+		$IPROUTE route add 10.32.255.96 dev "$TUNDEV"  # qingteng
+		$IPROUTE route add 10.32.255.94 dev "$TUNDEV"  # sso
+		$IPROUTE route add 10.32.255.95 dev "$TUNDEV"  # grafana
 		$IPROUTE route flush cache 2>/dev/null
 	}
 
