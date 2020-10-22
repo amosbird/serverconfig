@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+
+luakit http://172.18.248.248:8080/portal
