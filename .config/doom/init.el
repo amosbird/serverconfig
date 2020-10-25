@@ -198,6 +198,7 @@
 (setq lsp-response-timeout 5)
 (setq lsp-enable-symbol-highlighting nil)
 (setq lsp-ui-doc-enable nil)
+(setq lsp-enable-dap-auto-configure nil)
 (setq lsp-signature-render-all nil)
 (setq lsp-enable-on-type-formatting nil)
 (setq message-truncate-lines t)
