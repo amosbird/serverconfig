@@ -182,6 +182,12 @@ class FunctionBreakpoint(gdb.Breakpoint):
 
         return False # do not stop at function entry
 
+import sys
+
+sys.path.insert(0, '/tmp/gentoo/home/amos/git/serverconfig/gdbprinters/libcxx-printers')
+from printers import register_libcxx_printer_loader
+register_libcxx_printer_loader()
+
 end
 
 define hookpost-finish
@@ -247,6 +253,7 @@ set confirm off
 
 skip -gfi usr/include/c++/*/*/*
 skip -gfi usr/local/include/c++/*/*/*
+skip -gfi libc++/include/*
 
 # vim: filetype=python
 # Local Variables:

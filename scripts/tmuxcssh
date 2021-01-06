@@ -92,6 +92,7 @@ fi
 
 # Open a new session and split into new panes for each SSH session
 for host in ${hosts}; do
+    IFS=: read -r host port <<<"$host"
     host=clickhouse@$host
     if ! tmux has-session -t "${tmux_session}" 2>/dev/null; then
         tmux new-session -s "${tmux_session}" -d "ssh ${ssh_options} ${host}"

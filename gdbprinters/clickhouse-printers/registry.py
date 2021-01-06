@@ -1,0 +1,26 @@
+import gdb
+
+t_int8: gdb.Type = gdb.lookup_type("Int8", "DB")
+t_int16: gdb.Type = gdb.lookup_type("Int16", "DB")
+t_int32: gdb.Type = gdb.lookup_type("Int32", "DB")
+t_int64: gdb.Type = gdb.lookup_type("Int64", "DB")
+t_uint8: gdb.Type = gdb.lookup_type("UInt8", "DB")
+t_uint16: gdb.Type = gdb.lookup_type("UInt16", "DB")
+t_uint32: gdb.Type = gdb.lookup_type("UInt32", "DB")
+t_uint64: gdb.Type = gdb.lookup_type("UInt64", "DB")
+t_float32: gdb.Type = gdb.lookup_type("Float32", "DB")
+t_float64: gdb.Type = gdb.lookup_type("float64", "DB")
+
+t_col_array: gdb.Type = gdb.lookup_type("ColumnArray", "DB")
+t_col_const: gdb.Type = gdb.lookup_type("ColumnConst", "DB")
+t_col_lc: gdb.Type = gdb.lookup_type("ColumnLowCardinality", "DB")
+t_col_nullable: gdb.Type = gdb.lookup_type("ColumnNullable", "DB")
+t_col_vector: gdb.Type = gdb.lookup_type("ColumnVector", "DB")
+t_col_decimal: gdb.Type = gdb.lookup_type("ColumnDecimal", "DB")
+t_col_fixed_string: gdb.Type = gdb.lookup_type("ColumnFixedString", "DB")
+t_col_nothing: gdb.Type = gdb.lookup_type("ColumnNothing", "DB")
+t_col_set: gdb.Type = gdb.lookup_type("ColumnSet", "DB")
+t_col_string: gdb.Type = gdb.lookup_type("ColumnString", "DB")
+t_col_tuple: gdb.Type = gdb.lookup_type("ColumnTuple", "DB")
+
+t_col_offsets: gdb.Type = gdb.lookup_type("ColumnOffsets", "DB")

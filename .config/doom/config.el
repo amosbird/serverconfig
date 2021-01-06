@@ -3784,6 +3784,7 @@ When capture groups are present in the input, print them instead of lines."
 
 (defun +amos/launch ()
   (interactive)
+  (save-buffer-maybe)
   (let ((default-directory (doom-project-root)))
     (+amos/tmux-fork-window " launch.sh")))
 

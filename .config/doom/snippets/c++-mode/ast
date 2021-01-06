@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: ast
+# key: ast
+# type: command
+# --
+(+amos/add-include "Parsers/formatAST.h")
+(yas-expand-snippet "DUMP(serializeAST($0));")
