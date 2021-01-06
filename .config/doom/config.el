@@ -1866,7 +1866,7 @@ current buffer's, reload dir-locals."
 (advice-add #'ivy-xref-show-xrefs :override #'+amos-ivy-xref-show-xrefs-a)
 
 (after! recentf
-  (setq recentf-exclude '("^/tmp/" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
+  (setq recentf-exclude '("/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
 
 (after! ivy
   (setcdr (assq t ivy-format-functions-alist) #'ivy-format-function-line)
@@ -2742,7 +2742,16 @@ the current state and point position."
   (defun +amos*remove-git-index-lock (&rest _)
     (ignore-errors
       (delete-file ".git/index.lock")))
-  (advice-add #'magit-refresh :before #'+amos*remove-git-index-lock))
+  (advice-add #'magit-refresh :before #'+amos*remove-git-index-lock)
+
+  (remove-hook 'magit-status-sections-hook 'magit-insert-tags-header)
+  (remove-hook 'magit-status-sections-hook 'magit-insert-status-headers)
+  (remove-hook 'magit-status-sections-hook 'magit-insert-unpushed-to-pushremote)
+  (remove-hook 'magit-status-sections-hook 'magit-insert-unpulled-from-pushremote)
+  (remove-hook 'magit-status-sections-hook 'magit-insert-unpulled-from-upstream)
+  (remove-hook 'magit-status-sections-hook 'magit-insert-unpushed-to-upstream-or-recent)
+
+  )
 
 (after! evil-magit
   (setq evil-magit-use-z-for-folds nil))
