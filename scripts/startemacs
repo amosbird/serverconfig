@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 
 if [[ -z $GUI ]]; then
+    export TERM=xterm-tmux-24bits
     exec proxychains emacsclient -a '' -t -c
+    # exec emacsclient -a '' -t -c
 else
+    export TERM=xterm-tmux-24bits
     exec emacsclient -a '' -t -c
 fi

@@ -72,6 +72,7 @@
        ;; amos-sh
        )
 
+(setq select-active-regions nil)
 ;; (setq TeX-command "pdftex")
 ;; (setq LaTeX-command "pdflatex")
 ;; (setq-default TeX-engine 'xetex)
