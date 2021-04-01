@@ -183,10 +183,15 @@ class FunctionBreakpoint(gdb.Breakpoint):
         return False # do not stop at function entry
 
 import sys
-
-sys.path.insert(0, '/tmp/gentoo/home/amos/git/serverconfig/gdbprinters/libcxx-printers')
-from printers import register_libcxx_printer_loader
+# libcxx
+sys.path.insert(0, '/tmp/gentoo/home/amos/git/ClickHouse-pretty-printer/libcxx/v2')
+from libcxx_printers_new import register_libcxx_printer_loader
 register_libcxx_printer_loader()
+
+# clickhouse pretty printer
+sys.path.insert(0, '/tmp/gentoo/home/amos/git/ClickHouse-pretty-printer/clickhouse')
+from printers import register_ch_printers
+register_ch_printers()
 
 end
 
@@ -254,6 +259,7 @@ set confirm off
 skip -gfi usr/include/c++/*/*/*
 skip -gfi usr/local/include/c++/*/*/*
 skip -gfi libc++/include/*
+skip -gfi libcxx/include/*
 
 # vim: filetype=python
 # Local Variables:

@@ -66,7 +66,7 @@ end
 contains -- /usr/share/fish/vendor_completions.d $fish_complete_path
 or set -g fish_complete_path $fish_complete_path[1..-2] /usr/share/fish/vendor_completions.d $fish_complete_path[-1]
 
-set -x TERM xterm-256color
+# set -x TERM xterm-256color
 # >>> conda initialize >>>
 # !! Contents within this block are managed by 'conda init' !!
 # eval /tmp/gentoo/miniconda3/bin/conda "shell.fish" "hook" $argv | source
