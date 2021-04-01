@@ -2,7 +2,8 @@
 
 old_path=$PATH
 old_man_path=$MANPATH
-ln -sf ~/gentoo.tmp /tmp/gentoo
+mkdir -p /tmp/gentoo
+sudo mount --bind ~/gentoo.tmp /tmp/gentoo
 source /tmp/gentoo/etc/profile
 export PATH=$old_path:$PATH
 export MANPATH=$old_man_path:$MANPATH
@@ -44,7 +45,7 @@ fish -c "copyq &> /dev/null &"
 fish -c "runscrcpy  &> /dev/null &"
 fish -c "rungnirehtet &"
 fish -c "udiskie &> /tmp/udiskie.log &"
-fish -c "/home/amos/git/microsocks/microsocks -i 127.0.0.1 -p 8080 &> /tmp/microsocks.log &"
+fish -c "/home/amos/git/microsocks/microsocks -i 0.0.0.0 -p 8080 &> /tmp/microsocks.log &"
 fish -c "libinput-gestures-setup start &> /tmp/gestures.log &"
 fish -c "clipserver -S &"
 fish -c "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"

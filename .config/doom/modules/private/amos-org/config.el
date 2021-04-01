@@ -59,6 +59,7 @@
 (after! org
   (setq-default org-M-RET-may-split-line '((default))
                 org-adapt-indentation nil
+                org-export-with-sub-superscripts nil
                 org-agenda-dim-blocked-tasks nil
                 org-agenda-files (concat +org-dir "/todo.org")
                 org-agenda-inhibit-startup t

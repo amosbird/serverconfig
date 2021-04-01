@@ -5109,7 +5109,6 @@ See `project-local-get' for the parameter PROJECT."
   (progn
     (puthash 'sqlformat "sqlformat" format-all--executable-table)
     (puthash 'sqlformat nil format-all--install-table)
-    (format-all--pushhash 'sql-mode (cons 'sqlformat nil) format-all--mode-table)
     (puthash 'sqlformat (lambda (executable mode-result)
                           (ignore mode-result)
                           (format-all--buffer-easy executable))

@@ -288,7 +288,7 @@ default/fallback account."
           (:map mu4e~update-mail-mode-map
             :n "q" #'mu4e-interrupt-update-mail)))
 
-  (setq mu4e-user-mail-address-list '("amosbird@gmail.com" "zhengtianqi@ict.ac.cn" "zhengtianqi12@mails.ict.ac.cn"))
+  (setq mu4e-user-mail-address-list '("amosbird@gmail.com" "zhengtianqi12@mails.ucas.ac.cn"))
 
   (setq mu4e-contexts
         `( ,(make-mu4e-context
@@ -300,19 +300,11 @@ default/fallback account."
                      ( user-full-name          . "Amos Bird" )
                      ( mu4e-compose-signature  . nil)))
            ,(make-mu4e-context
-             :name "ict"
-             :enter-func (lambda () (mu4e-message "Switch to the ict context"))
-             ;; :leave-func (lambda () (mu4e-clear-caches))
-             :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi@ict.ac.cn")))
-             :vars '(( user-mail-address       . "zhengtianqi@ict.ac.cn" )
-                     ( user-full-name          . "Tianqi Zheng" )
-                     ( mu4e-compose-signature  . nil)))
-           ,(make-mu4e-context
              :name "ucas"
              :enter-func (lambda () (mu4e-message "Switch to the ucas context"))
              ;; :leave-func (lambda () (mu4e-clear-caches))
-             :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi12@mails.ict.ac.cn")))
-             :vars '(( user-mail-address       . "zhengtianqi12@mails.ict.ac.cn" )
+             :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi12@mails.ucas.ac.cn")))
+             :vars '(( user-mail-address       . "zhengtianqi12@mails.ucas.ac.cn" )
                      ( user-full-name          . "Tianqi Zheng" )
                      ( mu4e-compose-signature  . nil)))
            )))

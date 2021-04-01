@@ -7,7 +7,7 @@ if pgrep -f WeChat &>/dev/null; then
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
     done < <(xdo id -N Wine -n wechat.exe)
     if [ -z "$found" ]; then
-        wechat.sh &>/dev/null
+        $HOME/.deepinwine/deepin-wine-helper/sendkeys.sh w wechat 3 &>/dev/null
     elif bspc query -N -n focused | grep -q "$wid"; then
         bspc node "$wid" -g hidden -f
         exit 0

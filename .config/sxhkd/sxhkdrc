@@ -11,7 +11,7 @@ mod3 + c
 #   cliprectangle
 
 mod3+w
-  restartxcape.sh
+  rofiurl
 mod3+b
   baidupan.sh
 mod3+f
@@ -26,6 +26,8 @@ mod3+3
   rofipass
 mod3+4
   rofich
+mod3+r
+  rofidbtbl
 mod3+h
   rofihosts
 mod3+d
@@ -42,12 +44,17 @@ mod3+t
   xclip -out | upload -
 mod3+u
   hostrole "$(xclip -out)"
+mod3+i
+  hostmetric "$(xclip -out)"
 mod3+shift+r
   teiler
 mod3+g
   url "www.google.com/search?q="
+mod3+k
+  inputstr $(pass show scripts/otp | bash)
 mod3+s
-  url "scholar.google.com/scholar?q="
+  kafkaurl.py "$(xclip -o)"
+  # url "scholar.google.com/scholar?q="
 mod3+v
   translate
 super+z

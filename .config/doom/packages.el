@@ -17,6 +17,8 @@
                    vi-tilde-fringe
                    emacs-snippets)
 
+(unpin! format-all)
+
 (package! adoc-mode)
 (package! bind-map)
 (package! centered-cursor-mode)

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+host=${1:-201.nobida.cn}
+set -e
+
+for dir in /tmp/gentoo/home/amos/git/llvm-project/release/lib/clang/*/include
+do
+    rsync -aHS --rsync-path="mkdir -p $dir && rsync" $dir/ $host:$dir/
+done
+
+for file in /tmp/gentoo/home/amos/git/llvm-project/release/bin/clang-format /tmp/gentoo/home/amos/git/ccls/release/ccls
+do
+    rsync -aHS --rsync-path="mkdir -p $(dirname $file) && rsync" $file $host:$file
+done

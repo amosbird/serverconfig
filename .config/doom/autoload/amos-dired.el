@@ -96,6 +96,7 @@
 (defun +amos/dired-up-directory (&optional other-window)
   (interactive)
   (dired-up-directory other-window)
+  (recenter)
   (+amos-store-jump-history)
   (+amos--update-history default-directory +amos-dired-history-ring +amos-dired-history-index))
 

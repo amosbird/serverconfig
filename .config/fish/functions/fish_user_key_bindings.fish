@@ -82,7 +82,15 @@ function fish_user_key_bindings
                 history -z | fzf --read0 -q $str | read -lz result
                 and commandline -r -- (string trim -r $result)
             else
-                string tokenize -n 1000 -a | fzf -q $tok | read -l result
+                set -l list
+                for his in $history
+                    echo $his | read --tokenize --array tokens
+                    set -a list $tokens[-1..1]
+                    if test (count $list) -gt 256
+                        break
+                    end
+                end
+                string join0 -- $list | fzf --read0 -q $tok | read -l result
                 and commandline -tr -- $result
             end
         end

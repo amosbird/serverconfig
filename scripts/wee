@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-termite -t weechat -e "ssh -t cdn.wentropy.com 'env -i HOME=\$HOME TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" /home/amos/gentoo/startprefix3'"
+termite --hold -t weechat -e "ssh -t -J 192.144.138.253 13.75.119.182 'env -i HOME=\$HOME TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" /home/amos/gentoo/startprefix3'"

@@ -88,6 +88,7 @@ c.bindings.commands["normal"] = {
     "j": "scroll-page 0 0.1",
     "i": "hint inputs --last --visible",
     "gi": "enter-mode insert",
+    "go": "spawn translateurl {url:pretty}",
     "y": "yank",
     "co": "download-open;; download-remove",
     "cc": "download-copy",

@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 
 window=""
-if [ -n "$1" ]
-then
-   window=$1
+if [ -n "$1" ]; then
+    window=$1
 fi
 
 mapfile -t array < <(tmux list-panes -t "$window" -F "#{pane_tty}" | sed "s=/dev/==")
-mapfile -t pp < <( for a in "${array[@]}" ; do pgrep -t "$a" ; done )
+mapfile -t pp < <(for a in "${array[@]}"; do pgrep -t "$a"; done)
 tmux kill-window -t "$window"
-for p in "${pp[@]}" ; do
-    kill -9 "$p" &> /dev/null || true
+for p in "${pp[@]}"; do
+    kill -9 "$p" &>/dev/null || true
 done

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+luakit "https://translate.google.com/translate?hl=en&sl=auto&tl=en&u=$1"
