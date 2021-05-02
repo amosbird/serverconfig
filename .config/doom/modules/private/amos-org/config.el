@@ -23,19 +23,19 @@
           :gniv [M-return]   #'+amos/org-meta-return
           :gniv "M-RET"      #'+amos/org-meta-return
           :gniv "C-t"        #'+amos/org-todo
-          :t "H"             #'org-do-promote
-          :t "L"             #'org-do-demote
-          :t "K"             #'org-promote-subtree
-          :t "J"             #'org-demote-subtree
-          :t "C-i"           #'org-cycle
-          :t "C-j"           #'org-metadown
-          :t "C-k"           #'org-metaup
-          :t "x"             #'org-cut-subtree
-          :t "y"             #'org-copy-subtree
-          :t "p"             #'org-paste-subtree
-          :t "r"             #'org-refile
-          :t "s"             #'org-sort
-          :t "t"             #'org-toggle-heading
+          :n "C-i"           #'better-jumper-jump-forward
+          :g "C-c H"         #'org-do-promote
+          :g "C-c L"         #'org-do-demote
+          :g "C-c K"         #'org-promote-subtree
+          :g "C-c J"         #'org-demote-subtree
+          :g "C-c C-j"       #'org-metadown
+          :g "C-c C-k"       #'org-metaup
+          :g "C-c x"         #'org-cut-subtree
+          :g "C-c y"         #'org-copy-subtree
+          :g "C-c p"         #'org-paste-subtree
+          :g "C-c r"         #'org-refile
+          :g "C-c s"         #'org-sort
+          :g "C-c t"         #'org-toggle-heading
           :n "gt"            #'evil-struct-state
           :n "RET"           #'org-open-at-point
           :n "M-h"           #'evil-window-left
@@ -54,7 +54,8 @@
           :g "C-c C-j"       #'counsel-org-goto
           :nv "C-S-f"        #'+amos/org-format ;; gui
           :nv "S-<f11>"      #'+amos/org-format ;; terminal
-          :g "C-c C-S-l"     #'+org/remove-link)))
+          :g "C-c C-S-l"     #'+org/remove-link))
+  )
 
 (after! org
   (setq-default org-M-RET-may-split-line '((default))

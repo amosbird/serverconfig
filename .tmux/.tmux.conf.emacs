@@ -9,6 +9,7 @@ set -s detach-on-destroy off
 
 set -s key-table emacs
 
+bind-key -T emacs C-] send-keys Escape
 bind-key -T emacs M-0 switch-client -t amos -Z
 bind-key -T emacs M-= switch-client -t htop -Z
 

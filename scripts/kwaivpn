@@ -266,7 +266,9 @@ if [ -n "$IPROUTE" ]; then
 
 		# ---------------------
 
-		$IPROUTE route add 10.32.255.96/32 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
+		$IPROUTE route add 10.58.255.0/24 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
+		$IPROUTE route add 10.36.255.0/24 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
+		$IPROUTE route add 10.32.255.0/24 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
 		# $IPROUTE route add 192.168.120.0/24 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
 		$IPROUTE route add 172.17.1.166 dev "$TUNDEV"
 		$IPROUTE route add 172.29.4.154 dev "$TUNDEV" # gdev20

@@ -2112,23 +2112,11 @@ representation of `NUMBER' is smaller."
     (projectile-find-other-file)))
 
 (advice-add #'hide-mode-line-mode :override #'ignore)
-
-;; (defun +amos/fcitx--activate-proc ()
-;;   (osc-fcitx-activate))
-
-;; (defun +amos/fcitx--deactivate-proc ()
-;;   (osc-fcitx-deactivate))
-
-;; there is no easy way to query local info from remote via termio
-;; (when tmux-p
-;;   (advice-add #'fcitx-check-status :override (lambda () t))
-;;   (advice-add #'fcitx--active-p :override #'ignore)
-;;   (advice-add #'fcitx--activate-proc :override #'+amos/fcitx--activate-proc)
-;;   (advice-add #'fcitx--deactivate-proc :override #'+amos/fcitx--deactivate-proc))
+(advice-add #'visual-line-mode :override #'ignore)
 
 (when gui-p
   (require 'fcitx)
-  (fcitx-aggressive-setup))
+  (fcitx-evil-turn-on))
 
 (defun first-non-dired-buffer ()
   (--first (not (with-current-buffer it (derived-mode-p 'dired-mode))) (buffer-list)))
@@ -2907,9 +2895,9 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                                (not avy-all-windows)
                              avy-all-windows)))
       (avy-with avy-goto-char-timer
-                (avy--process
-                 (avy--read-candidates)
-                 (avy--style-fn avy-style))))
+        (avy--process
+         (avy--read-candidates)
+         (avy--style-fn avy-style))))
     (if block (evil-visual-block))))
 ;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
 ;;
@@ -3111,8 +3099,8 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
     (with-current-buffer (get-buffer-create "*lsp-ui-imenu*")
       (let* ((padding (or (and (eq lsp-ui-imenu-kind-position 'top) 1)
                           (--> (-filter 'imenu--subalist-p list)
-                               (--map (length (car it)) it)
-                               (-max (or it '(1))))))
+                            (--map (length (car it)) it)
+                            (-max (or it '(1))))))
              (grouped-by-subs (-partition-by 'imenu--subalist-p list))
              (color-index 0)
              buffer-read-only)
@@ -4272,6 +4260,9 @@ inside or just after a citation command, only adds KEYS to it."
        (if (or (evil-visual-state-p) (region-active-p))
            (setq deactivate-mark t))
        (cond
+        ;; amos: do not rotate
+        ;; ((evil-visual-state-p)
+        ;;  (evil-visual-rotate 'upper-left))
         ((evil-get-command-property 'evil-yank :move-point)
          (goto-char
           (or evil-operator-range-beginning orig)))
@@ -4293,7 +4284,7 @@ inside or just after a citation command, only adds KEYS to it."
               (cua-copy-region-to-global-mark beg end))
              ((eq type 'block)
               (evil-yank-rectangle beg end register yank-handler))
-             ((eq type 'line)
+             ((memq type '(line screen-line))
               (evil-yank-lines beg end register yank-handler))
              (t
               (evil-yank-characters beg end register yank-handler))))))
@@ -4439,11 +4430,11 @@ inside or just after a citation command, only adds KEYS to it."
          (split-len (length split))
          shrunk)
     (->> split
-         (--map-indexed (if (= it-index (1- split-len))
-                            it
-                          (shrink-path--truncate it)))
-         (s-join "/")
-         (setq shrunk))
+      (--map-indexed (if (= it-index (1- split-len))
+                         it
+                       (shrink-path--truncate it)))
+      (s-join "/")
+      (setq shrunk))
     (s-concat (unless (s-matches? (rx bos (or "~" "/")) shrunk) "/")
               shrunk
               (unless (s-ends-with? "/" shrunk) "/"))))
@@ -5104,6 +5095,20 @@ See `project-local-get' for the parameter PROJECT."
       (evil-declare-ignore-repeat (intern command)))))
 
 (remove-hook 'text-mode-hook #'auto-fill-mode)
+
+(defun +evil/visual-indent ()
+  "vnoremap < <gv"
+  (interactive)
+  (evil-shift-right (region-beginning) (region-end))
+  (evil-normal-state)
+  (evil-visual-restore))
+
+(defun +evil/visual-dedent ()
+  "vnoremap > >gv"
+  (interactive)
+  (evil-shift-left (region-beginning) (region-end))
+  (evil-normal-state)
+  (evil-visual-restore))
 
 (after! format-all
   (progn

@@ -141,7 +141,7 @@ c.bindings.commands["insert"] = {
     "<Alt-F8>": "scroll-to-perc 0",
     "<Alt-F9>": "back",
     "<Alt-F10>": "forward",
-    "<Escape>": "fake-key <Escape> ;; leave-mode",
+    "<Escape>": "fake-key <Escape> ;; mode-leave",
     "<Enter>": "fake-key <Return>",
     "<ctrl+a>": "fake-key <Home>",
     "<ctrl+shift+a>": "fake-key <ctrl+a>",
