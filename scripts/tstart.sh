@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 export LANG=en_US.UTF-8
-export SHELL=$HOME/gentoo/usr/local/bin/fish # for tmux
+export SHELL=/tmp/gentoo/usr/local/bin/fish # for tmux
 export TERM=xterm-tmux-24bits
 if test "$SSH_AUTH_SOCK"; then
     ln -sf $SSH_AUTH_SOCK ~/.ssh/ssh_auth_sock

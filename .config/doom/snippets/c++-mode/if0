@@ -1,0 +1,8 @@
+# -*- mode: snippet -*-
+# name: if0
+# uuid:
+# key: if0
+# condition: t
+# --
+if (/* DISABLES CODE */ (0))
+    $0
