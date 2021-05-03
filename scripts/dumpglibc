@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
 readelf -s --wide $1 | rg 'GLIBC' | perl -Mversion -nE 's/^\s+//; my @parts = split /\s+/; push(@items, [$parts[7] =~ m/(.*)\@GLIBC_(.*)/]);END{@items = sort { version->declare( $a->[1] ) <=> version->declare( $b->[1] ) } @items; print "$_->[0]\t$_->[1]\n" for @items;}'
+
+# readelf -s --wide $1 | rg 'GLIBC' | sort -V -t @ -k2
