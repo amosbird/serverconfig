@@ -48,7 +48,7 @@ default/fallback account."
 ;;
 
 (use-package! mu4e
-  :load-path "/tmp/gentoo/usr/share/emacs/site-lisp/mu/"
+  :load-path "/tmp/gentoo/usr/share/emacs/site-lisp/mu4e/"
   :commands (mu4e mu4e-compose-new browse-url-mail)
   :config
   (setq
@@ -288,7 +288,7 @@ default/fallback account."
           (:map mu4e~update-mail-mode-map
             :n "q" #'mu4e-interrupt-update-mail)))
 
-  (setq mu4e-user-mail-address-list '("amosbird@gmail.com" "zhengtianqi12@mails.ucas.ac.cn"))
+  (setq mu4e-user-mail-address-list '("amosbird@gmail.com"))
 
   (setq mu4e-contexts
         `( ,(make-mu4e-context
@@ -298,14 +298,6 @@ default/fallback account."
              :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "amosbird@gmail.com")))
              :vars '(( user-mail-address       . "amosbird@gmail.com" )
                      ( user-full-name          . "Amos Bird" )
-                     ( mu4e-compose-signature  . nil)))
-           ,(make-mu4e-context
-             :name "ucas"
-             :enter-func (lambda () (mu4e-message "Switch to the ucas context"))
-             ;; :leave-func (lambda () (mu4e-clear-caches))
-             :match-func (lambda (msg) (when msg (mu4e-message-contact-field-matches msg :to "zhengtianqi12@mails.ucas.ac.cn")))
-             :vars '(( user-mail-address       . "zhengtianqi12@mails.ucas.ac.cn" )
-                     ( user-full-name          . "Tianqi Zheng" )
                      ( mu4e-compose-signature  . nil)))
            )))
 
