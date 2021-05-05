@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# chromium --user-data-dir=/home/amos/.jupyterlab-user-data --class="jupyterlab" http://127.0.0.1:8888
+chromium --user-data-dir=/home/amos/.mail-user-data --class="mail" --window-size=7000,7000 --kiosk https://mail.corp.kuaishou.com
