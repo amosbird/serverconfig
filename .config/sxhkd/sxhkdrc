@@ -212,3 +212,9 @@ super + F5
 
 super+t
   transgui
+
+super + alt + {h,j,k,l}
+  bspc node -z {left -10 0,bottom +10 0,top -10 0,right +10 0}
+
+super + alt + shift + {h,j,k,l}
+  bspc node -z {left +10 0,bottom -10 0,top +10 0,right -10 0}

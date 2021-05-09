@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+sudo tailscale up --exit-node=100.104.31.7
