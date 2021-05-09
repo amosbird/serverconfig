@@ -2,6 +2,7 @@
 
 sudo pkill openconnect
 sudo pkill core
+sudo ip l s enp0s20f0u4u1u2 down
 sudo ip l s enp0s31f6 down
 sudo ip l s wlp3s0 down
 sudo netctl stop-all
@@ -9,11 +10,7 @@ sudo ip r d default
 sudo ip r f table cn
 sudo netctl switch-to "$1"
 if [ $? -ne 0 ]; then
-    sudo systemctl stop zerotier-one
     sudo systemctl stop dnsmasq
     sleep 5
-    sudo systemctl start zerotier-one
     sudo systemctl start dnsmasq
 fi
-
-# addroutes
