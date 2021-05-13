@@ -241,48 +241,29 @@ if [ -n "$IPROUTE" ]; then
 	}
 
 	set_default_route() {
-		$IPROUTE route add default dev "$TUNDEV" table kwai
-		# $IPROUTE route add 172.17.1.166 dev "$TUNDEV"
-		# $IPROUTE route add 172.29.4.154 dev "$TUNDEV"
-		# $IPROUTE route add 10.62.136.41 dev "$TUNDEV"
-		# $IPROUTE route add 10.48.50.8 dev "$TUNDEV"
-		# $IPROUTE route add 10.32.255.96 dev "$TUNDEV"  # qingteng
-		# $IPROUTE route add 10.32.255.94 dev "$TUNDEV"  # sso
-		# $IPROUTE route add 10.32.255.95 dev "$TUNDEV"  # grafana
-		# $IPROUTE route add 10.48.56.8 dev "$TUNDEV"
-		# $IPROUTE route add 10.0.0.0/8 dev "$TUNDEV"
+		ip rule add table kwai pref 3999
 
+		for d in enp0s31f6 enp0s20f0u4u1u2 wlp3s0; do
+			read -r _ _ gw _ < <(ip r g 123.206.66.49 oif $d)
+			if [ -n "$gw" ]; then
+				break
+			fi
+		done
 
-		# 4848
-		# $IPROUTE route add 10.52.237.50/32 dev "$TUNDEV"
+		while read -r subnet _ d; do
+			ip r a $subnet dev $d table kwai
+			:
+		done < <(ip route show table main scope link)
 
-		# # 320
-		# $IPROUTE route add 10.62.136.41/32 dev "$TUNDEV"
+		$IPROUTE route add 10.58.255.0/24 via $gw table kwai
+		$IPROUTE route add 10.36.255.0/24 via $gw table kwai
+		$IPROUTE route add 10.32.255.0/24 via $gw table kwai
+		$IPROUTE route add 10.0.0.0/8 dev "$TUNDEV" table kwai
 
-		# # flink
-		# $IPROUTE route add 10.48.50.8/32 dev "$TUNDEV"
-
-		# $IPROUTE route flush cache 2>/dev/null
-
-		# ---------------------
-
-		$IPROUTE route add 10.58.255.0/24 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
-		$IPROUTE route add 10.36.255.0/24 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
-		$IPROUTE route add 10.32.255.0/24 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
-		# $IPROUTE route add 192.168.120.0/24 via "$(ip r g 1.1.1.1 | awk '/via/ {print $3}')"
-		$IPROUTE route add 172.17.1.166 dev "$TUNDEV"
-		$IPROUTE route add 172.29.4.154 dev "$TUNDEV" # gdev20
-		$IPROUTE route add 172.29.4.79 dev "$TUNDEV" # dns
-		$IPROUTE route add 172.29.70.105 dev "$TUNDEV" # dns
-		# $IPROUTE route add 10.62.136.41 dev "$TUNDEV"
-		# $IPROUTE route add 10.48.50.8 dev "$TUNDEV"
-		# $IPROUTE route add 10.32.255.96 dev "$TUNDEV"  # qingteng
-		# $IPROUTE route add 10.32.255.94 dev "$TUNDEV"  # sso
-		# $IPROUTE route add 10.32.255.95 dev "$TUNDEV"  # grafana
-		# $IPROUTE route add 10.48.56.8 dev "$TUNDEV"
-
-		$IPROUTE route add 10.0.0.0/8 dev "$TUNDEV"
-
+		# DNS
+		$IPROUTE route add 172.17.1.166 dev "$TUNDEV" table kwai
+		$IPROUTE route add 172.29.4.79 dev "$TUNDEV" table kwai
+		$IPROUTE route add 172.29.70.105 dev "$TUNDEV" table kwai
 	}
 
 	set_network_route() {
@@ -398,6 +379,7 @@ else # use route command
 	}
 
 	del_vpngateway_route() {
+		ip r f table kwai
 		route $route_syntax_del -host "$VPNGATEWAY" $route_syntax_gw "`get_default_gw`"
 	}
 

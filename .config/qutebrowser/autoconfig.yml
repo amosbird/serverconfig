@@ -110,7 +110,7 @@ settings:
   content.geolocation:
     global: false
   content.headers.user_agent:
-    '*://otp.*.kuaishou.com/*': Kim/0.9.9 integration Mozilla/5.0 (Windows NT 10.0;
+    '*.kuaishou.com/*': Kim/0.9.9 integration Mozilla/5.0 (Windows NT 10.0;
       Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Kim/0.9.9 Chrome/69.0.3497.128
       Electron/4.2.6 Safari/537.36
     global: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)
