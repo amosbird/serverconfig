@@ -32,6 +32,7 @@
 (package! gitattributes-mode)
 (package! go-playground)
 (package! magit-svn)
+(package! magit-section)
 (package! move-text)
 (package! narrow-reindent)
 (package! ov)
