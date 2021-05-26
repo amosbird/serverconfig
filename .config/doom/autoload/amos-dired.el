@@ -11,7 +11,7 @@
 
 (setq dired-listing-switches "-alh"
       dired-recursive-deletes 'always)
-(setf (cdr (assoc "\000"  dired-compress-file-suffixes)) '(".zip" "zip -r %o %i"))
+(add-to-list 'dired-compress-file-suffixes '("" "\\.zip\\'" "zip -r %o %i"))
 (push ".d" dired-omit-extensions)
 
 (defun +dired|sort-directories-first ()
