@@ -68,7 +68,7 @@ ctrl+alt+q
 ctrl+alt+Eisu_toggle
   toggleaudio
 ctrl+alt+1
-  showphone.sh
+  showkim.sh
 ctrl+alt+2
   echo s | nc -U /tmp/scrcpy.socket
 ctrl+alt+3
@@ -108,8 +108,6 @@ ctrl+alt+x
 ctrl+alt+comma
   showwechat.sh
   # while read i; do bspc node $i -g hidden=off; done < /tmp/hidden_windows;
-# ctrl+alt+period
-#   showwangwang.sh
 super+Home
   movehome
 super+End

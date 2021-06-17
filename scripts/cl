@@ -24,7 +24,7 @@ def main():
         cargs.append(k + "=" + v)
     carg += "; ".join(cargs)
 
-    args = ["curl", "-s", "-H", carg]
+    args = ["curl", "-L", "-s", "-H", carg]
     args.extend(curlargs)
 
     subprocess.run(args)

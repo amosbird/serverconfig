@@ -3,7 +3,7 @@
 if [ -z "$VPNGATEWAY" ]
 then
 	sudo pkill openconnect
-	pass show vpn | bash &
+	pass show vpn2 | bash &
 	exit 0
 fi
 
