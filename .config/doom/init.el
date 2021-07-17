@@ -72,6 +72,7 @@
        ;; amos-sh
        )
 
+(setq shift-select-mode nil)
 (setq select-active-regions nil)
 ;; (setq TeX-command "pdftex")
 ;; (setq LaTeX-command "pdflatex")

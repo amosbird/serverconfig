@@ -1,0 +1,18 @@
+# setting to use if your config file is in .toml
+
+default_flags = "h"
+capture_mouse = false
+quit_on_last_cancel = true
+
+[search-modes]
+"<empty>" = "fuzzy path"
+"/" = "fuzzy path"
+"z/" = "regex path"
+
+[[verbs]]
+key = "ctrl-h"
+execution = ":parent"
+
+[[verbs]]
+key = "ctrl-l"
+execution = ":focus"

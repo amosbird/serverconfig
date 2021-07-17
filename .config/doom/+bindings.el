@@ -272,7 +272,7 @@
       :n "go"                     #'+amos/evil-insert-line-below
       :n "gO"                     #'+amos/evil-insert-line-above
       :n "gp"                     #'+evil/reselect-paste
-      :n "gr"                     #'+lookup/references
+      :n "gr"                     #'+amos/references
       :v "gR"                     #'+eval:replace-region
       :vnm "gy"                   #'evilnc-copy-and-comment-lines
       :vnm "gl"                   #'evilnc-comment-or-uncomment-lines

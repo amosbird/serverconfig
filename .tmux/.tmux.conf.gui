@@ -59,7 +59,8 @@ bind 2 split-window -v -c '#{pane_current_path}'
 bind 3 split-window -h -c '#{pane_current_path}'
 bind C-x send-prefix
 bind C-c detach-client
-bind r source-file /home/amos/.tmux/.tmux.conf.gui \; display '/home/amos/.tmux/.tmux.conf.gui sourced'
+bind r command-prompt -p 'new window name:' 'rename-window %1'
+bind R source-file $HOME/.tmux/.tmux.conf.gui \; display '$HOME/.tmux/.tmux.conf.gui sourced'
 bind c new-window
 bind d kill-pane
 bind e run-shell /home/amos/scripts/edittmuxpane

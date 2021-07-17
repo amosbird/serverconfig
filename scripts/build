@@ -7,7 +7,7 @@ else
    mkdir -p release && pushd release || exit 1
 fi
 
-mkdir install
+mkdir -p install
 
 if [[ "$1" == install ]]; then
     ninja && sudo ninja install
@@ -53,6 +53,12 @@ else
             -DCMAKE_PREFIX_PATH="$HOME/git/llvm-project/release;$HOME/git/llvm-project/release/tools/clang;$HOME/git/llvm-project/llvm;$HOME/git/llvm-project/clang"
         )
 
+        ;;
+    ccls-os)
+        cmake_args=(
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            -DCMAKE_CXX_COMPILER=clang++
+        )
         ;;
     ccls-debug)
         cmake_args=(

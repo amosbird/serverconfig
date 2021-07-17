@@ -308,19 +308,19 @@ Uses current context if CONTEXT is nil."
 (defun leap-set-jump (&optional pos)
   "Set jump point at POS.
 POS defaults to point."
-  (unless (or (region-active-p) (evil-visual-state-p))
-    (push-mark (if (markerp pos) (marker-position pos) pos) t))
+  (save-excursion
+    (unless (or (region-active-p) (evil-visual-state-p))
+      (push-mark (if (markerp pos) (marker-position pos) pos) t))
 
-  (unless (or leap--jumping better-jumper--jumping)
-    ;; clear out intermediary jumps when a new one is set
-    (let* ((struct (leap--get-struct))
-           (jump-list (leap--get-struct-jump-list struct))
-           (idx (leap-jump-list-struct-idx struct)))
-      (cl-loop repeat (+ 1 idx)
-               do (ring-remove jump-list 0))
-      (setf (leap-jump-list-struct-idx struct) -1)
-      (setf (leap-jump-list-struct-marker struct) nil))
-    (save-excursion
+    (unless (or leap--jumping better-jumper--jumping)
+      ;; clear out intermediary jumps when a new one is set
+      (let* ((struct (leap--get-struct))
+             (jump-list (leap--get-struct-jump-list struct))
+             (idx (leap-jump-list-struct-idx struct)))
+        (cl-loop repeat (+ 1 idx)
+                 do (ring-remove jump-list 0))
+        (setf (leap-jump-list-struct-idx struct) -1)
+        (setf (leap-jump-list-struct-marker struct) nil))
       (when pos
         (goto-char pos))
       (leap--push))))

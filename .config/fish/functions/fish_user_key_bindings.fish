@@ -235,7 +235,7 @@ function fish_user_key_bindings
     bind \ci __fzf_complete
     bind \eG open-magit
     bind \ep updir
-    bind \en elvish-nav
+    bind \en br
     bind \eg fzf-jump-cd
     bind \eo myprevd
     bind \ei mynextd

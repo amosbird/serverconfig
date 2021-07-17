@@ -1263,6 +1263,21 @@ When GREEDY is non-nil, join words in a greedy way."
 
 (advice-add #'counsel-rg :override #'+amos-counsel-rg-a)
 
+(defun +amos*evil-transient-mark (&optional arg)
+  "Toggle Transient Mark mode.
+Ensure that the region is properly deactivated.
+Enable with positive ARG, disable with negative ARG."
+  (unless (numberp arg)
+    (setq arg (if transient-mark-mode -1 1)))
+  (cond
+   ((< arg 1)
+    (evil-active-region -1))
+   (t
+    (unless transient-mark-mode
+      (evil-active-region -1)
+      (transient-mark-mode 1)))))
+(advice-add #'evil-transient-mark :override #'+amos*evil-transient-mark)
+
 (defun +amos-counsel-ag-occur-a ()
   (ivy-occur-grep-mode)
   (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
