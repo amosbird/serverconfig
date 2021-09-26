@@ -2,9 +2,9 @@
 
 workspace=$(bspc query -D -d focused --names)
 if pgrep -f WeChat &>/dev/null; then
-    while read -r wid
-    do
-        xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
+    while read -r wid; do
+        x=$(xprop -id "$wid")
+        grep -E -q "window state: (Normal|Iconic)" <<<"$x" && grep -q 'WM_NAME(COMPOUND_TEXT) = "微信"' <<<"$x" && ! grep -q "WM_TRANSIENT_FOR(WINDOW)" <<<"$x" && found=1 && break
     done < <(xdo id -N Wine -n wechat.exe)
     if [ -z "$found" ]; then
         $HOME/.deepinwine/deepin-wine-helper/sendkeys.sh w wechat 3 &>/dev/null
