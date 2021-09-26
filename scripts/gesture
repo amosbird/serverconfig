@@ -4,6 +4,9 @@ id=$(xdotool getmouselocation | awk -F "window:" '{print $2}')
 class=$(xprop -id $id WM_CLASS | awk -F ", \"" '{print substr($2, 1, length($2)-1)}')
 swipe3left() {
     case "$class" in
+    Brave-browser)
+        xdotool key --window $id alt+Left
+        ;;
     qutebrowser)
         xdotool key --window $id alt+F9
         ;;
@@ -16,6 +19,9 @@ swipe3left() {
 
 swipe3right() {
     case "$class" in
+    Brave-browser)
+        xdotool key --window $id alt+Right
+        ;;
     qutebrowser)
         xdotool key --window $id alt+F10
         ;;
@@ -28,6 +34,9 @@ swipe3right() {
 
 swipe3up() {
     case "$class" in
+    Brave-browser)
+        xdotool key --window $id Home
+        ;;
     qutebrowser)
         # xdotool key --window $id alt+F6
         xdotool key --window $id alt+F8
@@ -41,6 +50,9 @@ swipe3up() {
 
 swipe3down() {
     case "$class" in
+    Brave-browser)
+        xdotool key --window $id End
+        ;;
     qutebrowser)
         xdotool key --window $id alt+F7
         # xdotool key --window $id G
@@ -54,6 +66,9 @@ swipe3down() {
 
 swipe4left() {
     case "$class" in
+    Brave-browser)
+        xdotool key --window $id ctrl+shift+Tab
+        ;;
     qutebrowser|jupyterlab|discord)
         xdotool key --window $id ctrl+comma
         ;;
@@ -62,6 +77,9 @@ swipe4left() {
 
 swipe4right() {
     case "$class" in
+    Brave-browser)
+        xdotool key --window $id ctrl+Tab
+        ;;
     qutebrowser|jupyterlab|discord)
         xdotool key --window $id ctrl+period
         ;;
@@ -70,6 +88,9 @@ swipe4right() {
 
 swipe4up() {
     case "$class" in
+    Brave-browser)
+        xdotool key --window $id ctrl+shift+t
+        ;;
     qutebrowser)
         xdotool key --window $id alt+F5
         ;;
@@ -78,6 +99,9 @@ swipe4up() {
 
 swipe4down() {
     case "$class" in
+    Brave-browser)
+        xdotool key --window $id ctrl+w
+        ;;
     qutebrowser)
         xdotool key --window $id alt+F4
         ;;

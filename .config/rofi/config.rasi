@@ -1,8 +1,6 @@
 configuration {
 	font: "monospace 14";
-	bw: 1;
 	location: 0;
-	padding: 5;
 	yoffset: 0;
 	xoffset: 0;
 	fixed-num-lines: true;
@@ -27,26 +25,13 @@ configuration {
 	matching: "normal";
 	tokenize: true;
 	m: "-5";
-	line-margin: 2;
-	line-padding: 1;
 	filter: "";
-	separator-style: "dash";
-	hide-scrollbar: false;
-	fullscreen: false;
-	fake-transparency: false;
 	dpi: -1;
 	threads: 0;
-	scrollbar-width: 8;
 	scroll-method: 0;
-	fake-background: "screenshot";
 	window-format: "{w}    {i}{c}   {t}";
 	click-to-exit: true;
-	show-match: true;
 	theme: "~/.config/rofi/orange.rasi";
-	color-normal: "";
-	color-urgent: "";
-	color-active: "";
-	color-window: "";
 	pid: "/run/user/1000/rofi.pid";
 	display-window: "";
 	display-windowcd: "";

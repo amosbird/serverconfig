@@ -50,7 +50,19 @@
 
 #element {
    padding: 2px 15px;
-   children: [element-index, element-icon, element-text ];
+   children: [element-index, element-icon, element-text];
+}
+
+#element-index {
+   padding: 0px 5px;
+   background-color: @blackentry;
+   text-color: @fgwhite;
+}
+
+#element-icon {
+   padding: 0px 5px;
+   background-color: @blackentry;
+   text-color: @fgwhite;
 }
 
 #element.normal.normal {
@@ -140,4 +152,9 @@
    padding:6px 10px;
    text-color:@maincolor;
    background-color:@blackwidget;
+}
+
+element-text, element-icon {
+    background-color: inherit;
+    text-color:       inherit;
 }

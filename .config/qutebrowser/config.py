@@ -166,6 +166,3 @@ c.bindings.commands["insert"] = {
     "<ctrl+q>": ":jseval --quiet --file ./ctrlu.js",
     "<ctrl+x>": ":jseval --quiet --file ./ctrlk.js",
 }
-
-sys.path.append(os.path.join(sys.path[0], "jblock"))
-config.source("jblock/jblock/integrations/qutebrowser.py")

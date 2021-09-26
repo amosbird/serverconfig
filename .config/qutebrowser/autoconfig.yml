@@ -100,21 +100,31 @@ settings:
     global: '#1c5dc9'
   completion.show:
     global: auto
+  content.blocking.adblock.lists:
+    global:
+    - https://raw.githubusercontent.com/brave/adblock-lists/master/brave-unbreak.txt
+    - https://easylist.to/easylist/easylist.txt
+    - https://easylist.to/easylist/easyprivacy.txt
   content.blocking.enabled:
-    global: false
+    global: true
   content.blocking.hosts.lists:
     global:
+    - https://raw.githubusercontent.com/brave/adblock-lists/master/brave-unbreak.txt
     - https://easylist.to/easylist/easylist.txt
     - https://easylist.to/easylist/easyprivacy.txt
     - https://testpages.adblockplus.org/en/abp-testcase-subscription.txt
+  content.blocking.method:
+    global: adblock
   content.geolocation:
     global: false
   content.headers.user_agent:
-    '*.kuaishou.com/*': Kim/0.9.9 integration Mozilla/5.0 (Windows NT 10.0;
-      Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Kim/0.9.9 Chrome/69.0.3497.128
-      Electron/4.2.6 Safari/537.36
+    '*.kuaishou.com/*': Kim/0.9.9 integration Mozilla/5.0 (Windows NT 10.0; Win64;
+      x64) AppleWebKit/537.36 (KHTML, like Gecko) Kim/0.9.9 Chrome/69.0.3497.128 Electron/4.2.6
+      Safari/537.36
     global: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)
-      Chrome/86.0.4240.111 Safari/537.36
+      Chrome/91.0.4472.77 Safari/537.36
+    https://accounts.google.com/*: Mozilla/5.0 ({os_info}; rv:90.0) Gecko/20100101
+      Firefox/90.0
   content.javascript.can_access_clipboard:
     global: true
   content.media.video_capture:

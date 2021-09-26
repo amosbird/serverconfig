@@ -17,9 +17,9 @@ fc() {
 }
 
 case "$class" in
-Brave-browser)
-    echo "state=floating sticky=on"
-    ;;
+# Brave-browser)
+#     echo "state=floating sticky=on"
+#     ;;
 discord)
     echo "$wid" >/tmp/discord
     echo "state=floating sticky=on"
