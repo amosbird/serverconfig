@@ -39,6 +39,7 @@
        magit
        rgb
        biblio
+       ansible
        (lookup)
 
        :lang
@@ -157,6 +158,7 @@
 (setq dired-recursive-deletes 'always)
 (setq dired-auto-revert-buffer t)
 (setq global-auto-revert-non-file-buffers t)
+(setq popup-tip-max-width 160)
 (setq eldoc-message-function (lambda (&rest args) (let ((message-truncate-lines t)) (apply #'eldoc-minibuffer-message args))))
 (setq evil-cjk-emacs-word-boundary t)
 (setq evil-esc-delay 0.001)
@@ -181,7 +183,6 @@
 (setq inhibit-compacting-font-caches nil)
 (setq flycheck-disabled-checkers '(c/c++-clang c/c++-gcc c/c++-cppcheck))
 (setq fringes-outside-margins t)
-;; (setq global-auto-revert-non-file-buffers t)
 (setq indent-tabs-mode t)
 (setq initial-buffer-choice t)
 (setq interprogram-paste-function nil)
@@ -197,12 +198,6 @@
 (setq ivy-use-virtual-buffers nil)
 (setq ivy-virtual-abbreviate 'full)
 (setq google-translate-translation-directions-alist '(("en" . "zh-CN")))
-(setq lsp-response-timeout 5)
-(setq lsp-enable-symbol-highlighting nil)
-(setq lsp-ui-doc-enable nil)
-(setq lsp-enable-dap-auto-configure nil)
-(setq lsp-signature-render-all nil)
-(setq lsp-enable-on-type-formatting nil)
 (setq message-truncate-lines t)
 (setq nav-flash-delay 0.3)
 (setq org-M-RET-may-split-line '((default)))

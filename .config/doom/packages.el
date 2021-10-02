@@ -17,7 +17,7 @@
                    vi-tilde-fringe
                    emacs-snippets)
 
-(unpin! format-all)
+;; (unpin! format-all)
 
 (package! adoc-mode)
 (package! bind-map)

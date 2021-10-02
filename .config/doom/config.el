@@ -1,6 +1,7 @@
 ;;; private/amos/config.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
 (load! "+bindings")
+(load! "+lsp")
 (require 'dash)
 (require 'ivy)
 (require 'evil-multiedit)
@@ -25,37 +26,6 @@
 
 (use-package! quick-peek
   :defer)
-
-(use-package! flycheck
-  :after-call (doom-switch-buffer-hook after-find-file)
-  :config
-  (advice-add #'+syntax-check-buffer-h :override #'ignore)
-  ;; (setq flycheck-check-syntax-automatically nil)
-  ;; Emacs feels snappier without checks on newline
-  (setq flycheck-check-syntax-automatically '(save mode-enabled))
-  ;; (after! evil
-  ;;   (defun +syntax-checkers|flycheck-buffer ()
-  ;;     "Flycheck buffer on ESC in normal mode."
-  ;;     (when flycheck-mode
-  ;;       (ignore-errors (flycheck-buffer))
-  ;;       nil))
-  ;;   (add-hook! 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
-  (global-flycheck-inline-mode +1)
-  (global-flycheck-mode +1)
-
-  ;; (advice-add #'flycheck-display-error-messages :override #'flycheck-inline-display-errors)
-  (setq flycheck-highlighting-mode 'columns
-        ;; flycheck-check-syntax-automatically '(save mode-enabled)
-        flycheck-indication-mode nil
-        ;; flycheck-inline-display-function
-        ;; (lambda (msg pos)
-        ;;   (let* ((ov (quick-peek-overlay-ensure-at pos))
-        ;;          (contents (quick-peek-overlay-contents ov)))
-        ;;     (setf (quick-peek-overlay-contents ov)
-        ;;           (concat contents (when contents "\n") msg))
-        ;;     (quick-peek-update ov)))
-        ;; flycheck-inline-clear-function #'quick-peek-hide
-        flycheck-display-errors-delay 0))
 
 (use-package! dired-open
   :after dired
@@ -131,41 +101,9 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (advice-add #'+rgb@kurecolor/body :before (lambda (&rest _) (rainbow-mode +1)))
   :defer)
 
-(use-package! lsp-mode
-  :init
-  (setq
-   lsp-prefer-flymake nil
-   lsp-log-io nil
-   lsp-enable-indentation nil
-   lsp-enable-file-watchers nil
-   lsp-auto-guess-root t)
-  :defer
-  :config
-  (add-hook! 'kill-emacs-hook (setq lsp-restart 'ignore))
-  (add-hook! 'lsp-after-open-hook #'lsp-enable-imenu))
-
-;; (defun lsp-java-suggest-project-root ()
-;;   (and (memq major-mode '(java-mode))
-;;        (when-let (dir (cl-some  #'(lambda (file) (locate-dominating-file default-directory file)) '("pom.xml")))
-;;          (expand-file-name dir))))
-
-;; (advice-add 'lsp--suggest-project-root :before-until #'lsp-java-suggest-project-root)
-
-
 (use-package! thrift-mode
   :config
   (add-to-list 'auto-mode-alist '("\\.thrift\\'" . thrift-mode)))
-
-(use-package! lsp-ui
-  :init
-  (setq lsp-ui-sideline-enable nil
-        lsp-ui-sideline-show-diagnostics nil)
-  ;; (add-hook! 'lsp-ui-mode-hook
-  ;;   (defun +amos-init-ui-flycheck-h ()
-  ;;     (require 'lsp-ui-flycheck)
-  ;;     (lsp-ui-flycheck-enable t)))
-
-  :defer)
 
 (use-package! go-playground
   :defer
@@ -675,8 +613,6 @@ This predicate is only tested on \"insert\" action."
 (+amos-set-docsets 'python-mode :docs '("Python_3" "Python_2"))
 (+amos-set-docsets 'js2-mode :docs "JavaScript")
 (+amos-set-docsets 'emacs-lisp-mode :docs "Emacs_Lisp")
-
-(setq-hook! 'lua-mode-hook flycheck-highlighting-mode 'lines)
 
 (defun +amos-browse-url-a (ofun &rest candidate)
   (if (boundp 'amos-browse)
@@ -1650,24 +1586,6 @@ Enable with positive ARG, disable with negative ARG."
   (add-to-list 'xref-prompt-for-identifier '+lookup/references :append)
   (add-to-list 'xref-prompt-for-identifier 'xref-find-references :append))
 
-(defun +amos/lsp-highlight-symbol ()
-  (interactive)
-  (let ((url (thing-at-point 'url)))
-    (if url (goto-address-at-point)
-      (let ((inhibit-message t))
-        (setq-local +amos--lsp-maybe-highlight-symbol t)
-        (lsp--document-highlight)))))
-
-(defun +amos-lsp-remove-highlight-h ()
-  (interactive)
-  (when (and (boundp '+amos--lsp-maybe-highlight-symbol) +amos--lsp-maybe-highlight-symbol)
-    (--each (lsp-workspaces)
-      (with-lsp-workspace it
-                          (lsp--remove-overlays 'lsp-highlight)))
-    (setq-local +amos--lsp-maybe-highlight-symbol nil)))
-
-(add-hook 'doom-escape-hook #'+amos-lsp-remove-highlight-h)
-
 (defun +amos-surround-with-pair (c &optional back)
   (let* ((e (save-excursion
               (if back
@@ -1680,38 +1598,6 @@ Enable with positive ARG, disable with negative ARG."
       (save-excursion
         (evil-surround-region e b t c))
       (forward-char 1))))
-
-(cl-defun +amos-lsp-find-custom (kind method &optional extra &key display-action)
-  "Send request named METHOD and get cross references of the symbol under point.
-EXTRA is a plist of extra parameters."
-  (let ((loc (lsp-request method
-                          (append (lsp--text-document-position-params) extra))))
-    (if loc
-        (+amos-ivy-xref (lsp--locations-to-xref-items (if (sequencep loc) loc (list loc))) kind)
-      (message "Not found for: %s" (thing-at-point 'symbol t)))))
-
-(defun +amos/definitions ()
-  (interactive)
-  (+amos-lsp-find-custom 'definitions "textDocument/definition"))
-
-(defun +amos/references ()
-  (interactive)
-  (+amos-lsp-find-custom 'references "textDocument/references"))
-
-(defun +amos-lsp--position-to-point-a (params)
-  "Convert Position object in PARAMS to a point."
-  (save-excursion
-    (save-restriction
-      (widen)
-      (goto-char (point-min))
-      ;; We use `goto-char' to ensure that we return a point inside the buffer
-      ;; to avoid out of range error
-      (goto-char (+ (line-beginning-position (1+ (gethash "line" params)))
-                    (gethash "character" params)))
-      (point))))
-
-(advice-add #'lsp--position-to-point :override #'+amos-lsp--position-to-point-a)
-(advice-add #'lsp-ui-sideline--diagnostics-changed :override #'ignore)
 
 (defun +amos/create-fish-function (name)
   (interactive "sNew function's name: ")
@@ -2433,6 +2319,12 @@ the current state and point position."
       (shell-command! (format-spec "tmux switch-client -t amos; tmuxkillwindow amos:%a; tmux run -t amos \"tmux new-window -n %a -c %b; tmux send-keys %c C-m\"" `((?a . ,(getenv "envprompt")) (?b . ,default-directory) (?c . ,command))))
     (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
 
+(defun +amos/tmux-split-window (&optional command)
+  "Detach if inside tmux."
+  (interactive)
+  (+amos-store-jump-history)
+  (shell-command! (format "tmux split-window -c %s" default-directory)))
+
 (defun +amos/tmux-source ()
   "Source tmux config if inside tmux."
   (interactive)
@@ -2554,17 +2446,6 @@ the current state and point position."
         (when (eq 1 (length (get-buffer-window-list buffer nil t)))
           (kill-buffer buffer))))))
 (add-to-list 'delete-frame-functions #'+amos|maybe-delete-frame-buffer)
-
-(defun +amos-flycheck-next-error-function-a (n reset)
-  (-if-let* ((pos (flycheck-next-error-pos n reset))
-             (err (get-char-property pos 'flycheck-error))
-             (filename (flycheck-error-filename err))
-             (dummy (string= buffer-file-name filename)))
-      (progn
-        (leap-set-jump)
-        (flycheck-jump-to-error err))
-    (user-error "No more Flycheck errors")))
-(advice-add #'flycheck-next-error-function :override #'+amos-flycheck-next-error-function-a)
 
 ;; only reuse current frame's popup
 (defadvice +popup-display-buffer (around +amos*popup-display-buffer activate)
@@ -2735,7 +2616,7 @@ the current state and point position."
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
 (after! magit
-  ;; (magit-auto-revert-mode +1)
+  (magit-auto-revert-mode +1)
   (setq
    magit-refresh-status-buffer nil
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
@@ -2758,15 +2639,6 @@ the current state and point position."
 (after! recentf
   (setq recentf-max-saved-items 10000))
 
-(defun +amos-flycheck-inline-display-errors-a (ofun &rest candidate)
-  (if (or (memq this-command '(+amos/flycheck-previous-error
-                               +amos/flycheck-next-error
-                               flycheck-previous-error
-                               flycheck-next-error
-                               +amos/yank-flycheck-error))
-          (eq last-input-event 29))
-      (apply ofun candidate)))
-(advice-add #'flycheck-inline-display-errors :around #'+amos-flycheck-inline-display-errors-a)
 (advice-add #'evil-multiedit--cycle :after #'+amos/recenter)
 (advice-add #'wgrep-abort-changes :after #'kill-buffer)
 (advice-add #'wgrep-finish-edit :after #'kill-buffer)
@@ -3106,49 +2978,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
              (search-pattern (evil-ex-make-search-pattern regex)))
         (evil-multiedit-ex-match (point-min) (point-max) nil (car search-pattern))))))
 
-(defun +amos/lsp-ui-imenu ()
-  (interactive)
-  (setq lsp-ui-imenu--origin (current-buffer))
-  (imenu--make-index-alist)
-  (let ((list imenu--index-alist))
-    (with-current-buffer (get-buffer-create "*lsp-ui-imenu*")
-      (let* ((padding (or (and (eq lsp-ui-imenu-kind-position 'top) 1)
-                          (--> (-filter 'imenu--subalist-p list)
-                            (--map (length (car it)) it)
-                            (-max (or it '(1))))))
-             (grouped-by-subs (-partition-by 'imenu--subalist-p list))
-             (color-index 0)
-             buffer-read-only)
-        (remove-overlays)
-        (erase-buffer)
-        (lsp-ui-imenu--put-separator)
-        (dolist (group grouped-by-subs)
-          (if (imenu--subalist-p (car group))
-              (dolist (kind group)
-                (-let* (((title . entries) kind))
-                  (lsp-ui-imenu--put-kind title padding color-index)
-                  (--each-indexed entries
-                    (insert (lsp-ui-imenu--make-line title it-index padding it color-index)))
-                  (lsp-ui-imenu--put-separator)
-                  (setq color-index (1+ color-index))))
-            (--each-indexed group
-              (insert (lsp-ui-imenu--make-line " " it-index padding it color-index)))
-            (lsp-ui-imenu--put-separator)
-            (setq color-index (1+ color-index))))
-        (lsp-ui-imenu-mode)
-        (setq mode-line-format '(:eval (lsp-ui-imenu--win-separator)))
-        (goto-char 1)
-        (add-hook 'post-command-hook 'lsp-ui-imenu--post-command nil t)))
-    (let ((win (display-buffer-in-side-window (get-buffer "*lsp-ui-imenu*") '((side . right))))
-          (fit-window-to-buffer-horizontally t))
-      (set-window-margins win 1)
-      (select-window win)
-      (set-window-start win 1)
-      (set-window-dedicated-p win t)
-      (let ((fit-window-to-buffer-horizontally 'only))
-        (fit-window-to-buffer win))
-      (window-resize win 20 t))))
-
 (defun +amos/toggle-mc ()
   (interactive)
   (evil-mc-make-cursor-here)
@@ -3272,12 +3101,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         amos-company-files
         ))
 
-(defun +amos/format-buffer ()
-  (interactive)
-  (if (use-region-p)
-      (call-interactively #'+format/region)
-    (call-interactively #'+format/buffer)))
-
 ;; debugging eldoc
 (defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
 (stupid_function)
@@ -3360,45 +3183,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (yas--skip-and-clear target-field)
       (setq target-field (yas--find-next-field 1 snippet target-field)))
     (yas-exit-snippet snippet)))
-
-;; unwind flycheck backtrace
-;; (defun doom*flycheck-buffer ()
-;;   (interactive)
-;;   (flycheck-clean-deferred-check)
-;;   (if flycheck-mode
-;;       (unless (flycheck-running-p)
-;;         (run-hooks 'flycheck-before-syntax-check-hook)
-;;         (flycheck-clear-errors)
-;;         (flycheck-mark-all-overlays-for-deletion)
-;;         (let* ((checker (flycheck-get-checker-for-buffer)))
-;;           (if checker
-;;               (flycheck-start-current-syntax-check checker)
-;;             (flycheck-clear)
-;;             (flycheck-report-status 'no-checker))))
-;;     (user-error "Flycheck mode disabled")))
-;; (advice-add #'flycheck-buffer :override #'doom*flycheck-buffer)
-;; (defun doom*flycheck-start-command-checker (checker callback)
-;;   (let (process)
-;;     (let* ((program (flycheck-find-checker-executable checker))
-;;            (args (flycheck-checker-substituted-arguments checker))
-;;            (command (funcall flycheck-command-wrapper-function
-;;                              (cons program args)))
-;;            (process-connection-type nil))
-;;       (setq process (apply 'start-process (format "flycheck-%s" checker)
-;;                            nil command))
-;;       (setf (process-sentinel process) #'flycheck-handle-signal)
-;;       (setf (process-filter process) #'flycheck-receive-checker-output)
-;;       (set-process-query-on-exit-flag process nil)
-;;       (process-put process 'flycheck-checker checker)
-;;       (process-put process 'flycheck-callback callback)
-;;       (process-put process 'flycheck-buffer (current-buffer))
-;;       (process-put process 'flycheck-working-directory default-directory)
-;;       (process-put process 'flycheck-temporaries flycheck-temporaries)
-;;       (setq flycheck-temporaries nil)
-;;       (when (flycheck-checker-get checker 'standard-input)
-;;         (flycheck-process-send-buffer process))
-;;       process)))
-;; (advice-add #'flycheck-start-command-checker :override #'doom*flycheck-start-command-checker)
 
 ;; (defun +amos*git-link--select-remote ()
 ;;   (if current-prefix-arg
@@ -3867,9 +3651,6 @@ will be killed."
             (kill-buffer buf)
             (message "Killed non-existing/unreadable file buffer: %s" filename))))))
   (message "Finished reverting buffers containing unmodified files."))
-
-(advice-add #'flycheck-previous-error :after (lambda (&rest _) (recenter)))
-(advice-add #'flycheck-next-error :after (lambda (&rest _) (recenter)))
 
 (evil-define-state sticky
   "Sticky state.
@@ -4770,52 +4551,6 @@ Return the pasted text as a string."
     (define-key ediff-mode-map "J" #'+amos/ediff-next-revision)
     ))
 
-(defun +amos*flycheck-error-line-region (err)
-  (flycheck-error-with-buffer err
-    (save-restriction
-      (save-excursion
-        (widen)
-        (goto-char (point-min))
-        (forward-line (- (flycheck-error-line err) 1))
-        (let ((end (line-end-position)))
-          (skip-syntax-forward " " end)
-          (backward-prefix-chars)
-          (cons (point) (if (eolp) (+ 1 end) end)))))))
-
-(defun +amos*flycheck-error-column-region (err)
-  (flycheck-error-with-buffer err
-    (save-restriction
-      (save-excursion
-        (-when-let (column (flycheck-error-column err))
-          (widen)
-          (goto-char (point-min))
-          (forward-line (- (flycheck-error-line err) 1))
-          (cond
-           ((eobp)                    ; Line beyond EOF
-            (cons (- (point-max) 1) (point-max)))
-           ((eolp)                    ; Empty line
-            nil)
-           (t
-            (let ((end (min (+ (point) column)
-                            (+ (line-end-position) 1))))
-              (cons (- end 1) end)))))))))
-
-(advice-add #'flycheck-error-line-region :override #'+amos*flycheck-error-line-region)
-(advice-add #'flycheck-error-column-region :override #'+amos*flycheck-error-column-region)
-
-(defun +amos/yank-flycheck-error ()
-  (interactive)
-  (catch 'return
-    (let ((overlays (overlays-at (point))))
-      (cl-loop for overlay in overlays
-               do (when-let (str (overlay-get overlay 'flycheck-error))
-                    (kill-new (flycheck-error-message str))
-                    (throw 'return nil)))
-      (cl-loop for overlay in overlays
-               do (when-let (str (overlay-get overlay 'flycheck-warning))
-                    (kill-new (flycheck-error-message str))
-                    (throw 'return nil))))))
-
 (defvar project-local--obarrays nil
   "Plist of obarrays for each project.")
 
@@ -4912,6 +4647,14 @@ See `project-local-get' for the parameter PROJECT."
     (setq-local server-visit-file t)))
 (add-hook! 'server-visit-hook #'+amos-server-visit-h)
 
+(defun +amos/add-executable-bit-to-current-buffer-file ()
+  (interactive)
+  (if-let (filename (buffer-file-name))
+      (let* ((modes (or (file-modes filename)
+                        (error "File not found")))
+             (value "+x"))
+        (set-file-modes filename (file-modes-symbolic-to-number value modes)))))
+
 (after! latex
   ;; (remove-hook 'TeX-mode-hook #'visual-line-mode)
   (dolist (env '("itemize" "enumerate" "description"))
@@ -4957,47 +4700,9 @@ See `project-local-get' for the parameter PROJECT."
   (mkr! (apply func args)))
 (advice-add #'ediff-copy-diff :around #'+amos-ediff-copy-diff-a)
 
-;; (use-package! lsp-python-ms
-;;   :hook (python-mode . lsp)
-;;   :config
-;;   ;; for dev build of language server
-;;   (setq lsp-python-ms-dir
-;;         (expand-file-name "~/git/python-language-server/output/bin/release/"))
-;;   ;; for executable of language server, if it's not symlinked on your PATH
-;;   (setq lsp-python-ms-executable
-;;         "~/git/python-language-server/output/bin/release/Microsoft.Python.LanguageServer"))
-
 ;; (setq font-lock-maximum-decoration '((c-mode . 1) (c++-mode . 1) (t . t)))
 
-(defun +amos-set-evil-move-beyond-eol-nil-h (&rest _)
-  (setq evil-move-beyond-eol nil)
-  (evil-adjust-cursor)
-  (advice-remove #'flycheck-perform-deferred-syntax-check #'+amos-set-evil-move-beyond-eol-nil-h))
-
-(defun +amos/flycheck-next-error ()
-  (interactive)
-  (setq evil-move-beyond-eol t)
-  (flycheck-next-error-function 1 nil)
-  (recenter)
-  (flycheck-display-error-at-point-soon)
-  (advice-add #'flycheck-perform-deferred-syntax-check :after #'+amos-set-evil-move-beyond-eol-nil-h))
-
-(defun +amos/flycheck-previous-error ()
-  (interactive)
-  (setq evil-move-beyond-eol t)
-  (call-interactively #'flycheck-previous-error)
-  (flycheck-next-error-function -1 nil)
-  (recenter)
-  (flycheck-display-error-at-point-soon)
-  (advice-add #'flycheck-perform-deferred-syntax-check :after #'+amos-set-evil-move-beyond-eol-nil-h))
-
-(defun +amos-flycheck-display-error-at-point-soon-a ()
-  (when (flycheck-overlays-at (point))
-    (with-demoted-errors "Flycheck error display error: %s"
-      (when flycheck-mode
-        (-when-let (errors (flycheck-overlay-errors-at (point)))
-          (flycheck-display-errors errors))))))
-(advice-add #'flycheck-display-error-at-point-soon :override #'+amos-flycheck-display-error-at-point-soon-a)
+;; (load! "+flycheck")
 
 (defun +amos-ivy-scroll-up-command-a ()
   "Scroll the candidates upward by the minibuffer height."

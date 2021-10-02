@@ -71,7 +71,7 @@
          :n "gS"       (cmd! (setq current-prefix-arg t) (call-interactively #'ccls/workspace-symbol))
          :n "gh"       #'ccls-call-hierarchy
          :n "gR"       #'ccls/callers
-         :n "gb"       #'ccls/inheritances
+         :n "gb"       #'lsp-find-implementation
          :n "gt"       (cmd! (ccls/inheritance t))
          :n "gT"       #'ccls/inheritance
          :n "ge"       #'lsp-execute-code-action
@@ -138,7 +138,7 @@
   (let ((name (buffer-name)))
     (unless (or (string-prefix-p "timemachine:" name)
                 (string-suffix-p "~" name))
-      (require 'lsp-mode)
+      ;; (require 'lsp-mode)
       ;; (flycheck-mode +1)
       (global-eldoc-mode -1)
       (eldoc-mode -1)
@@ -152,119 +152,116 @@
       (setq-local ccls-enabled t)
       )))
 
-(add-hook! (c-mode c++-mode) #'+amos-ccls-enable-h)
+;; (add-hook! (c-mode c++-mode) #'+amos-ccls-enable-h)
+(add-hook! (c-mode c++-mode) #'lsp)
 (add-hook! (c-mode c++-mode) (electric-indent-local-mode -1))
 
-(use-package! ccls
-  ;; :commands (+amos-ccls-enable-h)  ; autoload fails
-  :defer
-  :init
-  (setq
-   ;; ccls-sem-highlight-method 'font-lock
-   ;; ccls-sem-highlight-method 'overlay
-   ccls-sem-highlight-method nil
-   ccls-root-files '(".ccls" ".ccls-root" "compile_commands.json")
-   )
+;; (use-package! ccls
+;;   ;; :commands (+amos-ccls-enable-h)  ; autoload fails
+;;   :defer
+;;   :init
+;;   (setq
+;;    ;; ccls-sem-highlight-method 'font-lock
+;;    ;; ccls-sem-highlight-method 'overlay
+;;    ccls-sem-highlight-method nil
+;;    ccls-root-files '(".ccls" ".ccls-root" "compile_commands.json")
+;;    )
 
-  :config
-  (defun ccls/workspace-symbol (pattern)
-    (interactive (list (read-string
-                        "workspace/symbol: "
-                        nil 'xref--read-pattern-history)))
-    (let ((symbols (lsp-request
-                    "workspace/symbol"
-                    `(:query ,pattern :folders ,(if current-prefix-arg (vector (doom-project-root)) (vector default-directory))))))
-      (unless symbols
-        (user-error "No symbol found for: %s" pattern))
-      (+amos-ivy-xref
-       (mapcar (lambda (x) (lsp--symbol-information-to-xref x)) symbols) pattern)))
-  (defun ccls/includes (&optional force)
-    (interactive)
-    (let ((x (intern (concat (doom-project-root) "--includes"))))
-      (unless (and (boundp x) (not force))
-        (setq x (lsp-request "$ccls/includes" nil)))
-      (ivy-read "Include: " x :action #'+amos/add-include)))
-  (defun ccls/fileinfo ()
-    (interactive)
-    (let ((hashmap (lsp-request
-                    "$ccls/fileInfo"
-                    (list :textDocument (lsp--text-document-identifier)))))
-      (with-current-buffer (generate-new-buffer "*temp*")
-        (insert (format "path = %s\n args = %s"
-                        (gethash "path" hashmap)
-                        (gethash "args" hashmap)))
-        (+popup/buffer))))
-  (defun ccls/diagnostic ()
-    (interactive)
-    (lsp-notify
-     "$ccls/diagnostic"
-     (list :textDocument (lsp--text-document-identifier))))
-  (defun ccls/inheritances ()
-    (interactive)
-    (+amos-lsp-find-custom 'inheritances "$ccls/inheritance" `(:levels 1000 :derived t)))
-  (defun ccls/callee ()
-    (interactive)
-    (+amos-lsp-find-custom 'callee "$ccls/call" '(:callee t)))
-  (defun ccls/caller ()
-    (interactive)
-    (+amos-lsp-find-custom 'caller "$ccls/call"))
-  (defun ccls/vars (kind)
-    (+amos-lsp-find-custom 'vars "$ccls/vars" `(:kind ,kind)))
-  (defun ccls/base (levels)
-    (+amos-lsp-find-custom 'base "$ccls/inheritance" `(:levels ,levels)))
-  (defun ccls/derived (levels)
-    (+amos-lsp-find-custom 'derived "$ccls/inheritance" `(:levels ,levels :derived t)))
-  (defun ccls/member (kind)
-    (+amos-lsp-find-custom 'member "$ccls/member" `(:kind ,kind)))
-  (defun ccls/member-function ()
-    (interactive)
-    (ccls/member 3))
-  (defun ccls/member-type ()
-    (interactive)
-    (ccls/member 2))
-  (defun ccls/member-field ()
-    (interactive)
-    (ccls/member 1))
+;;   :config
+;;   (defun ccls/workspace-symbol (pattern)
+;;     (interactive (list (read-string
+;;                         "workspace/symbol: "
+;;                         nil 'xref--read-pattern-history)))
+;;     (let ((symbols (lsp-request
+;;                     "workspace/symbol"
+;;                     `(:query ,pattern :folders ,(if current-prefix-arg (vector (doom-project-root)) (vector default-directory))))))
+;;       (unless symbols
+;;         (user-error "No symbol found for: %s" pattern))
+;;       (+amos-ivy-xref
+;;        (mapcar (lambda (x) (lsp--symbol-information-to-xref x)) symbols) pattern)))
+;;   (defun ccls/includes (&optional force)
+;;     (interactive)
+;;     (let ((x (intern (concat (doom-project-root) "--includes"))))
+;;       (unless (and (boundp x) (not force))
+;;         (setq x (lsp-request "$ccls/includes" nil)))
+;;       (ivy-read "Include: " x :action #'+amos/add-include)))
+;;   (defun ccls/fileinfo ()
+;;     (interactive)
+;;     (let ((hashmap (lsp-request
+;;                     "$ccls/fileInfo"
+;;                     (list :textDocument (lsp--text-document-identifier)))))
+;;       (with-current-buffer (generate-new-buffer "*temp*")
+;;         (insert (format "path = %s\n args = %s"
+;;                         (gethash "path" hashmap)
+;;                         (gethash "args" hashmap)))
+;;         (+popup/buffer))))
 
-  ;; References w/ Role::Address bit (e.g. variables explicitly being taken addresses)
-  (defun ccls/references-address ()
-    (interactive)
-    (+amos-lsp-find-custom
-     'address "textDocument/references"
-     (plist-put (lsp--text-document-position-params) :context
-                '(:role 128))))
+;;   (defun ccls/inheritances ()
+;;     (interactive)
+;;     (+amos-lsp-find-custom 'inheritances "$ccls/inheritance" `(:levels 1000 :derived t)))
+;;   (defun ccls/callee ()
+;;     (interactive)
+;;     (+amos-lsp-find-custom 'callee "$ccls/call" '(:callee t)))
+;;   (defun ccls/caller ()
+;;     (interactive)
+;;     (+amos-lsp-find-custom 'caller "$ccls/call"))
+;;   (defun ccls/vars (kind)
+;;     (+amos-lsp-find-custom 'vars "$ccls/vars" `(:kind ,kind)))
+;;   (defun ccls/base (levels)
+;;     (+amos-lsp-find-custom 'base "$ccls/inheritance" `(:levels ,levels)))
+;;   (defun ccls/derived (levels)
+;;     (+amos-lsp-find-custom 'derived "$ccls/inheritance" `(:levels ,levels :derived t)))
+;;   (defun ccls/member (kind)
+;;     (+amos-lsp-find-custom 'member "$ccls/member" `(:kind ,kind)))
+;;   (defun ccls/member-function ()
+;;     (interactive)
+;;     (ccls/member 3))
+;;   (defun ccls/member-type ()
+;;     (interactive)
+;;     (ccls/member 2))
+;;   (defun ccls/member-field ()
+;;     (interactive)
+;;     (ccls/member 1))
 
-  ;; References w/ Role::Dynamic bit (macro expansions)
-  (defun ccls/references-macro ()
-    (interactive)
-    (+amos-lsp-find-custom
-     'address "textDocument/references"
-     (plist-put (lsp--text-document-position-params) :context
-                '(:role 64))))
+;;   ;; References w/ Role::Address bit (e.g. variables explicitly being taken addresses)
+;;   (defun ccls/references-address ()
+;;     (interactive)
+;;     (+amos-lsp-find-custom
+;;      'address "textDocument/references"
+;;      (plist-put (lsp--text-document-position-params) :context
+;;                 '(:role 128))))
 
-  ;; References w/o Role::Call bit (e.g. where functions are taken addresses)
-  (defun ccls/references-not-call ()
-    (interactive)
-    (+amos-lsp-find-custom
-     'address "textDocument/references"
-     (plist-put (lsp--text-document-position-params) :context
-                '(:excludeRole 32))))
+;;   ;; References w/ Role::Dynamic bit (macro expansions)
+;;   (defun ccls/references-macro ()
+;;     (interactive)
+;;     (+amos-lsp-find-custom
+;;      'address "textDocument/references"
+;;      (plist-put (lsp--text-document-position-params) :context
+;;                 '(:role 64))))
 
-  ;; References w/ Role::Read
-  (defun ccls/references-read ()
-    (interactive)
-    (+amos-lsp-find-custom
-     'read "textDocument/references"
-     (plist-put (lsp--text-document-position-params) :context
-                '(:role 8))))
+;;   ;; References w/o Role::Call bit (e.g. where functions are taken addresses)
+;;   (defun ccls/references-not-call ()
+;;     (interactive)
+;;     (+amos-lsp-find-custom
+;;      'address "textDocument/references"
+;;      (plist-put (lsp--text-document-position-params) :context
+;;                 '(:excludeRole 32))))
 
-  ;; References w/ Role::Write
-  (defun ccls/references-write ()
-    (interactive)
-    (+amos-lsp-find-custom
-     'write "textDocument/references"
-     (plist-put (lsp--text-document-position-params) :context
-                '(:role 16)))))
+;;   ;; References w/ Role::Read
+;;   (defun ccls/references-read ()
+;;     (interactive)
+;;     (+amos-lsp-find-custom
+;;      'read "textDocument/references"
+;;      (plist-put (lsp--text-document-position-params) :context
+;;                 '(:role 8))))
+
+;;   ;; References w/ Role::Write
+;;   (defun ccls/references-write ()
+;;     (interactive)
+;;     (+amos-lsp-find-custom
+;;      'write "textDocument/references"
+;;      (plist-put (lsp--text-document-position-params) :context
+;;                 '(:role 16)))))
 
 (defun +amos/add-include (h &rest others)
   "Add an #include line for `h' near top of file, avoiding duplicates."

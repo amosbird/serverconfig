@@ -153,8 +153,10 @@
       :n "M-a"                    #'+amos/mark-whole-buffer
       :n "M-g"                    #'+amos/counsel-jumpdir-function
       :i "M-i"                    #'yas-insert-snippet
-      :n "M-,"                    #'+amos/flycheck-previous-error
-      :n "M-."                    #'+amos/flycheck-next-error
+      ;; :n "M-,"                    #'+amos/flycheck-previous-error
+      ;; :n "M-."                    #'+amos/flycheck-next-error
+      :n "M-,"                    #'flycheck-previous-error
+      :n "M-."                    #'flycheck-next-error
       :n "M-p"                    #'evil-multiedit-match-symbol-and-prev
       :n "M-n"                    #'evil-multiedit-match-symbol-and-next
       :n "M-y"                    #'+amos/yank-flycheck-error
@@ -211,10 +213,10 @@
       :n "C-s"                    #'+amos/swiper
       :n "C-S-s"                  #'+amos/counsel-rg-projectile ;; gui
       :n "C-S-d"                  #'+amos/counsel-rg-cur-dir ;; gui
-      :nv "C-S-f"                 #'+amos/format-buffer ;; gui
+      :nv "C-S-f"                 #'+format/region-or-buffer ;; gui
       :n "S-<f4>"                 #'+amos/counsel-rg-projectile ;; terminal
       :n "S-<f5>"                 #'+amos/counsel-rg-cur-dir ;; terminal
-      :nv "S-<f11>"               #'+amos/format-buffer ;; terminal
+      :nv "S-<f11>"               #'+format/region-or-buffer ;; terminal
       :n "C-y"                    #'+amos/yank-buffer-filename-with-line-position
       :i "M-y"                    #'+amos/yank-pop
       :i "C-a"                    #'evil-beginning-of-line
@@ -272,7 +274,7 @@
       :n "go"                     #'+amos/evil-insert-line-below
       :n "gO"                     #'+amos/evil-insert-line-above
       :n "gp"                     #'+evil/reselect-paste
-      :n "gr"                     #'+amos/references
+      :n "gr"                     #'+lookup/references
       :v "gR"                     #'+eval:replace-region
       :vnm "gy"                   #'evilnc-copy-and-comment-lines
       :vnm "gl"                   #'evilnc-comment-or-uncomment-lines
