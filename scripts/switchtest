@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# This script is from emanuele6 in #bspwm. It's used to grab window list of all desktop and write it to a tmp file
+# Still under testing
+: "${BSPATAB_WINFILE:=/tmp/bspwin10alttab_windows}"
+: "${BSPATAB_CNTFILE:=/tmp/bspwin10alttab_counter}"
+
+if [[ ! -e $BSPATAB_WINFILE || ! -e $BSPATAB_CNTFILE ]]; then
+    bspc wm -d \
+    | jq -r '
+          .focusHistory
+          | map(.nodeId | select(. != 0))
+          | reverse
+          | to_entries
+          | unique_by(.value)
+          | sort_by(.key)
+          | map(.value)[]
+      ' \
+    | while read -r
+          do bspc query -N -n "$REPLY"'.!hidden.window'
+      done > "$BSPATAB_WINFILE"
+    echo -n 1 > "$BSPATAB_CNTFILE"
+fi
+
+if
+    [[ ! -f $BSPATAB_WINFILE || ! -r $BSPATAB_WINFILE
+    || ! -f $BSPATAB_CNTFILE || ! -r $BSPATAB_CNTFILE ]]
+then
+    exit 3
+fi
+
+if ! cnt=$(< "$BSPATAB_CNTFILE")
+    then exit 3
+fi
+
+if ! mapfile -t < "$BSPATAB_WINFILE"
+    then exit 3
+fi
+
+if (( ${#MAPFILE[@]} <= 1 )); then
+    rm -r -- "$BSPATAB_WINFILE" "$BSPATAB_CNTFILE"
+    exit 1
+fi
+
+tries=0
+until
+    (( ++tries > ${MAPFILE[cnt]} )) ||
+    bspc node "${MAPFILE[cnt]}"'.!hidden.!focused.window' -f
+do
+    (( cnt = (cnt + 1) % ${#MAPFILE[@]} ))
+done
+
+printf %s "$(( cnt = (cnt + 1) % ${#MAPFILE[@]} ))" > "$BSPATAB_CNTFILE"

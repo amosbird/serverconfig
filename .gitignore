@@ -46,3 +46,4 @@ fishd.*
 !/aurs/*/PKGBUILD
 /.config/copyq/copyq_geometry.ini.lock
 /.config/copyq/copyq_geometry.ini.lock.rmlock
+/.config/copyq/copyq.lock

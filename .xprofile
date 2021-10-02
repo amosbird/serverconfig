@@ -12,7 +12,7 @@ export XDG_DATA_DIRS=/usr/share
 cap-indicator
 xset s off -dpms
 xset b off
-# compton -b
+picom -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 sudo xkeysnail --watch -q /home/amos/git/serverconfig/xkeysnail.py &
 # fish -c "xbanish -m se &"
