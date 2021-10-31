@@ -2,6 +2,8 @@
 
 (load! "+bindings")
 (load! "+lsp")
+(load! "+alias")
+; TODO eglot disable eldoc; understand flymake; make sure code actions work
 (require 'dash)
 (require 'ivy)
 (require 'evil-multiedit)
@@ -1701,18 +1703,26 @@ current buffer's, reload dir-locals."
   "Transform XREFS into a collection for display via `ivy-read'."
   (let (collection last-xref-list)
     (dolist (xref xrefs)
-      (with-slots (summary location) xref
-        (let ((line (xref-location-line location))
-              (file (xref-location-group location))
-              (candidate nil))
-          (setq candidate (concat
-                           ;; use file name only
-                           (car (reverse (split-string file "\\/")))
-                           (when (string= "integer" (type-of line))
-                             (concat ":" (int-to-string line) ": "))
-                           summary))
-          (push `(,candidate . ,location) collection)
-          (push (format "%s:%d:%s" (replace-regexp-in-string (concat "^" default-directory) "./" file) line summary) last-xref-list))))
+      (let* ((summary (xref-item-summary xref))
+             (location  (xref-item-location xref))
+             (line (xref-location-line location))
+             (file (xref-location-group location))
+             (candidate
+              (concat
+               (propertize
+                (concat
+                 (if ivy-xref-use-file-path
+                     file
+                   (file-name-nondirectory file))
+                 (if (integerp line)
+                     (format ":%d: " line)
+                   ": "))
+                'face 'compilation-info)
+               (progn
+                 (when ivy-xref-remove-text-properties
+                   (set-text-properties 0 (length summary) nil summary))
+                 summary))))
+        (push `(,candidate . ,location) collection)))
     (setq +amos-last-xref-list (nreverse last-xref-list))
     (nreverse collection)))
 

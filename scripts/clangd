@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-exec $HOME/git/llvm-project/release/bin/clangd "$@"
+exec /tmp/gentoo/usr/lib/llvm/12/bin/clangd "$@"

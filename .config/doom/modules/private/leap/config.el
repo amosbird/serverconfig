@@ -156,11 +156,8 @@ is missing."
   (let* ((window (or window (frame-selected-window)))
          (jump-struct (window-parameter window 'leap-struct)))
     (unless jump-struct
-      (let ((struct (if doom--last-window (window-parameter window 'leap-struct) nil)))
-        (setq jump-struct
-              (if struct (leap--copy-struct struct)
-                (make-leap-jump-list-struct)))
-        (leap--set-struct window jump-struct)))
+        (setq jump-struct (make-leap-jump-list-struct))
+        (leap--set-struct window jump-struct))
     jump-struct))
 
 (defun leap--get-struct (&optional context)

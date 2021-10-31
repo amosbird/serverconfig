@@ -34,6 +34,7 @@
 
        :tools
        lsp
+       ;; (lsp +eglot)
        eval
        make
        magit

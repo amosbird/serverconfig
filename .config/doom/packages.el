@@ -62,5 +62,20 @@
 (package! hl-line+ :recipe (:host github :repo "emacsmirror/hl-line-plus"))
 (package! sync-recentf :recipe (:host github :repo "ffevotte/sync-recentf"))
 (package! osc :recipe (:host github :repo "amosbird/osc.el"))
-(package! rainbow-mode :recipe (:host github :repo "amosbird/rainbow-mode"))
+;; (package! rainbow-mode :recipe (:host github :repo "amosbird/rainbow-mode"))
 (package! realign-mode :recipe (:host github :repo "amosbird/realign-mode.el"))
+
+(unpin! ivy-xref)
+
+(package! gitconfig-mode
+   :recipe (:host github :repo "magit/git-modes"
+   :files ("gitconfig-mode.el")))
+(package! gitignore-mode
+   :recipe (:host github :repo "magit/git-modes"
+   :files ("gitignore-mode.el")))
+(package! gitattributes-mode
+   :recipe (:host github :repo "magit/git-modes"
+   :files ("gitattributes-mode.el")))
+
+;; This is temporarily necessary due to an unrelated bug.
+(unpin! gitignore-mode gitconfig-mode gitattributes-mode)

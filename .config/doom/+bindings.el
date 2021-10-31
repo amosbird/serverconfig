@@ -740,6 +740,7 @@
         "C-p"         #'previous-line-or-history-element
         "C-a"         #'move-beginning-of-line
         "C-b"         #'backward-char
+        "C-f"         #'forward-char
         "C-d"         #'+amos/delete-char
         "C-o"         #'+amos/kill-line
         "C-r"         #'counsel-minibuffer-history

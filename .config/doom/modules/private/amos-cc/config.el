@@ -154,7 +154,8 @@
 
 ;; (add-hook! (c-mode c++-mode) #'+amos-ccls-enable-h)
 (add-hook! (c-mode c++-mode) #'lsp)
-(add-hook! (c-mode c++-mode) (electric-indent-local-mode -1))
+;; TODO figure out why I disabled it
+;; (add-hook! (c-mode c++-mode) (electric-indent-local-mode -1))
 
 ;; (use-package! ccls
 ;;   ;; :commands (+amos-ccls-enable-h)  ; autoload fails
