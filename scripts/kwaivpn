@@ -255,9 +255,9 @@ if [ -n "$IPROUTE" ]; then
 			:
 		done < <(ip route show table main scope link)
 
-		$IPROUTE route add 10.58.255.0/24 via $gw table kwai
-		$IPROUTE route add 10.36.255.0/24 via $gw table kwai
-		$IPROUTE route add 10.32.255.0/24 via $gw table kwai
+		# $IPROUTE route add 10.58.255.0/24 via $gw table kwai
+		# $IPROUTE route add 10.36.255.0/24 via $gw table kwai
+		# $IPROUTE route add 10.32.255.0/24 via $gw table kwai
 		$IPROUTE route add 10.0.0.0/8 dev "$TUNDEV" table kwai
 		$IPROUTE route add 10.36.255.86 dev "$TUNDEV" table kwai
 

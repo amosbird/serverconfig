@@ -90,7 +90,7 @@ c.bindings.commands["normal"] = {
     "gi": "enter-mode insert",
     "go": "spawn translateurl {url:pretty}",
     "y": "yank",
-    "co": "download-open;; download-remove",
+    "co": "download-open ;; download-copy",
     "cc": "download-copy",
     "cC": "download-copy-all",
     "O": "spawn fcitx-remote -c ;; set-cmd-text :open {url:pretty}",

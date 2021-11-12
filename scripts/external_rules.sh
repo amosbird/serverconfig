@@ -90,6 +90,7 @@ Wine)
         ;;
     wechat.exe)
         echo "$wid" >> /tmp/wechat
+        echo "state=floating sticky=on"
         ;;
     aliim.exe)
         echo "$wid" >> /tmp/aliim

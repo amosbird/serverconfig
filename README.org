@@ -229,3 +229,14 @@ pacman-key --init
 pacman-key --populate archlinux
 pacman-key --refresh-keys
 pacman -Syyu
+
+
+
+# groupadd -r autologin
+# gpasswd -a username autologin
+
+/etc/lightdm/lightdm.conf
+
+[Seat:*]
+autologin-user=username
+autologin-session=session
