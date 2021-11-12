@@ -51,7 +51,7 @@
        lua
        markdown
        (sh +fish)
-       ;; rust
+       (rust +lsp)
        (ocaml +lsp)
        (org +pandoc)
        ;; (python +lsp)
