@@ -477,24 +477,22 @@
         :n "RET" 'lsp-ui-imenu--visit)
 
       (:after evil-multiedit
-        :map evil-multiedit-state-map
-        [backspace] (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
-        "DEL" (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
-        "RET" (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-next))
-        "j"   #'evil-multiedit-next
-        "k"   #'evil-multiedit-prev
-        "C-f" #'iedit-show/hide-unmatched-lines
-        "#"   #'iedit-number-occurrences
-        "$"   (cmd! (evil-multiedit--goto-overlay-end) (backward-char))
-        :map (evil-multiedit-state-map iedit-mode-occurrence-keymap)
-        "M-p" #'evil-multiedit-match-and-prev
-        "M-n" #'evil-multiedit-match-and-next
-        "C-n" #'evil-multiedit-next
-        "C-p" #'evil-multiedit-prev
-        :map evil-multiedit-insert-state-map
-        "C-v" #'+amos/iedit-number-occurrences
-        "C-e" #'evil-multiedit--end-of-line
-        "C-a" #'evil-multiedit--beginning-of-line)
+        :map evil-multiedit-mode-map
+        :n [backspace] (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
+        :n "DEL" (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-prev))
+        :n "RET" (cmd! (evil-multiedit-toggle-or-restrict-region) (evil-multiedit-next))
+        :n "j"   #'evil-multiedit-next
+        :n "k"   #'evil-multiedit-prev
+        :n "C-f" #'iedit-show/hide-unmatched-lines
+        :n "#"   #'iedit-number-occurrences
+        :i "C-v" #'+amos/iedit-number-occurrences
+        :i "C-e" #'evil-multiedit--end-of-line
+        :i "C-a" #'evil-multiedit--beginning-of-line
+        :map (evil-multiedit-mode-map iedit-mode-occurrence-keymap)
+        :n "M-p" #'evil-multiedit-match-and-prev
+        :n "M-n" #'evil-multiedit-match-and-next
+        :n "C-n" #'evil-multiedit-next
+        :n "C-p" #'evil-multiedit-prev)
 
       (:after helm
         :map helm-map

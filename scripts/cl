@@ -4,6 +4,7 @@ from pycookiecheat import chrome_cookies
 import subprocess
 import sys
 import os
+from shutil import copyfile
 
 def main():
     if len(sys.argv) < 2:
@@ -16,7 +17,8 @@ def main():
             url = arg
             break
 
-    chrome = chrome_cookies(url, cookie_file="/home/amos/.local/share/qutebrowser/webengine/Cookies")
+    copyfile("/home/amos/.local/share/qutebrowser/webengine/Cookies", "/tmp/Cookies")
+    chrome = chrome_cookies(url, cookie_file="/tmp/Cookies")
 
     cargs = []
     carg = "cookie: "

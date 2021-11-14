@@ -1352,14 +1352,12 @@ Enable with positive ARG, disable with negative ARG."
       (mkr! (kill-region x y)))))
 
 (defun +amos-insert-state-p ()
-  (or (evil-insert-state-p) (evil-multiedit-insert-state-p) (active-minibuffer-window)))
+  (or (evil-insert-state-p) (active-minibuffer-window)))
 
 (defun +amos-insert-state ()
   (setq evil-insert-count 1
         evil-insert-vcount nil)
-  (if (evil-multiedit-state-p)
-      (evil-multiedit-insert-state)
-    (evil-insert-state)))
+  (evil-insert-state))
 
 (defmacro +amos-subword-move! (type command)
   `(evil-define-motion ,(intern (concat "+amos/" (s-replace "word" "subword" (symbol-name command)))) (count)
@@ -1373,7 +1371,7 @@ Enable with positive ARG, disable with negative ARG."
 
 (evil-define-command +amos/delete-forward-word (&optional subword)
   (evil-signal-at-bob-or-eob 1)
-  (when (or (not (or (evil-multiedit-state-p) (evil-multiedit-insert-state-p)))
+  (when (or (not (bound-and-true-p evil-multiedit-mode))
             (iedit-find-overlay-at-point (point) 'iedit-occurrence-overlay-name))
     (unless (+amos-insert-state-p)
       (+amos-insert-state))
@@ -1392,7 +1390,7 @@ Enable with positive ARG, disable with negative ARG."
 
 (evil-define-command +amos/delete-backward-word (&optional subword)
   (evil-signal-at-bob-or-eob -1)
-  (when (or (not (or (evil-multiedit-state-p) (evil-multiedit-insert-state-p)))
+  (when (or (not (bound-and-true-p evil-multiedit-mode))
             (iedit-find-overlay-at-point (1- (point)) 'iedit-occurrence-overlay-name))
     (unless (or (eolp) (+amos-insert-state-p))
       (+amos-insert-state)
@@ -3975,7 +3973,7 @@ inside or just after a citation command, only adds KEYS to it."
                                      'yank-handler yank-handler)))
               (evil-set-register ?r text)))
           (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
-        (if (evil-multiedit-state-p)
+        (if (bound-and-true-p evil-multiedit-mode)
             (evil-multiedit--delete-occurrences))
         (if current-prefix-arg
             (progn
@@ -4006,7 +4004,7 @@ inside or just after a citation command, only adds KEYS to it."
                                      'yank-handler yank-handler)))
               (evil-set-register ?r text)))
           (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
-        (if (evil-multiedit-state-p)
+        (if (bound-and-true-p evil-multiedit-mode)
             (evil-multiedit--delete-occurrences))
         (if current-prefix-arg
             (progn
