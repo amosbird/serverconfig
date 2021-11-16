@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
 set -e
-trizen -Syyuu -r --noconfirm
-trizen -Sua --devel --needed --noconfirm
+paru -Syu --noconfirm
+paru -Sua --devel --needed --noconfirm
