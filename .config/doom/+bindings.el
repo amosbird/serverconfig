@@ -489,10 +489,10 @@
         :i "C-e" #'evil-multiedit--end-of-line
         :i "C-a" #'evil-multiedit--beginning-of-line
         :map (evil-multiedit-mode-map iedit-mode-occurrence-keymap)
-        :n "M-p" #'evil-multiedit-match-and-prev
-        :n "M-n" #'evil-multiedit-match-and-next
-        :n "C-n" #'evil-multiedit-next
-        :n "C-p" #'evil-multiedit-prev)
+        :gvn "M-p" #'evil-multiedit-match-and-prev
+        :gvn "M-n" #'evil-multiedit-match-and-next
+        :gvn "C-n" #'evil-multiedit-next
+        :gvn "C-p" #'evil-multiedit-prev)
 
       (:after helm
         :map helm-map
