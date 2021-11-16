@@ -1,5 +1,5 @@
 [global]
-    font = "Ubuntu Mono 14"
+    font = "Ubuntu Mono 13"
     allow_markup = yes
     format = "<b>%s</b>\n%b"
     sort = yes
@@ -29,12 +29,6 @@
 [frame]
     width = 1
     color = "#383838"
-
-[shortcuts]
-    close = ctrl+shift+space
-    close_all = ctrl+space
-    history = ctrl+grave
-    context = ctrl+shift+period
 
 [urgency_low]
     background = "#181818"

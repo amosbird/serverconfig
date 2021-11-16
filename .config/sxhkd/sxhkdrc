@@ -200,10 +200,6 @@ XF86MonBrightnessUp
 #   sleep 0.1; \
 #   bspc node --state tiled
 
-ctrl+Eisu_toggle
-  echo 'connect 94:16:25:25:D2:5D' | bluetoothctl
-  # trackpointspeed
-
 super + shift + r
   restartbspwm.sh
 super + shift + q
@@ -220,3 +216,11 @@ super + alt + {h,j,k,l}
 
 super + alt + shift + {h,j,k,l}
   bspc node -z {left +10 0,bottom -10 0,top +10 0,right -10 0}
+
+ctrl + Escape
+  dunstctl close-all
+
+ctrl+Eisu_toggle
+  dunstctl history-pop
+  # echo 'connect 94:16:25:25:D2:5D' | bluetoothctl
+  # trackpointspeed
