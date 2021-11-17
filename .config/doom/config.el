@@ -3719,8 +3719,6 @@ will be killed."
 (add-hook! 'evil-struct-state-entry-hook #'+amos/toggle-centered-cursor-mode-all-window)
 (add-hook! 'evil-struct-state-exit-hook #'+amos/reset-cursor)
 
-(remove-hook 'after-change-major-mode-hook #'doom-highlight-non-default-indentation-h)
-
 ;; for remapped escape key
 (defun +amos-read-char-choice-a (prompt chars &optional inhibit-keyboard-quit)
   "Read and return one of CHARS, prompting for PROMPT.
@@ -4687,9 +4685,10 @@ See `project-local-get' for the parameter PROJECT."
   (not (derived-mode-p 'magit-mode)))
 (after! whitespace
   (add-function :before-while whitespace-enable-predicate 'prevent-whitespace-mode-for-magit))
-(global-whitespace-mode +1)
 
-(advice-add #'doom-highlight-non-default-indentation-h :override #'ignore)
+(defun +amos*doom-highlight-non-default-indentation-h (&rest _)
+  (whitespace-mode +1))
+(advice-add #'doom-highlight-non-default-indentation-h :override #'+amos*doom-highlight-non-default-indentation-h)
 
 (defun +amos/upload-wandbox ()
   (interactive)
