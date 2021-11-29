@@ -31,7 +31,6 @@ configuration {
 	scroll-method: 0;
 	window-format: "{w}    {i}{c}   {t}";
 	click-to-exit: true;
-	theme: "~/.config/rofi/orange.rasi";
 	pid: "/run/user/1000/rofi.pid";
 	display-window: "";
 	display-windowcd: "";
@@ -105,3 +104,5 @@ configuration {
 	kb-select-9: "Alt+9";
 	kb-select-10: "Alt+0";
 }
+
+@theme "~/.config/rofi/orange.rasi"
