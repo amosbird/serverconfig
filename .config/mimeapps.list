@@ -1,0 +1,10 @@
+[Added Associations]
+x-scheme-handler/tg=userapp-Telegram Desktop-XXFQD1.desktop;userapp-Telegram Desktop-843WD1.desktop;
+
+[Default Applications]
+text/html=luakit.desktop;
+x-scheme-handler/about=luakit.desktop;
+x-scheme-handler/http=luakit.desktop;
+x-scheme-handler/https=luakit.desktop;
+x-scheme-handler/tg=userapp-Telegram Desktop-843WD1.desktop;
+x-scheme-handler/unknown=luakit.desktop;
