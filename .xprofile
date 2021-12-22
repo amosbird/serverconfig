@@ -3,7 +3,7 @@
 old_path=$PATH
 old_man_path=$MANPATH
 mkdir -p /tmp/gentoo
-sudo mount --bind ~/gentoo.new /tmp/gentoo
+sudo mount --bind ~/gentoo /tmp/gentoo
 source /tmp/gentoo/etc/profile
 export PATH=$old_path:$PATH
 export MANPATH=$old_man_path:$MANPATH

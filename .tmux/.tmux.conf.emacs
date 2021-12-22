@@ -1,4 +1,5 @@
 #' -*- mode:conf -*-
+#'
 
 set -s mouse on
 set -s prefix None

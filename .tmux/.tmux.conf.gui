@@ -1,4 +1,5 @@
 #' -*- mode:conf -*-
+#'
 
 set -g default-terminal "xterm-tmux-24bits"
 set -ga terminal-overrides ",xterm-*:Tc"

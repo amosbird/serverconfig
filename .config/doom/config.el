@@ -3972,13 +3972,13 @@ inside or just after a citation command, only adds KEYS to it."
               (evil-set-register ?r text)))
           (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
         (if (bound-and-true-p evil-multiedit-mode)
-            (evil-multiedit--delete-occurrences))
-        (if current-prefix-arg
-            (progn
-              (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
-                  (forward-char))
-              (evil-paste-before nil ?r))
-          (evil-paste-before nil ?t))))))
+            (evil-multiedit--paste-replace)
+          (if current-prefix-arg
+              (progn
+                (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
+                    (forward-char))
+                (evil-paste-before nil ?r))
+            (evil-paste-before nil ?t)))))))
 
 (defun +amos/paste-from-gui ()
   (interactive)
@@ -4003,13 +4003,13 @@ inside or just after a citation command, only adds KEYS to it."
               (evil-set-register ?r text)))
           (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
         (if (bound-and-true-p evil-multiedit-mode)
-            (evil-multiedit--delete-occurrences))
-        (if current-prefix-arg
-            (progn
-              (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
-                  (forward-char))
-              (evil-paste-before nil ?r))
-          (evil-paste-before nil ?t))))))
+            (evil-multiedit--paste-replace)
+          (if current-prefix-arg
+              (progn
+                (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
+                    (forward-char))
+                (evil-paste-before nil ?r))
+            (evil-paste-before nil ?t)))))))
 
 (defun +amos-get-frame-by-name (fname)
   (require 'dash)
