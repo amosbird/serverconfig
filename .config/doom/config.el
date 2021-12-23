@@ -3,6 +3,7 @@
 (load! "+bindings")
 (load! "+lsp")
 (load! "+alias")
+(load! "+flycheck")
 ; TODO eglot disable eldoc; understand flymake; make sure code actions work
 (require 'dash)
 (require 'ivy)

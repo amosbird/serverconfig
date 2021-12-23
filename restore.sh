@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 
+set -e
+set -x
+
+cd $HOME
+
 mkdir -p $HOME/.config
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="git/serverconfig"
 
 mkdir -p $HOME/.lc
-ln -sf "$DIR"/lc/config.json $HOME/.lc/
+ln -sf "../$DIR/lc/config.json" $HOME/.lc/
 
 configs=(
     .globalrc
@@ -47,7 +52,7 @@ done
 
 for dotconfig in "$DIR/.config/"*; do
     rm -rf "$HOME/.config/$(basename "$dotconfig")"
-    ln -sf "$dotconfig" $HOME/.config/
+    ln -sf "../$dotconfig" $HOME/.config/
 done
 
 rm -rf $HOME/.tmux
@@ -56,7 +61,7 @@ ln -sf "$DIR/.tmux" $HOME/
 ln -sf "$DIR/.tmux/.tmux.conf" $HOME/
 
 mkdir -p $HOME/.local/share/
-ln -sf $HOME/gentoo/usr/share/grc $HOME/.local/share/
+ln -sf /tmp/gentoo/usr/share/grc $HOME/.local/share/
 
 lesskey "$DIR/lesskey"
 
