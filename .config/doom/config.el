@@ -8,6 +8,7 @@
 (require 'dash)
 (require 'ivy)
 (require 'evil-multiedit)
+(require 's)
 (require 'company) ; it loads company-lsp which loads lsp
 
 (setq tmux-p (getenv "TMUX"))

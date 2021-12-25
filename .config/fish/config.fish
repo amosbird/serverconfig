@@ -59,10 +59,10 @@ if not set -q fish_initialized
     set -U fish_pager_color_prefix white --bold --underline
     set -U fish_pager_color_progress brwhite '--background=cyan'
 
-    set -U fish_user_paths $HOME/scripts $HOME/.emacs.d/bin $HOME/.local/bin $HOME/.npm-packages/bin
     set -U fish_initialized 1
 end
 
+set -g fish_user_paths $HOME/scripts $HOME/.emacs.d/bin $HOME/.local/bin $HOME/.npm-packages/bin
 contains -- /usr/share/fish/vendor_completions.d $fish_complete_path
 or set -g fish_complete_path $fish_complete_path[1..-2] /usr/share/fish/vendor_completions.d $fish_complete_path[-1]
 
