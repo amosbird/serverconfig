@@ -11,8 +11,8 @@ case $(hostname) in
         monitormove eDP1 DP2-2
         ;;
     abbox)
-        xrandr --output DP-1 --primary --mode 1920x1080 --pos 0x0 --rotate normal --output HDMI-1 --off
-        monitormove DP-1 HDMI-1
+        xrandr --output HDMI-1 --primary --mode 1920x1080 --pos 0x0 --rotate normal --output DP-1 --off
+        monitormove HDMI-1 DP-1
         ;;
     *)
         ~/.screenlayout/inversed.sh
