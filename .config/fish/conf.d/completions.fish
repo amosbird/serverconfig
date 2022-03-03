@@ -1,13 +1,13 @@
 function __fish_clickhouse_get_stateless_query_tests
-    bash -c "cd $CLICKHOUSE_STATELESS_QUERY_TESTS_DIR && command fd '.(sql|sh)\$'"
+    find $CLICKHOUSE_STATELESS_QUERY_TESTS_DIR \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.expect' \) -type f -printf '%f\n'
 end
 
 function __fish_clickhouse_get_stateful_query_tests
-    bash -c "cd $CLICKHOUSE_STATEFUL_QUERY_TESTS_DIR && command fd '.(sql|sh)\$'"
+    find $CLICKHOUSE_STATEFUL_QUERY_TESTS_DIR \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.expect' \) -type f -printf '%f\n'
 end
 
 function __fish_clickhouse_get_performance_tests
-    bash -c "cd $CLICKHOUSE_PERF_TESTS_DIR && command fd '.xml\$'"
+    find $CLICKHOUSE_PERF_TESTS_DIR \( -iname '*.xml' \) -type f -printf '%f\n'
 end
 
 function __fish_netctl_get_profiles

@@ -4,7 +4,7 @@
 (load! "+lsp")
 (load! "+alias")
 (load! "+flycheck")
-; TODO eglot disable eldoc; understand flymake; make sure code actions work
+
 (require 'dash)
 (require 'ivy)
 (require 'evil-multiedit)
@@ -14,6 +14,12 @@
 (setq tmux-p (getenv "TMUX"))
 (setq gui-p (getenv "GUI"))
 
+(setq resize-mini-windows 'grow-only)
+;; (advice-add #'realign-mode :override #'ignore)
+;; (advice-add #'realign-windows :override #'ignore)
+;; (advice-add #'+vc-gutter-update-h :override #'ignore)
+;; (advice-add #'+vc-gutter-init-maybe-h :override #'ignore)
+
 (use-package! speed-type
   :defer
   :config
@@ -22,11 +28,6 @@
    :ni "q" #'kill-this-buffer
    :ni "r" #'speed-type--replay
    :ni "n" #'speed-type--play-next))
-
-(use-package! flyspell-lazy
-  :config
-  (add-to-list 'ispell-extra-args "--sug-mode=ultra")
-  (flyspell-lazy-mode +1))
 
 (use-package! quick-peek
   :defer)
@@ -133,11 +134,6 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 (use-package! gitattributes-mode
   :defer)
 
-;; way slower
-;; (use-package! magit-svn
-;;   :commands turn-on-magit-svn
-;;   :init (add-hook 'magit-mode-hook 'turn-on-magit-svn))
-
 (use-package! page-break-lines
   :init
   (global-page-break-lines-mode +1))
@@ -229,7 +225,8 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (advice-add #'git-gutter:put-signs :before (lambda (&rest _) (realign-windows)))
   (advice-add #'git-gutter:before-string :override #'+amos-git-gutter:before-string-a)
   (advice-add #'git-gutter:start-git-diff-process :override #'+amos-git-gutter:start-git-diff-process-a)
-  (add-hook 'window-configuration-change-hook #'git-gutter:update-all-windows))
+  ;; (add-hook 'window-configuration-change-hook #'git-gutter:update-all-windows)
+  )
 
 (use-package! evil-textobj-line
   :after evil)
@@ -241,6 +238,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (interactive)
   (ignore-errors
     (recenter)
+    (flycheck-inline-hide-errors)
     (+nav-flash/blink-cursor)))
 
 (defvar +amos-dir (file-name-directory load-file-name))
@@ -401,78 +399,6 @@ This predicate is only tested on \"insert\" action."
   (sp-pair "[" nil :post-handlers '(("| " " "))
            :unless '(sp-point-before-word-p sp-point-before-same-p)))
 
-(defun col-at-point (point)
-  (save-excursion (goto-char point) (current-column)))
-
-(defun evil--mc-make-cursor-at-col-append (_startcol endcol orig-line)
-  (end-of-line)
-  (when (> endcol (current-column))
-    (insert-char ?\s (- endcol (current-column))))
-  (move-to-column endcol)
-  (unless (= (line-number-at-pos) orig-line)
-    (evil-mc-make-cursor-here)))
-
-(defun evil--mc-make-cursor-at-col-insert (startcol _endcol orig-line)
-  (end-of-line)
-  (move-to-column startcol)
-  (unless (or (= (line-number-at-pos) orig-line) (> startcol (current-column)))
-    (evil-mc-make-cursor-here)))
-
-(defun evil--mc-make-vertical-cursors (beg end func)
-  (evil-mc-pause-cursors)
-  (apply-on-rectangle func
-                      beg end (line-number-at-pos (point)))
-  (evil-mc-resume-cursors)
-  (evil-insert-state))
-
-(defun evil-mc-insert-vertical-cursors (beg end)
-  (interactive (list (region-beginning) (region-end)))
-  (evil--mc-make-vertical-cursors beg end 'evil--mc-make-cursor-at-col-insert)
-  (move-to-column (min (col-at-point beg) (col-at-point end))))
-
-(defun evil-mc-append-vertical-cursors (beg end)
-  (interactive (list (region-beginning) (region-end)))
-  (when (and (evil-visual-state-p)
-             (eq (evil-visual-type) 'line))
-    (message "good")
-    (let ((column (max (evil-column evil-visual-beginning)
-                       (evil-column evil-visual-end))))
-      (evil-visual-rotate 'upper-left)
-      (move-to-column column t))
-    )
-  (evil--mc-make-vertical-cursors beg end 'evil--mc-make-cursor-at-col-append)
-  (move-to-column (max (col-at-point beg) (col-at-point end))))
-
-(after! evil-mc
-  (nconc evil-mc-known-commands
-         '((evil-repeat . ((:default . evil-mc-execute-default-call)))
-           (+amos/smart-eol-insert . ((:default . evil-mc-execute-default-call)))
-           (company-complete-common . ((:default . evil-mc-execute-default-complete)))
-           (company-select-next . ((:default . evil-mc-execute-default-complete)))
-           (company-select-previous . ((:default . evil-mc-execute-default-complete)))
-           (+amos/delete-forward-word . ((:default . evil-mc-execute-default-call)))
-           (+amos/delete-backward-word . ((:default . evil-mc-execute-default-call)))
-           (+amos/delete-forward-subword . ((:default . evil-mc-execute-default-call)))
-           (+amos/delete-backward-subword . ((:default . evil-mc-execute-default-call)))
-           (+amos/delete-char . ((:default . evil-mc-execute-default-call)))
-           (+amos/delete-backward-char . ((:default . evil-mc-execute-default-call)))
-           (+amos/kill-line . ((:default . evil-mc-execute-default-call)))
-           (+amos/backward-kill-to-bol-and-indent . ((:default . evil-mc-execute-default-call)))
-           (+amos/replace-last-sexp . ((:default . evil-mc-execute-default-call)))
-           (+amos/backward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-           (+amos/forward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-           (+amos/backward-subword-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-           (+amos/forward-subword-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-           (+amos/evil-backward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-           (+amos/evil-forward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-           (+amos/evil-forward-subword-end . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))))
-
-  ;; if I'm in insert mode, chances are I want cursors to resume
-  (add-hook! 'evil-mc-before-cursors-created
-    (add-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors nil t))
-  (add-hook! 'evil-mc-after-cursors-deleted
-    (remove-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors t)))
-
 (after! cus-edit (evil-set-initial-state 'Custom-mode 'normal))
 (after! ivy (evil-set-initial-state 'ivy-occur-grep-mode 'normal))
 (after! compile (evil-set-initial-state 'compilation-mode 'normal))
@@ -590,16 +516,6 @@ This predicate is only tested on \"insert\" action."
                     (interactive)
                     (evil-scroll-line-down 3)))
   (etcc-on))
-
-(defun +amos/lookup-docsets (identifier &optional arg)
-  (interactive (list (doom-thing-at-point-or-region)
-                     current-prefix-arg))
-  (let* ((search (if (not identifier) "" (concat "-s " identifier))))
-    (when-let* ((plist (cdr (assq major-mode +amos-docsets))))
-      (when-let* ((docs (s-join " " (doom-enlist (plist-get plist :docs)))))
-        (let ((cmd (format "rofidoc %s %s" search docs)))
-          (message cmd)
-          (osc-command cmd))))))
 
 (setq +amos-docsets nil)
 (defun +amos-set-docsets (mode &rest plist)
@@ -978,6 +894,10 @@ using a visual block/rectangle selection."
         (projectile-cache-project (projectile-project-root) files)))
     files))
 
+(defun +amos/projectile-find-file-action (file)
+  "Find FILE and run `projectile-find-file-hook'."
+  (find-file (projectile-expand-root file)))
+
 (defun +amos/projectile-find-file (&optional arg)
   "Jump to a file in the current project.
 
@@ -991,7 +911,7 @@ With a prefix ARG, invalidate the cache first."
             ;; :matcher counsel-projectile-find-file-matcher
             :require-match t
             :sort t
-            :action counsel-projectile-find-file-action
+            :action #'+amos/projectile-find-file-action
             :caller #'+amos/projectile-find-file))
 
 (advice-add #'projectile-cache-files-find-file-hook :override #'ignore)
@@ -2020,7 +1940,9 @@ representation of `NUMBER' is smaller."
   (interactive)
   (if (and (boundp 'cc-playground-mode) cc-playground-mode)
       (cc-switch-between-src-and-test)
-    (projectile-find-other-file)))
+    (if (memq major-mode '(c-mode c++-mode))
+        (lsp-clangd-find-other-file)
+      (projectile-find-other-file))))
 
 (advice-add #'hide-mode-line-mode :override #'ignore)
 (advice-add #'visual-line-mode :override #'ignore)
@@ -2346,18 +2268,6 @@ the current state and point position."
   (save-some-buffers nil t)
   (kill-emacs))
 
-(defun comp-buffer-name (maj-mode)
-  (concat "*" (downcase maj-mode) " " default-directory "*"))
-(setq compilation-buffer-name-function #'comp-buffer-name)
-(defun +amos-normalize-compilation-buffer-h (buffer msg)
-  (with-current-buffer buffer
-    (evil-normal-state)))
-(add-hook! 'compilation-finish-functions #'+amos-normalize-compilation-buffer-h)
-
-(defvar +amos-frame-list nil)
-(defvar +amos-frame-stack nil)
-(defvar +amos-tmux-need-switch nil)
-
 (defun +amos/set-face ()
   (after! swiper
     (set-face-attribute 'swiper-line-face nil :inherit 'unspecified :background 'unspecified :foreground 'unspecified :underline t))
@@ -2372,6 +2282,18 @@ the current state and point position."
 
 ;; vertical bar
 (add-hook! 'doom-load-theme-hook #'+amos/set-face)
+
+(defun comp-buffer-name (maj-mode)
+  (concat "*" (downcase maj-mode) " " default-directory "*"))
+(setq compilation-buffer-name-function #'comp-buffer-name)
+(defun +amos-normalize-compilation-buffer-h (buffer msg)
+  (with-current-buffer buffer
+    (evil-normal-state)))
+(add-hook! 'compilation-finish-functions #'+amos-normalize-compilation-buffer-h)
+
+(defvar +amos-frame-list nil)
+(defvar +amos-frame-stack nil)
+(defvar +amos-tmux-need-switch nil)
 
 (defun +amos-after-make-frame-functions-h (&rest _)
   (+amos/set-face)
@@ -2502,125 +2424,6 @@ the current state and point position."
   (setf (car args) 5000)
   (apply orig-fun args))
 (advice-add #'c-determine-limit :around #'+amos*c-determine-limit)
-
-(evil-define-state lisp
-  "Lisp state.
- Used to navigate lisp code and manipulate the sexp tree."
-  :tag " <L> "
-  :cursor (bar . 2)
-  ;; force smartparens mode
-  (if (evil-lisp-state-p) (smartparens-mode)))
-
-(set-keymap-parent evil-lisp-state-map evil-insert-state-map)
-
-(general-define-key
- :states 'lisp
- "<escape>"       (cmd! (evil-normal-state) (unless (bolp) (backward-char)))
- "M-o"            #'lisp-state-toggle-lisp-state
- "M-U"            #'+amos/replace-defun
- "M-u"            #'eval-defun
- "C-a"            #'sp-beginning-of-sexp
- "C-e"            #'sp-end-of-sexp
- "C-n"            #'sp-down-sexp
- "C-p"            #'sp-up-sexp
- "M-n"            #'sp-backward-down-sexp
- "M-p"            #'sp-backward-up-sexp
- "M-f"            #'sp-forward-sexp
- "M-b"            #'sp-backward-sexp
- "M-,"            #'sp-backward-unwrap-sexp
- "M-."            #'sp-unwrap-sexp
- "M-r"            #'sp-forward-slurp-sexp
- "M-R"            #'sp-forward-barf-sexp
- "M-s"            #'sp-splice-sexp
- "M-t"            #'sp-transpose-sexp
- "C-t"            #'sp-transpose-hybrid-sexp
- "M-d"            #'sp-kill-sexp
- "C-o"            #'sp-kill-hybrid-sexp
- [M-backspace]    #'sp-backward-kill-sexp
- [134217855]      #'sp-backward-kill-sexp ; M-DEL
- "M-w"            #'sp-copy-sexp
- "M-("            #'sp-wrap-round
- "M-{"            #'sp-wrap-curly
- "M-["            #'sp-wrap-square
- "M-\""           (cmd! (sp-wrap-with-pair "\"")))
-
-(defun lisp-state-toggle-lisp-state ()
-  "Toggle the lisp state."
-  (interactive)
-  (if (eq 'lisp evil-state)
-      (progn
-        (message "state: lisp -> insert")
-        (evil-insert-state))
-    (message "state: %s -> lisp" evil-state)
-    (evil-lisp-state)))
-
-(defun lisp-state-wrap (&optional arg)
-  "Wrap a symbol with parenthesis."
-  (interactive "P")
-  (sp-wrap-with-pair "("))
-
-(defun evil-lisp-state-next-paren (&optional closing)
-  "Go to the next/previous closing/opening parenthesis/bracket/brace."
-  (if closing
-      (let ((curr (point)))
-        (forward-char)
-        (unless (eq curr (search-forward-regexp "[])}]"))
-          (backward-char)))
-    (search-backward-regexp "[[({]")))
-
-(defun lisp-state-prev-opening-paren ()
-  "Go to the next closing parenthesis."
-  (interactive)
-  (evil-lisp-state-next-paren))
-
-(defun lisp-state-next-closing-paren ()
-  "Go to the next closing parenthesis."
-  (interactive)
-  (evil-lisp-state-next-paren 'closing))
-
-(defun lisp-state-forward-symbol (&optional arg)
-  "Go to the beginning of the next symbol."
-  (interactive "P")
-  (let ((n (if (char-equal (char-after) ?\() 1 2)))
-    (sp-forward-symbol (+ (if arg arg 0) n))
-    (sp-backward-symbol)))
-
-(defun lisp-state-insert-sexp-after ()
-  "Insert sexp after the current one."
-  (interactive)
-  (let ((sp-navigate-consider-symbols nil))
-    (if (char-equal (char-after) ?\() (forward-char))
-    (sp-up-sexp)
-    (evil-insert-state)
-    (sp-newline)
-    (sp-insert-pair "(")))
-
-(defun lisp-state-insert-sexp-before ()
-  "Insert sexp before the current one."
-  (interactive)
-  (let ((sp-navigate-consider-symbols nil))
-    (if (char-equal (char-after) ?\() (forward-char))
-    (sp-backward-sexp)
-    (evil-insert-state)
-    (sp-newline)
-    (evil-previous-visual-line)
-    (evil-end-of-line)
-    (insert " ")
-    (sp-insert-pair "(")
-    (indent-for-tab-command)))
-
-(defun lisp-state-eval-sexp-end-of-line ()
-  "Evaluate the last sexp at the end of the current line."
-  (interactive)
-  (save-excursion
-    (end-of-line)
-    (eval-last-sexp nil)))
-
-(defun lisp-state-beginning-of-sexp (&optional arg)
-  "Go to the beginning of current s-exp"
-  (interactive "P")
-  (sp-beginning-of-sexp)
-  (evil-backward-char))
 
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
@@ -2823,157 +2626,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 ;; (advice-add #'avy-handler-default :override #'+amos*avy-handler-default)
 (define-key key-translation-map "\035" [escape])
 
-(defun lua-busted-fuckups-fix ()
-  (save-excursion
-    (lua-forward-line-skip-blanks 'back)
-    (let* ((current-indentation (current-indentation))
-           (line (thing-at-point 'line t))
-           (busted-p (s-matches?
-                      (rx (+ bol (* space)
-                             (or "context" "describe" "it" "setup" "teardown")
-                             "("))
-                      line)))
-      (when busted-p
-        (+ current-indentation lua-indent-level)))))
-(defun +amos*lua-calculate-indentation-override (old-function &rest arguments)
-  (or (lua-busted-fuckups-fix)
-      (apply old-function arguments)))
-(advice-add #'lua-calculate-indentation-override :around #'+amos*lua-calculate-indentation-override)
-
-(defun lua-find-matching-token-in-line (found-token found-pos token-type &optional direction)
-  (let ((line (line-number-at-pos))
-        ;; If we are on a middle token, go backwards. If it is a middle-or-open,
-        ;; go forwards.
-        (search-direction
-         (or direction
-             (if (or (eq token-type 'open)
-                     (eq token-type 'middle-or-open))
-                 'forward
-               'backward)
-             'backward)))
-    (save-excursion
-      ;; This is required since lua-find-matching-token-word needs point to be
-      ;; at the beginning of the keyword.
-      (goto-char found-pos)
-      (let ((found-match (lua-find-matching-token-word found-token search-direction)))
-        (when (and found-match (= line (line-number-at-pos)))
-          (point))))))
-
-(defun lua-resolve-token-type (found-token found-pos)
-  "Get resolved token type.
- If token type is 'middle-or-open, determine which one it is and
- return it."
-  (save-excursion
-    (let ((token-type (lua-get-token-type (lua-get-block-token-info found-token))))
-      (if (not (eq token-type 'middle-or-open))
-          token-type
-        (goto-char found-pos)
-        (if (not (lua-find-matching-token-word found-token 'backward))
-            'open
-          'middle)))))
-
-(defun lua-line-indent-impact-current (&optional bound)
-  "Calculate how much current line impacts indentation of current line.
- `bound' is set to `line-end-position' by default."
-  ;; TODO: Optimization idea: sum all closers and matched-in-line openers until
-  ;; an unmatched-in-line opener is met.
-  (unless bound
-    (setq bound (line-end-position)))
-  (save-excursion
-    (back-to-indentation)
-    ;; Check first token.
-    (if (or (lua-comment-or-string-p)
-            (not (looking-at lua-indentation-modifier-regexp)))
-        0
-      (let ((token-type (lua-resolve-token-type (match-string 0) (match-beginning 0))))
-        (cond
-         ((eq token-type 'middle)
-          (- lua-indent-level))
-         ((eq token-type 'close)
-          ;; Loop over all tokens in line.
-          (back-to-indentation)
-          (let ((shift 0))
-            (while (lua-find-regexp 'forward lua-indentation-modifier-regexp bound)
-              (let ((found-token (match-string 0))
-                    (found-pos (match-beginning 0)))
-                (setq token-type (lua-resolve-token-type found-token found-pos))
-                ;; Only if 'close and unmatched.
-                (when (and (eq token-type 'close)
-                           (not (lua-find-matching-token-in-line found-token found-pos token-type)))
-                  (setq shift (- shift lua-indent-level)))))
-            (max -4 shift)))
-         (t 0))))))
-
-(defun lua-line-indent-impact-next (&optional bound)
-  "Calculate how much current line impacts indentation of next line.
- `bound' is set to `line-end-position' by default."
-  (unless bound
-    (setq bound (line-end-position)))
-  (save-excursion
-    (back-to-indentation)
-    (let ((shift 0)
-          (add 0)
-          (first-token-type)
-          (token-type))
-      ;; Shift if first token is 'middle.
-      (when (and (not (lua-comment-or-string-p))
-                 (looking-at lua-indentation-modifier-regexp)
-                 (eq 'middle (setq first-token-type (lua-resolve-token-type (match-string 0) (match-beginning 0)))))
-        (setq shift (+ shift lua-indent-level)))
-      ;; Loop over all tokens in line.
-      (while (lua-find-regexp 'forward lua-indentation-modifier-regexp bound)
-        (let ((found-token (match-string 0))
-              (found-pos (match-beginning 0)))
-          (setq token-type (lua-resolve-token-type found-token found-pos))
-          ;; Only if unmatched 'open and unmatched 'close if first token was not
-          ;; 'close.
-          (unless (lua-find-matching-token-in-line found-token found-pos token-type)
-            (cond
-             ((eq token-type 'open)
-              (setq add (+ add lua-indent-level)))
-             ((and (eq token-type 'close) (not (eq first-token-type 'close)))
-              (setq add (- add lua-indent-level)))
-             (t 0)))))
-      (+ shift (min lua-indent-level add)))))
-
-(defun +amos-lua-calculate-indentation-a (&optional parse-start)
-  "Return appropriate indentation for current line as Lua code."
-  ;; Algorithm: indentation is computed from current line and previous line.
-  ;; Current line:
-  ;; -1 on every unmatched closer if first token is a closer
-  ;; -1 if first token is 'middle
-  ;; Previous line:
-  ;; +1 on every unmatched opener
-  ;; +1 if first token is a 'middle
-  ;; -1 on every unmatched closer if first token is not a closer (if first token
-  ;;  is a 'middle, then first unmatched closer is actually closing the middle).
-  ;;
-  ;; To this we add
-  ;; + previous line indentation
-  ;; +1 if previous line is not a continuation and current-line is
-  ;; -1 if previous line is a continuation and current-line is not
-  (save-excursion
-    (back-to-indentation)
-    (let* ((continuing-p (lua-is-continuing-statement-p))
-           (cur-line-begin-pos (line-beginning-position))
-           (close-factor (lua-line-indent-impact-current)))
-
-      (if (lua-forward-line-skip-blanks 'back)
-          (+ (current-indentation)
-             (lua-line-indent-impact-next cur-line-begin-pos)
-             close-factor
-             ;; Previous line is a continuing statement, but not current.
-             (if (and (lua-is-continuing-statement-p) (not continuing-p))
-                 (- lua-indent-level)
-               0)
-             ;; Current line is a continuing statement, but not previous.
-             (if (and (not (lua-is-continuing-statement-p)) continuing-p)
-                 lua-indent-level
-               0))
-        ;; If there's no previous line, indentation is 0.
-        0))))
-(advice-add #'lua-calculate-indentation :override #'+amos-lua-calculate-indentation-a)
-
 (global-page-break-lines-mode +1)
 
 (defun anzu-multiedit (&optional symbol)
@@ -3114,7 +2766,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 ;; debugging eldoc
 (defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
 (stupid_function)
-(setq resize-mini-windows 'grow-only)
 
 (defun +amos/find-file-at-point ()
   (interactive)
@@ -3193,13 +2844,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (yas--skip-and-clear target-field)
       (setq target-field (yas--find-next-field 1 snippet target-field)))
     (yas-exit-snippet snippet)))
-
-;; (defun +amos*git-link--select-remote ()
-;;   (if current-prefix-arg
-;;       (git-link--read-remote)
-;;     (or (magit-get-upstream-remote) (magit-get-push-remote) "origin")))
-;; (setq git-link-default-branch "master")
-;; (advice-add #'git-link--select-remote :override #'+amos*git-link--select-remote)
 
 (evil-define-command +amos-evil-scroll-down-a (count)
   "Scrolls the window and the cursor COUNT lines downwards.
@@ -4364,26 +4008,6 @@ inside or just after a citation command, only adds KEYS to it."
 (after! magit-files
   (add-hook! 'magit-blob-mode-hook #'evil-normalize-keymaps))
 
-;; (setq-local +amos-window-start nil)
-;; (add-hook! 'minibuffer-setup-hook #'+amos|record-window-start)
-;; (add-hook! 'minibuffer-exit-hook #'+amos|restore-window-start)
-
-;; (defun +amos|record-window-start ()
-;;   (let ((windows (window-list)))
-;;     (dolist (window windows)
-;;       (let ((buffer (window-buffer (car windows))))
-;;         (unless (minibufferp buffer)
-;;           (with-current-buffer buffer
-;;             (setq-local +amos-window-start (window-start))))))))
-
-;; (defun +amos|restore-window-start ()
-;;   (let ((windows (window-list)))
-;;     (dolist (window windows)
-;;       (let ((buffer (window-buffer (car windows))))
-;;         (unless (minibufferp buffer)
-;;           (with-current-buffer buffer
-;;             (set-window-start +amos-window-start)))))))
-
 (defun +amos-xterm--pasted-text-a ()
   "Handle the rest of a terminal paste operation.
 Return the pasted text as a string."
@@ -4709,10 +4333,6 @@ See `project-local-get' for the parameter PROJECT."
   (mkr! (apply func args)))
 (advice-add #'ediff-copy-diff :around #'+amos-ediff-copy-diff-a)
 
-;; (setq font-lock-maximum-decoration '((c-mode . 1) (c++-mode . 1) (t . t)))
-
-;; (load! "+flycheck")
-
 (defun +amos-ivy-scroll-up-command-a ()
   "Scroll the candidates upward by the minibuffer height."
   (interactive)
@@ -4894,47 +4514,339 @@ See `project-local-get' for the parameter PROJECT."
  "+eval/region-and-replace"
  "+evil:delete-this-file"
  "cc-playground"
- "ccls"
- "counsel"
- "dired"
- "direnv"
- "doom/sudo-this-file"
- "doom/toggle-fullscreen"
- "easy-hugo"
- "editorconfig-find-current-editorconfig"
- "eval-defun"
- "evil-commentary-line"
- "evil-multiedit"
- "evil-next-line"
- "evil-previous-line"
  "+amos/evil-previous-visual-line"
  "+amos/evil-next-visual-line"
  "execute-extended-command"
  "find-file"
- "flycheck"
- "format"
- "git-gutter"
- "git-timemachine"
- "highlight-indentation-"
- "ivy-resume"
- "lsp"
- "magit"
+ "evil-commentary-line"
+ "evil-multiedit"
+ "evil-next-line"
+ "evil-previous-line"
+ "eval-defun"
  "move-text"
+ "zygospore"
  "pp-eval-last-sexp"
- "rainbow"
- "rotate-text"
  "save-buffer"
  "split-window"
  "switch-to-buffer"
  "toggle-truncate-lines"
+ "format"
  "undo-tree"
+ "rotate-text"
  "vc-revert"
  "whitespace-mode"
- "yasdcv-translate-at-point"
- "zygospore-toggle-delete-other-windows")
+ )
+
+(after! ccls
+  (+amos-ignore-repeat "ccls"))
+(after! counsel
+  (+amos-ignore-repeat "counsel"))
+(after! dired
+  (+amos-ignore-repeat "dired"))
+(after! direnv
+  (+amos-ignore-repeat "direnv"))
+(after! easy-hugo
+  (+amos-ignore-repeat "easy-hugo"))
+(after! editorconfig
+  (+amos-ignore-repeat "editorconfig"))
+(after! ivy
+  (+amos-ignore-repeat "ivy"))
+(after! lsp
+  (+amos-ignore-repeat "lsp" "+lsp"))
+(after! flycheck
+  (+amos-ignore-repeat "flycheck"))
+(after! git-gutter
+  (+amos-ignore-repeat "git-gutter"))
+(after! git-timemachine
+  (+amos-ignore-repeat "git-timemachine"))
+(after! magit
+  (+amos-ignore-repeat "magit"))
+(after! rainbow-mode
+  (+amos-ignore-repeat "rainbow"))
+(after! yasdcv
+  (+amos-ignore-repeat "yasdcv"))
 
 ;; debug a function in a post-command-hook
 ;; (defadvice ivy--queue-exhibit (around intercept activate)
 ;; (condition-case err
 ;; ad-do-it
 ;; ((debug error) (signal (car err) (cdr err)))))
+
+
+;; (setq ssh-remote-addr (and (getenv "SSH_CONNECTION") (nth 2 (split-string (getenv "SSH_CONNECTION") " "))))
+;; (defun +amos-paste-file (filename)
+;;   (if ssh-remote-addr
+;;       (let ((cmd (format "scp %s %s:%s/" (shell-quote-argument filename) ssh-remote-addr (shell-quote-argument default-directory))))
+;;         (message cmd)
+;;         (osc-command cmd))
+;;     (shell-command! (format "cp %s %s/" (shell-quote-argument filename) (shell-quote-argument default-directory)))))
+
+;; (use-package! flyspell-lazy
+;;   :config
+;;   (add-to-list 'ispell-extra-args "--sug-mode=ultra")
+;;   (flyspell-lazy-mode +1))
+
+;; way slower
+;; (use-package! magit-svn
+;;   :commands turn-on-magit-svn
+;;   :init (add-hook 'magit-mode-hook 'turn-on-magit-svn))
+
+;; (defun col-at-point (point)
+;;   (save-excursion (goto-char point) (current-column)))
+
+;; (defun evil--mc-make-cursor-at-col-append (_startcol endcol orig-line)
+;;   (end-of-line)
+;;   (when (> endcol (current-column))
+;;     (insert-char ?\s (- endcol (current-column))))
+;;   (move-to-column endcol)
+;;   (unless (= (line-number-at-pos) orig-line)
+;;     (evil-mc-make-cursor-here)))
+
+;; (defun evil--mc-make-cursor-at-col-insert (startcol _endcol orig-line)
+;;   (end-of-line)
+;;   (move-to-column startcol)
+;;   (unless (or (= (line-number-at-pos) orig-line) (> startcol (current-column)))
+;;     (evil-mc-make-cursor-here)))
+
+;; (defun evil--mc-make-vertical-cursors (beg end func)
+;;   (evil-mc-pause-cursors)
+;;   (apply-on-rectangle func
+;;                       beg end (line-number-at-pos (point)))
+;;   (evil-mc-resume-cursors)
+;;   (evil-insert-state))
+
+;; (defun evil-mc-insert-vertical-cursors (beg end)
+;;   (interactive (list (region-beginning) (region-end)))
+;;   (evil--mc-make-vertical-cursors beg end 'evil--mc-make-cursor-at-col-insert)
+;;   (move-to-column (min (col-at-point beg) (col-at-point end))))
+
+;; (defun evil-mc-append-vertical-cursors (beg end)
+;;   (interactive (list (region-beginning) (region-end)))
+;;   (when (and (evil-visual-state-p)
+;;              (eq (evil-visual-type) 'line))
+;;     (message "good")
+;;     (let ((column (max (evil-column evil-visual-beginning)
+;;                        (evil-column evil-visual-end))))
+;;       (evil-visual-rotate 'upper-left)
+;;       (move-to-column column t))
+;;     )
+;;   (evil--mc-make-vertical-cursors beg end 'evil--mc-make-cursor-at-col-append)
+;;   (move-to-column (max (col-at-point beg) (col-at-point end))))
+
+;; (after! evil-mc
+;;   (nconc evil-mc-known-commands
+;;          '((evil-repeat . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/smart-eol-insert . ((:default . evil-mc-execute-default-call)))
+;;            (company-complete-common . ((:default . evil-mc-execute-default-complete)))
+;;            (company-select-next . ((:default . evil-mc-execute-default-complete)))
+;;            (company-select-previous . ((:default . evil-mc-execute-default-complete)))
+;;            (+amos/delete-forward-word . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/delete-backward-word . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/delete-forward-subword . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/delete-backward-subword . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/delete-char . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/delete-backward-char . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/kill-line . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/backward-kill-to-bol-and-indent . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/replace-last-sexp . ((:default . evil-mc-execute-default-call)))
+;;            (+amos/backward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+;;            (+amos/forward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+;;            (+amos/backward-subword-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+;;            (+amos/forward-subword-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+;;            (+amos/evil-backward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+;;            (+amos/evil-forward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
+;;            (+amos/evil-forward-subword-end . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))))
+
+;;   ;; if I'm in insert mode, chances are I want cursors to resume
+;;   (add-hook! 'evil-mc-before-cursors-created
+;;     (add-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors nil t))
+;;   (add-hook! 'evil-mc-after-cursors-deleted
+;;     (remove-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors t)))
+
+;; (defun +amos-x-select-text (text &rest _)
+;;   (with-temp-buffer
+;;     (insert text)
+;;     (with-x-environment
+;;      (call-process-region (point-min) (point-max) "xclip")))
+;;   text)
+
+;; (defun +amos-tui-select-text (text &rest _)
+;;   (with-temp-buffer
+;;     (insert text)
+;;     (with-x-environment
+;;      (call-process-region (point-min) (point-max) "clipserver")))
+;;   text)
+
+;; (use-package osc
+;;   :demand
+;;   :init
+;;   (defun +amos/other-window ()
+;;     (interactive)
+;;     (if (display-graphic-p)
+;;         (i3-nav-right)
+;;       (osc-nav-right)))
+;;   (if gui-p
+;;       (setq interprogram-cut-function '+amos-x-select-text)
+;;     (setq interprogram-cut-function '+amos-tui-select-text))
+;;   (setq browse-url-browser-function (lambda (url &optional _new-window)
+;;                                       (if (display-graphic-p)
+;;                                           (if _new-window
+;;                                               (browse-url-chrome url)
+;;                                             (browse-url-firefox url))
+;;                                         (browse-url-osc url _new-window)))))
+
+;; (defun +amos/lookup-docsets (identifier &optional arg)
+;;   (interactive (list (doom-thing-at-point-or-region)
+;;                      current-prefix-arg))
+;;   (let* ((search (if (not identifier) "" (concat "-s " identifier))))
+;;     (when-let* ((plist (cdr (assq major-mode +amos-docsets))))
+;;       (when-let* ((docs (s-join " " (doom-enlist (plist-get plist :docs)))))
+;;         (let ((cmd (format "rofidoc %s %s" search docs)))
+;;           (message cmd)
+;;           (osc-command cmd))))))
+
+;; (evil-define-state lisp
+;;   "Lisp state.
+;;  Used to navigate lisp code and manipulate the sexp tree."
+;;   :tag " <L> "
+;;   :cursor (bar . 2)
+;;   ;; force smartparens mode
+;;   (if (evil-lisp-state-p) (smartparens-mode)))
+
+;; (set-keymap-parent evil-lisp-state-map evil-insert-state-map)
+
+;; (general-define-key
+;;  :states 'lisp
+;;  "<escape>"       (cmd! (evil-normal-state) (unless (bolp) (backward-char)))
+;;  "M-o"            #'lisp-state-toggle-lisp-state
+;;  "M-U"            #'+amos/replace-defun
+;;  "M-u"            #'eval-defun
+;;  "C-a"            #'sp-beginning-of-sexp
+;;  "C-e"            #'sp-end-of-sexp
+;;  "C-n"            #'sp-down-sexp
+;;  "C-p"            #'sp-up-sexp
+;;  "M-n"            #'sp-backward-down-sexp
+;;  "M-p"            #'sp-backward-up-sexp
+;;  "M-f"            #'sp-forward-sexp
+;;  "M-b"            #'sp-backward-sexp
+;;  "M-,"            #'sp-backward-unwrap-sexp
+;;  "M-."            #'sp-unwrap-sexp
+;;  "M-r"            #'sp-forward-slurp-sexp
+;;  "M-R"            #'sp-forward-barf-sexp
+;;  "M-s"            #'sp-splice-sexp
+;;  "M-t"            #'sp-transpose-sexp
+;;  "C-t"            #'sp-transpose-hybrid-sexp
+;;  "M-d"            #'sp-kill-sexp
+;;  "C-o"            #'sp-kill-hybrid-sexp
+;;  [M-backspace]    #'sp-backward-kill-sexp
+;;  [134217855]      #'sp-backward-kill-sexp ; M-DEL
+;;  "M-w"            #'sp-copy-sexp
+;;  "M-("            #'sp-wrap-round
+;;  "M-{"            #'sp-wrap-curly
+;;  "M-["            #'sp-wrap-square
+;;  "M-\""           (cmd! (sp-wrap-with-pair "\"")))
+
+;; (defun lisp-state-toggle-lisp-state ()
+;;   "Toggle the lisp state."
+;;   (interactive)
+;;   (if (eq 'lisp evil-state)
+;;       (progn
+;;         (message "state: lisp -> insert")
+;;         (evil-insert-state))
+;;     (message "state: %s -> lisp" evil-state)
+;;     (evil-lisp-state)))
+
+;; (defun lisp-state-wrap (&optional arg)
+;;   "Wrap a symbol with parenthesis."
+;;   (interactive "P")
+;;   (sp-wrap-with-pair "("))
+
+;; (defun evil-lisp-state-next-paren (&optional closing)
+;;   "Go to the next/previous closing/opening parenthesis/bracket/brace."
+;;   (if closing
+;;       (let ((curr (point)))
+;;         (forward-char)
+;;         (unless (eq curr (search-forward-regexp "[])}]"))
+;;           (backward-char)))
+;;     (search-backward-regexp "[[({]")))
+
+;; (defun lisp-state-prev-opening-paren ()
+;;   "Go to the next closing parenthesis."
+;;   (interactive)
+;;   (evil-lisp-state-next-paren))
+
+;; (defun lisp-state-next-closing-paren ()
+;;   "Go to the next closing parenthesis."
+;;   (interactive)
+;;   (evil-lisp-state-next-paren 'closing))
+
+;; (defun lisp-state-forward-symbol (&optional arg)
+;;   "Go to the beginning of the next symbol."
+;;   (interactive "P")
+;;   (let ((n (if (char-equal (char-after) ?\() 1 2)))
+;;     (sp-forward-symbol (+ (if arg arg 0) n))
+;;     (sp-backward-symbol)))
+
+;; (defun lisp-state-insert-sexp-after ()
+;;   "Insert sexp after the current one."
+;;   (interactive)
+;;   (let ((sp-navigate-consider-symbols nil))
+;;     (if (char-equal (char-after) ?\() (forward-char))
+;;     (sp-up-sexp)
+;;     (evil-insert-state)
+;;     (sp-newline)
+;;     (sp-insert-pair "(")))
+
+;; (defun lisp-state-insert-sexp-before ()
+;;   "Insert sexp before the current one."
+;;   (interactive)
+;;   (let ((sp-navigate-consider-symbols nil))
+;;     (if (char-equal (char-after) ?\() (forward-char))
+;;     (sp-backward-sexp)
+;;     (evil-insert-state)
+;;     (sp-newline)
+;;     (evil-previous-visual-line)
+;;     (evil-end-of-line)
+;;     (insert " ")
+;;     (sp-insert-pair "(")
+;;     (indent-for-tab-command)))
+
+;; (defun lisp-state-eval-sexp-end-of-line ()
+;;   "Evaluate the last sexp at the end of the current line."
+;;   (interactive)
+;;   (save-excursion
+;;     (end-of-line)
+;;     (eval-last-sexp nil)))
+
+;; (defun lisp-state-beginning-of-sexp (&optional arg)
+;;   "Go to the beginning of current s-exp"
+;;   (interactive "P")
+;;   (sp-beginning-of-sexp)
+;;   (evil-backward-char))
+
+;; (defun +amos*git-link--select-remote ()
+;;   (if current-prefix-arg
+;;       (git-link--read-remote)
+;;     (or (magit-get-upstream-remote) (magit-get-push-remote) "origin")))
+;; (setq git-link-default-branch "master")
+;; (advice-add #'git-link--select-remote :override #'+amos*git-link--select-remote)
+
+;; (setq-local +amos-window-start nil)
+;; (add-hook! 'minibuffer-setup-hook #'+amos|record-window-start)
+;; (add-hook! 'minibuffer-exit-hook #'+amos|restore-window-start)
+
+;; (defun +amos|record-window-start ()
+;;   (let ((windows (window-list)))
+;;     (dolist (window windows)
+;;       (let ((buffer (window-buffer (car windows))))
+;;         (unless (minibufferp buffer)
+;;           (with-current-buffer buffer
+;;             (setq-local +amos-window-start (window-start))))))))
+
+;; (defun +amos|restore-window-start ()
+;;   (let ((windows (window-list)))
+;;     (dolist (window windows)
+;;       (let ((buffer (window-buffer (car windows))))
+;;         (unless (minibufferp buffer)
+;;           (with-current-buffer buffer
+;;             (set-window-start +amos-window-start)))))))

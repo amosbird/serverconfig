@@ -11,36 +11,17 @@
                     (kill-new (flycheck-error-message str))
                     (throw 'return nil))))))
 
-;; (use-package! flycheck
-;;   :after-call (doom-switch-buffer-hook after-find-file)
-;;   :config
-;;   (advice-add #'+syntax-check-buffer-h :override #'ignore)
-;;   ;; (setq flycheck-check-syntax-automatically nil)
-;;   ;; Emacs feels snappier without checks on newline
-;;   (setq flycheck-check-syntax-automatically '(save mode-enabled))
-;;   ;; (after! evil
-;;   ;;   (defun +syntax-checkers|flycheck-buffer ()
-;;   ;;     "Flycheck buffer on ESC in normal mode."
-;;   ;;     (when flycheck-mode
-;;   ;;       (ignore-errors (flycheck-buffer))
-;;   ;;       nil))
-;;   ;;   (add-hook! 'doom-escape-hook #'+syntax-checkers|flycheck-buffer t))
-;;   (global-flycheck-inline-mode +1)
-;;   (global-flycheck-mode +1)
-
-;;   ;; (advice-add #'flycheck-display-error-messages :override #'flycheck-inline-display-errors)
-;;   (setq flycheck-highlighting-mode 'columns
-;;         ;; flycheck-check-syntax-automatically '(save mode-enabled)
-;;         flycheck-indication-mode nil
-;;         ;; flycheck-inline-display-function
-;;         ;; (lambda (msg pos)
-;;         ;;   (let* ((ov (quick-peek-overlay-ensure-at pos))
-;;         ;;          (contents (quick-peek-overlay-contents ov)))
-;;         ;;     (setf (quick-peek-overlay-contents ov)
-;;         ;;           (concat contents (when contents "\n") msg))
-;;         ;;     (quick-peek-update ov)))
-;;         ;; flycheck-inline-clear-function #'quick-peek-hide
-;;         flycheck-display-errors-delay 0))
+(after! flycheck (global-flycheck-inline-mode))
+(setq flycheck-highlighting-mode 'columns
+      flycheck-indication-mode nil)
+        ;; flycheck-inline-display-function
+        ;; (lambda (msg pos)
+        ;;   (let* ((ov (quick-peek-overlay-ensure-at pos))
+        ;;          (contents (quick-peek-overlay-contents ov)))
+        ;;     (setf (quick-peek-overlay-contents ov)
+        ;;           (concat contents (when contents "\n") msg))
+        ;;     (quick-peek-update ov)))
+        ;; flycheck-inline-clear-function #'quick-peek-hide
 
 ;; (defun +amos-set-evil-move-beyond-eol-nil-h (&rest _)
 ;;   (setq evil-move-beyond-eol nil)

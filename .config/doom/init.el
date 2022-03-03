@@ -41,6 +41,7 @@
        rgb
        biblio
        ansible
+       tree-sitter
        (lookup)
 
        :lang
@@ -54,8 +55,9 @@
        (rust +lsp)
        (ocaml +lsp)
        (org +pandoc)
-       ;; (python +lsp)
-       python
+       (python)
+       ;; TODO too slow
+       ;; (python +lsp +pyright)
        (java +lsp)
        (go +lsp)
 
@@ -327,7 +329,7 @@
   (add-to-list 'doom-evil-state-alist '(?s . sticky))
   (add-to-list 'doom-evil-state-alist '(?t . struct)))
 
-(advice-add #'doom-init-clipboard-in-tty-emacs-h :override #'ignore)
+;; (advice-add #'doom-init-clipboard-in-tty-emacs-h :override #'ignore)
 
 (defun +amos*+evil-collection-init (orig-fun module &optional disabled-list)
   (unless (memq (or (car-safe module) module) '(edebug dired mu4e mu4e-conversation))

@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
-exec /tmp/gentoo/usr/lib/llvm/13/bin/clangd "$@"
+export TMPDIR=$HOME/.clangd_tmpdir
+# exec /tmp/gentoo/usr/lib/llvm/13/bin/clangd "$@"
+exec /tmp/toolchain/bin/clangd "$@"

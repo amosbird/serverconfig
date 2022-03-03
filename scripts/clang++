@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+
+echo "$@" >> /tmp/dbg
+exec /tmp/gentoo/usr/lib/llvm/13/bin/clang++ "$@"

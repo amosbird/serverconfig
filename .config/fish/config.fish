@@ -16,6 +16,7 @@ set -x GPG_TTY (tty)
 
 set -e LS_COLORS
 alias l exa
+alias declare set
 
 status --is-interactive
 and function __jump_add --on-variable PWD

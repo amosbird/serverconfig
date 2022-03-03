@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+rg -i '\-Werror,' | sed "s/.*\[-Werror,\(.*\)\]/\1/" | sort | uniq | sed "s/-W/-Wno-/"

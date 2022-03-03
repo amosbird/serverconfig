@@ -22,10 +22,10 @@
   :config
   (set-electric! '(c-mode c++-mode objc-mode java-mode) :chars '(?\n ?\} ?\{))
 
-  (set-lookup-handlers! '(c-mode c++-mode)
-    :definition #'+amos/definitions
-    :references #'+amos/references
-    :documentation #'counsel-dash-at-point)
+  ;; (set-lookup-handlers! '(c-mode c++-mode)
+  ;;   :definition #'+amos/definitions
+  ;;   :references #'+amos/references
+  ;;   :documentation #'counsel-dash-at-point)
 
   (set-rotate-patterns! 'c++-mode
     :symbols '(("public" "protected" "private")
@@ -154,6 +154,77 @@
 
 ;; (add-hook! (c-mode c++-mode) #'+amos-ccls-enable-h)
 (add-hook! (c-mode c++-mode) #'lsp)
+(after! lsp-clangd (set-lsp-priority! 'clangd 2))
+(setq lsp-clients-clangd-args '(
+                                        ; "-j=3"
+                                 ;; "-log=verbose"
+                                 "--background-index"
+                                 "--clang-tidy"
+                                 "--completion-style=detailed"
+                                 "--header-insertion=never"
+                                 "--header-insertion-decorators=0"))
+
+(defun +amos|remap-cpp-faces ()
+  (add-function :before-until (local 'tree-sitter-hl-face-mapping-function)
+                (lambda (capture-name)
+                  (pcase capture-name
+                    ("type.builtin" 'font-lock-type-face)
+                    ("property" 'font-lock-constant-face)
+                    )))
+  )
+
+
+(add-hook! (c-mode c++-mode) #'tree-sitter-mode)
+;; (after! tree-sitter
+  ;; (global-tree-sitter-mode 1)
+  ;; )
+;; (tree-sitter-hl-add-patterns 'cpp
+;;   [
+;;    (qualified_identifier left: (namespace_identifier) @type.builtin right: (_))
+;;    ])
+
+(add-hook! (c-mode c++-mode) #'+amos|remap-cpp-faces)
+;; (add-hook! (c-mode c++-mode) #'tree-sitter-mode)
+
+;; (defface tree-sitter-hl-face:function
+;; (defface tree-sitter-hl-face:function.call
+;; (defface tree-sitter-hl-face:function.builtin
+;; (defface tree-sitter-hl-face:function.special
+;; (defface tree-sitter-hl-face:function.macro
+;; (defface tree-sitter-hl-face:method
+;; (defface tree-sitter-hl-face:method.call
+;; (defface tree-sitter-hl-face:type
+;; (defface tree-sitter-hl-face:type.parameter
+;; (defface tree-sitter-hl-face:type.argument
+;; (defface tree-sitter-hl-face:type.builtin
+;; (defface tree-sitter-hl-face:type.super
+;; (defface tree-sitter-hl-face:constructor
+;; (defface tree-sitter-hl-face:variable
+;; (defface tree-sitter-hl-face:variable.parameter
+;; (defface tree-sitter-hl-face:variable.builtin
+;; (defface tree-sitter-hl-face:variable.special
+;; (defface tree-sitter-hl-face:property
+;; (defface tree-sitter-hl-face:property.definition
+;; (defface tree-sitter-hl-face:comment
+;; (defface tree-sitter-hl-face:doc
+;; (defface tree-sitter-hl-face:string
+;; (defface tree-sitter-hl-face:string.special
+;; (defface tree-sitter-hl-face:escape
+;; (defface tree-sitter-hl-face:embedded
+;; (defface tree-sitter-hl-face:keyword
+;; (defface tree-sitter-hl-face:operator
+;; (defface tree-sitter-hl-face:label
+;; (defface tree-sitter-hl-face:constant
+;; (defface tree-sitter-hl-face:constant.builtin
+;; (defface tree-sitter-hl-face:number
+;; (defface tree-sitter-hl-face:punctuation
+;; (defface tree-sitter-hl-face:punctuation.bracket
+;; (defface tree-sitter-hl-face:punctuation.delimiter
+;; (defface tree-sitter-hl-face:punctuation.special
+;; (defface tree-sitter-hl-face:tag
+;; (defface tree-sitter-hl-face:attribute
+
+
 ;; TODO figure out why I disabled it
 ;; (add-hook! (c-mode c++-mode) (electric-indent-local-mode -1))
 

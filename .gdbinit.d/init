@@ -99,88 +99,88 @@ import time
 
 # useful auto-redraw hooks
 
-class AmosCommand(gdb.Command):
+# class AmosCommand(gdb.Command):
 
-    def __init__(self):
-        gdb.Command.__init__(self, 'amos',
-                             gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+#     def __init__(self):
+#         gdb.Command.__init__(self, 'amos',
+#                              gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
 
-    def invoke(self, arg, from_tty):
-        print("current thread has exited")
-        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
-            if thread.is_valid() and thread.is_stopped():
-                gdb.execute("thread {}".format(thread.num), from_tty=True)
-                gdb.execute("dashboard", from_tty=True)
-                return
-        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
-            if thread.is_valid():
-                gdb.execute("thread {}".format(thread.num), from_tty=True)
-                gdb.execute("dashboard", from_tty=True)
-                return
-        print("wtf????")
-AmosCommand()
+#     def invoke(self, arg, from_tty):
+#         print("current thread has exited")
+#         for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+#             if thread.is_valid() and thread.is_stopped():
+#                 gdb.execute("thread {}".format(thread.num), from_tty=True)
+#                 gdb.execute("dashboard", from_tty=True)
+#                 return
+#         for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+#             if thread.is_valid():
+#                 gdb.execute("thread {}".format(thread.num), from_tty=True)
+#                 gdb.execute("dashboard", from_tty=True)
+#                 return
+#         print("wtf????")
+# AmosCommand()
 
-class BirdCommand(gdb.Command):
-    def __init__(self):
-        gdb.Command.__init__(self, 'bird', gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+# class BirdCommand(gdb.Command):
+#     def __init__(self):
+#         gdb.Command.__init__(self, 'bird', gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
 
-    def invoke(self, arg, from_tty):
-        try:
-            gdb.selected_thread()
-        except SystemError:
-            for thread in gdb.Inferior.threads(gdb.selected_inferior()):
-                if thread.is_valid() and thread.is_stopped():
-                    gdb.execute("thread {}".format(thread.num), from_tty=True)
-                    gdb.execute("dashboard", from_tty=True)
-                    return
-            for thread in gdb.Inferior.threads(gdb.selected_inferior()):
-                if thread.is_valid():
-                    gdb.execute("thread {}".format(thread.num), from_tty=True)
-                    gdb.execute("dashboard", from_tty=True)
-                    return
-        if gdb.selected_thread() is not None and gdb.selected_thread().is_stopped():
-            return
-        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
-            if thread.is_valid() and thread.is_stopped():
-                gdb.execute("thread {}".format(thread.num), from_tty=True)
-                gdb.execute("dashboard", from_tty=True)
-                return
-        gdb.execute("dashboard", from_tty=True)
+#     def invoke(self, arg, from_tty):
+#         try:
+#             gdb.selected_thread()
+#         except SystemError:
+#             for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+#                 if thread.is_valid() and thread.is_stopped():
+#                     gdb.execute("thread {}".format(thread.num), from_tty=True)
+#                     gdb.execute("dashboard", from_tty=True)
+#                     return
+#             for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+#                 if thread.is_valid():
+#                     gdb.execute("thread {}".format(thread.num), from_tty=True)
+#                     gdb.execute("dashboard", from_tty=True)
+#                     return
+#         if gdb.selected_thread() is not None and gdb.selected_thread().is_stopped():
+#             return
+#         for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+#             if thread.is_valid() and thread.is_stopped():
+#                 gdb.execute("thread {}".format(thread.num), from_tty=True)
+#                 gdb.execute("dashboard", from_tty=True)
+#                 return
+#         gdb.execute("dashboard", from_tty=True)
 
-BirdCommand()
+# BirdCommand()
 
-class RedashCommand(gdb.Command):
-    def __init__(self):
-        gdb.Command.__init__(self, 'redash', gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
+# class RedashCommand(gdb.Command):
+#     def __init__(self):
+#         gdb.Command.__init__(self, 'redash', gdb.COMMAND_USER, gdb.COMPLETE_FILENAME)
 
-    def invoke(self, arg, from_tty):
-        for thread in gdb.Inferior.threads(gdb.selected_inferior()):
-            if thread.is_valid() and thread.is_stopped():
-                return
-        gdb.execute("dashboard", from_tty=True)
+#     def invoke(self, arg, from_tty):
+#         for thread in gdb.Inferior.threads(gdb.selected_inferior()):
+#             if thread.is_valid() and thread.is_stopped():
+#                 return
+#         gdb.execute("dashboard", from_tty=True)
 
-RedashCommand()
+# RedashCommand()
 
-class FunctionFinishBreakpoint(gdb.FinishBreakpoint):
-    def __init__ (self):
-        gdb.FinishBreakpoint.__init__(self, gdb.newest_frame(),
-                                      internal=True)
-        self.silent = True
+# class FunctionFinishBreakpoint(gdb.FinishBreakpoint):
+#     def __init__ (self):
+#         gdb.FinishBreakpoint.__init__(self, gdb.newest_frame(),
+#                                       internal=True)
+#         self.silent = True
 
-    def stop(self):
-        #print("after: {}".format(int(self.return_value)))
-        return not int(self.return_value)
+#     def stop(self):
+#         #print("after: {}".format(int(self.return_value)))
+#         return not int(self.return_value)
 
-class FunctionBreakpoint(gdb.Breakpoint):
-    def __init__ (self, spec):
-        gdb.Breakpoint.__init__(self, spec)
-        self.silent = True
+# class FunctionBreakpoint(gdb.Breakpoint):
+#     def __init__ (self, spec):
+#         gdb.Breakpoint.__init__(self, spec)
+#         self.silent = True
 
-    def stop (self):
-        #print("before")
-        FunctionFinishBreakpoint() # set breakpoint on function return
+#     def stop (self):
+#         #print("before")
+#         FunctionFinishBreakpoint() # set breakpoint on function return
 
-        return False # do not stop at function entry
+#         return False # do not stop at function entry
 
 import sys
 # libcxx
@@ -189,27 +189,27 @@ from libcxx_printers_new import register_libcxx_printer_loader
 register_libcxx_printer_loader()
 
 # clickhouse pretty printer
-sys.path.insert(0, '/tmp/gentoo/home/amos/git/ClickHouse-pretty-printer/clickhouse')
-from printers import register_ch_printers
-register_ch_printers()
+# sys.path.insert(0, '/tmp/gentoo/home/amos/git/ClickHouse-pretty-printer/clickhouse')
+# from printers import register_ch_printers
+# register_ch_printers()
 
 end
 
-define hookpost-finish
-  redash
-end
-define hookpost-next
-  redash
-end
-define hookpost-step
-  redash
-end
-define hookpost-stepi
-  redash
-end
-define hookpost-continue
-  redash
-end
+# define hookpost-finish
+#   redash
+# end
+# define hookpost-next
+#   redash
+# end
+# define hookpost-step
+#   redash
+# end
+# define hookpost-stepi
+#   redash
+# end
+# define hookpost-continue
+#   redash
+# end
 
 define hookpost-up
   dashboard
@@ -223,10 +223,13 @@ define hookpost-frame
   dashboard
 end
 
-dashboard -layout stack expressions threads registers
+# dashboard -layout stack expressions threads registers
+dashboard -layout stack threads
 dashboard -style syntax_highlighting 'monokai'
-dashboard stack -style compact True
-dashboard stack -style limit 3
+# dashboard stack -style compact True
+# dashboard stack -style limit 3
+dashboard stack -style arguments True
+dashboard stack -style locals True
 dashboard threads -style skip-running True
 
 # enable auto-load
@@ -242,7 +245,7 @@ handle SIGUSR1 noprint nostop pass
 handle SIGUSR2 noprint nostop pass
 # handle SIGTSTP noprint nostop pass
 # handle SIGQUIT noprint nostop pass
-# handle SIGINT noprint nostop pass
+handle SIGINT noprint nostop pass
 
 # set $dlopen = (void*(*)(char*, int)) dlopen
 # call $dlopen("/home/amos/git/luakit/lualib.so", 1)
@@ -254,6 +257,7 @@ set basenames-may-differ 1
 set target-async 1
 set non-stop on
 set confirm off
+set pagination off
 # Finally, turn it on!
 
 skip -gfi usr/include/c++/*/*/*

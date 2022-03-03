@@ -1,9 +1,11 @@
 (setq lsp-enable-file-watchers nil)
-(setq lsp-clangd-binary-path "/tmp/gentoo/usr/lib/llvm/12/bin/clangd")
 (setq lsp-ui-doc-enable nil)
 (setq lsp-enable-symbol-highlighting nil)
 (setq lsp-enable-on-type-formatting nil)
 (setq lsp-enable-dap-auto-configure nil)
+(setq lsp-auto-guess-root t)
+
+(advice-add #'lsp-ui-mode :override #'ignore)
 
 ;; (setq lsp-response-timeout 5)
 ;; (setq lsp-signature-render-all nil)

@@ -5,25 +5,25 @@ set tabstop=2
 
 set winsplit=src_big
 
-map / ib<Space>/
-map e :set<Space>nodis<CR>
-map a :set<Space>dis<CR>
-map m istepi&<CR>
-map M ireverse-stepi<CR>
-map r istart<CR>
-map R :edit<CR>
-map c icontinue&<CR>
-map C ic<Space>-a&<CR>
-map f ifinish&<CR>
-map n inext&<CR>
-map N ireverse-next<CR>
-map s istep&<CR>
-map S ireverse-step<CR>
+# map / ib<Space>/
+# map e :set<Space>nodis<CR>
+# map a :set<Space>dis<CR>
+# map m istepi&<CR>
+# map M ireverse-stepi<CR>
+# map r istart<CR>
+# map R :edit<CR>
+# map c icontinue&<CR>
+# map C ic<Space>-a&<CR>
+# map f ifinish&<CR>
+# map n inext&<CR>
+# map N ireverse-next<CR>
+# map s istep&<CR>
+# map S ireverse-step<CR>
 map <C-f> :switch<CR>
 map <C-r> idashboard<CR>
 map <C-t> :switchbreak<CR>
-map <C-o> iup<CR>
-map <C-i> idown<CR>
+# map <C-o> iup<CR>
+# map <C-i> idown<CR>
 imap <C-o> <C-k>
 imap <C-v> <PageDown>
 map w idashboard<Space>expression<Space>watch<Space>
