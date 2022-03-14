@@ -11,7 +11,7 @@ die() {
 
 # updateroutes
 
-for d in enp0s31f6 enp0s20f0u4u1u2 wlp3s0 wlp2s0 enp1s0; do
+for d in enp0s31f6 enp0s20f0u4u1u2 wlp3s0 wlp2s0 enp1s0 wlp0s20f3; do
     read -r _ _ gw _ < <(ip r g 123.206.66.49 oif $d)
     if [ -n "$gw" ]; then
         break
@@ -45,5 +45,6 @@ ip r a 13.75.119.182 via $gw table cn # azure
 ip r a 192.144.138.253 via $gw table cn # tcloud
 ip r a 168.138.207.219 via $gw table cn # oracle
 
+tailscale down && tailscale up --exit-node=100.104.31.7
 systemctl restart dnsmasq
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"

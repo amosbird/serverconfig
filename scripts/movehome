@@ -6,6 +6,11 @@ case $(hostname) in
         monitormove eDP-1 DP-1-2
         # monitormove eDP-1 HDMI-2
         ;;
+    abx1gen3)
+        xrandr --output eDP-1 --primary --mode 3840x2160 --pos 0x0 --rotate normal --output DP-1 --off --output HDMI-1 --off --output DP-2 --off --output HDMI-2 --off --output DP-2-1 --off --output DP-2-2 --off --output DP-2-3 --off
+        monitormove eDP-1 DP-2-3
+        # monitormove eDP-1 HDMI-2
+        ;;
     t450s)
         xrandr --output VIRTUAL1 --off --output eDP1 --primary --mode 1600x900 --pos 0x0 --brightness 1 --output DP1 --off --output DP2-1 --off --output DP2-2 --off --output DP2-3 --off --output HDMI2 --off --output HDMI1 --off --output DP2 --off
         monitormove eDP1 DP2-2
