@@ -86,10 +86,11 @@
 ;; (setq so-long-target-modes '(css-mode sgml-mode nxml-mode))
 (setq load-prefer-newer t)
 (setq shr-width 100)
-(setq all-the-icons-scale-factor 1.0)
 (setq cmake-tab-width 4)
-(setq doom-font (font-spec :family "Ubuntu Mono" :size 18))
+(setq all-the-icons-scale-factor 2.0)
+(setq doom-font (font-spec :family "Ubuntu Mono" :size 34))
 (setq doom-modeline-icon nil)
+(setq doom-themes-enable-bold nil)
 (setq display-line-numbers-type 'relative)
 ;; fix start-process xdg-open
 (setq process-connection-type nil)

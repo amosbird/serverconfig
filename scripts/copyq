@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
-# flatpak run com.github.hluk.copyq "$@"
-/usr/bin/copyq "$@"
-# /usr/local/bin/copyq "$@"
+# export QT_SCALE_FACTOR=2
+# export QT_AUTO_SCREEN_SCALE_FACTOR=1
+# export QT_SCREEN_SCALE_FACTORS='eDP-1=1;DP-2=1;DP-2-1=1;DP-2-2=1;HDMI-2=2;'
+exec /usr/bin/copyq "$@"

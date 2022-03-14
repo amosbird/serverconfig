@@ -68,7 +68,7 @@ ctrl+alt+q
 ctrl+alt+Eisu_toggle
   toggleaudio
 ctrl+alt+1
-  showkim.sh
+  showioa.sh
 ctrl+alt+2
   echo s | nc -U /tmp/scrcpy.socket
 ctrl+alt+3

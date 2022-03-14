@@ -1,4 +1,12 @@
-Xcursor.size: 16
+Xcursor.size: 48
+Xft.dpi: 192
+
+Xft.autohint: 0
+Xft.lcdfilter:  lcddefault
+Xft.hintstyle:  hintfull
+Xft.hinting: 1
+Xft.antialias: 1
+Xft.rgba: rgb
 
 URxvt.font: xft:Ubuntu Mono:size=14,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1
 URxvt.italicFont: xft:Ubuntu Mono:size=14,xft:WenQuanYi Micro Hei Mono:pixelsize=18:minspace=true,xft:-Free-Symbola-normal-normal-semicondensed-*-14-*-*-*-*-0-iso10646-1
@@ -65,13 +73,6 @@ URxvt*iso14755:            False
 
 !urxvt*matcher.pattern.1:  (/\\S+\\.pdf)\\b
 !urxvt*matcher.launcher.1: zathura $1
-
-Xft.autohint: 0
-Xft.lcdfilter: lcddefault
-Xft.hintstyle: hintslight
-Xft.hinting: 1
-Xft.antialias: 1
-Xft.rgba: rgb
 
 ! emacs
 Emacs.toolBar: 0

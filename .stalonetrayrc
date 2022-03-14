@@ -1,4 +1,5 @@
 sticky false
-icon_size 32
+icon_size 60
+kludges force_icons_size
 window_strut none
 window_type normal

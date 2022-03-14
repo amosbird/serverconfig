@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+if xrandr -q | rg -q 'DP-1-2 connected'; then
+    moveend
+else
+    movehome
+fi

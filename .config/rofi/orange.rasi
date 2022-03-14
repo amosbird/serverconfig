@@ -63,6 +63,7 @@
    padding: 0px 5px;
    background-color: @blackentry;
    text-color: @fgwhite;
+   size: 1.8ch;
 }
 
 #element.normal.normal {

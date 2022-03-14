@@ -16,7 +16,7 @@ picom -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 
 pushd /home/amos/git/xkeysnail
-sudo python -m xkeysnail /home/amos/git/serverconfig/xkeysnail.py &
+sudo python -m xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &
 popd
 # fish -c "xbanish -m se &"
 
@@ -34,10 +34,22 @@ export AWT_TOOLKIT=XToolkit
 export _JAVA_AWT_WM_NONREPARENTING=1
 # export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel"
 export AMPLXE_RUNTOOL_OPTIONS=--no-altstack
-export QT_SCALE_FACTOR=1
-export QT_AUTO_SCREEN_SCALE_FACTOR=0
-export QT_SCREEN_SCALE_FACTORS=1
-export GDK_SCALE=1
+export QT_AUTO_SCREEN_SCALE_FACTOR=1
+#export QT_SCALE_FACTOR=2
+#export QT_SCREEN_SCALE_FACTORS=2
+export GDK_SCALE=2 GDK_DPI_SCALE=0.5
+
+export WINEARCH=win32
+
+_envs=(
+  GDK_SCALE GDK_DPI_SCALE
+  XCURSOR_THEME XCURSOR_SIZE
+  XMODIFIERS QT_IM_MODULE GTK_IM_MODULE
+  LIBVA_DRIVER_NAME GST_VAAPI_ALL_DRIVERS
+)
+dbus-update-activation-environment "${_envs[@]}"
+systemctl --user import-environment "${_envs[@]}"
+
 # export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/lib64/pkgconfig
 eval "$(ssh-agent)"
 
@@ -46,11 +58,11 @@ fish -c "dunst &> /tmp/dunst.log &"
 fish -c "sxhkd &> /tmp/sxhkd.log &"
 fish -c "copyq &> /dev/null &"
 fish -c "runscrcpy  &> /dev/null &"
-fish -c "rungnirehtet &"
+# fish -c "rungnirehtet &"
 fish -c "udiskie &> /tmp/udiskie.log &"
 fish -c "/home/amos/git/microsocks/microsocks -i 0.0.0.0 -p 8080 &> /tmp/microsocks.log &"
 fish -c "libinput-gestures-setup start &> /tmp/gestures.log &"
 fish -c "clipserver -S &"
 fish -c "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
-fish -c "flameshot &> /tmp/flameshot.log &"
+# fish -c "flameshot &> /tmp/flameshot.log &"
 fish -c "fcitx &> /tmp/fcitx.log"

@@ -26,5 +26,5 @@ if pgrep Discord >/dev/null; then
 else
     rm /tmp/discord
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    bash -c "discord &"
+    bash -c "discord --proxy-server=http://127.0.0.1:12639 &"
 fi

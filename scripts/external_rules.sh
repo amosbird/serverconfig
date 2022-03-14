@@ -70,6 +70,10 @@ Thunar)
     echo "$wid" >> /tmp/thunar
     echo "state=floating sticky=on"
     ;;
+iOALinux)
+    echo "$wid" >> /tmp/ioa
+    echo "state=floating sticky=on"
+    ;;
 Kim)
     echo "$wid" >> /tmp/kim
     echo "state=floating sticky=on"
@@ -77,6 +81,11 @@ Kim)
 wechat.exe)
     echo "$wid" >> /tmp/wechat
     echo "state=floating sticky=on"
+    ;;
+wxwork.exe)
+    echo "$wid" >> /tmp/wxwork
+    echo "state=floating sticky=on"
+    fc
     ;;
 Wine)
     case "$instance" in

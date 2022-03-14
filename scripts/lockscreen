@@ -2,6 +2,7 @@
 
 dunstctl set-paused true
 
-i3lock -n -i ~/git/serverconfig/lock.png
+# i3lock -n -i ~/git/serverconfig/lock.png
+i3lock -n -i ~/git/serverconfig/lock_hidpi.png
 
 dunstctl set-paused false

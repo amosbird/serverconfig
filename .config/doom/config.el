@@ -408,7 +408,7 @@ This predicate is only tested on \"insert\" action."
     (with-selected-frame frame
       (dolist (charset '(kana han cjk-misc bopomofo))
         (set-fontset-font t charset
-                          (font-spec :family "WenQuanYi Micro Hei" :size 14)))
+                          (font-spec :family "WenQuanYi Micro Hei" :size 34)))
       (remove-hook! 'after-make-frame-functions #'+amos|init-frame))))
 
 (add-hook! 'after-init-hook

@@ -87,14 +87,14 @@ font:
   # as modifying the linespacing, and offset.x as modifying the letter spacing.
   offset:
     x: 0
-    y: 1
+    y: 10
 
   # Glyph offset determines the locations of the glyphs within their cells with
   # the default being at the bottom. Increase the x offset to move the glyph to
   # the right, increase the y offset to move the glyph upward.
   glyph_offset:
     x: 0
-    y: 0
+    y: 5
 
   # OS X only: use thin stroke font rendering. Thin strokes are suitable
   # for retina displays, but for non-retina you probably want this set to
@@ -103,6 +103,10 @@ font:
 
 # Should display the render timer
 render_timer: false
+
+cursor:
+  style:
+    blinking: Never
 
 # Colors (Tomorrow Night Bright)
 colors:
@@ -277,6 +281,7 @@ key_bindings:
   - { key: Return,   mods: Control,       chars: "\x1b[70~"                                        }
   - { key: S,        mods: Control|Shift, chars: "\x1b[1;2S"                                       }
   - { key: D,        mods: Control|Shift, chars: "\x1b[15;2~"                                      }
+  - { key: F,        mods: Control|Shift, chars: "\x1b[23;2~"                                      }
   - { key: J,        mods: Control|Shift, chars: "\x1b[17;2~"                                      }
   - { key: Back,     mods: Alt|Shift,     chars: "\x1b[18;2~"                                      }
   - { key: Return,   mods: Shift,         chars: "\x1b[19;2~"                                      }

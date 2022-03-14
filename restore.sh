@@ -42,6 +42,7 @@ configs=(
     .terminfo
     .xsettingsd
     .proxychains
+    .ideavimrc
     scripts
 )
 
