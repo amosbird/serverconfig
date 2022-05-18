@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 
+set -x
 id=$(xdotool getmouselocation | awk -F "window:" '{print $2}')
 class=$(xprop -id $id WM_CLASS | awk -F ", \"" '{print substr($2, 1, length($2)-1)}')
 swipe3left() {
@@ -8,6 +9,9 @@ swipe3left() {
         xdotool key --window $id alt+Left
         ;;
     qutebrowser)
+        xdotool key --window $id alt+F9
+        ;;
+    Vivaldi-stable)
         xdotool key --window $id alt+F9
         ;;
     llpp)
@@ -23,6 +27,9 @@ swipe3right() {
         xdotool key --window $id alt+Right
         ;;
     qutebrowser)
+        xdotool key --window $id alt+F10
+        ;;
+    Vivaldi-stable)
         xdotool key --window $id alt+F10
         ;;
     llpp)
@@ -41,6 +48,9 @@ swipe3up() {
         # xdotool key --window $id alt+F6
         xdotool key --window $id alt+F8
         ;;
+    Vivaldi-stable)
+        xdotool key --window $id alt+F6
+        ;;
     llpp)
         # xdotool key --window $id alt+F6
         xdotool key --window $id g
@@ -56,6 +66,9 @@ swipe3down() {
     qutebrowser)
         xdotool key --window $id alt+F7
         # xdotool key --window $id G
+        ;;
+    Vivaldi-stable)
+        xdotool key --window $id alt+F7
         ;;
     llpp)
         # xdotool key --window $id alt+F6
@@ -106,6 +119,22 @@ swipe4down() {
         xdotool key --window $id alt+F4
         ;;
     esac
+}
+
+swipe3leftup() {
+    swipe4up
+}
+
+swipe3leftdown() {
+    swipe4down
+}
+
+swipe3rightup() {
+    swipe4left
+}
+
+swipe3rightdown() {
+    swipe4right
 }
 
 pinch_in() {

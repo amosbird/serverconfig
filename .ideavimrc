@@ -67,6 +67,7 @@ noremap <silent> gr :action CallHierarchy<CR>
 noremap <silent> <C-s> :action SearchEverywhere<cr>
 noremap <silent> <Space>b :action ToggleLineBreakpoint<cr>
 noremap <silent> <Space>, :action RecentFiles<cr>
+noremap <silent> <Space>. :action GotoFile<cr>
 noremap <silent> gd :action GotoDeclaration<cr>
 noremap <silent> gi :action GotoImplementation<cr>
 noremap <silent> gt :action TypeHierarchy<cr>

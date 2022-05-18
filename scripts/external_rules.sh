@@ -87,6 +87,14 @@ wxwork.exe)
     echo "state=floating sticky=on"
     fc
     ;;
+# jetbrains-idea)
+#     case "$title" in
+#     "Welcome to IntelliJ IDEA")
+#         # echo "$wid" >/tmp/urxvt_scratchpad
+#         # echo "state=floating hidden=on"
+#         ;;
+#     esac
+#     ;;
 Wine)
     case "$instance" in
     tim.exe)

@@ -15,6 +15,7 @@ search_wrap = true
 cursor_blink = off
 cursor_shape = block
 cell_height_scale = 1.1
+hyperlinks = true
 
 [colors]
 

@@ -38,7 +38,7 @@ bspc rule -a Transmission-remote-gtk state=floating
 bspc rule -a flameshot manage=off
 bspc rule -a Zathura state=tiled
 bspc rule -a netease-cloud-music desktop=o follow=on
-bspc rule -a xfreerdp desktop=w follow=on
+bspc rule -a xfreerdp desktop=w follow=on state=tiled
 bspc rule -a Luakit desktop=f follow=on
 bspc rule -a Skype desktop=o state=fullscreen
 

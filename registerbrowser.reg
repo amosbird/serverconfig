@@ -1,0 +1,37 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\sshbrowser\Capabilities]
+"ApplicationDescription"="sshbrowser"
+"ApplicationIcon"="C:\\Users\\amos\\Desktop\\main.exe,0"
+"ApplicationName"="sshbrowser"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\sshbrowser\Capabilities\StartMenu]
+"StartMenuInternet"="sshbrowser"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\sshbrowser\Capabilities\URLAssociations]
+"http"="sshbrowserURL"
+"https"="sshbrowserURL"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\sshbrowser\DefaultIcon]
+@="C:\\Users\\amos\\Desktop\\main.exe,0"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\sshbrowser\shell\open\command]
+@="\"C:\\Users\\amos\\Desktop\\main.exe\""
+
+[HKEY_LOCAL_MACHINE\Software\Classes\sshbrowserURL]
+@="SSH Browser"
+"EditFlags"=dword:00000002
+"FriendlyTypeName"="SSH Browser"
+"URL Protocol"=""
+
+[HKEY_LOCAL_MACHINE\Software\Classes\sshbrowserURL\DefaultIcon]
+@="C:\\Users\\amos\\Desktop\\main.exe,0"
+
+[HKEY_LOCAL_MACHINE\Software\Classes\sshbrowserURL\shell]
+@="open"
+
+[HKEY_LOCAL_MACHINE\Software\Classes\sshbrowserURL\shell\open\command]
+@="\"C:\\Users\\amos\\Desktop\\main.exe\" \"%1\""
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\RegisteredApplications]
+"sshbrowser"="Software\\Clients\\StartMenuInternet\\sshbrowser\\Capabilities"

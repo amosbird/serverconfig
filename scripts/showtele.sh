@@ -7,8 +7,10 @@ if pgrep Telegram >/dev/null; then
     do
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
     done < <(xdo id -N TelegramDesktop -n Telegram)
+    # done < <(xdo id -N TelegramDesktop -n telegram-desktop)
     if [ -z "$found" ]; then
         /home/amos/git/tdesktop/out/Release/Telegram
+        # telegram-desktop
     elif bspc query -N -n focused | grep -q "$wid"; then
         bspc node "$wid" -g hidden -f
         exit 0
@@ -30,6 +32,8 @@ if pgrep Telegram >/dev/null; then
 else
     rm /tmp/telegram
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
+    # export QT_SCREEN_SCALE_FACTORS=
+    # export QT_AUTO_SCREEN_SCALE_FACTOR=
     bash -c "/home/amos/git/tdesktop/out/Release/Telegram &"
-    # bash -c "Telegram &"
+    # bash -c "telegram-desktop &"
 fi

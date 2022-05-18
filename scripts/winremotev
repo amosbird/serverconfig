@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+# /sound /audio-mode:0  #client
+# /sound /audio-mode:1  #server
+# /audio-mode:2  #disable
+
+# /size:3840x2160 /smart-sizing:1920x1080
+# /size:1920x1080 /smart-sizing:3840x2160
+unset http_proxy
+unset https_proxy
+xfreerdp /cert-ignore +nego +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse /microphone:sys:pulse /w:3840 /h:2160 /scale-desktop:200 /scale:180 +auto-reconnect /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amos /p:1 /v:192.168.122.15:3389

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-export http_proxy=http://127.0.0.1:12639 https_proxy=https://127.0.0.1:12639
 errlog() {
 	notify-send -a "teiler" "Error Log" "$1"
 	exit 1

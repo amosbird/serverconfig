@@ -119,9 +119,9 @@ bind-key -T gui S-F12 send-keys C-]
 bind-key -T gui f12 display
 
 # change this only after 3.2
-# unbind-key -Tgui DoubleClick1Pane
-# bind-key -T gui SecondClick1Pane copy-mode\; send -X select-word
-bind-key -T gui DoubleClick1Pane copy-mode\; send -X select-word
+unbind-key -Tgui DoubleClick1Pane
+bind-key -T gui SecondClick1Pane copy-mode\; send -X select-word
+# bind-key -T gui DoubleClick1Pane copy-mode\; send -X select-word
 bind-key -T gui TripleClick1Pane copy-mode\; send -X select-line
 
 bind-key -T gui C-] send-keys Escape

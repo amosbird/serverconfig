@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+set -x
+exec 5> /tmp/debug_output.txt
+BASH_XTRACEFD="5"
+
+args=("${@}")
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -pidfile)
+            pidfile="$2"
+            shift # past argument
+            shift # past value
+            ;;
+        *)
+            shift # past argument
+            ;;
+    esac
+done
+
+/usr/bin/qemu-system-x86_64 "${args[@]}"
+
+sleep 5
+
+echo -1000 | tee /proc/$(cat $pidfile)/oom_score_adj

@@ -37,7 +37,7 @@ mod3+D
 mod3+o
   lang=$(echo -e "chi_sim\neng\nchi_sim+eng\njpn" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
 mod3+p
-  node=$(bspc query -N -n); flameshot gui -r > /dev/null; bspc node -f $node
+  node=$(bspc query -N -n); flameshot gui -c > /dev/null; bspc node -f $node
 mod3+shift+p
   node=$(bspc query -N -n); flameshot gui -r | uploadimg - ; bspc node -f $node
 mod3+t
