@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+XDG_CURRENT_DESKTOP='' exec /usr/bin/xdg-open "$@"

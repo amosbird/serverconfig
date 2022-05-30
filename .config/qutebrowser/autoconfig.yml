@@ -123,10 +123,10 @@ settings:
       Safari/537.36
     global: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko)
       Chrome/91.0.4472.77 Safari/537.36
-    https://accounts.google.com/*: Mozilla/5.0 ({os_info}; rv:90.0) Gecko/20100101
-      Firefox/90.0
-  content.javascript.can_access_clipboard:
-    global: true
+    https://accounts.google.com/*: Mozilla/5.0 (X11; Linux x86_64; rv:57.0) Gecko/20100101
+      Firefox/57.0
+  content.javascript.clipboard:
+    global: access
   content.media.video_capture:
     https://meet.google.com: true
   content.notifications.enabled:
@@ -145,6 +145,14 @@ settings:
     global: false
   input.insert_mode.leave_on_load:
     global: true
+  statusbar.widgets:
+    global:
+    - keypress
+    - url
+    - scroll
+    - history
+    - tabs
+    - progress
   tabs.background:
     global: true
   tabs.new_position.unrelated:

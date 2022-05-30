@@ -40,6 +40,10 @@ Blueman-manager)
     echo "$wid" >/tmp/blueman
     echo "state=floating sticky=on"
     ;;
+nnn)
+    echo "$wid" >/tmp/nnn
+    echo "state=floating sticky=on"
+    ;;
 obs)
     echo "$wid" >>/tmp/obs
     fc
@@ -215,6 +219,10 @@ Soffice)
     w=$((w * 5 / 8))
     h=$((h - 60))
     echo "rectangle=${w}x${h}+$x+$y"
+    ;;
+nnnpopup)
+    echo "$wid" >/tmp/nnnpopup
+    fc
     ;;
 Emacs)
     case "$title" in

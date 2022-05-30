@@ -6,4 +6,4 @@
 
 # /size:3840x2160 /smart-sizing:1920x1080
 # /size:1920x1080 /smart-sizing:3840x2160
-xfreerdp /cert-ignore +nego +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse /microphone /w:3840 /h:2160 /scale-desktop:200 /scale:180 +auto-reconnect /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:administrator /p:$(pass show wxwork_pass) /v:$(pass show wxwork_ip) /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
+xfreerdp +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse /microphone /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amos /p:1 /v:192.168.2.156:3389

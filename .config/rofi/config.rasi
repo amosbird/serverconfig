@@ -26,7 +26,6 @@ configuration {
 	tokenize: true;
 	m: "-5";
 	filter: "";
-	dpi: 192;
 	threads: 0;
 	scroll-method: 0;
 	window-format: "{w}    {i}{c}   {t}";

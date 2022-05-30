@@ -1,5 +1,5 @@
-Xcursor.size: 48
-Xft.dpi: 192
+# Xcursor.size: 48
+# Xft.dpi: 192
 
 Xft.autohint: 0
 Xft.lcdfilter:  lcddefault

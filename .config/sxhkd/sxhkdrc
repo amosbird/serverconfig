@@ -119,7 +119,7 @@ super+Delete
 ctrl+alt+r
   rofi-runner
 super+0
-  pkill -SIGUSR1 sxhkd
+  pkill -x sxhkd && exec sxhkd
 ctrl+F12
   systemctl suspend
 ctrl + alt + {j, k}

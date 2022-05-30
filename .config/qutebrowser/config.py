@@ -28,6 +28,17 @@ c.hints.selectors['inputs'].append('[contenteditable=true]')
 c.hints.selectors['links'].append('button')
 c.hints.selectors['links'].append('div[class="ytp-miniplayer-ui"][style="display: none;"]')
 
+# file selector
+c.fileselect.handler = 'external'
+
+# command for selecting a single file in forms
+c.fileselect.single_file.command = ['nnnpicker', '{}']
+
+# command for selecting multiple files in forms
+c.fileselect.multiple_files.command = ['nnnpicker', '{}']
+
+c.statusbar.widgets = ["text:IOA PROXY", "keypress", "url", "scroll", "history", "tabs", "progress"]
+
 # import glob
 
 # c.content.user_stylesheets = glob.glob('/home/amos/css/*.user.css')
@@ -71,7 +82,8 @@ c.bindings.commands["normal"] = {
     "<alt-a>": "fake-key <ctrl+a>",
     "<ctrl-b>": "navigate prev",
     "<ctrl-f>": "navigate next",
-    "<ctrl-p>": "nop",
+    "<ctrl-p>": 'set content.proxy system ;; set statusbar.widgets \'["keypress", "url", "scroll", "history", "tabs", "progress"]\'',
+    "<ctrl-shift-p>": 'set content.proxy "http://127.0.0.1:12639" ;; set statusbar.widgets \'["text:IOA PROXY", "keypress", "url", "scroll", "history", "tabs", "progress"]\'',
     "<ctrl-i>": "forward",
     "<ctrl-o>": "back",
     "<ctrl-r>": "undo",

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-if ! xwininfo -name "popup" >/dev/null 2>&1; then
+if ! xwininfo -name "nnnpopup" >/dev/null 2>&1; then
     filedialog
     id=$(cat /tmp/popup)
 else

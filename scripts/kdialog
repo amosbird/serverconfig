@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+while :; do case $1 in
+    --getsavefilename) file="$2" break ;;
+    --version)
+        printf ""
+        exit
+        ;;
+    --*) shift ;;
+    *) break ;;
+esac; done
+file="${file##/*/}"
+
+exec termite --class "nnn" -e "bash -ilc \"/usr/bin/nnn -JS -s nnn -p - | awk '{ print system(\\\"[ -d \\\" '\$0' \\\" ]\\\") ? \$0: \$0\\\"/${file##/*/}\\\" }' > /proc/$$/fd/1\""

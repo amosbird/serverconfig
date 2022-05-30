@@ -1,11 +1,3 @@
 #!/usr/bin/env bash
 
-if [ -z "$1" ]; then
-    file=$HOME/
-elif [ -d "$1" ]; then
-    file=$(realpath "$1")/
-else
-    file=$(realpath "$1")
-fi
-
-emacspopup "(dired-jump nil \"$file\") (+amos/recenter)"
+exec termite --class "nnnpopup" --name "nnnpopup" -e "bash -ilc \"/usr/bin/nnn \\\"$*\\\"\"" &> /dev/null

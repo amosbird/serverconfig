@@ -1,11 +1,10 @@
 [Added Associations]
 
 [Default Applications]
-image/jpeg=myfeh.desktop;
-image/png=myfeh.desktop;
+inode/directory=nnn.desktop;
 text/html=luakit.desktop;
 x-scheme-handler/about=luakit.desktop;
 x-scheme-handler/http=luakit.desktop;
 x-scheme-handler/https=luakit.desktop;
-x-scheme-handler/terminal=foot.desktop;
+x-scheme-handler/terminal=xterm.desktop;
 x-scheme-handler/unknown=luakit.desktop;
