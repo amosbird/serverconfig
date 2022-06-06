@@ -3,4 +3,14 @@
 export http_proxy=http://127.0.0.1:12639
 export https_proxy=http://127.0.0.1:12639
 
-xfreerdp /cert-ignore +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse /microphone /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 /drive:amos,/home/amos -toggle-fullscreen +fonts -grab-keyboard /u:administrator /p:$(pass show devcloud) /v:$(pass show devcloud_ip) /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
+case $(hostname) in
+    abx1gen3)
+        DPI_PARAMS="/w:3840 /h:2160 /scale-desktop:200 /scale:180"
+        DPI_PARAMS="/scale-desktop:200 /scale:180"
+        ;;
+    *)
+        DPI_PARAMS=
+        ;;
+esac
+
+xfreerdp $DPI_PARAMS /cert-ignore +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse /microphone /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 /drive:amos,/home/amos -toggle-fullscreen +fonts -grab-keyboard /u:administrator /p:$(pass show devcloud) /v:$(pass show devcloud_ip) /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp

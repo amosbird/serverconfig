@@ -291,7 +291,7 @@ modes.add_binds("normal", {
             selector = "clickable", evaluator = "click",
             func = function (s) w:emit_form_root_active_signal(s) end,
         })
-        luakit.spawn("fcitx-remote -c")
+        luakit.spawn("fcitx5-remote -c")
     end},
     { "^F$", function (w)
         w:set_mode("follow", {
@@ -301,7 +301,7 @@ modes.add_binds("normal", {
                 w:new_tab(uri, { switch = false, private = w.view.private })
             end
         })
-        luakit.spawn("fcitx-remote -c")
+        luakit.spawn("fcitx5-remote -c")
     end},
     { "h", "Left.", function (w) w.view:send_key("Left", {}) end },
     { "l", "Right.", function (w) w.view:send_key("Right", {}) end },

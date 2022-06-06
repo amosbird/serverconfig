@@ -1947,9 +1947,9 @@ representation of `NUMBER' is smaller."
 (advice-add #'hide-mode-line-mode :override #'ignore)
 (advice-add #'visual-line-mode :override #'ignore)
 
-(when gui-p
-  (require 'fcitx)
-  (fcitx-evil-turn-on))
+;; (when gui-p
+;;   (require 'fcitx)
+;;   (fcitx-evil-turn-on))
 
 (defun first-non-dired-buffer ()
   (--first (not (with-current-buffer it (derived-mode-p 'dired-mode))) (buffer-list)))

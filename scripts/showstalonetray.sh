@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 
 if ! xwininfo -name "stalonetray" >/dev/null 2>&1; then
-    stalonetray &
+    rm /tmp/stalonetray
+    case $(hostname) in
+        abt480)
+            stalonetray --icon-size=48 --kludges=force_icons_size &> /tmp/stalonetray.log &
+            ;;
+        *)
+            stalonetray --icon-size=96 --kludges=force_icons_size &> /tmp/stalonetray.log &
+            ;;
+    esac
 else
     workspace=$(bspc query -D -d focused --names)
     id=$(cat /tmp/stalonetray)

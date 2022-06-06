@@ -1,5 +1,7 @@
+#if !(SRVR_abt480)
 Xcursor.size: 48
 Xft.dpi: 192
+#endif
 
 Xft.autohint: 0
 Xft.lcdfilter:  lcddefault
@@ -62,7 +64,7 @@ URxvt*scrollBar:           false
 !URxvt*background:         rgba:0000/0000/0200/c800  !transparent
 URxvt*transparent:         false
 URxvt.fading:              0
-URxvt.inputMethod:         fcitx
+URxvt.inputMethod:         fcitx5
 URxvt.preeditType:         OverTheSpot
 URxvt*termName:            xterm-256color
 URxvt*saveLines:           100000

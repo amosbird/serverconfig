@@ -61,11 +61,6 @@ mail)
     echo "$wid" >/tmp/mail
     echo "desktop=v"
     ;;
-stalonetray)
-    echo "$wid" >/tmp/stalonetray
-    # setbg.sh reset_tray
-    echo "desktop=n layer=above"
-    ;;
 dde-file-manager)
     echo "$wid" >> /tmp/dde
     echo "state=floating sticky=on"

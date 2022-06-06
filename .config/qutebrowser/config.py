@@ -37,7 +37,8 @@ c.fileselect.single_file.command = ['nnnpicker', '{}']
 # command for selecting multiple files in forms
 c.fileselect.multiple_files.command = ['nnnpicker', '{}']
 
-c.statusbar.widgets = ["text:IOA PROXY", "keypress", "url", "scroll", "history", "tabs", "progress"]
+# c.statusbar.widgets = ["text:IOA PROXY", "keypress", "url", "scroll", "history", "tabs", "progress"]
+c.statusbar.widgets = ["keypress", "url", "scroll", "history", "tabs", "progress"]
 
 # import glob
 
@@ -105,12 +106,12 @@ c.bindings.commands["normal"] = {
     "co": "download-open ;; download-copy",
     "cc": "download-copy",
     "cC": "download-copy-all",
-    "O": "spawn fcitx-remote -c ;; set-cmd-text :open {url:pretty}",
-    "T": "spawn fcitx-remote -c ;; set-cmd-text :open -t -r {url:pretty}",
-    "t": "spawn fcitx-remote -c ;; set-cmd-text -s :open -t",
-    "s": "spawn fcitx-remote -c ;; set-cmd-text -s :open -t google ",
-    "S": "spawn fcitx-remote -c ;; set-cmd-text -s :open -t scholar ",
-    "gs": "spawn fcitx-remote -c ;; set-cmd-text -s :open -t github ",
+    "O": "spawn fcitx5-remote -c ;; set-cmd-text :open {url:pretty}",
+    "T": "spawn fcitx5-remote -c ;; set-cmd-text :open -t -r {url:pretty}",
+    "t": "spawn fcitx5-remote -c ;; set-cmd-text -s :open -t",
+    "s": "spawn fcitx5-remote -c ;; set-cmd-text -s :open -t google ",
+    "S": "spawn fcitx5-remote -c ;; set-cmd-text -s :open -t scholar ",
+    "gs": "spawn fcitx5-remote -c ;; set-cmd-text -s :open -t github ",
 }
 
 config.unbind("D")
