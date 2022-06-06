@@ -7,7 +7,6 @@ if [ "$1" = "-h" ]; then
 	a="--hold"
 	shift
 fi
-a="--hold"
 pattern='^(([[:alnum:]]+)@)?([^:^@]+)(:([[:digit:]]+))?$'
 if [[ "$1" =~ $pattern ]]; then
 	user=${BASH_REMATCH[2]}
@@ -25,7 +24,7 @@ if [[ "$1" =~ $pattern ]]; then
 		arg="$arg -p $port"
 	fi
 
-	if ! ssh $arg 'ls /tmp/gentoo' &> /dev/null
+	if ! ssh $arg 'ls /tmp/gentoo && /tmp/gentoo/home/amos/scripts/killssh' &> /dev/null
 	then
 		echo /tmp/gentoo gets removed. Need to set it up manually.
 		exit 1

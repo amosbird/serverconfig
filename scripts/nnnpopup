@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+exec termite --class "nnn" -e "bash -ilc \"$HOME/scripts/nnn \\\"$*\\\"\"" &> /dev/null

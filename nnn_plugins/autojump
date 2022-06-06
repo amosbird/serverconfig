@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+
+if [ ! -p "$NNN_PIPE" ]; then
+    printf 'ERROR: NNN_PIPE is not set!'
+    read -r _
+    exit 2
+fi
+
+mapfile -t result < <(jump top | fzf +m --expect ctrl-space,alt-enter --reverse)
+dir=${result[1]}
+echo $dir
+if test -n "$dir"; then
+    if test -z "${result[0]}"; then
+        if [ ! -d "$dir" ]; then
+            jump clean
+        else
+	    printf "%s" "0c$dir" > "$NNN_PIPE"
+	    exit 0
+        fi
+    else
+        # alter-enter branch. not used for now
+        printf "%s" "0c$dir"
+	exit 0
+    fi
+fi
+exit 2

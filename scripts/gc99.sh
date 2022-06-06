@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-gremote2.sh -h 106.54.183.103
+gremote2.sh 106.54.183.103

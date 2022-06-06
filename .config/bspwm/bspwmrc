@@ -42,10 +42,10 @@ bspc rule -a xfreerdp desktop=w follow=on state=tiled
 bspc rule -a Luakit desktop=f follow=on
 bspc rule -a Skype desktop=o state=fullscreen
 
-stalonetray &
 xsetroot -cursor_name left_ptr
 # ~/scripts/startconky
-~/scripts/setbg.sh
+# ~/scripts/setbg.sh
+feh --bg-scale ~/git/serverconfig/black.jpg
 
 # Program Workspaces
 

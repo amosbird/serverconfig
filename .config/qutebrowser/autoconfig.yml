@@ -9,16 +9,27 @@ settings:
   bindings.commands:
     global:
       command:
+        <Alt+F10>: forward
+        <Alt+F4>: tab-close
+        <Alt+F5>: undo
+        <Alt+F6>: navigate prev
+        <Alt+F7>: navigate next
+        <Alt+F8>: scroll-to-perc 0
+        <Alt+F9>: back
         <Ctrl+d>: rl-delete-char
         <Ctrl+i>: completion-item-focus next
         <Ctrl+j>: completion-item-focus next
         <Ctrl+k>: completion-item-focus prev
         <Ctrl+o>: rl-kill-line
       insert:
-        '"<Escape>"': '"jseval -q document.activeElement.dispatchEvent(new KeyboardEvent(''keydown'',
-          {''key'': ''Escape''})); document.activeElement.dispatchEvent(new KeyboardEvent(''keyup'',
-          {''key'': ''Escape''}))"'
-        <Alt+Backspace>: fake-key <ctrl+shift+Left>;; fake-key <BackSpace>
+        <Alt+Backspace>: fake-key <ctrl+BackSpace>
+        <Alt+F10>: forward
+        <Alt+F4>: tab-close
+        <Alt+F5>: undo
+        <Alt+F6>: navigate prev
+        <Alt+F7>: navigate next
+        <Alt+F8>: scroll-to-perc 0
+        <Alt+F9>: back
         <Alt+a>: fake-key <ctrl+a>
         <Alt+b>: fake-key <ctrl+Left>
         <Alt+d>: fake-key <ctrl+Delete>
@@ -35,24 +46,37 @@ settings:
         <Ctrl+o>: fake-key <Shift+End>;; fake-key <Delete>
         <Ctrl+q>: :jseval --quiet --file ./ctrlu.js
         <Ctrl+u>: fake-key <Shift+Home>;; fake-key <BackSpace>
-        <Ctrl+w>: fake-key <ctrl+shift+Left>;; fake-key <BackSpace>
+        <Ctrl+w>: fake-key <ctrl+BackSpace>
         <Ctrl+x>: :jseval --quiet --file ./ctrlk.js
         <Enter>: fake-key <Return>
-        <Escape>: fake-key <Escape>;; leave-mode;; jseval -q document.activeElement.blur()
+        <Escape>: fake-key <Escape> ;; mode-leave
       normal:
+        <Alt+F10>: forward
+        <Alt+F4>: tab-close
+        <Alt+F5>: undo
+        <Alt+F6>: navigate prev
+        <Alt+F7>: navigate next
+        <Alt+F8>: scroll-to-perc 0
+        <Alt+F9>: back
         <Alt+a>: fake-key <ctrl+a>
+        <Ctrl+,>: tab-prev
+        <Ctrl+.>: tab-next
         <Ctrl+Alt+u>: spawn --userscript pbpst
         <Ctrl+Shift+a>: fake-key <ctrl+a>
+        <Ctrl+Shift+p>: set content.proxy "http://127.0.0.1:12639" ;; set statusbar.widgets
+          '["text:IOA PROXY", "keypress", "url", "scroll", "history", "tabs", "progress"]'
         <Ctrl+Space>: spawn i3-msg focus right
         <Ctrl+b>: navigate prev
         <Ctrl+f>: navigate next
         <Ctrl+i>: forward
         <Ctrl+o>: back
-        <Ctrl+p>: nop
+        <Ctrl+p>: set content.proxy system ;; set statusbar.widgets '["keypress",
+          "url", "scroll", "history", "tabs", "progress"]'
         <Ctrl+r>: undo
         <Ctrl+s>: set-cmd-text /
         <Escape>: clear-keychain ;; search ;; fullscreen --leave;; fake-key <Escape>
           ;; clear-messages ;; jseval -q document.getSelection().empty()
+        <F12>: devtools
         <Shift+Ins>: open -t -- {clipboard}
         <Space>: fake-key <Space>
         D: null
@@ -62,9 +86,10 @@ settings:
         T: spawn fcitx-remote -c ;; set-cmd-text :open -t -r {url:pretty}
         cC: download-copy-all
         cc: download-copy
-        co: download-open;; download-remove
+        co: download-open ;; download-copy
         d: scroll-page 0 0.5
         gi: enter-mode insert
+        go: spawn translateurl {url:pretty}
         gs: 'spawn fcitx-remote -c ;; set-cmd-text -s :open -t github '
         i: hint inputs --last --visible
         j: scroll-page 0 0.1
@@ -75,6 +100,13 @@ settings:
         u: scroll-page 0 -0.5
         y: yank
       prompt:
+        <Alt+F10>: forward
+        <Alt+F4>: tab-close
+        <Alt+F5>: undo
+        <Alt+F6>: navigate prev
+        <Alt+F7>: navigate next
+        <Alt+F8>: scroll-to-perc 0
+        <Alt+F9>: back
         <Ctrl+d>: rl-delete-char
         <Ctrl+i>: prompt-item-focus next
         <Ctrl+j>: prompt-item-focus next

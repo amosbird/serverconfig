@@ -21,7 +21,7 @@ function reset_conky() {
 if (($#)); then
     $1
 else
-    reset_tray
+    # reset_tray
     reset_conky
     # bspc monitor -d w e d f v n i o p c h
     feh --bg-scale ~/git/serverconfig/black.jpg

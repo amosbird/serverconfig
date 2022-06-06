@@ -9,6 +9,7 @@ if ! pgrep -f qutebrowser >/dev/null; then
 	cd /home/amos/git/qutebrowser/
 	# /usr/bin/python -m qutebrowser -l vdebug &
 	# /usr/bin/python -m qutebrowser &
+	export QTWEBENGINE_CHROMIUM_FLAGS=--proxy-pac-url=file:///home/amos/git/serverconfig/amos.pac
 	/usr/bin/python -m qutebrowser >/tmp/qb.log 2>&1 &
 	# .venv-qt6/bin/qutebrowser > /tmp/qb.log 2>&1 &
 	mkdir -p /run/user/1000/qutebrowser

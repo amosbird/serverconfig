@@ -1,3 +1,7 @@
 #!/usr/bin/env bash
 
-exec termite --class "nnn" -e "bash -ilc \"/usr/bin/nnn \\\"$*\\\"\"" &> /dev/null
+export NNN_PLUG="g:$HOME/git/serverconfig/nnn_plugins/autojump"
+export EDITOR=vim
+export visual=vim
+
+/usr/bin/nnn "$@"

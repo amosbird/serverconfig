@@ -57,10 +57,12 @@ systemctl --user import-environment "${_envs[@]}"
 eval "$(ssh-agent)"
 
 ~/scripts/restartxcape.sh
+
+fish -c "stalonetray &> /tmp/stalonetray.log &"
 fish -c "dunst &> /tmp/dunst.log &"
 fish -c "sxhkd &> /tmp/sxhkd.log &"
 fish -c "copyq &> /dev/null &"
-fish -c "runscrcpy  &> /dev/null &"
+# fish -c "runscrcpy  &> /dev/null &"
 # fish -c "rungnirehtet &"
 fish -c "udiskie &> /tmp/udiskie.log &"
 fish -c "/home/amos/git/microsocks/microsocks -i 0.0.0.0 -p 8080 &> /tmp/microsocks.log &"
@@ -68,6 +70,6 @@ fish -c "libinput-gestures-setup start &> /tmp/gestures.log &"
 fish -c "clipserver -S &"
 fish -c "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
 # use to sync selection and clipboard. copyq sometimes fails to do that.
-fish -c "parcellite &> /tmp/parcellite.log &"
+# fish -c "parcellite &> /tmp/parcellite.log &"
 # fish -c "flameshot &> /tmp/flameshot.log &"
 fish -c "fcitx &> /tmp/fcitx.log"

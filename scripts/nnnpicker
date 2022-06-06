@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
+export NNN_PLUG='f:finder;o:fzopen;p:mocplay;d:diffs;t:nmount;v:imgview'
+
 exec termite --class "nnn" -e "bash -ilc \"/usr/bin/nnn -JS -s nnn -p \\\"$*\\\"\"" &> /dev/null

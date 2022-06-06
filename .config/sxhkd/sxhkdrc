@@ -74,7 +74,8 @@ ctrl+alt+2
 ctrl+alt+3
   echo p | nc -U /tmp/scrcpy.socket
 ctrl+alt+4
-  echo n | nc -U /tmp/scrcpy.socket
+  showstalonetray.sh
+  # echo n | nc -U /tmp/scrcpy.socket
 ctrl+alt+5
   showobs.sh
   # echo c | nc -U /tmp/scrcpy.socket
@@ -131,7 +132,7 @@ ctrl + alt + {j, k}
 
 # Toggle fullscreen of window
 super + f
-	bspc node --state \~fullscreen
+  bspc node --state \~fullscreen
 
 # Toggle monocle of desktop
 super + w
@@ -149,25 +150,25 @@ super + i
 
 # move desktop
 super + {Up,Down,Left,Right}
-	bspc desktop -m {north,south,west,east} -f
+  bspc desktop -m {north,south,west,east} -f
 
 # Focus/swap windows by direction
 super + {_,shift + }{h,j,k,l}
-	bspc node --{focus,swap} {west,south,north,east}
+  bspc node --{focus,swap} {west,south,north,east}
 
 # Focus/move window to the biggest space
 super + {_,shift + }m
-	bspc node --{focus,swap} biggest
+  bspc node --{focus,swap} biggest
 
 ctrl + alt + shift + {w,e,d,f,v,n,i,o,c}
-	bspc node --to-desktop {w,e,d,f,v,n,i,o,c}
+  bspc node --to-desktop {w,e,d,f,v,n,i,o,c}
 
 ctrl + alt + {w,e,d,f,v,n,i,o,c}
-	bspc desktop --focus {w,e,d,f,v,n,i,o,c}
+  bspc desktop --focus {w,e,d,f,v,n,i,o,c}
 
 # Focus left/right occupied desktop, used to find missing node
 # ctrl + alt + {Left,Right}
-# 	bspc desktop --focus {prev,next}.occupied
+#   bspc desktop --focus {prev,next}.occupied
 
 alt + F1
   echo m | nc -U /tmp/scrcpy.socket
