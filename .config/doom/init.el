@@ -58,7 +58,8 @@
        (python)
        ;; TODO too slow
        ;; (python +lsp +pyright)
-       (java +lsp)
+       java
+       ;; (java +lsp)
        (go +lsp)
 
        :config

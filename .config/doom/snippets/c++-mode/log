@@ -1,0 +1,7 @@
+# -*- mode: snippet -*-
+# name: clickhouse_log
+# key: log
+# type: command
+# --
+(+amos/add-include "Common/logger_useful.h")
+(yas-expand-snippet "LOG_DEBUG(&::Poco::Logger::get(\"amosbird\"), \"$1 = {}\", $1);")
