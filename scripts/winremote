@@ -1,9 +1,29 @@
 #!/usr/bin/env bash
 
-# /sound /audio-mode:0  #client
-# /sound /audio-mode:1  #server
-# /audio-mode:2  #disable
+case $(hostname) in
+    abx1gen3)
+        DPI_PARAMS="/w:3840 /h:2160 /scale-desktop:200 /scale:180"
+        # DPI_PARAMS="/scale-desktop:200"
+        ;;
+    *)
+        DPI_PARAMS=
+        ;;
+esac
 
-# /size:3840x2160 /smart-sizing:1920x1080
-# /size:1920x1080 /smart-sizing:3840x2160
-xfreerdp +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse /microphone /size:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g') +auto-reconnect /dynamic-resolution /bpp:32 +home-drive -toggle-fullscreen +fonts -grab-keyboard /u:amos /p:1 /v:192.168.2.156:3389
+# USB_PARAMS="/dvc:urbdrc,id,dev:18d1:d00d"
+# USB_PARAMS="/usb:auto"
+# VAAPI="/vaapi-connection-type:x11"
+ip=$(pass show devcloud_ip)
+password=$(pass show devcloud)
+# size="/size:1920x1080 /smart-sizing:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g')"
+# debug=/log-level:debug
+rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
+# compression="-glyph-cache /network:modem /compression /bpp:8 -themes -wallpaper"
+
+# effect="+aero +menu-anims +window-drag +fonts /bpp:32"
+xfreerdp $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert-ignore $effect /rfx /gfx:rfx /sound:sys:pulse /microphone $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard /clipboard  /u:amos /p:$(pass show pass) /v:100.123.145.119:3389
+
+# DPI="/w:1920 /h:1080 /scale-desktop:100 /scale:100"
+# DPI="/size:3840x2160 /smart-sizing:1920x1080"
+
+# xfreerdp $DPI /cert-ignore +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse /microphone +auto-reconnect /bpp:32 /drive:amos,/home/amos -toggle-fullscreen +fonts -grab-keyboard /u:administrator /p:$(pass show devcloud) /v:$(pass show devcloud_ip) /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp

@@ -1,5 +1,4 @@
-#!/usr/bin/env bash
-
+#!/bin/sh
 # This wrapper script is invoked by xdg-desktop-portal-termfilechooser.
 #
 # Inputs:

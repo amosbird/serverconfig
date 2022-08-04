@@ -7,6 +7,9 @@ if pgrep Telegram >/dev/null; then
     do
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
     done < <(xdo id -N TelegramDesktop -n Telegram)
+
+    xdo id -N TelegramDesktop -n Telegram
+    bspc query -N -n focused
     # done < <(xdo id -N TelegramDesktop -n telegram-desktop)
     if [ -z "$found" ]; then
         /home/amos/git/tdesktop/out/Release/Telegram
@@ -17,7 +20,7 @@ if pgrep Telegram >/dev/null; then
     else
         bspc node "$wid" --to-desktop "$workspace"
         bspc node "$wid" -t floating
-        bspc node "$wid" -g hidden=off -f
+        bspc node "$wid" -g hidden=off
     fi
     wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
     w=${wh[0]}
@@ -29,6 +32,7 @@ if pgrep Telegram >/dev/null; then
     xdo move -x $x -y $y "$wid"
     xdo resize -w $w -h $h "$wid"
     bspc node "$wid" -l above
+    bspc node "$wid" -f
 else
     rm /tmp/telegram
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf

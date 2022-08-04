@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+exec /usr/bin/vivaldi-stable "$@"
+
 url=$1
 
 exists() { [[ -e "$1" ]]; }

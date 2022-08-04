@@ -106,12 +106,12 @@ c.bindings.commands["normal"] = {
     "co": "download-open ;; download-copy",
     "cc": "download-copy",
     "cC": "download-copy-all",
-    "O": "spawn fcitx5-remote -c ;; set-cmd-text :open {url:pretty}",
-    "T": "spawn fcitx5-remote -c ;; set-cmd-text :open -t -r {url:pretty}",
-    "t": "spawn fcitx5-remote -c ;; set-cmd-text -s :open -t",
-    "s": "spawn fcitx5-remote -c ;; set-cmd-text -s :open -t google ",
-    "S": "spawn fcitx5-remote -c ;; set-cmd-text -s :open -t scholar ",
-    "gs": "spawn fcitx5-remote -c ;; set-cmd-text -s :open -t github ",
+    "O": "spawn fcitx-remote -c ;; set-cmd-text :open {url:pretty}",
+    "T": "spawn fcitx-remote -c ;; set-cmd-text :open -t -r {url:pretty}",
+    "t": "spawn fcitx-remote -c ;; set-cmd-text -s :open -t",
+    "s": "spawn fcitx-remote -c ;; set-cmd-text -s :open -t google ",
+    "S": "spawn fcitx-remote -c ;; set-cmd-text -s :open -t scholar ",
+    "gs": "spawn fcitx-remote -c ;; set-cmd-text -s :open -t github ",
 }
 
 config.unbind("D")
@@ -154,7 +154,7 @@ c.bindings.commands["insert"] = {
     "<Alt-F8>": "scroll-to-perc 0",
     "<Alt-F9>": "back",
     "<Alt-F10>": "forward",
-    "<Escape>": "fake-key <Escape> ;; mode-leave",
+    "<Escape>": "spawn fcitx-remote -c ;; fake-key <Escape> ;; mode-leave",
     "<Enter>": "fake-key <Return>",
     "<ctrl+a>": "fake-key <Home>",
     "<ctrl+shift+a>": "fake-key <ctrl+a>",
