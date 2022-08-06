@@ -85,6 +85,9 @@ swipe4left() {
     qutebrowser|jupyterlab|discord)
         xdotool key --window $id ctrl+comma
         ;;
+    Vivaldi-stable)
+        xdotool key --window $id ctrl+Prior
+        ;;
     esac
 }
 
@@ -95,6 +98,9 @@ swipe4right() {
         ;;
     qutebrowser|jupyterlab|discord)
         xdotool key --window $id ctrl+period
+        ;;
+    Vivaldi-stable)
+        xdotool key --window $id ctrl+Next
         ;;
     esac
 }
@@ -107,6 +113,9 @@ swipe4up() {
     qutebrowser)
         xdotool key --window $id alt+F5
         ;;
+    Vivaldi-stable)
+        xdotool key --window $id alt+F11
+        ;;
     esac
 }
 
@@ -117,6 +126,9 @@ swipe4down() {
         ;;
     qutebrowser)
         xdotool key --window $id alt+F4
+        ;;
+    Vivaldi-stable)
+        xdotool key --window $id alt+F5
         ;;
     esac
 }

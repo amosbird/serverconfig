@@ -4,6 +4,8 @@ exec /usr/bin/vivaldi-stable "$@"
 
 url=$1
 
+exec /usr/bin/vivaldi-stable  --proxy-pac-url=https://gist.githubusercontent.com/amosbird/4da9eab5f3ea9322bfb1a69cd5aa57ec/raw/23041a1c16c1d35d3d2aafde18299ed292fe8688/amos.pac "$@"
+
 exists() { [[ -e "$1" ]]; }
 shopt -s nullglob
 if ! pgrep -f qutebrowser >/dev/null; then
@@ -12,6 +14,7 @@ if ! pgrep -f qutebrowser >/dev/null; then
 	# /usr/bin/python -m qutebrowser -l vdebug &
 	# /usr/bin/python -m qutebrowser &
 	export QTWEBENGINE_CHROMIUM_FLAGS=--proxy-pac-url=file:///home/amos/git/serverconfig/amos.pac
+	export QTWEBENGINEPROCESS_PATH=/usr/lib/qt6/chrome
 	/usr/bin/python -m qutebrowser >/tmp/qb.log 2>&1 &
 	# .venv-qt6/bin/qutebrowser > /tmp/qb.log 2>&1 &
 	mkdir -p /run/user/1000/qutebrowser
