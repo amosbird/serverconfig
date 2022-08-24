@@ -64,7 +64,6 @@ configuration {
 	kb-row-right: "Control+Page_Down";
 	kb-row-up: "Control+k";
 	kb-row-down: "Control+j";
-	kb-row-tab: "Tab";
 	kb-page-prev: "Alt+v,Page_Up";
 	kb-page-next: "Control+v,Page_Down";
 	kb-row-first: "Home,KP_Home";
