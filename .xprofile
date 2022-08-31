@@ -82,5 +82,5 @@ fish -c "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
 # fish -c "flameshot &> /tmp/flameshot.log &"
 fcitx
 # fcitx5 -d
-autocutsel -fork -selection PRIMARY
-autocutsel -fork -selection CLIPBOARD
+# autocutsel -fork -selection PRIMARY
+# autocutsel -fork -selection CLIPBOARD
