@@ -2,7 +2,7 @@
 
 export LANG=en_US.UTF-8
 export SHELL=/tmp/gentoo/usr/local/bin/fish # for tmux
-export TERM=xterm-256color
+export TERM=xterm-kitty
 export TMUX=/tmp/tmux-amos
 if test "$SSH_AUTH_SOCK"; then
     ln -sf $SSH_AUTH_SOCK ~/.ssh/ssh_auth_sock

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# weechat notification
+# /trigger addreplace notify print "*;;;1" "${tg_displayed} && ${tg_tags} !!- ,notify_none, && (${tg_highlight} || ${tg_msg_pv}) && ${buffer.notify} > 0" "/'/'\''/ /'/'\''/tg_prefix /.*/${buffer.name}/buffer_name /'/'\''/buffer_name" "/exec -bg /home/amos/scripts/kitty-notify '${buffer_name}' '<${tg_prefix}> ${tg_message}'" "ok" "none"
+
+title="$1"
+body="${2/&/&amp;}"
+body="${body/</&lt;}"
+body="${body/>/&gt;}"
+
+if [ -n "$TMUX" ]; then
+  printf '\ePtmux;\e\e]99;i=1:d=0;%s\e\e\\\e\\' "$title" >/dev/tty
+  printf '\ePtmux;\e\e]99;i=1:d=1:p=body;%s\e\e\\\e\\' "$body" >/dev/tty
+else
+  printf '\e]99;i=1:d=0;%s\e\\' "$title" >/dev/tty
+  printf '\e]99;i=1:d=1:p=body;%s\e\\' "$body" >/dev/tty
+fi

@@ -182,11 +182,11 @@ import time
 
 #         return False # do not stop at function entry
 
-import sys
+# import sys
 # libcxx
-sys.path.insert(0, '/tmp/gentoo/home/amos/git/ClickHouse-pretty-printer/libcxx/v2')
-from libcxx_printers_new import register_libcxx_printer_loader
-register_libcxx_printer_loader()
+# sys.path.insert(0, '/tmp/gentoo/home/amos/git/ClickHouse-pretty-printer/libcxx/v2')
+# from libcxx_printers_new import register_libcxx_printer_loader
+# register_libcxx_printer_loader()
 
 # clickhouse pretty printer
 # sys.path.insert(0, '/tmp/gentoo/home/amos/git/ClickHouse-pretty-printer/clickhouse')

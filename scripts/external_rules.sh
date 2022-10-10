@@ -192,6 +192,33 @@ Termite)
         ;;
     esac
     ;;
+kitty)
+    case "$title" in
+    local)
+        echo "desktop=e follow=on"
+        ;;
+    weechat)
+        echo "desktop=c follow=on"
+        ;;
+    vim)
+        echo "$wid" >/tmp/vim
+        echo "state=floating"
+        ;;
+    colorinsert)
+        echo "$wid" >/tmp/colorinsert
+        echo "state=floating"
+        ;;
+    urxvt_scratchpad)
+        echo "$wid" >/tmp/urxvt_scratchpad
+        echo "state=floating hidden=on" # hidden for show shell logic
+        ;;
+    stardict)
+        echo "$wid" >/tmp/stardict
+        echo "sticky=on state=floating hidden=on"
+        compton-trans -w "$wid" 70
+        ;;
+    esac
+    ;;
 scrcpy)
     echo "$wid" >/tmp/scrcpy
     compton-trans -w "$wid" 100
@@ -207,6 +234,10 @@ Ripcord)
     ;;
 stalonetray)
     echo "$wid" >>/tmp/stalonetray # appending so that sub windows don't overwrite
+    echo "sticky=on state=floating"
+    ;;
+wemeetapp)
+    echo "$wid" >>/tmp/wemeet # appending so that sub windows don't overwrite
     echo "sticky=on state=floating"
     ;;
 Soffice)

@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
-(sleep 0.3 & gdbus call --session --dest org.fcitx.Fcitx --object-path /CommitString --method org.fcitx.Fcitx.InputMethod.CommitString "$*") &
+# (sleep 0.3 & gdbus call --session --dest org.fcitx.Fcitx --object-path /CommitString --method org.fcitx.Fcitx.InputMethod.CommitString "$*") &
+
+copyq fillText "$@" &

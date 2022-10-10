@@ -16,8 +16,8 @@ esac
 ip=$(pass show devcloud_ip)
 password=$(pass show devcloud)
 # size="/size:1920x1080 /smart-sizing:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g')"
-# debug=/log-level:debug
-rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
+debug=/log-level:debug
+# rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
 # compression="-glyph-cache /network:modem /compression /bpp:8 -themes -wallpaper"
 
 # effect="+aero +menu-anims +window-drag +fonts /bpp:32"

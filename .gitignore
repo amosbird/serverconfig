@@ -47,3 +47,7 @@ fishd.*
 /.config/copyq/copyq_geometry.ini.lock
 /.config/copyq/copyq_geometry.ini.lock.rmlock
 /.config/copyq/copyq.lock
+/.config/copyq/copyq_geometry.ini.lock.rmlock.rmlock
+/.docker/.token_seed
+/.docker/.token_seed.lock
+/.docker/buildx/

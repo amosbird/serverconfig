@@ -34,6 +34,7 @@ if [[ "$1" =~ $pattern ]]; then
 
 	remote_sock=$(ssh $arg '/tmp/gentoo/usr/bin/gpgconf --create-socketdir; file=$(/tmp/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file; rm /tmp/clipservice.sock;')
 
-	termite $a -t $1 -e "ssh -A -t $arg -R 12639:localhost:12639 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) -R /tmp/clipservice.sock:/tmp/clipservice.sock 'while :; do touch -h /tmp/gentoo; sleep 60s; done & /tmp/gentoo/startprefix'"
+	# termite $a -t $1 -e "ssh -A -t $arg -R 12639:localhost:12639 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) -R /tmp/clipservice.sock:/tmp/clipservice.sock 'while :; do touch -h /tmp/gentoo; sleep 60s; done & /tmp/gentoo/startprefix'"
+	kitty $a -T $1 ssh -A -t $arg -R 12639:localhost:12639 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) -R /tmp/clipservice.sock:/tmp/clipservice.sock 'while :; do touch -h /tmp/gentoo; sleep 60s; done & /tmp/gentoo/startprefix'
 	# alacritty $a -t $1 -e ssh -A -t $arg -R 10000:localhost:12639 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) -R /tmp/clipservice.sock:/tmp/clipservice.sock 'while :; do touch -h /tmp/gentoo; sleep 60s; done & /tmp/gentoo/startprefix'
 fi

@@ -4,7 +4,7 @@ opt=$1
 shift
 create=
 if ! pgrep -f 'fzf --prompt=Color Input' >/dev/null; then
-    termite -t colorinsert -e colorfzf.sh &
+    kitty -T colorinsert -e colorfzf.sh &
     sleep 0.5
     create=1
 fi

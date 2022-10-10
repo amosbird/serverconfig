@@ -2,4 +2,4 @@
 
 
 echo "$@" >> /tmp/dbg
-exec /tmp/gentoo/usr/lib/llvm/13/bin/clang++ "$@"
+exec /usr/bin/clang++ "$@"

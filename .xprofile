@@ -34,6 +34,7 @@ export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
 export SDL_IM_MODULE=fcitx
 export INPUT_METHOD=fcitx
+export GLFW_IM_MODULE=ibus
 export QT_QPA_PLATFORMTHEME=gtk2
 export AWT_TOOLKIT=XToolkit
 export _JAVA_AWT_WM_NONREPARENTING=1
@@ -69,7 +70,7 @@ eval "$(ssh-agent)"
 
 fish -c "dunst &> /tmp/dunst.log &"
 fish -c "sxhkd &> /tmp/sxhkd.log &"
-fish -c "copyq &> /dev/null &"
+fish -c "copyq &> /tmp/copyq.log &"
 # fish -c "runscrcpy  &> /dev/null &"
 # fish -c "rungnirehtet &"
 fish -c "udiskie &> /tmp/udiskie.log &"
@@ -80,7 +81,7 @@ fish -c "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
 # use to sync selection and clipboard. copyq sometimes fails to do that.
 # fish -c "parcellite &> /tmp/parcellite.log &"
 # fish -c "flameshot &> /tmp/flameshot.log &"
-fcitx
-# fcitx5 -d
+# fcitx
+fcitx5 -d
 # autocutsel -fork -selection PRIMARY
 # autocutsel -fork -selection CLIPBOARD

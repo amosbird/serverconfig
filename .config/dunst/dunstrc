@@ -45,4 +45,7 @@
     foreground = "#E3C7AF"
     timeout = 0
 
-
+[download_complete]
+   appname = Vivaldi
+   summary = "Download Complete"
+   script = /home/amos/scripts/dunst_download_complete.sh

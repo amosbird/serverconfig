@@ -44,3 +44,5 @@
 	insteadOf ="https://aur.archlinux.org/xkeysnail-git.git"
 [url "https://github.com/amosbird/nnn-git-aur"]
 	insteadOf ="https://aur.archlinux.org/nnn-git.git"
+[url "https://github.com/amosbird/kitty-git-aur"]
+	insteadOf ="https://aur.archlinux.org/kitty-git.git"

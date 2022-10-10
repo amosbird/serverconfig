@@ -4,7 +4,7 @@ opt=$1
 shift
 create=
 if ! pgrep -f 'sdcv' >/dev/null; then
-    termite -t stardict -e dict.sh &
+    kitty -T stardict -e dict.sh &
     sleep 0.5
     create=1
 fi

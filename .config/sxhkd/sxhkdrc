@@ -70,7 +70,7 @@ ctrl+alt+Eisu_toggle
 ctrl+alt+1
   showioa.sh
 ctrl+alt+2
-  echo s | nc -U /tmp/scrcpy.socket
+  showwemeet.sh
 ctrl+alt+3
   echo p | nc -U /tmp/scrcpy.socket
 ctrl+alt+4
@@ -90,7 +90,7 @@ ctrl+alt+minus
 ctrl+alt+p
   showpopup.sh
 super+s
-  termite -e fish
+  kitty fish
 ctrl+alt+g
   colorpick
 ctrl+alt+b

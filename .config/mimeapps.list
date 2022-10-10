@@ -1,10 +1,8 @@
 [Added Associations]
 
 [Default Applications]
-application/torrent=org.qbittorrent.qBittorrent.desktop;
-application/x-bittorrent=org.qbittorrent.qBittorrent.desktop;
+application/pdf=zathura.desktop;
 image/jpeg=feh.desktop;
-inode/directory=thunar.desktop;
 text/html=luakit.desktop;
 video/mkv=mpv.desktop;
 video/mp4=mpv.desktop;
