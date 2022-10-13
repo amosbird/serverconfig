@@ -1,0 +1,18 @@
+patch:
+  "menu/page_size": 5
+
+  "ascii_composer/good_old_caps_lock": true
+  "ascii_composer/switch_key":
+    Shift_L: noop
+    Shift_R: noop
+    Caps_Lock: commit_code
+
+  Caps_Lock: noop
+  Control_L: noop
+  Control_R: noop
+  Eisu_toggle: clear
+  Shift_L: noop
+  Shift_R: noop
+  schema_list:
+    - schema: double_pinyin           # 朙月拼音
+

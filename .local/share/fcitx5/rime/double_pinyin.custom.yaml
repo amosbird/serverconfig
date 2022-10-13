@@ -1,0 +1,74 @@
+patch:
+  # 'punctuator/import_preset': alternative
+  'key_binder/import_preset': alternative
+  "translator/preedit_format": {}
+  "recognizer/patterns/reverse_lookup": {}
+  switches:
+    - name: ascii_mode
+      reset: 0
+      states: [ 中文, 西文 ]
+    - name: full_shape
+      reset: 0
+      states: [ 半角, 全角 ]
+    - name: simplification
+      reset: 1
+      states: [ 漢字, 汉字 ]
+    - name: ascii_punct
+      reset: 0
+      states: [ 。，, ．， ]
+
+  translator:
+    dictionary: luna_pinyin.extended
+    enable_charset_filter: true
+    disable_user_dict_for_patterns:
+      - ^[a-z]$
+
+  custom_phrase:
+    dictionary: ""
+    user_dict: custom_phrase
+    db_class: stabledb
+    enable_completion: false
+    enable_sentence: false
+    initial_quality: 1
+
+  "engine/translators/@before 0": lua_translator@baidu_translator
+  "engine/translators/@after last": table_translator@custom_phrase
+
+  # "engine/filters/@before 0": lua_filter@charset_filter
+  # "engine/filters/@before 0": charset_filter@gbk
+
+  # "engine/filters/@before 0": lua_filter@charset_comment_filter
+
+  "engine/processors/@before 0": lua_processor@baidu_processor
+
+  key_binder/bindings:
+      - {accept: Control+k, send: Up, when: composing}
+      - {accept: Control+j, send: Down, when: composing}
+      - {accept: Control+b, send: Left, when: composing}
+      - {accept: Control+f, send: Right, when: composing}
+      - {accept: Control+a, send: Home, when: composing}
+      - {accept: Control+e, send: End, when: composing}
+      - {accept: Control+d, send: Delete, when: composing}
+      - {accept: Control+o, send: Escape, when: composing}
+      - {accept: Control+u, send: Escape, when: composing}
+      - {accept: Control+g, send: Escape, when: composing}
+      - {accept: Alt+BackSpace, send: Escape, when: composing}
+      - {accept: Alt+v, send: Page_Up, when: composing}
+      - {accept: Control+v, send: Page_Down, when: composing}
+      - {accept: ISO_Left_Tab, send: "Shift+Left", when: composing}
+      - {accept: "Shift+Tab", send: "Shift+Left", when: composing}
+      - {accept: Tab, send: "Shift+Right", when: composing}
+      - {accept: minus, send: Page_Up, when: has_menu}
+      - {accept: equal, send: Page_Down, when: has_menu}
+      - {accept: comma, send: Page_Up, when: paging}
+      - {accept: period, send: Page_Down, when: has_menu}
+      - {accept: "Control+Shift+1", select: .next, when: always}
+      - {accept: "Control+Shift+2", toggle: ascii_mode, when: always}
+      - {accept: "Control+Shift+3", toggle: full_shape, when: always}
+      - {accept: "Control+Shift+4", toggle: simplification, when: always}
+      - {accept: "Control+Shift+5", toggle: extended_charset, when: always}
+      - {accept: "Control+Shift+exclam", select: .next, when: always}
+      - {accept: "Control+Shift+at", toggle: ascii_mode, when: always}
+      - {accept: Control+Shift+numbersign, toggle: full_shape, when: always}
+      - {accept: Control+Shift+dollar, toggle: simplification, when: always}
+      - {accept: "Control+Shift+percent", toggle: extended_charset, when: always}
