@@ -34,18 +34,16 @@ mod3+d
   dshot | copyq copyImage -
 mod3+D
   dshot | uploadimg -
-mod3+o
+mod3+t
   lang=$(echo -e "chi_sim\neng\nchi_sim+eng\njpn" | rofi -dmenu -p "Lang > ") ; [[ ! -z "$lang" ]] && maim -s | tesseract stdin stdout -l $lang | perl -pe 'chomp if eof' | xclip
 mod3+p
   node=$(bspc query -N -n); flameshot gui -c > /dev/null; bspc node -f $node
 mod3+shift+p
   node=$(bspc query -N -n); flameshot gui -r | uploadimg - ; bspc node -f $node
-mod3+t
-  xclip -out | upload -
 mod3+u
-  hostrole "$(xclip -out)"
-mod3+i
-  hostmetric "$(xclip -out)"
+  xclip -out | upload -
+mod3+o
+  openclipboard
 mod3+shift+r
   teiler
 mod3+g
