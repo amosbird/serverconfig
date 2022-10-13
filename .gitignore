@@ -51,3 +51,6 @@ fishd.*
 /.docker/.token_seed
 /.docker/.token_seed.lock
 /.docker/buildx/
+.local/share/fcitx5/rime/luna_pinyin.userdb
+.local/share/fcitx5/rime/luna_pinyin.userdb.old
+.local/share/fcitx5/rime/build

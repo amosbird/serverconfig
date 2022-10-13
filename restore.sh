@@ -56,6 +56,11 @@ for dotconfig in "$DIR/.config/"*; do
     ln -sf "../$dotconfig" $HOME/.config/
 done
 
+for share in "$DIR/.local/share/"*; do
+    rm -rf "$HOME/.local/share/$(basename "$share")"
+    ln -sf "../../$share" $HOME/.local/share/
+done
+
 rm -rf $HOME/.tmux
 rm -rf $HOME/.tmux.conf
 ln -sf "$DIR/.tmux" $HOME/

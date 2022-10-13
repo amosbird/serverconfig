@@ -1949,6 +1949,33 @@ representation of `NUMBER' is smaller."
 
 (when gui-p
   (require 'fcitx)
+  (setq fcitx-use-dbus t)
+
+  (defun fcitx5--activate-dbus ()
+    (dbus-call-method :session
+                      "org.fcitx.Fcitx5"
+                      "/controller"
+                      "org.fcitx.Fcitx.Controller1"
+                      "Activate"))
+  (advice-add #'fcitx--activate-dbus :override #'fcitx5--activate-dbus)
+
+  (defun fcitx5--deactivate-dbus ()
+    (dbus-call-method :session
+                      "org.fcitx.Fcitx5"
+                      "/controller"
+                      "org.fcitx.Fcitx.Controller1"
+                      "Deactivate"))
+  (advice-add #'fcitx--deactivate-dbus :override #'fcitx5--deactivate-dbus)
+
+  (defun fcitx5--active-p-dbus ()
+    (= (dbus-call-method :session
+                         "org.fcitx.Fcitx5"
+                         "/controller"
+                         "org.fcitx.Fcitx.Controller1"
+                         "State")
+       2))
+  (advice-add #'fcitx--active-p-dbus :override #'fcitx5--active-p-dbus)
+
   (fcitx-evil-turn-on))
 
 (defun first-non-dired-buffer ()
