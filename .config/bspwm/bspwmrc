@@ -66,3 +66,25 @@ feh --bg-scale ~/git/serverconfig/black.jpg
 # for_window [class="Zotero" title="ZotFile Preferences"] floating enable
 # for_window [class="Fcitx-config-gtk3"] floating enable
 # for_window [class="Emacs" instance="org-capture"] exec "/home/amos/scripts/showorg.sh", floating enable
+
+/home/amos/scripts/movehome
+
+/home/amos/scripts/showstalonetray.sh 1
+
+fish -c "dunst &> /tmp/dunst.log &"
+fish -c "sxhkd &> /tmp/sxhkd.log &"
+fish -c "copyq &> /tmp/copyq.log &"
+# fish -c "runscrcpy  &> /dev/null &"
+# fish -c "rungnirehtet &"
+fish -c "udiskie &> /tmp/udiskie.log &"
+fish -c "/home/amos/git/microsocks/microsocks -i 0.0.0.0 -p 8080 &> /tmp/microsocks.log &"
+fish -c "libinput-gestures-setup start &> /tmp/gestures.log &"
+fish -c "clipserver -S &"
+fish -c "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
+# use to sync selection and clipboard. copyq sometimes fails to do that.
+# fish -c "parcellite &> /tmp/parcellite.log &"
+# fish -c "flameshot &> /tmp/flameshot.log &"
+# fcitx
+fcitx5 -d
+# autocutsel -fork -selection PRIMARY
+# autocutsel -fork -selection CLIPBOARD

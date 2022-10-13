@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 
-if ! xwininfo -name "stalonetray" >/dev/null 2>&1; then
-    rm /tmp/stalonetray
-    case $(hostname) in
-        abt480)
-            stalonetray --icon-size=48 --kludges=force_icons_size &> /tmp/stalonetray.log &
-            ;;
-        *)
-            stalonetray --icon-size=96 --kludges=force_icons_size &> /tmp/stalonetray.log &
-            ;;
-    esac
-else
+toggle() {
     workspace=$(bspc query -D -d focused --names)
     id=$(cat /tmp/stalonetray)
     if [[ -z $id ]]; then
@@ -25,4 +15,23 @@ else
         bspc node "$id" -t floating
         bspc node "$id" -g hidden=off -f
     fi
+}
+
+if ! xwininfo -name "stalonetray" >/dev/null 2>&1; then
+    rm -f /tmp/stalonetray
+    case $(hostname) in
+        abt480)
+            stalonetray --icon-size=48 --kludges=force_icons_size &>/tmp/stalonetray.log &
+            ;;
+        *)
+            stalonetray --icon-size=96 --kludges=force_icons_size &>/tmp/stalonetray.log &
+            ;;
+    esac
+
+    if (($#)); then
+        sleep 0.2
+        toggle
+    fi
+else
+    toggle
 fi
