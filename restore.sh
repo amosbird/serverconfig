@@ -56,18 +56,22 @@ for dotconfig in "$DIR/.config/"*; do
     ln -sf "../$dotconfig" $HOME/.config/
 done
 
+mkdir -p $HOME/.local/share/
+
+ln -sf /tmp/gentoo/usr/share/grc $HOME/.local/share/
+
 for share in "$DIR/.local/share/"*; do
     rm -rf "$HOME/.local/share/$(basename "$share")"
     ln -sf "../../$share" $HOME/.local/share/
 done
+
+update-desktop-database "$HOME/.local/share/applications"
 
 rm -rf $HOME/.tmux
 rm -rf $HOME/.tmux.conf
 ln -sf "$DIR/.tmux" $HOME/
 ln -sf "$DIR/.tmux/.tmux.conf" $HOME/
 
-mkdir -p $HOME/.local/share/
-ln -sf /tmp/gentoo/usr/share/grc $HOME/.local/share/
 
 lesskey "$DIR/lesskey"
 

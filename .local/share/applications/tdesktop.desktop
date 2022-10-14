@@ -5,4 +5,4 @@ Type=Application
 NoDisplay=true
 Exec=/home/amos/git/tdesktop/out/Release/Telegram -workdir /home/amos/.local/share/TelegramDesktop/ -- %u
 Name=Telegram Desktop
-Comment=Custom definition for Telegram Desktop
+Comment=Telegram Desktop (Amos Bird fork)
