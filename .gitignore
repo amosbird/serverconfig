@@ -54,3 +54,4 @@ fishd.*
 .local/share/fcitx5/rime/luna_pinyin.userdb
 .local/share/fcitx5/rime/luna_pinyin.userdb.old
 .local/share/fcitx5/rime/build
+.local/share/fcitx5/rime/user.yaml
