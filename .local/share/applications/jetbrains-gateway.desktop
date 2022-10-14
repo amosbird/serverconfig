@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=JetBrains Gateway
+Icon=/home/amos/.local/share/JetBrains/Toolbox/apps/JetBrainsGateway/ch-0/.icon.svg
+StartupWMClass=jetbrains-ide
+Comment=An entry point to Remote Development
+Exec="/opt/jetbrains-gateway/bin/gateway.sh" %u
+Version=1.0
+Type=Application
+Categories=Development
+Terminal=false
+StartupNotify=true
+MimeType=x-scheme-handler/jetbrains-gateway;

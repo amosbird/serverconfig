@@ -21,7 +21,7 @@ debug=/log-level:debug
 # compression="-glyph-cache /network:modem /compression /bpp:8 -themes -wallpaper"
 
 # effect="+aero +menu-anims +window-drag +fonts /bpp:32"
-xfreerdp $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert-ignore $effect /rfx /gfx:rfx /sound:sys:pulse /microphone $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard /clipboard  /u:amos /p:$(pass show pass) /v:100.123.145.119:3389
+xfreerdp $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert-ignore $effect /rfx /gfx:rfx /sound:sys:pulse /microphone $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard /clipboard:use-selection:PRIMARY  /u:amos /p:$(pass show pass) /v:100.123.145.119:3389
 
 # DPI="/w:1920 /h:1080 /scale-desktop:100 /scale:100"
 # DPI="/size:3840x2160 /smart-sizing:1920x1080"
