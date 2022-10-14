@@ -3,10 +3,9 @@
 case $(hostname) in
     abx1gen3)
         DPI_PARAMS="/w:3840 /h:2160 /scale-desktop:200 /scale:180"
-        # DPI_PARAMS="/scale-desktop:200"
         ;;
     *)
-        DPI_PARAMS=
+        DPI_PARAMS="/w:1920 /h:1080"
         ;;
 esac
 
