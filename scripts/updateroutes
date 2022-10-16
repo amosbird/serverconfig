@@ -1,7 +1,7 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 
 import re
-import urllib2
+import urllib.request, urllib.error, urllib.parse
 import sys
 import argparse
 import math
@@ -25,7 +25,7 @@ def generate_mac():
 
 def fetch_ip_data():
     url = r"https://ftp.apnic.net/apnic/stats/apnic/delegated-apnic-latest"
-    data = urllib2.urlopen(url).read()
+    data = urllib.request.urlopen(url).read().decode()
 
     cnregex = re.compile(
         r"apnic\|cn\|ipv4\|[0-9\.]+\|[0-9]+\|[0-9]+\|a.*", re.IGNORECASE
