@@ -22,9 +22,12 @@ if pgrep -f /opt/wemeet/bin/wemeetapp &>/dev/null; then
     w=${wh[0]}
     h=${wh[1]}
     x=$((w / 4))
-    y=400
-    w=1840
-    h=1200
+    w=${wh[0]}
+    h=${wh[1]}
+    x=$((w / 4))
+    y=200
+    w=$((w * 19 / 40))
+    h=$((h * 11 / 20))
     xdo move -x $x -y $y "$wid"
     xdo resize -w $w -h $h "$wid"
     bspc node "$wid" -l above

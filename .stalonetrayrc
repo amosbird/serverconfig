@@ -1,5 +1,5 @@
 sticky false
-icon_size 60
+icon_size 48
 kludges force_icons_size
 window_strut none
-window_type normal
+window_type toolbar
