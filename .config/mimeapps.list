@@ -12,3 +12,4 @@ x-scheme-handler/http=luakit.desktop;
 x-scheme-handler/https=luakit.desktop;
 x-scheme-handler/terminal=xterm.desktop;
 x-scheme-handler/unknown=luakit.desktop;
+x-scheme-handler/tg=tdesktop.desktop;
