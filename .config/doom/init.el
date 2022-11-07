@@ -61,6 +61,7 @@
        java
        ;; (java +lsp)
        (go +lsp)
+       zig
 
        :config
        default
