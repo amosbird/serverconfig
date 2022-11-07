@@ -122,11 +122,12 @@ super+0
 ctrl+F12
   systemctl suspend
 ctrl + alt + {j, k}
-  if bspc query -N -n focused.!hidden.floating.window.local > /dev/null; then \
-      bspc node '{next,prev}.!hidden.floating.window.local' -f; \
-  else \
-      bspc node '{next,prev}.!hidden.window.local' -f; \
-  fi
+  bspc node '{next,prev}.!hidden.!floating.window.local' -f
+  # if bspc query -N -n focused.!hidden.floating.window.local > /dev/null; then \
+  #     bspc node '{next,prev}.!hidden.floating.window.local' -f; \
+  # else \
+  #     bspc node '{next,prev}.!hidden.window.local' -f; \
+  # fi
 
 # Toggle fullscreen of window
 super + f
