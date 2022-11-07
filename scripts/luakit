@@ -2,7 +2,7 @@
 
 bspc desktop --focus f
 
-N="$(realpath "$1")"
+N=$(realpath "$1" &>/dev/null)
 if [ -e "$N" ]; then
 	"$HOME"/scripts/vivaldi file://"$N" "$2"
 elif [ -n "$*" ]; then
