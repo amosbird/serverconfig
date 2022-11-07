@@ -47,4 +47,4 @@ ip r a 168.138.207.219 via $gw table cn # oracle
 ip r a 43.132.171.51 via $gw table cn # jack
 
 # systemctl restart dnsmasq
-sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"
+# sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"
