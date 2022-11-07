@@ -21,11 +21,11 @@ mod3+0
 mod3+1
   sleep 0.1 && inputstr 127.0.0.1
 mod3+2
-  sleep 0.1 && inputstr amosbird@gmail.com
+  joinwemeet "$(xclip -out)"
 mod3+3
   rofipass
 mod3+4
-  rofich
+  inputstr amosbird@gmail.com
 mod3+r
   rofidbtbl
 mod3+h
