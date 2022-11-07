@@ -14,6 +14,7 @@ toggle() {
         bspc node "$id" --to-desktop "$workspace"
         bspc node "$id" -t floating
         bspc node "$id" -g hidden=off -f
+        bspc node "$id" -l above
     fi
 }
 
