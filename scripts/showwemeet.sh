@@ -4,9 +4,14 @@ set -x
 
 workspace=$(bspc query -D -d focused --names)
 if pgrep -f /opt/wemeet/bin/wemeetapp &>/dev/null; then
-    while read -r wid
-    do
-        xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
+    while read -r wid; do
+        winfo=$(xprop -id "$wid")
+        if grep -E -q "window state: (Normal|Iconic)" <<<"$winfo"; then
+            if grep -F -q "_NET_WM_NAME(UTF8_STRING) = \"腾讯会议\"" <<< "$winfo"; then
+                found=1
+                break
+            fi
+        fi
     done < <(xdo id -N wemeetapp -n wemeetapp)
     if [ -z "$found" ]; then
         wemeet &

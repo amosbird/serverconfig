@@ -4,6 +4,7 @@ wid=$1
 class=$2
 instance=$3
 title=$(xprop -id "$wid" WM_NAME | perl -ne 'print /"(.*)"/')
+net_title=$(xprop -id "$wid" _NET_WM_NAME | perl -ne 'print /"(.*)"/')
 
 fc() {
     wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
@@ -237,8 +238,12 @@ stalonetray)
     echo "sticky=on state=floating"
     ;;
 wemeetapp)
-    echo "$wid" >>/tmp/wemeet # appending so that sub windows don't overwrite
-    echo "sticky=on state=floating"
+    case "$net_title" in
+    *)
+        echo "$wid" >>/tmp/wemeet # appending so that sub windows don't overwrite
+        echo "sticky=on state=floating"
+        ;;
+    esac
     ;;
 Soffice)
     wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
