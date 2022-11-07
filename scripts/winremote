@@ -9,18 +9,23 @@ case $(hostname) in
         ;;
 esac
 
+export NO_PROXY=1
 # USB_PARAMS="/dvc:urbdrc,id,dev:18d1:d00d"
 # USB_PARAMS="/usb:auto"
 # VAAPI="/vaapi-connection-type:x11"
 ip=$(pass show devcloud_ip)
 password=$(pass show devcloud)
 # size="/size:1920x1080 /smart-sizing:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g')"
-debug=/log-level:debug
+# debug=/log-level:trace
+# clipboard=/clipboard:use-selection:PRIMARY
+# log=/log-filters:com.freerdp.channels.cliprdr.client:trace
 # rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
 # compression="-glyph-cache /network:modem /compression /bpp:8 -themes -wallpaper"
 
 # effect="+aero +menu-anims +window-drag +fonts /bpp:32"
-xfreerdp $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert-ignore $effect /rfx /gfx:rfx /sound:sys:pulse /microphone $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard /clipboard:use-selection:PRIMARY  /u:amos /p:$(pass show pass) /v:100.123.145.119:3389
+# program=~/git/FreeRDP/release/client/X11/xfreerdp
+program=xfreerdp
+$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert-ignore $effect /rfx /gfx:rfx /sound:sys:pulse /microphone $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:amos /p:$(pass show pass) /v:100.123.145.119
 
 # DPI="/w:1920 /h:1080 /scale-desktop:100 /scale:100"
 # DPI="/size:3840x2160 /smart-sizing:1920x1080"
