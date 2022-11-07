@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+# exec 3>&1 4>&2
+# trap 'exec 2>&4 1>&3' 0 1 2 3
+# exec 1>/tmp/log.out 2>&1
+
+# set -x
+
+code=$(echo "$@" | perl -ne 'print $1.$2.$3."\n" if $_ =~ /(\d{3}).(\d{3}).(\d{3})[\r\n]/' | head -1)
+
+xdg-open "wemeet://page/inmeeting?meeting_code=$code" &
+
+disown $! 2> /dev/null
