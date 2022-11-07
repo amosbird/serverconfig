@@ -1,7 +1,7 @@
 patch:
   "menu/page_size": 5
 
-  "ascii_composer/good_old_caps_lock": true
+  "ascii_composer/good_old_caps_lock": false
   "ascii_composer/switch_key":
     Shift_L: noop
     Shift_R: noop
@@ -15,4 +15,3 @@ patch:
   Shift_R: noop
   schema_list:
     - schema: double_pinyin           # 朙月拼音
-
