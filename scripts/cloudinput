@@ -8,4 +8,4 @@ if [ -z "$len" ]; then
 	exit 1
 fi
 
-curl -s "https://www.baidu.com/sugrec?prod=pc&wd=$input" | jq -r '.g[]|.q' | perl -MEncode -MList::Util=uniq -nE 'if (decode("UTF-8", $_) =~ /^(\p{Han}{'$len'})/) {push @words, encode("UTF-8", $1)} END { $,=" "; print uniq @words }'
+curl -s "https://www.baidu.com/sugrec?prod=pc&wd=$input" | jq -r '.g[]|.q' 2> /dev/null | perl -MEncode -MList::Util=uniq -nE 'if (decode("UTF-8", $_) =~ /^(\p{Han}{'$len'})/) {push @words, encode("UTF-8", $1)} END { $,=" "; print uniq @words }' 2> /dev/null
