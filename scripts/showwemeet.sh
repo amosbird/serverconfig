@@ -26,13 +26,10 @@ if pgrep -f /opt/wemeet/bin/wemeetapp &>/dev/null; then
     wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
     w=${wh[0]}
     h=${wh[1]}
-    x=$((w / 4))
-    w=${wh[0]}
-    h=${wh[1]}
-    x=$((w / 4))
+    x=$((w / 7))
     y=200
-    w=$((w * 19 / 40))
-    h=$((h * 11 / 20))
+    w=$((w * 29 / 40))
+    h=$((h * 15 / 20))
     xdo move -x $x -y $y "$wid"
     xdo resize -w $w -h $h "$wid"
     bspc node "$wid" -l above
