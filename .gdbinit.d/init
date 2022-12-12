@@ -241,11 +241,11 @@ set history filename ~/.gdb_history
 set history save on
 set history remove-duplicates 5000
 
-handle SIGUSR1 noprint nostop pass
-handle SIGUSR2 noprint nostop pass
+handle SIGUSR1 noprint nostop ignore
+handle SIGUSR2 noprint nostop ignore
 # handle SIGTSTP noprint nostop pass
 # handle SIGQUIT noprint nostop pass
-handle SIGINT noprint nostop pass
+# handle SIGINT noprint nostop pass
 
 # set $dlopen = (void*(*)(char*, int)) dlopen
 # call $dlopen("/home/amos/git/luakit/lualib.so", 1)
@@ -260,10 +260,10 @@ set confirm off
 set pagination off
 # Finally, turn it on!
 
-skip -gfi usr/include/c++/*/*/*
-skip -gfi usr/local/include/c++/*/*/*
-skip -gfi libc++/include/*
-skip -gfi libcxx/include/*
+# skip -gfi usr/include/c++/*/*/*
+# skip -gfi usr/local/include/c++/*/*/*
+# skip -gfi libc++/include/*
+# skip -gfi libcxx/include/*
 
 # vim: filetype=python
 # Local Variables:
