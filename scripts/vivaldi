@@ -2,7 +2,7 @@
 
 url=$1
 
-exec /usr/bin/vivaldi-stable  --proxy-pac-url=https://gist.githubusercontent.com/amosbird/4da9eab5f3ea9322bfb1a69cd5aa57ec/raw/23041a1c16c1d35d3d2aafde18299ed292fe8688/amos.pac "$@"
+exec /usr/bin/vivaldi-stable  --proxy-pac-url=https://gist.githubusercontent.com/amosbird/4da9eab5f3ea9322bfb1a69cd5aa57ec/raw/7c77f21ada04cd3b19277f717a3ab92cd4a6bdf5/amos.pac "$@"
 
 exists() { [[ -e "$1" ]]; }
 shopt -s nullglob

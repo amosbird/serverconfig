@@ -164,3 +164,14 @@ define_keymap(
     },
     "Kim Emacs-like keys",
 )
+
+# Emacs-like keybindings in non-Emacs applications
+define_keymap(
+    re.compile("Vivaldi-stable"),
+    {
+        # Cursor
+        K("C-k"): with_mark(K("up")),
+        K("C-j"): with_mark(K("down")),
+    },
+    "Vivaldi Emacs-like keys",
+)
