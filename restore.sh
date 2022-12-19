@@ -65,8 +65,6 @@ for share in "$DIR/.local/share/"*; do
     ln -sf "../../$share" $HOME/.local/share/
 done
 
-update-desktop-database "$HOME/.local/share/applications"
-
 rm -rf $HOME/.tmux
 rm -rf $HOME/.tmux.conf
 ln -sf "$DIR/.tmux" $HOME/
@@ -92,6 +90,7 @@ if [[ $# == 0 ]]; then
 fi
 
 if [[ -n $GUI ]]; then
+    update-desktop-database "$HOME/.local/share/applications"
     sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
     setxkbmap us
 fi
