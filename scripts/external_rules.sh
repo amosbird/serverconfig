@@ -27,7 +27,8 @@ discord)
     ;;
 mpv)
     echo "$wid" >/tmp/mpv
-    echo "state=floating sticky=on"
+    # echo "state=floating sticky=on"
+    echo "state=tiled"
     ;;
 feh)
     echo "$wid" >/tmp/feh
