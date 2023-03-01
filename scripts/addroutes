@@ -41,6 +41,7 @@ ip r a 172.16.0.0/12 via $gw table cn
 ip r a 127.0.0.0/8 via $gw table cn
 
 ip r a 168.235.74.91 via $gw table cn  # la
+ip r a 168.235.86.112 via $gw table cn  # la
 ip r a 20.205.108.97 via $gw table cn # azure
 ip r a 192.144.138.253 via $gw table cn # tcloud
 ip r a 168.138.207.219 via $gw table cn # oracle

@@ -8,5 +8,5 @@ if [ -e "$N" ]; then
 elif [ -n "$*" ]; then
 	"$HOME"/scripts/vivaldi "$@"
 else
-	"$HOME"/scripts/vivaldi ~/git/tilde/index.html
+	"$HOME"/scripts/vivaldi
 fi

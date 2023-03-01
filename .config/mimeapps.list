@@ -3,12 +3,19 @@
 [Default Applications]
 application/pdf=zathura.desktop;
 application/x-bittorrent=org.qbittorrent.qBittorrent.desktop;
-image/jpeg=feh.desktop;
+image/apng=myfeh.desktop;
+image/jpeg=myfeh.desktop;
+image/png=myfeh.desktop;
+image/tiff=myfeh.desktop;
+image/webp=myfeh.desktop;
 text/html=luakit.desktop;
-video/mkv=mpv.desktop;
-video/mp4=mpv.desktop;
-video/x-matroska=mpv.desktop;
-video/x-ms-wmv=mpv.desktop;
+video/mkv=mympv.desktop;
+video/mp2t=mympv.desktop;
+video/mp4=mympv.desktop;
+video/mpeg=mympv.desktop;
+video/quicktime=mympv.desktop;
+video/x-matroska=mympv.desktop;
+video/x-ms-wmv=mympv.desktop;
 x-scheme-handler/about=luakit.desktop;
 x-scheme-handler/http=luakit.desktop;
 x-scheme-handler/https=luakit.desktop;

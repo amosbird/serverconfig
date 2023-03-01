@@ -25,8 +25,10 @@ password=$(pass show devcloud)
 
 # effect="+aero +menu-anims +window-drag +fonts /bpp:32"
 # program=~/git/FreeRDP/release/client/X11/xfreerdp
+sound="/sound:sys:pulse /microphone /audio-mode:0"
+# audio=/audio-mode:1
 program=xfreerdp
-$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert-ignore $effect /rfx /gfx:rfx /sound:sys:pulse /microphone $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:amos /p:$(pass show pass) /v:$ip
+$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert-ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:amos /p:$(pass show pass) /v:$ip
 
 # DPI="/w:1920 /h:1080 /scale-desktop:100 /scale:100"
 # DPI="/size:3840x2160 /smart-sizing:1920x1080"

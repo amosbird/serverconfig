@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Fleet 1.13.92 Public Preview
+Icon=/home/amos/.local/share/JetBrains/Toolbox/apps/Fleet/ch-0/.icon.png
+StartupWMClass=jetbrains-fleet
+Comment=The next-generation IDE by JetBrains
+Exec="/home/amos/.local/share/JetBrains/Toolbox/apps/Fleet/ch-0/1.13.92/bin/Fleet" %u
+Version=1.0
+Type=Application
+Categories=Development;IDE;
+Terminal=false

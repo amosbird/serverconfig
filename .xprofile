@@ -18,9 +18,11 @@ xset b off
 picom -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 
-pushd /home/amos/git/xkeysnail
-sudo python -m xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &
-popd
+sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &
+
+#pushd /home/amos/git/xkeysnail
+#sudo python -m xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &
+#popd
 # fish -c "xbanish -m se &"
 
 export GUI=t
