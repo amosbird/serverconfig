@@ -5,6 +5,20 @@
 (setq lsp-enable-dap-auto-configure nil)
 (setq lsp-auto-guess-root t)
 
+(add-hook! prog-mode #'flymake-mode)
+(add-hook! prog-mode #'flymake-popon-mode)
+(after! lsp-mode
+  (setq lsp-diagnostics-provider :flymake))
+
+(defun +amos/yank-flymake-error ()
+  (interactive)
+  (when-let ((diagnostic
+              (mapconcat
+               #'flymake-diagnostic-text
+               (flymake-diagnostics (point))
+               "\n")))
+    (kill-new diagnostic)))
+
 (advice-add #'lsp-ui-mode :override #'ignore)
 
 ;; (setq lsp-response-timeout 5)

@@ -22,11 +22,6 @@
   :config
   (set-electric! '(c-mode c++-mode objc-mode java-mode) :chars '(?\n ?\} ?\{))
 
-  ;; (set-lookup-handlers! '(c-mode c++-mode)
-  ;;   :definition #'+amos/definitions
-  ;;   :references #'+amos/references
-  ;;   :documentation #'counsel-dash-at-point)
-
   (set-rotate-patterns! 'c++-mode
     :symbols '(("public" "protected" "private")
                ("class" "struct")))
@@ -53,7 +48,11 @@
   ;;; Better fontification (also see `modern-cpp-font-lock')
   (add-hook! 'c-mode-common-hook
     (modify-syntax-entry ?_ "w")
-    (rainbow-delimiters-mode +1))
+    (rainbow-delimiters-mode +1)
+
+    (when-let ((p (getenv "envprompt")))
+      (if (string= p "CC-Playground")
+          (cc-playground-mode +1))))
   (add-hook! (c-mode c++-mode) #'+cc|fontify-constants)
   (setq-default c-noise-macro-names '("constexpr"))
 
@@ -121,38 +120,6 @@
   :hook (c++-mode . modern-c++-font-lock-mode)
   :defer)
 
-(setq ccls-enabled nil)
-(defun +amos-diagnostic-maybe-h ()
-  (interactive)
-  (when ccls-enabled
-    (ignore-errors
-      (ccls/diagnostic)
-      ;; (flycheck-buffer)
-      ))
-  nil)
-(add-hook! 'doom-escape-hook #'+amos-diagnostic-maybe-h)
-
-(defun +amos-ccls-enable-h ()
-  (interactive)
-  (require 'ccls)
-  (let ((name (buffer-name)))
-    (unless (or (string-prefix-p "timemachine:" name)
-                (string-suffix-p "~" name))
-      ;; (require 'lsp-mode)
-      ;; (flycheck-mode +1)
-      (global-eldoc-mode -1)
-      (eldoc-mode -1)
-      (when (--any? (s-starts-with? it default-directory) +amos-system-header-paths)
-        (c-set-style "gnu"))
-      ;; (add-hook 'lsp-after-diagnostics-hook #'flycheck-buffer nil t)
-      (direnv-update-environment)
-      (condition-case nil
-          (doom-with-advice (lsp--info #'ignore) (lsp))
-        (user-error nil))
-      (setq-local ccls-enabled t)
-      )))
-
-;; (add-hook! (c-mode c++-mode) #'+amos-ccls-enable-h)
 (add-hook! (c-mode c++-mode) #'lsp)
 (after! lsp-clangd (set-lsp-priority! 'clangd 2))
 (setq lsp-clients-clangd-args '(
@@ -172,8 +139,7 @@
                     ("property" 'font-lock-constant-face)
                     )))
   )
-
-
+(add-hook! (c-mode c++-mode) #'+amos|remap-cpp-faces)
 (add-hook! (c-mode c++-mode) #'tree-sitter-mode)
 ;; (after! tree-sitter
   ;; (global-tree-sitter-mode 1)
@@ -183,7 +149,6 @@
 ;;    (qualified_identifier left: (namespace_identifier) @type.builtin right: (_))
 ;;    ])
 
-(add-hook! (c-mode c++-mode) #'+amos|remap-cpp-faces)
 ;; (add-hook! (c-mode c++-mode) #'tree-sitter-mode)
 
 ;; (defface tree-sitter-hl-face:function
@@ -227,113 +192,6 @@
 
 ;; TODO figure out why I disabled it
 ;; (add-hook! (c-mode c++-mode) (electric-indent-local-mode -1))
-
-;; (use-package! ccls
-;;   ;; :commands (+amos-ccls-enable-h)  ; autoload fails
-;;   :defer
-;;   :init
-;;   (setq
-;;    ;; ccls-sem-highlight-method 'font-lock
-;;    ;; ccls-sem-highlight-method 'overlay
-;;    ccls-sem-highlight-method nil
-;;    ccls-root-files '(".ccls" ".ccls-root" "compile_commands.json")
-;;    )
-
-;;   :config
-;;   (defun ccls/workspace-symbol (pattern)
-;;     (interactive (list (read-string
-;;                         "workspace/symbol: "
-;;                         nil 'xref--read-pattern-history)))
-;;     (let ((symbols (lsp-request
-;;                     "workspace/symbol"
-;;                     `(:query ,pattern :folders ,(if current-prefix-arg (vector (doom-project-root)) (vector default-directory))))))
-;;       (unless symbols
-;;         (user-error "No symbol found for: %s" pattern))
-;;       (+amos-ivy-xref
-;;        (mapcar (lambda (x) (lsp--symbol-information-to-xref x)) symbols) pattern)))
-;;   (defun ccls/includes (&optional force)
-;;     (interactive)
-;;     (let ((x (intern (concat (doom-project-root) "--includes"))))
-;;       (unless (and (boundp x) (not force))
-;;         (setq x (lsp-request "$ccls/includes" nil)))
-;;       (ivy-read "Include: " x :action #'+amos/add-include)))
-;;   (defun ccls/fileinfo ()
-;;     (interactive)
-;;     (let ((hashmap (lsp-request
-;;                     "$ccls/fileInfo"
-;;                     (list :textDocument (lsp--text-document-identifier)))))
-;;       (with-current-buffer (generate-new-buffer "*temp*")
-;;         (insert (format "path = %s\n args = %s"
-;;                         (gethash "path" hashmap)
-;;                         (gethash "args" hashmap)))
-;;         (+popup/buffer))))
-
-;;   (defun ccls/inheritances ()
-;;     (interactive)
-;;     (+amos-lsp-find-custom 'inheritances "$ccls/inheritance" `(:levels 1000 :derived t)))
-;;   (defun ccls/callee ()
-;;     (interactive)
-;;     (+amos-lsp-find-custom 'callee "$ccls/call" '(:callee t)))
-;;   (defun ccls/caller ()
-;;     (interactive)
-;;     (+amos-lsp-find-custom 'caller "$ccls/call"))
-;;   (defun ccls/vars (kind)
-;;     (+amos-lsp-find-custom 'vars "$ccls/vars" `(:kind ,kind)))
-;;   (defun ccls/base (levels)
-;;     (+amos-lsp-find-custom 'base "$ccls/inheritance" `(:levels ,levels)))
-;;   (defun ccls/derived (levels)
-;;     (+amos-lsp-find-custom 'derived "$ccls/inheritance" `(:levels ,levels :derived t)))
-;;   (defun ccls/member (kind)
-;;     (+amos-lsp-find-custom 'member "$ccls/member" `(:kind ,kind)))
-;;   (defun ccls/member-function ()
-;;     (interactive)
-;;     (ccls/member 3))
-;;   (defun ccls/member-type ()
-;;     (interactive)
-;;     (ccls/member 2))
-;;   (defun ccls/member-field ()
-;;     (interactive)
-;;     (ccls/member 1))
-
-;;   ;; References w/ Role::Address bit (e.g. variables explicitly being taken addresses)
-;;   (defun ccls/references-address ()
-;;     (interactive)
-;;     (+amos-lsp-find-custom
-;;      'address "textDocument/references"
-;;      (plist-put (lsp--text-document-position-params) :context
-;;                 '(:role 128))))
-
-;;   ;; References w/ Role::Dynamic bit (macro expansions)
-;;   (defun ccls/references-macro ()
-;;     (interactive)
-;;     (+amos-lsp-find-custom
-;;      'address "textDocument/references"
-;;      (plist-put (lsp--text-document-position-params) :context
-;;                 '(:role 64))))
-
-;;   ;; References w/o Role::Call bit (e.g. where functions are taken addresses)
-;;   (defun ccls/references-not-call ()
-;;     (interactive)
-;;     (+amos-lsp-find-custom
-;;      'address "textDocument/references"
-;;      (plist-put (lsp--text-document-position-params) :context
-;;                 '(:excludeRole 32))))
-
-;;   ;; References w/ Role::Read
-;;   (defun ccls/references-read ()
-;;     (interactive)
-;;     (+amos-lsp-find-custom
-;;      'read "textDocument/references"
-;;      (plist-put (lsp--text-document-position-params) :context
-;;                 '(:role 8))))
-
-;;   ;; References w/ Role::Write
-;;   (defun ccls/references-write ()
-;;     (interactive)
-;;     (+amos-lsp-find-custom
-;;      'write "textDocument/references"
-;;      (plist-put (lsp--text-document-position-params) :context
-;;                 '(:role 16)))))
 
 (defun +amos/add-include (h &rest others)
   "Add an #include line for `h' near top of file, avoiding duplicates."

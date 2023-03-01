@@ -51,7 +51,7 @@
 (package! cc-playground :recipe (:host github :repo "amosbird/cc-playground" :files ("*.el" "templates")))
 (package! py-playground :recipe (:host github :repo "amosbird/py-playground" :files ("*.el" "templates")))
 (package! dired-hacks :recipe (:host github :repo "Fuco1/dired-hacks"))
-(package! direnv :recipe (:host github :repo "wbolster/emacs-direnv"))
+(package! direnv :recipe (:host github :repo "amosbird/emacs-direnv"))
 (package! evil-terminal-cursor-changer :recipe (:host github :repo "amosbird/evil-terminal-cursor-changer"))
 (package! evil-textobj-line :recipe (:host github :repo "syohex/evil-textobj-line"))
 (package! flyspell-lazy :recipe (:host github :repo "rolandwalker/flyspell-lazy"))
@@ -64,6 +64,7 @@
 (package! osc :recipe (:host github :repo "amosbird/osc.el"))
 ;; (package! rainbow-mode :recipe (:host github :repo "amosbird/rainbow-mode"))
 (package! realign-mode :recipe (:host github :repo "amosbird/realign-mode.el"))
+(package! flymake-popon :recipe (:type git :repo "https://codeberg.org/akib/emacs-flymake-popon.git"))
 
 (unpin! ivy-xref)
 

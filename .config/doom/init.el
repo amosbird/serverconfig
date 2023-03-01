@@ -25,7 +25,7 @@
 
        :checkers
        ;; spell
-       syntax
+       ;; syntax
 
        :emacs
        ;; dired
@@ -78,6 +78,7 @@
        ;; amos-sh
        )
 
+(setq enable-dir-local-variables nil)
 (setq shift-select-mode nil)
 (setq select-active-regions nil)
 ;; (setq TeX-command "pdftex")

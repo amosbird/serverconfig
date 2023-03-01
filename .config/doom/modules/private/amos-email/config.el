@@ -78,8 +78,8 @@ default/fallback account."
    ;; mu4e-view-show-images t
    ;; mu4e-view-use-gnus t
    sendmail-program "msmtp"
-   mu4e-completing-read-function (cond ((featurep! :completion ivy) #'ivy-completing-read)
-                                       ((featurep! :completion helm) #'completing-read)
+   mu4e-completing-read-function (cond ((modulep! :completion ivy) #'ivy-completing-read)
+                                       ((modulep! :completion helm) #'completing-read)
                                        (t #'ido-completing-read))
    mu4e-maildir-shortcuts '(("/drafts"                    . ?d)
                             ("/sent"                      . ?s)
@@ -172,7 +172,7 @@ default/fallback account."
   (defun +email*refresh (&rest _) (mu4e-headers-rerun-search))
   (advice-add #'mu4e-mark-execute-all :after #'+email*refresh)
 
-  (when (featurep! :feature spellcheck)
+  (when (modulep! :feature spellcheck)
     (add-hook! 'mu4e-compose-mode-hook #'flyspell-mode))
 
   (add-hook! (mu4e-compose-mode mu4e-view-mode)

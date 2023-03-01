@@ -155,11 +155,11 @@
       :i "M-i"                    #'yas-insert-snippet
       ;; :n "M-,"                    #'+amos/flycheck-previous-error
       ;; :n "M-."                    #'+amos/flycheck-next-error
-      :n "M-,"                    #'flycheck-previous-error
-      :n "M-."                    #'flycheck-next-error
+      :n "M-,"                    #'flymake-goto-prev-error
+      :n "M-."                    #'flymake-goto-next-error
       :n "M-p"                    #'evil-multiedit-match-symbol-and-prev
       :n "M-n"                    #'evil-multiedit-match-symbol-and-next
-      :n "M-y"                    #'+amos/yank-flycheck-error
+      :n "M-y"                    #'+amos/yank-flymake-error
       :v "M-p"                    #'evil-multiedit-match-and-prev
       :v "M-n"                    #'evil-multiedit-match-and-next
       :i "M-n"                    #'next-line

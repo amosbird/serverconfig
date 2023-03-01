@@ -38,3 +38,7 @@
 	insteadOf ="https://aur.archlinux.org/nnn-git.git"
 [url "https://github.com/amosbird/kitty-git-aur"]
 	insteadOf ="https://aur.archlinux.org/kitty-git.git"
+[url "git@git.woa.com:"]
+	insteadOf = http://git.woa.com/
+[url "git@git.woa.com:"]
+	insteadOf = https://git.woa.com/

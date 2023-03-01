@@ -3,7 +3,7 @@
 (load! "+bindings")
 (load! "+lsp")
 (load! "+alias")
-(load! "+flycheck")
+;; (load! "+flycheck")
 
 (require 'dash)
 (require 'ivy)
@@ -238,7 +238,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (interactive)
   (ignore-errors
     (recenter)
-    (flycheck-inline-hide-errors)
+    ;; (flycheck-inline-hide-errors)
     (+nav-flash/blink-cursor)))
 
 (defvar +amos-dir (file-name-directory load-file-name))
@@ -465,10 +465,11 @@ This predicate is only tested on \"insert\" action."
 (remove-hook! 'doom-init-ui-hook #'blink-cursor-mode)
 (remove-hook! 'doom-real-buffer-functions #'doom-dired-buffer-p)
 ;; (remove-hook! 'doom-init-ui-hook #'show-paren-mode)
-(add-hook! 'doom-after-init-modules-hook
-  (realign-mode)
-  (blink-cursor-mode -1)
-  (setq-default truncate-lines nil))
+(add-hook! 'after-init-hook
+  (defun amos-after-init-h (&rest _)
+    (realign-mode)
+    (blink-cursor-mode -1)
+    (setq-default truncate-lines nil)))
 
 (let ((evil-cursors '(("normal" "#b8860b" box)
                       ("insert" "#66cd00" bar)
@@ -2455,11 +2456,13 @@ the current state and point position."
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
+(setq    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1)
 (after! magit
   (magit-auto-revert-mode +1)
   (setq
    magit-refresh-status-buffer nil
    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1
+   ;; magit-display-buffer-function 'magit-display-buffer-fullcolumn-most-v1
    magit-display-buffer-noselect nil
    magit-repository-directories '(("~/git" . 2))
    magit-revision-show-gravatars '("^Author:     " . "^Commit:     "))

@@ -115,8 +115,8 @@
                                                        :background nil t)))
 
   ;; Use ivy/helm if either is available
-  (when (or (featurep! :completion ivy)
-            (featurep! :completion helm))
+  (when (or (modulep! :completion ivy)
+            (modulep! :completion helm))
     (setq-default org-completion-use-ido nil
                   org-outline-path-complete-in-steps nil))
 

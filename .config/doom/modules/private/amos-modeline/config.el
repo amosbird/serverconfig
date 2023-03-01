@@ -3,13 +3,13 @@
 (require 'doom-modeline)
 
 (defface +amos-workspace-tab-selected-face '((t (:inherit 'highlight))) "." :group 'amos-face)
-(defface +amos-workspace-tab-face '((t (:foreground "#bbc2cf" :inherit 'doom-modeline-highlight))) "." :group 'amos-face)
+(defface +amos-workspace-tab-face '((t (:foreground "#bbc2cf" :inherit 'mode-line))) "." :group 'amos-face)
 
 (setq +amos-full-width-digits ["１" "２" "３" "４" "５" "６" "７" "８" "９"])
 (defun +amos-frame-modeline (&optional _)
   (let ((frames +amos-frame-list)
         (current-frame (selected-frame)))
-    (concat (propertize " |" 'face '+amos-workspace-tab-face)
+    (concat " |"
             (mapconcat
              #'identity
              (cl-loop for frame in frames
@@ -22,8 +22,8 @@
                                   'face (if (eq current-frame frame)
                                             '+amos-workspace-tab-selected-face
                                           '+amos-workspace-tab-face)))
-             (propertize "|" 'face '+amos-workspace-tab-face))
-            (propertize "|" 'face '+amos-workspace-tab-face))))
+             "|")
+            "|")))
 (doom-modeline-def-segment frame (+amos-frame-modeline))
 
 (defface keycast-key
@@ -82,9 +82,7 @@
   '(bar matches buffer-info buffer-position selection-info frame)
   '(keycast host buffer-encoding major-mode vcs checker))
 
-(defun +amos-setup-custom-doom-modeline-h ()
-  (doom-modeline-set-modeline 'amos 'default)
-  (with-current-buffer "*Messages*" (doom-modeline-set-modeline 'amos))
-  (advice-add #'doom-modeline-set-modeline :override #'ignore))
+(defun +amos-setup-custom-doom-modeline-a ()
+  (doom-modeline-set-modeline 'amos))
 
-(add-hook! 'doom-modeline-mode-hook #'+amos-setup-custom-doom-modeline-h)
+(advice-add #'doom-modeline-auto-set-modeline :override #'+amos-setup-custom-doom-modeline-a)
