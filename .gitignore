@@ -45,10 +45,7 @@ fishd.*
 /aurs/*/*
 !/aurs/*/PKGBUILD
 /.config/copyq/copyq.lock
-/.config/copyq/copyq_geometry.ini.lock
-/.config/copyq/copyq_geometry.ini.lock.rmlock
-/.config/copyq/copyq_geometry.ini.lock.rmlock.rmlock
-/.config/copyq/copyq_geometry.ini.lock.rmlock.rmlock.rmlock
+/.config/copyq/copyq_geometry.ini.lock*
 /.docker/.token_seed
 /.docker/.token_seed.lock
 /.docker/buildx/

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+exec 1023>$1
+export BASH_XTRACEFD=1023
+
+# turn on the debug stream:
+# set -x
+
+# run some commands
+
+# Close the output:
+# set +x
+# exec 19>&-
