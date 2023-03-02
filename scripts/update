@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 
 set -e
-trizen -Syu --noconfirm
-trizen -Sua --devel --needed --noconfirm
+paru -Syu --noconfirm
