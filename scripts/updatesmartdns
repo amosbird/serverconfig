@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -e
+
+WORKDIR="$(mktemp -d)"
+CONFS=(accelerated-domains.china google.china apple.china bogus-nxdomain.china)
+
+echo "Downloading latest configurations..."
+git clone --depth=1 https://gitee.com/felixonmars/dnsmasq-china-list.git "$WORKDIR"
+
+echo "Generating new configurations..."
+cd "$WORKDIR"
+make smartdns SERVER=china
+
+echo "Removing old configurations..."
+for _conf in "${CONFS[@]}"; do
+  sudo rm -f /etc/smartdns/"$_conf"*.smartdns.conf
+done
+
+echo "Installing new configurations..."
+for _conf in "${CONFS[@]}"; do
+  sudo cp "$_conf.smartdns.conf" "/etc/smartdns/$_conf.smartdns.conf"
+done
+
+echo "Restarting smartdns service..."
+sudo systemctl restart smartdns
+
+echo "Cleaning up..."
+rm -rf "$WORKDIR"

@@ -62,8 +62,8 @@ configuration {
 	kb-mode-previous: "Shift+Left,Control+ISO_Left_Tab";
 	kb-row-left: "Control+Page_Up";
 	kb-row-right: "Control+Page_Down";
-	kb-row-up: "Control+k";
-	kb-row-down: "Control+j";
+	kb-row-up: "Control+k,Up";
+	kb-row-down: "Control+j,Down";
 	kb-page-prev: "Alt+v,Page_Up";
 	kb-page-next: "Control+v,Page_Down";
 	kb-row-first: "Home,KP_Home";

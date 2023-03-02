@@ -564,6 +564,12 @@ class SevenExtractor(NoPipeExtractor):
         self.archive.close()
 
 
+# class ZstdExtractor(NoPipeExtractor):
+#     file_type = "Zstd file"
+#     extract_command = ["unzstd", "-f"]
+#     list_command = ["unzstd", "-l"]
+
+
 class CABExtractor(NoPipeExtractor):
     file_type = "CAB archive"
     extract_command = ["cabextract", "-q"]
@@ -989,6 +995,12 @@ class ExtractorBuilder(object):
             "extensions": ("7z",),
             "magic": ("7-zip archive",),
         },
+        "zstd": {
+            "extractors": (SevenExtractor,),
+            "mimetypes": ("zstd",),
+            "extensions": ("zst",),
+            "magic": ("zstd archive",),
+        },
         "cab": {
             "extractors": (CABExtractor,),
             "mimetypes": ("x-cab",),
@@ -1051,6 +1063,7 @@ class ExtractorBuilder(object):
         ("lzma", "LZMA compressed"),
         ("lzip", "lzip compressed"),
         ("xz", "xz compressed"),
+        ("zst", "zstd compressed"),
     ):
         for pattern in mapping[1:]:
             magic_encoding_map[re.compile(pattern)] = mapping[0]
