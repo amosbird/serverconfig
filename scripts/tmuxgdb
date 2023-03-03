@@ -25,7 +25,7 @@ tty2=$(tmux display -p "#{pane_tty}")
 
 tmux select-pane -t 3
 if [ "$1" = "-p" ]; then
-    tmux send-keys "reptyr -l sh -c 'tmux select-pane -t 4; tmux send-keys \"cgdb -- -tty \$REPTYR_PTY -ex \\\"dashboard threads -output $tty1\\\" -ex \\\"dashboard stack -output $tty2\\\" -ex \\\"attach $2 &\\\" \" C-m'" C-m
+    tmux send-keys "reptyr -l sh -c 'tmux select-pane -t 4; tmux send-keys \"cgdb -- -q -tty \$REPTYR_PTY -ex \\\"dashboard threads -output $tty1\\\" -ex \\\"dashboard stack -output $tty2\\\" -ex \\\"attach $2 &\\\" \" C-m'" C-m
 else
     if [ -f "$1" ]
     then

@@ -254,7 +254,7 @@ handle SIGUSR2 noprint nostop ignore
 
 # set auto-solib-add off
 set basenames-may-differ 1
-set target-async 1
+set mi-async 1
 set non-stop on
 set confirm off
 set pagination off

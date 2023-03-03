@@ -1,7 +1,7 @@
 var direct = "DIRECT";
 var http_proxy = "PROXY 127.0.0.1:12639";
 
-var gfwed_list = ["oa.com", "woa.com", "oa.tencent.com"];
+var gfwed_list = ["oa.com", "woa.com", "oa.tencent.com", "oa.m.tencent.com"];
 
 var gfwed = {};
 for (var i = 0; i < gfwed_list.length; i += 1) {

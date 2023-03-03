@@ -53,6 +53,7 @@ case $(hostname) in
 
   *)
     export GDK_SCALE=2 GDK_DPI_SCALE=0.5
+    export LIBVA_DRIVER_NAME=nvidia
     ;;
 esac
 
