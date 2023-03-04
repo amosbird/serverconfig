@@ -42,3 +42,8 @@
 	insteadOf = http://git.woa.com/
 [url "git@git.woa.com:"]
 	insteadOf = https://git.woa.com/
+[filter "lfs"]
+	required = true
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process

@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
-ps -o ppid= -o pid= -o command= -C sshd | fgrep "/tmp/gentoo/home/amos/scripts/tstart.sh prefix" | awk '{print $2}' | xargs kill || :
+# ps -o ppid= -o pid= -o command= -C sshd | fgrep "/tmp/gentoo/home/amos/scripts/tstart.sh prefix" | awk '{print $2}' | xargs kill || :
+pkill -f "bash /tmp/gentoo/home/amos/scripts/tstart.sh prefix" || :
