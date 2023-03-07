@@ -172,8 +172,8 @@ define_keymap(
         # Cursor
         K("C-k"): with_mark(K("up")),
         K("C-j"): with_mark(K("down")),
-        K("C-key_0"): K("LM-key_2"),
-        K("C-key_9"): K("LM-key_1"),
+        K("C-key_0"): K("LM-F12"),
+        K("C-key_9"): K("LM-F11"),
     },
     "Vivaldi Emacs-like keys",
 )

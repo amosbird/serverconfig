@@ -86,7 +86,7 @@ swipe4left() {
         xdotool key --window $id ctrl+comma
         ;;
     Vivaldi-stable)
-        xdotool key --window $id alt+1
+        xdotool key --window $id alt+F11
         ;;
     esac
 }
@@ -100,7 +100,7 @@ swipe4right() {
         xdotool key --window $id ctrl+period
         ;;
     Vivaldi-stable)
-        xdotool key --window $id alt+2
+        xdotool key --window $id alt+F12
         ;;
     esac
 }
