@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-urxvt -T nobida142 -e ssh -t 142.nobida.cn "tmux new -d -s emacs emacs; tmux new-session -A -s amos"

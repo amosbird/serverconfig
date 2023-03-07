@@ -1,5 +1,3 @@
 #!/usr/bin/env bash
 
-# [ $# -ge 1 -a -f "$1" ] && input="$1" || input="-"
 tmux send -l "$(cat -)"
-# cat - | tee /tmp/sss > $(tmux display -p "#{pane_tty}")

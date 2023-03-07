@@ -3,11 +3,9 @@
 export LANG=en_US.UTF-8
 export SHELL=/tmp/gentoo/usr/local/bin/fish # for tmux
 export TERM=xterm-kitty
-export TMUX=/tmp/gentoo/tmux-amos
-if test "$SSH_AUTH_SOCK"; then
-    ln -sf $SSH_AUTH_SOCK ~/.ssh/ssh_auth_sock
-fi
-export SSH_AUTH_SOCK="$HOME/.ssh/ssh_auth_sock"
+export TMPDIR=/tmp/gentoo/tmp
+export TMUX=$TMPDIR/tmux-amos
+export SSH_AUTH_SOCK="$TMPDIR/ssh_auth_sock"
 
 case $1 in
 android)
@@ -18,6 +16,8 @@ local)
     ;;
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+    GENTOO_DIR=$(readlink /tmp/gentoo)
+    while :; do ln -sf $GENTOO_DIR /tmp/; sleep 60s; done &
     ;;
 *)
     echo "tstart.sh android|local|prefix"
@@ -26,7 +26,7 @@ esac
 
 tmux -u new -d -s htop "exec starthtop"
 if ! tmux list-sessions | grep -q -F emacs; then
-    fuser -k /tmp/gentoo/emacs.lock &>/dev/null # sometimes emacs daemon doesn't quit
+    fuser -k $TMPDIR/emacs.lock &>/dev/null # sometimes emacs daemon doesn't quit
 fi
 tmux -u new -d -s emacs "exec startemacs"
 tmux -u new-session -A -s amos

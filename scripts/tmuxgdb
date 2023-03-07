@@ -34,7 +34,7 @@ else
        program=$(which "$1")
     fi
     shift
-    tmpfile=$(mktemp /tmp/tmuxgdb-wrapper.XXXXXX)
+    tmpfile=$(mktemp $TMPDIR/tmuxgdb-wrapper.XXXXXX)
     export >> $tmpfile
     tmux send-keys "reptyr -l sh -c 'tmux select-pane -t 4; tmux send-keys \"source $tmpfile; rm $tmpfile\" C-m; tmux send-keys \"cgdb -- -q -ex \\\"file $program\\\" -tty \$REPTYR_PTY -ex \\\"dashboard threads -output $tty1\\\" -ex \\\"dashboard stack -output $tty2\\\" -ex \\\"start '\"${*@Q}\"'\\\" $program\"  C-m'" C-m
 fi

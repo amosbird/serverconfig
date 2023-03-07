@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
-export TMPDIR=$HOME/.clangd_tmpdir
+export TMPDIR=$TMPDIR/clangd
 exec $HOME/toolchain/bin/clangd "$@"
