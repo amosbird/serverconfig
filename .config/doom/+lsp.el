@@ -10,6 +10,8 @@
 (after! lsp-mode
   (setq lsp-diagnostics-provider :flymake))
 
+(global-eldoc-mode -1)
+(setq eglot-stay-out-of '(eldoc))
 (defun +amos/yank-flymake-error ()
   (interactive)
   (when-let ((diagnostic

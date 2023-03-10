@@ -250,10 +250,10 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
         (append (list '+amos-snippets-dir '+file-templates-dir)
                 (delq 'yas-installed-snippets-dir yas-snippet-dirs))))
 
-(add-to-list 'auto-mode-alist '("/git/serverconfig/scripts/.+" . sh-mode))
+(add-to-list 'auto-mode-alist '("/git/serverconfig/scripts/[!.]+" . sh-mode))
 (setq +file-templates-alist
       `(;; General
-        ("/git/serverconfig/scripts/.+" :mode sh-mode)
+        ("/git/serverconfig/scripts/[!.]+" :mode sh-mode)
         ("/git/serverconfig/.config/fish/functions/.+" :trigger "__func" :mode fish-mode)
         (gitignore-mode)
         (dockerfile-mode)
@@ -2271,12 +2271,12 @@ the current state and point position."
   (interactive)
   (+amos/switch-to-buffer-other-frame "*scratch"))
 
-(defun +amos/tmux-fork-window (&optional command)
+(defun +amos/tmux-fork-window (&optional command prompt)
   "Detach if inside tmux."
   (interactive)
   (+amos-store-jump-history)
   (if command
-      (shell-command! (format-spec "tmux switch-client -t amos; tmuxkillwindow amos:%a; tmux run -t amos \"tmux new-window -n %a -c %b; tmux send-keys %c C-m\"" `((?a . ,(getenv "envprompt")) (?b . ,default-directory) (?c . ,command))))
+      (shell-command! (format-spec "tmux switch-client -t amos; tmuxkillwindow amos:%a; tmux run -t amos \"tmux new-window -n %a -c %b; tmux send-keys %c C-m\"" `((?a . ,prompt) (?b . ,default-directory) (?c . ,command))))
     (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
 
 (defun +amos/tmux-split-window (&optional command)
@@ -3259,7 +3259,7 @@ When capture groups are present in the input, print them instead of lines."
   (interactive)
   (save-buffer-maybe)
   (let ((default-directory (doom-project-root)))
-    (+amos/tmux-fork-window " launch.sh")))
+    (+amos/tmux-fork-window " launch.sh" (getenv "envprompt"))))
 
 (defun +amos/list-file (&optional initial-input)
   (interactive)

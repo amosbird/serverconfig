@@ -121,15 +121,89 @@
   :defer)
 
 (add-hook! (c-mode c++-mode) #'lsp)
+;; (add-hook! (c-mode c++-mode) #'eglot-ensure)
 (after! lsp-clangd (set-lsp-priority! 'clangd 2))
 (setq lsp-clients-clangd-args '(
-                                        ; "-j=3"
-                                 ;; "-log=verbose"
-                                 "--background-index"
-                                 "--clang-tidy"
-                                 "--completion-style=detailed"
-                                 "--header-insertion=never"
-                                 "--header-insertion-decorators=0"))
+                                "-j=8"
+                                "--log=error"
+                                "--malloc-trim"
+                                "--background-index"
+                                "--clang-tidy"
+                                "--cross-file-rename"
+                                "--completion-style=detailed"
+                                "--pch-storage=memory"
+                                "--header-insertion=never"
+                                "--header-insertion-decorators=0"))
+
+(after! eglot
+  (setq eglot-autoshutdown t)
+  (setq eglot-extend-to-xref t)
+  (setq eglot-send-changes-idle-time 0.2)
+  (setq eglot-ignored-server-capabilities
+        '(:documentFormattingProvider
+          :documentRangeFormattingProvider
+          :documentOnTypeFormattingProvider
+          :documentLinkProvider
+          :foldingRangeProvider
+          :signatureHelpProvider
+          :hoverProvider))
+
+  (add-to-list 'eglot-server-programs
+               '((c-mode c++-mode)
+                 . ("clangd"
+                    "-j=8"
+                    "--log=error"
+                    "--malloc-trim"
+                    "--background-index"
+                    "--clang-tidy"
+                    "--cross-file-rename"
+                    "--completion-style=detailed"
+                    "--pch-storage=memory"
+                    "--header-insertion=never"
+                    "--header-insertion-decorators=0")))
+
+  (defun +amos/eglot-clangd-find-other-file (&optional new-window)
+    "Switch between the corresponding C/C++ source and header file.
+If NEW-WINDOW (interactively the prefix argument) is non-nil,
+open in a new window.
+
+Only works with clangd."
+    (interactive "P")
+    (let* ((res
+            (jsonrpc-request (eglot--current-server-or-lose)
+                             :textDocument/switchSourceHeader
+                             (eglot--TextDocumentIdentifier)))
+           (other (eglot--uri-to-path res)))
+      (if (string= other "")
+          (message "no other file found")
+        (funcall (if new-window #'find-file-other-window #'find-file) other))))
+
+  (defun eglot--remove-overlays (name)
+    (save-restriction
+      (widen)
+      (remove-overlays (point-min) (point-max) name t)))
+
+  ;; TODO it doesn't work
+  (defun eglot--make-links (links)
+    (mapc
+     (lambda (link)
+       (cl-destructuring-bind
+           (:range (:end end :start start) :target target)
+           link
+         (-doto (make-button (eglot--lsp-position-to-point start)
+                             (eglot--lsp-position-to-point end))
+           (overlay-put 'lsp-link t))
+         ))
+     links))
+
+  (defun +amos/eglot-document-links ()
+    (interactive)
+    (jsonrpc-async-request (eglot--current-server-or-lose)
+                           :textDocument/documentLink `(:textDocument ,(eglot--TextDocumentIdentifier))
+                           :success-fn #'eglot--make-links
+                           :deferred :textDocument/documentLink))
+  )
+
 
 (defun +amos|remap-cpp-faces ()
   (add-function :before-until (local 'tree-sitter-hl-face-mapping-function)

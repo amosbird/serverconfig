@@ -17,7 +17,14 @@ local)
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     GENTOO_DIR=$(readlink /tmp/gentoo)
-    while :; do ln -sf $GENTOO_DIR /tmp/; sleep 60s; done &
+    if [ -d "$GENTOO_DIR" ]
+    then
+        "$GENTOO_DIR"/home/amos/scripts/keepgentoo.py "$GENTOO_DIR" &
+        sleep 0.2
+    else
+        echo "gentoo dir suddenly disappear"
+        exit 1
+    fi
     ;;
 *)
     echo "tstart.sh android|local|prefix"

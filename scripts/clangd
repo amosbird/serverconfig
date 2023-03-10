@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
 
 export TMPDIR=$TMPDIR/clangd
-exec $HOME/toolchain/bin/clangd "$@"
+mkdir -p $TMPDIR/clangd
+if [ -z "$CLANGD" ]; then
+    exec $HOME/toolchain/bin/clangd "$@"
+else
+    exec $CLANGD "$@"
+fi
