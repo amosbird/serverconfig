@@ -7,11 +7,11 @@ if pgrep obs >/dev/null; then
         exit 0
     fi
     if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"; then
-        bspc node "$id" -g hidden -f
+        bspc node "$id".window -g hidden -f
     else
         bspc node "$id" --to-desktop "$workspace"
         bspc node "$id" -t floating
-        bspc node "$id" -g hidden=off -f
+        bspc node "$id".window -g hidden=off -f
     fi
     wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
     w=${wh[0]}

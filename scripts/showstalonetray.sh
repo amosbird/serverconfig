@@ -8,12 +8,12 @@ toggle() {
     fi
 
     if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"; then
-        bspc node "$id" -g hidden -f
+        bspc node "$id".window -g hidden -f
         exit 0
     else
         bspc node "$id" --to-desktop "$workspace"
         bspc node "$id" -t floating
-        bspc node "$id" -g hidden=off -f
+        bspc node "$id".window -g hidden=off -f
         bspc node "$id" -l above
     fi
 }

@@ -20,7 +20,7 @@ while read -r wid; do
     str=$(xprop -id $wid WM_CLASS 2>/dev/null)
     if [[ "$str" == *qutebrowser* ]]; then
         flag="last"
-        bspc node $wid -f
+        bspc node "$wid".window -f
         break
     fi
 done < <(bspc query -N -d focused -n .!hidden)

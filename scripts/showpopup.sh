@@ -11,11 +11,11 @@ else
     fi
 
     if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"; then
-        bspc node "$id" -g hidden -f
+        bspc node "$id".window -g hidden -f
     else
         bspc node "$id" --to-desktop "$workspace"
         bspc node "$id" -t floating
-        bspc node "$id" -g hidden=off -f
+        bspc node "$id".window -g hidden=off -f
     fi
 fi
 

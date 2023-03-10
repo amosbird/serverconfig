@@ -15,7 +15,7 @@ if pgrep Telegram >/dev/null; then
         /home/amos/git/tdesktop/out/Release/Telegram
         # telegram-desktop
     elif bspc query -N -n focused | grep -q "$wid"; then
-        bspc node "$wid" -g hidden -f
+        bspc node "$wid".window -g hidden -f
         exit 0
     else
         bspc node "$wid" --to-desktop "$workspace"
@@ -32,7 +32,7 @@ if pgrep Telegram >/dev/null; then
     xdo move -x $x -y $y "$wid"
     xdo resize -w $w -h $h "$wid"
     bspc node "$wid" -l above
-    bspc node "$wid" -f
+    bspc node "$wid".window -f
 else
     rm /tmp/telegram
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
