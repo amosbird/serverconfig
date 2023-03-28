@@ -21,7 +21,7 @@
 [url "https://github.com/amosbird/feh-git-aur"]
 	insteadOf ="https://aur.archlinux.org/feh-git.git"
 [url "https://github.com/amosbird/freerdp-git-aur"]
-	insteadOf ="https://aur.archlinux.org/freerdp-git.git"
+	insteadOf ="https://aur.archlinux.org/freerdp-git"
 [url "https://github.com/amosbird/obs-studio-git-aur"]
 	insteadOf ="https://aur.archlinux.org/obs-studio-git.git"
 [url "https://github.com/amosbird/netevent-git-aur"]

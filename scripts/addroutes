@@ -47,5 +47,8 @@ ip r a 192.144.138.253 via $gw table cn # tcloud
 ip r a 168.138.207.219 via $gw table cn # oracle
 ip r a 43.132.171.51 via $gw table cn # jack
 
+ip r a 9.2.87.192 via 192.168.255.1 table cn
+ip r a 116.130.221.63 via 192.168.255.1 table cn
+
 # systemctl restart dnsmasq
 # sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"
