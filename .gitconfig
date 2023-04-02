@@ -13,31 +13,31 @@
 [commit]
 	gpgsign = true
 [url "https://github.com/amosbird/bspwm-git-aur"]
-	insteadOf ="https://aur.archlinux.org/bspwm-git.git"
+	insteadOf ="https://aur.archlinux.org/bspwm-git"
 [url "https://github.com/amosbird/copyq-git-aur"]
-	insteadOf ="https://aur.archlinux.org/copyq-git.git"
+	insteadOf ="https://aur.archlinux.org/copyq-git"
 [url "https://github.com/amosbird/llpp-git-aur"]
-	insteadOf ="https://aur.archlinux.org/llpp-git.git"
+	insteadOf ="https://aur.archlinux.org/llpp-git"
 [url "https://github.com/amosbird/feh-git-aur"]
-	insteadOf ="https://aur.archlinux.org/feh-git.git"
+	insteadOf ="https://aur.archlinux.org/feh-git"
 [url "https://github.com/amosbird/freerdp-git-aur"]
 	insteadOf ="https://aur.archlinux.org/freerdp-git"
 [url "https://github.com/amosbird/obs-studio-git-aur"]
-	insteadOf ="https://aur.archlinux.org/obs-studio-git.git"
+	insteadOf ="https://aur.archlinux.org/obs-studio-git"
 [url "https://github.com/amosbird/netevent-git-aur"]
-	insteadOf ="https://aur.archlinux.org/netevent-git.git"
+	insteadOf ="https://aur.archlinux.org/netevent-git"
 [url "https://github.com/amosbird/rofi-emoji-aur"]
-	insteadOf ="https://aur.archlinux.org/rofi-emoji.git"
+	insteadOf ="https://aur.archlinux.org/rofi-emoji"
 [url "https://github.com/amosbird/librime-git-aur"]
-	insteadOf ="https://aur.archlinux.org/librime-git.git"
+	insteadOf ="https://aur.archlinux.org/librime-git"
 [url "https://github.com/amosbird/xbanish-git-aur"]
-	insteadOf ="https://aur.archlinux.org/xbanish-git.git"
+	insteadOf ="https://aur.archlinux.org/xbanish-git"
 [url "https://github.com/amosbird/xkeysnail-git-aur"]
-	insteadOf ="https://aur.archlinux.org/xkeysnail-git.git"
+	insteadOf ="https://aur.archlinux.org/xkeysnail-git"
 [url "https://github.com/amosbird/nnn-git-aur"]
-	insteadOf ="https://aur.archlinux.org/nnn-git.git"
+	insteadOf ="https://aur.archlinux.org/nnn-git"
 [url "https://github.com/amosbird/kitty-git-aur"]
-	insteadOf ="https://aur.archlinux.org/kitty-git.git"
+	insteadOf ="https://aur.archlinux.org/kitty-git"
 [url "git@git.woa.com:"]
 	insteadOf = http://git.woa.com/
 [url "git@git.woa.com:"]
