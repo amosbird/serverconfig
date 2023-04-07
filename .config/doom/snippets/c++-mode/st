@@ -2,4 +2,4 @@
 # name: stacktrace
 # key: st
 # --
-std::cerr << StackTrace().toString() << std::endl;
+LOG_DEBUG(&::Poco::Logger::get("amosbird"), "stacktrace\n{}", StackTrace().toString());

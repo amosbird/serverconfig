@@ -18,6 +18,7 @@ map f ifinish<CR><ESC>
 map n inext<CR><ESC>
 # map N ireverse-next<CR>
 map s istep<CR><ESC>
+map t it<Space>
 # map S ireverse-step<CR>
 map <C-f> :switch<CR><ESC>
 map <C-r> idashboard<CR><ESC>
