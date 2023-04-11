@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+echo Inside:
+echo "-----"
+curl myip.ipip.net
+echo "-----"
+echo Outside:
+echo "-----"
+curl ipinfo.io
+echo
+echo "-----"

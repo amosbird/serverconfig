@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 
+process_name=telegram-deskto binary=telegram-desktop window_name=telegram-desktop
+# process_name=Telegram binary=/home/amos/git/tdesktop/out/Release/Telegram window_name=Telegram
+
 workspace=$(bspc query -D -d focused --names)
-# if pgrep telegram-deskto >/dev/null; then
-if pgrep Telegram >/dev/null; then
+if pgrep $process_name >/dev/null; then
     while read -r wid
     do
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
-    done < <(xdo id -N TelegramDesktop -n Telegram)
+    done < <(xdo id -N TelegramDesktop -n $window_name)
 
-    xdo id -N TelegramDesktop -n Telegram
     bspc query -N -n focused
-    # done < <(xdo id -N TelegramDesktop -n telegram-desktop)
     if [ -z "$found" ]; then
-        /home/amos/git/tdesktop/out/Release/Telegram
-        # telegram-desktop
+        $binary
     elif bspc query -N -n focused | grep -q "$wid"; then
         bspc node "$wid".window -g hidden -f
         exit 0
@@ -38,6 +37,6 @@ else
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
     # export QT_SCREEN_SCALE_FACTORS=
     # export QT_AUTO_SCREEN_SCALE_FACTOR=
-    bash -c "/home/amos/git/tdesktop/out/Release/Telegram &"
-    # bash -c "telegram-desktop &"
+    # bash -c "/home/amos/git/tdesktop/out/Release/Telegram &"
+    bash -c "$binary &"
 fi

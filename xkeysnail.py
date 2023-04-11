@@ -177,3 +177,14 @@ define_keymap(
     },
     "Vivaldi Emacs-like keys",
 )
+
+# Emacs-like keybindings in non-Emacs applications
+define_keymap(
+    re.compile("copyq"),
+    {
+        K("C-k"): K("up"),
+        K("C-j"): K("down"),
+        K("C-d"): K("delete"),
+    },
+    "Vivaldi Emacs-like keys",
+)

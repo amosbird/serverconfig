@@ -7,6 +7,10 @@ export TMPDIR=/tmp/gentoo/tmp
 export TMUX=$TMPDIR/tmux-amos
 export SSH_AUTH_SOCK="$TMPDIR/ssh_auth_sock"
 
+if test -s /tmp/gentoo/etc/hostname; then
+    export HOSTNAME=$(cat /tmp/gentoo/etc/hostname)
+fi
+
 case $1 in
 android)
     export PATH=$PATH:/system/bin:/system/xbin:/system/sbin:/data/adb/modules/ssh/usr/bin

@@ -24,7 +24,7 @@ if [[ "$1" =~ $pattern ]]; then
 		arg="$arg -p $port"
 	fi
 
-	if ! ssh $arg 'ls /tmp/gentoo && /tmp/gentoo/home/amos/scripts/killssh' &> /dev/null
+	if ! ssh $arg 'ls /tmp/gentoo && /tmp/gentoo/home/amos/scripts/killssh' > /dev/null
 	then
 		echo /tmp/gentoo gets removed. Need to set it up manually.
 		exit 1

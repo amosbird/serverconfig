@@ -19,19 +19,19 @@
                        (if (< i 9)
                            (elt +amos-full-width-digits i)
                          (format "%d" (1+ i)))
-                                  'face (if (eq current-frame frame)
-                                            '+amos-workspace-tab-selected-face
-                                          '+amos-workspace-tab-face)))
+                       'face (if (eq current-frame frame)
+                                 '+amos-workspace-tab-selected-face
+                               '+amos-workspace-tab-face)))
              "|")
             "|")))
 (doom-modeline-def-segment frame (+amos-frame-modeline))
 
 (defface keycast-key
   '((t (:weight bold
-                :height 1.0
-                :background "#d5cfbf"
-                :foreground "#000000"
-                :box (:line-width -3 :style released-button))))
+        :height 1.0
+        :background "#d5cfbf"
+        :foreground "#000000"
+        :box (:line-width -3 :style released-button))))
   "When Keycast mode is enabled, face used for the key in the mode line."
   :group 'keycast)
 
@@ -75,7 +75,12 @@
             (or (and (not (equal meta "")) meta)
                 " %I "))))
 
-(defvar +amos--hostname (propertize (concat "  " (system-name) " ") 'face '(:weight bold :foreground "#51afef")))
+(setq +amos-system-name
+      (let ((hostname (getenv "HOSTNAME")))
+        (if (and hostname (not (string-empty-p hostname)))
+            hostname
+          (system-name))))
+(defvar +amos--hostname (propertize (concat "  " +amos-system-name " ") 'face '(:weight bold :foreground "#51afef")))
 (doom-modeline-def-segment host (let () +amos--hostname))
 
 (doom-modeline-def-modeline 'amos
