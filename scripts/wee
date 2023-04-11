@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
-kitty --hold -T weechat -o 'map ctrl+alt+u kitten hints --customize-processing weechat_hints.py' ssh -t cdn.wentropy.com 'env -i HOME=$HOME TERM=$TERM USER=$USER SSH_CONNECTION="$SSH_CONNECTION" SSH_AUTH_SOCK="$SSH_AUTH_SOCK" /tmp/gentoo/startprefix3'
+# kitty --hold -T weechat -o 'map ctrl+alt+u kitten hints --customize-processing weechat_hints.py' ssh -t cdn.wentropy.com 'env -i HOME=$HOME TERM=$TERM USER=$USER SSH_CONNECTION="$SSH_CONNECTION" SSH_AUTH_SOCK="$SSH_AUTH_SOCK" /tmp/gentoo/startprefix3'
+kitty --hold -T weechat ssh -t cdn.wentropy.com 'env -i HOME=$HOME TERM=$TERM USER=$USER SSH_CONNECTION="$SSH_CONNECTION" SSH_AUTH_SOCK="$SSH_AUTH_SOCK" /tmp/gentoo/startprefix3'
