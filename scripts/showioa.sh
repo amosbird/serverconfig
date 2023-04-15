@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep -f /usr/lib/iOA/bin/iOALinux &>/dev/null; then
+if pgrep -f /opt/ioa/bin/iOALinux &>/dev/null; then
     while read -r wid
     do
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
     done < <(xdo id -N iOALinux -n iOALinux)
     if [ -z "$found" ]; then
-        /usr/lib/iOA/bin/iOALinux &
+        /opt/ioa/bin/iOALinux &
     elif bspc query -N -n focused | grep -q "$wid"; then
         bspc node "$wid".window -g hidden -f
         exit 0
@@ -29,5 +29,5 @@ if pgrep -f /usr/lib/iOA/bin/iOALinux &>/dev/null; then
 else
     rm /tmp/ioa
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    bash -c "/usr/lib/iOA/bin/iOALinux &> /dev/null"
+    bash -c "/opt/ioa/bin/iOALinux &> /dev/null"
 fi
