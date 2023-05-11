@@ -30,9 +30,9 @@ if [[ "$1" =~ $pattern ]]; then
 		exit 1
 	fi
 
-	ssh $arg '/tmp/gentoo/usr/bin/gpgconf --create-socketdir; sleep 10;' &
+	ssh $arg 'export HOME=/tmp/gentoo/home/amos; /tmp/gentoo/usr/bin/gpgconf --create-socketdir; sleep 10;' &
 
-	remote_sock=$(ssh $arg '/tmp/gentoo/usr/bin/gpgconf --create-socketdir; file=$(/tmp/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file; rm /tmp/gentoo/tmp/clipservice.sock; rm /tmp/gentoo/tmp/ssh_auth_sock')
+	remote_sock=$(ssh $arg 'export HOME=/tmp/gentoo/home/amos; /tmp/gentoo/usr/bin/gpgconf --create-socketdir; file=$(/tmp/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file; rm /tmp/gentoo/tmp/clipservice.sock; rm /tmp/gentoo/tmp/ssh_auth_sock')
 
 	# termite $a -t $1 -e "ssh -A -t $arg -R 12639:localhost:12639 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) -R /tmp/clipservice.sock:/tmp/clipservice.sock 'while :; do touch -h /tmp/gentoo; sleep 60s; done & /tmp/gentoo/startprefix'"
 	kitty $a -T $1 ssh -t $arg -R 12639:localhost:12639 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) -R /tmp/gentoo/tmp/clipservice.sock:/tmp/clipservice.sock -R /tmp/gentoo/tmp/ssh_auth_sock:$SSH_AUTH_SOCK '/tmp/gentoo/startprefix'
