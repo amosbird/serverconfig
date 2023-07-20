@@ -6,6 +6,7 @@ export TERM=xterm-kitty
 export TMPDIR=/tmp/gentoo/tmp
 export TMUX=$TMPDIR/tmux-amos
 export SSH_AUTH_SOCK="$TMPDIR/ssh_auth_sock"
+export NPROC=$(nproc)
 
 if test -s /tmp/gentoo/etc/hostname; then
     export HOSTNAME=$(cat /tmp/gentoo/etc/hostname)

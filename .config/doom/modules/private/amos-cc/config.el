@@ -123,8 +123,8 @@
 (add-hook! (c-mode c++-mode) #'lsp)
 ;; (add-hook! (c-mode c++-mode) #'eglot-ensure)
 (after! lsp-clangd (set-lsp-priority! 'clangd 2))
-(setq lsp-clients-clangd-args '(
-                                "-j=8"
+(setq lsp-clients-clangd-args `(
+                                ,(format "-j=%s" (getenv "NPROC"))
                                 "--log=error"
                                 "--malloc-trim"
                                 "--background-index"
