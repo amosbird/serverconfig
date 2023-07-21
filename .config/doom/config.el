@@ -20,6 +20,8 @@
 ;; (advice-add #'+vc-gutter-update-h :override #'ignore)
 ;; (advice-add #'+vc-gutter-init-maybe-h :override #'ignore)
 
+(use-package! deadgrep)
+
 (use-package! speed-type
   :defer
   :config

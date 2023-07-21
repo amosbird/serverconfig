@@ -46,6 +46,7 @@
 (package! visual-fill-column)
 (package! yapfify)
 (package! thrift-mode)
+(package! deadgrep)
 
 (package! rmsbolt :recipe (:host gitlab :repo "jgkamat/rmsbolt"))
 (package! cc-playground :recipe (:host github :repo "amosbird/cc-playground" :files ("*.el" "templates")))
