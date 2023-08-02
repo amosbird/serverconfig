@@ -20,16 +20,16 @@
   (add-to-list 'auto-mode-alist '("\\.h\\'" . +cc-c-c++-objc-mode))
 
   :config
-  (set-electric! '(c-mode c++-mode objc-mode java-mode) :chars '(?\n ?\} ?\{))
+  (set-electric! '(c-mode c++-mode c-ts-base-mode objc-mode java-mode) :chars '(?\n ?\} ?\{))
 
   (set-rotate-patterns! 'c++-mode
     :symbols '(("public" "protected" "private")
                ("class" "struct")))
 
   (set-company-backend!
-    '(c-mode c++-mode objc-mode))
+    '(c-mode c++-mode c-ts-base-mode objc-mode))
 
-  (set-ligatures! '(c-mode c++-mode)
+  (set-ligatures! '(c-mode c++-mode c-ts-base-mode)
                   ;; Functional
                   ;; :def "void "
                   ;; Types
@@ -46,19 +46,23 @@
                   :yield "#require")
 
   ;;; Better fontification (also see `modern-cpp-font-lock')
-  (add-hook! 'c-mode-common-hook
+  (add-hook! (c-mode c++-mode) #'+cc|fontify-constants)
+  (setq-default c-noise-macro-names '("constexpr"))
+
+  (add-hook! (c-mode-common c-ts-base-mode)
     (modify-syntax-entry ?_ "w")
     (rainbow-delimiters-mode +1)
+
+    (setq-local c-ts-mode-indent-offset 4
+                treesit-font-lock-level 4)
+    (treesit-font-lock-recompute-features)
 
     (when-let ((p (getenv "envprompt")))
       (if (string= p "CC-Playground")
           (cc-playground-mode +1))))
-  (add-hook! (c-mode c++-mode) #'+cc|fontify-constants)
-  (setq-default c-noise-macro-names '("constexpr"))
-
 
   ;;; Keybindings
-  (map! (:map (c-mode-map c++-mode-map)
+  (map! (:map (c-mode-map c++-mode-map c-ts-base-mode-map)
          "<" nil
          ">" nil
          :i "RET"      #'+cc-append-comment-line
@@ -78,15 +82,16 @@
          :n "M-o"      #'lsp-ui-sideline-mode
          "C-c i"       #'ccls/includes
          "C-c I"       (cmd! (ccls/includes t))))
-  (sp-with-modes '(c++-mode objc-mode)
+  (sp-with-modes '(c++-mode objc-mode c-ts-base-mode)
     (sp-local-pair "<" ">"
                    :when '(+cc-sp-point-is-template-p +cc-sp-point-after-include-p)
                    :post-handlers '(("| " "SPC"))))
 
-  (sp-with-modes '(c-mode c++-mode objc-mode java-mode)
+  (sp-with-modes '(c-mode c++-mode c-ts-base-mode objc-mode java-mode)
     (sp-local-pair "<" ">" :actions :rem)
     (sp-local-pair "{" nil :post-handlers '(:add +amos-cc-brace-indent))
     (sp-local-pair "/*!" "*/" :post-handlers '(("||\n[i]" "RET") ("[d-1]< | " "SPC")))))
+
 
 (defun +amos-cc-brace-indent (id action _)
   (when (and (eq action 'insert))
@@ -120,16 +125,14 @@
   :hook (c++-mode . modern-c++-font-lock-mode)
   :defer)
 
-(add-hook! (c-mode c++-mode) #'lsp)
+(add-hook! (c-mode c++-mode c-ts-base-mode) #'lsp)
 ;; (add-hook! (c-mode c++-mode) #'eglot-ensure)
 (after! lsp-clangd (set-lsp-priority! 'clangd 2))
 (setq lsp-clients-clangd-args `(
-                                ,(format "-j=%s" (getenv "NPROC"))
                                 "--log=error"
                                 "--malloc-trim"
                                 "--background-index"
                                 "--clang-tidy"
-                                "--cross-file-rename"
                                 "--completion-style=detailed"
                                 "--pch-storage=memory"
                                 "--header-insertion=never"
@@ -151,12 +154,10 @@
   (add-to-list 'eglot-server-programs
                '((c-mode c++-mode)
                  . ("clangd"
-                    "-j=8"
                     "--log=error"
                     "--malloc-trim"
                     "--background-index"
                     "--clang-tidy"
-                    "--cross-file-rename"
                     "--completion-style=detailed"
                     "--pch-storage=memory"
                     "--header-insertion=never"
@@ -214,7 +215,7 @@ Only works with clangd."
                     )))
   )
 (add-hook! (c-mode c++-mode) #'+amos|remap-cpp-faces)
-(add-hook! (c-mode c++-mode) #'tree-sitter-mode)
+;; (add-hook! (c-mode c++-mode) #'tree-sitter-mode)
 ;; (after! tree-sitter
   ;; (global-tree-sitter-mode 1)
   ;; )
@@ -302,7 +303,7 @@ Only works with clangd."
                                    (statement-cont . +cc-llvm-lineup-statement)))))
 
 (defun +amos|iedit-mode-hook (&rest _)
-  (when (memq major-mode '(c-mode c++-mode))
+  (when (memq major-mode '(c-mode c++-mode c-ts-base-mode))
     (advice-add #'lsp-on-change :override #'ignore)
     (advice-add #'lsp-before-change :override #'ignore)
     (advice-add #'jit-lock-after-change :override #'ignore)
@@ -313,7 +314,7 @@ Only works with clangd."
     )
   t)
 (defun +amos|iedit-mode-hook-after (&rest _)
-  (when (memq major-mode '(c-mode c++-mode))
+  (when (memq major-mode '(c-mode c++-mode c-ts-base-mode))
     (doom-modeline-update-buffer-file-state-icon)
     (doom-modeline-update-buffer-file-name)
     (advice-add #'doom-modeline-update-buffer-file-name :override #'ignore)
@@ -326,7 +327,7 @@ Only works with clangd."
   (add-hook 'after-change-functions #'+amos|iedit-mode-hook-after nil t))
 
 (defun +amos|iedit-mode-end-hook ()
-  (when (memq major-mode '(c-mode c++-mode))
+  (when (memq major-mode '(c-mode c++-mode c-ts-base-mode))
     (lsp-on-revert)
     (advice-remove #'lsp-on-change #'ignore)
     (advice-remove #'lsp-before-change #'ignore)
@@ -346,3 +347,4 @@ Only works with clangd."
 
 ;; maybe useful?
 ;; (add-hook! (c-mode c++-mode) (setq iedit-auto-bufferring t))
+

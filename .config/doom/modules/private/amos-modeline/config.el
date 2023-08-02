@@ -91,3 +91,12 @@
   (doom-modeline-set-modeline 'amos))
 
 (advice-add #'doom-modeline-auto-set-modeline :override #'+amos-setup-custom-doom-modeline-a)
+
+;; ignore window-font-height which will call select-window which calls evil-set-curosr
+(defun +amos-window-font-height-a (&rest _)
+  1)
+
+(window-parameter (selected-window) 'popon-list)
+(advice-add #'window-font-height :override #'+amos-window-font-height-a)
+
+(setq after-focus-change-function #'ignore) ; it doens't make sense to update modeline

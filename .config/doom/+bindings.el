@@ -155,8 +155,8 @@
       :i "M-i"                    #'yas-insert-snippet
       ;; :n "M-,"                    #'+amos/flycheck-previous-error
       ;; :n "M-."                    #'+amos/flycheck-next-error
-      :n "M-,"                    #'flymake-goto-prev-error
-      :n "M-."                    #'flymake-goto-next-error
+      :n "M-,"                    (cmd! (let ((evil-move-beyond-eol t)) (flymake-goto-prev-error 1))) ; no interactive
+      :n "M-."                    (cmd! (let ((evil-move-beyond-eol t)) (flymake-goto-next-error 1))) ; no interactive
       :n "M-p"                    #'evil-multiedit-match-symbol-and-prev
       :n "M-n"                    #'evil-multiedit-match-symbol-and-next
       :n "M-y"                    #'+amos/yank-flymake-error
@@ -778,13 +778,13 @@
 (defun +amos/run-script () (interactive) (evil-normal-state) (compile (buffer-file-name) t))
 
 (after! sh-script
-  (define-key sh-mode-map (kbd "<C-return>") #'+amos/run-script))
+  (define-key sh-base-mode-map (kbd "<C-return>") #'+amos/run-script))
 
 (after! fish-mode
   (define-key fish-mode-map (kbd "<C-return>") #'+amos/run-script))
 
 (after! python
-  (define-key python-mode-map (kbd "<C-return>") #'+amos/run-script))
+  (define-key python-base-mode-map (kbd "<C-return>") #'+amos/run-script))
 
 (after! lua-mode
   (define-key lua-mode-map (kbd "<C-return>") #'+amos/run-script))

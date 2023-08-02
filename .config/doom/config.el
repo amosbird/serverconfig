@@ -20,6 +20,13 @@
 ;; (advice-add #'+vc-gutter-update-h :override #'ignore)
 ;; (advice-add #'+vc-gutter-init-maybe-h :override #'ignore)
 
+(after! checkdoc
+    (add-to-list 'evil-buffer-regexps `(,(regexp-quote checkdoc-diagnostic-buffer) . nil)))
+
+(use-package! treesit-auto
+  :config
+  (global-treesit-auto-mode))
+
 (use-package! deadgrep)
 
 (use-package! speed-type
@@ -461,6 +468,9 @@ This predicate is only tested on \"insert\" action."
                                         (browse-url-osc url _new-window)))))
 
 (defvar server-visit-file nil)
+
+(custom-set-faces!
+ `(font-lock-number-face :foreground ,(doom-color 'numbers)))
 
 (setq recenter-redisplay nil)
 (remove-hook! 'kill-emacs-query-functions #'doom-quit-p)
@@ -4416,6 +4426,10 @@ See `project-local-get' for the parameter PROJECT."
 (use-package! centered-cursor-mode
   :defer)
 
+(use-package! treemacs-nerd-icons
+  :config
+  (treemacs-load-theme "nerd-icons"))
+
 (defun +amos-swiper-isearch-a (orig-fn &rest args)
   (let (evil-ex-search-persistent-highlight)
     (apply orig-fn args)))
@@ -4587,6 +4601,8 @@ See `project-local-get' for the parameter PROJECT."
   (+amos-ignore-repeat "lsp" "+lsp"))
 (after! flycheck
   (+amos-ignore-repeat "flycheck"))
+(after! flymake
+  (+amos-ignore-repeat "flymake"))
 (after! git-gutter
   (+amos-ignore-repeat "git-gutter"))
 (after! git-timemachine

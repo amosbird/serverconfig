@@ -1,0 +1,4 @@
+If:
+  PathMatch: .*\.(asm|s)$
+Index:
+  Background: Skip

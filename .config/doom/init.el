@@ -13,6 +13,7 @@
        nav-flash
        unicode ;; for mu4e
        popup
+       (treemacs +lsp)
 
        :editor
        (evil +everywhere)
@@ -41,7 +42,7 @@
        rgb
        biblio
        ansible
-       tree-sitter
+       ;; tree-sitter
        (lookup)
 
        :lang
