@@ -6,7 +6,6 @@
 ;; (load! "+flycheck")
 
 (require 'dash)
-(require 'ivy)
 (require 'evil-multiedit)
 (require 's)
 (require 'company) ; it loads company-lsp which loads lsp
@@ -14,14 +13,47 @@
 (setq tmux-p (getenv "TMUX"))
 (setq gui-p (getenv "GUI"))
 
+(minibuffer-depth-indicate-mode +1)
 (setq resize-mini-windows 'grow-only)
 ;; (advice-add #'realign-mode :override #'ignore)
 ;; (advice-add #'realign-windows :override #'ignore)
 ;; (advice-add #'+vc-gutter-update-h :override #'ignore)
 ;; (advice-add #'+vc-gutter-init-maybe-h :override #'ignore)
 
-(after! checkdoc
-    (add-to-list 'evil-buffer-regexps `(,(regexp-quote checkdoc-diagnostic-buffer) . nil)))
+(setq evil-default-cursor #'ignore)
+(add-to-list 'evil-buffer-regexps `(
+                                    ,(rx (or
+                                         " *checkdoc-temp*"
+                                         " *eldoc*"
+                                         " *string-output*"
+                                         " *string-pixel-width*"
+                                         " *temp file*"
+                                         " *temp*"
+                                         " *elisp-flymake-byte-compile*"
+                                         "*gcc-flymake*"
+                                         ;; "*lsp-log*"
+                                         "*envrc*"
+                                         ;; "*Shell Command Output*"
+                                         "*Style Warnings*"
+                                         "*Native-compile-Log*"
+                                         ))
+                                    .
+                                    nil))
+
+(defun +amos-flymake-diagnostics-a (orig-fun &rest args)
+  (if (evil-insert-state-p)
+      nil
+    (apply orig-fun args)))
+(advice-add 'flymake-diagnostics :around #'+amos-flymake-diagnostics-a)
+
+(defun +amos-get-buffer-create-a (orig-fun &rest args)
+  ;; (trace-values args)
+  (message "%s" (prin1 orig-fun))
+  (message "%s" (prin1 args))
+  (apply orig-fun args)
+  )
+(advice-add #'get-buffer-create :around #'+amos-get-buffer-create-a)
+(advice-remove #'get-buffer-create #'+amos-get-buffer-create-a)
 
 (use-package! treesit-auto
   :config
@@ -51,17 +83,6 @@
   :config
   (dired-quick-sort-setup))
 
-(use-package! direnv
-  :config
-  (setq direnv-show-paths-in-summary nil)
-  (direnv-mode +1)
-  (add-hook! 'after-save-hook (if (string= (file-name-nondirectory buffer-file-name) ".envrc") (direnv-update-environment)))
-  (defun +amos/direnv-reload ()
-    (interactive)
-    (shell-command! "direnv allow")
-    (direnv-update-environment)
-    (direnv-mode +1)))
-
 (use-package! cc-playground
   :init
   (put 'cc-exec 'safe-local-variable #'stringp)
@@ -76,7 +97,6 @@
          ("C-c b" . cc-playground-bench)
          ("C-c d" . cc-playground-debug)
          ("C-c t" . cc-playground-debug-test)
-         ("C-c l" . cc-playground-ivy-add-library-link)
          ("C-c c" . cc-playground-change-compiler)
          ("C-c o" . cc-playground-switch-optimization-flag)
          ("C-c f" . cc-playground-add-compilation-flags))
@@ -119,33 +139,33 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   :config
   (add-to-list 'auto-mode-alist '("\\.thrift\\'" . thrift-mode)))
 
-(use-package! go-playground
-  :defer
-  :bind (:map go-playground-mode-map
-         ("<f8>" . go-playground-rm)))
+;; (use-package! go-playground
+;;   :defer
+;;   :bind (:map go-playground-mode-map
+;;          ("<f8>" . go-playground-rm)))
 
-(use-package! rust-playground
-  :defer
-  :bind (:map rust-playground-mode-map
-         ("<f8>" . rust-playground-rm)))
+;; (use-package! rust-playground
+;;   :defer
+;;   :bind (:map rust-playground-mode-map
+;;          ("<f8>" . rust-playground-rm)))
 
-(use-package! py-playground
-  :defer
-  :config
-  (dolist (x '(py-playground-exec py-playground-debug))
-    (advice-add x :before #'evil-normal-state))
-  :bind (:map py-playground-mode-map
-         ("<f8>" . py-playground-rm) ; terminal
-         ("S-RET" . py-playground-rm) ; gui
-         ("C-c r" . py-playground-add-or-modify-tag)
-         ("C-c d" . py-playground-debug)))
+;; (use-package! py-playground
+;;   :defer
+;;   :config
+;;   (dolist (x '(py-playground-exec py-playground-debug))
+;;     (advice-add x :before #'evil-normal-state))
+;;   :bind (:map py-playground-mode-map
+;;          ("<f8>" . py-playground-rm) ; terminal
+;;          ("S-RET" . py-playground-rm) ; gui
+;;          ("C-c r" . py-playground-add-or-modify-tag)
+;;          ("C-c d" . py-playground-debug)))
 
 (use-package! gitattributes-mode
   :defer)
 
-(use-package! page-break-lines
-  :init
-  (global-page-break-lines-mode +1))
+;; (use-package! page-break-lines
+;;   :init
+;;   (global-page-break-lines-mode +1))
 
 (use-package! adoc-mode
   :mode "\\.adoc$")
@@ -409,7 +429,6 @@ This predicate is only tested on \"insert\" action."
            :unless '(sp-point-before-word-p sp-point-before-same-p)))
 
 (after! cus-edit (evil-set-initial-state 'Custom-mode 'normal))
-(after! ivy (evil-set-initial-state 'ivy-occur-grep-mode 'normal))
 (after! compile (evil-set-initial-state 'compilation-mode 'normal))
 
 (defun +amos|init-frame (&optional frame)
@@ -470,7 +489,11 @@ This predicate is only tested on \"insert\" action."
 (defvar server-visit-file nil)
 
 (custom-set-faces!
- `(font-lock-number-face :foreground ,(doom-color 'numbers)))
+  `(font-lock-number-face :foreground ,(doom-color 'numbers))
+  '(font-lock-function-call-face
+    :inherit font-lock-function-name-face
+    :foreground "hot pink"
+    :background "black"))
 
 (setq recenter-redisplay nil)
 (remove-hook! 'kill-emacs-query-functions #'doom-quit-p)
@@ -594,27 +617,6 @@ This predicate is only tested on \"insert\" action."
   (let (evil-mode-map-alist)
     (call-interactively (key-binding (this-command-keys)))))
 
-(defun +amos-switch-buffer-matcher-a (regexp candidates)
-  "Return REGEXP matching CANDIDATES.
-Skip buffers that match `ivy-ignore-buffers'."
-  (let ((res (ivy--re-filter regexp candidates)))
-    (if (or (null ivy-use-ignore)
-            (null ivy-ignore-buffers)
-            (string-match "\\`\\." ivy-text))
-        res
-      (or (cl-remove-if
-           (lambda (buf)
-             (cl-find-if
-              (lambda (f-or-r)
-                (if (functionp f-or-r)
-                    (funcall f-or-r buf)
-                  (string-match-p f-or-r buf)))
-              ivy-ignore-buffers))
-           res)
-          (and (eq ivy-use-ignore t)
-               res)))))
-(advice-add #'ivy--switch-buffer-matcher :override #'+amos-switch-buffer-matcher-a)
-
 ;; recenter buffer when switching windows
 (defun +amos-update-window-buffer-list-h ()
   (walk-window-tree
@@ -628,20 +630,30 @@ Skip buffers that match `ivy-ignore-buffers'."
          (setf (window-parameter window 'my-last-buffer) new-buffer))))))
 (add-hook! 'window-configuration-change-hook #'+amos-update-window-buffer-list-h)
 
-(defun +amos-evil-ex-search-before-a (&rest _)
-  (if (thing-at-point 'symbol) (leap-set-jump)))
-(advice-add #'evil-ex-start-word-search :before #'+amos-evil-ex-search-before-a)
-(advice-add #'evil-visualstar/begin-search :before #'+amos-evil-ex-search-before-a)
+(defun +amos-goto-error (&optional prev)
+  (catch 'return
+    (dolist (walk-windows-window (window-list-1))
+      (with-selected-window walk-windows-window
+        (with-current-buffer (window-buffer walk-windows-window)
+          (when (eq major-mode 'grep-mode)
+            (let ((inhibit-message t))
+              (if prev (previous-error)
+                (next-error)))
+            (throw 'return nil))))
+      )
+    (if prev (windmove-up)
+      (windmove-down)))
+  )
 
-(defun +amos/counsel-rg-projectile ()
+(defun +amos/goto-previous-error ()
   (interactive)
-  (unless (doom-project-p)
-    (user-error "You're not in a project"))
-  (counsel-rg nil (doom-project-root)))
+  (+amos-goto-error t)
+  )
 
-(defun +amos/counsel-rg-cur-dir ()
+(defun +amos/goto-next-error ()
   (interactive)
-  (counsel-rg nil default-directory t))
+  (+amos-goto-error)
+  )
 
 (use-package! yapfify
   :after python)
@@ -777,32 +789,6 @@ With negative N, comment out original line and use the absolute value."
         (forward-line 1)
         (forward-char pos)))))
 
-(defun +amos/uniquify-lines ()
-  "Remove duplicate adjacent lines in a region or the current buffer"
-  (interactive)
-  (save-excursion
-    (save-restriction
-      (let* ((region-active (or (region-active-p) (evil-visual-state-p)))
-             (beg (if region-active (region-beginning) (point-min)))
-             (end (if region-active (region-end) (point-max))))
-        (goto-char beg)
-        (while (re-search-forward "^\\(.*\n\\)\\1+" end t)
-          (replace-match "\\1"))))))
-
-(defun +amos/sort-lines (&optional reverse)
-  "Sort lines in a region or the current buffer.
-A non-nil argument sorts in reverse order."
-  (interactive "P")
-  (let* ((region-active (or (region-active-p) (evil-visual-state-p)))
-         (beg (if region-active (region-beginning) (point-min)))
-         (end (if region-active (region-end) (point-max))))
-    (sort-lines reverse beg end)))
-
-(defun +amos/sort-lines-reverse ()
-  "Sort lines in reverse order, in a region or the current buffer."
-  (interactive)
-  (+amos/sort-lines -1))
-
 (defun +amos/sort-lines-by-column (&optional reverse)
   "Sort lines by the selected column,
 using a visual block/rectangle selection.
@@ -825,35 +811,8 @@ using a visual block/rectangle selection."
   (interactive)
   (+amos/sort-lines-by-column -1))
 
-(defun swap-args (fun)
-  (if (not (equal (interactive-form fun)
-                  '(interactive "P")))
-      (error "Unexpected")
-    (advice-add
-     fun
-     :around
-     (lambda (x &rest args)
-       "Swap the meaning the universal prefix argument"
-       (if (called-interactively-p 'any)
-           (apply x (cons (not (car args)) (cdr args)))
-         (apply x args))))))
-
 (after! evil-surround
   (setq-default evil-surround-pairs-alist (append '((?` . ("`" . "`")) (?~ . ("~" . "~"))) evil-surround-pairs-alist)))
-
-(defun +amos-ivy-rich-switch-buffer-pad-a (str len &optional left)
-  "Improved version of `ivy-rich-switch-buffer-pad' that truncates long inputs."
-  (let ((real-len (length str)))
-    (cond
-     ((< real-len len) (if left
-                           (concat (make-string (- len real-len) ? ) str)
-                         (concat str (make-string (- len real-len) ? ))))
-     ((= len real-len) str)
-     ((< len 1) str)
-     (t (concat (substring str 0 (- len 1)) "…")))))
-
-;; Override the original function using advice
-(advice-add 'ivy-rich-switch-buffer-pad :override #'+amos-ivy-rich-switch-buffer-pad-a)
 
 (evil-define-motion +amos-evil-beginning-of-line-a ()
   "Move the cursor to the beginning of the current line."
@@ -874,62 +833,6 @@ using a visual block/rectangle selection."
         (with-current-buffer b  ; go back to the current buffer, before-save-hook is now buffer-local
           (let ((before-save-hook (remove 'ws-butler-before-save before-save-hook)))
             (save-buffer)))))))
-
-(defun +amos/counsel-projectile-switch-project ()
-  (interactive)
-  (require 'counsel-projectile)
-  (ivy-read (projectile-prepend-project-name "Switch to project: ")
-            projectile-known-projects
-            :preselect (and (projectile-project-p)
-                            (abbreviate-file-name (projectile-project-root)))
-            :action #'+amos/find-file
-            :require-match t
-            :caller #'+amos/counsel-projectile-switch-project))
-
-(defun +amos/projectile-current-project-files ()
-  "Return a list of files for the current project."
-  (let* ((directory (projectile-project-root))
-         (files (and projectile-enable-caching
-                     (gethash directory projectile-projects-cache))))
-    ;; nothing is cached
-    (unless files
-      (when projectile-enable-caching
-        (message "Empty cache. Projectile is initializing cache..."))
-      (setq files
-            (projectile-adjust-files
-             directory
-             (projectile-project-vcs directory)
-             (split-string
-              (shell-command-to-string
-               (concat "cd " (projectile-project-root) "; fd --hidden -E '.git'")) "\n")))
-      ;; cache the resulting list of files
-      (when projectile-enable-caching
-        (projectile-cache-project (projectile-project-root) files)))
-    files))
-
-(defun +amos/projectile-find-file-action (file)
-  "Find FILE and run `projectile-find-file-hook'."
-  (find-file (projectile-expand-root file)))
-
-(defun +amos/projectile-find-file (&optional arg)
-  "Jump to a file in the current project.
-
-With a prefix ARG, invalidate the cache first."
-  (interactive "P")
-  (require 'counsel-projectile)
-  (projectile-maybe-invalidate-cache arg)
-  (ivy-read (projectile-prepend-project-name "Find file: ")
-            (+amos/projectile-current-project-files)
-            ;; (projectile-current-project-files)
-            ;; :matcher counsel-projectile-find-file-matcher
-            :require-match t
-            :sort t
-            :action #'+amos/projectile-find-file-action
-            :caller #'+amos/projectile-find-file))
-
-(advice-add #'projectile-cache-files-find-file-hook :override #'ignore)
-(after! projectile
-  (advice-remove 'delete-file #'delete-file-projectile-remove-from-cache))
 
 (defvar switch-buffer-functions
   nil
@@ -976,166 +879,6 @@ This function should be hooked to `buffer-list-update-hook'."
 
 (add-hook! 'after-save-hook #'executable-make-buffer-file-executable-if-script-p)
 
-(defvar +amos--ivy-regex-hash
-  (make-hash-table :test #'equal)
-  "Store pre-computed regex.")
-
-(defun +amos-ivy-regex-half-quote-a (str &optional greedy)
-  "Re-build regex pattern from STR in case it has a space.
-When GREEDY is non-nil, join words in a greedy way."
-  (let ((hashed (unless greedy
-                  (gethash str +amos--ivy-regex-hash))))
-    (if hashed
-        (prog1 (cdr hashed)
-          (setq ivy--subexps (car hashed)))
-      (when (string-match "\\([^\\]\\|^\\)\\\\$" str)
-        (setq str (substring str 0 -1)))
-      (cdr (puthash str
-                    (let ((subs (ivy--split str)))
-                      (if (= (length subs) 1)
-                          (cons (setq ivy--subexps 0) (regexp-quote (car subs)))
-                        (cons (setq ivy--subexps (length subs))
-                              (mapconcat (lambda (s) (format "\\(%s\\)" (regexp-quote s))) subs (if greedy ".*" ".*?")))))
-                    +amos--ivy-regex-hash)))))
-(advice-add #'ivy--regex :override #'+amos-ivy-regex-half-quote-a)
-
-(defvar +amos-escape-ivy-regex "[]^$?+.*[]")
-(defun +amos-escape-ivy-string (str)
-  (pcase str
-    ("\\" "\\\\")
-    ("^" "\\^")
-    ("$" "\\$")
-    ("." "\\.")
-    ("+" "\\+")
-    ("?" "\\?")
-    ("*" "\\*")
-    ("[" "\\[")
-    ("]" "\\]")))
-
-(defvar +amos-escape-counsel-regex "[]^[$+?.*({)}]")
-(defun +amos-escape-counsel-string (str)
-  (pcase str
-    ("." "\\.")
-    ("^" "\\^")
-    ("*" "\\*")
-    ("?" "\\?")
-    ("$" "\\$")
-    ("+" "\\+")
-    ("[" "\\[")
-    ("]" "\\]")
-    ("{" "\\{")
-    ("}" "\\}")
-    (")" "\\)")
-    ("(" "\\(")))
-
-(defun +amos-ivy-split (str)
-  "Split STR into list of substrings bounded by spaces.
-Single spaces act as splitting points.  Consecutive spaces
-\"quote\" their preceding spaces, i.e., guard them from being
-split.  This allows the literal interpretation of N spaces by
-inputting N+1 spaces.  Any substring not constituting a valid
-regexp is passed to `regexp-quote'."
-  (let ((len (length str))
-        start0
-        (start1 0)
-        res s
-        match-len)
-    (while (and (string-match " +" str start1)
-                (< start1 len))
-      (if (and (> (match-beginning 0) 2)
-               (string= "[^" (substring
-                              str
-                              (- (match-beginning 0) 2)
-                              (match-beginning 0))))
-          (progn
-            (setq start0 start1)
-            (setq start1 (match-end 0)))
-        (setq match-len (- (match-end 0) (match-beginning 0)))
-        (if (= match-len 1)
-            (progn
-              (when start0
-                (setq start1 start0)
-                (setq start0 nil))
-              (push (substring str start1 (match-beginning 0)) res)
-              (setq start1 (match-end 0)))
-          (setq str (replace-match
-                     (make-string (1- match-len) ?\ )
-                     nil nil str))
-          (setq start0 (or start0 start1))
-          (setq start1 (1- (match-end 0))))))
-    (if start0
-        (push (substring str start0) res)
-      (setq s (substring str start1))
-      (unless (= (length s) 0)
-        (push s res)))
-    (nreverse res)))
-
-(defun +amos-counsel-ag-regex (str &optional greedy)
-  "Re-build regex pattern from STR in case it has a space.
-When GREEDY is non-nil, join words in a greedy way."
-  (let ((hashed (unless greedy
-                  (gethash str ivy--regex-hash))))
-    (if hashed
-        (progn
-          (setq ivy--subexps (car hashed))
-          (cdr hashed))
-      (setq str (ivy--trim-trailing-re str))
-      (cdr (puthash str
-                    (let ((subs (+amos-ivy-split str)))
-                      (if (= (length subs) 1)
-                          (progn
-                            (cons
-                             (setq ivy--subexps 0)
-                             (setq x (replace-regexp-in-string +amos-escape-counsel-regex #'+amos-escape-counsel-string (car subs) t t))))
-                        (cons
-                         (setq ivy--subexps (length subs))
-                         (mapconcat
-                          (lambda (x)
-                            (replace-regexp-in-string +amos-escape-counsel-regex #'+amos-escape-counsel-string x t t))
-                          subs
-                          (if greedy ".*" ".*?")))))
-                    ivy--regex-hash)))))
-
-(defun +amos-counsel-rg-function (string)
-  "Grep in the current directory for STRING."
-  (let* ((command-args (counsel--split-command-args string))
-         (search-term (cdr command-args)))
-    (or
-     (let ((ivy-text search-term))
-       (ivy-more-chars))
-     (let* ((default-directory (ivy-state-directory ivy-last))
-            (regex (+amos-counsel-ag-regex search-term))
-            (subs (+amos-ivy-split search-term)))
-       (setq ivy--old-re (mapconcat
-                          (lambda (x)
-                            (format "\\(%s\\)" (replace-regexp-in-string +amos-escape-ivy-regex #'+amos-escape-ivy-string x t t)))
-                          subs ".*"))
-       (counsel--async-command (append counsel-rg-args `("--" ,regex ".")))
-       nil))))
-
-(cl-defun +amos-counsel-rg-a (&optional initial-input initial-directory extra-ag-args ag-prompt &key caller)
-  (interactive)
-  (setq counsel--regex-look-around t)
-  (let ((default-directory (or initial-directory (counsel--git-root) default-directory))
-        (ivy-use-selectable-prompt nil))
-    (ivy-read "amos-rg: "
-              (if extra-ag-args
-                  (lambda (string)
-                    (let ((counsel-rg-args (append counsel-rg-args '("-uu"))))
-                      (+amos-counsel-rg-function string)))
-                #'+amos-counsel-rg-function)
-              :initial-input initial-input
-              :dynamic-collection t
-              :keymap counsel-ag-map
-              :history 'counsel-git-grep-history
-              :action #'counsel-git-grep-action
-              :unwind (lambda ()
-                        (counsel-delete-process)
-                        (swiper--cleanup))
-              :caller (or caller 'counsel-rg))))
-
-(advice-add #'counsel-rg :override #'+amos-counsel-rg-a)
-
 (defun +amos*evil-transient-mark (&optional arg)
   "Toggle Transient Mark mode.
 Ensure that the region is properly deactivated.
@@ -1150,16 +893,6 @@ Enable with positive ARG, disable with negative ARG."
       (evil-active-region -1)
       (transient-mark-mode 1)))))
 (advice-add #'evil-transient-mark :override #'+amos*evil-transient-mark)
-
-(defun +amos-counsel-ag-occur-a ()
-  (ivy-occur-grep-mode)
-  (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
-                  default-directory))
-  (insert (format "%d candidates:\n" (length ivy--all-candidates)))
-  (ivy--occur-insert-lines ivy--all-candidates))
-(advice-add #'counsel-ag-occur :override #'+amos-counsel-ag-occur-a)
-
-(defvar counsel-rg-args '("rgemacs" "-S" "-M" "500" "--no-messages" "--no-heading" "--line-number" "--color" "never"))
 
 (evil-define-command ab-char-inc ()
   (save-excursion
@@ -1190,21 +923,6 @@ Enable with positive ARG, disable with negative ARG."
     (evil-insert-state)
     (setq buffer-offer-save nil)
     buf))
-
-(evil-define-command +amos/ivy-complete-dir ()
-  (let ((enable-recursive-minibuffers t)
-        (history (+amos--get-all-jump-dirs))
-        (old-last ivy-last)
-        (ivy-recursive-restore nil))
-    (ivy-read "Choose-directory: "
-              history
-              :action (lambda (x)
-                        (setq x (concat x "/"))
-                        (ivy--reset-state
-                         (setq ivy-last old-last))
-                        (delete-minibuffer-contents)
-                        (insert (substring-no-properties x))
-                        (ivy--cd-maybe)))))
 
 (defun +amos/smart-jumper (&optional f)
   (let* ((dir (if f -1 (forward-char) 1))
@@ -1593,8 +1311,15 @@ it will restore the window configuration to prior to full-framing."
   ;; (when git-gutter-mode (ignore (call-interactively #'git-gutter)))
   nil)
 
+(defun magit-quit-maybe ()
+  (interactive)
+  (when (derived-mode-p 'magit-mode)
+    (+magit/quit))
+  nil)
+
 (add-hook! 'doom-escape-hook #'save-buffer-maybe)
 (add-hook! 'doom-escape-hook #'git-gutter-maybe)
+(add-hook! 'doom-escape-hook #'magit-quit-maybe)
 
 (defun my-reload-dir-locals-for-all-buffer-in-this-directory ()
   "For every buffer with the same `default-directory` as the
@@ -1631,121 +1356,8 @@ current buffer's, reload dir-locals."
     (lock-buffer "/tmp/emacs.lock"))
   (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
 
-(defvar +amos-last-xref-list nil)
-(defun +amos/ivy-xref-make-collection (xrefs)
-  "Transform XREFS into a collection for display via `ivy-read'."
-  (let (collection last-xref-list)
-    (dolist (xref xrefs)
-      (let* ((summary (xref-item-summary xref))
-             (location  (xref-item-location xref))
-             (line (xref-location-line location))
-             (file (xref-location-group location))
-             (candidate
-              (concat
-               (propertize
-                (concat
-                 (if ivy-xref-use-file-path
-                     file
-                   (file-name-nondirectory file))
-                 (if (integerp line)
-                     (format ":%d: " line)
-                   ": "))
-                'face 'compilation-info)
-               (progn
-                 (when ivy-xref-remove-text-properties
-                   (set-text-properties 0 (length summary) nil summary))
-                 summary))))
-        (push `(,candidate . ,location) collection)))
-    (setq +amos-last-xref-list (nreverse last-xref-list))
-    (nreverse collection)))
-
-(defun +amos-ivy-xref (xrefs kind)
-  (if (= 1 (length xrefs))
-      (dolist (xref xrefs)
-        (with-slots (summary location) xref
-          (let* ((marker (xref-location-marker location))
-                 (buf (marker-buffer marker)))
-            (leap-set-jump)
-            (switch-to-buffer buf)
-            (goto-char marker))))
-    (let ((xref-pos (point))
-          (xref-buffer (current-buffer))
-          (default-directory (doom-project-root))
-          (success nil))
-      (ivy-read (concat "Find " (symbol-name kind) ": ") (+amos/ivy-xref-make-collection xrefs)
-                :unwind (lambda ()
-                          (unless success
-                            (switch-to-buffer xref-buffer)
-                            (goto-char xref-pos)
-                            (+amos/recenter)))
-                :action #'+amos-ivy-xref-action
-                :caller #'+amos-ivy-xref))))
-
-(defun +amos-ivy-xref-action (x)
-  (let ((location (cdr x)))
-    (let* ((marker (xref-location-marker location))
-           (buf (marker-buffer marker)))
-      (switch-to-buffer buf)
-      (with-ivy-window
-        (goto-char marker))
-      (unless (eq 'ivy-call this-command)
-        (setq success t)))))
-
-(defun +amos-xref--find-xrefs-a (input kind arg display-action)
-  (let ((xrefs (funcall (intern (format "xref-backend-%s" kind))
-                        (xref-find-backend)
-                        arg)))
-    (unless xrefs
-      (user-error "No %s found for: %s" (symbol-name kind) input))
-    (+amos-ivy-xref xrefs kind)))
-(advice-add #'xref--find-xrefs :override #'+amos-xref--find-xrefs-a)
-
-(defun +amos-ivy-xref-show-xrefs-a (fetcher alist)
-  (let* ((xrefs (if (functionp fetcher)
-                    ;; Emacs 27
-                    (or (assoc-default 'fetched-xrefs alist)
-                        (funcall fetcher))
-                  fetcher)))
-    (+amos-ivy-xref xrefs 'xref)))
-(advice-add #'ivy-xref-show-xrefs :override #'+amos-ivy-xref-show-xrefs-a)
-
 (after! recentf
-  (setq recentf-exclude '("/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
-
-(after! ivy
-  (setcdr (assq t ivy-format-functions-alist) #'ivy-format-function-line)
-  (setf (alist-get t ivy-re-builders-alist) 'ivy--regex-plus)
-  (dolist (command '(ccls/includes))
-    (setf (alist-get command ivy-re-builders-alist) 'ivy--regex-fuzzy))
-  (defun amos-recentf ()
-    (interactive)
-    (recentf-mode +1)
-    (ivy-read "Recentf: " (mapcar #'substring-no-properties recentf-list)
-              :action (lambda (f)
-                        (with-ivy-window
-                          (find-file f)))
-              :sort t
-              :caller 'counsel-recentf))
-  (ivy-set-actions
-   'amos-recentf
-   '(("j" find-file-other-window "other window")
-     ("f" find-file-other-frame "other frame")
-     ("x" counsel-find-file-extern "open externally")))
-
-  ;; SLOWWWWW
-  ;; (defun amos-recentf-sort-function (a b)
-  ;;   (let ((project-root (doom-project-root)))
-  ;;     (or (file-in-directory-p a project-root) (not (file-in-directory-p b project-root)))))
-  ;; (add-to-list 'ivy-sort-functions-alist '(counsel-recentf . amos-recentf-sort-function))
-
-  (dolist (cmd '(counsel-find-file +amos/counsel-projectile-switch-project))
-    (ivy-add-actions
-     cmd
-     '(("f" find-file-other-frame "other frame"))))
-  (dolist (cmd '(ivy-switch-buffer))
-    (ivy-add-actions
-     cmd
-     '(("f" switch-to-buffer-other-frame "other frame")))))
+  (setq recentf-exclude '("/$" "/tmp/sync-recentf-marker" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
 
 (defun +amos/redisplay-and-recenter (&rest _)
   (interactive)
@@ -1892,7 +1504,7 @@ representation of `NUMBER' is smaller."
 (defun set-eos! (modes &rest plist)
   (dolist (mode (doom-enlist modes))
     (push (cons mode plist) +amos-end-of-statement-regex)))
-(set-eos! '(c-mode c++-mode java-mode perl-mode js2-mode typescript-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
+(set-eos! '(c-mode c++-mode c-ts-mode c++-ts-mode java-mode perl-mode js2-mode typescript-mode) :regex-char '("[ \t\r\n\v\f]" "[[{(;]" ?\;))
 (set-eos! '(sql-mode) :regex-char '("[ \t\r\n\v\f]" ";" ?\;))
 (set-eos! '(emacs-lisp-mode) :regex-char "[ \t\r\n\v\f]")
 
@@ -1949,11 +1561,11 @@ representation of `NUMBER' is smaller."
   (interactive)
   (evil-visual-line (point-min) (point-max)))
 
-(defun +amos/projectile-find-other-file ()
+(defun +amos/find-other-file ()
   (interactive)
   (if (and (boundp 'cc-playground-mode) cc-playground-mode)
       (cc-switch-between-src-and-test)
-    (if (memq major-mode '(c-mode c++-mode))
+    (if (memq major-mode '(c-mode c++-mode c-ts-mode c++-ts-mode))
         (lsp-clangd-find-other-file)
       (projectile-find-other-file))))
 
@@ -2002,9 +1614,67 @@ representation of `NUMBER' is smaller."
         (reusable-frames . nil)))
 (map-put +popup-default-parameters 'modeline t)
 
-(set-popup-rules!
-  '(("^\\*"  :slot 1 :vslot -1 :select t)
-    ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit))
+(fset '+amos-set-popup-rules! (symbol-function 'set-popup-rules!))
+(advice-remove '+amos-set-popup-rules! #'ignore)
+
+(+amos-set-popup-rules!
+
+ '(("^\\*"  :slot 1 :vslot -1 :select t)
+   ("^ \\*" :slot 1 :vslot -1 :size +popup-shrink-to-fit))
+
+ '(("^\\*Completions" :ignore t)
+   ("^\\*Local variables\\*$" :vslot -1 :slot 1 :size +popup-shrink-to-fit)
+   ("^\\*\\(?:[Cc]ompil\\(?:ation\\|e-Log\\)\\|Messages\\)" :vslot -2 :size 0.3  :autosave t :quit t :ttl nil)
+   ("^\\*\\(?:doom \\|Pp E\\)" :vslot -3 :size +popup-shrink-to-fit :autosave t :select ignore :quit t :ttl 0)
+   ("^\\*doom:" :vslot -4 :size 0.35 :autosave t :select t :modeline t :quit nil :ttl t)
+   ("^\\*doom:\\(?:v?term\\|e?shell\\)-popup" :vslot -5 :size 0.35 :select t :modeline nil :quit nil :ttl nil)
+   ("^\\*\\(?:Wo\\)?Man " :size 0.5 :side right :vslot -6 :ttl 0 :quit t :select t)
+   ("^\\*Calc" :vslot -7 :side bottom :size 0.4 :select t :quit nil :ttl 0)
+   ("^\\*Customize" :slot 2 :side right :size 0.5 :select t :quit nil)
+   ("^ \\*undo-tree\\*" :slot 2 :side left :size 20 :select t :quit t)
+   ("^\\*\\([Hh]elp\\|Apropos\\)" :slot 2 :vslot -8 :size 0.42 :select t)
+   ("^\\*info\\*$" :slot 2 :vslot 2 :size 0.45 :select t)
+   ("^\\*diff-hl" :select nil :size +popup-shrink-to-fit)
+   ("^\\*git-gutter" :select nil :size +popup-shrink-to-fit)
+   ("^\\*vc-diff" :select nil)
+   ("^\\*vc-change" :select t))
+
+  '(("^\\*Warnings" :vslot 99 :size 0.25)
+    ("^\\*Backtrace" :vslot 99 :size 0.4 :quit nil)
+    ("^\\*CPU-Profiler-Report "    :side bottom :vslot 100 :slot 1 :height 0.4 :width 0.5 :quit nil)
+    ("^\\*Memory-Profiler-Report " :side bottom :vslot 100 :slot 2 :height 0.4 :width 0.5 :quit nil)
+    ("^\\*Process List\\*" :side bottom :vslot 101 :size 0.25 :select t :quit t)
+    ("^\\*\\(?:Proced\\|timer-list\\|Abbrevs\\|Output\\|Occur\\|unsent mail.*?\\|message\\)\\*" :ignore t))
+
+  '(("^\\*Org Links" :slot -1 :vslot -1 :size 2 :ttl 0)
+    ("^ ?\\*\\(?:Agenda Com\\|Calendar\\|Org Export Dispatcher\\)"
+     :slot -1 :vslot -1 :size #'+popup-shrink-to-fit :ttl 0)
+    ("^\\*Org \\(?:Select\\|Attach\\)" :slot -1 :vslot -2 :ttl 0 :size 0.25)
+    ("^\\*Org Agenda"     :ignore t)
+    ("^\\*Org Src"        :size 0.42  :quit nil :select t :autosave t :modeline t :ttl nil)
+    ("^\\*Org-Babel")
+    ("^\\*Capture\\*$\\|CAPTURE-.*$" :size 0.42 :quit nil :select t :autosave ignore))
+
+  '(("^ ?\\*Treemacs" :ignore t)
+    ("^\\*evil-registers" :size 0.3)
+    ("^\\*Command Line"   :size 8)
+    ("^\\*envrc\\*" :quit t :ttl 0)
+    ("^\\(?:\\*magit\\|magit:\\| \\*transient\\*\\)" :ignore t)
+    ("^\\*?[0-9]+:\\(?:new-\\|[0-9]+$\\)" :size 0.45 :modeline t :ttl 0 :quit nil)
+    ("^\\*\\(?:[^/]+/[^ ]+ #[0-9]+\\*$\\|Issues\\|Pull-Requests\\|forge\\)" :ignore t)
+    ("^\\*lsp-\\(help\\|install\\)" :size 0.35 :quit t :select t)
+    ((lambda (bufname _)
+       (when (boundp '+eval-repl-mode)
+         (buffer-local-value '+eval-repl-mode (get-buffer bufname))))
+     :ttl (lambda (buf)
+            (unless (plist-get +eval-repl-plist :persist)
+              (when-let (process (get-buffer-process buf))
+                (set-process-query-on-exit-flag process nil)
+                (kill-process process)
+                (kill-buffer buf))))
+     :size 0.25 :quit nil)
+    ("^\\*quickrun" :size 0.3 :ttl 0))
+
   '(("^\\*Completions" :slot -1 :vslot -2 :ttl kill-buffer)
     ("^\\*Warning*" :actions (+popup-display-buffer-stacked-side-window-fn))
     ("^\\*rmsbolt-output*" :side right :size 0.5 :ttl kill-buffer :select nil :quit t)
@@ -2013,7 +1683,6 @@ representation of `NUMBER' is smaller."
     ("^\\*compil\\(?:ation\\|e-Log\\)" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
     ("^\\*temp\\*" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
     ("^\\*\\(?:scratch\\|Messages\\)" :autosave t :ttl nil)
-    ("^\\*Man " :size 0.45 :vslot -6 :ttl kill-buffer :quit t :select t)
     ("^\\*doom \\(?:term\\|eshell\\)" :size 0.25 :vslot -10 :select t :quit nil :ttl kill-buffer)
     ("^\\*doom:" :vslot -20 :size 0.35 :autosave t :select t :modeline t :quit nil)
     ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)" :size +popup-shrink-to-fit :side right :ttl kill-buffer :select ignore)
@@ -2025,9 +1694,13 @@ representation of `NUMBER' is smaller."
     ;; `Info-mode'
     ("^\\*info\\*$" :slot 2 :vslot 2 :size 0.45 :ttl kill-buffer :select t)
     ("\\*TeX" :side right :size 0.4 :ttl kill-buffer)
+    ("^\\*Embark Writable Export" :actions (+popup-display-buffer-fullframe-fn) :quit current :select t)
+    ("^\\*Embark Export" :side bottom :size 0.35 :quit current :select t)
+    ("^\\*Embark Collect" :side right :size 0.5 :quit current :select t)
     ("^\\(?:\\*magit\\|magit:\\)" :ignore t)
-    ("\\[ Table \\]\\*" :side right :size 0.9 :select t :quit nil))
-  '(("^\\*Backtrace" :side right :size 0.5 :quit nil)))
+    ("\\[ Table \\]\\*" :side right :size 0.9 :select t :quit nil)
+    ("^\\*Backtrace" :side right :size 0.5 :quit current))
+  )
 
 (evil-define-command +amos-evil-visual-paste-a (count &optional register)
   "Paste over Visual selection."
@@ -2114,35 +1787,6 @@ representation of `NUMBER' is smaller."
         (run-hooks 'leap-post-jump-hook))
       result)))
 (advice-add #'+lookup--jump-to :override #'+amos-+lookup--jump-to-a)
-
-(defvar is-swiper-occur nil)
-(defun +amos-set-jump-point-maybe-a ()
-  (unless is-swiper-occur
-    (with-demoted-errors "Error: %S"
-      (when (and
-             (markerp +amos-ivy--origin)
-             (marker-buffer +amos-ivy--origin)
-             (eq ivy-exit 'done)
-             (not (equal (with-ivy-window (point-marker)) +amos-ivy--origin)))
-        (with-ivy-window
-          (with-current-buffer (marker-buffer +amos-ivy--origin)
-            (leap-set-jump +amos-ivy--origin))
-          (run-hooks 'leap-post-jump-hook))
-        (setq +amos-ivy--origin nil
-              leaped t))
-      (unless (or ivy-exit ivy-recursive-last)
-        (with-ivy-window
-          (run-hooks 'leap-post-jump-hook)))))
-  (setq is-swiper-occur nil))
-(advice-add #'ivy-call :after #'+amos-set-jump-point-maybe-a)
-
-(defun +amos|record-position-maybe ()
-  (with-ivy-window
-    (setq +amos-ivy--origin (point-marker))))
-
-(after! ivy
-  (setq ivy-hooks-alist '((t . +amos|record-position-maybe))))
-
 (advice-add #'better-jumper-jump-forward :override #'leap-jump-forward)
 (advice-add #'better-jumper-jump-backward :override #'leap-jump-backward)
 (advice-add #'better-jumper-set-jump :override #'ignore)
@@ -2158,23 +1802,6 @@ representation of `NUMBER' is smaller."
   (advice-remove fn #'doom-recenter-a))
 
 (advice-add #'elisp-def--flash-region :override #'ignore)
-;; (ad-disable-advice 'switch-to-buffer 'before 'evil-jumps)
-;; (ad-activate 'switch-to-buffer)  ;; stupid api
-(add-hook 'leap-post-jump-hook #'+amos/recenter)
-
-(defun +amos*evil--jump-hook (&optional command)
-  "Set jump point if COMMAND has a non-nil :jump property."
-  (setq command (or command this-command))
-  (unless
-      (and
-       (or (eq last-command 'evil-multiedit-match-symbol-and-prev)
-           (eq last-command 'evil-multiedit-match-symbol-and-next))
-       (or (eq command 'evil-multiedit-match-symbol-and-prev)
-           (eq command 'evil-multiedit-match-symbol-and-next)))
-    (when
-        (evil-get-command-property command :jump)
-      (leap-set-jump))))
-(advice-add #'evil--jump-hook :override #'+amos*evil--jump-hook)
 
 (defun +amos/yank-buffer-filename ()
   "Copy the current buffer's path to the kill ring."
@@ -2288,7 +1915,13 @@ the current state and point position."
   (interactive)
   (+amos-store-jump-history)
   (if command
-      (shell-command! (format-spec "tmux switch-client -t amos; tmuxkillwindow amos:%a; tmux run -t amos \"tmux new-window -n %a -c %b; tmux send-keys %c C-m\"" `((?a . ,prompt) (?b . ,default-directory) (?c . ,command))))
+      (shell-command!
+       (format-spec
+        (concat
+         "tmux switch-client -t amos;"
+         "tmuxkillwindow amos:%a;"
+         "tmux run -t amos \"tmux new-window -n %a -c %b; tmux send-keys %c C-m\"")
+        `((?a . ,(if prompt prompt "nil")) (?b . ,default-directory) (?c . ,command))))
     (shell-command! (format "tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
 
 (defun +amos/tmux-split-window (&optional command)
@@ -2309,14 +1942,6 @@ the current state and point position."
   (kill-emacs))
 
 (defun +amos/set-face ()
-  (after! swiper
-    (set-face-attribute 'swiper-line-face nil :inherit 'unspecified :background 'unspecified :foreground 'unspecified :underline t))
-  (after! ivy
-    (set-face-attribute 'ivy-current-match nil :inherit 'unspecified :distant-foreground 'unspecified
-                        :weight 'unspecified :background 'unspecified :foreground 'unspecified :underline t))
-  (after! xref
-    (set-face-attribute 'xref-match nil :inherit 'unspecified :distant-foreground 'unspecified
-                        :weight 'unspecified :background 'unspecified :foreground 'unspecified :weight 'ultra-bold))
   (set-face-background 'vertical-border 'unspecified)
   (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil))
 
@@ -2468,7 +2093,7 @@ the current state and point position."
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
 
-(setq    magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1)
+(setq magit-display-buffer-function 'magit-display-buffer-fullframe-status-topleft-v1)
 (after! magit
   (magit-auto-revert-mode +1)
   (setq
@@ -2668,8 +2293,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 ;; (advice-add #'avy-handler-default :override #'+amos*avy-handler-default)
 (define-key key-translation-map "\035" [escape])
 
-(global-page-break-lines-mode +1)
-
 (defun anzu-multiedit (&optional symbol)
   (interactive (list evil-symbol-word-search))
   (let ((string (evil-find-thing t (if symbol 'symbol 'word))))
@@ -2705,12 +2328,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (+amos-evil-ex! line-substitute "s/")
 (+amos-evil-ex! all-substitute "%s/")
 (+amos-evil-ex! region-substitute "'<,'>s/")
-
-(defun +amos/counsel-recentf-no-cache ()
-  (interactive)
-  (require 'recentf)
-  (recentf-cleanup)
-  (counsel-recentf))
 
 (defun +amos/reset-zoom ()
   (interactive)
@@ -2809,30 +2426,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
 (stupid_function)
 
-(defun +amos/find-file-at-point ()
-  (interactive)
-  (-if-let (s (symbol-at-point))
-      (let* ((path (symbol-name s))
-             (dir (file-name-directory path))
-             (name (file-name-nondirectory path))
-             (adir (expand-file-name (or dir "./")))
-             (_ (while (not (file-directory-p adir))
-                  (let ((tmp (substring adir 0 -1)))
-                    (setq adir (file-name-directory tmp))
-                    (setq name (concat (file-name-nondirectory tmp) "/" name)))))
-             (default-directory adir))
-        (minibuffer-with-setup-hook
-            (lambda ()
-              (insert name))
-          (ivy-read "Find file: " #'read-file-name-internal
-                    :matcher #'counsel--find-file-matcher
-                    :action #'counsel-find-file-action
-                    :require-match 'confirm-after-completion
-                    :history 'file-name-history
-                    :keymap counsel-find-file-map
-                    :caller 'counsel-find-file)))
-    (user-error "No file at point")))
-
 (defun +amos/upload ()
   (interactive)
   (let ((filename (buffer-file-name))
@@ -2855,15 +2448,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
 (semantic-mode -1)
 (with-eval-after-load 'semantic
   (add-to-list 'semantic-inhibit-functions #'my-inhibit-semantic-p))
-
-(defun my-replace (beg end)
-  (interactive
-   (list (if (use-region-p) evil-visual-beginning (line-beginning-position))
-         (if (use-region-p) evil-visual-end (line-end-position))))
-  (save-excursion
-    (while (and (goto-char beg)
-                (re-search-forward "\\[\\([^]]+\\)\\]" end t))
-      (replace-match (format "{%s}" (match-string 1))))))
 
 (add-hook! 'comint-mode-hook
   (add-hook! 'evil-insert-state-entry-hook :local
@@ -3092,14 +2676,6 @@ There is no need to advice `company-select-previous' because it calls
       (_ t))))
 (advice-add #'doom-buffer-frame-predicate :override #'+amos-doom-buffer-frame-predicate-a)
 
-(defun +amos-display-buffer-no-reuse-window (&rest _) nil)
-
-(defun +amos/exec-shell-command ()
-  (interactive)
-  (ivy-read "Shell command: " (split-string (shell-command-to-string "bash -c 'compgen -c' | tail -n +85") "\n")
-            :action #'compile
-            :caller '+amos-exec-shell-command))
-
 ;; get rid of minibuffer resize limitation
 (defun +amos-window--resize-mini-window-a (window delta)
   "Resize minibuffer window WINDOW by DELTA pixels.
@@ -3134,129 +2710,6 @@ as small) as possible, but don't signal an error."
           (run-window-configuration-change-hook frame))))))
 (advice-add #'window--resize-mini-window :override #'+amos-window--resize-mini-window-a)
 
-(defun +amos/swiper ()
-  (interactive)
-  (if (eq major-mode 'ivy-occur-grep-mode)
-      (save-restriction
-        (save-excursion
-          (goto-char 1)
-          (forward-line 4)
-          (narrow-to-region (point) (point-max)))
-        (swiper-isearch))
-    (swiper-isearch)))
-
-(defun +amos/swiper-search-symbol ()
-  (interactive)
-  (if (and (stringp (ivy-state-current ivy-last)) (string-empty-p (ivy-state-current ivy-last)))
-      (let ((text (ignore-errors (with-ivy-window (symbol-name (symbol-at-point))))))
-        (if text (insert (setf (ivy-state-current ivy-last) text))))
-    (ivy-next-line)))
-
-(defun +amos/swiper-symbol ()
-  (interactive)
-  (swiper-isearch (ignore-errors (symbol-name (symbol-at-point)))))
-
-(defun +amos/wgrep-occur ()
-  "Invoke the search+replace wgrep buffer on the current ag/rg search results."
-  (interactive)
-  (unless (window-minibuffer-p)
-    (user-error "No completion session is active"))
-  (require 'wgrep)
-  (setq is-swiper-occur (eq (ivy-state-caller ivy-last) 'swiper-isearch))
-  (let* ((ob (ivy-state-buffer ivy-last))
-         (caller (ivy-state-caller ivy-last))
-         (xref (eq caller '+amos-ivy-xref))
-         (recursive (and (eq (with-current-buffer ob major-mode) 'ivy-occur-grep-mode)
-                         (eq caller 'swiper-isearch)))
-         (occur-fn (plist-get ivy--occurs-list caller))
-         (buffer (generate-new-buffer
-                  (format "*ivy-occur%s \"%s\"*"
-                          (if caller (concat " " (prin1-to-string caller)) "")
-                          ivy-text))))
-    (with-current-buffer buffer
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (if recursive (+amos/swiper-occur)
-          (if (not xref)
-              (funcall occur-fn)
-            (ivy-occur-grep-mode)
-            ;; Need precise number of header lines for `wgrep' to work.
-            (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
-                            default-directory))
-            (insert (format "%d candidates:\n" (length +amos-last-xref-list)))
-            (ivy--occur-insert-lines +amos-last-xref-list))))
-      ;; (setf (ivy-state-text ivy-last) ivy-text)
-      (setq ivy-occur-last ivy-last)
-      (setq-local ivy--directory ivy--directory)
-      (goto-char 1)
-      (forward-line 4))
-    (with-selected-window (ivy-state-window ivy-last)
-      (goto-char +amos-ivy--origin))
-    (ivy-exit-with-action
-     `(lambda (_)
-        (if ,recursive
-            (progn
-              (switch-to-buffer ,buffer)
-              (kill-buffer ,ob))
-          (switch-to-buffer ,buffer))
-        (ivy-wgrep-change-to-wgrep-mode)))))
-
-(defun +amos-swiper--isearch-occur-cands (cands)
-  (let* ((last-pt (get-text-property 0 'point (car cands)))
-         (line (1+ (line-number-at-pos last-pt)))
-         res pt)
-    (dolist (cand cands)
-      (setq pt (get-text-property 0 'point cand))
-      (let ((lines (1- (count-lines last-pt pt))))
-        (when (< 0 lines)
-          (cl-incf line lines)
-          (push (cons line cand) res)
-          (setq last-pt pt))))
-    (nreverse res)))
-
-(defun +amos-swiper--occur-cands (cands)
-  (when cands
-    (with-current-buffer (ivy-state-buffer ivy-last)
-      (setq cands (mapcar #'swiper--line-at-point cands))
-      (mapcar (lambda (x) (cdr x)) (+amos-swiper--isearch-occur-cands cands)))))
-
-(defun +amos/swiper-occur (&optional revert)
-  "Generate a custom occur buffer for `swiper'.
-When REVERT is non-nil, regenerate the current *ivy-occur* buffer.
-When capture groups are present in the input, print them instead of lines."
-  (let* ((buffer (ivy-state-buffer ivy-last))
-         (ivy-text (progn (string-match "\"\\(.*\\)\"" (buffer-name))
-                          (match-string 1 (buffer-name))))
-         (re (mapconcat #'identity (ivy--split ivy-text) ".*?"))
-         (cands
-          (+amos-swiper--occur-cands
-           (if (not revert)
-               ivy--old-cands
-             (setq ivy--old-re nil)
-             (save-window-excursion
-               (switch-to-buffer buffer)
-               (if (eq (ivy-state-caller ivy-last) 'swiper)
-                   (let ((ivy--regex-function 'swiper--re-builder))
-                     (ivy--filter re (swiper--candidates)))
-                 (swiper-isearch-function ivy-text)))))))
-    (if (string-match-p "\\\\(" re)
-        (insert
-         (mapconcat #'identity
-                    (swiper--extract-matches
-                     re (with-current-buffer buffer
-                          (swiper--candidates)))
-                    "\n"))
-      (unless (eq major-mode 'ivy-occur-grep-mode)
-        (ivy-occur-grep-mode)
-        (font-lock-mode -1))
-      (setq swiper--current-window-start nil)
-      (insert (format "-*- mode:grep; default-directory: %S -*-\n\n\n"
-                      default-directory))
-      (insert (format "%d candidates:\n" (length cands)))
-      (ivy--occur-insert-lines cands)
-      (goto-char (point-min))
-      (forward-line 4))))
-
 (defun +amos/delete-nonascii (beg end)
   "Delete binary characters in a region"
   (interactive "r")
@@ -3272,17 +2725,6 @@ When capture groups are present in the input, print them instead of lines."
   (save-buffer-maybe)
   (let ((default-directory (doom-project-root)))
     (+amos/tmux-fork-window " launch.sh" (getenv "envprompt"))))
-
-(defun +amos/list-file (&optional initial-input)
-  (interactive)
-  (ivy-read "List file: " (split-string (shell-command-to-string "find -- * -prune -type f -print && find .* -prune -type f -print") "\n")
-            :initial-input initial-input
-            :action #'find-file
-            :preselect (counsel--preselect-file)
-            :require-match 'confirm-after-completion
-            :history 'file-name-history
-            :keymap counsel-find-file-map
-            :caller '+amos/list-file))
 
 (defun +amos/iedit-number-occurrences ()
   (interactive)
@@ -3726,82 +3168,11 @@ inside or just after a citation command, only adds KEYS to it."
  "company-"
  )
 
-(defun +amos-evil-yank-a (beg end &optional type register yank-handler)
-  "Saves the characters in motion into the kill-ring."
-  (interactive
-   (let*
-       ((evil-operator-range-motion
-         (if (evil-has-command-property-p 'evil-yank :motion)
-             (or
-              (evil-get-command-property 'evil-yank :motion)
-              (function undefined))))
-        (evil-operator-range-type
-         (evil-get-command-property 'evil-yank :type))
-        (orig (point))
-        evil-operator-range-beginning evil-operator-range-end evil-inhibit-operator)
-     (setq evil-inhibit-operator-value nil evil-this-operator this-command)
-     (prog1
-         (append
-          (evil-operator-range t)
-          (list evil-this-register
-                (evil-yank-handler)))
-       (setq orig (point)
-             evil-inhibit-operator-value evil-inhibit-operator)
-       (if (or (evil-visual-state-p) (region-active-p))
-           (setq deactivate-mark t))
-       (cond
-        ;; amos: do not rotate
-        ;; ((evil-visual-state-p)
-        ;;  (evil-visual-rotate 'upper-left))
-        ((evil-get-command-property 'evil-yank :move-point)
-         (goto-char
-          (or evil-operator-range-beginning orig)))
-        (t
-         (goto-char orig))))))
-  (unwind-protect
-      (let ((evil-inhibit-operator evil-inhibit-operator-value))
-        (unless (and evil-inhibit-operator
-                     (called-interactively-p 'any))
-          (let
-              ((evil-was-yanked-without-register
-                (and evil-was-yanked-without-register
-                     (not register))))
-            (cond
-             ((and
-               (fboundp 'cua--global-mark-active)
-               (fboundp 'cua-copy-region-to-global-mark)
-               (cua--global-mark-active))
-              (cua-copy-region-to-global-mark beg end))
-             ((eq type 'block)
-              (evil-yank-rectangle beg end register yank-handler))
-             ((memq type '(line screen-line))
-              (evil-yank-lines beg end register yank-handler))
-             (t
-              (evil-yank-characters beg end register yank-handler))))))
-    (setq evil-inhibit-operator-value nil)))
-(advice-add #'evil-yank :override #'+amos-evil-yank-a)
-
-(defun +amos--minibuffer-yank-by (fn &rest args)
-  (require 'ivy)
-  (let (text)
-    (with-selected-window (minibuffer-selected-window)
-      (let ((beg (point))
-            (bol (line-beginning-position))
-            (eol (line-end-position))
-            end)
-        (unwind-protect
-            (progn (apply fn args)
-                   (setq end (goto-char (max bol (min (point) eol))))
-                   (setq text (buffer-substring-no-properties beg end))
-                   (ivy--pulse-region beg end))
-          (unless text
-            (goto-char beg)))))
-    (when text
-      (insert (replace-regexp-in-string "  +" " " text t t)))))
-
-(defun +amos/minibuffer-yank-word (&optional arg)
-  (interactive "p")
-  (+amos--minibuffer-yank-by #'forward-word arg))
+(defun +amos-evil-yank-a (orig-fun &rest args)
+  (let ((marker (if (evil-visual-state-p) evil-visual-point (point-marker))))
+    (apply orig-fun args)
+    (goto-char (marker-position marker))))
+(advice-add #'evil-yank :around #'+amos-evil-yank-a)
 
 ;; candidate is (_ _ pos buffer)
 (defun +amos/delete-mark ()
@@ -3949,55 +3320,6 @@ inside or just after a citation command, only adds KEYS to it."
         (temporary-goal-column))
     (evil-line-move (- (or count 1)))))
 
-(defun +amos/swiper-isearch-forward ()
-  (interactive)
-  (when (timerp swiper--isearch-highlight-timer)
-    (cancel-timer swiper--isearch-highlight-timer)
-    (setq swiper--isearch-highlight-timer nil))
-  (ivy-next-line-or-history))
-
-(defun +amos/swiper-isearch-backward ()
-  (interactive)
-  (when (timerp swiper--isearch-highlight-timer)
-    (cancel-timer swiper--isearch-highlight-timer)
-    (setq swiper--isearch-highlight-timer nil))
-  (ivy-previous-line-or-history 1))
-
-(defun +amos/swiper-isearch-backward ()
-  (interactive)
-  (let ((i (- ivy--index 1))
-        (min-index 0)
-        (cands  ivy--all-candidates)
-        (current (ivy-state-current ivy-last)))
-    (with-current-buffer (ivy-state-buffer ivy-last)
-      (while (and (>= i 0)
-                  (swiper--isearch-same-line-p
-                   (swiper--line-at-point (nth i cands))
-                   (swiper--line-at-point current)))
-        (cl-decf i)))
-    (if (< i min-index)
-        (if ivy-wrap
-            (ivy-end-of-buffer)
-          (ivy-set-index min-index))
-      (ivy-set-index i))))
-
-(defun +amos/swiper-isearch-forward ()
-  (interactive)
-  (let ((i (+ ivy--index 1))
-        (max-index (1- ivy--length))
-        (cands  ivy--all-candidates)
-        (current (ivy-state-current ivy-last)))
-    (with-current-buffer (ivy-state-buffer ivy-last)
-      (while (and (< i ivy--length)
-                  (swiper--isearch-same-line-p
-                   (swiper--line-at-point (nth i cands))
-                   (swiper--line-at-point current)))
-        (cl-incf i))
-      (if (> i max-index)
-          (if ivy-wrap
-              (ivy-beginning-of-buffer)
-            (ivy-set-index max-index))
-        (ivy-set-index i)))))
 (setq scratch-file-name (concat "~/.emacs.d/persistent-scratch-" server-name))
 
 (defun +amos-save-persistent-scratch-h ()
@@ -4375,42 +3697,6 @@ See `project-local-get' for the parameter PROJECT."
   (mkr! (apply func args)))
 (advice-add #'ediff-copy-diff :around #'+amos-ediff-copy-diff-a)
 
-(defun +amos-ivy-scroll-up-command-a ()
-  "Scroll the candidates upward by the minibuffer height."
-  (interactive)
-  (let ((cand (1- (+ ivy--index ivy-height))))
-    (ivy-set-index (if (/= ivy--index (1- ivy--length)) (min (1- ivy--length) cand)
-                     (if ivy-wrap 0 (1- ivy--length))))))
-;; (advice-add #'ivy-scroll-up-command :override #'+amos-ivy-scroll-up-command-a)
-
-(defun +amos-ivy-scroll-down-command-a ()
-  "Scroll the candidates downward by the minibuffer height."
-  (interactive)
-  (let ((cand (1+ (- ivy--index ivy-height))))
-    (ivy-set-index (if (/= 0 ivy--index) (max 0 cand)
-                     (if ivy-wrap (1- ivy--length) 0)))))
-;; (advice-add #'ivy-scroll-down-command :override #'+amos-ivy-scroll-down-command-a)
-
-(defun +amos-git-link (cand)
-  (cl-destructuring-bind (remote branch) (split-string cand "~")
-    (let ((git-link-default-remote remote)
-          (git-link-default-branch branch))
-      (call-interactively #'git-link))))
-
-(defun +amos/git-link ()
-  (interactive)
-  (require 'git-link)
-  (let ((l (split-string (string-trim-right (shell-command-to-string "gittrackedremote")) "\n")))
-    (if (< (length l) 2)
-        (--map (+amos-git-link it) l)
-      (ivy-read "Remote branch: " (split-string (shell-command-to-string "gittrackedremote") "\n")
-                :action (lambda (cand)
-                          (cl-destructuring-bind (remote branch) (split-string cand "~")
-                            (let ((git-link-default-remote remote)
-                                  (git-link-default-branch branch))
-                              (call-interactively #'git-link))))
-                :caller '+amos/git-link))))
-
 (defun +amos/yank-pop()
   (interactive)
   (let ((kill-ring my-kill-ring))
@@ -4435,6 +3721,8 @@ See `project-local-get' for the parameter PROJECT."
     (apply orig-fn args)))
 (advice-add #'swiper-isearch :around #'+amos-swiper-isearch-a)
 
+(add-hook 'leap-post-jump-hook #'+amos/recenter)
+
 (defmacro leapify! (command)
   `(progn
      (defun ,(intern (concat "+amos-" (symbol-name command) "-a")) (orig-func &rest args)
@@ -4448,6 +3736,24 @@ See `project-local-get' for the parameter PROJECT."
 (leapify! goto-last-change)
 (leapify! evil-insert-resume)
 
+(defun +amos*evil--jump-hook (&optional command)
+  "Set jump point if COMMAND has a non-nil :jump property."
+  (setq command (or command this-command))
+  (unless
+      (and
+       (or (eq last-command 'evil-multiedit-match-symbol-and-prev)
+           (eq last-command 'evil-multiedit-match-symbol-and-next))
+       (or (eq command 'evil-multiedit-match-symbol-and-prev)
+           (eq command 'evil-multiedit-match-symbol-and-next)))
+    (when
+        (evil-get-command-property command :jump)
+      (leap-set-jump))))
+(advice-add #'evil--jump-hook :override #'+amos*evil--jump-hook)
+
+(defun +amos-evil-ex-search-before-a (&rest _)
+  (if (thing-at-point 'symbol) (leap-set-jump)))
+(advice-add #'evil-ex-start-word-search :before #'+amos-evil-ex-search-before-a)
+(advice-add #'evil-visualstar/begin-search :before #'+amos-evil-ex-search-before-a)
 (electric-indent-mode -1)
 
 (defun +amos/google-translate ()
@@ -4540,7 +3846,7 @@ See `project-local-get' for the parameter PROJECT."
  "+amos/maybe-add-end-of-statement"
  "+amos/other-window"
  "+amos/paste-from-gui"
- "+amos/projectile"
+ "+amos/find"
  "+amos/redisplay-and-recenter"
  "+amos/region-substitute"
  "+amos/rename-current-buffer-file"
@@ -4556,6 +3862,8 @@ See `project-local-get' for the parameter PROJECT."
  "+amos/wipe-current-buffer"
  "+amos/workspace"
  "+amos/yank"
+ "+amos/goto"
+ "+amos/consult"
  "+eval/buffer"
  "+eval/region-and-replace"
  "+evil:delete-this-file"
@@ -4595,8 +3903,6 @@ See `project-local-get' for the parameter PROJECT."
   (+amos-ignore-repeat "easy-hugo"))
 (after! editorconfig
   (+amos-ignore-repeat "editorconfig"))
-(after! ivy
-  (+amos-ignore-repeat "ivy"))
 (after! lsp
   (+amos-ignore-repeat "lsp" "+lsp"))
 (after! flycheck
@@ -4614,21 +3920,6 @@ See `project-local-get' for the parameter PROJECT."
 (after! yasdcv
   (+amos-ignore-repeat "yasdcv"))
 
-;; debug a function in a post-command-hook
-;; (defadvice ivy--queue-exhibit (around intercept activate)
-;; (condition-case err
-;; ad-do-it
-;; ((debug error) (signal (car err) (cdr err)))))
-
-
-;; (setq ssh-remote-addr (and (getenv "SSH_CONNECTION") (nth 2 (split-string (getenv "SSH_CONNECTION") " "))))
-;; (defun +amos-paste-file (filename)
-;;   (if ssh-remote-addr
-;;       (let ((cmd (format "scp %s %s:%s/" (shell-quote-argument filename) ssh-remote-addr (shell-quote-argument default-directory))))
-;;         (message cmd)
-;;         (osc-command cmd))
-;;     (shell-command! (format "cp %s %s/" (shell-quote-argument filename) (shell-quote-argument default-directory)))))
-
 ;; (use-package! flyspell-lazy
 ;;   :config
 ;;   (add-to-list 'ispell-extra-args "--sug-mode=ultra")
@@ -4641,75 +3932,6 @@ See `project-local-get' for the parameter PROJECT."
 
 ;; (defun col-at-point (point)
 ;;   (save-excursion (goto-char point) (current-column)))
-
-;; (defun evil--mc-make-cursor-at-col-append (_startcol endcol orig-line)
-;;   (end-of-line)
-;;   (when (> endcol (current-column))
-;;     (insert-char ?\s (- endcol (current-column))))
-;;   (move-to-column endcol)
-;;   (unless (= (line-number-at-pos) orig-line)
-;;     (evil-mc-make-cursor-here)))
-
-;; (defun evil--mc-make-cursor-at-col-insert (startcol _endcol orig-line)
-;;   (end-of-line)
-;;   (move-to-column startcol)
-;;   (unless (or (= (line-number-at-pos) orig-line) (> startcol (current-column)))
-;;     (evil-mc-make-cursor-here)))
-
-;; (defun evil--mc-make-vertical-cursors (beg end func)
-;;   (evil-mc-pause-cursors)
-;;   (apply-on-rectangle func
-;;                       beg end (line-number-at-pos (point)))
-;;   (evil-mc-resume-cursors)
-;;   (evil-insert-state))
-
-;; (defun evil-mc-insert-vertical-cursors (beg end)
-;;   (interactive (list (region-beginning) (region-end)))
-;;   (evil--mc-make-vertical-cursors beg end 'evil--mc-make-cursor-at-col-insert)
-;;   (move-to-column (min (col-at-point beg) (col-at-point end))))
-
-;; (defun evil-mc-append-vertical-cursors (beg end)
-;;   (interactive (list (region-beginning) (region-end)))
-;;   (when (and (evil-visual-state-p)
-;;              (eq (evil-visual-type) 'line))
-;;     (message "good")
-;;     (let ((column (max (evil-column evil-visual-beginning)
-;;                        (evil-column evil-visual-end))))
-;;       (evil-visual-rotate 'upper-left)
-;;       (move-to-column column t))
-;;     )
-;;   (evil--mc-make-vertical-cursors beg end 'evil--mc-make-cursor-at-col-append)
-;;   (move-to-column (max (col-at-point beg) (col-at-point end))))
-
-;; (after! evil-mc
-;;   (nconc evil-mc-known-commands
-;;          '((evil-repeat . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/smart-eol-insert . ((:default . evil-mc-execute-default-call)))
-;;            (company-complete-common . ((:default . evil-mc-execute-default-complete)))
-;;            (company-select-next . ((:default . evil-mc-execute-default-complete)))
-;;            (company-select-previous . ((:default . evil-mc-execute-default-complete)))
-;;            (+amos/delete-forward-word . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/delete-backward-word . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/delete-forward-subword . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/delete-backward-subword . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/delete-char . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/delete-backward-char . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/kill-line . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/backward-kill-to-bol-and-indent . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/replace-last-sexp . ((:default . evil-mc-execute-default-call)))
-;;            (+amos/backward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-;;            (+amos/forward-word-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-;;            (+amos/backward-subword-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-;;            (+amos/forward-subword-insert . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-;;            (+amos/evil-backward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-;;            (+amos/evil-forward-subword-begin . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))
-;;            (+amos/evil-forward-subword-end . ((:default . evil-mc-execute-default-call-with-count) (visual . evil-mc-execute-visual-text-object)))))
-
-;;   ;; if I'm in insert mode, chances are I want cursors to resume
-;;   (add-hook! 'evil-mc-before-cursors-created
-;;     (add-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors nil t))
-;;   (add-hook! 'evil-mc-after-cursors-deleted
-;;     (remove-hook 'evil-insert-state-entry-hook #'evil-mc-resume-cursors t)))
 
 ;; (defun +amos-x-select-text (text &rest _)
 ;;   (with-temp-buffer
@@ -4898,3 +4120,6 @@ See `project-local-get' for the parameter PROJECT."
 ;;         (unless (minibufferp buffer)
 ;;           (with-current-buffer buffer
 ;;             (set-window-start +amos-window-start)))))))
+
+(load! "+consult")
+(load! "+modeline")

@@ -1,0 +1,12 @@
+* c++ playground in emacs (WIP)
+
+Currently it's tightly coupled with [[https://github.com/hlissner/doom-emacs][Doom Emacs]]
+
+** Requirements
+
+1. direnv
+
+** Optionals
+
+1. tmuxgdb
+2. leetcode-cli

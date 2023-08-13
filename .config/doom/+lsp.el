@@ -23,6 +23,27 @@
 
 (advice-add #'lsp-ui-mode :override #'ignore)
 
+(defun +amos*evil-normal-post-command ()
+  (setq evil-move-beyond-eol nil)
+  (advice-remove #'evil-normal-post-command #'+amos*evil-normal-post-command))
+
+(defun +amos-flymake-goto-error (&optional p)
+  (setq evil-move-beyond-eol t)
+  (advice-add #'evil-normal-post-command :after #'+amos*evil-normal-post-command)
+  (if p (flymake-goto-prev-error 1)
+    (flymake-goto-next-error 1)))
+
+(defun +amos/flymake-goto-prev-error ()
+  (interactive)
+  (+amos-flymake-goto-error t))
+
+(defun +amos/flymake-goto-next-error ()
+  (interactive)
+  (+amos-flymake-goto-error))
+
+(add-hook! 'evil-normal-state-entry-hook (flymake-popon-mode +1))
+(add-hook! 'evil-normal-state-exit-hook (flymake-popon-mode -1))
+
 ;; (setq lsp-response-timeout 5)
 ;; (setq lsp-signature-render-all nil)
 

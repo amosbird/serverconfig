@@ -2,3 +2,8 @@ If:
   PathMatch: .*\.(asm|s)$
 Index:
   Background: Skip
+
+---
+
+CompileFlags:
+  Add: -Wno-unused-member-function

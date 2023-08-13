@@ -130,7 +130,8 @@
 
 (defun leap--set-buffer-struct (buffer struct)
   "Set jump struct for BUFFER to STRUCT."
-  (setf (buffer-local-value 'leap--jump-struct buffer) struct))
+  (with-current-buffer buffer
+    (setq-local leap--jump-struct struct)))
 
 (defun leap--set-struct (context struct)
   "Set jump struct for CONTEXT to STRUCT."
@@ -142,12 +143,13 @@
   "Get current jump struct for BUFFER.
 Creates and sets jump struct if one does not exist. buffer if BUFFER parameter
 is missing."
-  (let* ((buffer (or buffer (current-buffer)))
-         (jump-struct (buffer-local-value 'leap--jump-struct buffer)))
-    (unless jump-struct
-      (setq jump-struct (make-leap-jump-list-struct))
-      (leap--set-buffer-struct buffer jump-struct))
-    jump-struct))
+  (with-current-buffer buffer
+    (let* ((buffer (current-buffer))
+           (jump-struct leap--jump-struct))
+      (unless jump-struct
+        (setq jump-struct (make-leap-jump-list-struct))
+        (leap--set-buffer-struct buffer jump-struct))
+      jump-struct)))
 
 (defun leap--get-window-struct (&optional window)
   "Get current jump struct for WINDOW.
@@ -182,7 +184,8 @@ buffer if CONTEXT parameter is missing."
 
 (defun leap--set-buffer-marker-table (buffer table)
   "Set marker table for BUFFER to TABLE."
-  (setf (buffer-local-value 'leap--marker-table buffer) table))
+  (with-current-buffer buffer
+    (setq-local leap--marker-table table)))
 
 (defun leap--set-marker-table (context table)
   "Set marker table for CONTEXT to TABLE."
@@ -194,12 +197,13 @@ buffer if CONTEXT parameter is missing."
   "Get current marker table for BUFFER.
 Creates and sets marker table if one does not exist. buffer if BUFFER parameter
 is missing."
-  (let* ((buffer (or buffer (current-buffer)))
-         (marker-table (buffer-local-value 'leap--marker-table buffer)))
-    (unless marker-table
-      (setq marker-table (make-hash-table))
-      (leap--set-marker-table buffer marker-table))
-    marker-table))
+  (with-current-buffer buffer
+    (let* ((buffer (current-buffer))
+           (marker-table leap--marker-table))
+      (unless marker-table
+        (setq marker-table (make-hash-table))
+        (leap--set-marker-table buffer marker-table))
+      marker-table)))
 
 (defun leap--get-window-marker-table (&optional window)
   "Get marker table for WINDOW.

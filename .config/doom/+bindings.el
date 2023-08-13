@@ -11,17 +11,16 @@
     (apply orig-fn)))
 
 (map! :leader
-      :desc "sticky"                          :nv "DEL" #'evil-sticky-state
-      :desc "Find file in cwd"                :nv "m"   #'+amos/list-file
-      :desc "Ivy resume"                      :nv "SPC" #'ivy-resume
-      :desc "Find file in project"            :nv "."   #'+amos/projectile-find-file
-      :desc "Find file in project (no cache)" :nv ">"   (cmd! (setq current-prefix-arg t) (call-interactively #'+amos/projectile-find-file))
-      :desc "Find recent file"                :nv ","   #'counsel-recentf
-      :desc "Find recent file (no cache)"     :nv "<"   #'+amos/counsel-recentf-no-cache
+      :desc "Sticky"                          :nv "DEL" #'evil-sticky-state
+      :desc "Resume"                          :nv "SPC" #'vertico-repeat
+      :desc "Find file in project"            :nv "."   #'+amos/consult-find
+      :desc "Find file in current directory"  :nv ">"   #'+amos/consult-find-cur-dir
+      :desc "Find recent file"                :nv ","   #'+amos/consult-recentf
+      :desc "Find recent file (no cache)"     :nv "<"   #'+amos/consult-recentf-no-cache
       :desc "Shell command replace"           :nv "e"   #'+amos/shell-command-or-region
       :desc "Shell command"                   :nv "E"   #'+amos/shell-command-on-buffer
       :desc "Elisp command"                   :nv "RET" #'eval-expression
-      :desc "Ivy resume"                      :nv "r"   #'+amos/revert-buffer
+      :desc "Revert buffer"                   :nv "r"   #'+amos/revert-buffer
       :desc "Revert buffers"                  :nv "p"   #'+amos/revert-projectile-buffers
       :desc "Revert buffers"                  :nv "R"   #'+amos/revert-all-buffers
       :desc "Universal argument"              :nv "u"   #'universal-argument
@@ -118,7 +117,6 @@
         :gnemv "<f12>"         #'+amos/reset-cursor
         :gnemv "<f11>"         #'+amos/dump-evil-jump-list
         :gnemv "M-x"           #'execute-extended-command
-        :gnemv "M-X"           #'+amos/exec-shell-command
         :gnemv "C-M-u"         #'+amos/avy-open-url
         :gnemv "<f1>"          #'+amos/reset-zoom
         :gnemv "<f2>"          #'+amos/decrease-zoom
@@ -151,12 +149,12 @@
       :n "M-RET"                  #'+amos/toggle-mc
       :i "M-RET"                  #'+amos/close-block
       :n "M-a"                    #'+amos/mark-whole-buffer
-      :n "M-g"                    #'+amos/counsel-jumpdir-function
+      :n "M-g"                    #'+amos/consult-jumpdir-function
       :i "M-i"                    #'yas-insert-snippet
       ;; :n "M-,"                    #'+amos/flycheck-previous-error
       ;; :n "M-."                    #'+amos/flycheck-next-error
-      :n "M-,"                    (cmd! (let ((evil-move-beyond-eol t)) (flymake-goto-prev-error 1))) ; no interactive
-      :n "M-."                    (cmd! (let ((evil-move-beyond-eol t)) (flymake-goto-next-error 1))) ; no interactive
+      :n "M-,"                    #'+amos/flymake-goto-prev-error
+      :n "M-."                    #'+amos/flymake-goto-next-error
       :n "M-p"                    #'evil-multiedit-match-symbol-and-prev
       :n "M-n"                    #'evil-multiedit-match-symbol-and-next
       :n "M-y"                    #'+amos/yank-flymake-error
@@ -204,18 +202,17 @@
       :n "M-i"                    #'yasdcv-translate-at-point
       :v "M-i"                    #'+amos/evil-visual-insert-snippet
       :genvi "M-h"                #'evil-window-left
-      :genvi "M-j"                #'evil-window-down
-      :genvi "M-k"                #'evil-window-up
+      :genvi "M-j"                #'+amos/goto-next-error
+      :genvi "M-k"                #'+amos/goto-previous-error
       :genvi "M-l"                #'evil-window-right
-      :n "C-p"                    #'+amos/counsel-projectile-switch-project
       :nv "C-f"                   #'+amos/avy-goto-char-timer
       :n "C-l"                    #'+amos/redisplay-and-recenter
-      :n "C-s"                    #'+amos/swiper
-      :n "C-S-s"                  #'+amos/counsel-rg-projectile ;; gui
-      :n "C-S-d"                  #'+amos/counsel-rg-cur-dir ;; gui
+      :n "C-s"                    #'+amos/consult-line
+      :n "C-S-s"                  #'+amos/consult-ripgrep ;; gui
+      :n "C-S-d"                  #'+amos/consult-ripgrep-cur-dir ;; gui
       :nv "C-S-f"                 #'+format/region-or-buffer ;; gui
-      :n "S-<f4>"                 #'+amos/counsel-rg-projectile ;; terminal
-      :n "S-<f5>"                 #'+amos/counsel-rg-cur-dir ;; terminal
+      :n "S-<f4>"                 #'+amos/consult-ripgrep ;; terminal
+      :n "S-<f5>"                 #'+amos/consult-ripgrep-cur-dir ;; terminal
       :nv "S-<f11>"               #'+format/region-or-buffer ;; terminal
       :n "C-y"                    #'+amos/yank-buffer-filename-with-line-position
       :i "M-y"                    #'+amos/yank-pop
@@ -262,14 +259,12 @@
       :n "P"                      #'evil-paste-before
       :n "K"                      #'evil-paste-pop
       :n "L"                      #'evil-paste-pop-next
-      ;; :n "#"                      #'+amos/swiper-symbol
-      ;; :n "*"                      #'+amos/swiper-symbol
       :n "("                      #'+amos/smart-jumper-backward
       :n ")"                      #'+amos/smart-jumper-forward
       :v "<"                      #'+evil/visual-dedent
       :v ">"                      #'+evil/visual-indent
       :n "gx"                     #'evil-exchange
-      :n "gf"                     #'+amos/find-file-at-point
+      :n "gf"                     #'find-file-at-point
       :n "gd"                     #'+lookup/definition
       :n "go"                     #'+amos/evil-insert-line-below
       :n "gO"                     #'+amos/evil-insert-line-above
@@ -280,14 +275,14 @@
       :vnm "gl"                   #'evilnc-comment-or-uncomment-lines
       :n "m"                      #'+amos/push-mark
       :n "M"                      (cmd! (+amos/push-mark t))
-      :n "M-9"                    #'+amos/counsel-view-marks
+      ;; :n "M-9"                    #'+amos/counsel-view-marks
       :m "gs"                     (cmd! (evil-goto-mark ?s))
       :m "gb"                     (cmd! (evil-goto-mark ?b))
       :m "gm"                     (cmd! (evil-goto-mark ?m))
       :m "g<"                     (cmd! (evil-goto-mark ?<))
       :m "g>"                     (cmd! (evil-goto-mark ?>))
       :m "g."                     #'goto-last-change
-      :n ",,"                     #'+amos/projectile-find-other-file
+      :n ",,"                     #'+amos/find-other-file
       :m "gs"                     #'+evil/easymotion
 
       (:prefix "C-x"
@@ -381,11 +376,6 @@
         "C-e"        #'+amos/company-search-abort
         [escape]     #'+amos/company-search-abort)
 
-      (:after swiper
-        :map swiper-map
-        "M-j"      #'ivy-next-line
-        "M-k"      #'ivy-previous-line)
-
       (:after files
         :map ctl-x-map
         :g "C-d" #'+amos/direnv-reload)
@@ -410,12 +400,12 @@
         :n "C-v" #'peep-dired-scroll-page-down
         :n "E"   #'wdired-change-to-wdired-mode
         :n "I"   #'dired-kill-subdir
-        :n "M-n" #'+amos/counsel-jumpfile-function
+        :n "M-n" #'+amos/consult-jumpfile-function
         :n "M-v" #'peep-dired-scroll-page-up
         :n "S"   #'hydra-dired-quick-sort/body
         :nv "d"  #'dired-flag-file-deletion
         :n "D"   #'dired-do-delete
-        :n "f"   #'counsel-find-file
+        :n "f"   #'find-file
         :n "F"   #'dired-do-copy
         :n "h"   #'+amos/dired-up-directory
         :n "M-p" #'+amos/dired-up-directory
@@ -451,15 +441,10 @@
         :ni "M-U"    #'+amos/replace-defun
         :ni "M-u"    #'eval-defun)
 
-      (:after evil-magit
-        :map magit-mode-map
-        :n "<escape>" nil
+      (:after magit
         :map (magit-status-mode-map magit-revision-mode-map)
         "SPC" nil
-        :n "z" #'magit-stash
-        :n "C-j" nil
-        :n [tab] #'magit-section-toggle
-        :n "C-k" nil)
+        :n "z" #'magit-stash)
 
       (:after tex
         :map TeX-mode-map
@@ -494,75 +479,22 @@
         :gvn "C-n" #'evil-multiedit-next
         :gvn "C-p" #'evil-multiedit-prev)
 
-      (:after helm
-        :map helm-map
-        "C-<return>" #'helm-quit-and-execute-action
-        "C-o"      #'+amos/kill-line
-        "C-j"    #'helm-next-line
-        "C-k"    #'helm-previous-line
+      (:after vertico
+        :map vertico-map
+        "M-RET" #'vertico-exit-input
+        "C-w"   #'+amos/consult-yank-word
+        "C-i"   #'+vertico/embark-preview
+        "C-j"   #'vertico-next
+        "C-k"   #'vertico-previous
+        "C-h" (cmds! (eq 'file (vertico--metadata-get 'category)) #'vertico-directory-up)
+        "C-l" (cmds! (eq 'file (vertico--metadata-get 'category)) #'+vertico/enter-or-preview)
+
+        :map minibuffer-local-map
+        "C-c C-c"           #'embark-act
+        "C-c C-o"           #'embark-export
+        "C-c C-l"           #'+amos/embark-collect
+        :desc "Export to writable buffer" "C-c C-e" #'+amos/embark-export-write
         )
-
-      ;; ivy
-      (:after ivy
-        :map counsel-git-grep-map
-        "M-q" #'ivy-toggle-regexp-quote
-        :map counsel-ag-map
-        "M-q" #'ivy-toggle-regexp-quote
-        :map swiper-map
-        "M-q" #'ivy-toggle-regexp-quote
-        "C-j" #'+amos/swiper-isearch-forward
-        "C-k" #'+amos/swiper-isearch-backward
-        "C-s" #'+amos/swiper-search-symbol
-        "C-r" #'ivy-previous-line
-
-        :map ivy-switch-buffer-map
-        "M-q"  #'ivy-toggle-regexp-quote
-        "C-k"  #'ivy-previous-line
-
-        :map ivy-minibuffer-map
-        "C-SPC" #'ivy-restrict-to-matches
-        "C-s" #'ivy-restrict-to-matches
-        "C-<return>" #'ivy-immediate-done
-        "C-c o"    #'+amos/wgrep-occur
-        "C-c C-o"  #'+amos/wgrep-occur
-        "M-j"      #'ivy-next-line-and-call
-        "M-k"      #'ivy-previous-line-and-call
-        "C-i"      #'ivy-call
-        "M-9"    #'+amos/delete-mark
-        "C-a"    #'move-beginning-of-line
-        "C-b"    #'backward-char
-        "C-d"    #'+amos/delete-char
-        "C-j"    #'ivy-next-line
-        "C-k"    #'ivy-previous-line
-        "C-l"    #'ivy-alt-done
-        "C-o"    #'+amos/kill-line
-        "C-r"    #'counsel-minibuffer-history
-        "C-u"    #'+amos/backward-kill-to-bol-and-indent
-        "C-w"    #'ivy-yank-word
-        "M-y"    #'+amos/yank-pop
-        "M-b"    #'+amos/backward-word-insert
-        "M-d"    #'+amos/delete-forward-word
-        "M-f"    #'+amos/forward-word-insert
-        "M-B"    #'+amos/backward-subword-insert
-        "M-D"    #'+amos/delete-forward-subword
-        "M-F"    #'+amos/forward-subword-insert
-        "M-g"    #'+amos/ivy-complete-dir
-        "M-r"    #'ivy-toggle-fuzzy
-        "M-q"    #'ivy-toggle-regexp-quote
-        "M-z"    #'undo
-        "S-<f7>"      #'+amos/delete-backward-subword
-        "S-<insert>"    #'+amos/paste-from-gui
-        "M-S-<backspace>"       #'+amos/delete-backward-subword
-        "TAB"    #'ivy-call
-        [escape] #'keyboard-escape-quit
-        ;; ivy has its own logic for these
-        ;; "DEL"         #'+amos/backward-delete-char
-        ;; [M-backspace] #'+amos/backward-delete-word
-        ;; [134217855]   #'+amos/backward-delete-word ; M-DEL
-
-        :map ivy-occur-grep-mode-map
-        "C-d"    nil
-        "d"      #'ivy-occur-delete-candidate)
 
       ;; yasnippet
       (:after yasnippet
@@ -731,7 +663,7 @@
              evil-ex-search-keymap
              read-expression-map)
         [escape]      #'abort-recursive-edit
-        "C-w"         #'+amos/minibuffer-yank-word
+        ;; "C-w"         #'+amos/minibuffer-yank-word
         "C-k"         #'previous-line-or-history-element
         "C-j"         #'next-line-or-history-element
         "C-n"         #'next-line-or-history-element
@@ -741,7 +673,7 @@
         "C-f"         #'forward-char
         "C-d"         #'+amos/delete-char
         "C-o"         #'+amos/kill-line
-        "C-r"         #'counsel-minibuffer-history
+        ;; "C-r"         #'counsel-minibuffer-history
         "C-u"         #'+amos/backward-kill-to-bol-and-indent
         "M-y"         #'+amos/yank-pop
         "M-'"         (cmd! (insert ?\') (insert ?\{) (insert ?\}) (insert ?\') (backward-char 2))

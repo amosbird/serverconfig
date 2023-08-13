@@ -3,7 +3,8 @@
 (doom! :completion
        company
        ;; (helm +fuzzy)
-       (ivy +fuzzy)
+       ;; (ivy +fuzzy)
+       vertico
 
        :ui
        doom
@@ -11,7 +12,6 @@
        modeline
        hl-todo
        nav-flash
-       unicode ;; for mu4e
        popup
        (treemacs +lsp)
 
@@ -22,7 +22,6 @@
        rotate-text
        multiple-cursors
        snippets
-       ;; syntax-checker
 
        :checkers
        ;; spell
@@ -34,6 +33,7 @@
        vc
 
        :tools
+       direnv
        lsp
        ;; (lsp +eglot)
        eval
@@ -55,7 +55,7 @@
        (sh +fish)
        (rust +lsp)
        (ocaml +lsp)
-       (org +pandoc)
+       (org +pandoc +avy)
        (python)
        ;; TODO too slow
        ;; (python +lsp +pyright)
@@ -72,9 +72,10 @@
        ;; amos-java
        amos-email
        ;; amos-go
-       amos-modeline
+       ;; amos-modeline
        amos-org
        leap
+       cc-playground
        ;; amos-python
        ;; amos-sh
        )
@@ -328,7 +329,8 @@
 (setq bibtex-completion-additional-search-fields '("_note"))
 (setq initial-buffer-choice (lambda () (get-buffer "*Messages*")))
 (setq word-wrap-by-category t)
-(defun hide-mode-line-mode(&rest_)) ;; never hide modeline
+(setq next-error-recenter '(4))
+(setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number")
 
 (after! core-keybinds
   (add-to-list 'doom-evil-state-alist '(?s . sticky))
@@ -342,6 +344,9 @@
 (advice-add #'+evil-collection-init :around #'+amos*+evil-collection-init)
 
 (advice-add #'hide-mode-line-mode :override #'ignore)
+
+(advice-add #'set-popup-rule! :override #'ignore)
+(advice-add #'set-popup-rules! :override #'ignore)
 
 (ignore-errors
   (define-category ?U "Uppercase")

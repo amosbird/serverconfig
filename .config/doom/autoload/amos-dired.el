@@ -75,12 +75,6 @@
       (+amos/find-file jump-history t))))
 
 ;;;###autoload
-(defun +amos--get-all-jump-dirs ()
-  (unless (file-directory-p default-directory)
-    (cd "~"))
-  (split-string (shell-command-to-string "jump top") "\n" t))
-
-;;;###autoload
 (defun +amos/dired-next-history ()
   "Move forward in history"
   (interactive)
@@ -110,7 +104,9 @@
       (if (file-exists-p find-name)
           (progn
             ;; select origination file
+            (leap-set-jump)
             (find-file find-name)
+            (recenter)
             (when (and (file-directory-p find-name)
                        (not (eq (current-buffer) orig)))
               (unless ignore-history
@@ -130,22 +126,6 @@
     (select-window (posn-window (event-end event)))
     (find-alternate-file (file-name-sans-versions file t))))
 (define-key dired-mode-map [mouse-2] 'dired-mouse-find-alternate-file)
-
-;;;###autoload
-(defun +amos/counsel-jumpfile-function ()
-  (interactive)
-  (ivy-read "Jump file: " (directory-files-recursively default-directory ".*")
-            :require-match t
-            :action #'+amos/find-file
-            :caller #'+amos/counsel-jumpfile-function))
-
-;;;###autoload
-(defun +amos/counsel-jumpdir-function ()
-  (interactive)
-  (ivy-read "Jump directory: " (+amos--get-all-jump-dirs)
-            :require-match t
-            :action #'+amos/find-file
-            :caller #'+amos/counsel-jumpdir-function))
 
 ;;;###autoload
 (defun +amos-store-jump-history ()

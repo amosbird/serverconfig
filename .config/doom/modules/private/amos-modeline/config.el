@@ -47,6 +47,13 @@
   (setq keycast--this-command this-command))
 
 (add-hook! 'pre-command-hook :append #'keycast-mode-line-update)
+;; (define-minor-mode keycast-mode-line-mode
+;;   "Show current command and its key binding in the mode line."
+;;   :global t
+;;   :lighter " Key"
+;;   (if keycast-mode-line-mode
+;;       (add-hook! 'pre-command-hook :append #'keycast-mode-line-update)
+;;     (remove-hook! 'pre-command-hook #'keycast-mode-line-update)))
 
 (doom-modeline-def-segment keycast
   (let* ((key (ignore-errors
@@ -63,18 +70,6 @@
            (format " %s" (propertize (if (symbolp cmd) (symbol-name cmd) "No Key")
                                      'face 'keycast-command)))))))
 
-;; add padding for short buffer name
-(doom-modeline-def-segment amos-matches
-  (let ((meta (concat (doom-modeline--macro-recording)
-                      (doom-modeline--anzu)
-                      (doom-modeline--evil-substitute)
-                      (doom-modeline--iedit)
-                      (doom-modeline--symbol-overlay)
-                      (doom-modeline--multiple-cursors))))
-    (concat (if (not buffer-file-name) (make-string 24 ?\ ))
-            (or (and (not (equal meta "")) meta)
-                " %I "))))
-
 (setq +amos-system-name
       (let ((hostname (getenv "HOSTNAME")))
         (if (and hostname (not (string-empty-p hostname)))
@@ -84,19 +79,15 @@
 (doom-modeline-def-segment host (let () +amos--hostname))
 
 (doom-modeline-def-modeline 'amos
-  '(bar matches buffer-info buffer-position selection-info frame)
-  '(keycast host buffer-encoding major-mode vcs checker))
+  '(bar matches follow buffer-info buffer-position word-count parrot selection-info frame)
+  '(keycast host lsp indent-info buffer-encoding major-mode process vcs checker time))
 
 (defun +amos-setup-custom-doom-modeline-a ()
-  (doom-modeline-set-modeline 'amos))
+  (doom-modeline-set-modeline 'amos t))
 
 (advice-add #'doom-modeline-auto-set-modeline :override #'+amos-setup-custom-doom-modeline-a)
 
 ;; ignore window-font-height which will call select-window which calls evil-set-curosr
-(defun +amos-window-font-height-a (&rest _)
-  1)
-
-(window-parameter (selected-window) 'popon-list)
+(defun +amos-window-font-height-a (&rest _) 1)
 (advice-add #'window-font-height :override #'+amos-window-font-height-a)
-
 (setq after-focus-change-function #'ignore) ; it doens't make sense to update modeline

@@ -161,10 +161,8 @@
 ;; https://emacs.stackexchange.com/questions/22574/orgmode-export-how-to-prevent-a-new-line-for-comment-lines
 (defun +amos-org-export-delete-org-comments-h (_)
   (cl-loop for comment in (reverse (org-element-map (org-element-parse-buffer)
-                                    'comment 'identity))
-        do
-        (setf (buffer-substring (org-element-property :begin comment)
-                                (org-element-property :end comment)) "")))
+                                       'comment 'identity))
+           do (cl--set-buffer-substring (org-element-property :begin comment) (org-element-property :end comment) "")))
 (add-hook! 'org-export-before-processing-hook #'+amos-org-export-delete-org-comments-h)
 
 (use-package! ox-twbs

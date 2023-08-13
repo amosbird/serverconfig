@@ -1,0 +1,8 @@
+# -*- mode: snippet -*-
+# name: clickhouse_log_ast
+# key: logast
+# type: command
+# --
+(+amos/add-include "Common/logger_useful.h")
+(+amos/add-include "Parsers/formatAST.h")
+(yas-expand-snippet "LOG_DEBUG(&::Poco::Logger::get(\"amosbird\"), \"$1 = {}\", serializeAST(*${1:}));")

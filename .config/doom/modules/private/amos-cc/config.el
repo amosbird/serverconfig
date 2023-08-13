@@ -49,23 +49,11 @@
   (add-hook! (c-mode c++-mode) #'+cc|fontify-constants)
   (setq-default c-noise-macro-names '("constexpr"))
 
-  (add-hook! (c-mode-common c-ts-base-mode)
-    (modify-syntax-entry ?_ "w")
-    (rainbow-delimiters-mode +1)
-
-    (setq-local c-ts-mode-indent-offset 4
-                treesit-font-lock-level 4)
-    (treesit-font-lock-recompute-features)
-
-    (when-let ((p (getenv "envprompt")))
-      (if (string= p "CC-Playground")
-          (cc-playground-mode +1))))
-
-  ;;; Keybindings
+    ;;; Keybindings
   (map! (:map (c-mode-map c++-mode-map c-ts-base-mode-map)
          "<" nil
          ">" nil
-         :i "RET"      #'+cc-append-comment-line
+         ;; :i "RET"      #'+cc-append-comment-line
          :n "RET"      #'+amos/lsp-highlight-symbol
          :i ";"        #'+amos/better-semicolon
          :n "C-e"      #'+amos/maybe-add-end-of-statement
@@ -348,3 +336,28 @@ Only works with clangd."
 ;; maybe useful?
 ;; (add-hook! (c-mode c++-mode) (setq iedit-auto-bufferring t))
 
+
+(defun +amos-indent-style()
+  "Override the built-in GNU indentation style with some additional rules."
+  `(;; Here are your custom rules
+    ((node-is ")") parent-bol 0)
+    ((match nil "argument_list" nil 1 1) parent-bol c-ts-mode-indent-offset)
+    ((parent-is "argument_list") prev-sibling 0)
+    ((match nil "parameter_list" nil 1 1) parent-bol c-ts-mode-indent-offset)
+    ((parent-is "parameter_list") prev-sibling 0)
+
+    ;; Append here the indent style you want as base
+    ,@(alist-get 'gnu (c-ts-mode--indent-styles 'cpp))))
+
+(add-hook! (c-mode-common c-ts-base-mode)
+  (modify-syntax-entry ?_ "w")
+  ;; (rainbow-delimiters-mode +1)
+
+  (setq-local c-ts-mode-indent-offset 4
+              c-ts-mode-indent-style #'amos-indent-style
+              treesit-font-lock-level 4)
+  (treesit-font-lock-recompute-features)
+
+  (when-let ((p (getenv "envprompt")))
+    (if (string= p "CC-Playground")
+        (cc-playground-mode +1))))
