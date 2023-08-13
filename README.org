@@ -110,11 +110,11 @@ pacman -S base-devel expac yajl git
 #+BEGIN_SRC bash
 
 pacman -S --needed base-devel
-git clone https://aur.archlinux.org/paru.git
+git clone https://aur.archlinux.org/paru-git.git
 cd paru
 makepkg -si
 
-paru -S telegram-desktop intel-ucode dhcpcd qbittorrent miniserve xkeysnail blueman flameshot libinput-gestures autokey discord ttf-symbola-free ttf-nerd-fonts-symbols ipv6calc rclone sqlite-pcre-git zsh libqalculate ntfs-3g meson redshift netctl pass libjpeg6 shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exfat-utils expect fcitx5-im fcitx5-configtool fcitx5-rime rime-double-pinyin gconf giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-zen linux-zen-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls moreutils mpv mtr ncdu ncurses net-tools ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin parallel pavucontrol pdfjs pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi rofi rofi-dmenu rofi-calc rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-bin texlive-lang texlive-most texlive-slashbox thinkfan tidy time ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zbar zenity zip --noconfirm --needed
+paru -S wqy-microhei-kr-patched vivaldi vivaldi-ffmpeg-codecs telegram-desktop xorg-xhost perl-clipboard perl-ipc-run3 intel-ucode dhcpcd qbittorrent miniserve xkeysnail blueman flameshot libinput-gestures autokey discord ttf-symbola-free ttf-nerd-fonts-symbols ipv6calc rclone sqlite-pcre-git zsh libqalculate ntfs-3g meson redshift netctl pass libjpeg6 shfmt acpi alsa-lib alsa-utils android-sdk arandr arc-gtk-theme arc-icon-theme arc-kde aspell-en autopep8 bear capitaine-cursors ccache clang cmake compton conky-lua cups direnv dnsmasq dnsutils docker dstat dunst earlyoom exfat-utils expect fcitx5-im fcitx5-configtool fcitx5-rime rime-double-pinyin gconf giflib gnome-themes-standard gnutls go gobject-introspection gpick gpm grc gst-libav gst-plugins-good gst-plugins-ugly gtk-doc gtk3 gtk3 hicolor-icon-theme hplip inotify-tools intltool ipset jansson jdk8-openjdk jq libevent libfdk-aac libmagick6 libotf librsvg libxpm linux-zen linux-zen-headers llvm lsof lxappearance lxrandr-gtk3 m17n-lib maim mbedtls moreutils mpv mtr ncdu ncurses net-tools ninja nmap npm ntp openbsd-netcat openconnect openssh p7zip pandoc-bin parallel pavucontrol pdfjs pinta pkg-config pkgfile poppler-data prettier pulseaudio pulseaudio-alsa pulseaudio-ctl python-attrs python-black python-language-server python-mccabe python-pycodestyle python-pydocstyle python-pyflakes python-pylint python-pypeg2 python-pyqt5 python-pyqtwebengine python-rope python-sphinx python-virtualenv python-yaml qt5-script qt5-svg qt5-tools qt5-x11extras readline refind-efi rofi rofi-dmenu rofi-calc rsync ruby samba sdcv sddm simple-obfs slock socat stalonetray strace sxhkd sysdig sysstat tcl tcpdump tesseract tesseract-data-chi_sim tesseract-data-eng tesseract-data-jpn texlive-bin texlive-lang texlive-most texlive-slashbox thinkfan tidy time ttf-dejavu ttf-freefont ttf-inconsolata ttf-ms-fonts ttf-roboto ttf-roboto-slab ttf-ubuntu-font-family ttf-wps-fonts unclutter-xfixes-git unixodbc vala vim vnstat weechat wget wordnet-cli wps-office wqy-microhei-kr-patched xclip xdo xdotool xininfo-git xorg-fonts xorg-fonts-misc xorg-twm xorg-xbacklight xorg-xclock xorg-xdpyinfo xorg-xev xorg-xinput xorg-xlsfonts xorg-xprop xorg-xrdb xorg-xset xorg-xsetroot xorg-xwininfo xsensors xterm yapf zbar zenity zip --noconfirm --needed
 
 paru -S xdg-utils-handlr
 
@@ -137,7 +137,9 @@ cd serverconfig
 git remote set-url origin git@github.com:amosbird/serverconfig
 sh restore.sh
 
-paru -S librime-git kitty-git bspwm-git feh-git freerdp-git llpp-git caps-indicator --noconfirm --needed
+# sync user repo
+paru -Sy
+paru -S librime-git kitty-git bspwm-git feh-git freerdp-git caps-indicator --noconfirm --needed
 
 cd ~/git
 git clone git@github.com:amosbird/cc-snippets cc-playground
@@ -153,20 +155,14 @@ git clone https://github.com/hlissner/doom-emacs ~/.emacs.d
 ~/.terminfo
 ~/.gnupg
 ~/.ssh
-~/.getmail
-~/.msmtprc
 ~/.stardict
 # might need to remove simsun.ttc mingliu.ttc for tdesktop and emacs-gui
 ~/.local/share/fonts
-~/.local/share/qutebrowser
 /etc/ld.so.conf.d/99-user-local.conf
+# add -dpi 192 to ServerArguments if necessary
 /etc/sddm.conf
 /etc/hosts
-/etc/netns/zt/resolv.conf
-/etc/samba/smb.conf
-/etc/cups
 /etc/sysctl.d
-/etc/default/earlyoom
 /etc/ipset.conf
 /etc/iptables/iptables.rules
 /etc/iproute2/rt_tables
@@ -175,16 +171,8 @@ git clone https://github.com/hlissner/doom-emacs ~/.emacs.d
 /etc/netctl
 /etc/udev/hwdb.d
 /etc/udev/rules.d
-/etc/sysconfig/libvirt-guests
-/etc/systemd/system/thinkfan.service.d
-/etc/systemd/system/transmission.service.d
-/etc/systemd/system/zerotier-one.service.d
 /etc/systemd/system/getty@tty1.service.d
 /usr/local/bin/getcursorpos
-/usr/local/bin/gnirehtet
-/usr/local/bin/netns-exec
-/usr/local/bin/netns-exec-dbus
-/etc/thinkfan.conf
 /etc/modprobe.d
 /etc/modules-load.d
 /etc/pulse/default.pa
@@ -195,14 +183,10 @@ sudo cp -r .terminfo /root
 mkdir -p Downloads Mail Desktop Pictures/Paste Pictures/Screenshots Videos/Screencasts Music Books org/todos Documents/pdfs Documents/ppts Documents/docs
 
 systemctl enable sddm
-systemctl enable org.cups.cupsd.service
 systemctl enable dnsmasq
-systemctl enable earlyoom
 systemctl enable ipset
 systemctl enable iptables
 systemctl enable sshd
-systemctl enable thinkfan
-systemctl enable zerotier-one
 systemctl enable docker
 
 ccache -M 50G
@@ -221,14 +205,3 @@ pacman-key --init
 pacman-key --populate archlinux
 pacman-key --refresh-keys
 pacman -Syyu
-
-
-
-# groupadd -r autologin
-# gpasswd -a username autologin
-
-/etc/lightdm/lightdm.conf
-
-[Seat:*]
-autologin-user=username
-autologin-session=session

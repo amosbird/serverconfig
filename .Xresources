@@ -1,6 +1,5 @@
 #if !(SRVR_abt480)
-! Xcursor.size: 48
-Xcursor.size: 64
+Xcursor.size: 48
 Xft.dpi: 192
 #endif
 
