@@ -11,7 +11,7 @@ die() {
 
 # updateroutes
 
-for d in enp0s31f6 enp9s0u2u1u2 enp0s20f0u4u1u2 enp0s20f0u5 wlp3s0 wlp2s0 enp1s0 wlp0s20f3; do
+for d in eno1 enp0s31f6 enp9s0u2u1u2 enp0s20f0u4u1u2 enp0s20f0u5 wlp3s0 wlp2s0 enp1s0 wlp0s20f3 wlp5s0f3u2; do
     read -r _ _ gw _ < <(ip r g 123.206.66.49 oif $d)
     if [ -n "$gw" ]; then
         break
