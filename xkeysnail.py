@@ -186,5 +186,5 @@ define_keymap(
         K("C-j"): K("down"),
         K("C-d"): K("delete"),
     },
-    "Vivaldi Emacs-like keys",
+    "copyq Emacs-like keys",
 )

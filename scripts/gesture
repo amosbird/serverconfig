@@ -116,7 +116,7 @@ swipe4up() {
         xdotool key --window $id alt+F5
         ;;
     Vivaldi-stable)
-        xdotool key --window $id alt+F11
+        xdotool key --window $id alt+F8
         ;;
     esac
 }

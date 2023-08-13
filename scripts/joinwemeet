@@ -6,7 +6,12 @@
 
 # set -x
 
-code=$(echo "$@" | perl -ne 'print $1.$2.$3."\n" if $_ =~ /(\d{3}).(\d{3}).(\d{3})[\r\n]/' | head -1)
+re='^[0-9]+$'
+if ! [[ $@ =~ $re ]] ; then
+    code=$@
+else
+    code=$(echo "$@" | perl -ne 'print $1.$2.$3."\n" if $_ =~ /(\d{3}).(\d{3}).(\d{3})[\r\n]/' | head -1)
+fi
 
 xdg-open "wemeet://page/inmeeting?meeting_code=$code" &
 

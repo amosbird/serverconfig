@@ -5,12 +5,10 @@ process_name=telegram-deskto binary=telegram-desktop window_name=telegram-deskto
 
 workspace=$(bspc query -D -d focused --names)
 if pgrep $process_name >/dev/null; then
-    while read -r wid
-    do
+    while read -r wid; do
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
     done < <(xdo id -N TelegramDesktop -n $window_name)
 
-    bspc query -N -n focused
     if [ -z "$found" ]; then
         $binary
     elif bspc query -N -n focused | grep -q "$wid"; then
@@ -19,7 +17,7 @@ if pgrep $process_name >/dev/null; then
     else
         bspc node "$wid" --to-desktop "$workspace"
         bspc node "$wid" -t floating
-        bspc node "$wid" -g hidden=off
+        bspc node "$wid".window -g hidden=off -f
     fi
     wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
     w=${wh[0]}

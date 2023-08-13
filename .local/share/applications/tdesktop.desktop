@@ -2,6 +2,6 @@
 Version=1.0
 Type=Application
 NoDisplay=true
-Exec=/home/amos/git/tdesktop/out/Release/Telegram -workdir /home/amos/.local/share/TelegramDesktop/ -- %u
+Exec=/usr/bin/telegram-desktop -workdir /home/amos/.local/share/TelegramDesktop/ -- %u
 Name=Telegram Desktop
-Comment=Telegram Desktop (Amos Bird fork)
+Comment=Telegram Desktop

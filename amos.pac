@@ -18,6 +18,9 @@ function host2domain(host) {
 }
 
 function FindProxyForURL(url, host) {
+    if (isInNet(host, "11.0.0.0", "255.0.0.0") || isInNet(host, "9.0.0.0", "255.0.0.0") || isInNet(host, "30.0.0.0", "255.0.0.0")) {
+        return http_proxy;
+    }
     // return http_proxy;
     return gfwed[host2domain(host)] ? http_proxy : direct;
 }

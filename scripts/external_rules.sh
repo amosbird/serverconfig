@@ -240,20 +240,12 @@ stalonetray)
     ;;
 wemeetapp)
     case "$net_title" in
+    EmojiFloatWnd)
+        echo "hidden = on"
+        ;;
     wemeetapp)
-        # if xprop -id "$wid" "_NET_WM_STATE" | grep -E -q "_NET_WM_STATE_ABOVE"
-        # then
-        #     :
-        if xprop -id "$wid" "_NET_WM_STATE" | grep -E -q "_NET_WM_STATE_MODAL"
-        then
-            echo "$wid" >>/tmp/wemeet # appending so that sub windows don't overwrite
-            echo "sticky=on state=floating"
-            :
-        else
-            echo >> /tmp/a
-            xprop -id "$wid" >> /tmp/a
-           echo "hidden = on"
-        fi
+        echo "$wid" >>/tmp/wemeet # appending so that sub windows don't overwrite
+        echo "sticky=on state=floating"
         ;;
     *)
         echo "$wid" >>/tmp/wemeet # appending so that sub windows don't overwrite
