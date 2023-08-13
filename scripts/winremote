@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 case $(hostname) in
-    abx1gen3)
+    abx1gen3|qtw)
         DPI_PARAMS="/w:3840 /h:2160 /scale-desktop:200 /scale:180"
         ;;
     *)
@@ -13,9 +13,12 @@ export NO_PROXY=1
 # USB_PARAMS="/dvc:urbdrc,id,dev:18d1:d00d"
 # USB_PARAMS="/usb:auto"
 # VAAPI="/vaapi-connection-type:x11"
-ip=100.123.145.119
-# ip=192.168.2.99
-password=$(pass show devcloud)
+# ip=100.123.145.119
+# user=amos
+# password=$(pass show pass)
+ip=$(pass show windows_ip)
+user=Administrator
+password=$(pass show windows)
 # size="/size:1920x1080 /smart-sizing:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g')"
 # debug=/log-level:trace
 # clipboard=/clipboard:use-selection:PRIMARY
@@ -28,9 +31,5 @@ password=$(pass show devcloud)
 sound="/sound:sys:pulse /microphone /audio-mode:0"
 # audio=/audio-mode:1
 program=xfreerdp
-$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:amos /p:$(pass show pass) /v:$ip
 
-# DPI="/w:1920 /h:1080 /scale-desktop:100 /scale:100"
-# DPI="/size:3840x2160 /smart-sizing:1920x1080"
-
-# xfreerdp $DPI /cert-ignore +aero +menu-anims +window-drag /rfx /gfx /sound:sys:pulse /microphone +auto-reconnect /bpp:32 /drive:amos,/home/amos -toggle-fullscreen +fonts -grab-keyboard /u:administrator /p:$(pass show devcloud) /v:$(pass show devcloud_ip) /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
+$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:$user /p:"$password" /v:$ip /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
