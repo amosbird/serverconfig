@@ -1,4 +1,5 @@
 function br --wraps=broot
+    broot --set-install-state installed &> /dev/null
     set -l cmd_file (mktemp)
     if broot --outcmd $cmd_file $argv
         read --local --null cmd < $cmd_file
