@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 
-export TERM=screen-256color
-# export TERM=xterm-256color
-# export TERM=tmux-256color
-# export TERM=xterm-tmux-24bits
 export COLORTERM=truecolor
 if [[ -z $GUI ]]; then
     # export TERM=xterm-tmux-24bits

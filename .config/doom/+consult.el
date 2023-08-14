@@ -198,7 +198,8 @@ Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-locatio
                                               (leap-set-jump)
                                               (apply +amos-find-file args)
                                               (recenter))))
-    (consult-recent-file)))
+    (let ((recentf-list (--remove (string= it sync-recentf-marker) recentf-list)))
+      (consult-recent-file))))
 
 (defun +amos/consult-recentf ()
   (interactive)
@@ -214,36 +215,35 @@ Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-locatio
       (setcdr next (cons separator (cdr next)))
       (setq next (cddr next)))))
 
-(defun +amos-consult-fd-builder (input)
+(defun +amos-consult-fd-builder (no-ignore input)
   (pcase-let* ((`(,arg . ,opts) (consult--command-split input))
                (`(,re . ,hl) (funcall consult--regexp-compiler arg 'extended t)))
     (when re
       (list-interject re "--and")
       (cons
-       `("fd" "--color=never" "--hidden" "--full-path" ,@re ,@opts)
+       `("fd" "--color=never" "--hidden" "--full-path" ,(if no-ignore "--no-ignore" "") ,@re ,@opts)
        hl))))
 
-(defun +amos-consult-fd (&optional dir initial)
-  (interactive "P")
+(defun +amos-consult-fd (&optional dir initial no-ignore)
   (pcase-let* ((`(,prompt ,paths ,dir) (consult--directory-prompt "Fd" dir))
                (default-directory dir)
-               (file (consult--find prompt #'+amos-consult-fd-builder initial)))
+               (file (consult--find prompt (apply-partially #'+amos-consult-fd-builder no-ignore) initial)))
     (leap-set-jump)
     (find-file file)
     (recenter)))
 
-(defun +amos-consult-find (&optional cur)
+(defun +amos-consult-find (&optional cur no-ignore)
   (if cur
-      (+amos-consult-fd default-directory)
-    (+amos-consult-fd)))
+      (+amos-consult-fd default-directory nil no-ignore)
+    (+amos-consult-fd nil nil no-ignore)))
 
-(defun +amos/consult-find ()
-  (interactive)
-  (+amos-consult-find))
+(defun +amos/consult-find (&optional no-ignore)
+  (interactive "P")
+  (+amos-consult-find nil no-ignore))
 
-(defun +amos/consult-find-cur-dir ()
-  (interactive)
-  (+amos-consult-find t))
+(defun +amos/consult-find-cur-dir (&optional no-ignore)
+  (interactive "P")
+  (+amos-consult-find t no-ignore))
 
 (defun +amos/consult-line ()
   (interactive)

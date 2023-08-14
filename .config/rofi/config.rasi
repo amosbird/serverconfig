@@ -1,5 +1,5 @@
 configuration {
-	dpi: 1;
+	dpi: 0;
 	font: "monospace 14";
 	location: 0;
 	yoffset: 0;

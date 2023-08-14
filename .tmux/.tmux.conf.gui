@@ -1,8 +1,7 @@
 #' -*- mode:conf -*-
 #'
 
-set -g default-terminal "xterm-tmux-24bits"
-set -ga terminal-overrides ",xterm-*:Tc"
+set -ga terminal-overrides ",*:RGB"
 set -g escape-time 0
 set -g focus-events on
 set -g xterm-keys on
