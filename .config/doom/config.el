@@ -1357,7 +1357,7 @@ current buffer's, reload dir-locals."
   (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
 
 (after! recentf
-  (setq recentf-exclude '("/$" "/tmp/sync-recentf-marker" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
+  (setq recentf-exclude '("/$" "/tmp/sync-recentf-marker" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git$" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
 
 (defun +amos/redisplay-and-recenter (&rest _)
   (interactive)
