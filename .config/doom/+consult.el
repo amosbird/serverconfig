@@ -221,7 +221,9 @@ Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-locatio
     (when re
       (list-interject re "--and")
       (cons
-       `("fd" "--color=never" "--hidden" "--full-path" ,(if no-ignore "--no-ignore" "") ,@re ,@opts)
+       (if no-ignore
+           `("fd" "--color=never" "--hidden" "--full-path" "--no-ignore" ,@re ,@opts)
+         `("fd" "--color=never" "--hidden" "--full-path" ,@re ,@opts))
        hl))))
 
 (defun +amos-consult-fd (&optional dir initial no-ignore)
