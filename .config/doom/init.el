@@ -46,6 +46,7 @@
        (lookup)
 
        :lang
+       rest
        javascript
        data
        emacs-lisp

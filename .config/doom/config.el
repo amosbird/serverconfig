@@ -36,6 +36,9 @@
                                          ;; "*Shell Command Output*"
                                          "*Style Warnings*"
                                          "*Native-compile-Log*"
+                                         "*org-src"
+                                         "*Org Src"
+                                         " *org-src"
                                          ))
                                     .
                                     nil))
