@@ -1301,7 +1301,6 @@ it will restore the window configuration to prior to full-framing."
     (zygospore-delete-other-window)))
 
 (defun save-buffer-maybe ()
-  (interactive)
   ;; (garbage-collect)
   (when (and (buffer-file-name)
              (not defining-kbd-macro)
@@ -1310,19 +1309,32 @@ it will restore the window configuration to prior to full-framing."
   nil)
 
 (defun git-gutter-maybe ()
-  (interactive)
   ;; (when git-gutter-mode (ignore (call-interactively #'git-gutter)))
   nil)
 
 (defun magit-quit-maybe ()
-  (interactive)
   (when (derived-mode-p 'magit-mode)
     (+magit/quit))
   nil)
 
+(defun +evil-disable-multiedit-h ()
+  (when evil-multiedit-mode
+    (evil-multiedit-abort)
+    t))
+
 (add-hook! 'doom-escape-hook #'save-buffer-maybe)
 (add-hook! 'doom-escape-hook #'git-gutter-maybe)
 (add-hook! 'doom-escape-hook #'magit-quit-maybe)
+(add-hook! 'doom-escape-hook #'+evil-disable-multiedit-h)
+
+(defun +amos/evil-force-normal-state ()
+  (interactive)
+  (call-interactively (symbol-function 'evil-force-normal-state))
+  (require 'anzu)
+  (anzu--reset-status)
+  (require 'evil-snipe)
+  (evil-snipe--cleanup)
+  (call-interactively #'doom/escape))
 
 (defun my-reload-dir-locals-for-all-buffer-in-this-directory ()
   "For every buffer with the same `default-directory` as the
@@ -1360,7 +1372,7 @@ current buffer's, reload dir-locals."
   (advice-add #'switch-to-buffer-other-frame :override #'+amos/switch-to-buffer-other-frame))
 
 (after! recentf
-  (setq recentf-exclude '("/$" "/tmp/sync-recentf-marker" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git$" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
+  (setq recentf-exclude '("/$" "/tmp/sync-recentf-marker" "/ssh:" "\\.?ido\\.last$" "\\.revive$" "\\.git/" "/TAGS$" "^/var" "^/usr" "~/cc/" "~/Mail/" "~/\\.emacs\\.d/.local/cache")))
 
 (defun +amos/redisplay-and-recenter (&rest _)
   (interactive)
@@ -3875,6 +3887,7 @@ See `project-local-get' for the parameter PROJECT."
  "+amos/evil-next-visual-line"
  "execute-extended-command"
  "find-file"
+ "envrc-"
  "evil-commentary-line"
  "evil-multiedit"
  "evil-next-line"

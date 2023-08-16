@@ -106,6 +106,7 @@
 
 ;; Q U M H
 (map! (:map override
+        :n "<escape>"          #'+amos/evil-force-normal-state
         :gnemv "C-h d"         (cmd!
                                 (xref-find-definitions
                                  (let* ((backend (xref-find-backend)))
@@ -288,7 +289,7 @@
       (:prefix "C-x"
         :g "1"       #'zygospore-toggle-delete-other-windows
         :g "e"       #'pp-eval-last-sexp
-        :g "d"       #'+amos/direnv-reload
+        :g "d"       #'envrc-allow
         :g "a"       #'direnv-edit
         :g "C-r"     #'+amos/replace-last-sexp
         :i "C-f"     #'amos-company-files
@@ -378,7 +379,7 @@
 
       (:after files
         :map ctl-x-map
-        :g "C-d" #'+amos/direnv-reload)
+        :g "C-d" #'envrc-allow)
 
       (:after dired
         :map dired-mode-map
