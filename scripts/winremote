@@ -9,6 +9,8 @@ case $(hostname) in
         ;;
 esac
 
+# export NVD_BACKEND=direct
+# export LIBVA_DRIVER_NAME=nvidia
 export NO_PROXY=1
 # USB_PARAMS="/dvc:urbdrc,id,dev:18d1:d00d"
 # USB_PARAMS="/usb:auto"
@@ -32,4 +34,4 @@ sound="/sound:sys:pulse /microphone /audio-mode:0"
 # audio=/audio-mode:1
 program=xfreerdp
 
-$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:$user /p:"$password" /v:$ip /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
+$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:$user /p:"$password" /v:$ip /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp &> /tmp/freerdp.log
