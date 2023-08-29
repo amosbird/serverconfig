@@ -3,6 +3,7 @@
 case $(hostname) in
     abx1gen3|qtw)
         DPI_PARAMS="/w:3840 /h:2160 /scale-desktop:200 /scale:180"
+        # DPI_PARAMS="/size:3840x2160 /smart-sizing"
         ;;
     *)
         DPI_PARAMS="/w:1920 /h:1080"
@@ -25,7 +26,7 @@ password=$(pass show windows)
 # debug=/log-level:trace
 # clipboard=/clipboard:use-selection:PRIMARY
 # log=/log-filters:com.freerdp.channels.cliprdr.client:trace
-# rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
+rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
 # compression="-glyph-cache /network:modem /compression /bpp:8 -themes -wallpaper"
 
 # effect="+aero +menu-anims +window-drag +fonts /bpp:32"
@@ -34,4 +35,4 @@ sound="/sound:sys:pulse /microphone /audio-mode:0"
 # audio=/audio-mode:1
 program=xfreerdp
 
-$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:$user /p:"$password" /v:$ip /rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp &> /tmp/freerdp.log
+$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:$user /p:"$password" /v:$ip $rdp2tcp &> /tmp/freerdp.log
