@@ -199,8 +199,8 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
        hl))))
 
 (defun +amos-consult-fd (&optional dir initial no-ignore)
-  (pcase-let* ((`(,prompt . ,path) (consult--directory-prompt "Fd" dir))
-               (default-directory path)
+  (pcase-let* ((`(,prompt ,paths ,dir) (consult--directory-prompt "Fd" dir))
+               (default-directory dir)
                (file (consult--find prompt (apply-partially #'+amos-consult-fd-builder no-ignore) initial)))
     (leap-set-jump)
     (find-file file)
