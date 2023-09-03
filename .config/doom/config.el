@@ -79,6 +79,16 @@
 (use-package! dired-open
   :after dired
   :config
+  (defun +amos/dired-open-callgrind ()
+    "Open callgrind files according to its name."
+    (interactive)
+    (let ((file (ignore-errors (dired-get-file-for-visit)))
+          process)
+      (when (and file
+                 (not (file-directory-p file)))
+        (when (string-match-p "$[cachegrind|callgrind].out" file)
+          (setq process (dired-open--start-process file "kcachegrind"))))
+      process))
   (push #'+amos/dired-open-callgrind dired-open-functions))
 
 (use-package! dired-quick-sort
@@ -1709,63 +1719,23 @@ representation of `NUMBER' is smaller."
     ;; `Info-mode'
     ("^\\*info\\*$" :slot 2 :vslot 2 :size 0.45 :ttl kill-buffer :select t)
     ("\\*TeX" :side right :size 0.4 :ttl kill-buffer)
-    ("^\\*Embark Writable Export" :actions (+popup-display-buffer-fullframe-fn) :quit current :select t)
-    ("^\\*Embark Export" :side bottom :size 0.35 :quit current :select t)
-    ("^\\*Embark Collect" :side right :size 0.5 :quit current :select t)
+    ("^\\*Embark Export" :side bottom :size 0.35 :quit current :ttl kill-buffer :select t)
+    ("^\\*Embark Collect" :side right :size 0.5 :quit current :ttl kill-buffer :select t)
     ("^\\(?:\\*magit\\|magit:\\)" :ignore t)
     ("\\[ Table \\]\\*" :side right :size 0.9 :select t :quit nil)
     ("^\\*Backtrace" :side right :size 0.5 :quit current))
   )
 
-(evil-define-command +amos-evil-visual-paste-a (count &optional register)
-  "Paste over Visual selection."
-  :suppress-operator t
-  (interactive "P<x>")
-  ;; evil-visual-paste is typically called from evil-paste-before or
-  ;; evil-paste-after, but we have to mark that the paste was from
-  ;; visual state
-  (setq this-command 'evil-visual-paste)
-  (let* ((text (if register
-                   (evil-get-register register)
-                 (current-kill 0)))
-         (yank-handler (car-safe (get-text-property
-                                  0 'yank-handler text)))
-         new-kill
-         paste-eob)
-    (evil-with-undo
-      (let* ((kill-ring (list (current-kill 0)))
-             (kill-ring-yank-pointer kill-ring))
-        (when (evil-visual-state-p)
-          (evil-visual-rotate 'upper-left)
-          ;; if we replace the last buffer line that does not end in a
-          ;; newline, we use `evil-paste-after' because `evil-delete'
-          ;; will move point to the line above
-          (when (and (= evil-visual-end (point-max))
-                     (/= (char-before (point-max)) ?\n))
-            (setq paste-eob t))
-          (evil-delete evil-visual-beginning evil-visual-end
-                       (evil-visual-type) ?_)
-          (when (and (eq yank-handler #'evil-yank-line-handler)
-                     (not (eq (evil-visual-type) 'line))
-                     (not (= evil-visual-end (point-max))))
-            (insert "\n"))
-          (evil-normal-state)
-          (setq new-kill (current-kill 0))
-          (current-kill 1))
-        (if paste-eob
-            (evil-paste-after count register)
-          (evil-paste-before count register)))
-      (when evil-kill-on-visual-paste
-        (kill-new new-kill))
-      ;; mark the last paste as visual-paste
-      (setq evil-last-paste
-            (list (nth 0 evil-last-paste)
-                  (nth 1 evil-last-paste)
-                  (nth 2 evil-last-paste)
-                  (nth 3 evil-last-paste)
-                  (nth 4 evil-last-paste)
-                  t)))))
-(advice-add #'evil-visual-paste :override #'+amos-evil-visual-paste-a)
+(defun +amos-popup-make-rule (predicate plist)
+  (list predicate '(display-buffer-same-window)))
+
+;; This is a better version of +popup-display-buffer-fullframe-fn
+(cl-letf (((symbol-function '+popup-make-rule) #'+amos-popup-make-rule))
+  (+amos-set-popup-rules!
+   '(
+     ("^\\*Embark Writable Export")
+     )
+   ))
 
 (defvar leaped nil)
 (defun +amos-+lookup--jump-to-a (prop identifier &optional display-fn arg)
@@ -2080,30 +2050,12 @@ the current state and point position."
 (after! wdired
   (evil-set-initial-state 'wdired-mode 'normal))
 
-(defun +amos/dired-open-callgrind ()
-  "Open callgrind files according to its name."
-  (interactive)
-  (let ((file (ignore-errors (dired-get-file-for-visit)))
-        process)
-    (when (and file
-               (not (file-directory-p file)))
-      (when (string-match-p "$[cachegrind|callgrind].out" file)
-        (setq process (dired-open--start-process file "kcachegrind"))))
-    process))
-
 (defadvice dired-clean-up-after-deletion (around +amos*dired-clean-up-after-deletion activate)
   (doom-with-advice (y-or-n-p (lambda (&rest _) t))
       ad-do-it))
 
 (after! evil-snipe
-  (push 'dired-mode evil-snipe-disabled-modes)
-  )
-
-;; fix constructor list
-(defun +amos*c-determine-limit (orig-fun &rest args)
-  (setf (car args) 5000)
-  (apply orig-fun args))
-(advice-add #'c-determine-limit :around #'+amos*c-determine-limit)
+  (push 'dired-mode evil-snipe-disabled-modes))
 
 (after! iedit
   (add-hook! 'iedit-mode-end-hook (+amos/recenter) (setq iedit-unmatched-lines-invisible nil)))
@@ -2121,9 +2073,7 @@ the current state and point position."
   (defun +amos*remove-git-index-lock (&rest _)
     (ignore-errors
       (delete-file ".git/index.lock")))
-  (advice-add #'magit-refresh :before #'+amos*remove-git-index-lock)
-
-  )
+  (advice-add #'magit-refresh :before #'+amos*remove-git-index-lock))
 
 (after! evil-magit
   (setq evil-magit-use-z-for-folds nil))
@@ -2177,14 +2127,8 @@ By default the last line."
   (evil-with-state 'insert
     (syntactic-close)))
 
-;; TODO useless?
-(defun +amos-get-buffer-by-name (name)
-  (cl-loop for buffer in (buffer-list)
-           if (or (get-file-buffer name)
-                  (string= (buffer-name buffer) name))
-           collect buffer))
-
 (advice-add #'evil--jumps-savehist-load :override #'ignore)
+
 (defun +amos-clean-evil-jump-list (&optional buffer)
   (let* ((ring (make-ring evil-jumps-max-length))
          (jump-struct (evil--jumps-get-current))
@@ -2216,12 +2160,7 @@ By default the last line."
 (defun +amos-undo-tree-a (ofun &rest arg)
   (if (and (not defining-kbd-macro)
            (not executing-kbd-macro))
-      (if (not (memq major-mode '(c-mode c++-mode)))
-          (apply ofun arg)
-        ;; (+amos|iedit-setup-hooks)
-        (apply ofun arg)
-        ;; (+amos|iedit-mode-end-hook)
-        )
+      (apply ofun arg)
     (message "cannot use undo when recording/executing a macro!")))
 (advice-add #'undo-tree-undo :around #'+amos-undo-tree-a)
 (advice-add #'undo-tree-redo :around #'+amos-undo-tree-a)
@@ -2244,68 +2183,6 @@ By default the last line."
 (advice-add #'magit-blame--update-margin :override #'ignore)
 (advice-add #'evil-visual-update-x-selection :override #'ignore)
 
-(defun +amos-magit-blob-next-a ()
-  "Visit the next blob which modified the current file."
-  (interactive)
-  (if-let ((file (and magit-buffer-file-name (magit-blob-successor magit-buffer-revision magit-buffer-file-name))))
-      (magit-blob-visit file)
-    (user-error "You have reached the previous end of time")))
-(advice-add #'magit-blob-next :override #'+amos-magit-blob-next-a)
-
-(defun +amos/avy-goto-url()
-  "Use avy to go to an URL in the buffer."
-  (interactive)
-  (require 'avy)
-  (avy-jump "https?://" :window-flip nil :beg nil :end nil :action #'goto-char))
-
-(defun +amos/avy-open-url ()
-  "Use avy to select an URL in the buffer and open it."
-  (interactive)
-  (require 'avy)
-  (avy-jump "https?://" :window-flip nil :beg nil :end nil :action (lambda (p) (save-excursion (goto-char p) (browse-url-at-point)))))
-
-(defun +amos/avy-goto-char-timer (&optional arg)
-  "Read one or many consecutive chars and jump to the first one.
-The window scope is determined by `avy-all-windows' (ARG negates it)."
-  (interactive "P")
-  (require 'avy)
-  (let (block)
-    (when (eq 'block evil-visual-selection)
-      (evil-visual-char)
-      (setq block t))
-    (let ((avy-all-windows (if arg
-                               (not avy-all-windows)
-                             avy-all-windows)))
-      (avy-with avy-goto-char-timer
-        (avy--process
-         (avy--read-candidates)
-         (avy--style-fn avy-style))))
-    (if block (evil-visual-block))))
-;; (evil-define-avy-motion +amos/avy-goto-char-timer inclusive)
-;;
-
-(defun +amos*avy-handler-default (char)
-  "The default handler for a bad CHAR."
-  (let (dispatch)
-    (cond ((setq dispatch (assoc char avy-dispatch-alist))
-           (unless (eq avy-style 'words)
-             (setq avy-action (cdr dispatch)))
-           (throw 'done 'restart))
-          ((eq char 'escape)
-           ;; exit silently
-           (throw 'done 'abort))
-          ((memq char '(?\e ?\C-g))
-           ;; exit silently
-           (throw 'done 'abort))
-          ((eq char ??)
-           (avy-show-dispatch-help)
-           (throw 'done 'restart))
-          ((mouse-event-p char)
-           (signal 'user-error (list "Mouse event not handled" char)))
-          (t
-           (message "No such candidate: %s, hit `C-g' to quit."
-                    (if (characterp char) (string char) char))))))
-;; (advice-add #'avy-handler-default :override #'+amos*avy-handler-default)
 (define-key key-translation-map "\035" [escape])
 
 (defun anzu-multiedit (&optional symbol)
@@ -2319,11 +2196,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
                               (regexp-quote string))))
              (search-pattern (evil-ex-make-search-pattern regex)))
         (evil-multiedit-ex-match (point-min) (point-max) nil (car search-pattern))))))
-
-(defun +amos/toggle-mc ()
-  (interactive)
-  (evil-mc-make-cursor-here)
-  (evil-mc-pause-cursors))
 
 (defun +amos/wipe-current-buffer ()
   (interactive)
@@ -2437,10 +2309,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
         amos-company-files
         ))
 
-;; debugging eldoc
-(defun stupid_function (&optional xxxxxxx1 xxxxxxx2 xxxxxxx3 xxxxxxx4 xxxxxxx5 xxxxxxx6 xxxxxxx7 xxxxxxx8 xxxxxxx9 xxxxxxx10 xxxxxxx11 xxxxxxx12 xxxxxxx13 xxxxxxx14 xxxxxxx15 xxxxxxx16 xxxxxxx17 xxxxxxx18 xxxxxxx19 xxxxxxx20 xxxxxxx21 xxxxxxx22 xxxxxxx23 xxxxxxx24 xxxxxxx25 xxxxxxx26 xxxxxxx27 xxxxxxx28 xxxxxxx29 xxxxxxx30 xxxxxxx31 xxxxxxx32 xxxxxxx33 xxxxxxx34 xxxxxxx35 xxxxxxx36 xxxxxxx37 xxxxxxx38 xxxxxxx39))
-(stupid_function)
-
 (defun +amos/upload ()
   (interactive)
   (let ((filename (buffer-file-name))
@@ -2454,15 +2322,6 @@ The window scope is determined by `avy-all-windows' (ARG negates it)."
       (shell-command-to-string (concat "upload " filename " out"))))
     (osc-command "notify-send OSC52Command '\nText Uploaded'")
     (if tmp (delete-file filename))))
-
-(advice-add #'semantic-mode :around #'doom-shut-up-a)
-
-(defun my-inhibit-semantic-p ()
-  (not (or (equal major-mode 'c-mode) (equal major-mode 'c++-mode))))
-(add-to-list 'semantic-default-submodes 'global-semantic-stickyfunc-mode)
-(semantic-mode -1)
-(with-eval-after-load 'semantic
-  (add-to-list 'semantic-inhibit-functions #'my-inhibit-semantic-p))
 
 (add-hook! 'comint-mode-hook
   (add-hook! 'evil-insert-state-entry-hook :local
@@ -2527,19 +2386,6 @@ If the scroll count is zero the command scrolls half the screen."
            (goto-char (point-max))
            (recenter (- (max 1 scroll-margin)))))))))
 (advice-add #'evil-scroll-down :override #'+amos-evil-scroll-down-a)
-
-(defun +amos-evil-insert-newline-below-a ()
-  "Inserts a new line below point and places point in that line
-with regard to indentation."
-  (evil-narrow-to-field
-    (evil-move-end-of-line)
-    (if (not (looking-at "\n"))
-        (insert (if use-hard-newlines hard-newline "\n"))
-      (forward-char 1)
-      (insert (if use-hard-newlines hard-newline "\n"))
-      (backward-char 1))
-    (back-to-indentation)))
-(advice-add #'evil-insert-newline-below :override #'+amos-evil-insert-newline-below-a)
 
 (evil-define-motion +amos-evil-ret-a (count)
   "Move the cursor COUNT lines down.
@@ -2690,40 +2536,6 @@ There is no need to advice `company-select-previous' because it calls
       ;; ('dired-mode nil)
       (_ t))))
 (advice-add #'doom-buffer-frame-predicate :override #'+amos-doom-buffer-frame-predicate-a)
-
-;; get rid of minibuffer resize limitation
-(defun +amos-window--resize-mini-window-a (window delta)
-  "Resize minibuffer window WINDOW by DELTA pixels.
-If WINDOW cannot be resized by DELTA pixels make it as large (or
-as small) as possible, but don't signal an error."
-  (when (window-minibuffer-p window)
-    (let* ((frame (window-frame window))
-           (root (frame-root-window frame))
-           (height (window-pixel-height window))
-           (min-delta
-            (- (window-pixel-height root)
-               (window-min-size root nil t t)))) ;; amos
-      ;; Sanitize DELTA.
-      (cond
-       ((<= (+ height delta) 0)
-        (setq delta (- (frame-char-height (window-frame window)) height)))
-       ((> delta min-delta)
-        (setq delta min-delta)))
-
-      (unless (zerop delta)
-        ;; Resize now.
-        (window--resize-reset frame)
-        ;; Ideally we should be able to resize just the last child of root
-        ;; here.  See the comment in `resize-root-window-vertically' for
-        ;; why we do not do that.
-        (window--resize-this-window root (- delta) nil nil t)
-        (set-window-new-pixel window (+ height delta))
-        ;; The following routine catches the case where we want to resize
-        ;; a minibuffer-only frame.
-        (when (resize-mini-window-internal window)
-          (window--pixel-to-total frame)
-          (run-window-configuration-change-hook frame))))))
-(advice-add #'window--resize-mini-window :override #'+amos-window--resize-mini-window-a)
 
 (defun +amos/delete-nonascii (beg end)
   "Delete binary characters in a region"
@@ -3156,6 +2968,81 @@ inside or just after a citation command, only adds KEYS to it."
                 (evil-paste-before nil ?r))
             (evil-paste-before nil ?t)))))))
 
+(defun +amos-xterm--pasted-text-a ()
+  "Handle the rest of a terminal paste operation.
+Return the pasted text as a string."
+  (let ((end-marker-length (length xterm-paste-ending-sequence)))
+    (with-temp-buffer
+      (set-buffer-multibyte nil)
+      (while (not (search-backward xterm-paste-ending-sequence
+                                   (- (point) end-marker-length) t))
+        (let ((event (read-event nil nil
+                                 ;; Use finite timeout to avoid glomming the
+                                 ;; event onto this-command-keys.
+                                 most-positive-fixnum)))
+          (when (eql event ?\r)
+            (setf event ?\n))
+          (insert event)))
+      (let* ((last-coding-system-used)
+             (text (decode-coding-region (point-min) (point) (keyboard-coding-system) t)))
+        (if (string= "\e[290~" (this-command-keys))
+            (setq xterm-paste-urllist text)
+          (setq xterm-paste-urllist nil)
+          text)))))
+
+(advice-add #'xterm--pasted-text :override #'+amos-xterm--pasted-text-a)
+(after! xterm
+  (define-key xterm-rxvt-function-map "\e[290~" #'xterm-translate-bracketed-paste))
+
+(evil-define-command +amos-evil-visual-paste-a (count &optional register)
+  "Paste over Visual selection."
+  :suppress-operator t
+  (interactive "P<x>")
+  ;; evil-visual-paste is typically called from evil-paste-before or
+  ;; evil-paste-after, but we have to mark that the paste was from
+  ;; visual state
+  (setq this-command 'evil-visual-paste)
+  (let* ((text (if register
+                   (evil-get-register register)
+                 (current-kill 0)))
+         (yank-handler (car-safe (get-text-property
+                                  0 'yank-handler text)))
+         new-kill
+         paste-eob)
+    (evil-with-undo
+      (let* ((kill-ring (list (current-kill 0)))
+             (kill-ring-yank-pointer kill-ring))
+        (when (evil-visual-state-p)
+          (evil-visual-rotate 'upper-left)
+          ;; if we replace the last buffer line that does not end in a
+          ;; newline, we use `evil-paste-after' because `evil-delete'
+          ;; will move point to the line above
+          (when (and (= evil-visual-end (point-max))
+                     (/= (char-before (point-max)) ?\n))
+            (setq paste-eob t))
+          (evil-delete evil-visual-beginning evil-visual-end
+                       (evil-visual-type) ?_)
+          (when (and (eq yank-handler #'evil-yank-line-handler)
+                     (not (eq (evil-visual-type) 'line))
+                     (not (= evil-visual-end (point-max))))
+            (insert "\n"))
+          (evil-normal-state)
+          (setq new-kill (current-kill 0))
+          (current-kill 1))
+        (if paste-eob
+            (evil-paste-after count register)
+          (evil-paste-before count register)))
+      (when evil-kill-on-visual-paste
+        (kill-new new-kill))
+      ;; mark the last paste as visual-paste
+      (setq evil-last-paste
+            (list (nth 0 evil-last-paste)
+                  (nth 1 evil-last-paste)
+                  (nth 2 evil-last-paste)
+                  (nth 3 evil-last-paste)
+                  (nth 4 evil-last-paste)
+                  t)))))
+(advice-add #'evil-visual-paste :override #'+amos-evil-visual-paste-a)
 (defun +amos-get-frame-by-name (fname)
   (require 'dash)
   (-some (lambda (frame)
@@ -3386,32 +3273,6 @@ inside or just after a citation command, only adds KEYS to it."
   (add-hook! 'edebug-mode-hook #'evil-normalize-keymaps))
 (after! magit-files
   (add-hook! 'magit-blob-mode-hook #'evil-normalize-keymaps))
-
-(defun +amos-xterm--pasted-text-a ()
-  "Handle the rest of a terminal paste operation.
-Return the pasted text as a string."
-  (let ((end-marker-length (length xterm-paste-ending-sequence)))
-    (with-temp-buffer
-      (set-buffer-multibyte nil)
-      (while (not (search-backward xterm-paste-ending-sequence
-                                   (- (point) end-marker-length) t))
-        (let ((event (read-event nil nil
-                                 ;; Use finite timeout to avoid glomming the
-                                 ;; event onto this-command-keys.
-                                 most-positive-fixnum)))
-          (when (eql event ?\r)
-            (setf event ?\n))
-          (insert event)))
-      (let* ((last-coding-system-used)
-             (text (decode-coding-region (point-min) (point) (keyboard-coding-system) t)))
-        (if (string= "\e[290~" (this-command-keys))
-            (setq xterm-paste-urllist text)
-          (setq xterm-paste-urllist nil)
-          text)))))
-
-(advice-add #'xterm--pasted-text :override #'+amos-xterm--pasted-text-a)
-(after! xterm
-  (define-key xterm-rxvt-function-map "\e[290~" #'xterm-translate-bracketed-paste))
 
 (defun +amos/make-ignore ()
   (interactive)
@@ -3678,8 +3539,7 @@ See `project-local-get' for the parameter PROJECT."
         (space-mark   ?\     [?·]     [?.])		; space - middle dot
         (space-mark   ?\xA0  [?¤]     [?_])		; hard space - currency sign
         (newline-mark ?\n    [?$ ?\n])			; eol - dollar sign
-        )
-      )
+        ))
 
 ;; TODO font face for space characters?
 (defun +amos*whitespace-space-after-tab-regexp (&optional kind)
@@ -3730,11 +3590,6 @@ See `project-local-get' for the parameter PROJECT."
 (use-package! treemacs-nerd-icons
   :config
   (treemacs-load-theme "nerd-icons"))
-
-(defun +amos-swiper-isearch-a (orig-fn &rest args)
-  (let (evil-ex-search-persistent-highlight)
-    (apply orig-fn args)))
-(advice-add #'swiper-isearch :around #'+amos-swiper-isearch-a)
 
 (add-hook 'leap-post-jump-hook #'+amos/recenter)
 
@@ -3840,6 +3695,11 @@ See `project-local-get' for the parameter PROJECT."
   (setq so-long-max-lines 1024)
   (setq so-long-threshold 1024))
 
+(after! evil-nerd-commenter
+  (cl-pushnew 'c++-ts-mode evilnc-cpp-like-comment-syntax-modes)
+  (cl-pushnew 'c-ts-mode evilnc-cpp-like-comment-syntax-modes))
+
+
 ;; should be at last
 (+amos-ignore-repeat
  "+amos/align"
@@ -3853,6 +3713,7 @@ See `project-local-get' for the parameter PROJECT."
  "+amos/exec-shell-command"
  "+amos/format-buffer"
  "+amos/flycheck"
+ "+amos/flymake"
  "+amos/increase-zoom"
  "+amos/kill-current-buffer"
  "+amos/launch"
@@ -3935,207 +3796,6 @@ See `project-local-get' for the parameter PROJECT."
   (+amos-ignore-repeat "rainbow"))
 (after! yasdcv
   (+amos-ignore-repeat "yasdcv"))
-
-;; (use-package! flyspell-lazy
-;;   :config
-;;   (add-to-list 'ispell-extra-args "--sug-mode=ultra")
-;;   (flyspell-lazy-mode +1))
-
-;; way slower
-;; (use-package! magit-svn
-;;   :commands turn-on-magit-svn
-;;   :init (add-hook 'magit-mode-hook 'turn-on-magit-svn))
-
-;; (defun col-at-point (point)
-;;   (save-excursion (goto-char point) (current-column)))
-
-;; (defun +amos-x-select-text (text &rest _)
-;;   (with-temp-buffer
-;;     (insert text)
-;;     (with-x-environment
-;;      (call-process-region (point-min) (point-max) "xclip")))
-;;   text)
-
-;; (defun +amos-tui-select-text (text &rest _)
-;;   (with-temp-buffer
-;;     (insert text)
-;;     (with-x-environment
-;;      (call-process-region (point-min) (point-max) "clipserver")))
-;;   text)
-
-;; (use-package osc
-;;   :demand
-;;   :init
-;;   (defun +amos/other-window ()
-;;     (interactive)
-;;     (if (display-graphic-p)
-;;         (i3-nav-right)
-;;       (osc-nav-right)))
-;;   (if gui-p
-;;       (setq interprogram-cut-function '+amos-x-select-text)
-;;     (setq interprogram-cut-function '+amos-tui-select-text))
-;;   (setq browse-url-browser-function (lambda (url &optional _new-window)
-;;                                       (if (display-graphic-p)
-;;                                           (if _new-window
-;;                                               (browse-url-chrome url)
-;;                                             (browse-url-firefox url))
-;;                                         (browse-url-osc url _new-window)))))
-
-;; (defun +amos/lookup-docsets (identifier &optional arg)
-;;   (interactive (list (doom-thing-at-point-or-region)
-;;                      current-prefix-arg))
-;;   (let* ((search (if (not identifier) "" (concat "-s " identifier))))
-;;     (when-let* ((plist (cdr (assq major-mode +amos-docsets))))
-;;       (when-let* ((docs (s-join " " (doom-enlist (plist-get plist :docs)))))
-;;         (let ((cmd (format "rofidoc %s %s" search docs)))
-;;           (message cmd)
-;;           (osc-command cmd))))))
-
-;; (evil-define-state lisp
-;;   "Lisp state.
-;;  Used to navigate lisp code and manipulate the sexp tree."
-;;   :tag " <L> "
-;;   :cursor (bar . 2)
-;;   ;; force smartparens mode
-;;   (if (evil-lisp-state-p) (smartparens-mode)))
-
-;; (set-keymap-parent evil-lisp-state-map evil-insert-state-map)
-
-;; (general-define-key
-;;  :states 'lisp
-;;  "<escape>"       (cmd! (evil-normal-state) (unless (bolp) (backward-char)))
-;;  "M-o"            #'lisp-state-toggle-lisp-state
-;;  "M-U"            #'+amos/replace-defun
-;;  "M-u"            #'eval-defun
-;;  "C-a"            #'sp-beginning-of-sexp
-;;  "C-e"            #'sp-end-of-sexp
-;;  "C-n"            #'sp-down-sexp
-;;  "C-p"            #'sp-up-sexp
-;;  "M-n"            #'sp-backward-down-sexp
-;;  "M-p"            #'sp-backward-up-sexp
-;;  "M-f"            #'sp-forward-sexp
-;;  "M-b"            #'sp-backward-sexp
-;;  "M-,"            #'sp-backward-unwrap-sexp
-;;  "M-."            #'sp-unwrap-sexp
-;;  "M-r"            #'sp-forward-slurp-sexp
-;;  "M-R"            #'sp-forward-barf-sexp
-;;  "M-s"            #'sp-splice-sexp
-;;  "M-t"            #'sp-transpose-sexp
-;;  "C-t"            #'sp-transpose-hybrid-sexp
-;;  "M-d"            #'sp-kill-sexp
-;;  "C-o"            #'sp-kill-hybrid-sexp
-;;  [M-backspace]    #'sp-backward-kill-sexp
-;;  [134217855]      #'sp-backward-kill-sexp ; M-DEL
-;;  "M-w"            #'sp-copy-sexp
-;;  "M-("            #'sp-wrap-round
-;;  "M-{"            #'sp-wrap-curly
-;;  "M-["            #'sp-wrap-square
-;;  "M-\""           (cmd! (sp-wrap-with-pair "\"")))
-
-;; (defun lisp-state-toggle-lisp-state ()
-;;   "Toggle the lisp state."
-;;   (interactive)
-;;   (if (eq 'lisp evil-state)
-;;       (progn
-;;         (message "state: lisp -> insert")
-;;         (evil-insert-state))
-;;     (message "state: %s -> lisp" evil-state)
-;;     (evil-lisp-state)))
-
-;; (defun lisp-state-wrap (&optional arg)
-;;   "Wrap a symbol with parenthesis."
-;;   (interactive "P")
-;;   (sp-wrap-with-pair "("))
-
-;; (defun evil-lisp-state-next-paren (&optional closing)
-;;   "Go to the next/previous closing/opening parenthesis/bracket/brace."
-;;   (if closing
-;;       (let ((curr (point)))
-;;         (forward-char)
-;;         (unless (eq curr (search-forward-regexp "[])}]"))
-;;           (backward-char)))
-;;     (search-backward-regexp "[[({]")))
-
-;; (defun lisp-state-prev-opening-paren ()
-;;   "Go to the next closing parenthesis."
-;;   (interactive)
-;;   (evil-lisp-state-next-paren))
-
-;; (defun lisp-state-next-closing-paren ()
-;;   "Go to the next closing parenthesis."
-;;   (interactive)
-;;   (evil-lisp-state-next-paren 'closing))
-
-;; (defun lisp-state-forward-symbol (&optional arg)
-;;   "Go to the beginning of the next symbol."
-;;   (interactive "P")
-;;   (let ((n (if (char-equal (char-after) ?\() 1 2)))
-;;     (sp-forward-symbol (+ (if arg arg 0) n))
-;;     (sp-backward-symbol)))
-
-;; (defun lisp-state-insert-sexp-after ()
-;;   "Insert sexp after the current one."
-;;   (interactive)
-;;   (let ((sp-navigate-consider-symbols nil))
-;;     (if (char-equal (char-after) ?\() (forward-char))
-;;     (sp-up-sexp)
-;;     (evil-insert-state)
-;;     (sp-newline)
-;;     (sp-insert-pair "(")))
-
-;; (defun lisp-state-insert-sexp-before ()
-;;   "Insert sexp before the current one."
-;;   (interactive)
-;;   (let ((sp-navigate-consider-symbols nil))
-;;     (if (char-equal (char-after) ?\() (forward-char))
-;;     (sp-backward-sexp)
-;;     (evil-insert-state)
-;;     (sp-newline)
-;;     (evil-previous-visual-line)
-;;     (evil-end-of-line)
-;;     (insert " ")
-;;     (sp-insert-pair "(")
-;;     (indent-for-tab-command)))
-
-;; (defun lisp-state-eval-sexp-end-of-line ()
-;;   "Evaluate the last sexp at the end of the current line."
-;;   (interactive)
-;;   (save-excursion
-;;     (end-of-line)
-;;     (eval-last-sexp nil)))
-
-;; (defun lisp-state-beginning-of-sexp (&optional arg)
-;;   "Go to the beginning of current s-exp"
-;;   (interactive "P")
-;;   (sp-beginning-of-sexp)
-;;   (evil-backward-char))
-
-;; (defun +amos*git-link--select-remote ()
-;;   (if current-prefix-arg
-;;       (git-link--read-remote)
-;;     (or (magit-get-upstream-remote) (magit-get-push-remote) "origin")))
-;; (setq git-link-default-branch "master")
-;; (advice-add #'git-link--select-remote :override #'+amos*git-link--select-remote)
-
-;; (setq-local +amos-window-start nil)
-;; (add-hook! 'minibuffer-setup-hook #'+amos|record-window-start)
-;; (add-hook! 'minibuffer-exit-hook #'+amos|restore-window-start)
-
-;; (defun +amos|record-window-start ()
-;;   (let ((windows (window-list)))
-;;     (dolist (window windows)
-;;       (let ((buffer (window-buffer (car windows))))
-;;         (unless (minibufferp buffer)
-;;           (with-current-buffer buffer
-;;             (setq-local +amos-window-start (window-start))))))))
-
-;; (defun +amos|restore-window-start ()
-;;   (let ((windows (window-list)))
-;;     (dolist (window windows)
-;;       (let ((buffer (window-buffer (car windows))))
-;;         (unless (minibufferp buffer)
-;;           (with-current-buffer buffer
-;;             (set-window-start +amos-window-start)))))))
 
 (load! "+consult")
 (load! "+modeline")

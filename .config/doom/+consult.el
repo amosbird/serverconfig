@@ -156,38 +156,10 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
     (delete-overlay amos-consult--pulse-overlay)
     (setq amos-consult--pulse-overlay nil)))
 
-
-(defun +amos/embark-export-write ()
-  "Export the current vertico results to a writable buffer if possible.
-
-Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-location to occur-edit"
-  (interactive)
-  (let* ((edit-command
-          (pcase-let ((`(,type . ,candidates)
-                       (run-hook-with-args-until-success 'embark-candidate-collectors)))
-            (pcase type
-              ('consult-grep #'wgrep-change-to-wgrep-mode)
-              ('file #'wdired-change-to-wdired-mode)
-              ('consult-location #'wgrep-change-to-wgrep-mode)
-              ('consult-xref #'wgrep-change-to-wgrep-mode)
-              (x (user-error "Embark category %S doesn't support writable export" x)))))
-         (embark-after-export-hook `(,@embark-after-export-hook ,edit-command)))
-    (cl-letf (((symbol-function #'embark--descriptive-buffer-name)
-               (lambda (&rest _)
-                 (format "*Embark Writable Export: %s*"
-                         (if (minibufferp)
-                             (format "%s - %s" embark--command
-                                     (minibuffer-contents-no-properties))
-                           (buffer-name))))))
-      (embark-export))))
-
 (defun +amos/embark-collect ()
   "Create an Embark Collect buffer."
   (interactive)
-  (embark--quit-and-run
-   (lambda ()
-     (embark--collect (embark--descriptive-buffer-name 'collect))
-     (setq buffer-read-only nil))))
+  (embark-collect))
 
 (defun +amos-consult-recentf (&optional no-cache)
   (when no-cache
@@ -304,6 +276,154 @@ Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-locatio
   (interactive "P")
   (let ((consult-ripgrep-args (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
     (consult-ripgrep default-directory)))
+
+(defmacro +amos-embark-consult-export-grep-one-line (line last-buf filename not-saved-buffers)
+  `(pcase-let*
+      ((`(,loc . ,num) (consult--get-location ,line))
+       (lineno (format "%d" num))
+       (contents (embark-consult--strip ,line))
+       (this-buf (marker-buffer loc))
+       (file-path (buffer-file-name this-buf)))
+    (if (and file-path (not (buffer-modified-p this-buf)))
+        (progn
+          (unless (eq this-buf last-buf)
+            (setq last-buf this-buf)
+            (setq filename (file-name-nondirectory file-path))
+            (insert "\n"
+                    (propertize (concat "file: " filename)
+                                'wgrep-ignore t
+                                'font-lock-face '(:inherit compilation-info :underline t))
+                    "\n"))
+          (insert (propertize (concat file-path ":") 'invisible t)
+                  lineno ":" contents "\n"))
+      (cl-pushnew this-buf not-saved-buffers))))
+
+(defmacro +amos-embark-consult-export-grep-one-xref (item last-buf filename not-saved-buffers)
+  `(pcase-let* ((xref (get-text-property 0 'consult-xref ,item))
+               (loc (xref-location-marker (xref-item-location xref)))
+               (lineno (format "%d" (xref-location-line (xref-item-location xref))))
+               (contents (xref-item-summary xref))
+               (this-buf (marker-buffer loc))
+               (file-path (buffer-file-name this-buf)))
+    (if (and file-path (not (buffer-modified-p this-buf)))
+        (progn
+          (unless (eq this-buf last-buf)
+            (setq last-buf this-buf)
+            (setq filename (file-name-nondirectory file-path))
+            (insert "\n"
+                    (propertize (concat "file: " filename)
+                                'wgrep-ignore t
+                                'font-lock-face '(:inherit compilation-info :underline t))
+                    "\n"))
+          (insert (propertize (concat file-path ":") 'invisible t)
+                  lineno ":" contents "\n"))
+      (cl-pushnew this-buf not-saved-buffers))))
+
+(defun +amos-embark-consult-export-location-grep (lines &optional xref)
+  "Create a grep mode buffer listing LINES.
+The elements of LINES are assumed to be values of category `consult-location'."
+  (let ((buf (generate-new-buffer "*Embark Export Grep*")))
+    (with-current-buffer buf
+      (insert (propertize "Exported location results (file-backed buffers only):\n" 'wgrep-header t 'font-lock-face '(:weight bold)))
+      (save-excursion (let (last-buf filename not-saved-buffers)
+                        (dolist (line lines)
+                          (if xref
+                              (+amos-embark-consult-export-grep-one-xref line last-buf filename not-saved-buffers)
+                            (+amos-embark-consult-export-grep-one-line line last-buf filename not-saved-buffers)))
+                        (when not-saved-buffers
+                          (save-excursion
+                            (insert "\n\nSome "
+                                    (propertize "buffers" 'font-lock-face '(:weight bold))
+                                    " are not visiting (saved to) a file and are missing from exported results:\n")
+                            (dolist (nsbuf not-saved-buffers)
+                              (insert "- " (or (buffer-file-name nsbuf) (buffer-name nsbuf)) "\n"))
+                            (insert "Either save the buffers or use `embark-consult-export-location-occur' as your export adapter`")
+                            (message "This exporter requires the following buffers to be saved first %s" not-saved-buffers))
+                          (add-text-properties (point) (point-max) '(read-only t wgrep-footer t front-sticky t)))))
+      (grep-mode)
+
+      ;; Make this buffer current for next/previous-error
+      (setq next-error-last-buffer buf)
+      ;; Set up keymap before possible wgrep-setup, so that wgrep
+      ;; restores our binding too when the user finishes editing.
+      (use-local-map (make-composed-keymap
+                      embark-consult-revert-map
+                      (current-local-map)))
+      (setq-local wgrep-header&footer-parser #'embark-consult--wgrep-prepare)
+      (when (fboundp 'wgrep-setup) (wgrep-setup)))
+    buf))
+
+(defun +amos-embark-consult-export-xref-grep (items)
+  "Create a grep mode buffer listing ITEMS.
+The elements of ITEMS are assumed to be values of category `consult-xref'."
+  (+amos-embark-consult-export-location-grep items t))
+
+(defun +amos-embark-consult-export-grep (lines)
+  "Create a grep mode buffer listing LINES.
+The elements of LINES are assumed to be values of category `consult-grep'."
+  (let ((buf (generate-new-buffer "*Embark Export Grep*"))
+        (count 0)
+        prop)
+    (with-current-buffer buf
+      (insert (propertize "Exported grep results:\n\n" 'wgrep-header t 'font-lock-face '(:weight bold)) )
+      (save-excursion (dolist (line lines) (insert line "\n")))
+      (save-excursion
+        (while (setq prop (text-property-search-forward
+                           'face 'consult-highlight-match t))
+          (cl-incf count)
+          (put-text-property (prop-match-beginning prop)
+                             (prop-match-end prop)
+                             'font-lock-face
+                             'match)))
+      (grep-mode)
+      (when (> count 0)
+        (setq-local grep-num-matches-found count
+                    mode-line-process grep-mode-line-matches))
+      ;; Make this buffer current for next/previous-error
+      (setq next-error-last-buffer buf)
+      ;; Set up keymap before possible wgrep-setup, so that wgrep
+      ;; restores our binding too when the user finishes editing.
+      (use-local-map (make-composed-keymap
+                      embark-consult-revert-map
+                      (current-local-map)))
+      (setq-local wgrep-header&footer-parser #'embark-consult--wgrep-prepare)
+      (when (fboundp 'wgrep-setup) (wgrep-setup)))
+    buf))
+
+(defun +amos/embark-export-write ()
+  "Export the current vertico results to a writable buffer if possible.
+
+Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-location to occur-edit"
+  (interactive)
+  (let* ((edit-command
+          (pcase-let ((`(,type . ,candidates)
+                       (run-hook-with-args-until-success 'embark-candidate-collectors)))
+            (pcase type
+              ('consult-grep #'wgrep-change-to-wgrep-mode)
+              ('file #'wdired-change-to-wdired-mode)
+              ('consult-location #'wgrep-change-to-wgrep-mode)
+              ('consult-xref #'wgrep-change-to-wgrep-mode)
+              (x (user-error "Embark category %S doesn't support writable export" x)))))
+         (embark-after-export-hook `(,@embark-after-export-hook ,edit-command)))
+    (cl-letf (((symbol-function #'embark--descriptive-buffer-name)
+               (lambda (&rest _)
+                 (format "*Embark Writable Export: %s*"
+                         (if (minibufferp)
+                             (format "%s - %s" embark--command
+                                     (minibuffer-contents-no-properties))
+                           (buffer-name))))))
+      (embark-export))))
+
+(after! embark-consult
+  (setf (alist-get 'consult-location embark-exporters-alist)
+        #'+amos-embark-consult-export-location-grep)
+
+  (setf (alist-get 'consult-xref embark-exporters-alist)
+        #'+amos-embark-consult-export-xref-grep)
+
+  (setf (alist-get 'consult-grep embark-exporters-alist)
+        #'+amos-embark-consult-export-grep)
+  )
 
 (remove-hook! 'consult-after-jump-hook #'+nav-flash-blink-cursor-maybe-h)
 (defun consult-set-jump (&rest _)

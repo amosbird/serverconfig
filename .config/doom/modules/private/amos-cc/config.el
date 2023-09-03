@@ -339,23 +339,30 @@ Only works with clangd."
 
 (defun +amos-indent-style()
   "Override the built-in GNU indentation style with some additional rules."
-  `(;; Here are your custom rules
-    ((node-is ")") parent-bol 0)
-    ((match nil "argument_list" nil 1 1) parent-bol c-ts-mode-indent-offset)
-    ((parent-is "argument_list") prev-sibling 0)
-    ((match nil "parameter_list" nil 1 1) parent-bol c-ts-mode-indent-offset)
-    ((parent-is "parameter_list") prev-sibling 0)
+  `(
+    ((query "(for_statement body: (_) @indent)") parent-bol 0)
+    ((query "(if_statement consequence: (_) @indent)") parent-bol 0)
+    ((query "(while_statement body: (_) @indent)") parent-bol 0)
 
-    ;; Append here the indent style you want as base
-    ,@(alist-get 'gnu (c-ts-mode--indent-styles 'cpp))))
+    ;; TODO switch, do, case
+
+    ((query "(switch_statement body: (_) @indent)") parent-bol 0)
+
+    ((query "(case_statement (compound_statement _) @indent)") parent-bol 0)
+    ((query "(do_statement body: (_) @indent)") parent-bol 0)
+
+    ((parent-is "switch_statement") standalone-parent c-ts-mode-indent-offset)
+    ,@(alist-get 'gnu (c-ts-mode--indent-styles 'cpp))
+    ))
+
+(setq c-ts-mode-indent-offset 4
+      c-ts-mode-indent-style #'+amos-indent-style
+      treesit-font-lock-level 4)
 
 (add-hook! (c-mode-common c-ts-base-mode)
   (modify-syntax-entry ?_ "w")
   ;; (rainbow-delimiters-mode +1)
 
-  (setq-local c-ts-mode-indent-offset 4
-              c-ts-mode-indent-style #'amos-indent-style
-              treesit-font-lock-level 4)
   (treesit-font-lock-recompute-features)
 
   (when-let ((p (getenv "envprompt")))

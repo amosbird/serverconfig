@@ -181,6 +181,7 @@
 (setq evil-snipe-auto-scroll nil)
 (setq evil-snipe-scope 'visible)
 (setq evil-want-C-i-jump t)
+(setq evil-kill-on-visual-paste nil)
 (setq easy-hugo-basedir "~/git/blog/")
 (setq easy-hugo-url "https://wentropy.com")
 (setq easy-hugo-server-flags "-D")
