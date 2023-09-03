@@ -9,36 +9,27 @@ EnumerateForwardKeys=
 EnumerateBackwardKeys=
 # Skip first input method while enumerating
 EnumerateSkipFirst=False
+# Enumerate Input Method Group Forward
+EnumerateGroupForwardKeys=
+# Enumerate Input Method Group Backward
+EnumerateGroupBackwardKeys=
+# Activate Input Method
+ActivateKeys=
+# Deactivate Input Method
+DeactivateKeys=
+# Default Previous page
+PrevPage=
+# Default Next page
+NextPage=
+# Default Previous Candidate
+PrevCandidate=
+# Default Next Candidate
+NextCandidate=
+# Toggle embedded preedit
+TogglePreedit=
 
 [Hotkey/TriggerKeys]
 0=Eisu_toggle
-
-[Hotkey/EnumerateGroupForwardKeys]
-0=Super+space
-
-[Hotkey/EnumerateGroupBackwardKeys]
-0=Shift+Super+space
-
-[Hotkey/ActivateKeys]
-0=Hangul_Hanja
-
-[Hotkey/DeactivateKeys]
-0=Hangul_Romaja
-
-[Hotkey/PrevPage]
-0=Up
-
-[Hotkey/NextPage]
-0=Down
-
-[Hotkey/PrevCandidate]
-0=Shift+Tab
-
-[Hotkey/NextCandidate]
-0=Tab
-
-[Hotkey/TogglePreedit]
-0=Control+Alt+P
 
 [Behavior]
 # Active By Default

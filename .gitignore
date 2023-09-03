@@ -55,3 +55,4 @@ fishd.*
 .local/share/fcitx5/rime/user.yaml
 .local/share/fcitx5/rime/installation.yaml
 .config/fcitx5/conf/cached_layouts
+/.local/share/fcitx5/rime/sync/

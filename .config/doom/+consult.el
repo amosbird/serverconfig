@@ -227,8 +227,8 @@ Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-locatio
        hl))))
 
 (defun +amos-consult-fd (&optional dir initial no-ignore)
-  (pcase-let* ((`(,prompt ,paths ,dir) (consult--directory-prompt "Fd" dir))
-               (default-directory dir)
+  (pcase-let* ((`(,prompt . ,path) (consult--directory-prompt "Fd" dir))
+               (default-directory path)
                (file (consult--find prompt (apply-partially #'+amos-consult-fd-builder no-ignore) initial)))
     (leap-set-jump)
     (find-file file)
