@@ -12,7 +12,7 @@
 
 (map! :leader
       :desc "Sticky"                          :nv "DEL" #'evil-sticky-state
-      :desc "Resume"                          :nv "SPC" #'vertico-repeat
+      :desc "Resume"                          :nv "SPC" #'vertico-suspend
       :desc "Find file in project"            :nv "."   #'+amos/consult-find
       :desc "Find file in current directory"  :nv ">"   #'+amos/consult-find-cur-dir
       :desc "Find recent file"                :nv ","   #'+amos/consult-recentf
@@ -483,6 +483,7 @@
       (:after vertico
         :map vertico-map
         "M-RET" #'vertico-exit-input
+        "C-s"   #'vertico-suspend
         "C-w"   #'+amos/consult-yank-word
         "C-i"   #'+vertico/embark-preview
         "C-j"   #'vertico-next

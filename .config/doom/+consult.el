@@ -6,67 +6,48 @@
 (require 'wgrep)
 (eval-when-compile (require 'cl-lib))
 
-;; (defvar vertico-last-session nil)
+(defvar-local vertico-suspend--wc nil)
+(defvar-local vertico-suspend--ov nil)
 
-;; ; NOTE: constantly keep an eye on vertico--recompute so that we don't miss out any new states
-;; (defun vertico-repeat--save-exit ()
-;;   "Save command session in `vertico-repeat-history'."
-;;   (let ((session `(,vertico-repeat--command
-;;                    ,vertico-repeat--input
-;;                    ,vertico--base
-;;                    ,vertico--metadata
-;;                    ,vertico--candidates
-;;                    ,vertico--total
-;;                    ,vertico--highlight
-;;                    ,vertico--allow-prompt
-;;                    ,vertico--lock-candidate
-;;                    ,vertico--groups
-;;                    ,vertico--all-groups
-;;                    ,vertico--index))
-;;         (transform vertico-repeat-transformers))
-;;     (while (and transform (setq session (funcall (pop transform) session))))
-;;     (when session
-;;       (setq vertico-last-session session))))
-;;     ;; (when session
-;;     ;;   (add-to-history 'vertico-repeat-history session))))
-
-;; (defun vertico-repeat--restore (session)
-;;   "Restore Vertico SESSION for `vertico-repeat'."
-;;   (delete-minibuffer-contents)
-;;   (insert (cadr session))
-;;   (pcase-setq `(,_
-;;                 ,_
-;;                 ,vertico--base
-;;                 ,vertico--metadata
-;;                 ,vertico--candidates
-;;                 ,vertico--total
-;;                 ,vertico--highlight
-;;                 ,vertico--allow-prompt
-;;                 ,vertico--lock-candidate
-;;                 ,vertico--groups
-;;                 ,vertico--all-groups
-;;                 ,vertico--index
-;;                 )
-;;               session)
-
-;;   ;; (let ((buffer-undo-list t)) ;; Overlays affect point position and undo list!
-;;   ;;   ;; (vertico--update 'interruptible)
-;;   ;;   (vertico--prompt-selection)
-;;   ;;   (vertico--display-count)
-;;   ;;   (vertico--display-candidates (vertico--arrange-candidates)))
-;;   )
-
-;; ;;;###autoload
-;; (defun +amos/vertico-resume ()
-;;   "Repeat last Vertico completion SESSION.
-;; If called interactively from an existing Vertico session,
-;; `vertico-repeat-last' will restore the last input and
-;; last selected candidate for the current command."
-;;   (interactive)
-;;   (if vertico-last-session
-;;       (minibuffer-with-setup-hook
-;;           (apply-partially #'vertico-repeat--restore vertico-last-session)
-;;         (command-execute (setq this-command (car vertico-last-session))))))
+(defun vertico-suspend ()
+  "Suspend the current completion session.
+If the command is invoked from within the Vertico minibuffer, the
+current session is suspended.  If the command is invoked from
+outside the minibuffer, the active minibuffer is either selected
+or the latest completion session is restored."
+  (interactive)
+  (unless enable-recursive-minibuffers
+    (user-error "Recursive minibuffers must be enabled"))
+  (if-let ((win (active-minibuffer-window))
+           (buf (window-buffer win))
+           ((buffer-local-value 'vertico--input buf)))
+      (cond
+       ((minibufferp)
+        (unless (frame-root-window-p win)
+          (window-resize win (- (window-pixel-height win)) nil nil 'pixelwise))
+        (setq vertico-suspend--ov (make-overlay (point-min) (point-max)))
+        (overlay-put vertico-suspend--ov 'invisible t)
+        (overlay-put vertico-suspend--ov 'priority 1000)
+        (overlay-put vertico--candidates-ov 'before-string nil)
+        (overlay-put vertico--candidates-ov 'after-string nil)
+        (set-window-parameter win 'no-other-window t)
+        (let ((list (get-buffer-window-list buf)))
+          (when (length> list 1) ;; vertico-buffer
+            (setq vertico-suspend--wc (current-window-configuration))
+            (dolist (w list)
+              (unless (eq w win)
+                (delete-window w)))))
+        (other-window 1))
+       (t
+        (select-window win)
+        (set-window-parameter win 'no-other-window nil)
+        (when vertico-suspend--ov
+          (delete-overlay vertico-suspend--ov)
+          (setq vertico-suspend--ov nil))
+        (when vertico-suspend--wc
+          (set-window-configuration vertico-suspend--wc nil t)
+          (setq vertico-suspend--wc nil))))
+    (user-error "No Vertico session to suspend or resume")))
 
 (defun amos-consult--yank-by (fn &rest args)
   "Pull buffer text from current line into search string.
