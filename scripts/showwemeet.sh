@@ -14,7 +14,7 @@ if pgrep -f /opt/wemeet/bin/wemeetapp &>/dev/null; then
         fi
     done < <(xdo id -N wemeetapp -n wemeetapp)
     if [ -z "$found" ]; then
-        wemeet &
+        /opt/wemeet/bin/wemeetapp &
     elif bspc query -N -n focused | grep -q "$wid"; then
         bspc node "$wid".window -g hidden -f
         exit 0
@@ -36,5 +36,5 @@ if pgrep -f /opt/wemeet/bin/wemeetapp &>/dev/null; then
 else
     rm /tmp/ioa
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    bash -c "wemeet &> /dev/null"
+    bash -c "/opt/wemeet/bin/wemeetapp &> /dev/null"
 fi
