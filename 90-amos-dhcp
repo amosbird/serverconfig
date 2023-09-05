@@ -1,0 +1,5 @@
+#!/bin/bash
+
+case "${reason}" in
+BOUND|INFORM|REBIND|REBOOT|RENEW|TIMEOUT)       /home/amos/git/serverconfig/scripts/addroutes;;
+esac
