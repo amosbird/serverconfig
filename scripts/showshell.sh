@@ -29,7 +29,9 @@ else
     y=10
     read -r lr uv < <(xwininfo -id "$id" | perl -ne 'print $1>2?1:2 if /Absolute upper-left X: (.*)/; print " 1" if /IsViewable/; print " 0" if /IsUnMapped/;')
     if bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")" && [[ $lr -eq $1 ]]; then
+        bspc node older.!hidden -f
         bspc node "$id".window -g hidden
+        exit 0
     else
         bspc node "$id".window -t floating
         bspc node "$id".window -g hidden=off

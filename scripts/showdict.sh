@@ -33,12 +33,13 @@ case "$opt" in
 esac
 
 if [[ -z $create ]] && bspc query -N -n focused | grep -q "$(bspc query -N -n "$id")"; then
-    bspc node "$id".window -g hidden -f
+    bspc node older.!hidden -f
+    bspc node "$id".window -g hidden
     exit 0
 else
-    bspc node "$id" --to-desktop "$workspace"
     bspc node "$id" -t floating
-    bspc node "$id".window -g hidden=off -f
+    bspc node "$id".window -g hidden=off
+    bspc node "$id" --to-desktop "$workspace"
 fi
 
 wh=($(xrandr --current | perl -ne 'if (/primary/) {@x=split; $x[3] =~ /(\d+)x(\d+)/; print $1." ".$2}'))
