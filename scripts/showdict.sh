@@ -51,4 +51,5 @@ w=$((w / 2))
 h=$((h - 60))
 xdo move -x "$x" -y "$y" "$id"
 xdo resize -w "$w" -h "$h" "$id"
+bspc node "$id".window -f
 bspc node "$id" -l above

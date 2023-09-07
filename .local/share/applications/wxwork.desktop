@@ -1,0 +1,6 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Terminal=true
+Exec=/home/amos/scripts/win-handler.sh %u
+Name=wxwork (Amos Bird fork)

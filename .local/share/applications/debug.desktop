@@ -1,0 +1,6 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Terminal=false
+Exec=/home/amos/scripts/log2debug %u
+Name=debug (Amos Bird fork)
