@@ -205,6 +205,16 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
   (cl-letf (((symbol-function #'buffer-list) (lambda (&rest _) (list (current-buffer)))))
     (call-interactively #'consult-line-multi)))
 
+(defun +amos/consult-ripgrep (&optional arg)
+  (interactive "P")
+  (let ((consult-ripgrep-args (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
+    (consult-ripgrep)))
+
+(defun +amos/consult-ripgrep-cur-dir (&optional arg)
+  (interactive "P")
+  (let ((consult-ripgrep-args (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
+    (consult-ripgrep default-directory)))
+
 (defun +amos-git-link (cand)
   (require 'git-link)
   (cl-destructuring-bind (remote branch) (split-string cand "~")
@@ -247,16 +257,6 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
                     :category 'file
                     :state (consult--file-preview)
                     :history 'file-name-history)))
-
-(defun +amos/consult-ripgrep (&optional arg)
-  (interactive "P")
-  (let ((consult-ripgrep-args (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
-    (consult-ripgrep)))
-
-(defun +amos/consult-ripgrep-cur-dir (&optional arg)
-  (interactive "P")
-  (let ((consult-ripgrep-args (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
-    (consult-ripgrep default-directory)))
 
 (defmacro +amos-embark-consult-export-grep-one-line (line last-buf filename not-saved-buffers)
   `(pcase-let*

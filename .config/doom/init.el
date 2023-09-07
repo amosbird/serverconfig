@@ -332,7 +332,7 @@
 (setq initial-buffer-choice (lambda () (get-buffer "*Messages*")))
 (setq word-wrap-by-category t)
 (setq next-error-recenter '(4))
-(setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number .")
+(setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number")
 
 (after! core-keybinds
   (add-to-list 'doom-evil-state-alist '(?s . sticky))

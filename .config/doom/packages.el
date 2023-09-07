@@ -81,5 +81,7 @@
    :recipe (:host github :repo "magit/git-modes"
    :files ("gitattributes-mode.el")))
 
+(package! consult :pin "0923786304d1dc51c5ae92d27a85c6d8383fbc3d")
+
 ;; This is temporarily necessary due to an unrelated bug.
 (unpin! gitignore-mode gitconfig-mode gitattributes-mode)
