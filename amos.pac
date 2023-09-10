@@ -2,10 +2,16 @@ var direct = "DIRECT";
 var http_proxy = "PROXY 127.0.0.1:12639";
 
 var gfwed_list = ["oa.com", "woa.com"];
+var cn_list = ["qq.com", "taobao.com", "jd.com"];
 
 var gfwed = {};
+var cned = {};
 for (var i = 0; i < gfwed_list.length; i += 1) {
     gfwed[gfwed_list[i]] = true;
+}
+
+for (var i = 0; i < cn_list.length; i += 1) {
+    cned[cn_list[i]] = true;
 }
 
 function host2domain(host) {
@@ -18,6 +24,9 @@ function host2domain(host) {
 }
 
 function FindProxyForURL(url, host) {
+    if (cned[host2domain(host)])
+        return "PROXY 127.0.0.1:8888";
+
     if (isInNet(host, "11.0.0.0", "255.0.0.0") || isInNet(host, "9.0.0.0", "255.0.0.0") || isInNet(host, "30.0.0.0", "255.0.0.0")) {
         return http_proxy;
     }

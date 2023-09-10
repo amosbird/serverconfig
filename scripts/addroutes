@@ -33,6 +33,9 @@ ip r f table cn
 
 ip rule add table cn pref 4000
 
+tid=$(id -u tinyproxy)
+ip rule add uidrange $tid-$tid lookup main pref 4001
+
 while read -r subnet _ d; do
     ip r a $subnet dev $d table cn
     :
