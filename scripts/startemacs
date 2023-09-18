@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
 
 export COLORTERM=truecolor
-if [[ -z $GUI ]]; then
-    # export TERM=xterm-tmux-24bits
-    # exec proxychains emacsclient -a '' -t -c
-    exec emacsclient -a '' -t -c
-    # exec lvim
-else
-    # export TERM=xterm-tmux-24bits
-    exec emacsclient -a '' -t -c
-fi
+exec emacsclient -a '' -t -c
+# exec emacs -Q

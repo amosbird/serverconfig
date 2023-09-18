@@ -75,14 +75,16 @@
   (defvar +amos--hostname (propertize (concat "  " +amos-system-name " ") 'face '(:weight bold :foreground "#51afef")))
   (doom-modeline-def-segment host (let () +amos--hostname))
 
+  (doom-modeline-def-segment padding (make-string 50 ?\s))
+
   (doom-modeline-def-modeline 'amos
     '(bar matches follow buffer-info buffer-position word-count parrot selection-info frame)
-    '(keycast host lsp indent-info buffer-encoding major-mode process vcs checker time))
+    '(keycast host lsp indent-info buffer-encoding major-mode process vcs checker time padding))
 
-  (defun +amos-setup-custom-doom-modeline-a ()
-    (doom-modeline-set-modeline 'amos))
-
-  (advice-add #'doom-modeline-auto-set-modeline :override #'+amos-setup-custom-doom-modeline-a)
+  (defun +amos*doom-modeline-set-modeline (&rest _)
+    (setq mode-line-format (list "%e" (doom-modeline 'amos)))
+    (setq-default mode-line-format (list "%e" (doom-modeline 'amos))))
+  (advice-add #'doom-modeline-set-modeline :override #'+amos*doom-modeline-set-modeline)
 
   ;; ignore window-font-height which will call select-window which calls evil-set-curosr
   (defun +amos-window-font-height-a (&rest _) 1)

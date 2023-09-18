@@ -141,7 +141,7 @@ bind-key -T amos C-v run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/
 bind-key -T amos M-s run-shell 'T=$(tmux display -p "#{pane_tty}" | sed "s=/dev/=="); if pgrep -t$T "emacs|fzf|elvish" &> /dev/null; then tmux send-key M-s; else tmux copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""; fi'
 
 bind-key -T amos M-0 run-shell $HOME/scripts/switch-to-emacs-session.sh
-bind-key -T amos M-= switch-client -t htop -Z
+bind-key -T amos M-= run-shell $HOME/scripts/switch-to-htop-session.sh
 
 bind-key -T amos M-u copy-mode\; send -X cursor-up\; send -X search-backward ❯
 # bind-key -T amos M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""

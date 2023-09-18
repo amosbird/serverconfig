@@ -49,7 +49,7 @@
 
 (package! avy)
 
-(package! treemacs-nerd-icons :recipe (:host github :repo "rainstormstudio/treemacs-nerd-icons"))
+;; (package! treemacs-nerd-icons :recipe (:host github :repo "rainstormstudio/treemacs-nerd-icons"))
 (package! treesit-auto :recipe (:host github :repo "renzmann/treesit-auto"))
 (package! rmsbolt :recipe (:host gitlab :repo "jgkamat/rmsbolt"))
 ;; (package! cc-playground :recipe (:host github :repo "amosbird/cc-playground" :files ("*.el" "templates")))

@@ -1921,7 +1921,7 @@ the current state and point position."
   (shell-command! "tmux source-file ~/.tmux/.tmux.conf.emacs"))
 
 (defun +amos/prompt-kill-emacs ()
-  "Prompt to save changed buffers and exit Spacemacs"
+  "Prompt to save changed buffers and exit Emacs."
   (interactive)
   (save-some-buffers nil t)
   (kill-emacs))
@@ -3587,9 +3587,9 @@ See `project-local-get' for the parameter PROJECT."
 (use-package! centered-cursor-mode
   :defer)
 
-(use-package! treemacs-nerd-icons
-  :config
-  (treemacs-load-theme "nerd-icons"))
+;; (use-package! treemacs-nerd-icons
+;;   :config
+;;   (treemacs-load-theme "nerd-icons"))
 
 (add-hook 'leap-post-jump-hook #'+amos/recenter)
 

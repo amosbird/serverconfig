@@ -13,7 +13,7 @@
        hl-todo
        nav-flash
        popup
-       (treemacs +lsp)
+       ;; (treemacs +lsp)
 
        :editor
        (evil +everywhere)
@@ -192,6 +192,7 @@
 (setq explicit-shell-file-name "/bin/bash")
 (setq find-file-visit-truename t)
 (setq inhibit-compacting-font-caches nil)
+;; (setq inhibit-compacting-font-caches t)
 (setq flycheck-disabled-checkers '(c/c++-clang c/c++-gcc c/c++-cppcheck))
 (setq fringes-outside-margins t)
 (setq indent-tabs-mode t)

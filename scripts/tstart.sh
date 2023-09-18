@@ -39,7 +39,7 @@ esac
 
 tmux -u new -d -s htop "exec starthtop"
 if ! tmux list-sessions | grep -q -F emacs; then
-    fuser -k $TMPDIR/emacs.lock &>/dev/null # sometimes emacs daemon doesn't quit
+    pkill -9 -F "$TMPDIR/emacs-server"
 fi
 tmux -u new -d -s emacs "exec startemacs"
 tmux -u new-session -A -s amos
