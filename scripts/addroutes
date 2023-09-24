@@ -18,7 +18,7 @@ die() {
 
 # updateroutes
 
-for d in eth0 eno1 enp0s31f6 enp9s0u2u1u2 enp0s20f0u4u1u2 enp0s20f0u5 wlp3s0 wlp2s0 enp1s0 wlp0s20f3 wlp5s0f3u2 wlp0s20f0u6; do
+for d in $(ls /sys/class/net/); do
     read -r _ _ gw _ < <(ip r g 123.206.66.49 oif $d)
     if [ -n "$gw" ]; then
         break
@@ -50,12 +50,10 @@ ip r a 192.168.0.0/16 via $gw table cn
 ip r a 172.16.0.0/12 via $gw table cn
 ip r a 127.0.0.0/8 via $gw table cn
 
-ip r a 168.235.74.91 via $gw table cn  # la
-ip r a 168.235.86.112 via $gw table cn  # la
-ip r a 20.205.108.97 via $gw table cn # azure
-ip r a 192.144.138.253 via $gw table cn # tcloud
-ip r a 168.138.207.219 via $gw table cn # oracle
-ip r a 43.132.171.51 via $gw table cn # jack
+for h in $(pass show vps_ip_list)
+do
+    ip r a $h via $gw table cn
+done
 
 # systemctl restart dnsmasq
 sudo -u amos DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus notify-send -a "Routes" "Routes Updated"
