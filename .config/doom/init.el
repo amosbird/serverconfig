@@ -219,7 +219,6 @@
       '((python . t)
         (emacs-lisp . t)
         (dot . t)
-        (gnuplot . t)
         (C . t)
         (sql . t)
         (awk . t)))

@@ -2,4 +2,4 @@
 
 export COLORTERM=truecolor
 exec emacsclient -a '' -t -c
-# exec emacs -Q
+# exec emacs --fg-daemon
