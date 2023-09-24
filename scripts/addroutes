@@ -14,45 +14,48 @@ die() {
     exit 1
 }
 
-((UID == 0)) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
+# ((UID == 0)) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
 
 # updateroutes
 
-for d in $(ls /sys/class/net/); do
-    read -r _ _ gw _ < <(ip r g 123.206.66.49 oif $d)
-    if [ -n "$gw" ]; then
-        break
-    fi
-done
+# for d in $(ls /sys/class/net/); do
+#     read -r _ _ gw _ < <(ip r g 123.206.66.49 oif $d)
+#     if [ -n "$gw" ]; then
+#         break
+#     fi
+# done
+read -r _ _ gw _ < <(ip r g 123.206.66.49)
 
 if [ -z "$gw" ]; then
     die "Cannot get default gw"
 fi
 
-ip r f table cn
+sudo ip r f table cn
 
-ip rule add table cn pref 4000
+sudo ip rule add table cn pref 4000
 
 tid=$(id -u tinyproxy)
-ip rule add uidrange $tid-$tid lookup main pref 4001
+if [ -n "$tid" ]; then
+    sudo ip rule add uidrange $tid-$tid lookup main pref 4001
+fi
 
 while read -r subnet _ d; do
-    ip r a $subnet dev $d table cn
+    sudo ip r a $subnet dev $d table cn
     :
 done < <(ip route show table main scope link)
 
-ip -batch - <<EOF
-$(sed "s/GATEWAY/$gw/" /home/amos/.routefile)
+sudo ip -batch - <<EOF
+$(sed "s/GATEWAY/$gw/" $HOME/.routefile)
 EOF
 
-ip r a 10.0.0.0/8 via $gw table cn
-ip r a 192.168.0.0/16 via $gw table cn
-ip r a 172.16.0.0/12 via $gw table cn
-ip r a 127.0.0.0/8 via $gw table cn
+sudo ip r a 10.0.0.0/8 via $gw table cn
+sudo ip r a 192.168.0.0/16 via $gw table cn
+sudo ip r a 172.16.0.0/12 via $gw table cn
+sudo ip r a 127.0.0.0/8 via $gw table cn
 
 for h in $(pass show vps_ip_list)
 do
-    ip r a $h via $gw table cn
+    sudo ip r a $h via $gw table cn
 done
 
 # systemctl restart dnsmasq

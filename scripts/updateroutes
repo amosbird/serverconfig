@@ -6,13 +6,14 @@ import sys
 import argparse
 import math
 import textwrap
+import os
 import subprocess as s
 
 
 def generate_mac():
     results = fetch_ip_data()
 
-    upfile = open("/home/amos/.routefile", "w")
+    upfile = open(f"{os.path.expanduser('~')}/.routefile", "w")
 
     for ip, _, mask in results:
         upfile.write("route add %s/%s via GATEWAY table cn\n" % (ip, mask))
