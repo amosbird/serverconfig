@@ -340,9 +340,9 @@ Only works with clangd."
 (defun +amos-indent-style()
   "Override the built-in GNU indentation style with some additional rules."
   `(
-    ((query "(for_statement body: (_) @indent)") parent-bol 0)
-    ((query "(if_statement consequence: (_) @indent)") parent-bol 0)
-    ((query "(while_statement body: (_) @indent)") parent-bol 0)
+    ((query "(for_statement body: (compound_statement \"{\") @indent)") parent-bol 0)
+    ((query "(if_statement consequence: (compound_statement \"{\") @indent)") parent-bol 0)
+    ((query "(while_statement body: (compound_statement \"{\") @indent)") parent-bol 0)
 
     ;; TODO switch, do, case
 
