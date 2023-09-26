@@ -4,7 +4,7 @@
 
 output=$(ip r l table cn | wc -l)
 
-if [ "$output" -gt 5 ]
+if [ "$output" -gt 30 ]
 then
     exit 0
 fi
@@ -16,15 +16,33 @@ die() {
 
 # ((UID == 0)) || [[ -n "$SUDO_UID" ]] || exec sudo "$0" "$@" || exit
 
-# updateroutes
+# Get a list of network interfaces in /sys/class/net
+interfaces=$(ls /sys/class/net)
 
-# for d in $(ls /sys/class/net/); do
-#     read -r _ _ gw _ < <(ip r g 123.206.66.49 oif $d)
-#     if [ -n "$gw" ]; then
-#         break
-#     fi
-# done
-read -r _ _ gw _ < <(ip r g 123.206.66.49)
+# Initialize an empty array to store non-virtual interfaces
+non_virtual_interfaces=()
+
+# Iterate through each interface
+for interface in $interfaces; do
+    # Get the real path of the interface
+    real_path=$(readlink -f "/sys/class/net/$interface")
+
+    # Check if the real path is under /sys/devices/virtual/
+    if [[ $real_path == "/sys/devices/virtual/"* ]]; then
+        continue  # Skip virtual interfaces
+    fi
+
+    # Add non-virtual interfaces to the array
+    non_virtual_interfaces+=("$interface")
+done
+
+for interface in "${non_virtual_interfaces[@]}"; do
+    read -r _ _ gw _ < <(ip r g 123.206.66.49 oif $interface)
+    if [ -n "$gw" ]; then
+        echo $interface
+        break
+    fi
+done
 
 if [ -z "$gw" ]; then
     die "Cannot get default gw"

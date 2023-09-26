@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 
-process_name=telegram-deskto binary=telegram-desktop window_name=telegram-desktop
-# process_name=Telegram binary=/home/amos/git/tdesktop/out/Release/Telegram window_name=Telegram
+process_name=telegram-deskto
+binary=telegram-desktop
+window_name=telegram-desktop
+class_name=TelegramDesktop
 
 workspace=$(bspc query -D -d focused --names)
 if pgrep $process_name >/dev/null; then
     while read -r wid; do
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
-    done < <(xdo id -N TelegramDesktop -n $window_name)
+    done < <(xdo id -N $class_name -n $window_name)
 
     if [ -z "$found" ]; then
         $binary
