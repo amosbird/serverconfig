@@ -6,7 +6,7 @@ export LC_CTYPE=en_US.UTF-8
 old_path=$PATH
 old_man_path=$MANPATH
 mkdir -p /tmp/gentoo
-sudo mount --bind ~/gentoo /tmp/gentoo
+sudo mount --bind ~/tmp/gentoo /tmp/gentoo
 source /tmp/gentoo/etc/profile
 export PATH=$old_path:$PATH
 export MANPATH=$old_man_path:$MANPATH
