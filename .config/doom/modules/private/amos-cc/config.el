@@ -336,12 +336,28 @@ Only works with clangd."
 ;; maybe useful?
 ;; (add-hook! (c-mode c++-mode) (setq iedit-auto-bufferring t))
 
+(after! treesit
+  (cl-pushnew
+   (cons 'top-level-namespace
+         (lambda ()
+           (lambda (node parent &rest _)
+             (when-let* ((gp (treesit-node-parent parent))
+                         (ggp (treesit-node-parent gp)))
+               (and
+                (string-match-p "namespace_definition" (treesit-node-type gp))
+                (string-match-p "translation_unit" (treesit-node-type ggp)))))))
+   treesit-simple-indent-presets))
 
 (defun +amos-indent-style()
   "Override the built-in GNU indentation style with some additional rules."
   `(
+    ((top-level-namespace) parent-bol 0)
     ((query "(for_statement body: (compound_statement \"{\") @indent)") parent-bol 0)
+    ((query "(for_range_loop (compound_statement \"{\") @indent)") parent-bol 0)
     ((query "(if_statement consequence: (compound_statement \"{\") @indent)") parent-bol 0)
+    ((query "(else_clause (compound_statement \"{\") @indent)") parent-bol 0)
+    ((query "(else_clause (_) @indent)") parent-bol 4)
+    ((parent-is "else_statement") parent-bol 4)
     ((query "(while_statement body: (compound_statement \"{\") @indent)") parent-bol 0)
 
     ;; TODO switch, do, case

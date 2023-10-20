@@ -3,7 +3,8 @@
 export LANG=en_US.UTF-8
 export SHELL=/tmp/gentoo/bin/fish # for tmux
 export TERM=xterm-kitty
-export TMPDIR=/tmp/gentoo/tmp
+# export TMPDIR=/tmp/gentoo/tmp
+export TMPDIR=/tmp
 export TMUX=$TMPDIR/tmux-amos
 export SSH_AUTH_SOCK="$TMPDIR/ssh_auth_sock"
 export NPROC=$(nproc)
@@ -22,15 +23,6 @@ local)
     ;;
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    GENTOO_DIR=$(readlink /tmp/gentoo)
-    if [ -d "$GENTOO_DIR" ]
-    then
-        "$GENTOO_DIR"/home/amos/scripts/keepgentoo.py "$GENTOO_DIR" &
-        sleep 0.2
-    else
-        echo "gentoo dir suddenly disappear"
-        exit 1
-    fi
     ;;
 *)
     echo "tstart.sh android|local|prefix"

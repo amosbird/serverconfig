@@ -303,7 +303,7 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
 (defun +amos-embark-consult-export-location-grep (lines &optional xref)
   "Create a grep mode buffer listing LINES.
 The elements of LINES are assumed to be values of category `consult-location'."
-  (let ((buf (generate-new-buffer "*Embark Export Grep*")))
+  (let ((buf (generate-new-buffer (embark--descriptive-buffer-name 'export))))
     (with-current-buffer buf
       (insert (propertize "Exported location results (file-backed buffers only):\n" 'wgrep-header t 'font-lock-face '(:weight bold)))
       (save-excursion (let (last-buf filename not-saved-buffers)
@@ -332,7 +332,7 @@ The elements of LINES are assumed to be values of category `consult-location'."
                       (current-local-map)))
       (setq-local wgrep-header&footer-parser #'embark-consult--wgrep-prepare)
       (when (fboundp 'wgrep-setup) (wgrep-setup)))
-    buf))
+    (pop-to-buffer buf)))
 
 (defun +amos-embark-consult-export-xref-grep (items)
   "Create a grep mode buffer listing ITEMS.
@@ -342,7 +342,7 @@ The elements of ITEMS are assumed to be values of category `consult-xref'."
 (defun +amos-embark-consult-export-grep (lines)
   "Create a grep mode buffer listing LINES.
 The elements of LINES are assumed to be values of category `consult-grep'."
-  (let ((buf (generate-new-buffer "*Embark Export Grep*"))
+  (let ((buf (generate-new-buffer (embark--descriptive-buffer-name 'export)))
         (count 0)
         prop)
     (with-current-buffer buf
@@ -369,7 +369,7 @@ The elements of LINES are assumed to be values of category `consult-grep'."
                       (current-local-map)))
       (setq-local wgrep-header&footer-parser #'embark-consult--wgrep-prepare)
       (when (fboundp 'wgrep-setup) (wgrep-setup)))
-    buf))
+    (pop-to-buffer buf)))
 
 (defun +amos/embark-export-write ()
   "Export the current vertico results to a writable buffer if possible.

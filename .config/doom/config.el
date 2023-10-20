@@ -1726,10 +1726,10 @@ representation of `NUMBER' is smaller."
     ("^\\*Backtrace" :side right :size 0.5 :quit current))
   )
 
+;; This is a better version of +popup-display-buffer-fullframe-fn
 (defun +amos-popup-make-rule (predicate plist)
   (list predicate '(display-buffer-same-window)))
 
-;; This is a better version of +popup-display-buffer-fullframe-fn
 (cl-letf (((symbol-function '+popup-make-rule) #'+amos-popup-make-rule))
   (+amos-set-popup-rules!
    '(
@@ -3740,12 +3740,14 @@ See `project-local-get' for the parameter PROJECT."
  "+amos/yank"
  "+amos/goto"
  "+amos/consult"
+ "+amos/evil-force-"
  "+eval/buffer"
  "+eval/region-and-replace"
  "+evil:delete-this-file"
  "cc-playground"
  "+amos/evil-previous-visual-line"
  "+amos/evil-next-visual-line"
+ "+format"
  "execute-extended-command"
  "find-file"
  "envrc-"
