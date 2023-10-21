@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-
-id=$(which -a id | tail -n1)
-exec "$id" "$@"

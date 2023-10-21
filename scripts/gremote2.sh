@@ -24,7 +24,7 @@ if [[ "$1" =~ $pattern ]]; then
 		arg="$arg -p $port"
 	fi
 
-	remote_home=$(ssh $arg 'rm $HOME/tmp/gentoo/home/amos/.gnupg/S.gpg-agent; rm $HOME/tmp/{clipservice.sock,ssh_auth_sock}; echo $HOME')
+	remote_home=$(ssh $arg 'bash $HOME/tmp/gentoo/home/amos/scripts/killssh; rm $HOME/tmp/gentoo/home/amos/.gnupg/S.gpg-agent; rm $HOME/tmp/{clipservice.sock,ssh_auth_sock}; echo $HOME')
 
 	kitty $a -T $1 ssh -t $arg -R 12639:localhost:12639 -R $remote_home/tmp/gentoo/home/amos/.gnupg/S.gpg-agent:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK '$HOME/tmp/gentoo/gentoo_mount $HOME/tmp /tmp/gentoo/startprefix'
 fi

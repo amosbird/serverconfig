@@ -3,7 +3,8 @@
 if pgrep -f urxvt_scratchpad; then
     :
 else
-    kitty --debug-font-fallback -T urxvt_scratchpad bash -c "env SHELL=/home/amos/gentoo/bin/fish tmux -f /home/amos/.tmux/.tmux.conf.gui -L gui new -A -s gui" &
+    # --debug-font-fallback
+    kitty -T urxvt_scratchpad bash -c "env SHELL=/tmp/gentoo/bin/fish tmux -f /home/amos/.tmux/.tmux.conf.gui -L gui new -A -s gui" &
     sleep 0.5 # sleep for show shell logic
 fi
 
