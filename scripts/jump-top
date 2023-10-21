@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+jump top | sed "s|^$HOME|~|"

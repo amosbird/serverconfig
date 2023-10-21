@@ -103,12 +103,18 @@ int main(int argc, char* argv[]) {
     if (-1 == unshare(CLONE_NEWNS | CLONE_NEWUSER))
         err(EXIT_FAILURE, "unshare failed");
 
-    setgroups_deny();
-    map_id("/proc/self/uid_map", 0, real_euid);
-    map_id("/proc/self/gid_map", 0, real_egid);
-
     if (mount(gentoo_tmp_dir, "/tmp", NULL, MS_BIND, NULL) != 0)
         err(EXIT_FAILURE, "mount gentoo tmp dir failed");
+
+    setgroups_deny();
+    map_id("/proc/self/uid_map", 1000, real_euid);
+    map_id("/proc/self/gid_map", 1000, real_egid);
+
+    if (setgid(1000) != 0)
+        err(EXIT_FAILURE, "setgid failed");
+
+    if (setuid (1000) != 0)
+        err(EXIT_FAILURE, "setuid failed");
 
     execvp(cmd, argv + 2);
 }

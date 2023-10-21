@@ -246,7 +246,7 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
 (defun +amos--get-all-jump-dirs ()
   (unless (file-directory-p default-directory)
     (cd "~"))
-  (split-string (shell-command-to-string "jump top | grep -x -v \"/\"") "\n" t))
+  (split-string (shell-command-to-string "jump-top | grep -x -v \"/\"") "\n" t))
 
 (defun +amos/consult-jumpdir-function ()
   (interactive)

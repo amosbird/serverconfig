@@ -13,9 +13,9 @@ if [[ "$1" =~ $pattern ]]; then
 	host=${BASH_REMATCH[3]}
 	port=${BASH_REMATCH[5]:-22}
 
-	ssh $host -p $port '$HOME/gentoo/usr/bin/gpgconf --create-socketdir; sleep 10;' &
+	ssh $host -p $port '/tmp/gentoo/usr/bin/gpgconf --create-socketdir; sleep 10;' &
 
-    remote_sock=$(ssh $host -p $port '$HOME/gentoo/usr/bin/gpgconf --create-socketdir; file=$($HOME/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file; rm /tmp/clipservice.sock; touch /tmp/gentoo')
+    remote_sock=$(ssh $host -p $port '/tmp/gentoo/usr/bin/gpgconf --create-socketdir; file=$($HOME/gentoo/usr/bin/gpgconf --list-dir agent-socket); rm $file; echo $file; rm /tmp/clipservice.sock; touch /tmp/gentoo')
 
 	# ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -A -t $host -p $port -R $remote_sock:$(gpgconf --list-dir agent-extra-socket)
 	termite $a -t $1 -e "ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=60 -A -t $host -p $port -R 10000:localhost:8080 -R $remote_sock:$(gpgconf --list-dir agent-extra-socket) -R /tmp/clipservice.sock:/tmp/clipservice.sock 'env -i TERM=\$TERM USER=\$USER SSH_CONNECTION=\"\$SSH_CONNECTION\" SSH_AUTH_SOCK=\"\$SSH_AUTH_SOCK\" SSH_REMOTE_HOST=\"\$(hostname)\" \$HOME/gentoo/startprefix'"

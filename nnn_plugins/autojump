@@ -6,7 +6,7 @@ if [ ! -p "$NNN_PIPE" ]; then
     exit 2
 fi
 
-mapfile -t result < <(jump top | fzf +m --expect ctrl-space,alt-enter --reverse)
+mapfile -t result < <(jump-top | fzf +m --expect ctrl-space,alt-enter --reverse)
 dir=${result[1]}
 echo $dir
 if test -n "$dir"; then

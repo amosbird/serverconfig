@@ -40,5 +40,5 @@ if [[ $1 = "ssh" ]]; then
     fi
     echo $host
 else
-    echo "#[bold,fg=#dddddd,bg=#009aff]"$3
+    echo "#[bold,fg=#dddddd,bg=#009aff]"~${3#${HOME}}
 fi
