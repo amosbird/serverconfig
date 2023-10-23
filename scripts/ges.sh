@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-gremote2.sh $(pass show ip/tsearch2)
+gremote2.sh -h $(pass show ip/tsearch2)
