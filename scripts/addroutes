@@ -25,6 +25,10 @@ non_virtual_interfaces=()
 
 # Iterate through each interface
 for interface in $interfaces; do
+    if [[ $interface == "enp9s0u2u1u2" ]]; then
+        continue
+    fi
+
     # Get the real path of the interface
     real_path=$(readlink -f "/sys/class/net/$interface")
 

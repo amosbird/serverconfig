@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep -f /opt/ioa/bin/iOALinux &>/dev/null; then
+if pgrep -f /opt/ioa/bin/iOALinux.bin &>/dev/null; then
     while read -r wid
     do
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
-    done < <(xdo id -N iOALinux -n iOALinux)
+    done < <(xdo id -N iOALinux.bin -n iOALinux.bin)
     if [ -z "$found" ]; then
         /opt/ioa/bin/iOALinux &
     elif bspc query -N -n focused | grep -q "$wid"; then

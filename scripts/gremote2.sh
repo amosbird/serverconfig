@@ -33,5 +33,5 @@ if [[ "$1" =~ $pattern ]]; then
 
 	# kitty $a bash -c "echo $remote_home; echo amosbird; echo $sock"
 
-	kitty $a -T $1 ssh -t $arg -R 12639:localhost:12639 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK '$HOME/tmp/gentoo/login'
+	kitty $a -T $1 ssh -t $arg -L 127.0.0.1:8123:$host:8123 -R 12639:localhost:12639 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK '$HOME/tmp/gentoo/login'
 fi
