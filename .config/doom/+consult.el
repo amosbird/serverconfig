@@ -6,49 +6,6 @@
 (require 'wgrep)
 (eval-when-compile (require 'cl-lib))
 
-(defvar-local vertico-suspend--wc nil)
-(defvar-local vertico-suspend--ov nil)
-
-(defun vertico-suspend ()
-  "Suspend the current completion session.
-If the command is invoked from within the Vertico minibuffer, the
-current session is suspended.  If the command is invoked from
-outside the minibuffer, the active minibuffer is either selected
-or the latest completion session is restored."
-  (interactive)
-  (unless enable-recursive-minibuffers
-    (user-error "Recursive minibuffers must be enabled"))
-  (if-let ((win (active-minibuffer-window))
-           (buf (window-buffer win))
-           ((buffer-local-value 'vertico--input buf)))
-      (cond
-       ((minibufferp)
-        (unless (frame-root-window-p win)
-          (window-resize win (- (window-pixel-height win)) nil nil 'pixelwise))
-        (setq vertico-suspend--ov (make-overlay (point-min) (point-max)))
-        (overlay-put vertico-suspend--ov 'invisible t)
-        (overlay-put vertico-suspend--ov 'priority 1000)
-        (overlay-put vertico--candidates-ov 'before-string nil)
-        (overlay-put vertico--candidates-ov 'after-string nil)
-        (set-window-parameter win 'no-other-window t)
-        (let ((list (get-buffer-window-list buf)))
-          (when (length> list 1) ;; vertico-buffer
-            (setq vertico-suspend--wc (current-window-configuration))
-            (dolist (w list)
-              (unless (eq w win)
-                (delete-window w)))))
-        (other-window 1))
-       (t
-        (select-window win)
-        (set-window-parameter win 'no-other-window nil)
-        (when vertico-suspend--ov
-          (delete-overlay vertico-suspend--ov)
-          (setq vertico-suspend--ov nil))
-        (when vertico-suspend--wc
-          (set-window-configuration vertico-suspend--wc nil t)
-          (setq vertico-suspend--wc nil))))
-    (user-error "No Vertico session to suspend or resume")))
-
 (defun amos-consult--yank-by (fn &rest args)
   "Pull buffer text from current line into search string.
 The region to extract is determined by the respective values of
@@ -162,35 +119,15 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
   (interactive)
   (+amos-consult-recentf t))
 
-(defun list-interject (list separator)
-  (let ((next list))
-    (dotimes (_ (length (cdr list)))
-      (setcdr next (cons separator (cdr next)))
-      (setq next (cddr next)))))
-
-(defun +amos-consult-fd-builder (no-ignore input)
-  (pcase-let* ((`(,arg . ,opts) (consult--command-split input))
-               (`(,re . ,hl) (funcall consult--regexp-compiler arg 'extended t)))
-    (when re
-      (list-interject re "--and")
-      (cons
-       (if no-ignore
-           `("fd" "--color=never" "--hidden" "--full-path" "--no-ignore" ,@re ,@opts)
-         `("fd" "--color=never" "--hidden" "--full-path" ,@re ,@opts))
-       hl))))
-
-(defun +amos-consult-fd (&optional dir initial no-ignore)
-  (pcase-let* ((`(,prompt ,paths ,dir) (consult--directory-prompt "Fd" dir))
-               (default-directory dir)
-               (file (consult--find prompt (apply-partially #'+amos-consult-fd-builder no-ignore) initial)))
-    (leap-set-jump)
-    (find-file file)
-    (recenter)))
-
 (defun +amos-consult-find (&optional cur no-ignore)
-  (if cur
-      (+amos-consult-fd default-directory nil no-ignore)
-    (+amos-consult-fd nil nil no-ignore)))
+  (let* ((consult-fd-args-base '("fd" "--color=never" "--hidden" "--full-path"))
+         (consult-fd-args (if no-ignore (append consult-fd-args-base '("--no-ignore")) consult-fd-args-base)))
+    (cl-letf* ((+amos-find-file (symbol-function #'find-file))
+               ((symbol-function #'find-file) (lambda (&rest args)
+                                                (leap-set-jump)
+                                                (apply +amos-find-file args)
+                                                (recenter))))
+      (consult-fd cur nil))))
 
 (defun +amos/consult-find (&optional no-ignore)
   (interactive "P")
@@ -198,22 +135,38 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
 
 (defun +amos/consult-find-cur-dir (&optional no-ignore)
   (interactive "P")
-  (+amos-consult-find t no-ignore))
+  (+amos-consult-find default-directory no-ignore))
 
 (defun +amos/consult-line ()
   (interactive)
   (cl-letf (((symbol-function #'buffer-list) (lambda (&rest _) (list (current-buffer)))))
     (call-interactively #'consult-line-multi)))
 
+;; consult-ripgrep uses consult--jump instead of find-file
+(remove-hook! 'consult-after-jump-hook #'+nav-flash-blink-cursor-maybe-h)
+(defun +amos*consult--jump (orig-fun pos)
+  (when pos
+    (leap-set-jump)
+    (funcall orig-fun pos)))
+(advice-add #'consult--jump :around #'+amos*consult--jump)
+(add-hook! 'consult-after-jump-hook #'recenter)
+(defun +amos-consult-ripgrep (&optional cur)
+  (cl-letf* ((+amos-find-file (symbol-function #'find-file))
+             ((symbol-function #'find-file) (lambda (&rest args)
+                                              (leap-set-jump)
+                                              (apply +amos-find-file args)
+                                              (recenter))))
+    (consult-ripgrep cur)))
+
 (defun +amos/consult-ripgrep (&optional arg)
   (interactive "P")
   (let ((consult-ripgrep-args (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
-    (consult-ripgrep)))
+    (+amos-consult-ripgrep)))
 
 (defun +amos/consult-ripgrep-cur-dir (&optional arg)
   (interactive "P")
   (let ((consult-ripgrep-args (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
-    (consult-ripgrep default-directory)))
+    (+amos-consult-ripgrep default-directory)))
 
 (defun +amos-git-link (cand)
   (require 'git-link)
@@ -406,12 +359,6 @@ Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-locatio
         #'+amos-embark-consult-export-grep)
   )
 
-(remove-hook! 'consult-after-jump-hook #'+nav-flash-blink-cursor-maybe-h)
-(defun consult-set-jump (&rest _)
-   (leap-set-jump))
-(advice-add #'consult--jump-1 :before #'consult-set-jump)
-(add-hook! 'consult-after-jump-hook #'recenter)
-
 (setq consult-buffer-sources '(consult--source-hidden-buffer consult--source-modified-buffer consult--source-buffer))
 
 (after! consult
@@ -438,4 +385,8 @@ Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-locatio
    consult--source-project-recent-file
    consult--source-bookmark
    :preview-key "C-i")
+
+  (after! lsp
+    lsp-find-implementation
+    :preview-key "C-i")
   )

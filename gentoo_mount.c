@@ -89,32 +89,75 @@ void map_id(const char* file, uint32_t from, uint32_t to) {
 };
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        printf("Usage: %s <string1> <string2> ...\n", argv[0]);
-        return 1;
-    }
-
-    char* gentoo_tmp_dir = argv[1];
-    char* cmd = argv[2];
-
     uid_t real_euid = geteuid();
     gid_t real_egid = getegid();
 
-    if (-1 == unshare(CLONE_NEWNS | CLONE_NEWUSER))
-        err(EXIT_FAILURE, "unshare failed");
+    uid_t uid;
+    gid_t gid;
+    char* tmp_dir;
+    char* home_dir;
+    char* cmd;
+    if (real_euid == 0) {
+        if (argc < 6) {
+            printf("Usage: %s <uid> <gid> <tmp_dir> <home_dir> <cmd> ...\n", argv[0]);
+            return 1;
+        }
 
-    if (mount(gentoo_tmp_dir, "/tmp", NULL, MS_BIND, NULL) != 0)
+        char *endptr1, *endptr2;
+        uid = strtol(argv[1], &endptr1, 10);
+        gid = strtol(argv[2], &endptr2, 10);
+
+        if (*endptr1 != '\0' || *endptr2 != '\0') {
+            err(EXIT_FAILURE, "Parsing error: Non-integer characters detected.");
+        }
+
+        tmp_dir = argv[3];
+        home_dir = argv[4];
+        cmd = argv[5];
+    } else {
+        if (argc < 4) {
+            printf("Usage: %s <tmp_dir> <home_dir> <cmd> ...\n", argv[0]);
+            return 1;
+        }
+        tmp_dir = argv[1];
+        home_dir = argv[2];
+        cmd = argv[3];
+        uid = real_euid;
+        gid = real_egid;
+    }
+
+    if (real_euid == 0) {
+        if (-1 == unshare(CLONE_NEWNS))
+            err(EXIT_FAILURE, "unshare failed");
+    } else {
+        if (-1 == unshare(CLONE_NEWNS | CLONE_NEWUSER))
+            err(EXIT_FAILURE, "unshare failed");
+    }
+
+    if (mount("none", "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0)
+        err(EXIT_FAILURE, "cannot change root filesystem privacy");
+
+    if (mount(tmp_dir, "/tmp", NULL, MS_BIND, NULL) != 0)
         err(EXIT_FAILURE, "mount gentoo tmp dir failed");
 
-    setgroups_deny();
-    map_id("/proc/self/uid_map", 1000, real_euid);
-    map_id("/proc/self/gid_map", 1000, real_egid);
+    if (mount(home_dir, "/tmp/gentoo/home/amos", NULL, MS_BIND, NULL) != 0)
+        err(EXIT_FAILURE, "mount gentoo home dir failed");
 
-    if (setgid(1000) != 0)
-        err(EXIT_FAILURE, "setgid failed");
+    if (real_euid != 0) {
+        setgroups_deny();
+        map_id("/proc/self/uid_map", real_euid, real_euid);
+        map_id("/proc/self/gid_map", real_egid, real_egid);
+    }
 
-    if (setuid (1000) != 0)
-        err(EXIT_FAILURE, "setuid failed");
+    if (setresgid(gid, gid, gid) != 0)
+        err(EXIT_FAILURE, "setgid failed %d", gid);
 
-    execvp(cmd, argv + 2);
+    if (setresuid(uid, uid, uid) != 0)
+        err(EXIT_FAILURE, "setuid failed %d", uid);
+
+    if (real_euid != 0) {
+        execvp(cmd, argv + 3);
+    } else {
+        execvp(cmd, argv + 5);
+    }
 }

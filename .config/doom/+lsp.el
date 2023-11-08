@@ -4,6 +4,7 @@
 (setq lsp-enable-on-type-formatting nil)
 (setq lsp-enable-dap-auto-configure nil)
 (setq lsp-auto-guess-root t)
+;; (setq lsp-headerline-breadcrumb-enable t)
 (setq lsp-enable-indentation nil)
 
 (add-hook! prog-mode #'flymake-mode)

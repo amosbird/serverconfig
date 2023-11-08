@@ -70,6 +70,7 @@
 ;; (package! rainbow-mode :recipe (:host github :repo "amosbird/rainbow-mode"))
 (package! realign-mode :recipe (:host github :repo "amosbird/realign-mode.el"))
 (package! flymake-popon :recipe (:type git :repo "https://codeberg.org/akib/emacs-flymake-popon.git"))
+(package! kkp :recipe (:host github :repo "benjaminor/kkp"))
 
 (package! gitconfig-mode
    :recipe (:host github :repo "magit/git-modes"
@@ -81,7 +82,8 @@
    :recipe (:host github :repo "magit/git-modes"
    :files ("gitattributes-mode.el")))
 
-(package! consult :pin "0923786304d1dc51c5ae92d27a85c6d8383fbc3d")
+(package! vertico :pin "edbb370ad237781eb893a5c2b505cfa24e6b2d9a")
+(package! consult :pin "fa249d5dd7212e5ae1fa51c086d8f1197d738ef4")
 
 ;; This is temporarily necessary due to an unrelated bug.
 (unpin! gitignore-mode gitconfig-mode gitattributes-mode)

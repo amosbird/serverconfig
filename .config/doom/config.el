@@ -545,6 +545,12 @@ This predicate is only tested on \"insert\" action."
       (ad-set-arg 1 (- (ad-get-arg 1) 2)))))
 
 (unless window-system
+  ;; TODO doesn't work yet. Might be related to tmux.
+  ;; (use-package kkp
+  ;;   :config
+  ;;   ;; (setq kkp-alt-modifier 'alt) ;; use this if you want to map the Alt keyboard modifier to Alt in Emacs (and not to Meta)
+  ;;   (global-kkp-mode +1))
+
   (require 'evil-terminal-cursor-changer)
   (xterm-mouse-mode +1)
   ;; enable terminal scroll
@@ -3699,6 +3705,42 @@ See `project-local-get' for the parameter PROJECT."
   (cl-pushnew 'c++-ts-mode evilnc-cpp-like-comment-syntax-modes)
   (cl-pushnew 'c-ts-mode evilnc-cpp-like-comment-syntax-modes))
 
+(defun +amos-with-face (str &rest face-plist)
+  (propertize str 'face face-plist))
+
+(defun +amos-make-header ()
+  "."
+  (let* ((margin (car (window-margins)))
+         (padding (if margin (+ 4 margin) 0))
+         (header (concat (make-string padding ?\ ) (abbreviate-file-name default-directory)))
+         (drop-str "[...]"))
+    (if (> (length header)
+           (window-body-width))
+        (progn
+          (concat (+amos-with-face drop-str
+                             :background "blue"
+                             :weight 'bold
+                             )
+                  (+amos-with-face (substring header
+                                        (+ (- (length header)
+                                              (window-body-width))
+                                           (length drop-str))
+                                        (length header))
+                             :foreground "#51AFEF"
+                             :weight 'bold
+                             )))
+      (concat (+amos-with-face header
+                         :foreground "#51AFEF"
+                         :weight 'bold
+                         )))))
+
+(defun +amos-display-header ()
+  (when (memq major-mode '(dired-mode))
+    (setq header-line-format
+          '("" ;; invocation-name
+            (:eval (+amos-make-header))))))
+
+(add-hook! 'buffer-list-update-hook #'+amos-display-header)
 
 ;; should be at last
 (+amos-ignore-repeat

@@ -18,6 +18,7 @@
   "List directories first in dired buffers."
   (save-excursion
     (let (buffer-read-only)
+      (delete-line)
       (forward-line 2) ;; beyond dir. header
       (sort-regexp-fields t "^.*$" "[ ]*." (point) (point-max))))
   (and (featurep 'xemacs)
@@ -348,12 +349,12 @@ If called with `universal-argument' (C-u), ask for username.
   (if peep-dired-window (peep-dired-disable)
     (peep-dired-enable)))
 
-(defun +amos*dired-open-file (o &rest args)
-  (let ((buf (current-buffer)))
-    (apply o args)
-    (unless (eq (current-buffer) buf)
-      (bury-buffer buf))))
-(advice-add #'dired-open-file :around #'+amos*dired-open-file)
+;; (defun +amos*dired-open-file (o &rest args)
+;;   (let ((buf (current-buffer)))
+;;     (apply o args)
+;;     (unless (eq (current-buffer) buf)
+;;       (bury-buffer buf))))
+;; (advice-add #'dired-open-file :around #'+amos*dired-open-file)
 
 (require 'dired-ranger)
 (defun +amos-dired-copy-ring-string ()

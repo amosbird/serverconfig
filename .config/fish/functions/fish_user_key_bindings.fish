@@ -37,7 +37,8 @@ function fish_user_key_bindings
             set -l dir (string trim -- "$result[2]")
             if test -n "$dir"
                 if test -z "$result[1]"
-                    if not cd "$dir"
+                    set updated_path (string replace -r "^~" "$HOME" -- "$dir")
+                    if not cd "$updated_path"
                         jump clean
                     end
                 else
@@ -216,17 +217,17 @@ function fish_user_key_bindings
         end
     end
 
-    function delete-suggestion
-        commandline --with-suggestion | read -lz cmd
-        builtin history delete --exact --case-sensitive $cmd
-        builtin history merge
-    end
+    # function delete-suggestion
+    #     commandline --with-suggestion | read -lz cmd
+    #     builtin history delete --exact --case-sensitive $cmd
+    #     builtin history merge
+    # end
 
     function yank-commandline
         commandline | osc52clip
     end
 
-    bind \eD delete-suggestion
+    # bind \eD delete-suggestion
     bind \cs sudo-commandline
     bind \e` proxy-commandline # Control-Shift-S
     bind \cq gdb-commandline
@@ -259,26 +260,28 @@ function fish_user_key_bindings
         set -g __fish_last_bind_mode $fish_bind_mode
         # If the token is currently single-quoted,
         # we escape single-quotes (and backslashes).
-        __fish_commandline_is_singlequoted
+        string match -q 'single*' (__fish_tokenizer_state -- (commandline -ct | string collect))
         and set -g __fish_paste_quoted 1
-        set -g __fish_amos_cmd (commandline | string split0)
+        set -l cmdline (commandline | string collect -N)
         set -g __fish_amos_cursor (commandline -C)
+        # head -c -1 is because https://github.com/fish-shell/fish-shell/issues/10064
+        set -g __fish_amos_cmd_pre (string sub -l $__fish_amos_cursor -- $cmdline | head -c -1 | string collect -N)
+
+        # Without this, pasting at 0 will remove cmd_post
+        if test -z $__fish_amos_cmd_pre
+            set -g __fish_amos_cmd_pre ""
+        end
+
+        set -g __fish_amos_cmd_post (string sub -s (math $__fish_amos_cursor + 1) -- $cmdline | string collect)
+
         commandline -r ""
     end
 
     function stop_bracketed_paste
         set fish_bind_mode $__fish_last_bind_mode
         set -e __fish_paste_quoted
-        set -l cmdline (string trim -N -- (commandline | string split0) | string split0)
-        set -l x (string sub -N -l $__fish_amos_cursor -- $__fish_amos_cmd | string split0)
-        if test -z "$x"
-            set x ""
-        end
-        set -l y (string sub -N -s (math $__fish_amos_cursor + 1) -l (math (string length -- $__fish_amos_cmd) - $__fish_amos_cursor - 1) -- $__fish_amos_cmd | string split0)
-        if test -z "$y"
-            set y ""
-        end
-        commandline -r -- $x$cmdline$y
+        set -l cmdline (commandline | string collect)
+        commandline -r -- $__fish_amos_cmd_pre$cmdline$__fish_amos_cmd_post
         commandline -C (math $__fish_amos_cursor + (string length -- "$cmdline"))
         set -e __fish_amos_cmd
         set -e __fish_amos_cursor
@@ -287,8 +290,10 @@ function fish_user_key_bindings
 
     for mode in (bind --list-modes | string match -v paste)
         bind --preset -M $mode -m paste \e\[200~ 'start_bracketed_paste'
+        # bind --preset -M $mode -m paste \e\[200~ '__fish_start_bracketed_paste'
     end
     bind --preset -M paste \e\[201~ 'stop_bracketed_paste'
+    # bind --preset -M paste \e\[201~ '__fish_stop_bracketed_paste'
 
     function insert-last-arg
         set -l a (commandline -co)[-1]

@@ -642,6 +642,7 @@
 
       (:map key-translation-map
         ;; "\035"          (kbd "<escape>")
+        [C-f5]          (kbd "<tab>")
         [S-iso-lefttab] [backtab]
         "C-1"           (kbd "1")
         "C-2"           (kbd "2")
