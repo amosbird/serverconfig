@@ -59,6 +59,40 @@ int prlimit64(pid_t pid, enum __rlimit_resource resource, const struct rlimit64*
     return orig_prlimit64(pid, resource, new_limit, old_limit);
 }
 
+char* setlocale(int category, const char* /* locale */) {
+    QWE(setlocale);
+    return orig_setlocale(category, "");
+}
+
+locale_t uselocale(locale_t /* newloc */) {
+    QWE(uselocale);
+    return orig_uselocale(LC_GLOBAL_LOCALE);
+}
+
+struct tm* gmtime(const time_t* timep) {
+    QWE(gmtime);
+    uselocale(LC_GLOBAL_LOCALE);
+    return orig_gmtime(timep);
+}
+
+struct tm* gmtime_r(const time_t* timep, struct tm* result) {
+    QWE(gmtime_r);
+    uselocale(LC_GLOBAL_LOCALE);
+    return orig_gmtime_r(timep, result);
+}
+
+struct tm* localtime(const time_t* timep) {
+    QWE(localtime);
+    uselocale(LC_GLOBAL_LOCALE);
+    return orig_localtime(timep);
+}
+
+struct tm* localtime_r(const time_t* timep, struct tm* result) {
+    QWE(localtime_r);
+    uselocale(LC_GLOBAL_LOCALE);
+    return orig_localtime_r(timep, result);
+}
+
 // int socket(int family, int type, int protocol) {
 //     QWE(socket);
 //     struct ifreq interface;

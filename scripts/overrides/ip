@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+if [ "$*" = "route add default via 192.168.255.1 dev tun0" ]; then
+    exit 0
+fi
+
+exec /usr/bin/ip "$@"

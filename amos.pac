@@ -3,7 +3,7 @@ var http_proxy = "PROXY 127.0.0.1:12639";
 
 var gfwed_list = ["oa.com", "woa.com"];
 var cn_list = ["qq.com", "taobao.com", "jd.com"];
-var us_list = ["openai.com"];
+var us_list = ["openai.com", "bard.google.com"];
 
 var gfwed = {};
 var cned = {};
