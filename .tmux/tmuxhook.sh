@@ -25,5 +25,15 @@ elif [[ $1 -eq 3 ]]; then # detach
         tmux run-shell "pkill -USR1 -F $TMPDIR/htop.pid"
     fi
 elif [[ $1 -eq 4 ]]; then # new window
-    tmux source "$HOME/.tmux/.tmux.conf.amos"
+    case "$2" in
+    emacs)
+        tmux source $HOME/.tmux/.tmux.conf.emacs
+        ;;
+    htop)
+        tmux source $HOME/.tmux/.tmux.conf.htop
+        ;;
+    amos)
+        tmux source $HOME/.tmux/.tmux.conf.amos
+        ;;
+    esac
 fi

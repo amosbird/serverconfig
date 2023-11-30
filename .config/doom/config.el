@@ -20,6 +20,7 @@
 ;; (advice-add #'+vc-gutter-update-h :override #'ignore)
 ;; (advice-add #'+vc-gutter-init-maybe-h :override #'ignore)
 
+;; Avoid major-mode switching which leads to cursor shape blinking
 (setq evil-default-cursor #'ignore)
 (add-to-list 'evil-buffer-regexps `(
                                     ,(rx (or
@@ -1964,6 +1965,14 @@ the current state and point position."
       (filtered-frame-list (lambda (f) (not (+amos--is-frame-daemons-frame f))))
     (frame-list)))
 
+(defun +amos|maybe-delete-frame-buffer (frame)
+  (let ((windows (window-list frame)))
+    (dolist (window windows)
+      (let ((buffer (window-buffer (car windows))))
+        (when (eq 1 (length (get-buffer-window-list buffer nil t)))
+          (kill-buffer buffer))))))
+(add-to-list 'delete-frame-functions #'+amos|maybe-delete-frame-buffer)
+
 (defun +amos/workspace-new ()
   (interactive)
   (if gui-p (setenv "DISPLAY" ":0"))
@@ -1977,38 +1986,34 @@ the current state and point position."
     (select-frame nframe)
     (let ((dir default-directory))
       (switch-to-buffer "*scratch*")
-      (cd dir))
-    (push nframe +amos-frame-stack)
-    (setq +amos-frame-list
-          (-insert-at (1+ (-elem-index oframe +amos-frame-list)) nframe +amos-frame-list))))
+      (cd dir))))
 
 (defun +amos/workspace-delete ()
   (interactive)
-  (let ((f (selected-frame)))
-    (setq +amos-frame-list (--remove (eq f it) +amos-frame-list))
-    (setq +amos-frame-stack (-uniq (--remove (eq f it) +amos-frame-stack)))
-    (if +amos-frame-stack
-        (+amos/workspace-switch-to-frame (car +amos-frame-stack)))
-    (delete-frame f))
-  (when +amos-tmux-need-switch
-    (shell-command! "tmux switch-client -t amos\; run-shell -t amos '$HOME/scripts/setcursor.sh $(tmux display -p \"#{pane_tty}\")'")
-    (setq +amos-tmux-need-switch nil)))
+  (let (best-window best-time time)
+    (dolist (window (window-list-1 nil 'nomini 'visible))
+      (setq time (window-use-time window))
+      (when (and (not (eq (window-frame window) (selected-frame)))
+                 (or (not best-time) (> time best-time)))
+        (setq best-time time)
+        (setq best-window window)))
+    (delete-frame)
+    (select-frame (window-frame best-window))))
 
-(defun +amos/workspace-switch-to-frame (frame)
-  (setq +amos-tmux-need-switch nil)
+(defun +amos-workspace-switch-to-frame (frame)
   (let ((oframe (selected-frame)))
     (make-frame-invisible oframe t)
     (select-frame frame)
     (raise-frame frame)
-    (push frame +amos-frame-stack)
     (+amos/reset-cursor)
     (recenter)))
 
 (defun +amos/workspace-switch-to (index)
   (interactive)
-  (when (< index (length +amos-frame-list))
-    (let ((frame (nth index +amos-frame-list)))
-      (+amos/workspace-switch-to-frame frame))))
+  (let ((frames (cdr (visible-frame-list))))
+    (when (< index (length frames))
+      (let ((frame (nth index frames)))
+        (+amos-workspace-switch-to-frame frame)))))
 
 (defun +amos/workspace-switch-to-1 () (interactive) (+amos/workspace-switch-to 0))
 (defun +amos/workspace-switch-to-2 () (interactive) (+amos/workspace-switch-to 1))
@@ -2020,20 +2025,13 @@ the current state and point position."
 (defun +amos/workspace-switch-to-8 () (interactive) (+amos/workspace-switch-to 7))
 (defun +amos/workspace-switch-to-9 () (interactive) (+amos/workspace-switch-to 8))
 (defun +amos-workspace-cycle (off)
-  (let* ((n (length +amos-frame-list))
-         (index (-elem-index (selected-frame) +amos-frame-list))
+  (let* ((frames (cdr (visible-frame-list)))
+         (n (length frames))
+         (index (-elem-index (selected-frame) frames))
          (i (% (+ off index n) n)))
     (+amos/workspace-switch-to i)))
 (defun +amos/workspace-switch-left ()  (interactive) (+amos-workspace-cycle -1))
 (defun +amos/workspace-switch-right () (interactive) (+amos-workspace-cycle +1))
-
-(defun +amos|maybe-delete-frame-buffer (frame)
-  (let ((windows (window-list frame)))
-    (dolist (window windows)
-      (let ((buffer (window-buffer (car windows))))
-        (when (eq 1 (length (get-buffer-window-list buffer nil t)))
-          (kill-buffer buffer))))))
-(add-to-list 'delete-frame-functions #'+amos|maybe-delete-frame-buffer)
 
 ;; only reuse current frame's popup
 (defadvice +popup-display-buffer (around +amos*popup-display-buffer activate)

@@ -6,6 +6,8 @@
 (setq lsp-auto-guess-root t)
 ;; (setq lsp-headerline-breadcrumb-enable t)
 (setq lsp-enable-indentation nil)
+;; TODO remember to disable it, maybe notify on modeline
+;; (setq lsp-log-io t)
 
 (add-hook! prog-mode #'flymake-mode)
 (add-hook! prog-mode #'flymake-popon-mode)

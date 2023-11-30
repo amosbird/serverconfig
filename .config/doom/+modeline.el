@@ -4,7 +4,7 @@
 
   (setq +amos-full-width-digits ["１" "２" "３" "４" "５" "６" "７" "８" "９"])
   (defun +amos-frame-modeline (&optional _)
-    (let ((frames +amos-frame-list)
+    (let ((frames (cdr (visible-frame-list)))
           (current-frame (selected-frame)))
       (concat " |"
               (mapconcat
@@ -75,11 +75,13 @@
   (defvar +amos--hostname (propertize (concat "  " +amos-system-name " ") 'face '(:weight bold :foreground "#51afef")))
   (doom-modeline-def-segment host (let () +amos--hostname))
 
-  (doom-modeline-def-segment padding (make-string 50 ?\s))
+  (doom-modeline-def-segment padding (make-string 52 ?\s))
 
   (doom-modeline-def-modeline 'amos
     '(bar matches follow buffer-info buffer-position word-count parrot selection-info frame)
-    '(keycast host lsp indent-info buffer-encoding major-mode process vcs checker time padding))
+    '(;; keycast
+      ;; host
+      lsp indent-info buffer-encoding major-mode process vcs checker time padding))
 
   (defun +amos*doom-modeline-set-modeline (&rest _)
     (setq mode-line-format (list "%e" (doom-modeline 'amos)))
