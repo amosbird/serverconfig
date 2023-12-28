@@ -64,6 +64,7 @@
        ;; (java +lsp)
        (go +lsp)
        (yaml +lsp)
+       (web +lsp)
        zig
 
        :config

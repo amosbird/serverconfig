@@ -1,4 +1,29 @@
 #!/usr/bin/env bash
 
-# ps -o ppid= -o pid= -o command= -C sshd | fgrep "/tmp/gentoo/home/amos/scripts/tstart.sh prefix" | awk '{print $2}' | xargs kill || :
-pkill -f "bash /tmp/gentoo/home/amos/scripts/tstart.sh prefix" || :
+# Get the initial PID
+pid=$(pgrep -f "bash /data/amos/tmp/gentoo/login" || :)
+
+if [ -z "$pid" ]; then
+    echo "Failed to get original PID"
+    exit 1
+fi
+
+# Loop until the process owner is root
+while [ "$(ps -o uid= -p $pid | tr -d '[:space:]')" != "0" ]; do
+    # Print the current PID
+    echo "Current PID: $pid"
+
+    # Get the parent PID
+    parent_pid=$(ps -o ppid= -p $pid)
+
+    # Break out of the loop if the parent PID is empty
+    if [ -z "$parent_pid" ]; then
+        echo "Failed to get parent PID"
+        exit 1
+    fi
+
+    # Update the PID for the next iteration
+    pid=$parent_pid
+done
+
+kill $pid

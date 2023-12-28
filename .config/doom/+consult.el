@@ -120,7 +120,7 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
   (+amos-consult-recentf t))
 
 (defun +amos-consult-find (&optional cur no-ignore)
-  (let* ((consult-fd-args-base '("fd" "--color=never" "--hidden" "--full-path"))
+  (let* ((consult-fd-args-base '("fd" "--color=never" "--hidden"))
          (consult-fd-args (if no-ignore (append consult-fd-args-base '("--no-ignore")) consult-fd-args-base)))
     (cl-letf* ((+amos-find-file (symbol-function #'find-file))
                ((symbol-function #'find-file) (lambda (&rest args)

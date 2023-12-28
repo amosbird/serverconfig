@@ -3696,8 +3696,8 @@ See `project-local-get' for the parameter PROJECT."
     'sqlformat))
 
 (after! so-long
-  (setq so-long-max-lines 1024)
-  (setq so-long-threshold 1024))
+  (setq so-long-max-lines 10240)
+  (setq so-long-threshold 10240))
 
 (after! evil-nerd-commenter
   (cl-pushnew 'c++-ts-mode evilnc-cpp-like-comment-syntax-modes)
