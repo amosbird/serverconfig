@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+if ! command -v atuin &> /dev/null
+then
+    exit 0
+fi
+
 LOCK_FILE="/tmp/atuin_sync.lock"
 LOG_FILE="/tmp/atuin_sync.log"
 
