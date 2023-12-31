@@ -232,7 +232,6 @@ function fish_user_key_bindings
     bind \e` proxy-commandline # Control-Shift-S
     bind \cq gdb-commandline
     bind \em ls-commandline
-    bind \cr fzf-history-token-widget
     bind \ci __fzf_complete
     bind \eG open-magit
     bind \ep updir
@@ -309,4 +308,47 @@ function fish_user_key_bindings
 
     bind \e\> 'insert-last-arg'
     bind \e\< 'insert-last-line'
+
+    function _atuin_search
+        set -l ATUIN_H "$(ATUIN_SHELL_FISH=t ATUIN_LOG=error atuin search $argv -i -- (commandline -b) 3>&1 1>&2 2>&3)"
+
+        if test -n "$ATUIN_H"
+            if string match --quiet '__atuin_accept__:*' "$ATUIN_H"
+                set -l ATUIN_HIST "$(string replace "__atuin_accept__:" "" -- "$ATUIN_H")"
+                commandline -r "$ATUIN_HIST"
+                commandline -f repaint
+                commandline -f execute
+                return
+            else
+                commandline -r "$ATUIN_H"
+            end
+        end
+
+        commandline -f repaint
+    end
+
+    function _atuin_bind_up
+        # Fallback to fish's builtin up-or-search if we're in search or paging mode
+        if commandline --search-mode; or commandline --paging-mode
+            up-or-search
+            return
+        end
+
+        # Only invoke atuin if we're on the top line of the command
+        set -l lineno (commandline --line)
+
+        switch $lineno
+            case 1
+                _atuin_search --shell-up-key-binding
+            case '*'
+                up-or-search
+        end
+    end
+
+    bind \cr _atuin_search
+    if bind -M insert > /dev/null 2>&1
+        bind -M insert \cr _atuin_search
+    end
+
+    # bind \cr fzf-history-token-widget
 end

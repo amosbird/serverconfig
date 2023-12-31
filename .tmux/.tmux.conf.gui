@@ -36,7 +36,7 @@ set -g message-style "bg=#00346e, fg=#ffffd7"
 set -g status-style "bg=#222222, fg=#ffffd7"
 set -g status-left "#[bg=#009aff] ❐ #S "
 set -g status-left-length 400
-set -g status-right "#{?client_prefix, #[bg=#778833] PREFIX,}#{?pane_synchronized, #[bg=#008844] SYNC,} #[bg=#009aff] #(whoami)@#h #[bg=#881100] %Y-%m-%d %H:%M "
+set -g status-right "#(atuin_sync.sh)#{?client_prefix, #[bg=#778833] PREFIX,}#{?pane_synchronized, #[bg=#008844] SYNC,} #[bg=#009aff] #(whoami)@#h #[bg=#881100] %Y-%m-%d %H:%M "
 set -g status-right-length 600
 
 set -g window-status-format " #I #W#{?window_zoomed_flag, [max],} "
