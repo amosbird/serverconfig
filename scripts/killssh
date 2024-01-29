@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Get the initial PID
-pid=$(pgrep -f "bash /data/amos/tmp/gentoo/login" || :)
+pid=$(pgrep -f "bash $HOME/tmp/gentoo/login" || :)
 
 if [ -z "$pid" ]; then
     echo "Failed to get original PID"
@@ -23,7 +23,8 @@ while [ "$(ps -o uid= -p $pid | tr -d '[:space:]')" != "0" ]; do
     fi
 
     # Update the PID for the next iteration
+    top_pid=$pid
     pid=$parent_pid
 done
 
-kill $pid
+kill $top_pid
