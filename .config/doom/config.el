@@ -1341,7 +1341,7 @@ it will restore the window configuration to prior to full-framing."
 
 (add-hook! 'doom-escape-hook #'save-buffer-maybe)
 (add-hook! 'doom-escape-hook #'git-gutter-maybe)
-(add-hook! 'doom-escape-hook #'magit-quit-maybe)
+;; (add-hook! 'doom-escape-hook #'magit-quit-maybe)
 (add-hook! 'doom-escape-hook #'+evil-disable-multiedit-h)
 
 (defun +amos/evil-force-normal-state ()
@@ -1603,6 +1603,7 @@ representation of `NUMBER' is smaller."
 
 (advice-add #'hide-mode-line-mode :override #'ignore)
 (advice-add #'visual-line-mode :override #'ignore)
+(advice-add #'magit-process-set-mode-line :override #'ignore)
 
 (when gui-p
   (require 'fcitx)
@@ -1728,7 +1729,6 @@ representation of `NUMBER' is smaller."
     ("\\*TeX" :side right :size 0.4 :ttl kill-buffer)
     ("^\\*Embark Export" :side bottom :size 0.35 :quit current :ttl kill-buffer :select t)
     ("^\\*Embark Collect" :side right :size 0.5 :quit current :ttl kill-buffer :select t)
-    ("^\\(?:\\*magit\\|magit:\\)" :ignore t)
     ("\\[ Table \\]\\*" :side right :size 0.9 :select t :quit nil)
     ("^\\*Backtrace" :side right :size 0.5 :quit current))
   )
@@ -3586,7 +3586,11 @@ See `project-local-get' for the parameter PROJECT."
 (use-package! rmsbolt
   :defer
   :config
-  (add-hook! 'rmsbolt-mode-hook (setq-local rmsbolt-command (shell-command-to-string "printf \"%s %s\" \"$CXX\" \"$CXXFLAGS\""))))
+  (advice-add #'rmsbolt-compile :before (lambda (&rest _) (save-buffer-maybe)))
+  (add-hook! 'rmsbolt-mode-hook
+    (setq-local rmsbolt-command
+                (string-trim-right
+                 (shell-command-to-string (format "get-compile-command.sh %s" (projectile-project-root)))))))
 
 (use-package! centered-cursor-mode
   :defer)

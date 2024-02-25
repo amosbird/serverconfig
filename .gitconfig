@@ -8,6 +8,7 @@
 	ui = auto
 [core]
 	excludesfile = ~/.gitignore_global
+	untrackedcache = true
 [github]
 	user = amosbird
 [commit]

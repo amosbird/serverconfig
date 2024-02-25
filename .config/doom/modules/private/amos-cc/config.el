@@ -120,6 +120,7 @@
                                 "--log=error"
                                 "--malloc-trim"
                                 "--background-index"
+                                "-j=8"
                                 "--clang-tidy"
                                 "--completion-style=detailed"
                                 "--pch-storage=memory"

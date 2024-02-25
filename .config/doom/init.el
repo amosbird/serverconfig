@@ -302,6 +302,7 @@
         (markdown-mode . bibtex-completion-format-citation-pandoc-citeproc)
         (default       . bibtex-completion-format-citation-default)))
 (setq ivy-bibtex-default-action 'ivy-bibtex-insert-citation)
+(setq rmsbolt-automatic-recompile nil)
 
 ;; (setq redisplay-dont-pause t)
 (setq require-final-newline t)
