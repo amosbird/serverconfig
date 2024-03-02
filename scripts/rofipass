@@ -9,7 +9,7 @@ list_passwords() {
     printf '%s\n' "${pw_list[@]%.gpg}" "otp" | sort -n
 }
 
-selected_password="$(list_passwords 2>/dev/null | rofi -steal-focus -dmenu -p "pass > ")"
+selected_password="$(list_passwords 2>/dev/null | rofi -steal-focus -dmenu -matching fuzzy -sort fzf -p "pass > ")"
 
 rofi_exit=$?
 if [[ $rofi_exit -eq 1 ]]; then

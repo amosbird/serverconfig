@@ -80,8 +80,7 @@ function fish_user_key_bindings
         begin
             set -lx FZF_DEFAULT_OPTS "--reverse --height $FZF_TMUX_HEIGHT $FZF_DEFAULT_OPTS +s --tiebreak=index --bind=ctrl-r:toggle-sort $FZF_CTRL_R_OPTS +m"
             if [ $str = $tok ]
-                history -z | fzf --read0 -q $str | read -lz result
-                and commandline -r -- (string trim -r $result)
+                _atuin_search
             else
                 set -l list
                 for his in $history
@@ -93,9 +92,9 @@ function fish_user_key_bindings
                 end
                 string join0 -- $list | fzf --read0 -q $tok | read -l result
                 and commandline -tr -- $result
+                commandline -f repaint
             end
         end
-        commandline -f repaint
     end
 
     function elvish-nav -d ""
@@ -345,10 +344,5 @@ function fish_user_key_bindings
         end
     end
 
-    bind \cr _atuin_search
-    if bind -M insert > /dev/null 2>&1
-        bind -M insert \cr _atuin_search
-    end
-
-    # bind \cr fzf-history-token-widget
+    bind \cr fzf-history-token-widget
 end

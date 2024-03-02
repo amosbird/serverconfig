@@ -409,7 +409,42 @@ local code = {
     ["u"] = "sh"
 }
 
-local function translator(input, seg, env)
+local flag = false
+
+local function processor(key, env)
+    local kAccepted = 1
+    local kNoop = 2
+    local engine = env.engine
+    local context = engine.context
+
+    if key:repr() == "Control+t" then
+        if context:is_composing() then
+            flag = true
+            context:refresh_non_confirmed_composition()
+            return kAccepted
+        end
+    end
+
+    return kNoop
+end
+
+local translator = {}
+
+local function memoryCallback(memory, commit)
+    for i, e in ipairs(commit:get()) do
+        if e.comment == "+" then
+            memory:update_userdict(e, 1, "")
+        end
+    end
+    return true
+end
+
+function translator.init(env)
+    env.mem = Memory(env.engine, Schema("double_pinyin"))
+    env.mem:memorize(function(commit) memoryCallback(env.mem, commit) end)
+end
+
+function translator.func(input, seg, env)
     local input2 = ""
     local dictstr = ""
     local len = 0
@@ -425,14 +460,23 @@ local function translator(input, seg, env)
         end
         len = len + 1
     end
-    local f = assert(io.popen("cloudinput " .. input2 .. " " .. len, "r"))
-    local s = assert(f:read("*a"))
-    f:close()
-    for word in s:gmatch("%S+") do
-        local c = Candidate("phrase", seg.start, seg.start + #input, word, dictstr)
-        c.quality = 2
-        yield(c)
+
+    if flag then
+        flag = false
+
+        local f = assert(io.popen("cloudinput " .. input2 .. " " .. len, "r"))
+        local s = assert(f:read("*a"))
+        f:close()
+        for word in s:gmatch("%S+") do
+            dict = DictEntry()
+            dict.text = word
+            dict.custom_code = dictstr
+            dict.comment = '+'
+
+            local ph = Phrase(env.mem, "baidu", seg.start, seg.start + #input, dict)
+            yield(ph:toCandidate())
+        end
     end
 end
 
-return translator
+return {processor = processor, translator = translator}

@@ -57,3 +57,4 @@ fishd.*
 .local/share/fcitx5/rime/installation.yaml
 .config/fcitx5/conf/cached_layouts
 /.local/share/fcitx5/rime/sync/
+/.local/share/fcitx5/rime/baidu.userdb/
