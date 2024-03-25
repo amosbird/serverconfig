@@ -36,7 +36,9 @@ if [[ "$1" =~ $pattern ]]; then
 
 	# TODO: dbus requires same UID
 	# DBUS_SESSION_BUS_ADDRESS
-	
-	KITTY_SOCK=/tmp/kitty.$(uuidgen)
-	kitty $a -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T $1 ssh -t $arg -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:5601:127.0.0.1:5601 -R 12639:localhost:12639 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK -R $remote_home/tmp/kitty_sock:$KITTY_SOCK -R $remote_home/tmp/dbus_sock:/run/user/1000/bus "$remote_home/tmp/gentoo/login prefix $arg $remote_home/tmp/gentoo/login"
+
+	UUID=$(uuidgen)
+	SSH_MASTER_CTRL=/tmp/ssh-master.$UUID
+	KITTY_SOCK=/tmp/kitty.$UUID
+	kitty $a -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T $1 ssh -t $arg -M -S $SSH_MASTER_CTRL -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:5601:127.0.0.1:5601 -R 12639:localhost:12639 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK -R $remote_home/tmp/kitty_sock:$KITTY_SOCK -R $remote_home/tmp/dbus_sock:/run/user/1000/bus "$remote_home/tmp/gentoo/login prefix $arg $remote_home/tmp/gentoo/login $SSH_MASTER_CTRL"
 fi
