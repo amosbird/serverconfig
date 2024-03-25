@@ -284,7 +284,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
   (ignore-errors
     (recenter)
     ;; (flycheck-inline-hide-errors)
-    (+nav-flash/blink-cursor)))
+    (+nav-flash-blink-cursor-maybe-h)))
 
 (defvar +amos-dir (file-name-directory load-file-name))
 (defvar +amos-snippets-dir (expand-file-name "snippets/" +amos-dir))
@@ -1785,14 +1785,8 @@ representation of `NUMBER' is smaller."
 ;; (advice-add #'better-jumper-set-jump :override #'ignore)
 ;; (advice-add #'doom-set-jump-a :override #'ignore)
 ;; (advice-add #'doom-set-jump-h :override #'ignore)
-(advice-add #'doom-recenter-a :override #'ignore)
-(dolist (fn '(evil-visualstar/begin-search-forward
-              evil-visualstar/begin-search-backward
-              evil-ex-search-word-backward
-              evil-ex-search-word-backward
-              evil-ex-search-forward
-              evil-ex-search-backward))
-  (advice-remove fn #'doom-recenter-a))
+
+(add-hook 'better-jumper-post-jump-hook #'recenter)
 
 (advice-add #'elisp-def--flash-region :override #'ignore)
 
