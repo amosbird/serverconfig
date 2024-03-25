@@ -24,6 +24,7 @@ fishd.*
 .config/copyq/copyq-bak.conf
 .config/copyq/copyq_geometry.ini
 .config/copyq/copyq_tabs.ini
+.config/copyq/copyq-monitor.ini
 /.docker/.buildNodeID
 /.config/fish/fish_universal_variables
 /.config/fcitx/profile*

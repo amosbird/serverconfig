@@ -25,7 +25,7 @@ non_virtual_interfaces=()
 
 # Iterate through each interface
 for interface in $interfaces; do
-    if [[ $interface == "enp9s0u2u1u2" ]]; then
+    if [[ $interface == enp* ]]; then
         continue
     fi
 
