@@ -3233,7 +3233,7 @@ Return the pasted text as a string."
         (temporary-goal-column))
     (evil-line-move (- (or count 1)))))
 
-(setq scratch-file-name (concat "~/.emacs.d/persistent-scratch-" server-name))
+(setq scratch-file-name (concat "~/.local/emacs-persistent-scratch-" server-name))
 
 (defun +amos-save-persistent-scratch-h ()
   "Write the contents of *scratch* to the file name

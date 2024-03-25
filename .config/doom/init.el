@@ -213,7 +213,7 @@
 (setq ivy-virtual-abbreviate 'full)
 (setq google-translate-translation-directions-alist '(("en" . "zh-CN")))
 (setq message-truncate-lines t)
-(setq nav-flash-delay 0.3)
+(setq nav-flash-delay nil)
 (setq org-M-RET-may-split-line '((default)))
 (setq org-agenda-files '("~/org/todo.org"))
 (setq org-src-tab-acts-natively nil)

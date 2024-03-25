@@ -70,6 +70,7 @@ rm -rf $HOME/.tmux.conf
 ln -sf "$DIR/.tmux" $HOME/
 ln -sf "$DIR/.tmux/.tmux.conf" $HOME/
 
+ln -sf "/tmp/gentoo/emacs" $HOME/.emacs.d
 
 lesskey "$DIR/lesskey"
 

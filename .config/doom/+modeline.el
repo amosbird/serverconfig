@@ -81,7 +81,7 @@
     '(bar matches follow buffer-info buffer-position word-count parrot selection-info frame)
     '(;; keycast
       ;; host
-      lsp indent-info buffer-encoding major-mode process vcs checker time padding))
+      lsp indent-info buffer-encoding major-mode process vcs check time padding))
 
   (defun +amos*doom-modeline-set-modeline (&rest _)
     (setq mode-line-format (list "%e" (doom-modeline 'amos)))
