@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
 export COLORTERM=truecolor
-dtach -A /tmp/emacs.dtach emacsclient -a '' -t -cc
+exec dtach -A /tmp/emacs.dtach emacsclient -a '' -t -cc
 # exec emacs --fg-daemon

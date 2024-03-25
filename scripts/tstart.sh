@@ -20,7 +20,7 @@ android)
     ;;
 local)
     # export PATH=$HOME/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    kitten @ launch --allow-remote-control --keep-focus startemacs
+    kitten @ launch --allow-remote-control --keep-focus fish -c "TMUX=$TMPDIR/tmux-amos startemacs"
     ;;
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
