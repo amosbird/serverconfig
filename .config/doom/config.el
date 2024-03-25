@@ -8,9 +8,11 @@
 (require 'dash)
 (require 'evil-multiedit)
 (require 's)
+(require 'map)
 (require 'company) ; it loads company-lsp which loads lsp
 
-(setq tmux-p (getenv "TMUX"))
+;; (setq tmux-p (getenv "TMUX"))
+(setq tmux-p nil)
 (setq gui-p (getenv "GUI"))
 
 (minibuffer-depth-indicate-mode +1)
@@ -482,23 +484,27 @@ This predicate is only tested on \"insert\" action."
      (call-process-region (point-min) (point-max) "clipserver")))
   text)
 
-(use-package osc
-  :demand
-  :init
-  (defun +amos/other-window ()
-    (interactive)
-    (if (display-graphic-p)
-        (i3-nav-right)
-      (osc-nav-right)))
-  (if gui-p
-      (setq interprogram-cut-function '+amos-x-select-text)
-    (setq interprogram-cut-function '+amos-tui-select-text))
-  (setq browse-url-browser-function (lambda (url &optional _new-window)
-                                      (if (display-graphic-p)
-                                          (if _new-window
-                                              (browse-url-chrome url)
-                                            (browse-url-firefox url))
-                                        (browse-url-osc url _new-window)))))
+(if gui-p
+    (setq interprogram-cut-function '+amos-x-select-text)
+  (setq interprogram-cut-function '+amos-tui-select-text))
+
+;; (use-package osc
+;;   :demand
+;;   :init
+;;   (defun +amos/other-window ()
+;;     (interactive)
+;;     (if (display-graphic-p)
+;;         (i3-nav-right)
+;;       (osc-nav-right)))
+;;   (if gui-p
+;;       (setq interprogram-cut-function '+amos-x-select-text)
+;;     (setq interprogram-cut-function '+amos-tui-select-text))
+;;   (setq browse-url-browser-function (lambda (url &optional _new-window)
+;;                                       (if (display-graphic-p)
+;;                                           (if _new-window
+;;                                               (browse-url-chrome url)
+;;                                             (browse-url-firefox url))
+;;                                         (browse-url-osc url _new-window)))))
 
 (defvar server-visit-file nil)
 
@@ -970,11 +976,11 @@ Enable with positive ARG, disable with negative ARG."
     (if (< 0 dir) (backward-char))))
 
 (evil-define-command +amos/smart-jumper-backward ()
-  (leap-set-jump)
+  ;; (leap-set-jump)
   (+amos/smart-jumper t))
 
 (evil-define-command +amos/smart-jumper-forward ()
-  (leap-set-jump)
+  ;; (leap-set-jump)
   (+amos/smart-jumper))
 
 (evil-define-command +amos/complete ()
@@ -1377,11 +1383,6 @@ current buffer's, reload dir-locals."
       (add-hook! (make-variable-buffer-local 'after-save-hook)
                  #'my-reload-dir-locals-for-all-buffer-in-this-directory))))
 
-(unless tmux-p
-  (map!
-   (:map key-translation-map
-    "\033"          (kbd "<escape>"))))
-
 (when tmux-p
   (let ((create-lockfiles t))
     (find-file-noselect "/tmp/emacs.lock")
@@ -1744,46 +1745,46 @@ representation of `NUMBER' is smaller."
      )
    ))
 
-(defvar leaped nil)
-(defun +amos-+lookup--jump-to-a (prop identifier &optional display-fn arg)
-  (let* (leaped
-         (origin (point-marker))
-         (handlers (plist-get (list :definition '+lookup-definition-functions
-                                    :references '+lookup-references-functions
-                                    :documentation '+lookup-documentation-functions
-                                    :file '+lookup-file-functions)
-                              prop))
-         (result
-          (if arg
-              (if-let*
-                  ((handler (intern-soft
-                             (completing-read "Select lookup handler: "
-                                              (remq t (append (symbol-value handlers)
-                                                              (default-value handlers)))
-                                              nil t))))
-                  (+lookup--run-handlers handler identifier origin)
-                (user-error "No lookup handler selected"))
-            (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin))))
-    (when (cond ((null result)
-                 (message "No lookup handler could find %S" identifier)
-                 nil)
-                ((markerp result)
-                 (funcall (or display-fn #'switch-to-buffer)
-                          (marker-buffer result))
-                 (goto-char result)
-                 result)
-                (result))
-      (unless (or leaped (null result))
-        (with-current-buffer (marker-buffer origin)
-          (leap-set-jump (marker-position origin)))
-        (run-hooks 'leap-post-jump-hook))
-      result)))
-(advice-add #'+lookup--jump-to :override #'+amos-+lookup--jump-to-a)
-(advice-add #'better-jumper-jump-forward :override #'leap-jump-forward)
-(advice-add #'better-jumper-jump-backward :override #'leap-jump-backward)
-(advice-add #'better-jumper-set-jump :override #'ignore)
-(advice-add #'doom-set-jump-a :override #'ignore)
-(advice-add #'doom-set-jump-h :override #'ignore)
+;; (defvar leaped nil)
+;; (defun +amos-+lookup--jump-to-a (prop identifier &optional display-fn arg)
+;;   (let* (leaped
+;;          (origin (point-marker))
+;;          (handlers (plist-get (list :definition '+lookup-definition-functions
+;;                                     :references '+lookup-references-functions
+;;                                     :documentation '+lookup-documentation-functions
+;;                                     :file '+lookup-file-functions)
+;;                               prop))
+;;          (result
+;;           (if arg
+;;               (if-let*
+;;                   ((handler (intern-soft
+;;                              (completing-read "Select lookup handler: "
+;;                                               (remq t (append (symbol-value handlers)
+;;                                                               (default-value handlers)))
+;;                                               nil t))))
+;;                   (+lookup--run-handlers handler identifier origin)
+;;                 (user-error "No lookup handler selected"))
+;;             (run-hook-wrapped handlers #'+lookup--run-handlers identifier origin))))
+;;     (when (cond ((null result)
+;;                  (message "No lookup handler could find %S" identifier)
+;;                  nil)
+;;                 ((markerp result)
+;;                  (funcall (or display-fn #'switch-to-buffer)
+;;                           (marker-buffer result))
+;;                  (goto-char result)
+;;                  result)
+;;                 (result))
+;;       (unless (or leaped (null result))
+;;         (with-current-buffer (marker-buffer origin)
+;;           (leap-set-jump (marker-position origin)))
+;;         (run-hooks 'leap-post-jump-hook))
+;;       result)))
+;; (advice-add #'+lookup--jump-to :override #'+amos-+lookup--jump-to-a)
+;; (advice-add #'better-jumper-jump-forward :override #'leap-jump-forward)
+;; (advice-add #'better-jumper-jump-backward :override #'leap-jump-backward)
+;; (advice-add #'better-jumper-set-jump :override #'ignore)
+;; (advice-add #'doom-set-jump-a :override #'ignore)
+;; (advice-add #'doom-set-jump-h :override #'ignore)
 (advice-add #'doom-recenter-a :override #'ignore)
 (dolist (fn '(evil-visualstar/begin-search-forward
               evil-visualstar/begin-search-backward
@@ -1927,6 +1928,19 @@ the current state and point position."
   (interactive)
   (shell-command! "tmux source-file ~/.tmux/.tmux.conf.emacs"))
 
+(defun +amos/kitty-fork-window (&optional command prompt)
+  (interactive)
+  (+amos-store-jump-history)
+  (if command
+      (shell-command!
+       (format-spec
+        (concat
+         "kitten @ --to unix:/tmp/kitty_sock action next_window;"
+         "tmuxkillwindow amos:%a;"
+         "tmux run -t amos \"tmux new-window -n %a -c %b; tmux send-keys %c C-m\"")
+        `((?a . ,(if prompt prompt "nil")) (?b . ,default-directory) (?c . ,command))))
+    (shell-command! (format "kitten @ --to unix:/tmp/kitty_sock action next_window; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
+
 (defun +amos/prompt-kill-emacs ()
   "Prompt to save changed buffers and exit Emacs."
   (interactive)
@@ -1949,9 +1963,6 @@ the current state and point position."
 (add-hook! 'compilation-finish-functions #'+amos-normalize-compilation-buffer-h)
 
 (defvar +amos-frame-list nil)
-(defvar +amos-frame-stack nil)
-(defvar +amos-tmux-need-switch nil)
-
 (defun +amos-after-make-frame-functions-h (&rest _)
   (+amos/set-face)
   (unless +amos-frame-list
@@ -2187,6 +2198,7 @@ By default the last line."
 (advice-add #'magit-blame--update-margin :override #'ignore)
 (advice-add #'evil-visual-update-x-selection :override #'ignore)
 
+(define-key key-translation-map "\e[70~" (kbd "<C-return>"))
 (define-key key-translation-map "\035" [escape])
 
 (defun anzu-multiedit (&optional symbol)
@@ -2555,7 +2567,7 @@ There is no need to advice `company-select-previous' because it calls
   (interactive)
   (save-buffer-maybe)
   (let ((default-directory (doom-project-root)))
-    (+amos/tmux-fork-window " launch.sh" (getenv "envprompt"))))
+    (+amos/kitty-fork-window " launch.sh" (getenv "envprompt"))))
 
 (defun +amos/iedit-number-occurrences ()
   (interactive)
@@ -3599,39 +3611,39 @@ See `project-local-get' for the parameter PROJECT."
 ;;   :config
 ;;   (treemacs-load-theme "nerd-icons"))
 
-(add-hook 'leap-post-jump-hook #'+amos/recenter)
+;; (add-hook 'leap-post-jump-hook #'+amos/recenter)
 
-(defmacro leapify! (command)
-  `(progn
-     (defun ,(intern (concat "+amos-" (symbol-name command) "-a")) (orig-func &rest args)
-       (let ((origin (point-marker)))
-         (apply orig-func args)
-         (unless (equal (point-marker) origin)
-           (with-current-buffer (marker-buffer origin)
-             (leap-set-jump origin)))))
-     (advice-add #',command :around #',(intern (concat "+amos-" (symbol-name command) "-a")))))
+;; (defmacro leapify! (command)
+;;   `(progn
+;;      (defun ,(intern (concat "+amos-" (symbol-name command) "-a")) (orig-func &rest args)
+;;        (let ((origin (point-marker)))
+;;          (apply orig-func args)
+;;          (unless (equal (point-marker) origin)
+;;            (with-current-buffer (marker-buffer origin)
+;;              (leap-set-jump origin)))))
+;;      (advice-add #',command :around #',(intern (concat "+amos-" (symbol-name command) "-a")))))
 
-(leapify! goto-last-change)
-(leapify! evil-insert-resume)
+;; (leapify! goto-last-change)
+;; (leapify! evil-insert-resume)
 
-(defun +amos*evil--jump-hook (&optional command)
-  "Set jump point if COMMAND has a non-nil :jump property."
-  (setq command (or command this-command))
-  (unless
-      (and
-       (or (eq last-command 'evil-multiedit-match-symbol-and-prev)
-           (eq last-command 'evil-multiedit-match-symbol-and-next))
-       (or (eq command 'evil-multiedit-match-symbol-and-prev)
-           (eq command 'evil-multiedit-match-symbol-and-next)))
-    (when
-        (evil-get-command-property command :jump)
-      (leap-set-jump))))
-(advice-add #'evil--jump-hook :override #'+amos*evil--jump-hook)
+;; (defun +amos*evil--jump-hook (&optional command)
+;;   "Set jump point if COMMAND has a non-nil :jump property."
+;;   (setq command (or command this-command))
+;;   (unless
+;;       (and
+;;        (or (eq last-command 'evil-multiedit-match-symbol-and-prev)
+;;            (eq last-command 'evil-multiedit-match-symbol-and-next))
+;;        (or (eq command 'evil-multiedit-match-symbol-and-prev)
+;;            (eq command 'evil-multiedit-match-symbol-and-next)))
+;;     (when
+;;         (evil-get-command-property command :jump)
+;;       (leap-set-jump))))
+;; (advice-add #'evil--jump-hook :override #'+amos*evil--jump-hook)
 
-(defun +amos-evil-ex-search-before-a (&rest _)
-  (if (thing-at-point 'symbol) (leap-set-jump)))
-(advice-add #'evil-ex-start-word-search :before #'+amos-evil-ex-search-before-a)
-(advice-add #'evil-visualstar/begin-search :before #'+amos-evil-ex-search-before-a)
+;; (defun +amos-evil-ex-search-before-a (&rest _)
+;;   (if (thing-at-point 'symbol) (leap-set-jump)))
+;; (advice-add #'evil-ex-start-word-search :before #'+amos-evil-ex-search-before-a)
+;; (advice-add #'evil-visualstar/begin-search :before #'+amos-evil-ex-search-before-a)
 (electric-indent-mode -1)
 
 (defun +amos/google-translate ()

@@ -269,6 +269,7 @@
       :n "gd"                     #'+lookup/definition
       :n "go"                     #'+amos/evil-insert-line-below
       :n "gO"                     #'+amos/evil-insert-line-above
+      :m "gb"                     #'+lookup/implementations
       :n "gp"                     #'+evil/reselect-paste
       :n "gr"                     #'+lookup/references
       :v "gR"                     #'+eval:replace-region
@@ -278,7 +279,6 @@
       :n "M"                      (cmd! (+amos/push-mark t))
       ;; :n "M-9"                    #'+amos/counsel-view-marks
       :m "gs"                     (cmd! (evil-goto-mark ?s))
-      :m "gb"                     (cmd! (evil-goto-mark ?b))
       :m "gm"                     (cmd! (evil-goto-mark ?m))
       :m "g<"                     (cmd! (evil-goto-mark ?<))
       :m "g>"                     (cmd! (evil-goto-mark ?>))
@@ -300,7 +300,8 @@
         :g "C"       #'+amos/workspace-new-scratch
         :g "k"       #'+amos/workspace-delete
         :g "C-x"     #'+amos/workspace-delete
-        :g "o"       #'+amos/tmux-fork-window
+        ;; :g "o"       #'+amos/tmux-fork-window
+        :g "o"       #'+amos/kitty-fork-window
         :g "l"       #'+amos/launch
         :gnemv "r"   #'+amos/tmux-source
         :g "C-c"     #'+amos/tmux-detach

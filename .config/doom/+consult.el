@@ -105,7 +105,7 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
     (recentf-cleanup))
   (cl-letf* ((+amos-find-file (symbol-function #'find-file))
              ((symbol-function #'find-file) (lambda (&rest args)
-                                              (leap-set-jump)
+                                              (better-jumper-set-jump)
                                               (apply +amos-find-file args)
                                               (recenter))))
     (let ((recentf-list (--remove (string= it sync-recentf-marker) recentf-list)))
@@ -124,7 +124,7 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
          (consult-fd-args (if no-ignore (append consult-fd-args-base '("--no-ignore")) consult-fd-args-base)))
     (cl-letf* ((+amos-find-file (symbol-function #'find-file))
                ((symbol-function #'find-file) (lambda (&rest args)
-                                                (leap-set-jump)
+                                                (better-jumper-set-jump)
                                                 (apply +amos-find-file args)
                                                 (recenter))))
       (consult-fd cur nil))))
@@ -146,14 +146,14 @@ The \"pulse\" duration is determined by `amos-consult-pulse-delay'."
 (remove-hook! 'consult-after-jump-hook #'+nav-flash-blink-cursor-maybe-h)
 (defun +amos*consult--jump (orig-fun pos)
   (when pos
-    (leap-set-jump)
+    (better-jumper-set-jump)
     (funcall orig-fun pos)))
 (advice-add #'consult--jump :around #'+amos*consult--jump)
 (add-hook! 'consult-after-jump-hook #'recenter)
 (defun +amos-consult-ripgrep (&optional cur)
   (cl-letf* ((+amos-find-file (symbol-function #'find-file))
              ((symbol-function #'find-file) (lambda (&rest args)
-                                              (leap-set-jump)
+                                              (better-jumper-set-jump)
                                               (apply +amos-find-file args)
                                               (recenter))))
     (consult-ripgrep cur)))
@@ -381,12 +381,11 @@ Supports exporting `consult-grep' to wgrep, file to wdeired, and consult-locatio
    +lookup/definition
    +lookup/references
    +lookup/implementations
+   +lookup/type-definition
+   +lookup/documentation
+   +lookup/file
    consult--source-recent-file
    consult--source-project-recent-file
    consult--source-bookmark
    :preview-key "C-i")
-
-  (after! lsp
-    lsp-find-implementation
-    :preview-key "C-i")
   )

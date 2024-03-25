@@ -20,9 +20,16 @@ android)
     ;;
 local)
     # export PATH=$HOME/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+    kitten @ launch --allow-remote-control --keep-focus startemacs
     ;;
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+    kitten @ launch --allow-remote-control --keep-focus ssh -tt $SSH_SERVER $LOGIN_PATH emacs
+    ;;
+emacs)
+    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+    fish -c startemacs
+    exit 0
     ;;
 *)
     echo "tstart.sh android|local|prefix"
@@ -30,8 +37,8 @@ prefix)
 esac
 
 tmux -u new -d -s htop "exec starthtop"
-if ! tmux list-sessions | grep -q -F emacs; then
-    pkill -9 -F "$TMPDIR/emacs-server"
-fi
-tmux -u new -d -s emacs "exec startemacs"
+# if ! tmux list-sessions | grep -q -F emacs; then
+#     pkill -9 -F "$TMPDIR/emacs-server"
+# fi
+# tmux -u new -d -s emacs "exec startemacs"
 tmux -u new-session -A -s amos
