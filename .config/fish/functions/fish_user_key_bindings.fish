@@ -129,8 +129,8 @@ function fish_user_key_bindings
                 emacspopup "(cd \"$PWD\") (magit-status)"
             else
                 set EMACS emacsclient -n -q -u -e
-                tmux switch-client -t emacs
-                $EMACS "(progn (+amos/workspace-new) (cd \"$PWD\") (magit-status) (setq +amos-tmux-need-switch t))"
+                kitten @ --to unix:/tmp/kitty_sock action next_window;
+                $EMACS "(progn (+amos/workspace-new) (cd \"$PWD\") (magit-status))"
             end
         end
     end
@@ -141,9 +141,9 @@ function fish_user_key_bindings
         if [ $sn = "gui" ]
             emacspopup "(cd \"$PWD\") (+amos/dired-jump)"
         else
+            kitten @ --to unix:/tmp/kitty_sock action next_window;
             set EMACS emacsclient -n -q -u -e
-            tmux switch-client -t emacs
-            $EMACS "(progn (+amos/workspace-new) (cd \"$PWD\") (+amos/dired-jump) (setq +amos-tmux-need-switch t))"
+            $EMACS "(progn (+amos/workspace-new) (cd \"$PWD\") (+amos/dired-jump))"
         end
     end
 

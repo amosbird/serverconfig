@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
 export COLORTERM=truecolor
+printf "\e[?1006l\e[?1000l\e[?1002l\e[?1003l\e[?1000h\e[?1002h\e[?1003h" # enable mouse
+printf "\e[?2004h" # enable bracketed paste
 exec dtach -A /tmp/emacs.dtach emacsclient -a '' -t -cc
 # exec emacs --fg-daemon

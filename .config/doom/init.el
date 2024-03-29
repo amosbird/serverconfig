@@ -1,10 +1,11 @@
 ;;;  -*- lexical-binding: t; no-byte-compile: t; -*-
 
 (doom! :completion
-       company
-       ;; (helm +fuzzy)
-       ;; (ivy +fuzzy)
+       (corfu +orderless +dabbrev)
        vertico
+
+       :os
+       tty
 
        :ui
        doom
@@ -42,8 +43,7 @@
        rgb
        biblio
        ansible
-       ;; tree-sitter
-       (lookup)
+       lookup
 
        :lang
        rest
@@ -73,11 +73,11 @@
        :private
        amos-cc
        ;; amos-java
-       amos-email
+       ;; amos-email
        ;; amos-go
        ;; amos-modeline
        amos-org
-       leap
+       ;; leap
        cc-playground
        ;; amos-python
        ;; amos-sh

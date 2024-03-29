@@ -105,7 +105,7 @@
       (if (file-exists-p find-name)
           (progn
             ;; select origination file
-            (leap-set-jump)
+            (better-jumper-set-jump)
             (find-file find-name)
             (recenter)
             (when (and (file-directory-p find-name)

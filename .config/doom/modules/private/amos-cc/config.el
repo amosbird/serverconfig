@@ -26,9 +26,6 @@
     :symbols '(("public" "protected" "private")
                ("class" "struct")))
 
-  (set-company-backend!
-    '(c-mode c++-mode c-ts-base-mode objc-mode))
-
   (set-ligatures! '(c-mode c++-mode c-ts-base-mode)
                   ;; Functional
                   ;; :def "void "

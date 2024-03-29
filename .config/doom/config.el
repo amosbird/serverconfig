@@ -9,7 +9,6 @@
 (require 'evil-multiedit)
 (require 's)
 (require 'map)
-(require 'company) ; it loads company-lsp which loads lsp
 
 ;; (setq tmux-p (getenv "TMUX"))
 (setq tmux-p nil)
@@ -990,11 +989,14 @@ Enable with positive ARG, disable with negative ARG."
                 (end-of-thing 'symbol))
             (point)))
       (save-excursion (insert " ")))
-  (company-manual-begin))
+  (completion-at-point)
+  ;; (company-manual-begin)
+  )
 
 (evil-define-command +amos/complete-filter ()
   (+amos/complete)
-  (company-filter-candidates))
+  ;; (company-filter-candidates)
+  )
 
 (defvar my-kill-ring nil)
 (defmacro mkr! (&rest body)
@@ -2021,6 +2023,10 @@ the current state and point position."
       (let ((frame (nth index frames)))
         (+amos-workspace-switch-to-frame frame)))))
 
+(defun +amos/workspace-switch-to-htop ()
+  (interactive)
+  (shell-command! "kitten @ --to unix:/tmp/kitty_sock action next_window; tmux switch-client -t htop;"))
+
 (defun +amos/workspace-switch-to-1 () (interactive) (+amos/workspace-switch-to 0))
 (defun +amos/workspace-switch-to-2 () (interactive) (+amos/workspace-switch-to 1))
 (defun +amos/workspace-switch-to-3 () (interactive) (+amos/workspace-switch-to 2))
@@ -2113,24 +2119,6 @@ By default the last line."
     (forward-line (1- count)))
   (evil-first-non-blank)
   (+amos/recenter))
-
-(defun +amos/company-abort ()
-  (interactive)
-  (if company-selection-changed
-      (+amos/company-search-abort)
-    (company-abort)
-    (evil-normal-state)
-    (cl-decf evil-repeat-pos)))
-
-(defun +amos/company-search-abort ()
-  (interactive)
-  (if company-selection-changed
-      (progn
-        (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)
-        (company-complete-selection))
-    (company-abort))
-  (evil-normal-state)
-  (cl-decf evil-repeat-pos))
 
 (defun +amos/close-block ()
   (interactive)
@@ -2315,9 +2303,6 @@ By default the last line."
       '(
         +amos/complete
         +amos/complete-filter
-        +amos/company-abort
-        +amos/company-search-abort
-        amos-company-files
         ))
 
 (defun +amos/upload ()
@@ -2418,127 +2403,127 @@ In Insert state, insert a newline."
       (--find-index (< (line-number-at-pos) it) lines))))
 (advice-add #'git-gutter:search-near-diff-index :override #'+amos-git-gutter:search-near-diff-index-a)
 
-(defun +amos-company--insert-candidate-a (candidate)
-  (when (> (length candidate) 0)
-    (setq candidate (substring-no-properties candidate))
-    (let* ((prefix (s-shared-start company-prefix candidate))
-           (non-prefix (substring company-prefix (length prefix))))
-      (delete-region (- (point) (length non-prefix)) (point))
-      (insert (substring candidate (length prefix))))))
-(advice-add #'company--insert-candidate :override #'+amos-company--insert-candidate-a)
+;; (defun +amos-company--insert-candidate-a (candidate)
+;;   (when (> (length candidate) 0)
+;;     (setq candidate (substring-no-properties candidate))
+;;     (let* ((prefix (s-shared-start company-prefix candidate))
+;;            (non-prefix (substring company-prefix (length prefix))))
+;;       (delete-region (- (point) (length non-prefix)) (point))
+;;       (insert (substring candidate (length prefix))))))
+;; (advice-add #'company--insert-candidate :override #'+amos-company--insert-candidate-a)
 
 ;; company
-(setq-default
- ;; company-idle-delay (lambda () (if (company-in-string-or-comment) nil 0.3))
- company-idle-delay nil
- company-auto-complete nil ; this is actually company-auto-finish
- company-tooltip-limit 14
- company-dabbrev-downcase nil
- company-dabbrev-ignore-case nil
- company-dabbrev-ignore-buffers "\\`[ *]"
- ;; company-dabbrev-other-buffers t
- ;; company-dabbrev-ignore-buffers (lambda (buffer) (not (projectile-project-buffer-p buffer (projectile-project-root))))
- ;; company-dabbrev-code-time-limit 0.3
- ;; company-dabbrev-code-ignore-case t
- ;; company-dabbrev-code-everywhere t
- company-tooltip-align-annotations t
- company-require-match 'never
- company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
- company-frontends (append '(company-tng-frontend) company-frontends)
- company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
- company-transformers nil
- company-lsp-async t
- company-lsp-cache-candidates nil
- company-show-numbers t
- company-search-regexp-function 'company-search-flex-regexp)
-(defvar-local company-fci-mode-on-p nil)
-(defun company-turn-off-fci (&rest ignore)
-  (when (boundp 'fci-mode)
-    (setq company-fci-mode-on-p fci-mode)
-    (when fci-mode (fci-mode -1))))
-(defun company-maybe-turn-on-fci (&rest ignore)
-  (when company-fci-mode-on-p (fci-mode 1)))
-(add-hook 'company-completion-started-hook   #'company-turn-off-fci)
-(add-hook 'company-completion-finished-hook  #'company-maybe-turn-on-fci)
-(add-hook 'company-completion-cancelled-hook #'company-maybe-turn-on-fci)
+;; (setq-default
+;;  ;; company-idle-delay (lambda () (if (company-in-string-or-comment) nil 0.3))
+;;  company-idle-delay nil
+;;  company-auto-complete nil ; this is actually company-auto-finish
+;;  company-tooltip-limit 14
+;;  company-dabbrev-downcase nil
+;;  company-dabbrev-ignore-case nil
+;;  company-dabbrev-ignore-buffers "\\`[ *]"
+;;  ;; company-dabbrev-other-buffers t
+;;  ;; company-dabbrev-ignore-buffers (lambda (buffer) (not (projectile-project-buffer-p buffer (projectile-project-root))))
+;;  ;; company-dabbrev-code-time-limit 0.3
+;;  ;; company-dabbrev-code-ignore-case t
+;;  ;; company-dabbrev-code-everywhere t
+;;  company-tooltip-align-annotations t
+;;  company-require-match 'never
+;;  company-global-modes '(not eshell-mode comint-mode erc-mode message-mode help-mode gud-mode)
+;;  company-frontends (append '(company-tng-frontend) company-frontends)
+;;  company-backends '(company-capf company-dabbrev company-ispell company-yasnippet)
+;;  company-transformers nil
+;;  company-lsp-async t
+;;  company-lsp-cache-candidates nil
+;;  company-show-numbers t
+;;  company-search-regexp-function 'company-search-flex-regexp)
+;; (defvar-local company-fci-mode-on-p nil)
+;; (defun company-turn-off-fci (&rest ignore)
+;;   (when (boundp 'fci-mode)
+;;     (setq company-fci-mode-on-p fci-mode)
+;;     (when fci-mode (fci-mode -1))))
+;; (defun company-maybe-turn-on-fci (&rest ignore)
+;;   (when company-fci-mode-on-p (fci-mode 1)))
+;; (add-hook 'company-completion-started-hook   #'company-turn-off-fci)
+;; (add-hook 'company-completion-finished-hook  #'company-maybe-turn-on-fci)
+;; (add-hook 'company-completion-cancelled-hook #'company-maybe-turn-on-fci)
 
-(defvar-local company-tng--overlay nil)
+;; (defvar-local company-tng--overlay nil)
 
-(defun company-tng-frontend (command)
-  (cl-case command
-    (show
-     (let ((ov (make-overlay (point) (point))))
-       (setq company-tng--overlay ov)
-       (overlay-put ov 'priority 2))
-     (advice-add 'company-select-next :before-until 'company-tng--allow-unselected)
-     (advice-add 'company-fill-propertize :filter-args 'company-tng--adjust-tooltip-highlight))
-    (update
-     (let* ((ov company-tng--overlay)
-            (candidate (nth company-selection company-candidates))
-            (prefix (s-shared-start company-prefix candidate))
-            (non-prefix (substring company-prefix (length prefix)))
-            (selected (substring candidate (length prefix)))
-            (selected (and company-selection-changed
-                           (if (iedit-find-current-occurrence-overlay)
-                               (propertize selected 'face 'iedit-occurrence)
-                             selected))))
-       (move-overlay ov (- (point) (length non-prefix)) (point))
-       (overlay-put ov (if (= (length non-prefix) 0) 'after-string 'display)
-                    selected)))
-    (hide
-     (when company-tng--overlay
-       (delete-overlay company-tng--overlay)
-       (kill-local-variable 'company-tng--overlay))
-     (advice-remove 'company-select-next 'company-tng--allow-unselected)
-     (advice-remove 'company-fill-propertize 'company-tng--adjust-tooltip-highlight))
-    (pre-command
-     (when (and company-selection-changed
-                (not (company--company-command-p (this-command-keys))))
-       (company--unread-this-command-keys)
-       (setq this-command 'company-complete-selection)
-       (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)))))
+;; (defun company-tng-frontend (command)
+;;   (cl-case command
+;;     (show
+;;      (let ((ov (make-overlay (point) (point))))
+;;        (setq company-tng--overlay ov)
+;;        (overlay-put ov 'priority 2))
+;;      (advice-add 'company-select-next :before-until 'company-tng--allow-unselected)
+;;      (advice-add 'company-fill-propertize :filter-args 'company-tng--adjust-tooltip-highlight))
+;;     (update
+;;      (let* ((ov company-tng--overlay)
+;;             (candidate (nth company-selection company-candidates))
+;;             (prefix (s-shared-start company-prefix candidate))
+;;             (non-prefix (substring company-prefix (length prefix)))
+;;             (selected (substring candidate (length prefix)))
+;;             (selected (and company-selection-changed
+;;                            (if (iedit-find-current-occurrence-overlay)
+;;                                (propertize selected 'face 'iedit-occurrence)
+;;                              selected))))
+;;        (move-overlay ov (- (point) (length non-prefix)) (point))
+;;        (overlay-put ov (if (= (length non-prefix) 0) 'after-string 'display)
+;;                     selected)))
+;;     (hide
+;;      (when company-tng--overlay
+;;        (delete-overlay company-tng--overlay)
+;;        (kill-local-variable 'company-tng--overlay))
+;;      (advice-remove 'company-select-next 'company-tng--allow-unselected)
+;;      (advice-remove 'company-fill-propertize 'company-tng--adjust-tooltip-highlight))
+;;     (pre-command
+;;      (when (and company-selection-changed
+;;                 (not (company--company-command-p (this-command-keys))))
+;;        (company--unread-this-command-keys)
+;;        (setq this-command 'company-complete-selection)
+;;        (advice-add 'company-call-backend :before-until 'company-tng--supress-post-completion)))))
 
-(defun company-tng--allow-unselected (&optional arg)
-  "Advice `company-select-next' to allow for an 'unselected'
-state. Unselected means that no user interaction took place on the
-completion candidates and it's marked by setting
-`company-selection-changed' to nil. This advice will call the underlying
-`company-select-next' unless we need to transition to or from an unselected
-state.
+;; (defun company-tng--allow-unselected (&optional arg)
+;;   "Advice `company-select-next' to allow for an 'unselected'
+;; state. Unselected means that no user interaction took place on the
+;; completion candidates and it's marked by setting
+;; `company-selection-changed' to nil. This advice will call the underlying
+;; `company-select-next' unless we need to transition to or from an unselected
+;; state.
 
-Possible state transitions:
-- (arg > 0) unselected -> first candidate selected
-- (arg < 0) first candidate selected -> unselected
-- (arg < 0 wrap-round) unselected -> last candidate selected
-- (arg < 0 no wrap-round) unselected -> unselected
+;; Possible state transitions:
+;; - (arg > 0) unselected -> first candidate selected
+;; - (arg < 0) first candidate selected -> unselected
+;; - (arg < 0 wrap-round) unselected -> last candidate selected
+;; - (arg < 0 no wrap-round) unselected -> unselected
 
-There is no need to advice `company-select-previous' because it calls
-`company-select-next' internally."
-  (cond
-   ;; Selecting next
-   ((or (not arg) (> arg 0))
-    (unless company-selection-changed
-      (company-set-selection (1- (or arg 1)) 'force-update)
-      t))
-   ;; Selecting previous
-   ((< arg 0)
-    (when (and company-selection-changed
-               (< (+ company-selection arg) 0))
-      (company-set-selection 0)
-      (setq company-selection-changed nil)
-      (company-call-frontends 'update)
-      t)
-    )))
+;; There is no need to advice `company-select-previous' because it calls
+;; `company-select-next' internally."
+;;   (cond
+;;    ;; Selecting next
+;;    ((or (not arg) (> arg 0))
+;;     (unless company-selection-changed
+;;       (company-set-selection (1- (or arg 1)) 'force-update)
+;;       t))
+;;    ;; Selecting previous
+;;    ((< arg 0)
+;;     (when (and company-selection-changed
+;;                (< (+ company-selection arg) 0))
+;;       (company-set-selection 0)
+;;       (setq company-selection-changed nil)
+;;       (company-call-frontends 'update)
+;;       t)
+;;     )))
 
-(defun company-tng--adjust-tooltip-highlight (args)
-  (unless company-selection-changed
-    (setf (nth 3 args) nil))
-  args)
+;; (defun company-tng--adjust-tooltip-highlight (args)
+;;   (unless company-selection-changed
+;;     (setf (nth 3 args) nil))
+;;   args)
 
-(defun company-tng--supress-post-completion (command &rest args)
-  (when (eq command 'post-completion)
-    (advice-remove #'company-call-backend #'company-tng--supress-post-completion)
-    t))
+;; (defun company-tng--supress-post-completion (command &rest args)
+;;   (when (eq command 'post-completion)
+;;     (advice-remove #'company-call-backend #'company-tng--supress-post-completion)
+;;     t))
 
 ;; ignore buffers for switching
 (defun +amos-doom-buffer-frame-predicate-a (buf)
@@ -3721,7 +3706,7 @@ See `project-local-get' for the parameter PROJECT."
   "."
   (let* ((margin (car (window-margins)))
          (padding (if margin (+ 4 margin) 0))
-         (header (concat (make-string padding ?\ ) (abbreviate-file-name default-directory)))
+         (header (concat (make-string padding ?\ ) (abbreviate-file-name dired-directory)))
          (drop-str "[...]"))
     (if (> (length header)
            (window-body-width))

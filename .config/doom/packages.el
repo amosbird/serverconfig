@@ -86,4 +86,4 @@
 (package! consult :pin "fa249d5dd7212e5ae1fa51c086d8f1197d738ef4")
 
 ;; This is temporarily necessary due to an unrelated bug.
-(unpin! gitignore-mode gitconfig-mode gitattributes-mode)
+(unpin! gitignore-mode gitconfig-mode gitattributes-mode evil-terminal-cursor-changer)

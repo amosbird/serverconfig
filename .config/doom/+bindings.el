@@ -131,6 +131,7 @@
         :gnemv "M-6"           #'+amos/workspace-switch-to-6
         :gnemv "M-7"           #'+amos/workspace-switch-to-7
         :gnemv "M-8"           #'+amos/workspace-switch-to-8
+        :gnemv "M-="           #'+amos/workspace-switch-to-htop
         ;; :gnemv "M-9"           #'+amos/workspace-switch-to-9
         :gnemv "S-<f9>"        #'+amos/workspace-switch-left
         :gnemv "S-<f10>"       #'+amos/workspace-switch-right
@@ -242,7 +243,7 @@
       :n "C-SPC"                  #'+amos/other-window
       :i "C-SPC"                  #'+amos/complete
       :i "C-s"                    #'+amos/complete-filter
-      :i "C-j"                    #'company-dabbrev-code
+      ;; :i "C-j"                    #'company-dabbrev-code
       :v "R"                      #'evil-multiedit-match-all
       :n "!"                      #'rotate-text
       :v "H"                      #'+amos/align-repeat-left
@@ -292,9 +293,9 @@
         :g "d"       #'envrc-allow
         :g "a"       #'direnv-edit
         :g "C-r"     #'+amos/replace-last-sexp
-        :i "C-f"     #'amos-company-files
-        :i "C-n"     #'company-dabbrev-code
-        :i "C-p"     #'+company/dabbrev-code-previous
+        ;; :i "C-f"     #'amos-company-files
+        ;; :i "C-n"     #'company-dabbrev-code
+        ;; :i "C-p"     #'+company/dabbrev-code-previous
         :g "u"       #'+amos/avy-open-url
         :g "c"       #'+amos/workspace-new
         :g "C"       #'+amos/workspace-new-scratch
@@ -327,56 +328,6 @@
                            :bind ((evil-snipe-scope 'buffer)
                                   (evil-snipe-enable-highlight)
                                   (evil-snipe-enable-incremental-highlight))))
-
-      (:after company
-        :map company-active-map
-        "C-v"        #'company-next-page
-        "M-v"        #'company-previous-page
-        "C-j"        #'company-select-next
-        "C-k"        #'company-select-previous
-        "C-h"        #'company-quickhelp-manual-begin
-        "C-S-h"      #'company-show-doc-buffer
-        "C-S-s"      #'company-search-candidates
-        "C-s"        #'company-filter-candidates
-        "C-SPC"      #'company-complete-common
-        "C-h"        #'company-quickhelp-manual-begin
-        "<"          nil
-        ">"          nil
-        "("          nil
-        ")"          nil
-        "{"          nil
-        "}"          nil
-        "C-w"        nil
-        "RET"        nil
-        "SPC"        nil
-        [return]     nil
-        [tab]        nil
-        [escape]     #'+amos/company-abort
-
-        :map company-search-map
-        "C-i"        #'company-complete-selection
-        "C-j"        #'company-select-next
-        "C-k"        #'company-select-previous
-        "C-n"        #'company-search-repeat-forward
-        "C-p"        #'company-search-repeat-backward
-        "C-s"        (cmd! (company-complete-common) (company-filter-candidates))
-        "SPC"        #'+amos/company-search-abort
-        ";"          #'+amos/company-search-abort
-        "_"          #'+amos/company-search-abort
-        "["          #'+amos/company-search-abort
-        "]"          #'+amos/company-search-abort
-        ","          #'+amos/company-search-abort
-        "-"          #'+amos/company-search-abort
-        "."          #'+amos/company-search-abort
-        ":"          #'+amos/company-search-abort
-        "<"          #'+amos/company-search-abort
-        ">"          #'+amos/company-search-abort
-        "{"          #'+amos/company-search-abort
-        "}"          #'+amos/company-search-abort
-        "("          #'+amos/company-search-abort
-        ")"          #'+amos/company-search-abort
-        "C-e"        #'+amos/company-search-abort
-        [escape]     #'+amos/company-search-abort)
 
       (:after files
         :map ctl-x-map
@@ -702,14 +653,6 @@
       :textobj "i" #'evil-indent-plus-i-indent         #'evil-indent-plus-a-indent
       :textobj "I" #'evil-indent-plus-i-indent-up      #'evil-indent-plus-a-indent-up
       :textobj "J" #'evil-indent-plus-i-indent-up-down #'evil-indent-plus-a-indent-up-down)
-
-(after! company
-  (bind-keys :map company-active-map
-             :filter (company-explicit-action-p)
-             ("<" . nil)
-             (">" . nil)
-             ("C-i" . company-complete-selection)
-             ("C-h" . company-quickhelp-manual-begin)))
 
 (defun +amos/run-script () (interactive) (evil-normal-state) (compile (buffer-file-name) t))
 

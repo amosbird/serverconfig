@@ -481,6 +481,6 @@ copy ring."
 ;;                 :keymap bjm/counsel-email-map)))))
 ;;
 
-(set-company-backend!
-  '(mu4e-compose-mode)
-  'company-capf)
+;; (set-company-backend!
+;;   '(mu4e-compose-mode)
+;;   'company-capf)
