@@ -9,6 +9,7 @@ export TMUX=$TMPDIR/tmux-amos
 export SSH_AUTH_SOCK="$TMPDIR/ssh_auth_sock"
 export NPROC=$(nproc)
 export MANPATH=  # Rely on man_db.conf instead
+export LSP_USE_PLISTS=true
 
 if test -s /tmp/gentoo/etc/hostname; then
     export HOSTNAME=$(cat /tmp/gentoo/etc/hostname)
