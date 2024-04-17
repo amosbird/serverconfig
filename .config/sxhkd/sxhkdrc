@@ -48,6 +48,8 @@ mod3+shift+r
   teiler
 mod3+g
   url "www.google.com/search?q="
+mod3+s
+  rofi-search
 mod3+k
   inputstr $(pass show scripts/otp | bash)
 mod3+s
