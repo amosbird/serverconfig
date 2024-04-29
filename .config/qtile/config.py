@@ -1,5 +1,6 @@
 import re
 import subprocess
+from threading import Lock
 
 from libqtile import hook, layout, qtile
 from libqtile.config import Drag, DropDown, Group, Key, Match, Rule, ScratchPad, Screen
@@ -67,25 +68,25 @@ class ShellHolder:
     def __init__(self):
         self.shell: Shell | None = None
         self._spawned: tuple[Match, int] | None = None
-        self.spawning = False
+        self.spawn_lock = Lock()
 
     def _spawn(self, x: int):
-        if self.spawning:
-            return
+        with self.spawn_lock:
+            if self._spawned:
+                return
 
-        self.spawning = True
-        hook.subscribe.client_new(self.on_client_new)
-        pid = qtile.spawn(
-            [
-                "kitty",
-                "-T",
-                "urxvt_scratchpad",
-                "bash",
-                "-c",
-                "env SHELL=/tmp/gentoo/bin/fish tmux -f /home/amos/.tmux/.tmux.conf.gui -L gui new -A -s gui",
-            ]
-        )
-        self._spawned = (Match(net_wm_pid=pid), x)
+            hook.subscribe.client_new(self.on_client_new)
+            pid = qtile.spawn(
+                [
+                    "kitty",
+                    "-T",
+                    "urxvt_scratchpad",
+                    "bash",
+                    "-c",
+                    "env SHELL=/tmp/gentoo/bin/fish tmux -f /home/amos/.tmux/.tmux.conf.gui -L gui new -A -s gui",
+                ]
+            )
+            self._spawned = (Match(net_wm_pid=pid), x)
 
     def on_client_new(self, client, *args, **kwargs):
         if self._spawned is None:
@@ -109,6 +110,8 @@ class ShellHolder:
         if self.shell is not None and self.shell.window is client:
             del self.shell
             self.shell = None
+            del self._spawned
+            self._spawned = None
             hook.unsubscribe.client_killed(self.on_client_killed)
 
     def toggle_left(self):
