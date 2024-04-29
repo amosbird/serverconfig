@@ -11,6 +11,7 @@ inherit git-r3
 EGIT_REPO_URI="https://github.com/amosbird/tmux.git"
 EGIT_CLONE_TYPE="shallow"
 KEYWORDS="amd64"
+# RESTRICT="strip"
 
 LICENSE="ISC"
 SLOT="0"

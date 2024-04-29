@@ -77,6 +77,9 @@
       orig-result)))
 (advice-add 'lsp-resolve-final-command :around #'lsp-booster--advice-final-command)
 
+(after! python
+  (add-hook! python-ts-mode #'lsp))
+
 ;; (setq lsp-response-timeout 5)
 ;; (setq lsp-signature-render-all nil)
 

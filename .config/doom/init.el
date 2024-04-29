@@ -42,7 +42,6 @@
        magit
        rgb
        biblio
-       ansible
        lookup
 
        :lang
@@ -57,9 +56,7 @@
        (rust +lsp)
        (ocaml +lsp)
        (org +pandoc +avy)
-       (python)
-       ;; TODO too slow
-       ;; (python +lsp +pyright)
+       (python +lsp +pyright)
        java
        ;; (java +lsp)
        (go +lsp)
@@ -83,6 +80,7 @@
        ;; amos-sh
        )
 
+(setq flymake-indicator-type nil)
 (setq enable-dir-local-variables nil)
 (setq shift-select-mode nil)
 (setq select-active-regions nil)

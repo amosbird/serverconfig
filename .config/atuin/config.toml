@@ -139,3 +139,6 @@ enter_accept = false
 #
 # Set commands that should be totally stripped and ignored from stats
 #common_prefix = ["sudo"]
+
+[sync]
+records = true
