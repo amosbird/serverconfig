@@ -7,7 +7,7 @@ inherit autotools elisp-common flag-o-matic readme.gentoo-r1 toolchain-funcs
 
 inherit git-r3
 EGIT_REPO_URI="https://github.com/amosbird/emacs.git"
-EGIT_BRANCH="r29.1"
+EGIT_BRANCH="master"
 EGIT_CHECKOUT_DIR="${WORKDIR}/emacs"
 EGIT_CLONE_TYPE="shallow"
 S="${EGIT_CHECKOUT_DIR}"

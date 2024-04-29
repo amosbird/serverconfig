@@ -80,7 +80,8 @@
        ;; amos-sh
        )
 
-(setq flymake-indicator-type nil)
+;; TODO cannot disable indicator or else it will be in front of the error
+;; (setq flymake-indicator-type nil)
 (setq enable-dir-local-variables nil)
 (setq shift-select-mode nil)
 (setq select-active-regions nil)
