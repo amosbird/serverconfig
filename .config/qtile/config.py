@@ -1,7 +1,7 @@
 import re
 import subprocess
 
-from libqtile import hook, layout
+from libqtile import hook, layout, qtile
 from libqtile.config import Drag, DropDown, Group, Key, Match, Rule, ScratchPad, Screen
 from libqtile.core.manager import Qtile
 from libqtile.lazy import lazy
@@ -13,6 +13,136 @@ alt = "mod1"
 ctrl = "control"
 shift = "shift"
 lock = "lock"
+
+
+class Shell:
+    def __init__(self, window):
+        self.scratchpad_name = "scratchpad"
+        self.window = window
+
+    def visible(self):
+        if self.window.group is None:
+            return False
+        return (
+            self.window.group.name != self.scratchpad_name
+            and self.window.group is self.window.qtile.current_group
+            and self.window.has_focus
+        )
+
+    def toggle_left(self):
+        if not self.visible() or self.window.float_x != 0:
+            self.show_float(0, 0)
+        else:
+            self.hide()
+
+    def toggle_right(self):
+        x2 = int(self.window.qtile.current_screen.width / 2)
+        if not self.visible() or self.window.float_x != x2:
+            self.show_float(x2, 0)
+        else:
+            self.hide()
+
+    def show_float(self, x, y):
+        win = self.window
+        screen = win.qtile.current_screen
+        win.opacity = 0.95
+        win.set_size_floating(int(screen.width / 2), int(screen.height))
+        win.toscreen()
+        win.set_position_floating(int(x), int(y))
+        win.focus()
+
+    def show_tiled(self):
+        win = self.window
+        win.qtile.groups_map["h"].toscreen()
+        win.togroup("h")
+        win.disable_floating()
+        win.opacity = 1
+        win.focus()
+
+    def hide(self):
+        self.window.togroup(self.scratchpad_name)
+
+
+class ShellHolder:
+    def __init__(self):
+        self.shell: Shell | None = None
+        self._spawned: tuple[Match, int] | None = None
+
+    def _spawn(self, x: int):
+        hook.subscribe.client_new(self.on_client_new)
+        pid = qtile.spawn(
+            [
+                "kitty",
+                "-T",
+                "urxvt_scratchpad",
+                "bash",
+                "-c",
+                "env SHELL=/tmp/gentoo/bin/fish tmux -f /home/amos/.tmux/.tmux.conf.gui -L gui new -A -s gui",
+            ]
+        )
+        self._spawned = (Match(net_wm_pid=pid), x)
+
+    def on_client_new(self, client, *args, **kwargs):
+        if self._spawned is None:
+            return
+
+        if not self._spawned[0].compare(client):
+            return
+
+        hook.unsubscribe.client_new(self.on_client_new)
+        self.shell = Shell(client)
+        if self._spawned[1] == 2:
+            self.shell.toggle_left()
+        elif self._spawned[1] == 1:
+            self.shell.toggle_right()
+        elif self._spawned[1] == 0:
+            self.shell.show_tiled()
+        hook.subscribe.client_killed(self.on_client_killed)
+
+    def on_client_killed(self, client, *args, **kwargs):
+        if self.shell is not None and self.shell.window is client:
+            del self.shell
+            self.shell = None
+            hook.unsubscribe.client_killed(self.on_client_killed)
+
+    def toggle_left(self):
+        if self.shell:
+            self.shell.toggle_left()
+        else:
+            self._spawn(2)
+
+    def toggle_right(self):
+        if self.shell:
+            self.shell.toggle_right()
+        else:
+            self._spawn(1)
+
+    def show_shell(self):
+        if self.shell:
+            self.shell.show_tiled()
+        else:
+            self._spawn(0)
+
+
+shell = ShellHolder()
+
+
+@lazy.function
+def toggle_shell_left(qtile: Qtile):
+    global shell
+    shell.toggle_left()
+
+
+@lazy.function
+def toggle_shell_right(qtile: Qtile):
+    global shell
+    shell.toggle_right()
+
+
+@lazy.function
+def show_shell(qtile: Qtile):
+    global shell
+    shell.show_shell()
 
 
 keys = [
@@ -66,9 +196,12 @@ keys = [
     Key([ctrl, alt], "p", lazy.spawn("showpopup.sh")),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),
     Key([ctrl, alt], "b", lazy.spawn("scanqrcode")),
-    Key([ctrl, alt], "s", lazy.spawn("toggleshell 2")),
-    Key([ctrl, alt], "l", lazy.spawn("toggleshell 1")),
-    Key([ctrl, alt], "h", lazy.spawn("toggleshell 0")),
+    # Key([ctrl, alt], "s", lazy.spawn("toggleshell 2")),
+    # Key([ctrl, alt], "l", lazy.spawn("toggleshell 1")),
+    # Key([ctrl, alt], "h", lazy.spawn("toggleshell 0")),
+    Key([ctrl, alt], "s", toggle_shell_left()),
+    Key([ctrl, alt], "l", toggle_shell_right()),
+    Key([ctrl, alt], "h", show_shell()),
     Key([mod4], "s", lazy.spawn("kitty fish")),
     Key([mod4], "Home", lazy.spawn("movehome")),
     Key([mod4], "End", lazy.spawn("moveend")),
@@ -194,8 +327,6 @@ layouts = [
 
 screens = [Screen()]
 
-urxvt_scratchpad = None
-
 
 @hook.subscribe.client_new
 def before_window_created(client):
@@ -211,8 +342,6 @@ def before_window_created(client):
             client.qtile.current_screen.height * 0.45,
         )
     elif "urxvt_scratchpad" == client.window.get_name():
-        global urxvt_scratchpad
-        urxvt_scratchpad = client.wid
         # client.togroup("scratchpad", switch_group=False)
         with open("/tmp/urxvt_scratchpad", "w") as file:
             file.write(str(client.wid))
@@ -226,13 +355,6 @@ def before_window_created(client):
 def after_window_created(client):
     if "xfreerdp" in client.get_wm_class():
         client.disable_floating()
-
-
-@hook.subscribe.client_killed
-def client_killed(client):
-    if "urxvt_scratchpad" == client.window.get_name():
-        global urxvt_scratchpad
-        urxvt_scratchpad = None
 
 
 # @hook.subscribe.layout_change
@@ -269,17 +391,6 @@ def focus_previous_window(qtile: Qtile):
         group.focus(previous_focused[0])
 
 
-@lazy.function
-def toggle_shell_right(qtile: Qtile):
-    global urxvt_scratchpad
-    if urxvt_scratchpad is None:
-        qtile.spawn("")
-        group = previous_focused[0].group
-        qtile.current_screen.set_group(group)
-        # logger.info(f"FOCUS PREVIOUS {previous_focused[0]}")
-        group.focus(previous_focused[0])
-
-
 follow_mouse_focus = False
 bring_front_click = False
 floats_kept_above = True
@@ -292,7 +403,6 @@ floating_layout = layout.Floating(
         Match(wm_class="discord"),
         Match(wm_class="discord"),
         Match(wm_class="TelegramDesktop"),
-        Match(wm_class="kitty", title="urxvt_scratchpad"),
         # Match(wm_class="wemeetapp"),
     ],
 )
