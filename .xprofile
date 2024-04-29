@@ -8,7 +8,7 @@ old_man_path=$MANPATH
 mkdir -p /tmp/gentoo
 sudo mount --bind ~/tmp/gentoo /tmp/gentoo
 source /tmp/gentoo/etc/profile
-export PATH=$old_path:$PATH
+export PATH=/home/amos/scripts:$old_path:$PATH
 export MANPATH=$old_man_path:$MANPATH
 export XDG_DATA_DIRS=/usr/share
 

@@ -28,4 +28,3 @@ case $(hostname) in
         ;;
 esac
 redshiftctl on
-killall -SIGUSR1 conky

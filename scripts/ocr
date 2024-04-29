@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+lang=$(echo -e "chi_sim\neng\nchi_sim+eng\njpn" | rofi -dmenu -p "Lang > ")
+[[ -n "$lang" ]] && maim -s | tesseract stdin stdout -l "$lang" | perl -pe 'chomp if eof' | xclip

@@ -12,20 +12,18 @@ if [[ "$1" =~ $pattern ]]; then
 	user=${BASH_REMATCH[2]}
 	host=${BASH_REMATCH[3]}
 	port=${BASH_REMATCH[5]}
-	if [ -n "$user" ]
-	then
+	if [ -n "$user" ]; then
 		arg="$user@$host"
 	else
 		arg="$host"
 	fi
 
-	if [ -n "$port" ]
-	then
+	if [ -n "$port" ]; then
 		arg="$arg -p $port"
 	fi
 
 	{
-		read -r remote_home;
+		read -r remote_home
 		read -r sock
 	} < <(
 		ssh $arg 'read sock < <($HOME/tmp/gentoo/prelogin); rm $sock; rm $HOME/tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}; echo $HOME; echo $sock'
@@ -40,5 +38,5 @@ if [[ "$1" =~ $pattern ]]; then
 	UUID=$(uuidgen)
 	SSH_MASTER_CTRL=/tmp/ssh-master.$UUID
 	KITTY_SOCK=/tmp/kitty.$UUID
-	kitty $a -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T $1 ssh -t $arg -M -S $SSH_MASTER_CTRL -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:5601:127.0.0.1:5601 -R 12639:localhost:12639 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK -R $remote_home/tmp/kitty_sock:$KITTY_SOCK -R $remote_home/tmp/dbus_sock:/run/user/1000/bus "$remote_home/tmp/gentoo/login prefix $arg $remote_home/tmp/gentoo/login $SSH_MASTER_CTRL"
+	kitty $a -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T remote ssh -t $arg -M -S $SSH_MASTER_CTRL -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:5601:127.0.0.1:5601 -R 12639:localhost:12639 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK -R $remote_home/tmp/kitty_sock:$KITTY_SOCK -R $remote_home/tmp/dbus_sock:/run/user/1000/bus "$remote_home/tmp/gentoo/login prefix $arg $remote_home/tmp/gentoo/login $SSH_MASTER_CTRL"
 fi

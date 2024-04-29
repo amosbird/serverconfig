@@ -8,12 +8,6 @@ fi
 LOCK_FILE="/tmp/atuin_sync.lock"
 LOG_FILE="/tmp/atuin_sync.log"
 
-exec 200>>"$LOCK_FILE"
-if ! flock -n 200; then
-    printf 'history syncing'
-    exit 0
-fi
-
 read -r time status <"$LOCK_FILE"
 
 current_time=$(date +%s)
@@ -22,6 +16,11 @@ if (( current_time - time < 600 )) && [ "$status" = 0 ]; then
 fi
 
 printf 'history syncing'
+
+exec 200>>"$LOCK_FILE"
+if ! flock -n 200; then
+    exit 0
+fi
 
 exec 1>&- 2>&-
 

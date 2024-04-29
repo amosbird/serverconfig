@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep -f /opt/wemeet/bin/wemeetapp &>/dev/null; then
+if pgrep wemeetapp &>/dev/null; then
     while read -r wid; do
         winfo=$(xprop -id "$wid")
         if grep -E -q "window state: (Normal|Iconic)" <<<"$winfo"; then
@@ -12,7 +12,7 @@ if pgrep -f /opt/wemeet/bin/wemeetapp &>/dev/null; then
         fi
     done < <(xdo id -N wemeetapp -n wemeetapp)
     if [ -z "$found" ]; then
-        /opt/wemeet/bin/wemeetapp &
+        /opt/wemeet/wemeetapp.sh &
     elif bspc query -N -n focused | grep -q "$wid"; then
         bspc node older.!hidden -f
         bspc node "$wid".window -g hidden
@@ -34,7 +34,7 @@ if pgrep -f /opt/wemeet/bin/wemeetapp &>/dev/null; then
     bspc node "$wid".window -f
     bspc node "$wid" -l above
 else
-    rm /tmp/ioa
+    rm /tmp/wemeet
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    bash -c "/opt/wemeet/bin/wemeetapp &> /dev/null"
+    bash -c "/opt/wemeet/wemeetapp.sh &> /dev/null"
 fi
