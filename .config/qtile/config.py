@@ -67,8 +67,13 @@ class ShellHolder:
     def __init__(self):
         self.shell: Shell | None = None
         self._spawned: tuple[Match, int] | None = None
+        self.spawning = False
 
     def _spawn(self, x: int):
+        if self.spawning:
+            return
+
+        self.spawning = True
         hook.subscribe.client_new(self.on_client_new)
         pid = qtile.spawn(
             [
@@ -98,6 +103,7 @@ class ShellHolder:
         elif self._spawned[1] == 0:
             self.shell.show_tiled()
         hook.subscribe.client_killed(self.on_client_killed)
+        self.spawning = False
 
     def on_client_killed(self, client, *args, **kwargs):
         if self.shell is not None and self.shell.window is client:
