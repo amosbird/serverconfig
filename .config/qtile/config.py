@@ -5,7 +5,10 @@ from threading import Lock
 from libqtile import hook, layout, qtile
 from libqtile.config import Drag, DropDown, Group, Key, Match, Rule, ScratchPad, Screen
 from libqtile.core.manager import Qtile
+from libqtile.backend.base import FloatStates
 from libqtile.lazy import lazy
+from libqtile.utils import send_notification
+
 
 mod3 = "mod3"
 mod4 = "mod4"
@@ -47,9 +50,11 @@ class Shell:
         win = self.window
         screen = win.qtile.current_screen
         win.opacity = 0.95
+        win._float_state = FloatStates.TOP
         win.set_size_floating(int(screen.width / 2), int(screen.height))
         win.toscreen()
         win.set_position_floating(int(x), int(y))
+        win.bring_to_front()
         win.focus()
 
     def show_tiled(self):
@@ -200,7 +205,7 @@ keys = [
     Key([ctrl, alt], "5", lazy.spawn("showobs.sh")),
     Key([ctrl, alt], "8", lazy.spawn("rofidoc")),
     Key([ctrl, alt], "9", lazy.group["scratchpad"].dropdown_toggle("stardict")),
-    Key([ctrl, alt], "0", lazy.group["scratchpad"].dropdown_toggle("telegram")),
+    Key([ctrl, alt], "0", lazy.group["scratchpad"].dropdown_toggle("tdesktop")),
     Key([ctrl, alt], "minus", lazy.group["scratchpad"].dropdown_toggle("discord")),
     Key([ctrl, alt], "p", lazy.spawn("showpopup.sh")),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),
@@ -221,7 +226,6 @@ keys = [
     Key([mod4], "0", lazy.reload_config()),
     Key([ctrl], "Escape", lazy.spawn("dunstctl close-all")),
     Key([ctrl], "Eisu_Toggle", lazy.spawn("dunstctl history-pop")),
-    Key([mod4], "q", lazy.window.kill()),
     Key([ctrl, alt], "q", lazy.window.kill()),
     Key([ctrl, alt], "j", lazy.layout.next()),
     Key([ctrl, alt], "k", lazy.layout.previous()),
@@ -255,7 +259,7 @@ groups = [
                 on_focus_lost_hide=True,
             ),
             DropDown(
-                "telegram",
+                "tdesktop",
                 "telegram-desktop",
                 match=Match(wm_class="TelegramDesktop"),
                 x=0.15,
@@ -347,8 +351,8 @@ def before_window_created(client):
         client.togroup("w", switch_group=True)
     elif "stalonetray" == client.window.get_name():
         client.set_position_floating(
-            client.qtile.current_screen.width * 0.45,
-            client.qtile.current_screen.height * 0.45,
+            int(client.qtile.current_screen.width * 0.45),
+            int(client.qtile.current_screen.height * 0.45),
         )
     elif "urxvt_scratchpad" == client.window.get_name():
         # client.togroup("scratchpad", switch_group=False)
@@ -401,7 +405,7 @@ def focus_previous_window(qtile: Qtile):
 
 
 follow_mouse_focus = False
-bring_front_click = False
+bring_front_click = "floating_only"
 floats_kept_above = True
 cursor_warp = False
 floating_layout = layout.Floating(
@@ -432,3 +436,20 @@ auto_minimize = False
 # We choose LG3D to maximize irony: it is a 3D non-reparenting WM written in
 # java that happens to be on java's whitelist.
 wmname = "LG3D"
+
+
+def show_telegram(uri):
+    scratchpad = qtile.groups_map["scratchpad"]
+    name = "tdesktop"
+    if name in scratchpad.dropdowns:
+        scratchpad.dropdowns[name].show()
+        qtile.spawn(f"telegram-desktop -- {uri}")
+    else:
+        if name in scratchpad._dropdownconfig:
+            old_command = scratchpad._dropdownconfig[name].command
+            scratchpad._dropdownconfig[name].command = f"{old_command} -- {uri}"
+            scratchpad._spawn(scratchpad._dropdownconfig[name])
+            scratchpad._dropdownconfig[name].command = old_command
+
+
+wl_input_rules = {"tdesktop": show_telegram}

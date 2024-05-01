@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+# qtile cmd-obj
+
+# TODO discord doesn't provide a way to land in discord:// url
+discord

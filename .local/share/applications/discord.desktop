@@ -1,0 +1,7 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+NoDisplay=true
+Exec=/home/amos/scripts/discord-open %u
+Name=Discord
+Comment=Discord

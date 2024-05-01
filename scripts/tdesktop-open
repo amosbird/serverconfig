@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+qtile cmd-obj -o root -f eval -a "self.config.wl_input_rules['tdesktop'](\"$1\")"
+
+# telegram-desktop -- "$@"

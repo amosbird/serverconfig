@@ -84,6 +84,7 @@
 ;; (setq flymake-indicator-type nil)
 (setq enable-dir-local-variables nil)
 (setq shift-select-mode nil)
+(setq corfu-terminal-enable-on-minibuffer nil)
 (setq select-active-regions nil)
 ;; (setq TeX-command "pdftex")
 ;; (setq LaTeX-command "pdflatex")

@@ -2,6 +2,6 @@
 Version=1.0
 Type=Application
 NoDisplay=true
-Exec=/usr/bin/telegram-desktop -workdir /home/amos/.local/share/TelegramDesktop/ -- %u
+Exec=/home/amos/scripts/tdesktop-open %u
 Name=Telegram Desktop
 Comment=Telegram Desktop
