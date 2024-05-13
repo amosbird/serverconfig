@@ -454,4 +454,4 @@ def show_telegram(uri):
             scratchpad._dropdownconfig[name].command = old_command
 
 
-wl_input_rules = {"tdesktop": show_telegram}
+qtile.show_telegram = show_telegram
