@@ -196,6 +196,7 @@ keys = [
     ),
     Key([mod3], "s", lazy.spawn('kafkaurl.py "$(xclip -o)"', shell=True)),
     Key([mod3], "v", lazy.spawn("translate")),
+    Key([mod4], "f", lazy.window.toggle_floating()),
     Key([mod4], "z", lazy.spawn("lockscreen")),
     Key([ctrl, alt], "Eisu_toggle", lazy.spawn("toggleaudio")),
     Key([ctrl, alt], "1", lazy.group["scratchpad"].dropdown_toggle("ioa")),
@@ -368,6 +369,8 @@ def before_window_created(client):
 def after_window_created(client):
     if "xfreerdp" in client.get_wm_class():
         client.disable_floating()
+    elif "mpv" in client.get_wm_class():
+        client.disable_floating()
 
 
 # @hook.subscribe.layout_change
@@ -413,7 +416,6 @@ floating_layout = layout.Floating(
     float_rules=[
         *layout.Floating.default_float_rules,
         Match(wm_class="copyq"),
-        Match(wm_class="discord"),
         Match(wm_class="discord"),
         Match(wm_class="TelegramDesktop"),
         # Match(wm_class="wemeetapp"),
