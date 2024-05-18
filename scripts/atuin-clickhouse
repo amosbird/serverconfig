@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-export XDG_CONFIG_HOME=$HOME/.config/atuin-clickhouse
 export XDG_DATA_HOME=$HOME/.local/share/atuin-clickhouse
 
 exec atuin "$@"

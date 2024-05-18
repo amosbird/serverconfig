@@ -20,11 +20,6 @@ unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 
 sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &
 
-#pushd /home/amos/git/xkeysnail
-#sudo python -m xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &
-#popd
-# fish -c "xbanish -m se &"
-
 export GUI=t
 export XAPIAN_CJK_NGRAM=1
 export BSPWM_STATE=/tmp/bspwm-state.json
