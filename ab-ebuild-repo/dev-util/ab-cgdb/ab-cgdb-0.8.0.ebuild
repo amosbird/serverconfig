@@ -32,7 +32,7 @@ BDEPEND="
 
 RDEPEND="
 	${DEPEND}
-	sys-devel/gdb"
+	dev-debug/gdb"
 
 DOCS=( AUTHORS ChangeLog FAQ INSTALL NEWS README.md )
 
