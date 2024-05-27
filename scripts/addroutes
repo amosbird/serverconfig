@@ -67,6 +67,7 @@ sudo ip rule add to 10.0.0.0/8 lookup ioa pref 2500
 sudo ip rule add to 192.168.0.0/16 lookup main pref 3000
 sudo ip rule add to 172.16.0.0/12 lookup main pref 3000
 sudo ip rule add to 10.0.0.0/8 lookup main pref 3000
+sudo ip rule add to 169.254.0.0/16 lookup main pref 3000
 
 sudo ip rule add table cn pref 4000
 
