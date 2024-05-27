@@ -55,6 +55,11 @@ fi
 
 sudo ip r f table cn
 
+# Local
+sudo ip rule add to 10.76.154.0/24 lookup main pref 2000
+sudo ip rule add to 10.78.126.0/23 lookup main pref 2000
+sudo ip rule add to 10.0.0.0/24 lookup main pref 2000
+
 sudo ip rule add to 10.0.0.0/8 lookup ioa pref 2500
 
 # Fix docker with tailscale exit node

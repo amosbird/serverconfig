@@ -86,10 +86,10 @@ class ShellHolder:
                     "kitty",
                     "-T",
                     "urxvt_scratchpad",
-                    "bash",
                     "-c",
-                    "env SHELL=/tmp/gentoo/bin/fish tmux -f /home/amos/.tmux/.tmux.conf.gui -L gui new -A -s gui",
-                ]
+                    "~/.config/kitty/kitty-mux.conf",
+                ],
+                shell=True,
             )
             self._spawned = (Match(net_wm_pid=pid), x)
 
