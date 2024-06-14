@@ -240,9 +240,9 @@
       :i "C-d"                    #'+amos/delete-char
       :n "C-j"                    #'move-text-down
       :n "C-k"                    #'move-text-up
-      :n "C-SPC"                  #'+amos/other-window
-      :i "C-SPC"                  #'+amos/complete
-      :i "C-s"                    #'+amos/complete-filter
+      ;; :n "C-SPC"                  #'+amos/other-window
+      ;; :i "C-SPC"                  #'+amos/complete
+      ;; :i "C-s"                    #'+amos/complete-filter
       ;; :i "C-j"                    #'company-dabbrev-code
       :v "R"                      #'evil-multiedit-match-all
       :n "!"                      #'rotate-text
@@ -459,27 +459,15 @@
         :map yas-minor-mode-map
         :i "C-l" yas-maybe-expand)
 
-      (:after ccls
-        (:map ccls-tree-mode-map
-          :m "C-i"      #'ccls-tree-toggle-expand
-          :n "c"        #'ccls-tree-toggle-calling
-          :n "f"        #'ccls-tree-press
-          :n "h"        #'ccls-tree-collapse-or-select-parent
-          :n "j"        #'ccls-tree-next-line
-          :n "k"        #'ccls-tree-prev-line
-          :n "J"        #'ccls-tree-next-sibling
-          :n "K"        #'ccls-tree-prev-sibling
-          :n "l"        #'ccls-tree-expand-or-set-root
-          :n "oh"       #'ccls-tree-press-and-horizontal-split
-          :n "ov"       #'ccls-tree-press-and-vertical-split
-          :n "oo"       #'ccls-tree-press-and-switch
-          :n "q"        #'ccls-tree-quit
-          :n "<escape>" #'ccls-tree-quit
-          :n "Q"        #'quit-window
-          :n "yy"       #'ccls-tree-yank-path
-          :n "RET"      #'ccls-tree-press-and-switch
-          :n "<left>"   #'ccls-tree-collapse-or-select-parent
-          :n "<right>"  #'ccls-tree-expand-or-set-root))
+      (:when (modulep! :completion corfu)
+        (:after corfu
+                (:map corfu-mode-map
+                 :i "C-SPC" #'completion-at-point)
+                (:map corfu-map
+                 :i "C-SPC" #'corfu-insert-separator
+                 :i "C-a" #'corfu-prompt-beginning
+                 :i "C-u" nil
+                 :i "C-d" nil)))
 
       (:after comint
         (:map comint-mode-map
