@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
 
-# (sleep 0.3 & gdbus call --session --dest org.fcitx.Fcitx --object-path /CommitString --method org.fcitx.Fcitx.InputMethod.CommitString "$*") &
-
-copyq fillText "$@" &
+# -- is important or else copyq will interprete backslash as part of an escape sequence
+coproc ( copyq fillText -- "$@" &>/dev/null )

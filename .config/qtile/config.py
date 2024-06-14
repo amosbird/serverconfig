@@ -48,6 +48,7 @@ class Shell:
 
     def show_float(self, x, y):
         win = self.window
+        win.togroup()
         screen = win.qtile.current_screen
         win.opacity = 0.95
         win._float_state = FloatStates.TOP
@@ -194,7 +195,7 @@ keys = [
         "k",
         lazy.spawn('inputstr "$(pass show scripts/otp | bash)"', shell=True),
     ),
-    Key([mod3], "s", lazy.spawn('kafkaurl.py "$(xclip -o)"', shell=True)),
+    Key([mod3], "s", lazy.spawn("rofitsearch")),
     Key([mod3], "v", lazy.spawn("translate")),
     Key([mod4], "f", lazy.window.toggle_floating()),
     Key([mod4], "z", lazy.spawn("lockscreen")),
@@ -345,6 +346,9 @@ screens = [Screen()]
 @hook.subscribe.client_new
 def before_window_created(client):
     if "copyq" in client.get_wm_class():
+        client.set_size_floating(2000, 1200)
+        client.center()
+    elif "kitty" in client.get_wm_class() and client.window.get_name() == "float":
         client.set_size_floating(2000, 1200)
         client.center()
     elif "xfreerdp" in client.get_wm_class():

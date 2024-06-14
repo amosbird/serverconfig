@@ -17,7 +17,7 @@ if [[ $rofi_exit -eq 1 ]]; then
 fi
 
 if [[ "$selected_password" = "otp" ]]; then
-    inputstr $(pass show scripts/otp | bash)
+    inputstr "$(pass show scripts/otp | bash)"
 else
     inputstr "$(pass show "$selected_password")"
 fi

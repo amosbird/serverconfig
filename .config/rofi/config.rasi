@@ -54,8 +54,14 @@ configuration {
 	kb-remove-char-back: "BackSpace,Control+h";
 	kb-remove-to-eol: "Control+o";
 	kb-remove-to-sol: "Control+u";
+
+	// ROFI_RETV = 1
 	kb-accept-entry: "Control+m,Return,KP_Enter";
-	kb-accept-custom: "Control+Return";
+
+	// Accept the input string as is
+	// ROFI_RETV = 2
+	kb-accept-custom: "Shift+Return";
+
 	kb-accept-alt: "Alt+Return";
 	kb-delete-entry: "Shift+Delete";
 	kb-mode-next: "Shift+Right,Control+Tab";
@@ -73,7 +79,9 @@ configuration {
 	kb-toggle-case-sensitivity: "grave,dead_grave";
 	kb-toggle-sort: "Alt+grave";
 	kb-cancel: "Escape,Control+bracketleft,Control+g";
-	kb-custom-1: "Control+1";
+
+	// ROFI_RETV = 10
+	kb-custom-1: "Control+1,Control+Return";
 	kb-custom-2: "Control+2";
 	kb-custom-3: "Control+3";
 	kb-custom-4: "Control+4";
