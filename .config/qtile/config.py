@@ -162,8 +162,8 @@ def show_shell(qtile: Qtile):
 
 keys = [
     Key([mod3], "e", lazy.spawn("rofi -show emoji -modi emoji")),
-    Key([mod3], "a", lazy.spawn("roficalc")),
-    Key([mod3], "c", lazy.spawn("colorinsert")),
+    Key([mod3], "a", lazy.spawn("kitty -T float /home/amos/git/work/scripts/insert-cluster.sh")),
+    Key([mod3], "c", lazy.spawn("roficalc")),
     Key([mod3], "w", lazy.spawn("rofiurl")),
     Key([mod3], "f", lazy.spawn("copyq toggle")),
     Key([mod3], "0", lazy.spawn("sleep 0.1 && inputstr 0.0.0.0", shell=True)),
