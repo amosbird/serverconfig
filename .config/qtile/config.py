@@ -196,7 +196,7 @@ keys = [
         lazy.spawn('inputstr "$(pass show scripts/otp | bash)"', shell=True),
     ),
     Key([mod3], "s", lazy.spawn("/home/amos/git/work/scripts/rofitsearch")),
-    Key([mod3], "v", lazy.spawn("translate")),
+    Key([mod3], "v", lazy.spawn("rofisound")),
     Key([mod4], "f", lazy.window.toggle_floating()),
     Key([mod4], "z", lazy.spawn("lockscreen")),
     Key([ctrl, alt], "Eisu_toggle", lazy.spawn("toggleaudio")),
