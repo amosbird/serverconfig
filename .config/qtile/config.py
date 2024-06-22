@@ -308,6 +308,9 @@ groups = [
     Group("h"),
     Group("2"),
 ]
+
+keys.append(Key([ctrl, alt, shift], "2", lazy.window.togroup("2")))
+
 for i in ["w", "e", "d", "f", "v", "n", "i", "o", "c"]:
     groups.append(Group(i))
     keys.append(Key([ctrl, alt], i, lazy.group[i].toscreen()))
