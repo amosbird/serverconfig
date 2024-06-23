@@ -64,17 +64,33 @@ sudo ip r f table cn
 # when using iproute2 but analysis of these sources do not show what it is)
 # rule PREFERENCE higher number means lower priority
 
+# ioa2
+tid=$(id -u tinyproxy)
+if [ -n "$tid" ]; then
+    sudo ip rule add uidrange $tid-$tid lookup ioa2 pref 1500
+fi
+
+rule_to_add="-A OUTPUT -m set --match-set ioa2 dst -j MARK --set-xmark 0x2"
+existing_rule=$(sudo iptables -t mangle -S OUTPUT | grep -- "$rule_to_add")
+if [ -z "$existing_rule" ]; then
+    sudo iptables -t mangle $rule_to_add
+fi
+sudo ip rule add fwmark 0x2 lookup ioa2 pref 1500
+
 # Local
 sudo ip rule add to 10.76.154.0/24 lookup main pref 2000
 sudo ip rule add to 10.78.126.0/23 lookup main pref 2000
 sudo ip rule add to 10.0.0.0/24 lookup main pref 2000
 
-sudo ip rule add to 10.0.0.0/8 lookup ioa pref 2500
-
-tid=$(id -u tinyproxy)
-if [ -n "$tid" ]; then
-    sudo ip rule add uidrange $tid-$tid lookup ioa pref 2500
+# ioa
+rule_to_add="-A OUTPUT -m set --match-set ioa dst -j MARK --set-xmark 0x1"
+existing_rule=$(sudo iptables -t mangle -S OUTPUT | grep -- "$rule_to_add")
+if [ -z "$existing_rule" ]; then
+    sudo iptables -t mangle $rule_to_add
 fi
+sudo ip rule add fwmark 0x1 lookup ioa pref 2500
+
+sudo ip rule add to 10.0.0.0/8 lookup ioa pref 2500
 
 # Fix docker with tailscale exit node
 # https://github.com/tailscale/tailscale/issues/3646
