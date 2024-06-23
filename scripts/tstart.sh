@@ -27,10 +27,16 @@ local)
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH emacs
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH lvim
     ;;
 emacs)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     fish -c startemacs
+    exit 0
+    ;;
+lvim)
+    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+    fish -c startlvim
     exit 0
     ;;
 *)

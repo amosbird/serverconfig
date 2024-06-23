@@ -1,0 +1,24 @@
+#!/bin/bash
+
+if [ -z "$1" ]; then
+    echo "Usage: $0 <pid>"
+    exit 1
+fi
+
+PID=$1
+
+if [ ! -d /proc/$PID ]; then
+    echo "Process with PID $PID does not exist."
+    exit 1
+fi
+
+echo "Threads, nice values, and names for process $PID:"
+echo "TID   Nice Value   Thread Name"
+
+for TID in $(ls /proc/$PID/task); do
+    # Extract the 19th field from /proc/<pid>/task/<tid>/stat which represents the nice value
+    NICE_VALUE=$(awk '{print $19}' /proc/$PID/task/$TID/stat)
+    # Get the thread name from /proc/<pid>/task/<tid>/comm
+    THREAD_NAME=$(cat /proc/$PID/task/$TID/comm)
+    echo "$TID   $NICE_VALUE   $THREAD_NAME"
+done
