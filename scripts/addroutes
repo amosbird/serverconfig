@@ -55,6 +55,15 @@ fi
 
 sudo ip r f table cn
 
+# Lower metrics are considered better and take precedence over higher costs.
+# http://0pointer.de/lennart/projects/ifmetric/ : The default metric for a route
+# in the Linux kernel is 0, meaning the highest priority.
+# http://www.man7.org/linux/man-pages/man8/route.8.html : If this option is not
+# specified the metric for inet6 (IPv6) address family defaults to '1', for inet
+# (IPv4) it defaults to '0'. (it then hints that the default may be different
+# when using iproute2 but analysis of these sources do not show what it is)
+# rule PREFERENCE higher number means lower priority
+
 # Local
 sudo ip rule add to 10.76.154.0/24 lookup main pref 2000
 sudo ip rule add to 10.78.126.0/23 lookup main pref 2000
