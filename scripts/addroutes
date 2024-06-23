@@ -62,6 +62,11 @@ sudo ip rule add to 10.0.0.0/24 lookup main pref 2000
 
 sudo ip rule add to 10.0.0.0/8 lookup ioa pref 2500
 
+tid=$(id -u tinyproxy)
+if [ -n "$tid" ]; then
+    sudo ip rule add uidrange $tid-$tid lookup ioa pref 2500
+fi
+
 # Fix docker with tailscale exit node
 # https://github.com/tailscale/tailscale/issues/3646
 sudo ip rule add to 192.168.0.0/16 lookup main pref 3000
@@ -70,11 +75,6 @@ sudo ip rule add to 10.0.0.0/8 lookup main pref 3000
 sudo ip rule add to 169.254.0.0/16 lookup main pref 3000
 
 sudo ip rule add table cn pref 4000
-
-tid=$(id -u tinyproxy)
-if [ -n "$tid" ]; then
-    sudo ip rule add uidrange $tid-$tid lookup main pref 4001
-fi
 
 while read -r subnet _ d; do
     sudo ip r a $subnet dev $d table cn

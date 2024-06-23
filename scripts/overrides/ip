@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 if [ "$*" = "route add default via 192.168.255.1 dev tun0" ]; then
+    exec /usr/bin/ip route add default via 192.168.255.1 dev tun0 table ioa
     exit 0
 fi
 
