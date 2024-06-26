@@ -459,16 +459,6 @@
         :map yas-minor-mode-map
         :i "C-l" yas-maybe-expand)
 
-      (:when (modulep! :completion corfu)
-        (:after corfu
-                (:map corfu-mode-map
-                 :i "C-SPC" #'completion-at-point)
-                (:map corfu-map
-                 :i "C-SPC" #'corfu-insert-separator
-                 :i "C-a" #'corfu-prompt-beginning
-                 :i "C-u" nil
-                 :i "C-d" nil)))
-
       (:after comint
         (:map comint-mode-map
           "C-d" nil))
@@ -641,6 +631,55 @@
       :textobj "i" #'evil-indent-plus-i-indent         #'evil-indent-plus-a-indent
       :textobj "I" #'evil-indent-plus-i-indent-up      #'evil-indent-plus-a-indent-up
       :textobj "J" #'evil-indent-plus-i-indent-up-down #'evil-indent-plus-a-indent-up-down)
+
+(map! :when (modulep! :completion corfu)
+      :after corfu
+      (:map corfu-map
+            [remap corfu-insert-separator] #'+corfu-smart-sep-toggle-escape
+            "C-S-s" #'+corfu-move-to-minibuffer
+            "C-p" #'corfu-previous
+            "C-n" #'corfu-next
+            "S-TAB" #'corfu-previous
+            [backtab] #'corfu-previous
+            "TAB" #'corfu-next
+            [tab] #'corfu-next))
+(let ((cmds-del
+       `(menu-item "Reset completion" corfu-reset
+         :filter ,(lambda (cmd)
+                    (when (and (>= corfu--index 0)
+                               (eq corfu-preview-current 'insert))
+                      cmd))))
+      (cmds-ret
+       `(menu-item "Insert completion DWIM" corfu-insert
+         :filter ,(lambda (cmd)
+                    (interactive)
+                    (cond ((null +corfu-want-ret-to-confirm)
+                           (corfu-quit)
+                           nil)
+                          ((eq +corfu-want-ret-to-confirm 'minibuffer)
+                           (funcall-interactively cmd)
+                           nil)
+                          ((and (or (not (minibufferp nil t))
+                                    (eq +corfu-want-ret-to-confirm t))
+                                (>= corfu--index 0))
+                           cmd)
+                          ((or (not (minibufferp nil t))
+                               (eq +corfu-want-ret-to-confirm t))
+                           nil)
+                          (t cmd))))))
+  (map! :when (modulep! :completion corfu)
+        :map corfu-mode-map
+        :gi "C-SPC" #'completion-at-point
+        :map corfu-map
+        :gi "C-SPC" #'corfu-insert-separator
+        :gi "C-a" #'corfu-prompt-beginning
+        :gi "C-o" nil
+        :gi "C-u" nil
+        :gi "C-d" nil
+        [backspace] cmds-del
+        "DEL" cmds-del
+        :gi [return] cmds-ret
+        :gi "RET" cmds-ret))
 
 (defun +amos/run-script () (interactive) (evil-normal-state) (compile (buffer-file-name) t))
 
