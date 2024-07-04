@@ -1,0 +1,6 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Terminal=false
+Exec=/home/amos/scripts/luakit %u
+Name=luakit (Amos Bird fork)

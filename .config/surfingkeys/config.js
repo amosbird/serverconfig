@@ -8,7 +8,9 @@ api.map('gt', 'T');
 // an example to remove mapkey `Ctrl-i`
 api.unmap('<ctrl-i>');
 
-
+// settings.lurkingPattern = /iwiki\.woa\.com/i
+settings.blocklistPattern = /iwiki\.woa\.com.*\/edit$|iwiki\.woa\.com.*\/drawio/i;
+// settings.blocklistPattern = /.*mail.google.com.*|.*inbox.google.com.*|trello.com|duolingo.com|youtube.com|udemy.com/i;
 
 // set theme
 settings.smoothScroll = false;
