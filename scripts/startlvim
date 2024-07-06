@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 
-printf "\e[?1006l\e[?1000l\e[?1002l\e[?1003l\e[?1000h\e[?1002h\e[?1003h" # enable mouse
-printf "\e[?2004h" # enable bracketed paste
+if echo 1 | socat - UNIX-CONNECT:/tmp/lvim.dtach &> /dev/null; then
+    printf "\e[?1006l\e[?1000l\e[?1002l\e[?1003l\e[?1000h\e[?1002h\e[?1003h" # enable mouse
+    printf "\e[?2004h" # enable bracketed paste
+    printf "\e[>5u" # enable kitty keyboard extension
+    exec dtach -a /tmp/lvim.dtach -r winch
+else
+    export NVIM_APPNAME="${NVIM_APPNAME:-"lvim"}"
 
-export NVIM_APPNAME="${NVIM_APPNAME:-"lvim"}"
+    export LUNARVIM_RUNTIME_DIR="${LUNARVIM_RUNTIME_DIR:-"/tmp/gentoo/home/amos/.local/share/lunarvim"}"
+    export LUNARVIM_CONFIG_DIR="${LUNARVIM_CONFIG_DIR:-"/tmp/gentoo/home/amos/.config/lvim"}"
+    export LUNARVIM_CACHE_DIR="${LUNARVIM_CACHE_DIR:-"/tmp/gentoo/home/amos/.cache/lvim"}"
 
-export LUNARVIM_RUNTIME_DIR="${LUNARVIM_RUNTIME_DIR:-"/tmp/gentoo/home/amos/.local/share/lunarvim"}"
-export LUNARVIM_CONFIG_DIR="${LUNARVIM_CONFIG_DIR:-"/tmp/gentoo/home/amos/.config/lvim"}"
-export LUNARVIM_CACHE_DIR="${LUNARVIM_CACHE_DIR:-"/tmp/gentoo/home/amos/.cache/lvim"}"
+    export LUNARVIM_BASE_DIR="${LUNARVIM_BASE_DIR:-"/tmp/gentoo/home/amos/.local/share/lunarvim/lvim"}"
 
-export LUNARVIM_BASE_DIR="${LUNARVIM_BASE_DIR:-"/tmp/gentoo/home/amos/.local/share/lunarvim/lvim"}"
+    SOCKET="/tmp/nvimsocket"
 
-SOCKET="/tmp/nvimsocket"
-
-exec dtach -A /tmp/lvim.dtach -r winch nvim -u "$LUNARVIM_BASE_DIR/init.lua" --listen $SOCKET
+    exec dtach -A /tmp/lvim.dtach -r winch nvim -u "$LUNARVIM_BASE_DIR/init.lua" --listen $SOCKET
+fi

@@ -75,21 +75,55 @@
   (defvar +amos--hostname (propertize (concat "  " +amos-system-name " ") 'face '(:weight bold :foreground "#51afef")))
   (doom-modeline-def-segment host (let () +amos--hostname))
 
-  (doom-modeline-def-segment padding (make-string 52 ?\s))
-
-  (doom-modeline-def-modeline 'amos
-    '(bar matches follow buffer-info buffer-position word-count parrot selection-info frame)
-    '(;; keycast
-      ;; host
-      lsp indent-info buffer-encoding major-mode process vcs check time padding))
-
   (defun +amos*doom-modeline-set-modeline (&rest _)
-    (setq mode-line-format (list "%e" (doom-modeline 'amos)))
-    (setq-default mode-line-format (list "%e" (doom-modeline 'amos))))
+    (setq-default global-mode-line-format (list "%e" (doom-modeline 'amos)))
+    ;; (setq mode-line-format (make-string 300 ?─))
+    ;; (setq-default mode-line-format (make-string 300 ?─))
+    (setq mode-line-format (make-string 300 ? ))
+    (setq-default mode-line-format (make-string 300 ? ))
+    ;; (setq mode-line-format (list "%e" (doom-modeline 'amos)))
+    ;; (setq-default mode-line-format (list "%e" (doom-modeline 'amos)))
+    )
   (advice-add #'doom-modeline-set-modeline :override #'+amos*doom-modeline-set-modeline)
 
   ;; ignore window-font-height which will call select-window which calls evil-set-curosr
   (defun +amos-window-font-height-a (&rest _) 1)
   (advice-add #'window-font-height :override #'+amos-window-font-height-a)
   (setq after-focus-change-function #'ignore) ; it doens't make sense to update modeline
+  )
+
+(defun doom-modeline-format--amos ()
+  (let ((lhs-forms (doom-modeline--prepare-segments
+                    '(
+                      bar
+                      matches
+                      follow
+                      buffer-info buffer-position word-count parrot selection-info
+                      frame
+                      )))
+        (rhs-forms (doom-modeline--prepare-segments
+                    '(;; keycast
+                      host
+                      lsp
+                      indent-info buffer-encoding major-mode process vcs check time
+                      ))))
+    (list lhs-forms
+          (let* (
+                 (lhs-str (format-mode-line (cons "" lhs-forms) nil nil (current-buffer)))
+                 (lhs-len (length lhs-str))
+                 (lhs-width (progn
+                              (add-face-text-property
+                               0 lhs-len 'mode-line t lhs-str)
+                              (doom-modeline-string-pixel-width lhs-str)))
+                 (rhs-str (format-mode-line (cons "" rhs-forms)  nil nil (current-buffer)))
+                 (rhs-len (length rhs-str))
+                 (rhs-width (progn
+                              (add-face-text-property
+                               0 rhs-len 'mode-line t rhs-str)
+                              (doom-modeline-string-pixel-width rhs-str)))
+                 )
+            (propertize (make-string (- (frame-pixel-width) -5 lhs-width rhs-width) ?-)
+                        'face `(:foreground ,(face-background 'mode-line))))
+          rhs-forms
+          ))
   )

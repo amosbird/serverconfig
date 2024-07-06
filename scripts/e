@@ -6,7 +6,7 @@ if [[ $session == "gui" ]]; then
     emacspopup "(find-file \"$file\")"
 else
     EMACS="emacsclient -n -q -u -e"
-    kitten @ --to unix:/tmp/kitty_sock action next_window
+    kitten @ --to unix:/tmp/kitty_sock focus-window --match id:2
     if [ -z "$2" ]; then
         $EMACS "(progn (setq +amos-tmux-need-switch t) (+amos/workspace-new) (find-file \"$file\"))"
     else

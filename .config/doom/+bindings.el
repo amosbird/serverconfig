@@ -135,10 +135,14 @@
         ;; :gnemv "M-9"           #'+amos/workspace-switch-to-9
         :gnemv "S-<f9>"        #'+amos/workspace-switch-left
         :gnemv "S-<f10>"       #'+amos/workspace-switch-right
-        :gnemv "C-,"           #'+amos/workspace-switch-left
-        :gnemv "C-."           #'+amos/workspace-switch-right
-        :gnemv "C-<comma>"     #'+amos/workspace-switch-left
-        :gnemv "C-<period>"    #'+amos/workspace-switch-right
+        :gnemv "C-9"           #'+amos/workspace-switch-left
+        :gnemv "C-0"           #'+amos/workspace-switch-right
+        :gnemv "S-<f1>"        #'centaur-tabs-backward-tab
+        :gnemv "S-<f2>"        #'centaur-tabs-forward-tab
+        :gnemv "C-,"           #'centaur-tabs-backward-tab
+        :gnemv "C-."           #'centaur-tabs-forward-tab
+        :gnemv "C-<comma>"     #'centaur-tabs-backward-tab
+        :gnemv "C-<period>"    #'centaur-tabs-forward-tab
         )
 
       :gn "M-W"                   #'+amos/kill-current-buffer

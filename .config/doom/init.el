@@ -14,6 +14,7 @@
        hl-todo
        nav-flash
        popup
+       tabs
        ;; (treemacs +lsp)
 
        :editor
@@ -40,7 +41,6 @@
        eval
        make
        magit
-       rgb
        biblio
        lookup
 

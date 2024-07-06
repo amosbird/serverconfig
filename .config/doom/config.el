@@ -25,23 +25,23 @@
 (setq evil-default-cursor #'ignore)
 (add-to-list 'evil-buffer-regexps `(
                                     ,(rx (or
-                                         " *checkdoc-temp*"
-                                         " *eldoc*"
-                                         " *string-output*"
-                                         " *string-pixel-width*"
-                                         " *temp file*"
-                                         " *temp*"
-                                         " *elisp-flymake-byte-compile*"
-                                         "*gcc-flymake*"
-                                         ;; "*lsp-log*"
-                                         "*envrc*"
-                                         ;; "*Shell Command Output*"
-                                         "*Style Warnings*"
-                                         "*Native-compile-Log*"
-                                         "*org-src"
-                                         "*Org Src"
-                                         " *org-src"
-                                         ))
+                                          " *checkdoc-temp*"
+                                          " *eldoc*"
+                                          " *string-output*"
+                                          " *string-pixel-width*"
+                                          " *temp file*"
+                                          " *temp*"
+                                          " *elisp-flymake-byte-compile*"
+                                          "*gcc-flymake*"
+                                          ;; "*lsp-log*"
+                                          "*envrc*"
+                                          ;; "*Shell Command Output*"
+                                          "*Style Warnings*"
+                                          "*Native-compile-Log*"
+                                          "*org-src"
+                                          "*Org Src"
+                                          " *org-src"
+                                          ))
                                     .
                                     nil))
 
@@ -59,6 +59,15 @@
   )
 (advice-add #'get-buffer-create :around #'+amos-get-buffer-create-a)
 (advice-remove #'get-buffer-create #'+amos-get-buffer-create-a)
+
+;; (use-package! copilot
+;;   :hook (prog-mode . copilot-mode)
+;;   :init
+;;   ;; (setq copilot-node-executable "/tmp/gentoo/home/amos/.config/lvim/pack/gongfeng/start/vim/resource/bin/copilot-node-server.sh")
+;;   ;; (setq copilot-install-dir "/tmp/gentoo/home/amos/.config/lvim/pack/gongfeng/start/vim/resource")
+;;   :bind (:map copilot-completion-map
+;;               ("<tab>" . 'copilot-accept-completion)
+;;               ("C-<tab>" . 'copilot-accept-completion-by-word)))
 
 (use-package! treesit-auto
   :config
@@ -106,15 +115,15 @@
   (dolist (x '(cc-playground-exec cc-playground-debug cc-playground-exec-test cc-playground-bench))
     (advice-add x :before #'evil-normal-state))
   :bind (:map cc-playground-mode-map
-         ("<f8>" . cc-playground-rm) ; terminal
-         ("S-RET" . cc-playground-rm) ; gui
-         ("C-c r" . cc-playground-add-or-modify-tag)
-         ("C-c b" . cc-playground-bench)
-         ("C-c d" . cc-playground-debug)
-         ("C-c t" . cc-playground-debug-test)
-         ("C-c c" . cc-playground-change-compiler)
-         ("C-c o" . cc-playground-switch-optimization-flag)
-         ("C-c f" . cc-playground-add-compilation-flags))
+              ("<f8>" . cc-playground-rm) ; terminal
+              ("S-RET" . cc-playground-rm) ; gui
+              ("C-c r" . cc-playground-add-or-modify-tag)
+              ("C-c b" . cc-playground-bench)
+              ("C-c d" . cc-playground-debug)
+              ("C-c t" . cc-playground-debug-test)
+              ("C-c c" . cc-playground-change-compiler)
+              ("C-c o" . cc-playground-switch-optimization-flag)
+              ("C-c f" . cc-playground-add-compilation-flags))
   :config
   (add-hook! 'cc-playground-mode-hook (rmsbolt-mode +1))
   (add-hook! 'cc-playground-rm-hook
@@ -128,27 +137,27 @@
 (use-package! google-translate
   :defer)
 
-(use-package! kurecolor
-  :init
-  ;; | color    | toggle                     | meaning      |
-  ;; |----------+----------------------------+--------------|
-  ;; | red      |                            | persist      |
-  ;; | blue     | :exit t                    | transient    |
-  ;; | amaranth | :foreign-keys warn         | persist w    |
-  ;; | teal     | :foreign-keys warn :exit t | transient w  |
-  ;; | pink     | :foreign-keys run          | nested       |
-  (defhydra +rgb@kurecolor (:color red :hint nil)
-    "
-Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
-    ("w" kurecolor-decrease-brightness-by-step)
-    ("W" kurecolor-increase-brightness-by-step)
-    ("d" kurecolor-decrease-saturation-by-step)
-    ("D" kurecolor-increase-saturation-by-step)
-    ("e" kurecolor-decrease-hue-by-step)
-    ("E" kurecolor-increase-hue-by-step)
-    ("q" nil "cancel" :color blue))
-  (advice-add #'+rgb@kurecolor/body :before (lambda (&rest _) (rainbow-mode +1)))
-  :defer)
+;; (use-package! kurecolor
+;;   :init
+;;   ;; | color    | toggle                     | meaning      |
+;;   ;; |----------+----------------------------+--------------|
+;;   ;; | red      |                            | persist      |
+;;   ;; | blue     | :exit t                    | transient    |
+;;   ;; | amaranth | :foreign-keys warn         | persist w    |
+;;   ;; | teal     | :foreign-keys warn :exit t | transient w  |
+;;   ;; | pink     | :foreign-keys run          | nested       |
+;;   (defhydra +rgb@kurecolor (:color red :hint nil)
+;;     "
+;; Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
+;;     ("w" kurecolor-decrease-brightness-by-step)
+;;     ("W" kurecolor-increase-brightness-by-step)
+;;     ("d" kurecolor-decrease-saturation-by-step)
+;;     ("D" kurecolor-increase-saturation-by-step)
+;;     ("e" kurecolor-decrease-hue-by-step)
+;;     ("E" kurecolor-increase-hue-by-step)
+;;     ("q" nil "cancel" :color blue))
+;;   (advice-add #'+rgb@kurecolor/body :before (lambda (&rest _) (rainbow-mode +1)))
+;;   :defer)
 
 (use-package! thrift-mode
   :config
@@ -211,7 +220,7 @@ Inc/Dec      _w_/_W_ brightness      _d_/_D_ saturation      _e_/_E_ hue    "
 
 (use-package! realign-mode
   :config
-  ;; (add-hook! 'realign-hooks #'recenter)
+  ;; (add-hook! 'realign-hooks #'centaur-tabs-display-update)
   (defun amos-special-window-p (window)
     (let* ((buffer (window-buffer window))
            (framename (frame-parameter (window-frame window) 'name))
@@ -551,7 +560,7 @@ This predicate is only tested on \"insert\" action."
       (ad-set-arg 1 (- (ad-get-arg 1) 2)))))
 
 (unless window-system
-  ;; TODO doesn't work yet. Might be related to tmux.
+  ;; NOTE: Not good
   ;; (use-package kkp
   ;;   :config
   ;;   ;; (setq kkp-alt-modifier 'alt) ;; use this if you want to map the Alt keyboard modifier to Alt in Emacs (and not to Meta)
@@ -1675,66 +1684,66 @@ representation of `NUMBER' is smaller."
    ("^\\*vc-diff" :select nil)
    ("^\\*vc-change" :select t))
 
-  '(("^\\*Warnings" :vslot 99 :size 0.25)
-    ("^\\*Backtrace" :vslot 99 :size 0.4 :quit nil)
-    ("^\\*CPU-Profiler-Report "    :side bottom :vslot 100 :slot 1 :height 0.4 :width 0.5 :quit nil)
-    ("^\\*Memory-Profiler-Report " :side bottom :vslot 100 :slot 2 :height 0.4 :width 0.5 :quit nil)
-    ("^\\*Process List\\*" :side bottom :vslot 101 :size 0.25 :select t :quit t)
-    ("^\\*\\(?:Proced\\|timer-list\\|Abbrevs\\|Output\\|Occur\\|unsent mail.*?\\|message\\)\\*" :ignore t))
+ '(("^\\*Warnings" :vslot 99 :size 0.25)
+   ("^\\*Backtrace" :vslot 99 :size 0.4 :quit nil)
+   ("^\\*CPU-Profiler-Report "    :side bottom :vslot 100 :slot 1 :height 0.4 :width 0.5 :quit nil)
+   ("^\\*Memory-Profiler-Report " :side bottom :vslot 100 :slot 2 :height 0.4 :width 0.5 :quit nil)
+   ("^\\*Process List\\*" :side bottom :vslot 101 :size 0.25 :select t :quit t)
+   ("^\\*\\(?:Proced\\|timer-list\\|Abbrevs\\|Output\\|Occur\\|unsent mail.*?\\|message\\)\\*" :ignore t))
 
-  '(("^\\*Org Links" :slot -1 :vslot -1 :size 2 :ttl 0)
-    ("^ ?\\*\\(?:Agenda Com\\|Calendar\\|Org Export Dispatcher\\)"
-     :slot -1 :vslot -1 :size #'+popup-shrink-to-fit :ttl 0)
-    ("^\\*Org \\(?:Select\\|Attach\\)" :slot -1 :vslot -2 :ttl 0 :size 0.25)
-    ("^\\*Org Agenda"     :ignore t)
-    ("^\\*Org Src"        :size 0.42  :quit nil :select t :autosave t :modeline t :ttl nil)
-    ("^\\*Org-Babel")
-    ("^\\*Capture\\*$\\|CAPTURE-.*$" :size 0.42 :quit nil :select t :autosave ignore))
+ '(("^\\*Org Links" :slot -1 :vslot -1 :size 2 :ttl 0)
+   ("^ ?\\*\\(?:Agenda Com\\|Calendar\\|Org Export Dispatcher\\)"
+    :slot -1 :vslot -1 :size #'+popup-shrink-to-fit :ttl 0)
+   ("^\\*Org \\(?:Select\\|Attach\\)" :slot -1 :vslot -2 :ttl 0 :size 0.25)
+   ("^\\*Org Agenda"     :ignore t)
+   ("^\\*Org Src"        :size 0.42  :quit nil :select t :autosave t :modeline t :ttl nil)
+   ("^\\*Org-Babel")
+   ("^\\*Capture\\*$\\|CAPTURE-.*$" :size 0.42 :quit nil :select t :autosave ignore))
 
-  '(("^ ?\\*Treemacs" :ignore t)
-    ("^\\*evil-registers" :size 0.3)
-    ("^\\*Command Line"   :size 8)
-    ("^\\*envrc\\*" :quit t :ttl 0)
-    ("^\\(?:\\*magit\\|magit:\\| \\*transient\\*\\)" :ignore t)
-    ("^\\*?[0-9]+:\\(?:new-\\|[0-9]+$\\)" :size 0.45 :modeline t :ttl 0 :quit nil)
-    ("^\\*\\(?:[^/]+/[^ ]+ #[0-9]+\\*$\\|Issues\\|Pull-Requests\\|forge\\)" :ignore t)
-    ("^\\*lsp-\\(help\\|install\\)" :size 0.35 :quit t :select t)
-    ((lambda (bufname _)
-       (when (boundp '+eval-repl-mode)
-         (buffer-local-value '+eval-repl-mode (get-buffer bufname))))
-     :ttl (lambda (buf)
-            (unless (plist-get +eval-repl-plist :persist)
-              (when-let (process (get-buffer-process buf))
-                (set-process-query-on-exit-flag process nil)
-                (kill-process process)
-                (kill-buffer buf))))
-     :size 0.25 :quit nil)
-    ("^\\*quickrun" :size 0.3 :ttl 0))
+ '(("^ ?\\*Treemacs" :ignore t)
+   ("^\\*evil-registers" :size 0.3)
+   ("^\\*Command Line"   :size 8)
+   ("^\\*envrc\\*" :quit t :ttl 0)
+   ("^\\(?:\\*magit\\|magit:\\| \\*transient\\*\\)" :ignore t)
+   ("^\\*?[0-9]+:\\(?:new-\\|[0-9]+$\\)" :size 0.45 :modeline t :ttl 0 :quit nil)
+   ("^\\*\\(?:[^/]+/[^ ]+ #[0-9]+\\*$\\|Issues\\|Pull-Requests\\|forge\\)" :ignore t)
+   ("^\\*lsp-\\(help\\|install\\)" :size 0.35 :quit t :select t)
+   ((lambda (bufname _)
+      (when (boundp '+eval-repl-mode)
+        (buffer-local-value '+eval-repl-mode (get-buffer bufname))))
+    :ttl (lambda (buf)
+           (unless (plist-get +eval-repl-plist :persist)
+             (when-let (process (get-buffer-process buf))
+               (set-process-query-on-exit-flag process nil)
+               (kill-process process)
+               (kill-buffer buf))))
+    :size 0.25 :quit nil)
+   ("^\\*quickrun" :size 0.3 :ttl 0))
 
-  '(("^\\*Completions" :slot -1 :vslot -2 :ttl kill-buffer)
-    ("^\\*Warning*" :actions (+popup-display-buffer-stacked-side-window-fn))
-    ("^\\*rmsbolt-output*" :side right :size 0.5 :ttl kill-buffer :select nil :quit t)
-    ("^\\*git-gutter*" :side right :size 0.5)
-    ("^\\*Flycheck" :side bottom :size 0.5 :select t :ttl kill-buffer :quit t)
-    ("^\\*compil\\(?:ation\\|e-Log\\)" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
-    ("^\\*temp\\*" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
-    ("^\\*\\(?:scratch\\|Messages\\)" :autosave t :ttl nil)
-    ("^\\*doom \\(?:term\\|eshell\\)" :size 0.25 :vslot -10 :select t :quit nil :ttl kill-buffer)
-    ("^\\*doom:" :vslot -20 :size 0.35 :autosave t :select t :modeline t :quit nil)
-    ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)" :size +popup-shrink-to-fit :side right :ttl kill-buffer :select ignore)
-    ("^\\*Customize" :ignore t)
-    ("^amos-compress-view" :ignore t)
-    ("^ \\*undo-tree\\*" :slot 2 :side left :size 20 :select t :ttl kill-buffer :quit t)
-    ;; `help-mode', `helpful-mode'
-    ("^\\*[Hh]elp" :side right :size 0.5 :ttl kill-buffer :select t)
-    ;; `Info-mode'
-    ("^\\*info\\*$" :slot 2 :vslot 2 :size 0.45 :ttl kill-buffer :select t)
-    ("\\*TeX" :side right :size 0.4 :ttl kill-buffer)
-    ("^\\*Embark Export" :side bottom :size 0.35 :quit current :ttl kill-buffer :select t)
-    ("^\\*Embark Collect" :side right :size 0.5 :quit current :ttl kill-buffer :select t)
-    ("\\[ Table \\]\\*" :side right :size 0.9 :select t :quit nil)
-    ("^\\*Backtrace" :side right :size 0.5 :quit current))
-  )
+ '(("^\\*Completions" :slot -1 :vslot -2 :ttl kill-buffer)
+   ("^\\*Warning*" :actions (+popup-display-buffer-stacked-side-window-fn))
+   ("^\\*rmsbolt-output*" :side right :size 0.5 :ttl kill-buffer :select nil :quit t)
+   ("^\\*git-gutter*" :side right :size 0.5)
+   ("^\\*Flycheck" :side bottom :size 0.5 :select t :ttl kill-buffer :quit t)
+   ("^\\*compil\\(?:ation\\|e-Log\\)" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
+   ("^\\*temp\\*" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
+   ("^\\*\\(?:scratch\\|Messages\\)" :autosave t :ttl nil)
+   ("^\\*doom \\(?:term\\|eshell\\)" :size 0.25 :vslot -10 :select t :quit nil :ttl kill-buffer)
+   ("^\\*doom:" :vslot -20 :size 0.35 :autosave t :select t :modeline t :quit nil)
+   ("^\\*\\(?:\\(?:Pp E\\|doom e\\)val\\)" :size +popup-shrink-to-fit :side right :ttl kill-buffer :select ignore)
+   ("^\\*Customize" :ignore t)
+   ("^amos-compress-view" :ignore t)
+   ("^ \\*undo-tree\\*" :slot 2 :side left :size 20 :select t :ttl kill-buffer :quit t)
+   ;; `help-mode', `helpful-mode'
+   ("^\\*[Hh]elp" :side right :size 0.5 :ttl kill-buffer :select t)
+   ;; `Info-mode'
+   ("^\\*info\\*$" :slot 2 :vslot 2 :size 0.45 :ttl kill-buffer :select t)
+   ("\\*TeX" :side right :size 0.4 :ttl kill-buffer)
+   ("^\\*Embark Export" :side bottom :size 0.35 :quit current :ttl kill-buffer :select t)
+   ("^\\*Embark Collect" :side right :size 0.5 :quit current :ttl kill-buffer :select t)
+   ("\\[ Table \\]\\*" :side right :size 0.9 :select t :quit nil)
+   ("^\\*Backtrace" :side right :size 0.5 :quit current))
+ )
 
 ;; This is a better version of +popup-display-buffer-fullframe-fn
 (defun +amos-popup-make-rule (predicate plist)
@@ -1946,7 +1955,8 @@ the current state and point position."
 
 (defun +amos/set-face ()
   (set-face-background 'vertical-border 'unspecified)
-  (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background nil :foreground nil))
+  (set-face-background 'mode-line (face-attribute 'vertical-border :foreground))
+  (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background 'unspecified :foreground 'unspecified))
 
 ;; vertical bar
 (add-hook! 'doom-load-theme-hook #'+amos/set-face)
@@ -2055,6 +2065,9 @@ the current state and point position."
         (concat dired-omit-files "\\|\\.directory$"))
   (add-hook! 'dired-mode-hook
     (let ((inhibit-message t))
+      (if (boundp 'tab-line-format)
+          (setq-local tab-line-format nil)
+        (setq-local header-line-format nil))
       (toggle-truncate-lines +1)
       ;; (dired-omit-mode) ;; .d folders are gone
       (+amos-store-jump-history))))
@@ -3046,6 +3059,13 @@ Return the pasted text as a string."
              frame))
          (frame-list)))
 
+(defun +amos*centaur-tabs-count (&rest _)
+  (let* ((pad (car (window-margins)))
+         (adjusted-pad (max 0 (- pad 5))))
+    (propertize (make-string adjusted-pad ? )
+                'face (list :background centaur-tabs-background-color))))
+;; (advice-add 'centaur-tabs-count :override #'+amos*centaur-tabs-count)
+
 (after! tex
   (setq-default TeX-master t)
   (setq-default TeX-command-extra-options "-shell-escape"))
@@ -3189,11 +3209,11 @@ Return the pasted text as a string."
          (split-len (length split))
          shrunk)
     (->> split
-      (--map-indexed (if (= it-index (1- split-len))
-                         it
-                       (shrink-path--truncate it)))
-      (s-join "/")
-      (setq shrunk))
+         (--map-indexed (if (= it-index (1- split-len))
+                            it
+                          (shrink-path--truncate it)))
+         (s-join "/")
+         (setq shrunk))
     (s-concat (unless (s-matches? (rx bos (or "~" "/")) shrunk) "/")
               shrunk
               (unless (s-ends-with? "/" shrunk) "/"))))
@@ -3318,18 +3338,18 @@ Return the pasted text as a string."
   (lexical-let ((cache (or cache +amos-git-timemachine--revisions-cache))
                 (file-name (or file-name +amos-git-timemachine-file))
                 (revision-log revision-log))
-    (defun +amos|ediff-startup-hook ()
-      (setq
-       +amos-git-timemachine--revisions-cache cache
-       +amos-git-timemachine-file file-name
-       +amos-git-timemachine-revision revision-log)
-      (remove-hook 'ediff-startup-hook #'+amos|ediff-startup-hook))
-    (add-hook 'ediff-startup-hook #'+amos|ediff-startup-hook)
-    (if (eq major-mode 'ediff-mode)
-        (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
-                  ((symbol-function 'yes-or-no-p) #'+amos*yes))
-          (ediff-quit nil)))
-    (magit-ediff-compare (car revision-log) nil file-name file-name)))
+               (defun +amos|ediff-startup-hook ()
+                 (setq
+                  +amos-git-timemachine--revisions-cache cache
+                  +amos-git-timemachine-file file-name
+                  +amos-git-timemachine-revision revision-log)
+                 (remove-hook 'ediff-startup-hook #'+amos|ediff-startup-hook))
+               (add-hook 'ediff-startup-hook #'+amos|ediff-startup-hook)
+               (if (eq major-mode 'ediff-mode)
+                   (cl-letf (((symbol-function 'y-or-n-p) #'+amos*yes)
+                             ((symbol-function 'yes-or-no-p) #'+amos*yes))
+                     (ediff-quit nil)))
+               (magit-ediff-compare (car revision-log) nil file-name file-name)))
 
 (defun +amos-git-timemachine--next-revision (revisions)
   (or (cadr (cl-member (car +amos-git-timemachine-revision) revisions :key #'car :test #'string=))
@@ -3705,28 +3725,29 @@ See `project-local-get' for the parameter PROJECT."
 (defun +amos-make-header ()
   "."
   (let* ((margin (car (window-margins)))
-         (padding (if margin (+ 4 margin) 0))
+         ;; (padding (if margin (+ 4 margin) 0))
+         (padding 4)
          (header (concat (make-string padding ?\ ) (abbreviate-file-name dired-directory)))
          (drop-str "[...]"))
     (if (> (length header)
            (window-body-width))
         (progn
           (concat (+amos-with-face drop-str
-                             :background "blue"
-                             :weight 'bold
-                             )
+                                   :background "blue"
+                                   :weight 'bold
+                                   )
                   (+amos-with-face (substring header
-                                        (+ (- (length header)
-                                              (window-body-width))
-                                           (length drop-str))
-                                        (length header))
-                             :foreground "#51AFEF"
-                             :weight 'bold
-                             )))
+                                              (+ (- (length header)
+                                                    (window-body-width))
+                                                 (length drop-str))
+                                              (length header))
+                                   :foreground "#51AFEF"
+                                   :weight 'bold
+                                   )))
       (concat (+amos-with-face header
-                         :foreground "#51AFEF"
-                         :weight 'bold
-                         )))))
+                               :foreground "#51AFEF"
+                               :weight 'bold
+                               )))))
 
 (defun +amos-display-header ()
   (when (memq major-mode '(dired-mode))
