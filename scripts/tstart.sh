@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 export LANG=en_US.UTF-8
-export SHELL=/tmp/gentoo/bin/fish # for tmux
+export SHELL=/tmp/gentoo/bin/fish # for tmux command
 export TERM=xterm-kitty
 # export TMPDIR=/tmp/gentoo/tmp
 export TMPDIR=/tmp

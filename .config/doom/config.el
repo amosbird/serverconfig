@@ -1955,7 +1955,6 @@ the current state and point position."
 
 (defun +amos/set-face ()
   (set-face-background 'vertical-border 'unspecified)
-  (set-face-background 'mode-line (face-attribute 'vertical-border :foreground))
   (set-face-attribute 'mode-line-inactive nil :inherit 'mode-line :background 'unspecified :foreground 'unspecified))
 
 ;; vertical bar
@@ -2065,9 +2064,7 @@ the current state and point position."
         (concat dired-omit-files "\\|\\.directory$"))
   (add-hook! 'dired-mode-hook
     (let ((inhibit-message t))
-      (if (boundp 'tab-line-format)
-          (setq-local tab-line-format nil)
-        (setq-local header-line-format nil))
+      (setq-local tab-line-format nil)
       (toggle-truncate-lines +1)
       ;; (dired-omit-mode) ;; .d folders are gone
       (+amos-store-jump-history))))

@@ -79,8 +79,8 @@
     (setq-default global-mode-line-format (list "%e" (doom-modeline 'amos)))
     ;; (setq mode-line-format (make-string 300 ?─))
     ;; (setq-default mode-line-format (make-string 300 ?─))
-    (setq mode-line-format (make-string 300 ? ))
-    (setq-default mode-line-format (make-string 300 ? ))
+    (setq mode-line-format '((:eval (+amos-modeline-horizontal-sep))))
+    (setq-default mode-line-format '((:eval (+amos-modeline-horizontal-sep))))
     ;; (setq mode-line-format (list "%e" (doom-modeline 'amos)))
     ;; (setq-default mode-line-format (list "%e" (doom-modeline 'amos)))
     )
@@ -91,6 +91,10 @@
   (advice-add #'window-font-height :override #'+amos-window-font-height-a)
   (setq after-focus-change-function #'ignore) ; it doens't make sense to update modeline
   )
+
+(defun +amos-modeline-horizontal-sep()
+  (let* ((width (window-pixel-width)))
+    (make-string width ?─)))
 
 (defun doom-modeline-format--amos ()
   (let ((lhs-forms (doom-modeline--prepare-segments

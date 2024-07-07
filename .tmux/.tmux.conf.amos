@@ -1,5 +1,4 @@
 #' -*- mode:conf -*-
-#'
 
 set -s history-limit 9999
 set -s set-titles off
