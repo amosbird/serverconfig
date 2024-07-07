@@ -2069,6 +2069,8 @@ the current state and point position."
       ;; (dired-omit-mode) ;; .d folders are gone
       (+amos-store-jump-history))))
 
+(add-hook! 'with-editor-mode-hook (setq-local tab-line-format nil))
+
 (define-advice dired-revert (:after (&rest _) +amos*dired-revert)
   "Call `recenter' after `dired-revert'."
   (with-demoted-errors "Errors: %S" (+amos/recenter)))
