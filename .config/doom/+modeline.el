@@ -77,13 +77,8 @@
 
   (defun +amos*doom-modeline-set-modeline (&rest _)
     (setq-default global-mode-line-format (list "%e" (doom-modeline 'amos)))
-    ;; (setq mode-line-format (make-string 300 ?─))
-    ;; (setq-default mode-line-format (make-string 300 ?─))
     (setq mode-line-format '((:eval (+amos-modeline-horizontal-sep))))
-    (setq-default mode-line-format '((:eval (+amos-modeline-horizontal-sep))))
-    ;; (setq mode-line-format (list "%e" (doom-modeline 'amos)))
-    ;; (setq-default mode-line-format (list "%e" (doom-modeline 'amos)))
-    )
+    (setq-default mode-line-format '((:eval (+amos-modeline-horizontal-sep)))))
   (advice-add #'doom-modeline-set-modeline :override #'+amos*doom-modeline-set-modeline)
 
   ;; ignore window-font-height which will call select-window which calls evil-set-curosr

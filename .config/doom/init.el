@@ -82,7 +82,8 @@
 
 ;; TODO cannot disable indicator or else it will be in front of the error
 ;; (setq flymake-indicator-type nil)
-(setq enable-dir-local-variables nil)
+;; (setq enable-dir-local-variables nil)
+(setq enable-local-variables :safe)
 (setq shift-select-mode nil)
 (setq +corfu-want-minibuffer-completion nil)
 (setq corfu-terminal-enable-on-minibuffer nil)

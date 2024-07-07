@@ -9,7 +9,7 @@
 (require 'dired-aux)
 (require 'cl-macs)
 
-(setq dired-listing-switches "-alh"
+(setq dired-listing-switches "-Alh"
       dired-recursive-deletes 'always)
 (add-to-list 'dired-compress-file-suffixes '("" "\\.zip\\'" "zip -r %o %i"))
 (push ".d" dired-omit-extensions)
