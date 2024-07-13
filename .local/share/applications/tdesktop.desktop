@@ -1,7 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Type=Application
-NoDisplay=true
-Exec=/home/amos/scripts/tdesktop-open %u
-Name=Telegram Desktop
-Comment=Telegram Desktop

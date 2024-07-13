@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 workspace=$(bspc query -D -d focused --names)
-if pgrep -f /opt/ioa/bin/iOALinux.bin &>/dev/null; then
+if pgrep -f /opt/ioa/bin/iOALinux &>/dev/null; then
     while read -r wid
     do
         xprop -id "$wid" | grep -E -q "window state: (Normal|Iconic)" && found=1 && break
@@ -31,5 +31,5 @@ if pgrep -f /opt/ioa/bin/iOALinux.bin &>/dev/null; then
 else
     rm /tmp/ioa
     # env FONTCONFIG_FILE=~/.config/tgfonts.conf
-    bash -c "/opt/ioa/bin/iOALinux &> /dev/null"
+    coproc _ (/opt/ioa/bin/iOALinux &> /dev/null)
 fi

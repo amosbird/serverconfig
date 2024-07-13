@@ -8,16 +8,17 @@
 
 # echo "$@" > /tmp/log
 
-bspc desktop --focus f
+if [ -z "$2" ]; then
+    qtile cmd-obj -o group f -f toscreen
+fi
 
-if [ "$DISPLAY" != "" ]
-then
+if [ "$DISPLAY" != "" ]; then
     xhost +
 fi
 
 N=$(realpath "$1" &>/dev/null)
 if [ -e "$N" ]; then
-	"$HOME"/scripts/vivaldi file://"$N" "$2"
+    "$HOME"/scripts/vivaldi file://"$N"
 else
-	"$HOME"/scripts/vivaldi "$@"
+    "$HOME"/scripts/vivaldi "$1"
 fi

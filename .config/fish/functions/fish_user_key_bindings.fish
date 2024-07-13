@@ -232,6 +232,8 @@ function fish_user_key_bindings
     bind \cq gdb-commandline
     bind \em ls-commandline
     bind \ci __fzf_complete
+    bind \ci __fzf_complete
+    bind ctrl-i __fzf_complete
     bind \eG open-magit
     bind \ep updir
     bind \en br

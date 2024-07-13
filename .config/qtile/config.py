@@ -3,11 +3,22 @@ import subprocess
 from threading import Lock
 
 from libqtile import hook, layout, qtile
-from libqtile.config import Drag, DropDown, Group, Key, Match, Rule, ScratchPad, Screen
+from libqtile.config import (
+    Drag,
+    DropDown,
+    Group,
+    Key,
+    Match,
+    MatchAny,
+    Rule,
+    ScratchPad,
+    Screen,
+)
 from libqtile.core.manager import Qtile
 from libqtile.backend.base import FloatStates
 from libqtile.lazy import lazy
 from libqtile.utils import send_notification
+from qtile_extras.layout.decorations import ConditionalBorderWidth
 
 
 mod3 = "mod3"
@@ -52,7 +63,7 @@ class Shell:
         screen = win.qtile.current_screen
         win.opacity = 0.95
         win._float_state = FloatStates.TOP
-        win.set_size_floating(int(screen.width / 2), int(screen.height))
+        win.set_size_floating(int(screen.width / 2), int(screen.height) - 10)
         win.toscreen()
         win.set_position_floating(int(x), int(y))
         win.bring_to_front()
@@ -160,10 +171,20 @@ def show_shell(qtile: Qtile):
     shell.show_shell()
 
 
+@lazy.function
+def open_rofi_browser(qtile: Qtile):
+    qtile.spawn("luakit ~/git/rofi-chrome/extension/run.html 1", shell=True)
+
+
 keys = [
     Key([mod3], "e", lazy.spawn("rofi -show emoji -modi emoji")),
-    Key([mod3], "a", lazy.spawn("kitty -T float /home/amos/git/work/scripts/insert-cluster.sh")),
+    Key(
+        [mod3],
+        "a",
+        lazy.spawn("kitty -T float /home/amos/git/work/scripts/insert-cluster.sh"),
+    ),
     Key([mod3], "c", lazy.spawn("roficalc")),
+    Key([mod3, shift], "c", lazy.spawn("colorinsert")),
     Key([mod3], "w", lazy.spawn("rofiurl")),
     Key([mod3], "f", lazy.spawn("copyq toggle")),
     Key([mod3], "0", lazy.spawn("sleep 0.1 && inputstr 0.0.0.0", shell=True)),
@@ -197,6 +218,7 @@ keys = [
     ),
     Key([mod3], "s", lazy.spawn("/home/amos/git/work/scripts/rofitsearch")),
     Key([mod3], "v", lazy.spawn("rofisound")),
+    Key([mod4, shift], "f", lazy.window.toggle_fullscreen()),
     Key([mod4], "f", lazy.window.toggle_floating()),
     Key([mod4], "z", lazy.spawn("lockscreen")),
     Key([ctrl, alt], "Eisu_toggle", lazy.spawn("toggleaudio")),
@@ -209,6 +231,13 @@ keys = [
     Key([ctrl, alt], "9", lazy.group["scratchpad"].dropdown_toggle("stardict")),
     Key([ctrl, alt], "0", lazy.group["scratchpad"].dropdown_toggle("tdesktop")),
     Key([ctrl, alt], "minus", lazy.group["scratchpad"].dropdown_toggle("discord")),
+    Key(
+        [ctrl, alt],
+        "t",
+        open_rofi_browser.when(
+            func=lambda: not "Vivaldi-stable" in qtile.current_window.get_wm_class()
+        ),
+    ),
     Key([ctrl, alt], "p", lazy.spawn("showpopup.sh")),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),
     Key([ctrl, alt], "b", lazy.spawn("scanqrcode")),
@@ -233,7 +262,6 @@ keys = [
     Key([ctrl, alt], "k", lazy.layout.previous()),
     # Key([ctrl, alt], "Tab", focus_previous_window()),
     Key([mod4], "w", lazy.next_layout()),
-    Key([mod4], "f", lazy.window.toggle_fullscreen()),
 ]
 
 mouse = [
@@ -254,7 +282,7 @@ groups = [
         [
             DropDown(
                 "ioa",
-                "/opt/ioa/bin/iOALinux.bin",
+                "/opt/ioa/bin/iOALinux",
                 x=0.26,
                 y=0.224,
                 opacity=1,
@@ -268,7 +296,7 @@ groups = [
                 y=0.1,
                 width=0.7,
                 height=0.8,
-                opacity=0.99,
+                opacity=1,
                 on_focus_lost_hide=False,
             ),
             DropDown(
@@ -279,18 +307,18 @@ groups = [
                 y=0.1,
                 width=0.7,
                 height=0.8,
-                opacity=0.99,
+                opacity=1,
                 on_focus_lost_hide=False,
             ),
             DropDown(
                 "chatgpt",
-                "chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk --proxy-server=100.110.32.130:8888 https://chatgpt.com/",
+                "chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk --proxy-server=100.110.32.130:8888 https://chatgpt.com/ https://claude.ai/",
                 match=Match(wm_class="chatgpt"),
                 x=0.1,
                 y=0.1,
                 width=0.8,
                 height=0.85,
-                opacity=0.99,
+                opacity=1,
                 on_focus_lost_hide=False,
             ),
             DropDown(
@@ -383,12 +411,12 @@ def before_window_created(client):
     # doesn't work
 
 
-@hook.subscribe.client_managed
-def after_window_created(client):
-    if "xfreerdp" in client.get_wm_class():
-        client.disable_floating()
-    elif "mpv" in client.get_wm_class():
-        client.disable_floating()
+# @hook.subscribe.client_managed
+# def after_window_created(client):
+#     if "xfreerdp" in client.get_wm_class():
+#         client.disable_floating()
+#     elif "mpv" in client.get_wm_class():
+#         client.disable_floating()
 
 
 # @hook.subscribe.layout_change
@@ -406,6 +434,9 @@ previous_focused = []
 
 @hook.subscribe.client_focus
 def client_focused(window):
+    if "urxvt_scratchpad" == window.name:
+        window.border_width = 0
+
     global previous_focused
     if len(previous_focused) < 2:
         previous_focused.append(window)
@@ -425,14 +456,39 @@ def focus_previous_window(qtile: Qtile):
         group.focus(previous_focused[0])
 
 
+# @hook.subscribe.focus_change
+# def focus_changed():
+#     window = qtile.current_window
+#     # send_notification("qtile", f"Focus changed.")
+#     if "urxvt_scratchpad" == window.name:
+#         window.border_width = 0
+#         send_notification("qtile", "Focus changed.")
+
+
+# @hook.subscribe.group_window_add
+# def group_window_add(group, window):
+#     if "urxvt_scratchpad" == window.name:
+#         window.border_width = 0
+#         send_notification("qtile", f"Window {window.name} added to {group.name}")
+
+
 follow_mouse_focus = False
 bring_front_click = "floating_only"
 floats_kept_above = True
 cursor_warp = False
 floating_layout = layout.Floating(
-    border_width=0,
+    border_width=8,
+    # border_width=ConditionalBorderWidth(
+    #     default=8, matches=[(Match(title="urxvt_scratchpad"), 0)]
+    # ),
+    # border_focus="#1D1F21",
+    # border_normal="#1D1F21",
+    border_focus="#FFB300",
+    border_normal="#FFB300",
     float_rules=[
-        *layout.Floating.default_float_rules,
+        MatchAny(*layout.Floating.default_float_rules)
+        & ~Match(wm_class="xfreerdp")
+        & ~Match(wm_class="mpv"),
         Match(wm_class="copyq"),
         Match(wm_class="discord"),
         Match(wm_class="TelegramDesktop"),
@@ -440,7 +496,20 @@ floating_layout = layout.Floating(
     ],
 )
 auto_fullscreen = False
-focus_on_window_activation = "focus"
+focus_on_window_activation = "urgent"
+
+
+@hook.subscribe.client_urgent_hint_changed
+def client_urgency_change(client):
+    if "discord" in client.get_wm_class():
+        discord = qtile.groups_map["scratchpad"].dropdowns["discord"]
+        win = discord.window
+        win._float_state = FloatStates.TOP
+        win.togroup()
+        win.bring_to_front()
+        discord.shown = True
+
+
 reconfigure_screens = True
 
 # If things like steam games want to auto-minimize themselves when losing

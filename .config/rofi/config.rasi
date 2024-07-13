@@ -51,7 +51,7 @@ configuration {
 	kb-remove-word-back: "Alt+BackSpace,Control+w";
 	kb-remove-word-forward: "Alt+d";
 	kb-remove-char-forward: "Delete,Control+d";
-	kb-remove-char-back: "BackSpace,Control+h";
+	kb-remove-char-back: "BackSpace,Control+h,Shift+BackSpace";
 	kb-remove-to-eol: "Control+o";
 	kb-remove-to-sol: "Control+u";
 
@@ -60,7 +60,7 @@ configuration {
 
 	// Accept the input string as is
 	// ROFI_RETV = 2
-	kb-accept-custom: "Shift+Return";
+	kb-accept-custom: "Control+Return";
 
 	kb-accept-alt: "Alt+Return";
 	kb-delete-entry: "Shift+Delete";
@@ -68,8 +68,10 @@ configuration {
 	kb-mode-previous: "Shift+Left,Control+ISO_Left_Tab";
 	kb-row-left: "Control+Page_Up";
 	kb-row-right: "Control+Page_Down";
-	kb-row-up: "Control+k,Up";
-	kb-row-down: "Control+j,Down";
+	kb-row-up: "Control+k,Up,Control+Up";
+	kb-row-down: "Control+j,Down,Control+Down";
+	kb-entry-history-up: "Control+p";
+	kb-entry-history-down: "Control+n";
 	kb-page-prev: "Alt+v,Page_Up";
 	kb-page-next: "Control+v,Page_Down";
 	kb-row-first: "Home,KP_Home";

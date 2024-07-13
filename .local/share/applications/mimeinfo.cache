@@ -120,3 +120,4 @@ video/x-ogm+ogg=mympv.desktop;
 video/x-theora=mympv.desktop;
 video/x-theora+ogg=mympv.desktop;
 x-scheme-handler/jetbrains=jetbrains-toolbox.desktop;
+x-scheme-handler/tg=org.telegram.desktop.desktop;

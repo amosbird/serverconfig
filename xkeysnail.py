@@ -74,38 +74,6 @@ define_keymap(
 
 # Emacs-like keybindings in non-Emacs applications
 define_keymap(
-    re.compile("Wine"),
-    {
-        # Cursor
-        K("C-b"): with_mark(K("left")),
-        K("C-f"): with_mark(K("right")),
-        K("C-k"): with_mark(K("up")),
-        K("C-j"): with_mark(K("down")),
-        K("C-h"): with_mark(K("backspace")),
-        K("LM-b"): with_mark(K("RC-left")),
-        K("LM-f"): with_mark(K("RC-right")),
-        K("C-a"): with_mark(K("home")),
-        K("C-e"): with_mark(K("end")),
-        K("LM-v"): with_mark(K("page_up")),
-        K("C-v"): with_mark(K("page_down")),
-        K("C-o"): [K("LShift-end"), K("delete"), set_mark(False)],
-        K("C-u"): [K("LShift-home"), K("backspace"), set_mark(False)],
-        K("C-i"): K("tab"),
-        K("C-d"): [K("delete"), set_mark(False)],
-        K("LM-d"): [K("RC-delete"), set_mark(False)],
-        K("C-space"): set_mark(True),
-        K("C-g"): [K("esc"), set_mark(False)],
-        K("LM-backspace"): K("RC-backspace"),
-        K("LM-d"): K("RC-delete"),
-        # wine wechat IME breaks this
-        # K("LM-j"): [K("end"), K("enter")],
-        K("C-s"): [K("RC-f"), set_mark(False)],
-    },
-    "Wechat Emacs-like keys",
-)
-
-# Emacs-like keybindings in non-Emacs applications
-define_keymap(
     re.compile("TelegramDesktop"),
     {
         # Cursor
@@ -126,9 +94,8 @@ define_keymap(
         K("C-d"): [K("delete"), set_mark(False)],
         K("LM-d"): [K("RC-delete"), set_mark(False)],
         K("LM-backspace"): K("RC-backspace"),
-        K("LM-d"): K("RC-delete"),
-        K("LC-comma"): K("RC-page_up"),
-        K("LC-dot"): K("RC-page_down"),
+        K("LC-key_9"): K("RC-page_up"),
+        K("LC-key_0"): K("RC-page_down"),
         K("LM-o"): K("RC-o"),
         K("C-s"): [K("RC-f"), set_mark(False)],
         K("LM-j"): [K("end"), K("LShift-slash"), K("enter"), set_mark(False)],
@@ -138,40 +105,12 @@ define_keymap(
 
 # Emacs-like keybindings in non-Emacs applications
 define_keymap(
-    re.compile("Kim"),
-    {
-        # Cursor
-        K("C-b"): with_mark(K("left")),
-        K("C-f"): with_mark(K("right")),
-        K("C-k"): with_mark(K("up")),
-        K("C-j"): with_mark(K("down")),
-        K("C-h"): with_mark(K("backspace")),
-        K("LM-b"): with_mark(K("RC-left")),
-        K("LM-f"): with_mark(K("RC-right")),
-        K("C-a"): with_mark(K("home")),
-        K("C-e"): with_mark(K("end")),
-        K("C-o"): [K("LShift-end"), K("delete"), set_mark(False)],
-        K("C-u"): [K("LShift-home"), K("backspace"), set_mark(False)],
-        K("C-i"): K("tab"),
-        K("C-d"): [K("delete"), set_mark(False)],
-        K("LM-d"): [K("RC-delete"), set_mark(False)],
-        K("LM-backspace"): K("RC-backspace"),
-        K("LM-d"): K("RC-delete"),
-        K("LC-comma"): K("RC-page_up"),
-        K("LC-dot"): K("RC-page_down"),
-        K("LM-o"): K("RC-o"),
-        K("C-s"): [K("RC-k"), set_mark(False)],
-    },
-    "Kim Emacs-like keys",
-)
-
-# Emacs-like keybindings in non-Emacs applications
-define_keymap(
     re.compile("Vivaldi-stable"),
     {
         # Cursor
         K("C-k"): with_mark(K("up")),
         K("C-j"): with_mark(K("down")),
+        K("C-LM-t"): K("LM-t"),
         K("C-key_0"): K("LM-F12"),
         K("C-key_9"): K("LM-F11"),
     },

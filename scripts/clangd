@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 
-export TMPDIR=$TMPDIR/clangd
-mkdir -p $TMPDIR/clangd
-if [ -z "$CLANGD" ]; then
+export TMPDIR=/tmp/clangd
+mkdir -p $TMPDIR
+if [ -n "$GUI" ]; then
+    exec /usr/bin/clangd "$@"
+elif [ -z "$CLANGD" ]; then
     exec $HOME/toolchain/bin/clangd "$@"
 else
     exec $CLANGD "$@"
