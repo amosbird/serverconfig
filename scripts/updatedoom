@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-
-doom clean
-doom -y upgrade -f
-doom -y compile

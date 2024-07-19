@@ -9,7 +9,9 @@
 (require 'dired-aux)
 (require 'cl-macs)
 
-(setq dired-listing-switches "-Alh"
+; The -A option removes './..', which is not ideal. We need to determine if it
+; appears at the top of the buffer, as this indicates the top directory."
+(setq dired-listing-switches "-alh"
       dired-recursive-deletes 'always)
 (add-to-list 'dired-compress-file-suffixes '("" "\\.zip\\'" "zip -r %o %i"))
 (push ".d" dired-omit-extensions)

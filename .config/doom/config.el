@@ -1,5 +1,7 @@
 ;;; private/amos/config.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
+(load! "treecrumbs")
+
 (load! "+bindings")
 (load! "+lsp")
 (load! "+alias")
@@ -13,6 +15,16 @@
 ;; (setq tmux-p (getenv "TMUX"))
 (setq tmux-p nil)
 (setq gui-p (getenv "GUI"))
+
+(advice-add #'breadcrumb-project-crumbs :override #'ignore)
+
+(add-to-list 'consult-preview-allowed-hooks 'global-hl-line-mode-check-buffers)
+(add-to-list 'consult-preview-allowed-hooks 'treecrumbs-mode)
+;; (add-to-list 'consult-preview-allowed-hooks 'breadcrumb-local-mode)
+
+;; (add-to-list 'consult-preview-allowed-hooks 'global-treesit-auto-mode-check-buffers)
+
+;; (setq consult-preview-variables (assq-delete-all 'delay-mode-hooks consult-preview-variables))
 
 (minibuffer-depth-indicate-mode +1)
 (setq resize-mini-windows 'grow-only)
@@ -220,7 +232,6 @@
 
 (use-package! realign-mode
   :config
-  ;; (add-hook! 'realign-hooks #'centaur-tabs-display-update)
   (defun amos-special-window-p (window)
     (let* ((buffer (window-buffer window))
            (framename (frame-parameter (window-frame window) 'name))
@@ -3057,13 +3068,6 @@ Return the pasted text as a string."
            (when (equal fname (frame-parameter frame 'name))
              frame))
          (frame-list)))
-
-(defun +amos*centaur-tabs-count (&rest _)
-  (let* ((pad (car (window-margins)))
-         (adjusted-pad (max 0 (- pad 5))))
-    (propertize (make-string adjusted-pad ? )
-                'face (list :background centaur-tabs-background-color))))
-;; (advice-add 'centaur-tabs-count :override #'+amos*centaur-tabs-count)
 
 (after! tex
   (setq-default TeX-master t)

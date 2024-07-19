@@ -14,7 +14,7 @@
        hl-todo
        nav-flash
        popup
-       tabs
+       ;; tabs
        ;; (treemacs +lsp)
 
        :editor

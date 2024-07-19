@@ -1,4 +1,6 @@
 (setq lsp-enable-file-watchers nil)
+(setq lsp-enable-imenu nil)
+(setq lsp-ui-imenu-enable nil)
 (setq lsp-ui-doc-enable nil)
 (setq lsp-enable-symbol-highlighting nil)
 (setq lsp-enable-on-type-formatting nil)
@@ -11,6 +13,9 @@
 
 (add-hook! prog-mode #'flymake-mode)
 (add-hook! prog-mode #'flymake-popon-mode)
+
+(add-hook! prog-mode #'treecrumbs-mode)
+;; (add-hook! prog-mode #'breadcrumb-local-mode)
 (after! lsp-mode
   (setq lsp-diagnostics-provider :flymake))
 
