@@ -930,6 +930,13 @@ This function should be hooked to `buffer-list-update-hook'."
 
 (add-hook! 'after-save-hook #'executable-make-buffer-file-executable-if-script-p)
 
+(defun +amos*reload-envrc ()
+  "Update all buffers using the same .envrc directory when .envrc is saved."
+  (when (and buffer-file-name
+             (string-equal (file-name-nondirectory buffer-file-name) ".envrc"))
+    (envrc-reload)))
+(add-hook! 'after-save-hook #'+amos*reload-envrc)
+
 (defun +amos*evil-transient-mark (&optional arg)
   "Toggle Transient Mark mode.
 Ensure that the region is properly deactivated.
@@ -3607,11 +3614,12 @@ See `project-local-get' for the parameter PROJECT."
 (use-package! rmsbolt
   :defer
   :config
-  (advice-add #'rmsbolt-compile :before (lambda (&rest _) (save-buffer-maybe)))
-  (add-hook! 'rmsbolt-mode-hook
-    (setq-local rmsbolt-command
-                (string-trim-right
-                 (shell-command-to-string (format "get-compile-command.sh %s" (projectile-project-root)))))))
+  (advice-add #'rmsbolt-compile :before
+              (lambda (&rest _)
+                (save-buffer-maybe)
+                (setq-local rmsbolt-command
+                            (string-trim-right
+                             (shell-command-to-string (format "get-compile-command.sh %s" (projectile-project-root))))))))
 
 (use-package! centered-cursor-mode
   :defer)

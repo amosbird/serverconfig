@@ -7,11 +7,11 @@ Output :
 
 case "$1" in
 debug)
-    tmux switch-client -t amos
+    kitten @ --to unix:/tmp/kitty_sock focus-window --match id:1
     tmux run -t amos "fish -c 'tmuxgdb deb'"
     ;;
 debug_test)
-    tmux switch-client -t amos
+    kitten @ --to unix:/tmp/kitty_sock focus-window --match id:1
     tmux run -t amos "fish -c 'tmuxgdb deb_test'"
     ;;
 bench)

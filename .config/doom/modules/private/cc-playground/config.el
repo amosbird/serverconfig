@@ -228,9 +228,7 @@ By default confirmation required."
                   (newline)
                   (insert (concat "export LEETCODE_ID=" id))
                   (let ((inhibit-message t))
-                    (save-buffer))
-                  ;; (direnv-update-environment)
-                  )))
+                    (save-buffer)))))
             (find-file snippet-file-name)
             (make-symbolic-link "snippet.cpp" (concat id ".cpp"))
             (forward-line 8)
@@ -319,19 +317,18 @@ By default confirmation required."
   (when (cc-playground-inside)
     (if (memq flag (list ?0 ?1 ?2 ?3 ?g))
         (let ((buffer (find-file-noselect (cc-playground--direnv-get-rcfile)))
-              (flags (format "-O%c \\" flag)))
+              (flags (format "-O%c" flag)))
           (with-current-buffer buffer
             (save-excursion
               (goto-char (point-min))
               (re-search-forward "export ccls_cxx_flags=" nil 'stop-at-the-end 1)
               (end-of-line)
-              (if (re-search-forward "^-O.* \\\\$" nil t)
+              (if (re-search-forward "^-O.*" nil t)
                   (replace-match (regexp-quote flags) nil nil)
                 (newline)
                 (insert flags))
               (let ((inhibit-message t))
                 (save-buffer))
-              ;; (direnv-update-environment)
               (message "using optimization flag %c" flag))))
       (user-error (format "unknow optimization flag %c. known flags: 0, 1, 2, 3, g." flag)))))
 
@@ -349,9 +346,7 @@ By default confirmation required."
           (newline)
           (insert flags)
           (let ((inhibit-message t))
-            (save-buffer))
-          ;; (direnv-update-environment)
-          )))))
+            (save-buffer)))))))
 
 (defun cc-playground-change-compiler ()
   "Change the compiler."
