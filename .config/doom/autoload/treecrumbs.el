@@ -107,19 +107,28 @@ The defined languages are stored in `treecrumbs-languages'."
               (bare_key)]))
   ("array" . "[]"))
 
+;; Use treesit-inspect-node-at-point to debug
 (define-treecrumbs-language cpp
   ;; In C++ files, crumbs are generated from namespaces and
   ;; identifier declarations.
   ("namespace_definition" . ([(namespace_definition
                                name: (namespace_identifier) @key)
                               (namespace_definition
+                               name: (nested_namespace_specifier (namespace_identifier)) @key)
+                              (namespace_definition
                                "namespace" @key
                                !name)]))
 
   ("function_definition" . ((function_definition
                              declarator:
-                             (function_declarator
-                              declarator: (_) @key))))
+                             [
+                              (function_declarator declarator: (_) @key)
+                              (reference_declarator
+                               (function_declarator declarator: (_) @key))
+                              (pointer_declarator
+                               (function_declarator declarator: (_) @key))
+                              ]
+                             )))
 
   ("class_specifier" . ((class_specifier
                          name: (type_identifier) @key)))
@@ -127,11 +136,12 @@ The defined languages are stored in `treecrumbs-languages'."
   ("struct_specifier" . ((struct_specifier
                           name: (type_identifier) @key)))
 
-  ("field_declaration" . ((field_declaration
-                           declarator: (_) @key)))
+  ;; ("field_declaration" . ((field_declaration
+  ;;                          declarator: (_) @key)))
 
-  ("init_declarator" . ((init_declarator
-                         declarator: (_) @key))))
+  ;; ("init_declarator" . ((init_declarator
+  ;;                        declarator: (_) @key)))
+  )
 
 (defvar-local treecrumbs--current-crumbs nil
   "Current crumbs to display in the header line. Only updated when
@@ -151,16 +161,13 @@ is undefined, it directly updates the buffer-local
      node
      (lambda (parent)
        (when-let ((query (cdr (assoc (treesit-node-type parent) lang))))
-
          (setq-local treecrumbs--current-crumbs
                      (concat treecrumbs--current-crumbs
-                             (if (string-empty-p treecrumbs--current-crumbs) ""
-                               " < ")
-
+                             (if (string-empty-p treecrumbs--current-crumbs) "" " < ")
                              (if (stringp query)
                                  query
                                (substring-no-properties
-                                (treesit-node-text (cdar (treesit-query-capture parent query))))))))
+                                (or (treesit-node-text (cdar (treesit-query-capture parent query))) "???"))))))
        t))))
 
 

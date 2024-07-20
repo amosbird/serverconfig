@@ -99,7 +99,7 @@
   :defer)
 
 (add-hook! (c-mode c++-mode c-ts-base-mode) #'lsp)
-;; (add-hook! (c-mode c++-mode) #'eglot-ensure)
+;; (add-hook! (c-mode c++-mode c-ts-base-mode) #'eglot-ensure)
 (after! lsp-clangd (set-lsp-priority! 'clangd 2))
 (setq lsp-clients-clangd-args `(
                                 "--log=error"
@@ -131,6 +131,7 @@
                     "--log=error"
                     "--malloc-trim"
                     "--background-index"
+                    "-j=8"
                     "--clang-tidy"
                     "--completion-style=detailed"
                     "--pch-storage=memory"

@@ -1,7 +1,5 @@
 ;;; private/amos/config.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
-(load! "treecrumbs")
-
 (load! "+bindings")
 (load! "+lsp")
 (load! "+alias")
@@ -80,6 +78,14 @@
 ;;   :bind (:map copilot-completion-map
 ;;               ("<tab>" . 'copilot-accept-completion)
 ;;               ("C-<tab>" . 'copilot-accept-completion-by-word)))
+
+(use-package lsp-booster
+  :after lsp)
+
+(use-package eglot-booster
+  :after eglot
+  :config
+  (eglot-booster-mode))
 
 (use-package! treesit-auto
   :config
