@@ -18,7 +18,7 @@ from libqtile.core.manager import Qtile
 from libqtile.backend.base import FloatStates
 from libqtile.lazy import lazy
 from libqtile.utils import send_notification
-from qtile_extras.layout.decorations import ConditionalBorderWidth
+from libqtile.configurable import Configurable
 
 
 mod3 = "mod3"
@@ -63,7 +63,7 @@ class Shell:
         screen = win.qtile.current_screen
         win.opacity = 0.95
         win._float_state = FloatStates.TOP
-        win.set_size_floating(int(screen.width / 2), int(screen.height) - 10)
+        win.set_size_floating(int(screen.width / 2), int(screen.height))
         win.toscreen()
         win.set_position_floating(int(x), int(y))
         win.bring_to_front()
@@ -171,11 +171,6 @@ def show_shell(qtile: Qtile):
     shell.show_shell()
 
 
-@lazy.function
-def open_rofi_browser(qtile: Qtile):
-    qtile.spawn("luakit ~/git/rofi-chrome/extension/run.html 1", shell=True)
-
-
 keys = [
     Key([mod3], "e", lazy.spawn("rofi -show emoji -modi emoji")),
     Key(
@@ -234,9 +229,7 @@ keys = [
     Key(
         [ctrl, alt],
         "t",
-        open_rofi_browser.when(
-            func=lambda: not "Vivaldi-stable" in qtile.current_window.get_wm_class()
-        ),
+        lazy.spawn("luakit ~/git/rofi-chrome/extension/run.html 1", shell=True),
     ),
     Key([ctrl, alt], "p", lazy.spawn("showpopup.sh")),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),
@@ -312,7 +305,7 @@ groups = [
             ),
             DropDown(
                 "chatgpt",
-                "chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk --proxy-server=100.110.32.130:8888 https://chatgpt.com/ https://claude.ai/",
+                "chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk --proxy-server=socks://100.110.32.130:1080 https://chatgpt.com/ https://claude.ai/",
                 match=Match(wm_class="chatgpt"),
                 x=0.1,
                 y=0.1,
@@ -424,8 +417,113 @@ def before_window_created(client):
 #     send_notification("qtile", f"{layout.name} is now on group {group.name}")
 
 
+class ConditionalBorderWidth(Configurable):
+    """
+    A class that allows finer control as to which border width is applied to which window.
+
+    To configure the border width, you need to provide two parameters:
+
+      * ``matches``: a list of tuples of (Match rules, border width)
+      * ``default``: border width to apply if no matches
+
+    Matches are applied in order and will return a border width as soon as a rule matches.
+
+    It can be used in place of the integer border width layout when defining layouts in your
+    config. For example:
+
+    .. code:: python
+
+        from qtile_extras.layout.decorations import ConditionalBorderWidth
+
+        layouts = [
+            layout.Columns(
+                border_focus_stack=["#d75f5f", "#8f3d3d"],
+                border_width=ConditionalBorderWidth(
+                    default=2,
+                    matches=[(Match(wm_class="vlc"), 0)])
+            ),
+            ...
+        ]
+
+    The above code will default to a border width of 2 but will apply a border width of zero
+    for VLC windows.
+
+    """
+
+    defaults = [
+        ("default", 0, "Default border width value if no rule is matched"),
+        (
+            "matches",
+            [],
+            "List of rules to apply border widths. See docs for more details.",
+        ),
+    ]
+
+    def __init__(self, **config):
+        Configurable.__init__(self, **config)
+        self.add_defaults(ConditionalBorderWidth.defaults)
+
+    def get_border_for_window(self, win):
+        for rule, value in self.matches:
+            if rule.compare(win):
+                return value
+        return self.default
+
+    # Layouts size windows by subtracting the border width so we
+    # need to allow the multiplication to work on the custom class
+    # The size will be fixed with the injected window.place code.
+    def __mul__(self, other):
+        return other * self.default
+
+    __rmul__ = __mul__
+
+
+def new_place(
+    self,
+    x,
+    y,
+    width,
+    height,
+    borderwidth,
+    bordercolor,
+    above=False,
+    margin=None,
+    respect_hints=False,
+):
+    if isinstance(borderwidth, ConditionalBorderWidth):
+        old = getattr(self, "_old_bw", borderwidth.default)
+        newborder = borderwidth.get_border_for_window(self)
+        if newborder != old:
+            width += old * 2
+            width -= newborder * 2
+            height += old * 2
+            height -= newborder * 2
+    else:
+        newborder = borderwidth
+
+    self._old_bw = newborder
+
+    self._place(
+        x,
+        y,
+        width,
+        height,
+        newborder,
+        bordercolor,
+        above=above,
+        margin=margin,
+        respect_hints=respect_hints,
+    )
+
+
 @hook.subscribe.startup_once
 def startup():
+    from libqtile.backend.x11.window import _Window
+
+    _Window._place = _Window.place
+    _Window.place = new_place
+
+    # qtile.debug()
     subprocess.Popen("startup")
 
 
@@ -477,10 +575,10 @@ bring_front_click = "floating_only"
 floats_kept_above = True
 cursor_warp = False
 floating_layout = layout.Floating(
-    border_width=8,
-    # border_width=ConditionalBorderWidth(
-    #     default=8, matches=[(Match(title="urxvt_scratchpad"), 0)]
-    # ),
+    # border_width=0,
+    border_width=ConditionalBorderWidth(
+        default=8, matches=[(Match(title="urxvt_scratchpad"), 0)]
+    ),
     # border_focus="#1D1F21",
     # border_normal="#1D1F21",
     border_focus="#FFB300",
@@ -499,15 +597,15 @@ auto_fullscreen = False
 focus_on_window_activation = "urgent"
 
 
-@hook.subscribe.client_urgent_hint_changed
-def client_urgency_change(client):
-    if "discord" in client.get_wm_class():
-        discord = qtile.groups_map["scratchpad"].dropdowns["discord"]
-        win = discord.window
-        win._float_state = FloatStates.TOP
-        win.togroup()
-        win.bring_to_front()
-        discord.shown = True
+# @hook.subscribe.client_urgent_hint_changed
+# def client_urgency_change(client):
+#     if "discord" in client.get_wm_class():
+#         discord = qtile.groups_map["scratchpad"].dropdowns["discord"]
+#         win = discord.window
+#         win._float_state = FloatStates.TOP
+#         win.togroup()
+#         win.bring_to_front()
+#         discord.shown = True
 
 
 reconfigure_screens = True
