@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 
+ # -theme-str "window { location: west; anchor: north;}"
+# G_MESSAGES_DEBUG=IMDKit LD_PRELOAD=/home/amos/git/xcb-imdkit/build/src/libxcb-imdkit.so /home/amos/git/rofi/build/rofi -levenshtein-sort -show run >>/tmp/rofi.log 2>&1
 rofi -levenshtein-sort -show run >>/tmp/rofi.log 2>&1
