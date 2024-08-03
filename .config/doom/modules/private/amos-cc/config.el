@@ -4,6 +4,14 @@
   "Fallback major mode for .h files if all other heuristics fail (in
 `+cc-c-c++-objc-mode').")
 
+(defun +amos/format-region-or-buffer ()
+  "Format the selected region, or whole buffer if nothing is selected."
+  (interactive)
+  (call-interactively
+   (if (doom-region-active-p)
+       #'clang-format-region
+     #'clang-format-buffer)))
+
 (use-package! cc-mode
   :mode ("\\.mm\\'" . objc-mode)
   :init
@@ -53,6 +61,7 @@
          :i ";"        #'+amos/better-semicolon
          :n "C-e"      #'+amos/maybe-add-end-of-statement
          :n "M-v"      #'+amos/lsp-ui-imenu
+         :nv "S-<f11>" #'+amos/format-region-or-buffer ;; terminal
          :n "ge"       #'lsp-execute-code-action
          :n "M-o"      #'lsp-ui-sideline-mode))
   (sp-with-modes '(c++-mode objc-mode c-ts-base-mode)

@@ -1,5 +1,6 @@
 (setq lsp-enable-file-watchers nil)
 (setq lsp-enable-imenu nil)
+(setq lsp-eldoc-enable-hover nil)
 (setq lsp-ui-imenu-enable nil)
 (setq lsp-ui-doc-enable nil)
 (setq lsp-enable-symbol-highlighting nil)
@@ -10,6 +11,8 @@
 (setq lsp-enable-indentation nil)
 ;; TODO remember to disable it, maybe notify on modeline
 ;; (setq lsp-log-io t)
+
+(advice-add #'flymake-eldoc-function :override #'ignore)
 
 (add-hook! prog-mode #'flymake-mode)
 (add-hook! prog-mode #'flymake-popon-mode)
@@ -54,6 +57,12 @@
 
 (after! python
   (add-hook! python-ts-mode #'lsp))
+
+(after! java-ts-mode
+  (add-hook! java-ts-mode #'lsp))
+
+(setq lsp-java-vmargs
+      '("-XX:+UseParallelGC" "-XX:GCTimeRatio=4" "-XX:AdaptiveSizePolicyWeight=90" "-Dsun.zip.disableMemoryMapping=true" "-Xmx4G" "-Xms1G"))
 
 ;; (setq lsp-response-timeout 5)
 ;; (setq lsp-signature-render-all nil)

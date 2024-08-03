@@ -143,6 +143,11 @@ The defined languages are stored in `treecrumbs-languages'."
   ;;                        declarator: (_) @key)))
   )
 
+;; Use treesit-inspect-node-at-point to debug
+(define-treecrumbs-language java
+  ("class_declaration" . ((class_declaration name: (identifier) @key)))
+  ("method_declaration" . ((method_declaration name: (identifier) @key))))
+
 (defvar-local treecrumbs--current-crumbs nil
   "Current crumbs to display in the header line. Only updated when
 the node under point changes.")

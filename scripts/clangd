@@ -2,10 +2,39 @@
 
 export TMPDIR=/tmp/clangd
 mkdir -p $TMPDIR
-if [ -n "$GUI" ]; then
-    exec /usr/bin/clangd "$@"
-elif [ -z "$CLANGD" ]; then
-    exec $HOME/toolchain/bin/clangd "$@"
-else
+
+if [ -n "$CLANGD" ]; then
     exec $CLANGD "$@"
 fi
+
+file1="compile_commands.json"
+file2="build/compile_commands.json"
+
+if [ -f "$file1" ]; then
+    compile_commands_file="$file1"
+elif [ -f "$file2" ]; then
+    compile_commands_file="$file2"
+fi
+
+if [ -f "$compile_commands_file" ]; then
+
+    command=$(jq --raw-output '.[0].command' "$compile_commands_file")
+    executable=$(echo "$command" | sed -E 's|([^ ]*/)[^ ]+.*|\1clangd|')
+    if [ -x "$executable" ]; then
+        exec "$executable" "$@"
+    fi
+fi
+
+exclude_dir=$(dirname "$0")
+original_path="$PATH"
+filtered_path=$(echo "$original_path" | tr ':' '\n' | grep -v "^$exclude_dir\$" | tr '\n' ':' | sed 's/:$//')
+export PATH="$filtered_path"
+
+clangd_path=$(command -v clangd)
+
+if [ -z "$clangd_path" ]; then
+    echo "clangd not found in PATH."
+    exit 1
+fi
+
+exec clangd "$@"
