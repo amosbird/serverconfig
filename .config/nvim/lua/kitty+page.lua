@@ -51,6 +51,10 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
       vim.fn.setreg('/', query)
     end
     query = vim.fn.getreg('/')
+    if query == '' then
+      vim.o.tabline = ' No search '
+      return
+    end
 
     local searchcount = vim.fn.searchcount({recompute = true})
     local total_matches = searchcount.total
@@ -62,6 +66,11 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
       vim.o.tabline = ' Search: ' .. query .. ' | No matches '
     end
   end
+
+  vim.fn.setreg('/', '')
+  vim.opt.hlsearch = true
+  vim.opt.ignorecase = true
+  vim.opt.smartcase = true
 
   vim.cmd([[
     augroup UpdateTablineOnSearch
@@ -88,7 +97,6 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
     vim.api.nvim_feedkeys(tostring(CURSOR_COLUMN - 1) .. [[l]], 'n', true)
     vim.cmd('highlight MsgArea guibg=#00346E')
     vim.cmd('highlight TabLineFill guibg=#00346E')
-    vim.o.tabline = ' No search pattern '
 
     if (SEARCH == 1) then
       -- require('searchbox').incsearch()
@@ -126,9 +134,5 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
                                 end
   })
 
-  -- vim.opt.incsearch = true
-  vim.opt.hlsearch = true
-  vim.opt.ignorecase = true
-  vim.opt.smartcase = true
   vim.defer_fn(setCursor, 10)
 end
