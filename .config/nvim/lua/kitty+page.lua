@@ -45,7 +45,37 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
     end
   end
 
-  require('hlslens').setup()
+  function UpdateTabline()
+    local query = vim.fn.getcmdline()
+    if query ~= '' then
+      vim.fn.setreg('/', query)
+    end
+    query = vim.fn.getreg('/')
+
+    local searchcount = vim.fn.searchcount({recompute = true})
+    local total_matches = searchcount.total
+    local current_match = searchcount.current
+
+    if total_matches > 0 then
+      vim.o.tabline = ' Search: ' .. query .. ' | Match ' .. current_match .. ' of ' .. total_matches .. ' '
+    else
+      vim.o.tabline = ' Search: ' .. query .. ' | No matches '
+    end
+  end
+
+  vim.cmd([[
+    augroup UpdateTablineOnSearch
+      autocmd!
+      autocmd CmdlineChanged * lua UpdateTabline()
+      autocmd CursorMoved * lua UpdateTabline()
+      autocmd CursorMovedI * lua UpdateTabline()
+      autocmd InsertEnter * lua UpdateTabline()
+    augroup END
+  ]])
+
+  vim.o.showtabline = 2
+
+  UpdateTabline()
 
   local setCursor = function()
     vim.api.nvim_feedkeys(tostring(INPUT_LINE_NUMBER) .. [[ggzt]], 'n', true)
@@ -57,6 +87,8 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
     vim.api.nvim_feedkeys([[0]], 'n', true)
     vim.api.nvim_feedkeys(tostring(CURSOR_COLUMN - 1) .. [[l]], 'n', true)
     vim.cmd('highlight MsgArea guibg=#00346E')
+    vim.cmd('highlight TabLineFill guibg=#00346E')
+    vim.o.tabline = ' No search pattern '
 
     if (SEARCH == 1) then
       -- require('searchbox').incsearch()
@@ -94,10 +126,9 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
                                 end
   })
 
-  vim.opt.incsearch = true
+  -- vim.opt.incsearch = true
   vim.opt.hlsearch = true
   vim.opt.ignorecase = true
   vim.opt.smartcase = true
-
   vim.defer_fn(setCursor, 10)
 end
