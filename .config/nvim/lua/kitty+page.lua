@@ -26,6 +26,7 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
   end
   local term_buf = vim.api.nvim_create_buf(true, false);
   local term_io = vim.api.nvim_open_term(term_buf, {})
+  vim.api.nvim_buf_set_keymap(term_buf, 'v', '<ESC>', 'y<Cmd>q<CR>', { })
   vim.api.nvim_buf_set_keymap(term_buf, 'n', '<ESC>', '<Cmd>q<CR>', { })
   vim.api.nvim_buf_set_keymap(term_buf, 'n', 'u', '<C-u>', { noremap = true })
   vim.api.nvim_buf_set_keymap(term_buf, 'n', 'd', '<C-d>', { noremap = true })
@@ -36,14 +37,6 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
   -- vim.api.nvim_buf_set_keymap(term_buf, 'n', '<ESC>', '<Cmd>q<CR>', { })
   -- vim.api.nvim_buf_set_keymap(term_buf, 'n', '<ESC>', '<Cmd>q<CR>', { })
   local group = vim.api.nvim_create_augroup('kitty+page', {})
-
-  local searchBackwardWithPrompt = function()
-    local prompt = 'Search backward: '
-    local search_term = vim.fn.input(prompt)
-    if search_term ~= '' then
-        vim.cmd('?' .. search_term)
-    end
-  end
 
   function UpdateTabline()
     local query = vim.fn.getcmdline()
@@ -99,8 +92,6 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
     vim.cmd('highlight TabLineFill guibg=#00346E')
 
     if (SEARCH == 1) then
-      -- require('searchbox').incsearch()
-      -- searchBackwardWithPrompt()
       vim.api.nvim_feedkeys('?', 'n', true)
     end
   end
