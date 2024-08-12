@@ -2,5 +2,5 @@
 
 qtile cmd-obj -o group 2 -f toscreen
 if ! pgrep wemeetapp &>/dev/null; then
-    bash -c "/opt/wemeet/wemeetapp.sh &> /dev/null"
+    bash -c "wemeet &> /dev/null"
 fi
