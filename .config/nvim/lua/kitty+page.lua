@@ -42,6 +42,9 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
   local term_buf = vim.api.nvim_create_buf(true, false);
   local term_io = vim.api.nvim_open_term(term_buf, {})
 
+  -- vim.api.nvim_buf_set_keymap(term_buf, 'v', '<ESC>',
+  --                             "<Esc>'<0v'>g_y<Cmd>lua vim.defer_fn(function() vim.cmd('quit') end, 10)<CR>",
+  --                             { noremap = true })
   vim.api.nvim_buf_set_keymap(term_buf, 'v', '<ESC>', 'y<Cmd>lua vim.defer_fn(function() vim.cmd("quit") end, 10)<CR>', { noremap = true })
   vim.api.nvim_buf_set_keymap(term_buf, 'n', '<ESC>', '<Cmd>q<CR>', { noremap = true })
   vim.keymap.set('n', '<M-u>', function() pcall(vim.cmd, 'normal! n') end,
@@ -51,6 +54,16 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
   vim.keymap.set('n', 'n', function() pcall(vim.cmd, 'normal! n') end,
                  { buffer = term_buf, noremap = true, silent = true })
   vim.keymap.set('n', 'N', function() pcall(vim.cmd, 'normal! N') end,
+  vim.keymap.set('v', '<M-u>', function()
+                   -- Set the search pattern to the selected text
+                   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('k?❯<CR>', true, false, true), 'n', true)
+                   -- Perform the search forward within the visual selection
+                   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('n', true, false, true), 'x', false)
+  end, { buffer = term_buf, noremap = true, silent = true })
+
+  -- vim.keymap.set('v', '<M-u>', function() pcall(vim.cmd, 'normal! n') end,
+  --                { buffer = term_buf, noremap = true, silent = true })
+  vim.keymap.set('v', '<M-n>', function() pcall(vim.cmd, 'normal! N') end,
                  { buffer = term_buf, noremap = true, silent = true })
 
   -- local function search_next_from_cmdline()
@@ -66,6 +79,9 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
   vim.api.nvim_buf_set_keymap(term_buf, 'n', 'u', '<C-u>', { noremap = true })
   vim.api.nvim_buf_set_keymap(term_buf, 'n', 'd', '<C-d>', { noremap = true })
   vim.api.nvim_buf_set_keymap(term_buf, 'n', 'g', 'gg', { noremap = true, nowait = true })
+  vim.api.nvim_buf_set_keymap(term_buf, 'v', 'u', '<C-u>', { noremap = true })
+  vim.api.nvim_buf_set_keymap(term_buf, 'v', 'd', '<C-d>', { noremap = true })
+  vim.api.nvim_buf_set_keymap(term_buf, 'v', 'g', 'gg', { noremap = true, nowait = true })
 
   local group = vim.api.nvim_create_augroup('kitty+page', {})
 

@@ -18,7 +18,7 @@ xset b off
 picom -b
 unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 
-sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &
+sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &> /tmp/xkeysnail.log &
 
 export GUI=t
 export XAPIAN_CJK_NGRAM=1
