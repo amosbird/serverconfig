@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+exec nvim -u NONE -R -M -c "lua require('kitty+page')($1, $2, $3, $4)" -

@@ -307,7 +307,7 @@ groups = [
             ),
             DropDown(
                 "chatgpt",
-                "chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk --proxy-server=socks://100.110.32.130:1080 https://chatgpt.com/ https://claude.ai/",
+                "runai",
                 match=Match(wm_class="chatgpt"),
                 x=0.1,
                 y=0.1,
@@ -354,6 +354,7 @@ dgroups_app_rules = [
     Rule(Match(wm_class="kitty", title="local"), group="e"),
     Rule(Match(wm_class="kitty", title="remote"), group="i"),
     Rule(Match(wm_class="kitty", title="weechat"), group="c"),
+    Rule(Match(wm_class="wemeetapp"), group="2"),
     Rule(Match(wm_class="xfreerdp"), group="w"),
     Rule(
         Match(wm_class=re.compile("^[Vv]ivaldi.*")),

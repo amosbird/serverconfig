@@ -48,6 +48,10 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
                  { buffer = term_buf, noremap = true, silent = true })
   vim.keymap.set('n', '<M-n>', function() pcall(vim.cmd, 'normal! N') end,
                  { buffer = term_buf, noremap = true, silent = true })
+  vim.keymap.set('n', 'n', function() pcall(vim.cmd, 'normal! n') end,
+                 { buffer = term_buf, noremap = true, silent = true })
+  vim.keymap.set('n', 'N', function() pcall(vim.cmd, 'normal! N') end,
+                 { buffer = term_buf, noremap = true, silent = true })
 
   -- local function search_next_from_cmdline()
   --   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<C-c>', true, true, true), 'n', true)
