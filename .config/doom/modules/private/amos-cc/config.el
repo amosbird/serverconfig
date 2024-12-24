@@ -249,8 +249,7 @@ Only works with clangd."
 ;; (defface tree-sitter-hl-face:attribute
 
 
-;; TODO figure out why I disabled it
-;; (add-hook! (c-mode c++-mode) (electric-indent-local-mode -1))
+(add-hook! (c-ts-base-mode) (electric-indent-local-mode +1))
 
 (defun +amos/add-include (h &rest others)
   "Add an #include line for `h' near top of file, avoiding duplicates."
@@ -364,11 +363,111 @@ Only works with clangd."
     ((query "(do_statement body: (_) @indent)") parent-bol 0)
 
     ((parent-is "switch_statement") standalone-parent c-ts-mode-indent-offset)
-    ,@(alist-get 'gnu (c-ts-mode--indent-styles 'cpp))
+    ,@(alist-get 'cpp treesit-simple-indent-rules)
     ))
 
+
+;; TODO: Figure out how to extend this properly
+(defun +amos*c-ts-mode--simple-indent-rules (mode style)
+  "Return the indent rules for MODE and STYLE.
+
+The returned value can be set to `treesit-simple-indent-rules'.
+MODE can be `c' or `cpp'.  STYLE can be `gnu', `k&r', `linux', `bsd'."
+  (let ((rules
+         `((c-ts-mode--for-each-tail-body-matcher
+            prev-line c-ts-mode-indent-offset)
+
+           ((top-level-namespace) parent-bol 0)
+           ((query "(for_statement body: (compound_statement \"{\") @indent)") parent-bol 0)
+           ((query "(for_range_loop (compound_statement \"{\") @indent)") parent-bol 0)
+           ((query "(if_statement consequence: (compound_statement \"{\") @indent)") parent-bol 0)
+           ((query "(else_clause (compound_statement \"{\") @indent)") parent-bol 0)
+           ((query "(else_clause (_) @indent)") parent-bol 4)
+           ((parent-is "else_statement") parent-bol 4)
+           ((query "(while_statement body: (compound_statement \"{\") @indent)") parent-bol 0)
+
+           ;; TODO switch, do, case
+
+           ((query "(switch_statement body: (_) @indent)") parent-bol 0)
+
+           ((query "(case_statement (compound_statement _) @indent)") parent-bol 0)
+           ((query "(do_statement body: (_) @indent)") parent-bol 0)
+
+           ((parent-is "switch_statement") standalone-parent c-ts-mode-indent-offset)
+
+           ;; Misc overrides.
+           ((parent-is "translation_unit") column-0 0)
+           ((node-is ,(rx (or "else" "case"))) standalone-parent 0)
+           ;; Align the while keyword to the do keyword.
+           ((match "while" "do_statement") parent 0)
+           c-ts-mode--parenthesized-expression-indent-rule
+           ;; Thanks to tree-sitter-c's weird for-loop grammar, we can't
+           ;; use the baseline indent rule for it.
+           c-ts-mode--for-loop-indent-rule
+           c-ts-mode--label-indent-rules
+           ,@c-ts-mode--preproc-indent-rules
+           c-ts-mode--macro-heuristic-rules
+
+           ;; Make sure type and function definition components align and
+           ;; don't indent. Also takes care of GNU style opening braces.
+           ((parent-is ,(rx (or "function_definition"
+                                "struct_specifier"
+                                "enum_specifier"
+                                "function_declarator"
+                                "template_declaration")))
+            parent 0)
+           ;; This is for the trailing-star stype:  int *
+           ;;                                       func()
+           ((match "function_declarator" nil "declarator") parent-bol 0)
+           ;; ((match nil "function_definition" "declarator") parent 0)
+           ;; ((match nil "struct_specifier" "name") parent 0)
+           ;; ((match nil "function_declarator" "parameters") parent 0)
+           ;; ((parent-is "template_declaration") parent 0)
+
+           ;; `c-ts-common-looking-at-star' has to come before
+           ;; `c-ts-common-comment-2nd-line-matcher'.
+           ;; FIXME: consolidate into a single rule.
+           ((and (parent-is "comment") c-ts-common-looking-at-star)
+            c-ts-common-comment-start-after-first-star -1)
+           (c-ts-common-comment-2nd-line-matcher
+            c-ts-common-comment-2nd-line-anchor
+            1)
+           ((parent-is "comment") prev-adaptive-prefix 0)
+
+           ;; Preproc directives
+           ((node-is "preproc_arg") no-indent)
+           ((node-is "preproc") column-0 0)
+           ((node-is "#endif") column-0 0)
+
+           ;; C++
+           ((node-is "access_specifier") parent-bol 0)
+           ((prev-line-is "access_specifier")
+            parent-bol c-ts-mode-indent-offset)
+
+           c-ts-common-baseline-indent-rule)))
+    (setq rules
+          (pcase style
+            ('gnu rules)
+            ('k&r rules)
+            ('linux
+             ;; Reference:
+             ;; https://www.kernel.org/doc/html/latest/process/coding-style.html,
+             ;; and script/Lindent in Linux kernel repository.
+             `(((node-is "labeled_statement") column-0 0)
+               ,@rules))
+            ('bsd
+             `(((match "compound_statement" "compound_statement")
+                standalone-parent c-ts-mode-indent-offset)
+               ((node-is "compound_statement") standalone-parent 0)
+               ,@rules))))
+    (pcase mode
+      ('c `((c . ,rules)))
+      ('cpp `((cpp . ,rules))))))
+
+(advice-add #'c-ts-mode--simple-indent-rules :override #'+amos*c-ts-mode--simple-indent-rules)
+
 (setq c-ts-mode-indent-offset 4
-      c-ts-mode-indent-style #'+amos-indent-style
+      ;; c-ts-mode-indent-style #'+amos-indent-style
       treesit-font-lock-level 4)
 
 (add-hook! (c-mode-common c-ts-base-mode)
