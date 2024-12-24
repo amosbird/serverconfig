@@ -246,6 +246,8 @@ consult-location to occur-edit."
 (setq consult-buffer-sources '(consult--source-hidden-buffer consult--source-modified-buffer consult--source-buffer))
 
 (after! consult
+  ; TODO lookups doesn't work after emacs 30
+  (setq consult-preview-key "C-i")
   (consult-customize
    consult-buffer
    consult-ripgrep

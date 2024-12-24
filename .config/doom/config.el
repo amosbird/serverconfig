@@ -61,15 +61,6 @@
     (apply orig-fun args)))
 (advice-add 'flymake-diagnostics :around #'+amos-flymake-diagnostics-a)
 
-(defun +amos-get-buffer-create-a (orig-fun &rest args)
-  ;; (trace-values args)
-  (message "%s" (prin1 orig-fun))
-  (message "%s" (prin1 args))
-  (apply orig-fun args)
-  )
-(advice-add #'get-buffer-create :around #'+amos-get-buffer-create-a)
-(advice-remove #'get-buffer-create #'+amos-get-buffer-create-a)
-
 ;; (use-package! copilot
 ;;   :hook (prog-mode . copilot-mode)
 ;;   :init
@@ -243,6 +234,7 @@
            (framename (frame-parameter (window-frame window) 'name))
            (buffname (string-trim (buffer-name buffer))))
       (or (equal buffname "*doom*")
+          (frame-parent (window-frame window))
           (with-current-buffer buffer server-visit-file)
           (equal buffname "*flycheck-posframe-buffer*")
           (equal buffname "*Ediff Control Panel*")
@@ -1683,8 +1675,20 @@ representation of `NUMBER' is smaller."
         (reusable-frames . nil)))
 (map-put +popup-default-parameters 'modeline t)
 
+
 (fset '+amos-set-popup-rules! (symbol-function 'set-popup-rules!))
 (advice-remove '+amos-set-popup-rules! #'ignore)
+
+(defun +amos-get-buffer-create-a (orig-fun &rest args)
+  ;; (trace-values args)
+  (message "%s" (prin1 orig-fun))
+  (message "%s" (prin1 args))
+  (apply orig-fun args)
+  )
+(advice-add #'get-buffer-create :around #'+amos-get-buffer-create-a)
+(advice-remove #'get-buffer-create #'+amos-get-buffer-create-a)
+(advice-add #'display-buffer :around #'+amos-get-buffer-create-a)
+(advice-remove #'display-buffer #'+amos-get-buffer-create-a)
 
 (+amos-set-popup-rules!
 
@@ -2043,7 +2047,6 @@ the current state and point position."
 
 (defun +amos-workspace-switch-to-frame (frame)
   (let ((oframe (selected-frame)))
-    (make-frame-invisible oframe t)
     (select-frame frame)
     (raise-frame frame)
     (+amos/reset-cursor)
@@ -3774,6 +3777,36 @@ See `project-local-get' for the parameter PROJECT."
 
 (add-hook! 'buffer-list-update-hook #'+amos-display-header)
 
+(defun +amos/restclient-http-send-current (&optional raw stay-in-window suppress-response-buffer)
+  (interactive)
+  (save-excursion
+    (goto-char (restclient-current-min))
+    (when (re-search-forward restclient-method-url-regexp (point-max) t)
+      (let ((method (match-string-no-properties 1))
+            (url (concat "http://127.0.0.1:9200" (string-trim (match-string-no-properties 2))))
+            (vars (restclient-find-vars-before-point))
+            (headers '()))
+        (forward-line)
+        (while (cond
+                ((looking-at restclient-response-hook-regexp)
+                 (when-let (hook-function (restclient-parse-hook (match-string-no-properties 2)
+                                                                 (match-end 2)
+                                                                 (match-string-no-properties 3)))
+                   (push hook-function restclient-curr-request-functions)))
+                ((and (looking-at restclient-header-regexp) (not (looking-at restclient-empty-line-regexp)))
+                 (setq headers (cons (restclient-replace-all-in-header vars (restclient-make-header)) headers)))
+                ((looking-at restclient-use-var-regexp)
+                 (setq headers (append headers (restclient-parse-headers (restclient-replace-all-in-string vars (match-string 1)))))))
+          (forward-line))
+        (when (looking-at restclient-empty-line-regexp)
+          (forward-line))
+        (when restclient-curr-request-functions
+          (add-hook 'restclient-response-loaded-hook 'restclient-single-request-function))
+        (let* ((cmax (restclient-current-max))
+               (entity (restclient-parse-body (buffer-substring (min (point) cmax) cmax) vars))
+               (url (restclient-replace-all-in-string vars url)))
+          (restclient-http-do method url headers entity raw stay-in-window suppress-response-buffer))))))
+
 ;; should be at last
 (+amos-ignore-repeat
  "+amos/align"
@@ -3875,3 +3908,21 @@ See `project-local-get' for the parameter PROJECT."
 
 (load! "+consult")
 (load! "+modeline")
+(load! "+protobuf-mode")
+(require 'protobuf-mode)
+
+(use-package c++-ts-mode
+  :mode (("\\.cpp\\'" . c++-ts-mode)
+         ("\\.cxx\\'" . c++-ts-mode)
+         ("\\.cc\\'" . c++-ts-mode)
+         ("\\.ixx\\'" . c++-ts-mode)
+         ("\\.cppm\\'" . c++-ts-mode)
+         ("\\.cxxm\\'" . c++-ts-mode)
+         ("\\.hpp\\'" . c++-ts-mode)
+         ("\\.hxx\\'" . c++-ts-mode)
+         ("\\.h\\'" . c++-ts-mode)))
+
+(defun +amos*evil-refresh-cursor (orig-fn &rest args)
+  (unless (frame-parent (selected-frame))
+    (apply orig-fn args)))
+(advice-add #'evil-refresh-cursor :around #'+amos*evil-refresh-cursor)

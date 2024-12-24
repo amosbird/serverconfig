@@ -241,6 +241,8 @@ set history filename ~/.gdb_history
 set history save on
 set history remove-duplicates 5000
 
+set print thread-events off
+handle SIGSEGV noprint nostop
 handle SIGUSR1 noprint nostop ignore
 handle SIGUSR2 noprint nostop ignore
 # handle SIGTSTP noprint nostop pass

@@ -514,6 +514,9 @@
         :gn "-"        #'negative-argument
         :gn "="        #'edebug-temp-display-freq-count)
 
+      (:map restclient-mode-map
+        :g "C-c C-c"   #'+amos/restclient-http-send-current)
+
       (:map emacs-lisp-mode-map
         :i "M-o"       #'lisp-state-toggle-lisp-state)
 

@@ -75,10 +75,15 @@
   (defvar +amos--hostname (propertize (concat "  " +amos-system-name " ") 'face '(:weight bold :foreground "#51afef")))
   (doom-modeline-def-segment host (let () +amos--hostname))
 
+  ;; (defun +amos*doom-modeline-set-modeline (&rest _)
+  ;;   (setq-default global-mode-line-format (list "%e" (doom-modeline 'amos)))
+  ;;   (setq mode-line-format '((:eval (+amos-modeline-horizontal-sep))))
+  ;;   (setq-default mode-line-format '((:eval (+amos-modeline-horizontal-sep)))))
+  ;; (advice-add #'doom-modeline-set-modeline :override #'+amos*doom-modeline-set-modeline)
+
   (defun +amos*doom-modeline-set-modeline (&rest _)
-    (setq-default global-mode-line-format (list "%e" (doom-modeline 'amos)))
-    (setq mode-line-format '((:eval (+amos-modeline-horizontal-sep))))
-    (setq-default mode-line-format '((:eval (+amos-modeline-horizontal-sep)))))
+    (setq mode-line-format (list "%e" (doom-modeline 'amos)))
+    (setq-default mode-line-format (list "%e" (doom-modeline 'amos))))
   (advice-add #'doom-modeline-set-modeline :override #'+amos*doom-modeline-set-modeline)
 
   ;; ignore window-font-height which will call select-window which calls evil-set-curosr
@@ -91,6 +96,10 @@
   (let* ((width (window-pixel-width)))
     (make-string width ?─)))
 
+(defun +amos-string-pixel-width (str)
+  "Return the width of STR in pixels."
+  (* (string-width str) (window-font-width nil 'mode-line)))
+
 (defun doom-modeline-format--amos ()
   (let ((lhs-forms (doom-modeline--prepare-segments
                     '(
@@ -102,7 +111,7 @@
                       )))
         (rhs-forms (doom-modeline--prepare-segments
                     '(;; keycast
-                      host
+                      ;; host
                       lsp
                       indent-info buffer-encoding major-mode process vcs check time
                       ))))
@@ -113,15 +122,15 @@
                  (lhs-width (progn
                               (add-face-text-property
                                0 lhs-len 'mode-line t lhs-str)
-                              (doom-modeline-string-pixel-width lhs-str)))
+                              (+amos-string-pixel-width lhs-str)))
                  (rhs-str (format-mode-line (cons "" rhs-forms)  nil nil (current-buffer)))
                  (rhs-len (length rhs-str))
                  (rhs-width (progn
                               (add-face-text-property
                                0 rhs-len 'mode-line t rhs-str)
-                              (doom-modeline-string-pixel-width rhs-str)))
+                              (+amos-string-pixel-width rhs-str)))
                  )
-            (propertize (make-string (- (frame-pixel-width) -5 lhs-width rhs-width) ?-)
+            (propertize (make-string (- (frame-pixel-width) lhs-width rhs-width) ?-)
                         'face `(:foreground ,(face-background 'mode-line))))
           rhs-forms
           ))

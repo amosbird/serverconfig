@@ -1,13 +1,17 @@
 function __fish_clickhouse_get_stateless_query_tests
-    find $CLICKHOUSE_STATELESS_QUERY_TESTS_DIR \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.expect' \) -type f -printf '%f\n'
+    find $CLICKHOUSE_STATELESS_QUERY_TESTS_DIR \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.http' -o -iname '*.expect' \) -type f -printf '%f\n'
 end
 
 function __fish_clickhouse_get_stateful_query_tests
-    find $CLICKHOUSE_STATEFUL_QUERY_TESTS_DIR \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.expect' \) -type f -printf '%f\n'
+    find $CLICKHOUSE_STATEFUL_QUERY_TESTS_DIR \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.http' -o -iname '*.expect' \) -type f -printf '%f\n'
 end
 
 function __fish_clickhouse_get_performance_tests
     find $CLICKHOUSE_PERF_TESTS_DIR \( -iname '*.xml' \) -type f -printf '%f\n'
+end
+
+function __fish_clickhouse_get_integration_tests
+    find $CLICKHOUSE_TESTS_INTEGRATION_PATH \( -iname 'test_*' \) -type d -printf '%f\n'
 end
 
 function __fish_netctl_get_profiles
@@ -41,6 +45,7 @@ complete -f -c tq -a '(__fish_clickhouse_get_stateless_query_tests)'
 complete -f -c ts -a '(__fish_clickhouse_get_stateful_query_tests)'
 complete -f -c tp -a '(__fish_clickhouse_get_performance_tests)'
 complete -f -c tp1 -a '(__fish_clickhouse_get_performance_tests)'
+complete -f -c ti -a '(__fish_clickhouse_get_integration_tests)'
 
 complete -x -c tmuxgdb -s p -a '(__fish_complete_user_pids)'
 complete -x -c strace -s p -a '(__fish_complete_user_pids)'

@@ -15,6 +15,7 @@
                    solaire-mode
                    stripe-buffer
                    vi-tilde-fringe
+                   kkp
                    emacs-snippets)
 
 ;; (unpin! format-all)
@@ -92,3 +93,6 @@
 
 ;; This is temporarily necessary due to an unrelated bug.
 (unpin! gitignore-mode gitconfig-mode gitattributes-mode evil-terminal-cursor-changer)
+
+(unpin! corfu cape)
+(disable-packages! corfu-terminal)

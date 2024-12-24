@@ -339,6 +339,7 @@
 (setq next-error-recenter '(4))
 (setq consult-ripgrep-args "rg --null --line-buffered --color=never --max-columns=1000 --path-separator / --smart-case --no-heading --with-filename --line-number")
 (setq initial-major-mode 'text-mode)
+(setq ispell-alternate-dictionary "/tmp/gentoo/usr/share/dict/words")
 
 (after! core-keybinds
   (add-to-list 'doom-evil-state-alist '(?s . sticky))
