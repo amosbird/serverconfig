@@ -462,8 +462,8 @@ MODE can be `c' or `cpp'.  STYLE can be `gnu', `k&r', `linux', `bsd'."
     (pcase mode
       ('c `((c . ,rules)))
       ('cpp `((cpp .
-               `(((query "(for_range_loop (compound_statement \"{\") @indent)") parent-bol 0)
-                 ,@rules)
+               (((query "(for_range_loop (compound_statement \"{\") @indent)") parent-bol 0)
+                ,@rules)
                ))))))
 
 (advice-add #'c-ts-mode--simple-indent-rules :override #'+amos*c-ts-mode--simple-indent-rules)
