@@ -95,4 +95,5 @@
 (unpin! gitignore-mode gitconfig-mode gitattributes-mode evil-terminal-cursor-changer)
 
 (unpin! corfu cape)
+;; TODO: it doesn't work in multiple frames
 (disable-packages! corfu-terminal)

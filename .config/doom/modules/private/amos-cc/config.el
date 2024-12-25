@@ -379,7 +379,6 @@ MODE can be `c' or `cpp'.  STYLE can be `gnu', `k&r', `linux', `bsd'."
 
            ((top-level-namespace) parent-bol 0)
            ((query "(for_statement body: (compound_statement \"{\") @indent)") parent-bol 0)
-           ((query "(for_range_loop (compound_statement \"{\") @indent)") parent-bol 0)
            ((query "(if_statement consequence: (compound_statement \"{\") @indent)") parent-bol 0)
            ((query "(else_clause (compound_statement \"{\") @indent)") parent-bol 0)
            ((query "(else_clause (_) @indent)") parent-bol 4)
@@ -462,7 +461,10 @@ MODE can be `c' or `cpp'.  STYLE can be `gnu', `k&r', `linux', `bsd'."
                ,@rules))))
     (pcase mode
       ('c `((c . ,rules)))
-      ('cpp `((cpp . ,rules))))))
+      ('cpp `((cpp .
+               `(((query "(for_range_loop (compound_statement \"{\") @indent)") parent-bol 0)
+                 ,@rules)
+               ))))))
 
 (advice-add #'c-ts-mode--simple-indent-rules :override #'+amos*c-ts-mode--simple-indent-rules)
 
