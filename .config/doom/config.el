@@ -3926,3 +3926,6 @@ See `project-local-get' for the parameter PROJECT."
   (unless (frame-parent (selected-frame))
     (apply orig-fn args)))
 (advice-add #'evil-refresh-cursor :around #'+amos*evil-refresh-cursor)
+
+; TODO: corfu-auto somehow breaks Chinese input
+(add-hook 'text-mode-hook (lambda () (setq-local corfu-auto nil)))
