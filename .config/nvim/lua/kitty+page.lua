@@ -54,6 +54,7 @@ return function(INPUT_LINE_NUMBER, CURSOR_LINE, CURSOR_COLUMN, SEARCH)
   vim.keymap.set('n', 'n', function() pcall(vim.cmd, 'normal! n') end,
                  { buffer = term_buf, noremap = true, silent = true })
   vim.keymap.set('n', 'N', function() pcall(vim.cmd, 'normal! N') end,
+                 { buffer = term_buf, noremap = true, silent = true })
   vim.keymap.set('v', '<M-u>', function()
                    -- Set the search pattern to the selected text
                    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('k?❯<CR>', true, false, true), 'n', true)
