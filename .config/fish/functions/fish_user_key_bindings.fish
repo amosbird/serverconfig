@@ -129,7 +129,7 @@ function fish_user_key_bindings
                 emacspopup "(cd \"$PWD\") (magit-status)"
             else
                 set EMACS emacsclient -n -q -u -e
-                kitten @ --to unix:/tmp/kitty_sock action next_window;
+                kitten @ --to unix:/tmp/kitty_sock focus-window --match id:2
                 $EMACS "(progn (+amos/workspace-new) (cd \"$PWD\") (magit-status))"
             end
         end
@@ -141,7 +141,7 @@ function fish_user_key_bindings
         if [ $sn = "gui" ]
             emacspopup "(cd \"$PWD\") (+amos/dired-jump)"
         else
-            kitten @ --to unix:/tmp/kitty_sock action next_window;
+            kitten @ --to unix:/tmp/kitty_sock focus-window --match id:2
             set EMACS emacsclient -n -q -u -e
             $EMACS "(progn (+amos/workspace-new) (cd \"$PWD\") (+amos/dired-jump))"
         end
