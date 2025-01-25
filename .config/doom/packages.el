@@ -16,6 +16,7 @@
                    stripe-buffer
                    vi-tilde-fringe
                    kkp
+                   helpful
                    emacs-snippets)
 
 ;; (unpin! format-all)

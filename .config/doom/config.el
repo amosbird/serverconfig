@@ -3807,6 +3807,54 @@ See `project-local-get' for the parameter PROJECT."
                (url (restclient-replace-all-in-string vars url)))
           (restclient-http-do method url headers entity raw stay-in-window suppress-response-buffer))))))
 
+(defun +amos-lsp-a (orig-fun &rest args)
+  (if (and buffer-file-name (string-match-p "~$" buffer-file-name))
+      nil
+    (apply orig-fun args)))
+(advice-add 'lsp :around #'+amos-lsp-a)
+
+(defun +amos/ediff-rebase-command (&optional arg)
+  (interactive)
+  (require 'magit)
+  (let* ((onto (expand-file-name "rebase-merge/onto" (magit-gitdir)))
+         (file (expand-file-name +amos-ediff-buffer-file-name))
+         (base (magit-git-string "merge-base" "HEAD" "ORIG_HEAD"))
+         (local (magit-git-string "rev-parse" "REBASE_HEAD"))
+         (file-directory (file-name-directory file)))
+
+    (unless (file-exists-p onto)
+      (user-error "Not in a rebase process."))
+
+    (if (string-empty-p (magit-git-string "ls-files" "-u" "--" file))
+      (user-error "File '%s' is not in a conflicted state" file))
+
+    (if arg
+        (setq local (with-temp-buffer (insert-file-contents onto) (string-trim (buffer-string)))))
+
+    (+amos/workspace-new)
+    (with-current-buffer (get-buffer-create "*git-rebase-ediff*")
+      (setq default-directory file-directory)
+      (magit-diff-range (format "%s..%s" base local) nil (list file))
+      (delete-other-windows))))
+
+(defun +amos-smerge-ediff-a (orig-fun &rest args)
+  (let ((filename (or buffer-file-name "-")))
+    (defun +amos-smerge-ediff-startup-hook ()
+      (message "ediff-startup-hook triggered!")
+      (if (buffer-live-p ediff-control-buffer)
+          (progn
+            (message "ediff-control-buffer is live: %s" ediff-control-buffer)
+            (with-current-buffer ediff-control-buffer
+              (define-key ediff-mode-map "A" (cmd! (+amos/ediff-rebase-command t)))
+              (define-key ediff-mode-map "B" '+amos/ediff-rebase-command)
+              (setq-local +amos-ediff-buffer-file-name filename)
+              (message "Set +amos-ediff-buffer-file-name to: %s" filename)))
+        (message "ediff-control-buffer is not live!"))
+      (remove-hook 'ediff-startup-hook #'+amos-smerge-ediff-startup-hook))
+    (add-hook 'ediff-startup-hook #'+amos-smerge-ediff-startup-hook)
+    (apply orig-fun args)))
+(advice-add 'smerge-ediff :around #'+amos-smerge-ediff-a)
+
 ;; should be at last
 (+amos-ignore-repeat
  "+amos/align"
