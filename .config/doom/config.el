@@ -3832,9 +3832,15 @@ See `project-local-get' for the parameter PROJECT."
         (setq local (with-temp-buffer (insert-file-contents onto) (string-trim (buffer-string)))))
 
     (+amos/workspace-new)
-    (with-current-buffer (get-buffer-create "*git-rebase-ediff*")
-      (setq default-directory file-directory)
-      (magit-diff-range (format "%s..%s" base local) nil (list file))
+    (let ((default-directory file-directory))
+      (magit-setup-buffer #'magit-diff-mode t
+        (doom-modeline-buffer-name nil)
+        (magit-buffer-range (format "%s..%s" base local))
+        (magit-buffer-typearg nil)
+        (magit-buffer-diff-type 'committed)
+        (magit-buffer-diff-args nil)
+        (magit-buffer-diff-files (list file))
+        (magit-buffer-diff-files-suspended nil))
       (delete-other-windows))))
 
 (defun +amos-smerge-ediff-a (orig-fun &rest args)
