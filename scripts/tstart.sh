@@ -23,6 +23,7 @@ android)
 local)
     # export PATH=$HOME/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh emacs"
+    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh htop"
     ;;
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
