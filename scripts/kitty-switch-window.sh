@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
 
-# set -x
-
-# source /home/amos/scripts/bashlog
-
-
-# Check if window ID is provided
 if [ -z "$1" ]; then
     echo "Usage: $0 <kitty_window_id>"
     exit 1
@@ -15,6 +9,7 @@ current_window_id=$1
 target_window_id=$2
 
 if [ "$current_window_id" -eq 3 ]; then
+    kitty @ send-text \\x1b[24~
     if ! kitty @ focus-window --match recent:1; then
         echo "Failed to switch to previous window"
         exit 1
@@ -40,5 +35,5 @@ else
 fi
 
 if [ "$target_window_id" -eq 3 ]; then
-    kitty @ focus-window
+    kitty @ send-text \\x1b[24~
 fi
