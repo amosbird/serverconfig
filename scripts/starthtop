@@ -1,11 +1,4 @@
 #!/usr/bin/env bash
 
-trap '' SIGUSR1 SIGUSR2
-
-echo $$ >$TMPDIR/htop.pid
-
-if [ -z "$1" ]; then
-    export HTOP_SUSPEND=1
-fi
-
-exec htop
+export HTOP_SUSPEND=1
+exec dtach -A /tmp/htop.dtach htop

@@ -27,11 +27,17 @@ local)
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH emacs
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH lvim
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH htop
+    # kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH lvim
     ;;
 emacs)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     fish -c startemacs
+    exit 0
+    ;;
+htop)
+    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+    fish -c starthtop
     exit 0
     ;;
 lvim)
@@ -44,7 +50,7 @@ lvim)
     exit 1
 esac
 
-tmux -u new -d -s htop "exec starthtop"
+# tmux -u new -d -s htop "exec starthtop"
 # if ! tmux list-sessions | grep -q -F emacs; then
 #     pkill -9 -F "$TMPDIR/emacs-server"
 # fi

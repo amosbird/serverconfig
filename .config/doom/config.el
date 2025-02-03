@@ -1683,8 +1683,7 @@ representation of `NUMBER' is smaller."
   ;; (trace-values args)
   (message "%s" (prin1 orig-fun))
   (message "%s" (prin1 args))
-  (apply orig-fun args)
-  )
+  (apply orig-fun args))
 (advice-add #'get-buffer-create :around #'+amos-get-buffer-create-a)
 (advice-remove #'get-buffer-create #'+amos-get-buffer-create-a)
 (advice-add #'display-buffer :around #'+amos-get-buffer-create-a)
@@ -1755,6 +1754,7 @@ representation of `NUMBER' is smaller."
    ("^\\*Flycheck" :side bottom :size 0.5 :select t :ttl kill-buffer :quit t)
    ("^\\*compil\\(?:ation\\|e-Log\\)" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
    ("^\\*temp\\*" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
+   ("^\\*aider:" :side left :size 0.25 :select nil :ttl kill-buffer :quit nil)
    ("^\\*\\(?:scratch\\|Messages\\)" :autosave t :ttl nil)
    ("^\\*doom \\(?:term\\|eshell\\)" :size 0.25 :vslot -10 :select t :quit nil :ttl kill-buffer)
    ("^\\*doom:" :vslot -20 :size 0.35 :autosave t :select t :modeline t :quit nil)
@@ -3860,6 +3860,49 @@ See `project-local-get' for the parameter PROJECT."
     (add-hook 'ediff-startup-hook #'+amos-smerge-ediff-startup-hook)
     (apply orig-fun args)))
 (advice-add 'smerge-ediff :around #'+amos-smerge-ediff-a)
+
+(use-package aider
+  :config
+  (setq aider-args '("--deepseek"))
+  (setenv "DEEPSEEK_API_KEY" (string-trim (shell-command-to-string "pass show deepseek-api"))))
+
+(use-package! gptel
+  :config
+  (setq gptel-model 'deepseek-chat
+        gptel-backend
+        (gptel-make-openai "DeepSeek"
+          :host "api.deepseek.com"
+          :endpoint "/chat/completions"
+          :stream t
+          :key (string-trim (shell-command-to-string "pass show deepseek-api"))
+          :models '(deepseek-chat deepseek-coder))))
+
+(use-package! gptel-quick)
+
+(use-package! evedel
+  :defer t
+  :config
+  (customize-set-variable 'evedel-empty-tag-query-matches-all nil)
+  :bind (("C-c e r" . evedel-create-reference)
+         ("C-c e d" . evedel-create-directive)
+         ("C-c e s" . evedel-save-instructions)
+         ("C-c e l" . evedel-load-instructions)
+         ("C-c e p" . evedel-process-directives)
+         ("C-c e m" . evedel-modify-directive)
+         ("C-c e C" . evedel-modify-reference-commentary)
+         ("C-c e k" . evedel-delete-instructions)
+         ("C-c e c" . evedel-convert-instructions)
+         ("C->"     . evedel-next-instruction)
+         ("C-<"     . evedel-previous-instruction)
+         ("C-."     . evedel-cycle-instructions-at-point)
+         ("C-c e t" . evedel-add-tags)
+         ("C-c e T" . evedel-remove-tags)
+         ("C-c e D" . evedel-modify-directive-tag-query)
+         ("C-c e P" . evedel-preview-directive-prompt)
+         ("C-c e /" . evedel-directive-undo)
+         ("C-c e ?" . (lambda ()
+                        (interactive)
+                        (evedel-directive-undo t)))))
 
 ;; should be at last
 (+amos-ignore-repeat

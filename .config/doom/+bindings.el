@@ -643,13 +643,8 @@
       :after corfu
       (:map corfu-map
             [remap corfu-insert-separator] #'+corfu-smart-sep-toggle-escape
-            "C-S-s" #'+corfu-move-to-minibuffer
-            "C-p" #'corfu-previous
-            "C-n" #'corfu-next
-            "S-TAB" #'corfu-previous
-            [backtab] #'corfu-previous
-            "TAB" #'corfu-next
-            [tab] #'corfu-next))
+            [remap scroll-down-command] nil
+            [remap scroll-up-command] nil))
 (let ((cmds-del
        `(menu-item "Reset completion" corfu-reset
          :filter ,(lambda (cmd)

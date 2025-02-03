@@ -280,12 +280,12 @@ By default confirmation required."
 
 (defun cc-playground-snippet-unique-dir ()
   (let ((dir-name (concat cc-playground-basedir "/"
-                          (time-stamp-string "default--%:y-%02m-%02d-%02H%02M%02S"))))
+                          (time-stamp-string "default--%Y-%02m-%02d-%02H%02M%02S"))))
     dir-name))
 
 (defun cc-playground-snippet-unique-dir-leetcode (id)
   (let ((dir-name (concat cc-playground-basedir "/"
-                          (time-stamp-string (concat "leetcode-" id "--%:y-%02m-%02d-%02H%02M%02S")))))
+                          (time-stamp-string (concat "leetcode-" id "--%Y-%02m-%02d-%02H%02M%02S")))))
     dir-name))
 
 (defun cc-playground-inside ()
