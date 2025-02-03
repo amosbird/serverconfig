@@ -19,9 +19,14 @@ export NO_PROXY=1
 # ip=100.123.145.119
 # user=amos
 # password=$(pass show pass)
-ip=$(pass show windows_ip)
-user=Administrator
-password=$(pass show windows)
+
+# ip=$(pass show windows_ip)
+# user=Administrator
+# password=$(pass show windows)
+ip=$(pass show windows_qtw)
+user=Tencent_Go
+password=$(pass show gpg)
+
 # size="/size:1920x1080 /smart-sizing:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g')"
 # debug=/log-level:trace
 # clipboard=/clipboard:use-selection:PRIMARY
