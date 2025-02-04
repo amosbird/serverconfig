@@ -516,6 +516,7 @@ local function memoryCallback(memory, commit)
 end
 
 function translator.init(env)
+    env.pydb = ReverseDb("build/luna_pinyin.extended.reverse.bin")
     env.mem = Memory(env.engine, Schema("double_pinyin"))
     env.mem:memorize(function(commit) memoryCallback(env.mem, commit) end)
 end
@@ -540,9 +541,39 @@ function translator.func(input, seg, env)
             len = len + 1
         end
         local suggestions = get_baidu_suggestions(input2, len)
+
+        local lp = ""
+        local dictstr2 = ""
+        if (#input % 2) == 1 then
+            local trimmed = dictstr:sub(1, -2)
+            local last_space = trimmed:match(".*() ")
+            if last_space then
+                dictstr2 = trimmed:sub(1, last_space)
+                lp = trimmed:sub(last_space + 1)
+            else
+                lp = trimmed
+            end
+        end
+
         for _, word in ipairs(suggestions) do
             dict = DictEntry()
             dict.text = word
+
+            if lp ~= "" then
+                local pos = utf8.offset(word, -1)
+                if pos then
+                    local last_char = word:sub(pos)
+                    local py = env.pydb:lookup(last_char)
+                    local result = nil
+                    for token in py:gmatch("%S+") do
+                        if token:sub(1, #lp) == lp then
+                            dictstr = dictstr2 .. token .. " "
+                            break
+                        end
+                    end
+                end
+            end
+
             dict.custom_code = dictstr
             dict.comment = '+'
 
