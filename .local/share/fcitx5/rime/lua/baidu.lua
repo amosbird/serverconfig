@@ -1,5 +1,6 @@
-local json = require("json")
 local io = require("io")
+-- local http = require("socket.http")
+-- local json = require("dkjson")
 
 local code = {
     ["ca"] = "ca",
@@ -409,6 +410,74 @@ local code = {
     ["u"] = "sh"
 }
 
+local function url_encode(str)
+    if str then
+        str = string.gsub(str, "\n", "\r\n")
+        str = string.gsub(str, "([^%w %-%_%.%~])",
+            function(c)
+                return string.format("%%%02X", string.byte(c))
+            end)
+        str = string.gsub(str, " ", "+")
+    end
+    return str
+end
+
+local function get_chinese_chars(str, len)
+    local result = ""
+    local count = 0
+    local i = 1
+
+    while i <= #str do
+        local byte = string.byte(str, i)
+        if byte >= 0xE0 and byte <= 0xEF then
+            count = count + 1
+            result = result .. string.sub(str, i, i + 2)
+            i = i + 3
+        else
+            i = i + 1
+        end
+
+        if count == len then
+            break
+        end
+    end
+
+    return count == len and result or nil
+end
+
+local function get_baidu_suggestions(input, len)
+    local url = string.format("https://www.baidu.com/sugrec?prod=pc&wd=%s", url_encode(input))
+
+    local response, status = http.request(url)
+    if status ~= 200 then
+        log.error(status)
+        return {}
+    end
+
+    local data, pos, err = json.decode(response)
+    if err then
+        log.error(tostring(err))
+        return {}
+    end
+
+    local seen = {}
+    local results = {}
+
+    if data and data.g then
+        for _, item in ipairs(data.g) do
+            log.error(item.q)
+            local chars = get_chinese_chars(item.q, len)
+            if chars and not seen[chars] then
+                log.error(chars)
+                seen[chars] = true
+                table.insert(results, chars)
+            end
+        end
+    end
+
+    return results
+end
+
 local flag = false
 
 local function processor(key, env)
@@ -417,12 +486,14 @@ local function processor(key, env)
     local engine = env.engine
     local context = engine.context
 
-    if key:repr() == "Control+t" then
+    if key:repr() == "Control+space" then
+        return kAccepted
+    elseif key:repr() == "Control+Release+space" then
         if context:is_composing() then
             flag = true
             context:refresh_non_confirmed_composition()
-            return kAccepted
         end
+        return kAccepted
     end
 
     return kNoop
@@ -432,6 +503,12 @@ local translator = {}
 
 local function memoryCallback(memory, commit)
     for i, e in ipairs(commit:get()) do
+
+        local candidate = e.candidate
+        if candidate and candidate.spelling_hint then
+            log.error("Spelling Hint: " .. candidate.spelling_hint)
+        end
+
         if e.comment == "+" then
             memory:update_userdict(e, 1, "")
         end
@@ -445,29 +522,31 @@ function translator.init(env)
 end
 
 function translator.func(input, seg, env)
-    local input2 = ""
-    local dictstr = ""
-    local len = 0
-    for i = 1, #input, 2 do
-        local w = input:sub(i, i + 1)
-        local w2 = code[w]
-        if w2 then
-            input2 = input2 .. w2
-            dictstr = dictstr .. w2 .. " "
-        else
-            input2 = input2 .. w
-            dictstr = dictstr .. w .. " "
-        end
-        len = len + 1
-    end
-
     if flag then
         flag = false
+
+        local input2 = ""
+        local dictstr = ""
+        local len = 0
+        for i = 1, #input, 2 do
+            local w = input:sub(i, i + 1)
+            local w2 = code[w]
+            if w2 then
+                input2 = input2 .. w2
+                dictstr = dictstr .. w2 .. " "
+            else
+                input2 = input2 .. w
+                dictstr = dictstr .. w .. " "
+            end
+            len = len + 1
+        end
 
         local f = assert(io.popen("cloudinput " .. input2 .. " " .. len, "r"))
         local s = assert(f:read("*a"))
         f:close()
         for word in s:gmatch("%S+") do
+        -- local suggestions = get_baidu_suggestions(input2, len)
+        -- for _, word in ipairs(suggestions) do
             dict = DictEntry()
             dict.text = word
             dict.custom_code = dictstr
