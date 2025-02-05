@@ -170,7 +170,8 @@
 
 (use-package! thrift-mode
   :config
-  (add-to-list 'auto-mode-alist '("\\.thrift\\'" . thrift-mode)))
+  (add-to-list 'auto-mode-alist '("\\.thrift\\'" . thrift-mode))
+  (add-hook 'thrift-mode-hook 'font-lock-mode))
 
 ;; (use-package! go-playground
 ;;   :defer
@@ -4002,8 +4003,9 @@ See `project-local-get' for the parameter PROJECT."
 
 (load! "+consult")
 (load! "+modeline")
-(load! "+protobuf-mode")
-(require 'protobuf-mode)
+
+(use-package protobuf-mode
+  :mode ("\\.proto\\'" . protobuf-mode))
 
 (use-package c++-ts-mode
   :mode (("\\.cpp\\'" . c++-ts-mode)

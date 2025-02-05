@@ -79,6 +79,7 @@
 (package! gptel)
 (package! gptel-quick :recipe (:host github :repo "karthink/gptel-quick"))
 (package! evedel :recipe (:host github :repo "daedsidog/evedel"))
+(package! protobuf-mode)
 
 (package! gitconfig-mode
    :recipe (:host github :repo "magit/git-modes"
