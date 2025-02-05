@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
 export HTOP_SUSPEND=1
-exec dtach -A /tmp/htop.dtach htop
+exec dtach -A /tmp/htop.dtach -E -r ctrl_l -z htop
