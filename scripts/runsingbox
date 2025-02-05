@@ -1,3 +1,4 @@
 #!/usr/bin/env bash
 
 pass sing-box.json | sing-box run -c /dev/stdin
+# pass sing-box-client.json | sing-box run -c /dev/stdin
