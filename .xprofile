@@ -37,9 +37,6 @@ export AWT_TOOLKIT=XToolkit
 export _JAVA_AWT_WM_NONREPARENTING=1
 # export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel"
 export AMPLXE_RUNTOOL_OPTIONS=--no-altstack
-export QT_AUTO_SCREEN_SCALE_FACTOR=1
-#export QT_SCALE_FACTOR=2
-#export QT_SCREEN_SCALE_FACTORS=2
 
 export XDG_CURRENT_DESKTOP=i3
 
@@ -47,7 +44,6 @@ case $(hostname) in
   abt480) ;;
 
   *)
-    export GDK_SCALE=2 GDK_DPI_SCALE=0.5
     export LIBVA_DRIVER_NAME=nvidia
     ;;
 esac
