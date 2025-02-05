@@ -4,8 +4,8 @@
 
   (setq +amos-full-width-digits ["１" "２" "３" "４" "５" "６" "７" "８" "９"])
   (defun +amos-frame-modeline (&optional _)
-    (let ((frames (cdr (visible-frame-list)))
-          (current-frame (selected-frame)))
+    (let ((frames (tty-root-frame-list))
+          (current-frame (selected-root-frame)))
       (concat " |"
               (mapconcat
                #'identity
