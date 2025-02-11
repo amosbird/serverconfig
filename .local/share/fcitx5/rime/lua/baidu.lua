@@ -582,7 +582,10 @@ function translator.func(input, seg, env)
             dict.comment = '+'
 
             local ph = Phrase(env.mem, "baidu", seg.start, seg.start + #input, dict)
-            yield(ph:toCandidate())
+            local candidate = ph:toCandidate()
+            candidate.weight = 1e10
+            candidate.quality = 1000
+            yield(candidate)
         end
     end
 end
