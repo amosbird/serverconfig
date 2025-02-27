@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+pkill -9 -f "dtach -a /tmp/emacs.dtach"
+pkill -9 -f "dtach -a /tmp/htop.dtach"
+
 # Get the initial PID
 pid=$(pgrep -f "bash $HOME/tmp/gentoo/login" || :)
 

@@ -5,7 +5,6 @@ export SHELL=/tmp/gentoo/bin/fish # for tmux command
 export TERM=xterm-kitty
 # export TMPDIR=/tmp/gentoo/tmp
 export TMPDIR=/tmp
-export TMUX=$TMPDIR/tmux-amos
 export SSH_AUTH_SOCK=$TMPDIR/ssh_auth_sock
 export KITTY_LISTEN_ON=unix:$TMPDIR/kitty_sock
 export NPROC=$(nproc)
@@ -50,6 +49,8 @@ lvim)
     echo "tstart.sh android|local|prefix"
     exit 1
 esac
+
+export TMUX=$TMPDIR/tmux-amos
 
 # tmux -u new -d -s htop "exec starthtop"
 # if ! tmux list-sessions | grep -q -F emacs; then

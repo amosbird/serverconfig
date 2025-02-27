@@ -1986,11 +1986,12 @@ the current state and point position."
        (format-spec
         (concat
          "kitten @ --to unix:/tmp/kitty_sock action next_window;"
+         "export TMUX=$TMPDIR/tmux-amos;"
          "tmux switch-client -t amos;"
          "tmuxkillwindow amos:%a;"
          "tmux run -t amos \"tmux new-window -n %a -c %b; tmux send-keys %c C-m\"")
         `((?a . ,(if prompt prompt "nil")) (?b . ,default-directory) (?c . ,command))))
-    (shell-command! (format "kitten @ --to unix:/tmp/kitty_sock action next_window; tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
+    (shell-command! (format "kitten @ --to unix:/tmp/kitty_sock action next_window; export TMUX=$TMPDIR/tmux-amos; tmux switch-client -t amos; tmux run -t amos \"tmux new-window -c %s\"" default-directory))))
 
 (defun +amos/prompt-kill-emacs ()
   "Prompt to save changed buffers and exit Emacs."

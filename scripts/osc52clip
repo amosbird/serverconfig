@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
 esc="\033]52;c;"$(printf -- "%b" "$(cat $1)" | base64 | tr -d '\r\n')"\07"
-esc="\033Ptmux;\033"$esc"\033\\" # tmux
+if [ -n "$TMUX" ]; then
+    esc="\033Ptmux;\033"$esc"\033\\" # tmux
+fi
 printf -- "%b" "$esc"
