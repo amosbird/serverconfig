@@ -5,6 +5,11 @@ then
     exit 0
 fi
 
+if ! command -v atuin-clickhouse &> /dev/null
+then
+    exit 0
+fi
+
 LOCK_FILE="/tmp/atuin_sync.lock"
 LOG_FILE="/tmp/atuin_sync.log"
 
@@ -24,4 +29,4 @@ fi
 
 exec 1>&- 2>&-
 
-nohup bash -c "atuin sync >/dev/null 2>\"$LOG_FILE\"; s=\$?; echo \$(date +%s) \$s > \"$LOCK_FILE\"" &
+nohup bash -c "atuin sync >/dev/null 2>\"$LOG_FILE\"; atuin-clickhouse sync >/dev/null 2>\"$LOG_FILE\"; s=\$?; echo \$(date +%s) \$s > \"$LOCK_FILE\"" &

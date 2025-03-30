@@ -57,8 +57,8 @@
        (ocaml +lsp)
        (org +pandoc +avy)
        (python +lsp +pyright)
-       ;; java
-       (java +lsp)
+       java
+       ;; (java +lsp)
        (go +lsp)
        (yaml +lsp)
        (web +lsp)
