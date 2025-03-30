@@ -121,8 +121,6 @@ ctrl+alt+r
   rofi-runner
 super+0
   pkill -x sxhkd && exec sxhkd
-ctrl+F12
-  systemctl suspend
 ctrl + alt + {j, k}
   bspc node '{next,prev}.!hidden.!floating.window.local' -f
   # if bspc query -N -n focused.!hidden.floating.window.local > /dev/null; then \
