@@ -586,9 +586,15 @@ and are not the special daemon frame."
       (ad-set-arg 1 (- (ad-get-arg 1) 2)))))
 
 (unless window-system
-  ;; NOTE: Not good
+  ;; NOTE: Not good because it won't work with read-event, read-char, etc. And there is no way to extend those C functions using advice
   ;; (use-package kkp
   ;;   :config
+
+  ;;   ;; (advice-add 'read-char :around #'+amos*read-char)
+
+  ;;   (setq kkp-active-enhancements nil)
+
+  ;;   ;; (setq kkp--printable-ascii-letters nil)
   ;;   ;; (setq kkp-alt-modifier 'alt) ;; use this if you want to map the Alt keyboard modifier to Alt in Emacs (and not to Meta)
   ;;   (global-kkp-mode +1))
 
@@ -1771,6 +1777,8 @@ representation of `NUMBER' is smaller."
    ("^\\*Flycheck" :side bottom :size 0.5 :select t :ttl kill-buffer :quit t)
    ("^\\*compil\\(?:ation\\|e-Log\\)" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
    ("^\\*temp\\*" :side right :size 0.5 :select t :ttl kill-buffer :quit t)
+   ("^\\*HTTP Response\\*" :side right :size 0.5 :select nil :ttl kill-buffer :quit t)
+   ("^\\*HTTP " :side right :size 0.5 :select nil :ttl kill-buffer :quit t)
    ("^\\*aider:" :side left :size 0.25 :select nil :ttl kill-buffer :quit nil)
    ("^\\*\\(?:scratch\\|Messages\\)" :autosave t :ttl nil)
    ("^\\*doom \\(?:term\\|eshell\\)" :size 0.25 :vslot -10 :select t :quit nil :ttl kill-buffer)
@@ -2218,9 +2226,6 @@ By default the last line."
 (advice-add #'git-gutter:next-hunk :after (lambda (arg) (recenter)))
 (advice-add #'magit-blame--update-margin :override #'ignore)
 (advice-add #'evil-visual-update-x-selection :override #'ignore)
-
-(define-key key-translation-map "\e[70~" (kbd "<C-return>"))
-(define-key key-translation-map "\035" [escape])
 
 (defun anzu-multiedit (&optional symbol)
   (interactive (list evil-symbol-word-search))
@@ -2947,7 +2952,8 @@ inside or just after a citation command, only adds KEYS to it."
   (interactive "e")
   (if (+amos-insert-state-p)
       (xterm-paste event)
-    (let ((uri-list xterm-paste-urllist))
+    (let ((uri-list ;; xterm-paste-urllist
+                    ))
       (unless (and uri-list (+amos-dispatch-uri-list uri-list))
         (with-temp-buffer
           (xterm-paste event)
@@ -3002,31 +3008,31 @@ inside or just after a citation command, only adds KEYS to it."
                 (evil-paste-before nil ?r))
             (evil-paste-before nil ?t)))))))
 
-(defun +amos-xterm--pasted-text-a ()
-  "Handle the rest of a terminal paste operation.
-Return the pasted text as a string."
-  (let ((end-marker-length (length xterm-paste-ending-sequence)))
-    (with-temp-buffer
-      (set-buffer-multibyte nil)
-      (while (not (search-backward xterm-paste-ending-sequence
-                                   (- (point) end-marker-length) t))
-        (let ((event (read-event nil nil
-                                 ;; Use finite timeout to avoid glomming the
-                                 ;; event onto this-command-keys.
-                                 most-positive-fixnum)))
-          (when (eql event ?\r)
-            (setf event ?\n))
-          (insert event)))
-      (let* ((last-coding-system-used)
-             (text (decode-coding-region (point-min) (point) (keyboard-coding-system) t)))
-        (if (string= "\e[290~" (this-command-keys))
-            (setq xterm-paste-urllist text)
-          (setq xterm-paste-urllist nil)
-          text)))))
+;; (defun +amos-xterm--pasted-text-a ()
+;;   "Handle the rest of a terminal paste operation.
+;; Return the pasted text as a string."
+;;   (let ((end-marker-length (length xterm-paste-ending-sequence)))
+;;     (with-temp-buffer
+;;       (set-buffer-multibyte nil)
+;;       (while (not (search-backward xterm-paste-ending-sequence
+;;                                    (- (point) end-marker-length) t))
+;;         (let ((event (read-event nil nil
+;;                                  ;; Use finite timeout to avoid glomming the
+;;                                  ;; event onto this-command-keys.
+;;                                  most-positive-fixnum)))
+;;           (when (eql event ?\r)
+;;             (setf event ?\n))
+;;           (insert event)))
+;;       (let* ((last-coding-system-used)
+;;              (text (decode-coding-region (point-min) (point) (keyboard-coding-system) t)))
+;;         (if (string= "\e[290~" (this-command-keys))
+;;             (setq xterm-paste-urllist text)
+;;           (setq xterm-paste-urllist nil)
+;;           text)))))
 
-(advice-add #'xterm--pasted-text :override #'+amos-xterm--pasted-text-a)
-(after! xterm
-  (define-key xterm-rxvt-function-map "\e[290~" #'xterm-translate-bracketed-paste))
+;; (advice-add #'xterm--pasted-text :override #'+amos-xterm--pasted-text-a)
+;; (after! xterm
+;;   (define-key xterm-rxvt-function-map "\e[290~" #'xterm-translate-bracketed-paste))
 
 (evil-define-command +amos-evil-visual-paste-a (count &optional register)
   "Paste over Visual selection."

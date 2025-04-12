@@ -95,7 +95,7 @@ bind-key -T amos S-F10 next-window
 
 bind-key -T amos S-F12 send-keys C-]
 
-bind-key -T amos f12 display
+# bind-key -T amos f12 display
 
 # change this only after 3.2
 unbind-key -Tamos DoubleClick1Pane

@@ -106,7 +106,7 @@
 
 ;; Q U M H
 (map! (:map override
-        :n "<escape>"          #'+amos/evil-force-normal-state
+        ;; :n "<escape>"          #'+amos/evil-force-normal-state
         :gnemv "C-h d"         (cmd!
                                 (xref-find-definitions
                                  (let* ((backend (xref-find-backend)))
@@ -115,10 +115,10 @@
                                                     nil nil nil
                                                     'xref--read-identifier-history nil))))
         :gnemv "<xterm-paste>" #'+amos/xterm-paste
-        :gnemv "<f12>"         #'+amos/reset-cursor
-        :gnemv "<f11>"         #'+amos/dump-evil-jump-list
-        :gnemv "M-x"           #'execute-extended-command
+        ;; :gnemv "<f12>"         #'+amos/reset-cursor
+        ;; :gnemv "<f11>"         #'+amos/dump-evil-jump-list
         :gnemv "C-M-u"         #'+amos/avy-open-url
+        :gnemv "M-x"           #'execute-extended-command
         :gnemv "<f1>"          #'+amos/reset-zoom
         :gnemv "<f2>"          #'+amos/decrease-zoom
         :gnemv "<f3>"          #'+amos/increase-zoom
@@ -131,8 +131,8 @@
         :gnemv "M-6"           #'+amos/workspace-switch-to-6
         :gnemv "M-7"           #'+amos/workspace-switch-to-7
         :gnemv "M-8"           #'+amos/workspace-switch-to-8
-        :gnemv "M-="           #'+amos/workspace-switch-to-htop
-        ;; :gnemv "M-9"           #'+amos/workspace-switch-to-9
+        :gnemv "M-9"           #'+amos/workspace-switch-to-9
+        ;; :gnemv "M-="           #'+amos/workspace-switch-to-htop
         :gnemv "S-<f9>"        #'+amos/workspace-switch-left
         :gnemv "S-<f10>"       #'+amos/workspace-switch-right
         :gnemv "C-9"           #'+amos/workspace-switch-left
@@ -578,7 +578,7 @@
         :g "C-c C-k" #'reb-quit)
 
       (:map key-translation-map
-        ;; "\035"          (kbd "<escape>")
+        "\035"          (kbd "<escape>")
         [C-f5]          (kbd "<tab>")
         [S-iso-lefttab] [backtab]
         "C-1"           (kbd "1")
@@ -591,6 +591,7 @@
         "C-8"           (kbd "8")
         "C-9"           (kbd "9")
         "C-0"           (kbd "0")
+        "\e[70~"        (kbd "<C-return>")
         "C-@"           (kbd "C-SPC"))
 
       (:map (minibuffer-local-map

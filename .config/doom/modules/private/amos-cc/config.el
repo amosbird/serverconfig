@@ -248,8 +248,7 @@ Only works with clangd."
 ;; (defface tree-sitter-hl-face:tag
 ;; (defface tree-sitter-hl-face:attribute
 
-
-(add-hook! (c-ts-base-mode) (electric-indent-local-mode +1))
+(add-hook! (c-ts-base-mode) (electric-indent-local-mode +1) (setq fill-column 120))
 
 (defun +amos/add-include (h &rest others)
   "Add an #include line for `h' near top of file, avoiding duplicates."
@@ -274,7 +273,7 @@ Only works with clangd."
 
 (c-add-style "amos"
              '("cc-mode"
-               (fill-column . 100)
+               (fill-column . 120)
                (indent-tabs-mode . nil)
                (c-offsets-alist . ((innamespace . 0)
                                    (arglist-intro . ++)
