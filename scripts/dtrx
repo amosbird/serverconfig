@@ -1418,7 +1418,8 @@ class ExtractorApplication(object):
 
     def show_stderr(self, logger_func, stderr):
         if stderr:
-            logger_func("Error output from this process:\n" + stderr.rstrip("\n"))
+            text = stderr.decode('utf-8', errors='replace').rstrip("\n")
+            logger_func("Error output from this process:\n" + text)
 
     def try_extractors(self, filename, builder):
         errors = []
