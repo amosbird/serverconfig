@@ -15,6 +15,7 @@
 (setq gui-p (getenv "GUI"))
 
 (advice-add #'breadcrumb-project-crumbs :override #'ignore)
+(advice-add #'+magit-invalidate-projectile-cache-h :override #'ignore)
 
 (add-to-list 'consult-preview-allowed-hooks 'global-hl-line-mode-check-buffers)
 (add-to-list 'consult-preview-allowed-hooks 'treecrumbs-mode)
