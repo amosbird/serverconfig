@@ -302,13 +302,17 @@ function fish_user_key_bindings
     end
 
     function insert-last-line
-        set -l a (string escape -n -- (string trim -- (tmux capture-pane -p | rg -v '^$|❯|^\\[' | tail -1)))
+        if test -n "$TMUX"
+            set -l a (string escape -n -- (string trim -- (tmux capture-pane -p | rg -v '^$|❯|^\\[' | tail -1)))
+        else
+            set -l a (string escape -n -- (string trim -- (kitty @ --to unix:/tmp/kitty-mux-socket get-text --extent screen | rg -v '^$|❯|^\\[' | tail -1)))
+        end
         test -n "$a"
         and commandline -t -- $a
     end
 
-    bind \e\> 'insert-last-arg'
-    bind \e\< 'insert-last-line'
+    bind alt-shift-. 'insert-last-arg'
+    bind alt-shift-comma 'insert-last-line'
 
     function _atuin_search
         set -l ATUIN_H "$(ATUIN_SHELL_FISH=t ATUIN_LOG=error atuin search $argv -i -- (commandline -b) 3>&1 1>&2 2>&3)"
@@ -346,5 +350,6 @@ function fish_user_key_bindings
         end
     end
 
-    bind \cr fzf-history-token-widget
+    bind ctrl-r fzf-history-token-widget
+    bind alt-backspace backward-kill-path-component
 end

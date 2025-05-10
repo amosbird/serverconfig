@@ -100,6 +100,8 @@ class ShellHolder:
                     "urxvt_scratchpad",
                     "-c",
                     "~/.config/kitty/kitty-mux.conf",
+                    "--listen-on",
+                    "unix:/tmp/kitty-mux-socket"
                 ],
                 shell=True,
             )
@@ -184,7 +186,7 @@ keys = [
     Key([mod3], "f", lazy.spawn("copyq toggle")),
     Key([mod3], "0", lazy.spawn("sleep 0.1 && inputstr 0.0.0.0", shell=True)),
     Key([mod3], "1", lazy.spawn("sleep 0.1 && inputstr 127.0.0.1", shell=True)),
-    Key([mod3], "2", lazy.spawn('joinwemeet "$(xclip -out)"', shell=True)),
+    Key([mod3], "2", lazy.spawn('joinwemeet "$(xclip -selection clipboard -out)"', shell=True)),
     Key([mod3], "3", lazy.spawn("rofipass")),
     Key([mod3], "4", lazy.spawn("inputstr amosbird@gmail.com")),
     Key([mod3], "r", lazy.spawn("rofidbtbl")),
@@ -202,7 +204,7 @@ keys = [
         "p",
         lazy.spawn("flameshot gui -r | pngquant - | uploadimg -", shell=True),
     ),
-    Key([mod3], "u", lazy.spawn("xclip -out | upload -", shell=True)),
+    Key([mod3], "u", lazy.spawn("xclip -selection clipboard -out | upload -", shell=True)),
     Key([mod3], "o", lazy.spawn("openclipboard")),
     Key([mod3, shift], "r", lazy.spawn("teiler")),
     Key([mod3], "g", lazy.spawn('url "www.google.com/search?q="')),

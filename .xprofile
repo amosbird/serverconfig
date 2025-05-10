@@ -22,7 +22,6 @@ sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &> /tmp/xkeysnai
 
 export GUI=t
 export XAPIAN_CJK_NGRAM=1
-export BSPWM_STATE=/tmp/bspwm-state.json
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export XIM=fcitx
 export XIM_PROGRAM=fcitx

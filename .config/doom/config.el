@@ -509,7 +509,7 @@ and are not the special daemon frame."
   (with-temp-buffer
     (insert text)
     (with-x-environment
-     (call-process-region (point-min) (point-max) "xclip")))
+     (call-process-region (point-min) (point-max) "xclip" nil nil nil "-selection" "clipboard")))
   text)
 
 (defun +amos-tui-select-text (text &rest _)

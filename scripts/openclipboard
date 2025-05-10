@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-f=$(copyq selection text/uri-list)
+f=$(copyq clipboard text/uri-list)
 
 if [ -z $f ]; then
     notify-send "openclipboard" "There is no uri to open in current clipboard"

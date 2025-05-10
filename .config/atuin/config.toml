@@ -142,3 +142,6 @@ enter_accept = false
 
 [sync]
 records = true
+
+[keys]
+scroll_exits = false

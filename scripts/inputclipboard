@@ -2,4 +2,4 @@
 
 export DISPLAY=:0 XAUTHORITY=/home/amos/.Xauthority
 
-inputstr "$(xclip -o)"
+inputstr "$(xclip -selection clipboard -o)"
