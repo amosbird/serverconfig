@@ -2,6 +2,13 @@
 
 (load! "+bindings")
 (load! "+lsp")
+
+;; (use-package! lsp-bridge
+;;   :init
+;;   (setq lsp-bridge-python-command "/tmp/gentoo/python/bin/python3")
+;;   :config
+;;   (global-lsp-bridge-mode))
+
 (load! "+alias")
 ;; (load! "+flycheck")
 
@@ -3867,10 +3874,10 @@ See `project-local-get' for the parameter PROJECT."
     (apply orig-fun args)))
 (advice-add 'smerge-ediff :around #'+amos-smerge-ediff-a)
 
-(use-package aider
-  :config
-  (setq aider-args '("--deepseek"))
-  (setenv "DEEPSEEK_API_KEY" (string-trim (shell-command-to-string "pass show deepseek-api"))))
+;(use-package aider
+;  :config
+;  (setq aider-args '("--deepseek"))
+;  (setenv "DEEPSEEK_API_KEY" (string-trim (shell-command-to-string "pass show deepseek-api"))))
 
 (use-package! gptel
   :config

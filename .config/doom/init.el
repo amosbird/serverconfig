@@ -5,7 +5,7 @@
        vertico
 
        :os
-       tty
+       ;; tty
 
        :ui
        doom
