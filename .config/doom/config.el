@@ -3917,6 +3917,10 @@ See `project-local-get' for the parameter PROJECT."
                         (interactive)
                         (evedel-directive-undo t)))))
 
+; https://github.com/kovidgoyal/kitty/issues/4094#issuecomment-933644114
+(or standard-display-table (setq standard-display-table (make-display-table)))
+(aset standard-display-table #xAD (vector (make-glyph-code ?- 'escape-glyph)))
+
 ;; should be at last
 (+amos-ignore-repeat
  "+amos/align"

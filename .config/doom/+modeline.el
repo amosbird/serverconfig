@@ -43,7 +43,7 @@
     (setq keycast--this-command-keys (this-command-keys))
     (setq keycast--this-command this-command))
 
-  (add-hook! 'pre-command-hook :append #'keycast-mode-line-update)
+  ;; (add-hook! 'pre-command-hook :append #'keycast-mode-line-update)
   ;; (define-minor-mode keycast-mode-line-mode
   ;;   "Show current command and its key binding in the mode line."
   ;;   :global t

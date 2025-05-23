@@ -56,7 +56,7 @@
        (rust +lsp)
        (ocaml +lsp)
        (org +pandoc +avy)
-       (python +lsp +pyright)
+       (python +lsp)
        java
        ;; (java +lsp)
        (go +lsp)
