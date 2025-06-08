@@ -97,41 +97,33 @@ int main(int argc, char* argv[]) {
     char* tmp_dir;
     char* home_dir;
     char* cmd;
-    if (real_euid == 0) {
-        if (argc < 6) {
-            printf("Usage: %s <uid> <gid> <tmp_dir> <home_dir> <cmd> ...\n", argv[0]);
-            return 1;
-        }
-
-        char *endptr1, *endptr2;
-        uid = strtol(argv[1], &endptr1, 10);
-        gid = strtol(argv[2], &endptr2, 10);
-
-        if (*endptr1 != '\0' || *endptr2 != '\0') {
-            err(EXIT_FAILURE, "Parsing error: Non-integer characters detected.");
-        }
-
-        tmp_dir = argv[3];
-        home_dir = argv[4];
-        cmd = argv[5];
-    } else {
-        if (argc < 4) {
-            printf("Usage: %s <tmp_dir> <home_dir> <cmd> ...\n", argv[0]);
-            return 1;
-        }
-        tmp_dir = argv[1];
-        home_dir = argv[2];
-        cmd = argv[3];
-        uid = real_euid;
-        gid = real_egid;
+    if (argc < 6) {
+        printf("Usage: %s <uid> <gid> <tmp_dir> <home_dir> <cmd> ...\n", argv[0]);
+        return 1;
     }
 
-    if (real_euid == 0) {
-        if (-1 == unshare(CLONE_NEWNS))
+    char *endptr1, *endptr2;
+    uid = strtol(argv[1], &endptr1, 10);
+    gid = strtol(argv[2], &endptr2, 10);
+
+    if (*endptr1 != '\0' || *endptr2 != '\0') {
+        err(EXIT_FAILURE, "Parsing error: Non-integer characters detected.");
+    }
+
+    tmp_dir = argv[3];
+    home_dir = argv[4];
+    cmd = argv[5];
+
+    int new_user = 0;
+    if (-1 == unshare(CLONE_NEWNS))
+    {
+        if (errno == EPERM) {
+            if (-1 == unshare(CLONE_NEWNS | CLONE_NEWUSER))
+                err(EXIT_FAILURE, "unshare failed");
+            new_user = 1;
+        } else {
             err(EXIT_FAILURE, "unshare failed");
-    } else {
-        if (-1 == unshare(CLONE_NEWNS | CLONE_NEWUSER))
-            err(EXIT_FAILURE, "unshare failed");
+        }
     }
 
     if (mount("none", "/", NULL, MS_REC | MS_PRIVATE, NULL) != 0)
@@ -143,7 +135,7 @@ int main(int argc, char* argv[]) {
     if (mount(home_dir, "/tmp/gentoo/home/amos", NULL, MS_BIND, NULL) != 0)
         err(EXIT_FAILURE, "mount gentoo home dir failed");
 
-    if (real_euid != 0) {
+    if (new_user) {
         setgroups_deny();
         map_id("/proc/self/uid_map", real_euid, real_euid);
         map_id("/proc/self/gid_map", real_egid, real_egid);
@@ -155,9 +147,5 @@ int main(int argc, char* argv[]) {
     if (setresuid(uid, uid, uid) != 0)
         err(EXIT_FAILURE, "setuid failed %d", uid);
 
-    if (real_euid != 0) {
-        execvp(cmd, argv + 3);
-    } else {
-        execvp(cmd, argv + 5);
-    }
+    execvp(cmd, argv + 5);
 }

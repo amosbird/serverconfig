@@ -207,7 +207,7 @@ keys = [
     Key([mod3], "u", lazy.spawn("xclip -selection clipboard -out | upload -", shell=True)),
     Key([mod3], "o", lazy.spawn("openclipboard")),
     Key([mod3, shift], "r", lazy.spawn("teiler")),
-    Key([mod3], "g", lazy.spawn('url "www.google.com/search?q="')),
+    Key([mod3], "g", lazy.spawn('url "www.google.com/search?pws=0&gl=us&gws_rd=cr&q="')),
     Key(
         [mod3],
         "k",
