@@ -1,22 +1,28 @@
-set -s mouse on
-set -s prefix None
-set -s prefix2 None
-set -s status off
-set -s detach-on-destroy off
+set -ga terminal-overrides ",*:RGB"
+set -g default-shell /bin/bash
+set -g default-command $SHELL
+set -g escape-time 0
+set -g focus-events on
+set -g xterm-keys on
+set -g base-index 1
+set -g pane-base-index 1
+set -g automatic-rename on
+set -g aggressive-resize on
+set -g visual-bell off
+set -g window-size largest
+set -g mouse on
+set -g prefix None
+set -g prefix2 None
+set -g status off
+set -g detach-on-destroy off
 
-set -s window-active-style 'bg=#141414'
+set -g window-active-style 'bg=#141414'
 
-set -s key-table htop
-bind-key -T htop C-] send-keys Escape
-bind-key -T htop C-j send-keys Down
-bind-key -T htop C-k send-keys Up
-# bind-key -T htop C-s send-keys \\
-bind-key -T htop M-0 run-shell "pkill -USR1 -F $TMPDIR/htop.pid" \; switch-client -l
-bind-key -T htop M-= run-shell "pkill -USR1 -F $TMPDIR/htop.pid" \; switch-client -l
+bind-key C-] send-keys Escape
+bind-key C-j send-keys Down
+bind-key C-k send-keys Up
 
-# bind -T htop 3 split-window -v -c '#{pane_current_path}'
-
-bind-key -T htop M-h select-pane -L
-bind-key -T htop M-j select-pane -D
-bind-key -T htop M-k select-pane -U
-bind-key -T htop M-l select-pane -R
+bind-key M-h select-pane -L
+bind-key M-j select-pane -D
+bind-key M-k select-pane -U
+bind-key M-l select-pane -R

@@ -69,6 +69,15 @@
     (apply orig-fun args)))
 (advice-add 'flymake-diagnostics :around #'+amos-flymake-diagnostics-a)
 
+;; accept completion from copilot and fallback to company
+;; (use-package! copilot
+;;   :hook (prog-mode . copilot-mode)
+;;   :bind (:map copilot-completion-map
+;;               ("<tab>" . 'copilot-accept-completion)
+;;               ("TAB" . 'copilot-accept-completion)
+;;               ("C-TAB" . 'copilot-accept-completion-by-word)
+;;               ("C-<tab>" . 'copilot-accept-completion-by-word)))
+
 ;; (use-package! copilot
 ;;   :hook (prog-mode . copilot-mode)
 ;;   :init
@@ -2956,34 +2965,79 @@ inside or just after a citation command, only adds KEYS to it."
                            (spaces-string endextra))))
     (setcdr lines (cons line (cdr lines)))))
 
+(defvar +amos-ediff-yank-history nil
+  "Stores the last few yanked/pasted text snippets for ediff.")
+
+(defun +amos-save-to-ediff-ring (text)
+  "Save TEXT into ediff yank ring."
+  (push text +amos-ediff-yank-history)
+  (when (> (length +amos-ediff-yank-history) 10)
+    (setq +amos-ediff-yank-history (cl-subseq +amos-ediff-yank-history 0 10))))
+
 (defun +amos/xterm-paste (event)
   (interactive "e")
-  (if (+amos-insert-state-p)
-      (xterm-paste event)
-    (let ((uri-list ;; xterm-paste-urllist
-                    ))
-      (unless (and uri-list (+amos-dispatch-uri-list uri-list))
-        (with-temp-buffer
-          (xterm-paste event)
-          (let ((lines (list nil)))
-            (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
-            (setq lines (nreverse (cdr lines)))
-            (let* ((yank-handler (list #'evil-yank-block-handler
-                                       lines
-                                       t
-                                       'evil-delete-yanked-rectangle))
-                   (text (propertize (mapconcat #'identity lines "\n")
-                                     'yank-handler yank-handler)))
-              (evil-set-register ?r text)))
-          (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
-        (if (bound-and-true-p evil-multiedit-mode)
-            (evil-multiedit--paste-replace)
-          (if current-prefix-arg
-              (progn
-                (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
-                    (forward-char))
-                (evil-paste-before nil ?r))
-            (evil-paste-before nil ?t)))))))
+  (cl-block +amos/xterm-paste
+    (if (+amos-insert-state-p)
+        (xterm-paste event)
+      (let ((uri-list ;; xterm-paste-urllist
+             ))
+        (unless (and uri-list (+amos-dispatch-uri-list uri-list))
+          (with-temp-buffer
+            (xterm-paste event)
+            (when (and current-prefix-arg (= current-prefix-arg 9))
+              (+amos-save-to-ediff-ring (buffer-substring-no-properties (point-min) (point-max)))
+              (message "Saved pasted text to ediff ring.")
+              (cl-return-from +amos/xterm-paste))
+            (let ((lines (list nil)))
+              (evil-apply-on-rectangle #'+amos-extract-rectangle-line (point-min) (point-max) lines)
+              (setq lines (nreverse (cdr lines)))
+              (let* ((yank-handler (list #'evil-yank-block-handler
+                                         lines
+                                         t
+                                         'evil-delete-yanked-rectangle))
+                     (text (propertize (mapconcat #'identity lines "\n")
+                                       'yank-handler yank-handler)))
+                (evil-set-register ?r text)))
+            (evil-set-register ?t (buffer-substring-no-properties (point-min) (point-max))))
+          (if (bound-and-true-p evil-multiedit-mode)
+              (evil-multiedit--paste-replace)
+            (if current-prefix-arg
+                (progn
+                  (if (and (= 2 current-prefix-arg) (not (evil-visual-state-p)))
+                      (forward-char))
+                  (evil-paste-before nil ?r))
+              (evil-paste-before nil ?t))))))))
+
+(defun +amos/ediff-last-two-yanks ()
+  "Ediff the last two pasted/yanked text snippets. Clean up buffers after exit."
+  (interactive)
+  (if (< (length +amos-ediff-yank-history) 2)
+      (message "Need at least two pasted regions to compare.")
+    (let* ((buf-a-name "*ediff-yank-a*")
+           (buf-b-name "*ediff-yank-b*")
+           (buf-a (get-buffer-create buf-a-name))
+           (buf-b (get-buffer-create buf-b-name))
+           (text-a (nth 1 +amos-ediff-yank-history))
+           (text-b (nth 0 +amos-ediff-yank-history)))
+      ;; Prepare buffers
+      (with-current-buffer buf-a
+        (erase-buffer)
+        (insert text-a))
+      (with-current-buffer buf-b
+        (erase-buffer)
+        (insert text-b))
+      ;; Launch ediff and install cleanup hook in control buffer
+      (let ((cleanup-fn
+             (lambda ()
+               (when (get-buffer buf-a-name)
+                 (kill-buffer buf-a-name))
+               (when (get-buffer buf-b-name)
+                 (kill-buffer buf-b-name)))))
+        (add-hook 'ediff-startup-hook
+                  (lambda ()
+                    ;; buffer-local quit hook: only for this ediff session
+                    (add-hook 'ediff-quit-hook cleanup-fn nil t))))
+      (ediff-buffers buf-a buf-b))))
 
 (defun +amos/paste-from-gui ()
   (interactive)

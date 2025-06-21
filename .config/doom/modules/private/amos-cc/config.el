@@ -107,7 +107,7 @@
   :hook (c++-mode . modern-c++-font-lock-mode)
   :defer)
 
-(add-hook! (c-mode c++-mode c-ts-base-mode) #'lsp)
+(add-hook! (c-mode c++-mode c-ts-base-mode) #'lsp-deferred)
 ;; (add-hook! (c-mode c++-mode c-ts-base-mode) #'eglot-ensure)
 (after! lsp-clangd (set-lsp-priority! 'clangd 2))
 (setq lsp-clients-clangd-args `(

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 
 export HTOP_SUSPEND=1
-if echo 1 | socat - UNIX-CONNECT:/tmp/htop.dtach &> /dev/null; then
-    exec dtach -a /tmp/htop.dtach -E -z
-else
-    exec dtach -A /tmp/htop.dtach -E -r ctrl_l -z htop
-fi
+export TMUX=$TMPDIR/tmux-htop
+
+tmux -f ~/.tmux/.tmux.conf.htop -u new-session -A -s htop htop

@@ -56,10 +56,10 @@
 (add-hook! 'evil-normal-state-exit-hook (flymake-popon-mode -1))
 
 (after! python
-  (add-hook! python-ts-mode #'lsp))
+  (add-hook! python-ts-mode #'lsp-deferred))
 
 (after! java-ts-mode
-  (add-hook! java-ts-mode #'lsp))
+  (add-hook! java-ts-mode #'lsp-deferred))
 
 (setq lsp-java-vmargs
       '("-XX:+UseParallelGC" "-XX:GCTimeRatio=4" "-XX:AdaptiveSizePolicyWeight=90" "-Dsun.zip.disableMemoryMapping=true" "-Xmx4G" "-Xms1G"))
