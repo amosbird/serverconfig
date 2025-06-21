@@ -45,7 +45,7 @@
 [[file:assets/keyboard.png]]
 
 
-* bootstrap
+* Bootstrap (as a reference only)
 
 #+BEGIN_SRC bash
 
