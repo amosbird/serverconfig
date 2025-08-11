@@ -287,7 +287,7 @@ groups = [
             ),
             DropDown(
                 "tdesktop",
-                "telegram-desktop",
+                "Telegram",
                 match=Match(wm_class="TelegramDesktop"),
                 x=0.15,
                 y=0.1,
