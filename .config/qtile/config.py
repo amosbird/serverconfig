@@ -409,13 +409,10 @@ def before_window_created(client):
     # doesn't work
 
 
-# @hook.subscribe.client_managed
-# def after_window_created(client):
-#     if "xfreerdp" in client.get_wm_class():
-#         client.disable_floating()
-#     elif "mpv" in client.get_wm_class():
-#         client.disable_floating()
-
+@hook.subscribe.client_managed
+def after_window_created(client):
+    if "chatgpt" in client.get_wm_class():
+        client.keep_above()
 
 # @hook.subscribe.layout_change
 # def layout_change(layout, group):

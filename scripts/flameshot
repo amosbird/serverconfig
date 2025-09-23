@@ -7,7 +7,7 @@
 # https://github.com/flameshot-org/flameshot/issues/784#issuecomment-918382722
 
 focusedwindow=$(xdotool getactivewindow)
-/usr/bin/flameshot "$@"
+QT_ENABLE_HIGHDPI_SCALING=0 /usr/bin/flameshot "$@"
 if [ "$focusedwindow" == "$(xdotool getactivewindow)" ]; then
     xdotool windowfocus "$focusedwindow"
 fi

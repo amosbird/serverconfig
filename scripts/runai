@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 
-chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk https://yuanbao.tencent.com https://chatgpt.com/ https://claude.ai/
+chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk https://chatgpt.com/ https://claude.ai/ https://gemini.google.com/
+# chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk https://yuanbao.tencent.com https://chatgpt.com/ https://claude.ai/
 # chromium --user-data-dir=/home/amos/.config/chrome-chatgpt --class=chatgpt --kiosk --proxy-server=socks://100.69.235.80:1080 https://chatgpt.com/ https://claude.ai/
