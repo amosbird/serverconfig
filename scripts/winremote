@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 
-case $(hostname) in
-    abx1gen3|qtw)
-        DPI_PARAMS="/w:3840 /h:2160 /scale-desktop:200 /scale:180"
-        # DPI_PARAMS="/size:3840x2160 /smart-sizing"
-        ;;
-    *)
-        DPI_PARAMS="/w:1920 /h:1080"
-        ;;
-esac
+DPI_PARAMS="/w:3840 /h:2160 /scale-desktop:200 /scale:180"
 
 # export NVD_BACKEND=direct
 # export LIBVA_DRIVER_NAME=nvidia

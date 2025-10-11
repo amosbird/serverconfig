@@ -257,7 +257,7 @@ keys = [
     Key([mod4], "s", lazy.spawn("kitty fish")),
     Key([mod4], "Home", lazy.spawn("movehome")),
     Key([mod4], "End", lazy.spawn("moveend")),
-    Key([mod4], "Insert", lazy.spawn("movesecond")),
+    Key([mod4], "Insert", lazy.spawn("moveinsert")),
     Key([mod4], "Delete", lazy.spawn("lxrandr")),
     Key([ctrl, alt], "r", lazy.spawn("rofi-runner")),
     Key([mod4], "F5", lazy.spawn("redshiftctl")),

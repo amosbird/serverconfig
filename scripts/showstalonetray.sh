@@ -21,9 +21,9 @@ toggle() {
 if ! xwininfo -name "stalonetray" >/dev/null 2>&1; then
     rm -f /tmp/stalonetray
     case $(hostname) in
-        abt480)
-            stalonetray --icon-size=48 --kludges=force_icons_size &>/tmp/stalonetray.log &
-            ;;
+        # abt480)
+        #     stalonetray --icon-size=48 --kludges=force_icons_size &>/tmp/stalonetray.log &
+        #     ;;
         *)
             stalonetray --icon-size=96 --kludges=force_icons_size &>/tmp/stalonetray.log &
             ;;

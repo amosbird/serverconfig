@@ -1,7 +1,7 @@
-#if !(SRVR_abt480)
+! #if !(SRVR_abt480)
 Xcursor.size: 48
 Xft.dpi: 192
-#endif
+! #endif
 
 Xft.autohint: 0
 Xft.lcdfilter:  lcddefault
