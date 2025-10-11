@@ -101,7 +101,7 @@ class ShellHolder:
                     "-c",
                     "~/.config/kitty/kitty-mux.conf",
                     "--listen-on",
-                    "unix:/tmp/kitty-mux-socket"
+                    "unix:/tmp/kitty-mux-socket",
                 ],
                 shell=True,
             )
@@ -186,7 +186,11 @@ keys = [
     Key([mod3], "f", lazy.spawn("copyq toggle")),
     Key([mod3], "0", lazy.spawn("sleep 0.1 && inputstr 0.0.0.0", shell=True)),
     Key([mod3], "1", lazy.spawn("sleep 0.1 && inputstr 127.0.0.1", shell=True)),
-    Key([mod3], "2", lazy.spawn('joinwemeet "$(xclip -selection clipboard -out)"', shell=True)),
+    Key(
+        [mod3],
+        "2",
+        lazy.spawn('joinwemeet "$(xclip -selection clipboard -out)"', shell=True),
+    ),
     Key([mod3], "3", lazy.spawn("rofipass")),
     Key([mod3], "4", lazy.spawn("inputstr amosbird@gmail.com")),
     Key([mod3], "r", lazy.spawn("rofidbtbl")),
@@ -204,10 +208,16 @@ keys = [
         "p",
         lazy.spawn("flameshot gui -r | pngquant - | uploadimg -", shell=True),
     ),
-    Key([mod3], "u", lazy.spawn("xclip -selection clipboard -out | upload -", shell=True)),
+    Key(
+        [mod3],
+        "u",
+        lazy.spawn("xclip -selection clipboard -out | upload -", shell=True),
+    ),
     Key([mod3], "o", lazy.spawn("openclipboard")),
     Key([mod3, shift], "r", lazy.spawn("teiler")),
-    Key([mod3], "g", lazy.spawn('url "www.google.com/search?pws=0&gl=us&gws_rd=cr&q="')),
+    Key(
+        [mod3], "g", lazy.spawn('url "www.google.com/search?pws=0&gl=us&gws_rd=cr&q="')
+    ),
     Key(
         [mod3],
         "k",
@@ -251,9 +261,19 @@ keys = [
     Key([mod4], "Delete", lazy.spawn("lxrandr")),
     Key([ctrl, alt], "r", lazy.spawn("rofi-runner")),
     Key([mod4], "F5", lazy.spawn("redshiftctl")),
-    Key([mod4], "0", lazy.reload_config()),
+    # Key([mod4], "0", lazy.reload_config()),
     Key([ctrl], "Escape", lazy.spawn("dunstctl close-all")),
     Key([ctrl], "Eisu_Toggle", lazy.spawn("dunstctl history-pop")),
+    Key([ctrl], "F1", lazy.spawn("pulseaudio-ctl mute")),
+    Key([ctrl], "F2", lazy.spawn("pulseaudio-ctl down 3")),
+    Key([ctrl], "F3", lazy.spawn("pulseaudio-ctl up 3")),
+    Key([ctrl], "F4", lazy.spawn("pavucontrol")),
+    Key([ctrl], "F10", lazy.spawn("blueman-manager")),
+    Key([], "XF86AudioLowerVolume", lazy.spawn("pulseaudio-ctl down 3")),
+    Key([], "XF86AudioRaiseVolume", lazy.spawn("pulseaudio-ctl up 3")),
+    Key([], "XF86AudioMute", lazy.spawn("pulseaudio-ctl mute")),
+    Key([], "XF86MonBrightnessDown", lazy.spawn("xbacklight -5")),
+    Key([], "XF86MonBrightnessUp", lazy.spawn("xbacklight +5")),
     Key([ctrl, alt], "q", lazy.window.kill()),
     Key([ctrl, alt], "j", lazy.layout.next()),
     Key([ctrl, alt], "k", lazy.layout.previous()),
@@ -413,6 +433,7 @@ def before_window_created(client):
 def after_window_created(client):
     if "chatgpt" in client.get_wm_class():
         client.keep_above()
+
 
 # @hook.subscribe.layout_change
 # def layout_change(layout, group):
