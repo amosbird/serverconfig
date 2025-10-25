@@ -120,4 +120,5 @@ video/x-ogm+ogg=mympv.desktop;
 video/x-theora=mympv.desktop;
 video/x-theora+ogg=mympv.desktop;
 x-scheme-handler/jetbrains=jetbrains-toolbox.desktop;
-x-scheme-handler/tg=org.telegram.desktop.desktop;
+x-scheme-handler/tg=org.telegram.desktop._023d4009d7ff6bfa2363e883ec2f16df.desktop;org.telegram.desktop._9825785ce25c95281b361d7a1b66ddd3.desktop;org.telegram.desktop.desktop;
+x-scheme-handler/tonsite=org.telegram.desktop._023d4009d7ff6bfa2363e883ec2f16df.desktop;org.telegram.desktop._9825785ce25c95281b361d7a1b66ddd3.desktop;

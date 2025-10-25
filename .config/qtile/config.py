@@ -307,7 +307,7 @@ groups = [
             ),
             DropDown(
                 "tdesktop",
-                "Telegram",
+                "/opt/telegram/Telegram",
                 match=Match(wm_class="TelegramDesktop"),
                 x=0.15,
                 y=0.1,
@@ -653,7 +653,7 @@ def show_telegram(uri):
     name = "tdesktop"
     if name in scratchpad.dropdowns:
         scratchpad.dropdowns[name].show()
-        qtile.spawn(f"telegram-desktop -- {uri}")
+        qtile.spawn(f"/opt/telegram/Telegram -- {uri}")
     else:
         if name in scratchpad._dropdownconfig:
             old_command = scratchpad._dropdownconfig[name].command
