@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
 xsetroot -cursor_name left_ptr
+
+/home/amos/scripts/moveend
+
 feh --bg-scale ~/git/serverconfig/black.jpg
-
-/home/amos/scripts/movehome
-
 # /home/amos/scripts/showstalonetray.sh 1
 
 fish -c "dunst &> /tmp/dunst.log &"
