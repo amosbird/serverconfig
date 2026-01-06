@@ -3,51 +3,140 @@
 
 pkgname=freerdp-git
 pkgdesc='Free RDP client - git checkout'
-pkgver=2.0.0.rc4.r1096.g94711084a
+pkgver=3.12.0.r901.g06d20add4
 pkgrel=1
-depends=('openssl' 'libxcursor' 'libcups' 'alsa-lib' 'libxext' 'libxdamage'
-         'ffmpeg' 'libxkbfile' 'libxinerama' 'libxv' 'openh264')
-makedepends=('git' 'krb5' 'cmake' 'damageproto')
-arch=('i686' 'x86_64')
-url="http://www.freerdp.com/"
-license=('GPL')
+pkgdesc="Free implementation of the Remote Desktop Protocol (RDP)"
+arch=(x86_64)
+url="https://www.freerdp.com/"
+license=(Apache-2.0)
+depends=(
+  fuse3
+  gcc-libs
+  glibc
+  jansson
+  libcups
+  libx11
+  libxcursor
+  libxext
+  libxdamage
+  libxfixes
+  libxkbcommon
+  libxi
+  libxinerama
+  libxkbfile
+  libxrandr
+  libxrender
+  libxtst
+  sdl3
+  sdl3_ttf
+  wayland
+)
+makedepends=(
+  alsa-lib
+  cmake
+  ffmpeg
+  git
+  icu
+  krb5
+  libjpeg-turbo
+  libp11
+  libpng
+  libpulse
+  libusb
+  libwebp
+  ninja
+  openssl
+  pam
+  pkcs11-helper
+  xorgproto
+  zlib
+)
 provides=('freerdp')
 conflicts=('freerdp')
-source=('freerdp::git://github.com/amosbird/FreeRDP.git')
+source=('freerdp::git+https://github.com/amosbird/FreeRDP.git')
 sha256sums=('SKIP')
 
 pkgver() {
-	cd freerdp/
+  cd freerdp/
 
-	if GITTAG="$(git describe --abbrev=0 --tags 2>/dev/null)"; then
-		printf '%s.r%s.g%s' \
-			"$(sed -e "s/^${pkgname%%-git}//" -e 's/^[-_/a-zA-Z]\+//' -e 's/[-_+]/./g' <<< ${GITTAG})" \
-			"$(git rev-list --count ${GITTAG}..)" \
-			"$(git rev-parse --short HEAD)"
-	else
-		printf '0.r%s.g%s' \
-			"$(git rev-list --count master)" \
-			"$(git rev-parse --short HEAD)"
-	fi
+  if GITTAG="$(git describe --abbrev=0 --tags 2>/dev/null)"; then
+    printf '%s.r%s.g%s' \
+      "$(sed -e "s/^${pkgname%%-git}//" -e 's/^[-_/a-zA-Z]\+//' -e 's/[-_+]/./g' <<< ${GITTAG})" \
+      "$(git rev-list --count ${GITTAG}..)" \
+      "$(git rev-parse --short HEAD)"
+  else
+    printf '0.r%s.g%s' \
+      "$(git rev-list --count master)" \
+      "$(git rev-parse --short HEAD)"
+  fi
 }
 
 build() {
-	cd freerdp/
+  export CFLAGS+=" -Wno-incompatible-pointer-types"
+  export CXXFLAGS+=" -Wno-incompatible-pointer-types"
 
-	cmake \
-		-DCMAKE_INSTALL_PREFIX=/usr \
-		-DCMAKE_INSTALL_LIBDIR=lib \
-		-DWITH_PULSE=ON \
-		-DWITH_SERVER=ON \
-		-DWITH_OPENH264=ON \
-		-DWITH_CUPS=ON \
-		.
-	make
+  local cmake_options=(
+    -B build
+    -D CHANNEL_RDPECAM_CLIENT=ON
+    -D CHANNEL_URBDRC_CLIENT=ON
+    -D CMAKE_BUILD_TYPE=Release
+    -D CMAKE_INSTALL_LIBDIR=lib
+    -D CMAKE_INSTALL_PREFIX=/usr
+    -D CMAKE_SKIP_INSTALL_RPATH=ON
+    -D PROXY_PLUGINDIR=/usr/lib/$pkgname/server/proxy/plugins
+    -D RDTK_FORCE_STATIC_BUILD=ON  # prevent file conflicts with freerdp2
+    -D UWAC_FORCE_STATIC_BUILD=ON  # prevent file conflicts with freerdp2
+    -D WINPR_UTILS_IMAGE_JPEG=ON
+    -D WINPR_UTILS_IMAGE_PNG=ON
+    -D WINPR_UTILS_IMAGE_WEBP=ON
+    -D WITH_ALSA=ON
+    -D WITH_BINARY_VERSIONING=ON  # prevent file conflicts with freerdp2
+    -D WITH_CHANNELS=ON
+    -D WITH_CLIENT_CHANNELS=ON
+    -D WITH_CLIENT_SDL3=ON
+    -D WITH_CLIENT_SDL2=OFF
+    -D WITH_CUPS=ON
+    -D WITH_DSP_FFMPEG=ON
+    -D WITH_FFMPEG=ON
+    -D WITH_FUSE=ON
+    -D WITH_ICU=ON
+    -D WITH_JPEG=ON
+    -D WITH_PCSC=ON
+    -D WITH_PULSE=ON
+    -D WITH_SERVER=ON
+    -D WITH_SERVER_CHANNELS=ON
+    -D WITH_SWSCALE=ON
+    -D WITH_SYSTEMD=ON
+    -D WITH_VAAPI=ON
+    -D WITH_VERBOSE_WINPR_ASSERT=OFF
+    -D WITH_WAYLAND=ON
+    -D WITH_WINPR_TOOLS=ON
+    -D WITH_X11=ON
+    -G Ninja
+    -S freerdp
+    -W no-dev
+  )
+
+  cmake "${cmake_options[@]}"
+  cmake --build build --verbose
 }
 
 package() {
-	cd freerdp/
 
-	make DESTDIR="${pkgdir}/" install
+  depends+=(
+    alsa-lib libasound.so
+    ffmpeg libavcodec.so libavutil.so libswresample.so libswscale.so
+    icu libicuuc.so
+    krb5 libk5crypto.so libkrb5.so
+    libjpeg-turbo libjpeg.so
+    libpng libpng16.so
+    libpulse libpulse.so
+    libusb libusb-1.0.so
+    libwebp libwebp.so
+    openssl libcrypto.so libssl.so
+    pam libpam.so
+    zlib libz.so
+  )
+
+  DESTDIR="$pkgdir" cmake --install build
 }
-
