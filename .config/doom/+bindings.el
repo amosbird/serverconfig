@@ -515,7 +515,7 @@
         :gn "="        #'edebug-temp-display-freq-count)
 
       (:map restclient-mode-map
-        :g "C-c C-c"   #'+amos/restclient-http-send-current)
+        :g "C-c C-c"   #'restclient-http-send-current)
 
       (:map emacs-lisp-mode-map
         :i "M-o"       #'lisp-state-toggle-lisp-state)
@@ -643,9 +643,10 @@
 (map! :when (modulep! :completion corfu)
       :after corfu
       (:map corfu-map
-            [remap corfu-insert-separator] #'+corfu-smart-sep-toggle-escape
-            [remap scroll-down-command] nil
-            [remap scroll-up-command] nil))
+            [remap corfu-insert-separator] #'+corfu/smart-sep-toggle-escape
+            "C-S-s" #'+corfu/move-to-minibuffer
+            "C-p" #'corfu-previous
+            "C-n" #'corfu-next))
 (let ((cmds-del
        `(menu-item "Reset completion" corfu-reset
          :filter ,(lambda (cmd)

@@ -94,6 +94,8 @@
 (package! embark :pin "86fc40909ba9506676a28d35879f8c091018ac42" :recipe (:host github :repo "amosbird/embark"))
 (package! embark-consult :pin "86fc40909ba9506676a28d35879f8c091018ac42" :recipe (:host github :repo "amosbird/embark"))
 
+(package! magit-prime :recipe (:host github :repo "Azkae/magit-prime"))
+
 ;; (package! vertico :pin "edbb370ad237781eb893a5c2b505cfa24e6b2d9a")
 ;; (package! consult :pin "fa249d5dd7212e5ae1fa51c086d8f1197d738ef4")
 

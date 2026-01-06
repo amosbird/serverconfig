@@ -87,13 +87,18 @@
 ;;               ("<tab>" . 'copilot-accept-completion)
 ;;               ("C-<tab>" . 'copilot-accept-completion-by-word)))
 
-(use-package lsp-booster
-  :after lsp)
-
-(use-package eglot-booster
-  :after eglot
+(use-package! magit-prime
+  :after magit
   :config
-  (eglot-booster-mode))
+  (add-hook 'magit-pre-refresh-hook 'magit-prime-refresh-cache))
+
+;; (use-package lsp-booster
+;;   :after lsp)
+
+;; (use-package eglot-booster
+;;   :after eglot
+;;   :config
+;;   (eglot-booster-mode))
 
 (use-package! treesit-auto
   :config
@@ -238,9 +243,9 @@
 (use-package! move-text
   :defer)
 
-(use-package! ws-butler
-  :config
-  (ws-butler-global-mode +1))
+; (use-package! ws-butler
+;   :config
+;   (ws-butler-global-mode +1))
 
 (use-package! syntactic-close
   :defer)
@@ -3844,35 +3849,27 @@ See `project-local-get' for the parameter PROJECT."
 
 (add-hook! 'buffer-list-update-hook #'+amos-display-header)
 
-(defun +amos/restclient-http-send-current (&optional raw stay-in-window suppress-response-buffer)
-  (interactive)
-  (save-excursion
-    (goto-char (restclient-current-min))
-    (when (re-search-forward restclient-method-url-regexp (point-max) t)
-      (let ((method (match-string-no-properties 1))
-            (url (concat "http://127.0.0.1:9200" (string-trim (match-string-no-properties 2))))
-            (vars (restclient-find-vars-before-point))
-            (headers '()))
-        (forward-line)
-        (while (cond
-                ((looking-at restclient-response-hook-regexp)
-                 (when-let (hook-function (restclient-parse-hook (match-string-no-properties 2)
-                                                                 (match-end 2)
-                                                                 (match-string-no-properties 3)))
-                   (push hook-function restclient-curr-request-functions)))
-                ((and (looking-at restclient-header-regexp) (not (looking-at restclient-empty-line-regexp)))
-                 (setq headers (cons (restclient-replace-all-in-header vars (restclient-make-header)) headers)))
-                ((looking-at restclient-use-var-regexp)
-                 (setq headers (append headers (restclient-parse-headers (restclient-replace-all-in-string vars (match-string 1)))))))
-          (forward-line))
-        (when (looking-at restclient-empty-line-regexp)
-          (forward-line))
-        (when restclient-curr-request-functions
-          (add-hook 'restclient-response-loaded-hook 'restclient-single-request-function))
-        (let* ((cmax (restclient-current-max))
-               (entity (restclient-parse-body (buffer-substring (min (point) cmax) cmax) vars))
-               (url (restclient-replace-all-in-string vars url)))
-          (restclient-http-do method url headers entity raw stay-in-window suppress-response-buffer))))))
+(defun +amos|restclient-prepend-url (url &rest _args)
+  "Prepend 127.0.0.1:9200 to URL if it does not already have a host."
+  (if (string-match-p "^http" url) url (concat "http://127.0.0.1:9200" url)))
+
+(defun +amos|restclient-prepend-url-once (url &rest _)
+  "Prepend 127.0.0.1:9200 to URL if it does not already have a host.
+Also remove itself after first run."
+  (let ((new-url (if (string-match-p "^http" url)
+                     url
+                   (concat "http://127.0.0.1:9200" url))))
+    (advice-remove #'restclient-replace-all-in-string #'+amos|restclient-prepend-url-once)
+    new-url))
+
+(advice-add 'restclient-http-parse-current-and-do
+            :before
+            (lambda (&rest _)
+              (advice-add 'restclient-replace-all-in-string
+                          :filter-return #'+amos|restclient-prepend-url-once)))
+
+(with-eval-after-load 'restclient
+  (setq restclient-method-body-prohibited-regexp "^HEAD$"))
 
 (defun +amos-lsp-a (orig-fun &rest args)
   (if (and buffer-file-name (string-match-p "~$" buffer-file-name))

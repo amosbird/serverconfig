@@ -43,6 +43,7 @@ configs=(
     .xsettingsd
     .proxychains
     .ideavimrc
+    .lldbinit
     scripts
 )
 
