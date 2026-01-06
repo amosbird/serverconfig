@@ -3930,18 +3930,18 @@ Also remove itself after first run."
 ;  (setq aider-args '("--deepseek"))
 ;  (setenv "DEEPSEEK_API_KEY" (string-trim (shell-command-to-string "pass show deepseek-api"))))
 
-(use-package! gptel
-  :config
-  (setq gptel-model 'deepseek-chat
-        gptel-backend
-        (gptel-make-openai "DeepSeek"
-          :host "api.deepseek.com"
-          :endpoint "/chat/completions"
-          :stream t
-          :key (string-trim (shell-command-to-string "pass show deepseek-api"))
-          :models '(deepseek-chat deepseek-coder))))
+;; (use-package! gptel
+;;   :config
+;;   (setq gptel-model 'deepseek-chat
+;;         gptel-backend
+;;         (gptel-make-openai "DeepSeek"
+;;           :host "api.deepseek.com"
+;;           :endpoint "/chat/completions"
+;;           :stream t
+;;           :key (string-trim (shell-command-to-string "pass show deepseek-api"))
+;;           :models '(deepseek-chat deepseek-coder))))
 
-(use-package! gptel-quick)
+;; (use-package! gptel-quick)
 
 (use-package! evedel
   :defer t

@@ -75,9 +75,9 @@
 (package! realign-mode :recipe (:host github :repo "amosbird/realign-mode.el"))
 (package! flymake-popon :recipe (:type git :repo "https://codeberg.org/akib/emacs-flymake-popon.git"))
 (package! kkp :recipe (:host github :repo "benjaminor/kkp"))
-(package! aider :recipe (:host github :repo "tninja/aider.el" :files ("aider.el" "aider-doom.el")))
-(package! gptel)
-(package! gptel-quick :recipe (:host github :repo "karthink/gptel-quick"))
+;; (package! aider :recipe (:host github :repo "tninja/aider.el" :files ("aider.el" "aider-doom.el")))
+;; (package! gptel)
+;; (package! gptel-quick :recipe (:host github :repo "karthink/gptel-quick"))
 (package! evedel :recipe (:host github :repo "daedsidog/evedel"))
 (package! protobuf-mode)
 
