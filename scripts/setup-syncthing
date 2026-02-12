@@ -48,6 +48,10 @@ echo "==> Tailscale IP: ${TS_IP:-not found}"
 
 [ -z "$TS_IP" ] && { echo "ERROR: tailscale not running"; exit 1; }
 
+# Validate inputs to prevent injection via SSH
+[[ "$LOCAL_ID" =~ ^[A-Z0-9-]+$ ]] || { echo "ERROR: invalid device ID"; exit 1; }
+[[ "$TS_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "ERROR: invalid tailscale IP"; exit 1; }
+
 # --- Network: tailscale only, no relay/global discovery ---
 echo "==> Locking down to tailscale"
 set_listen_addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
@@ -125,6 +129,7 @@ REMOTE
         done
     ' | while read -r peer_id peer_addrs; do
         [ "$peer_id" = "$LOCAL_ID" ] || [ "$peer_id" = "$INTRODUCER_ID" ] && continue
+        [[ "$peer_id" =~ ^[A-Z0-9-]+$ ]] || continue
         echo "  Setting peer $peer_id -> $peer_addrs"
         # Clear existing addresses
         for i in $(syncthing cli config devices "$peer_id" addresses list 2>/dev/null | sort -rn); do
