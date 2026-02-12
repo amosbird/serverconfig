@@ -155,7 +155,14 @@ for entry in "${SHARED_FOLDERS[@]}"; do
     if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
         syncthing cli config folders "$fid" devices add \
             --device-id "$INTRODUCER_ID" 2>/dev/null || true
+        # Ensure folder exists on introducer with correct path (not auto-accept default)
         ssh "$INTRODUCER_SSH" "
+            if ! syncthing cli config folders list | grep -qF '$fid'; then
+                syncthing cli config folders add \
+                    --id '$fid' \
+                    --label '$flabel' \
+                    --path '\$HOME/.copilot'
+            fi
             syncthing cli config folders '$fid' devices add \
                 --device-id '$LOCAL_ID' 2>/dev/null || true
         "
