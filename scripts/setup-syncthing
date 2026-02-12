@@ -1,168 +1,115 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Architecture:
-#   clickstock runs ONLY stdiscosrv (private discovery) + a peer registry file.
-#   clickstock does NOT run syncthing and does NOT sync data.
-#   Clients form a direct mesh: every client connects to every other client.
-#   New node: runs this script → registers in peer registry on clickstock →
-#   gets peer list → adds all peers locally → SSHes to each peer to add self.
-#   Discovery server handles ongoing address resolution.
+# Syncthing mesh for ~/.copilot over Tailscale
+#
+# Topology:
+#   - clickstock (introducer): propagates device info to all nodes
+#   - All nodes connect directly to each other for actual sync
+#   - No discovery servers, no relays — tailscale static addresses only
+#
+# Usage: run on any new node (must have syncthing running + tailscale up)
+#   Only SSH access to clickstock (root@100.66.107.106) is required.
+#   The introducer automatically propagates the new device to all existing nodes.
 
-SEED_TS_IP="100.66.107.106"
-SEED_SSH="root@$SEED_TS_IP"
-PEER_REGISTRY="/var/lib/syncthing-discosrv/peers.txt"
+INTRODUCER_IP="100.66.107.106"
+INTRODUCER_SSH="root@$INTRODUCER_IP"
+INTRODUCER_ID="P6RUYUS-2H2TQOU-UOXGLQD-OGZULWJ-OFDQU7K-E3WRIX7-77F2LXA-LT4OVAT"
 
-# Private discovery server (stdiscosrv on clickstock, no syncthing)
-DISCO_ID="ZBO5OO5-QD56IFD-EWHDC3A-QH6NXRX-3IXPNWC-3UAXFNL-AEDVQGA-U4EOGQX"
-DISCO_URL="https://$DISCO_ID@$SEED_TS_IP:8443/v2/"
+FOLDER_ID="copilot-config"
+FOLDER_LABEL="Copilot Config"
+FOLDER_PATH="$HOME/.copilot"
 
-SHARED_FOLDERS=(
-    "copilot-config|Copilot Config|~/.copilot"
-)
+# ── Helpers ──────────────────────────────────────────────────────────
 
-# --- Helpers ---
-has_device() { syncthing cli config devices list 2>/dev/null | grep -qF "$1"; }
-has_folder() { syncthing cli config folders list 2>/dev/null | grep -qF "$1"; }
-
-set_listen_addresses() {
-    local indices
-    indices=$(syncthing cli config options raw-listen-addresses list 2>/dev/null)
-    for i in $(echo "$indices" | sort -rn); do
-        syncthing cli config options raw-listen-addresses "$i" delete
-    done
-    for addr in "$@"; do
-        syncthing cli config options raw-listen-addresses add "$addr"
-    done
-}
-
-set_device_addresses() {
-    local dev_id="$1"; shift
-    local indices
-    indices=$(syncthing cli config devices "$dev_id" addresses list 2>/dev/null)
-    for i in $(echo "$indices" | sort -rn); do
-        syncthing cli config devices "$dev_id" addresses "$i" delete
-    done
-    for addr in "$@"; do
-        syncthing cli config devices "$dev_id" addresses add "$addr"
-    done
-}
-
-set_global_discovery() {
-    local indices
-    indices=$(syncthing cli config options raw-global-ann-servers list 2>/dev/null)
-    for i in $(echo "$indices" | sort -rn); do
-        syncthing cli config options raw-global-ann-servers "$i" delete
-    done
-    for url in "$@"; do
-        syncthing cli config options raw-global-ann-servers add "$url"
-    done
-}
+die() { echo "ERROR: $*" >&2; exit 1; }
 
 get_tailscale_ip() {
     ip addr show tailscale0 2>/dev/null | awk '/inet / {split($2,a,"/"); print a[1]}'
 }
 
+# Replace all listen/announcement addresses with given args
+replace_list() {
+    local key="$1"; shift
+    for i in $(syncthing cli config options "$key" list 2>/dev/null | sort -rn); do
+        syncthing cli config options "$key" "$i" delete
+    done
+    for v in "$@"; do
+        syncthing cli config options "$key" add "$v"
+    done
+}
+
+# ── Preflight ────────────────────────────────────────────────────────
+
 LOCAL_ID=$(syncthing cli show system | grep myID | sed 's/.*": "//;s/".*//')
 TS_IP=$(get_tailscale_ip)
 HOSTNAME=$(hostname | tr -cd 'a-zA-Z0-9._-')
-echo "==> Local: $HOSTNAME ($LOCAL_ID)"
-echo "==> Tailscale IP: ${TS_IP:-not found}"
 
-[ -z "$TS_IP" ] && { echo "ERROR: tailscale not running"; exit 1; }
-[[ "$LOCAL_ID" =~ ^[A-Z0-9-]+$ ]] || { echo "ERROR: invalid device ID"; exit 1; }
-[[ "$TS_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "ERROR: invalid tailscale IP"; exit 1; }
+[ -z "$TS_IP" ] && die "tailscale not running"
+[[ "$LOCAL_ID" =~ ^[A-Z0-9-]+$ ]] || die "cannot get syncthing device ID"
 
-# --- Network: tailscale only, private discovery ---
-echo "==> Configuring network: tailscale + private discovery"
-set_listen_addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
-syncthing cli config options global-ann-enabled set true
-set_global_discovery "$DISCO_URL"
+echo "==> $HOSTNAME ($LOCAL_ID) @ $TS_IP"
+
+# ── Network lockdown: tailscale only ─────────────────────────────────
+
+echo "==> Locking down to tailscale..."
+replace_list raw-listen-addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
+syncthing cli config options global-ann-enabled set false
 syncthing cli config options relays-enabled set false
 syncthing cli config options local-ann-enabled set false
 syncthing cli config options natenabled set false
 syncthing cli config options always-local-nets add "100.64.0.0/10" 2>/dev/null || true
 
-# --- Remove clickstock from devices if present (it no longer syncs) ---
-CLICKSTOCK_ID="6TKCCHI-IMYMGDN-B3CX2SK-T3674QH-V3B4U4G-IUS4QZI-6QO427R-G6T7PQS"
-if has_device "$CLICKSTOCK_ID"; then
-    echo "==> Removing clickstock (no longer a sync peer)"
-    syncthing cli config devices "$CLICKSTOCK_ID" delete 2>/dev/null || true
+# ── Add introducer ───────────────────────────────────────────────────
+
+echo "==> Adding introducer (clickstock)..."
+if ! syncthing cli config devices list | grep -qF "$INTRODUCER_ID"; then
+    syncthing cli config devices add \
+        --device-id "$INTRODUCER_ID" --name "clickstock-introducer" \
+        --addresses "tcp://$INTRODUCER_IP:22000" --addresses "quic://$INTRODUCER_IP:22000"
+fi
+syncthing cli config devices "$INTRODUCER_ID" introducer set true
+syncthing cli config devices "$INTRODUCER_ID" auto-accept-folders set true
+
+# ── Create shared folder ─────────────────────────────────────────────
+
+echo "==> Configuring folder: $FOLDER_ID -> $FOLDER_PATH"
+mkdir -p "$FOLDER_PATH"
+
+if ! syncthing cli config folders list | grep -qF "$FOLDER_ID"; then
+    syncthing cli config folders add --id "$FOLDER_ID" --label "$FOLDER_LABEL" --path "$FOLDER_PATH"
 fi
 
-# --- Register in peer registry and get peer list ---
-echo "==> Registering in peer registry on seed..."
-PEER_DATA=$(ssh "$SEED_SSH" bash -s <<REMOTE
-    REGISTRY='$PEER_REGISTRY'
-    touch "\$REGISTRY"
+# Share with introducer
+syncthing cli config folders "$FOLDER_ID" devices add --device-id "$INTRODUCER_ID" 2>/dev/null || true
+syncthing cli config folders "$FOLDER_ID" devices "$INTRODUCER_ID" introducer set true 2>/dev/null || true
 
-    # Update or add this device
-    if grep -qF '$LOCAL_ID' "\$REGISTRY"; then
-        sed -i '/^$LOCAL_ID|/d' "\$REGISTRY"
-    fi
-    echo '$LOCAL_ID|$HOSTNAME|$TS_IP' >> "\$REGISTRY"
+# ── Register on introducer via SSH ────────────────────────────────────
 
-    cat "\$REGISTRY"
+echo "==> Registering on introducer via SSH..."
+ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "$INTRODUCER_SSH" bash <<REMOTE
+set -e
+
+# Add this device if not known
+if ! syncthing cli config devices list 2>/dev/null | grep -qF '$LOCAL_ID'; then
+    syncthing cli config devices add \
+        --device-id '$LOCAL_ID' --name '$HOSTNAME' \
+        --addresses 'dynamic' \
+        --addresses 'tcp://$TS_IP:22000' --addresses 'quic://$TS_IP:22000'
+    echo "  Added device $LOCAL_ID"
+else
+    echo "  Device already known"
+fi
+
+# Share folder with this device
+syncthing cli config folders '$FOLDER_ID' devices add --device-id '$LOCAL_ID' 2>/dev/null || true
+echo "  Shared $FOLDER_ID"
 REMOTE
-)
 
-# --- Add all peers (full mesh) ---
-echo "==> Building mesh..."
-echo "$PEER_DATA" | while IFS='|' read -r peer_id peer_name peer_ip; do
-    [ -z "$peer_id" ] && continue
-    [ "$peer_id" = "$LOCAL_ID" ] && continue
-    [[ "$peer_id" =~ ^[A-Z0-9-]+$ ]] || continue
+# ── .stignore ─────────────────────────────────────────────────────────
 
-    if has_device "$peer_id"; then
-        echo "  Updating: $peer_name ($peer_ip)"
-        set_device_addresses "$peer_id" "dynamic" "tcp://$peer_ip:22000" "quic://$peer_ip:22000"
-    else
-        echo "  Adding: $peer_name ($peer_ip)"
-        syncthing cli config devices add \
-            --device-id "$peer_id" --name "$peer_name" \
-            --addresses "dynamic" \
-            --addresses "tcp://$peer_ip:22000" \
-            --addresses "quic://$peer_ip:22000"
-    fi
-
-    # Bidirectional: SSH to peer to add ourselves
-    echo "    -> Registering on $peer_name..."
-    ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$peer_ip" "
-        syncthing cli config devices list 2>/dev/null | grep -qF '$LOCAL_ID' || \
-            syncthing cli config devices add --device-id '$LOCAL_ID' --name '$HOSTNAME' \
-                --addresses 'dynamic' --addresses 'tcp://$TS_IP:22000' --addresses 'quic://$TS_IP:22000' 2>/dev/null
-        for fid in copilot-config; do
-            syncthing cli config folders \"\$fid\" devices add --device-id '$LOCAL_ID' 2>/dev/null || true
-        done
-    " 2>/dev/null || echo "    Warning: could not reach $peer_ip"
-done
-
-# --- Shared folders ---
-echo "==> Configuring folders..."
-for entry in "${SHARED_FOLDERS[@]}"; do
-    IFS='|' read -r fid flabel fpath <<< "$entry"
-    fpath="${fpath/#\~/$HOME}"
-    mkdir -p "$fpath"
-
-    if has_folder "$fid"; then
-        echo "  Folder '$fid' exists"
-    else
-        echo "  Adding: $flabel ($fpath)"
-        syncthing cli config folders add --id "$fid" --label "$flabel" --path "$fpath"
-    fi
-
-    # Share with all peers
-    echo "$PEER_DATA" | while IFS='|' read -r peer_id _ _; do
-        [ -z "$peer_id" ] || [ "$peer_id" = "$LOCAL_ID" ] && continue
-        [[ "$peer_id" =~ ^[A-Z0-9-]+$ ]] || continue
-        syncthing cli config folders "$fid" devices add --device-id "$peer_id" 2>/dev/null || true
-    done
-done
-
-# --- .stignore ---
-COPILOT_DIR="$HOME/.copilot"
-if [ ! -f "$COPILOT_DIR/.stignore-shared" ]; then
-    cat > "$COPILOT_DIR/.stignore-shared" << 'IGN'
+if [ ! -f "$FOLDER_PATH/.stignore-shared" ]; then
+    cat > "$FOLDER_PATH/.stignore-shared" << 'IGN'
 // Syncthing selective sync for ~/.copilot
 /pkg
 /logs
@@ -175,12 +122,15 @@ if [ ! -f "$COPILOT_DIR/.stignore-shared" ]; then
 IGN
     echo "==> Created .stignore-shared"
 fi
-if [ ! -f "$COPILOT_DIR/.stignore" ]; then
-    echo '#include .stignore-shared' > "$COPILOT_DIR/.stignore"
+
+if [ ! -f "$FOLDER_PATH/.stignore" ]; then
+    echo '#include .stignore-shared' > "$FOLDER_PATH/.stignore"
     echo "==> Created .stignore"
 fi
 
-TOTAL_PEERS=$(echo "$PEER_DATA" | grep -v "$LOCAL_ID" | grep -c '^[A-Z]' || true)
+# ── Done ──────────────────────────────────────────────────────────────
+
 echo ""
-echo "==> Done! $HOSTNAME in mesh with $TOTAL_PEERS peer(s)"
-echo "    Discovery: private stdiscosrv @ $SEED_TS_IP"
+echo "==> Done! $HOSTNAME registered with introducer."
+echo "    Existing peers will be propagated automatically."
+echo "    Sync will start once the introducer connects."
