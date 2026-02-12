@@ -13,11 +13,48 @@ SHARED_FOLDERS=(
 has_device() { syncthing cli config devices list 2>/dev/null | grep -qF "$1"; }
 has_folder() { syncthing cli config folders list 2>/dev/null | grep -qF "$1"; }
 
-echo "==> Local Device ID:"
-syncthing cli show system | grep myID
+get_tailscale_ip() {
+    ip addr show tailscale0 2>/dev/null | awk '/inet / {split($2,a,"/"); print a[1]}'
+}
 
-# --- Add introducer ---
-if has_device "$INTRODUCER_ID"; then
+LOCAL_ID=$(syncthing cli show system | grep myID | sed 's/.*": "//;s/".*//')
+TS_IP=$(get_tailscale_ip)
+echo "==> Local Device ID: $LOCAL_ID"
+echo "==> Tailscale IP: ${TS_IP:-not found}"
+
+if [ -z "$TS_IP" ]; then
+    echo "WARNING: tailscale not running or no IP assigned"
+fi
+
+# --- Introducer mode (on introducer itself) ---
+if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
+    echo "==> This IS the introducer, configuring..."
+
+    # Auto-accept devices & folders
+    syncthing cli config options set auto-accept-devices true
+    syncthing cli config defaults device auto-accept-folders set true
+
+    # Only listen on tailscale IP (restrict to tailnet only)
+    if [ -n "$TS_IP" ]; then
+        echo "==> Binding to tailscale only: tcp://$TS_IP:22000, quic://$TS_IP:22000"
+        syncthing cli config options set listen-addresses "tcp://$TS_IP:22000,quic://$TS_IP:22000"
+    fi
+
+    # Disable global discovery & relaying (tailscale handles connectivity)
+    syncthing cli config options set global-announce-enabled false
+    syncthing cli config options set relays-enabled false
+
+    # Keep local discovery for LAN peers also on tailnet
+    syncthing cli config options set local-announce-enabled true
+
+    # GUI only on localhost
+    syncthing cli config gui set address "127.0.0.1:8384"
+fi
+
+# --- Add introducer (skip on introducer itself) ---
+if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
+    echo "==> Skipping introducer self-add"
+elif has_device "$INTRODUCER_ID"; then
     echo "==> Introducer already added, ensuring introducer=true + auto-accept"
     syncthing cli config devices "$INTRODUCER_ID" introducer set true
     syncthing cli config devices "$INTRODUCER_ID" auto-accept-folders set true
@@ -30,7 +67,7 @@ else
         --auto-accept-folders
 fi
 
-# --- Add shared folders ---
+# --- Add shared folders (all nodes) ---
 for entry in "${SHARED_FOLDERS[@]}"; do
     IFS='|' read -r fid flabel fpath <<< "$entry"
     fpath="${fpath/#\~/$HOME}"
@@ -46,9 +83,11 @@ for entry in "${SHARED_FOLDERS[@]}"; do
             --path "$fpath"
     fi
 
-    # Ensure introducer is shared on this folder
-    syncthing cli config folders "$fid" devices add \
-        --device-id "$INTRODUCER_ID" 2>/dev/null || true
+    # Share folder with introducer (skip on introducer itself)
+    if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
+        syncthing cli config folders "$fid" devices add \
+            --device-id "$INTRODUCER_ID" 2>/dev/null || true
+    fi
 done
 
 # --- Create .stignore if missing ---
@@ -76,7 +115,10 @@ if [ ! -f "$COPILOT_STIGNORE" ]; then
 fi
 
 echo ""
-echo "==> Done! Next steps:"
-echo "    1. On the introducer ($INTRODUCER_NAME), accept this device"
-echo "    2. On the introducer, share folders to this device"
-echo "    3. Introducer mode will auto-propagate other devices & folders"
+echo "==> Done!"
+if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
+    echo "    Introducer configured: auto-accept ON, listening on tailscale only."
+else
+    echo "    Configured as client. Introducer will auto-accept this device."
+    echo "    Folders will propagate via introducer mode."
+fi
