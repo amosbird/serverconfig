@@ -6,25 +6,34 @@ INTRODUCER_NAME="clickstock"
 INTRODUCER_TS_IP="100.66.107.106"
 INTRODUCER_SSH="root@$INTRODUCER_TS_IP"
 
-# Shared folders: id|label|path
 SHARED_FOLDERS=(
     "copilot-config|Copilot Config|~/.copilot"
 )
 
-# --- Helper ---
+# --- Helpers ---
 has_device() { syncthing cli config devices list 2>/dev/null | grep -qF "$1"; }
 has_folder() { syncthing cli config folders list 2>/dev/null | grep -qF "$1"; }
 
 set_listen_addresses() {
-    # Remove existing entries (iterate in reverse to avoid index shift)
     local indices
     indices=$(syncthing cli config options raw-listen-addresses list 2>/dev/null)
     for i in $(echo "$indices" | sort -rn); do
         syncthing cli config options raw-listen-addresses "$i" delete
     done
-    # Add new ones
     for addr in "$@"; do
         syncthing cli config options raw-listen-addresses add "$addr"
+    done
+}
+
+set_device_addresses() {
+    local dev_id="$1"; shift
+    local indices
+    indices=$(syncthing cli config devices "$dev_id" addresses list 2>/dev/null)
+    for i in $(echo "$indices" | sort -rn); do
+        syncthing cli config devices "$dev_id" addresses "$i" delete
+    done
+    for addr in "$@"; do
+        syncthing cli config devices "$dev_id" addresses add "$addr"
     done
 }
 
@@ -37,79 +46,63 @@ TS_IP=$(get_tailscale_ip)
 echo "==> Local Device ID: $LOCAL_ID"
 echo "==> Tailscale IP: ${TS_IP:-not found}"
 
-if [ -z "$TS_IP" ]; then
-    echo "WARNING: tailscale not running or no IP assigned"
-fi
+[ -z "$TS_IP" ] && { echo "ERROR: tailscale not running"; exit 1; }
 
-# --- Introducer mode (on introducer itself) ---
+# --- Network: tailscale only, no relay/global discovery ---
+echo "==> Locking down to tailscale"
+set_listen_addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
+syncthing cli config options global-ann-enabled set false
+syncthing cli config options relays-enabled set false
+syncthing cli config options local-ann-enabled set false
+syncthing cli config options natenabled set false
+# Treat tailscale subnet as local network
+syncthing cli config options always-local-nets add "100.64.0.0/10" 2>/dev/null || true
+
+# --- Introducer-specific config ---
 if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
-    echo "==> This IS the introducer, configuring..."
-
-    # Auto-accept folders from new devices
+    echo "==> This IS the introducer"
     syncthing cli config defaults device auto-accept-folders set true
-
-    # Only listen on tailscale IP (restrict to tailnet only)
-    if [ -n "$TS_IP" ]; then
-        echo "==> Binding to tailscale only: tcp://$TS_IP:22000, quic://$TS_IP:22000"
-        set_listen_addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
-    fi
-
-    # Disable global discovery & relaying (tailscale handles connectivity)
-    syncthing cli config options global-ann-enabled set false
-    syncthing cli config options relays-enabled set false
-
-    # Keep local discovery for LAN peers also on tailnet
-    syncthing cli config options local-ann-enabled set true
-
-    # GUI only on localhost
     syncthing cli config gui raw-address set "127.0.0.1:8384"
 fi
 
-# --- Lock down network: all nodes only use tailscale ---
-if [ -n "$TS_IP" ]; then
-    echo "==> Restricting to tailscale network"
-    set_listen_addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
-    syncthing cli config options global-ann-enabled set false
-    syncthing cli config options relays-enabled set false
-    syncthing cli config options local-ann-enabled set true
-fi
-
-# --- Add introducer (skip on introducer itself) ---
-if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
-    echo "==> Skipping introducer self-add"
-elif has_device "$INTRODUCER_ID"; then
-    echo "==> Introducer already added, ensuring introducer=true + auto-accept"
-    syncthing cli config devices "$INTRODUCER_ID" introducer set true
-    syncthing cli config devices "$INTRODUCER_ID" auto-accept-folders set true
-else
-    echo "==> Adding introducer: $INTRODUCER_NAME ($INTRODUCER_ID)"
-    syncthing cli config devices add \
-        --device-id "$INTRODUCER_ID" \
-        --name "$INTRODUCER_NAME" \
-        --addresses "tcp://$INTRODUCER_TS_IP:22000" \
-        --addresses "quic://$INTRODUCER_TS_IP:22000" \
-        --introducer \
-        --auto-accept-folders
-fi
-
-# --- Register this device on introducer via SSH ---
+# --- Client: add introducer + register via SSH ---
 if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
-    echo "==> Registering this device on introducer ($INTRODUCER_NAME) via SSH..."
+    if has_device "$INTRODUCER_ID"; then
+        echo "==> Introducer already added, updating address"
+        set_device_addresses "$INTRODUCER_ID" \
+            "tcp://$INTRODUCER_TS_IP:22000" "quic://$INTRODUCER_TS_IP:22000"
+        syncthing cli config devices "$INTRODUCER_ID" introducer set true
+        syncthing cli config devices "$INTRODUCER_ID" auto-accept-folders set true
+    else
+        echo "==> Adding introducer: $INTRODUCER_NAME"
+        syncthing cli config devices add \
+            --device-id "$INTRODUCER_ID" \
+            --name "$INTRODUCER_NAME" \
+            --addresses "tcp://$INTRODUCER_TS_IP:22000" \
+            --addresses "quic://$INTRODUCER_TS_IP:22000" \
+            --introducer \
+            --auto-accept-folders
+    fi
+
+    # Register self on introducer with tailscale address
+    echo "==> Registering on introducer via SSH..."
     HOSTNAME=$(hostname | tr -cd 'a-zA-Z0-9._-')
-    ssh "$INTRODUCER_SSH" "
+    ssh "$INTRODUCER_SSH" bash -s <<REMOTE
         if syncthing cli config devices list | grep -qF '$LOCAL_ID'; then
-            echo 'Device already known on introducer'
+            echo 'Device already known, updating address'
         else
-            syncthing cli config devices add \
-                --device-id '$LOCAL_ID' \
-                --name '$HOSTNAME' \
+            syncthing cli config devices add \\
+                --device-id '$LOCAL_ID' \\
+                --name '$HOSTNAME' \\
+                --addresses 'tcp://$TS_IP:22000' \\
+                --addresses 'quic://$TS_IP:22000' \\
                 --auto-accept-folders
             echo 'Device added on introducer'
         fi
-    "
+REMOTE
 fi
 
-# --- Add shared folders (all nodes) ---
+# --- Shared folders ---
 for entry in "${SHARED_FOLDERS[@]}"; do
     IFS='|' read -r fid flabel fpath <<< "$entry"
     fpath="${fpath/#\~/$HOME}"
@@ -125,12 +118,9 @@ for entry in "${SHARED_FOLDERS[@]}"; do
             --path "$fpath"
     fi
 
-    # Share folder with introducer (skip on introducer itself)
     if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
         syncthing cli config folders "$fid" devices add \
             --device-id "$INTRODUCER_ID" 2>/dev/null || true
-
-        # Also share on introducer side
         ssh "$INTRODUCER_SSH" "
             syncthing cli config folders '$fid' devices add \
                 --device-id '$LOCAL_ID' 2>/dev/null || true
@@ -138,7 +128,7 @@ for entry in "${SHARED_FOLDERS[@]}"; do
     fi
 done
 
-# --- Create .stignore if missing ---
+# --- .stignore ---
 COPILOT_STIGNORE="$HOME/.copilot/.stignore"
 COPILOT_STIGNORE_SHARED="$HOME/.copilot/.stignore-shared"
 
@@ -163,11 +153,9 @@ if [ ! -f "$COPILOT_STIGNORE" ]; then
 fi
 
 echo ""
-echo "==> Done!"
+echo "==> Done! ($LOCAL_ID)"
 if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
-    echo "    Introducer configured: listening on tailscale only."
-    echo "    NOTE: New devices must be accepted once (via GUI or CLI), then folders auto-share."
+    echo "    Introducer ready. All devices and folders auto-propagate."
 else
-    echo "    Configured as client. Registered on introducer via SSH."
-    echo "    Folders will propagate via introducer mode."
+    echo "    Connected to introducer. Other devices will be discovered automatically."
 fi
