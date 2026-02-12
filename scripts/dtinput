@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# 拉起 kitty 弹窗运行 dtpick，确认后将时间串输入到原焦点窗口
+# 通过缓存文件 mtime 变化判断是否确认（Ctrl+C 杀 kitty 时退出码不可靠）
+cache=~/.cache/dtpick_last
+old_mtime=$(stat -c %Y "$cache" 2>/dev/null || echo 0)
+kitty -T dtpick -e dtpick
+new_mtime=$(stat -c %Y "$cache" 2>/dev/null || echo 0)
+[ "$new_mtime" != "$old_mtime" ] || exit 1
+dt=$(head -1 "$cache")
+[ -n "$dt" ] || exit 1
+inputstr "$dt"

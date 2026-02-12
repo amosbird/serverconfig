@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+"""
+dtpick — 终端日期时间选择器 (curses TUI)
+
+快速输入 ISO 格式时间字符串 (2026-02-12 08:54:44)。
+启动时以上次输出的时间为初始值 (~/.cache/dtpick_last)，无记录则用当前时间。
+
+键位:
+  w e r     跳转到 年/月/日
+  s d f     跳转到 时/分/秒
+  h / l     左/右移动槽位
+  j / k     当前字段 -1 / +1 (循环)
+  0-9       数字输入 (智能歧义等待)
+  Enter     确认输出 ISO 时间并保存
+  Esc       取消，无输出
+  BS/Ctrl+H 清除当前输入缓冲
+"""
+import curses
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+CACHE_FILE = Path.home() / ".cache" / "dtpick_last"
+
+# 槽位定义: (跳转键, 显示名, 位宽)
+SLOTS = [
+    ("w", "Year",   4),
+    ("e", "Month",  2),
+    ("r", "Day",    2),
+    ("s", "Hour",   2),
+    ("d", "Minute", 2),
+    ("f", "Second", 2),
+]
+
+SLOT_KEYS = [s[0] for s in SLOTS]
+
+
+def days_in_month(y, m):
+    """返回指定年月的天数，处理闰年"""
+    if m == 2:
+        return 29 if (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)) else 28
+    return 30 if m in (4, 6, 9, 11) else 31
+
+
+def slot_range(idx, slots):
+    """返回槽位的 (min, max) 合法范围"""
+    key = slots[idx].key
+    if key == "w":
+        return (1, 9999)
+    if key == "e":
+        return (1, 12)
+    if key == "r":
+        y = int(slots[0].value)
+        m = int(slots[1].value)
+        return (1, days_in_month(y, m))
+    if key == "s":
+        return (0, 23)
+    # 分、秒
+    return (0, 59)
+
+
+def can_extend(digit, idx, slots):
+    """
+    判断首位数字作为十位时，是否存在任何合法的两位数值。
+    若存在则应等待第二键，否则补零立即确认。
+    """
+    lo, hi = slot_range(idx, slots)
+    tens = int(digit) * 10
+    # 检查 [tens, tens+9] 与 [lo, hi] 是否有交集
+    return tens <= hi and tens + 9 >= lo
+
+
+class Slot:
+    """单个可编辑的日期时间字段"""
+    def __init__(self, key, width, value):
+        self.key = key       # 跳转快捷键
+        self.width = width   # 显示位宽 (年=4, 其余=2)
+        self.value = value   # 当前已确认的值 (字符串)
+        self.buffer = ""     # 正在输入的临时缓冲
+
+
+class ChronosFlow:
+    """日期时间编辑器核心逻辑"""
+    def __init__(self):
+        initial, active = self._load_last()
+        initial = initial or datetime.now().strftime("%Y%m%d%H%M%S")
+        self.slots = []
+        i = 0
+        for k, _, w in SLOTS:
+            self.slots.append(Slot(k, w, initial[i:i+w]))
+            i += w
+        self.active = active
+        self.last_edited = active  # 最后被编辑的槽位（持久化用）
+
+    @staticmethod
+    def _load_last():
+        """
+        从缓存读取上次输出的时间和槽位索引。
+        文件格式: 第一行 ISO 时间，第二行槽位索引。
+        返回 (14位数字串, 槽位索引) 或 (None, 0)。
+        """
+        try:
+            lines = CACHE_FILE.read_text().strip().splitlines()
+            digits = lines[0].replace("-", "").replace(":", "").replace(" ", "")
+            active = int(lines[1]) if len(lines) > 1 else 0
+            if len(digits) == 14 and digits.isdigit() and 0 <= active < len(SLOTS):
+                return digits, active
+        except (FileNotFoundError, ValueError, IndexError):
+            pass
+        return None, 0
+
+    def validate(self, idx, buf):
+        """校验输入值是否在合法范围内"""
+        n = int(buf)
+        lo, hi = slot_range(idx, self.slots)
+        return lo <= n <= hi
+
+    def commit_buffer(self):
+        """将当前槽位的缓冲区补零确认（切换槽位时调用）"""
+        s = self.slots[self.active]
+        if s.buffer:
+            buf = s.buffer.zfill(s.width)
+            if self.validate(self.active, buf):
+                s.value = buf
+                self.last_edited = self.active
+            s.buffer = ""
+
+    def input_digit(self, ch):
+        """
+        处理数字键输入，使用智能歧义等待逻辑:
+        - 首位数字若作为十位能构成合法值 → 等待第二键
+        - 否则补零立即确认并自动前进
+        """
+        s = self.slots[self.active]
+        s.buffer += ch
+
+        if len(s.buffer) == 1 and s.width == 2:
+            if can_extend(ch, self.active, self.slots):
+                # 首位可作十位，等待第二键
+                return
+            # 无法作十位，补零确认
+            buf = s.buffer.zfill(2)
+            if self.validate(self.active, buf):
+                s.value = buf
+                s.buffer = ""
+                self.last_edited = self.active
+                self.active = min(self.active + 1, len(self.slots) - 1)
+            else:
+                s.buffer = ""
+        elif len(s.buffer) >= s.width:
+            # 已输满位宽，校验完整值
+            buf = s.buffer[:s.width]
+            if self.validate(self.active, buf):
+                s.value = buf
+                s.buffer = ""
+                self.last_edited = self.active
+                self.active = min(self.active + 1, len(self.slots) - 1)
+            else:
+                s.buffer = ""
+
+    def adjust(self, delta):
+        """当前字段值 +delta，循环处理"""
+        s = self.slots[self.active]
+        s.buffer = ""
+        lo, hi = slot_range(self.active, self.slots)
+        n = int(s.value) + delta
+        if n > hi:
+            n = lo
+        elif n < lo:
+            n = hi
+        s.value = str(n).zfill(s.width)
+        self.last_edited = self.active
+
+    def move(self, delta):
+        """左右移动槽位，切换前提交缓冲"""
+        self.commit_buffer()
+        self.active = max(0, min(self.active + delta, len(self.slots) - 1))
+
+    def jump(self, key):
+        """按快捷键跳转到指定槽位"""
+        self.commit_buffer()
+        self.active = SLOT_KEYS.index(key)
+        self.slots[self.active].buffer = ""
+
+    def to_iso(self):
+        """返回 ISO 格式时间字符串"""
+        v = [s.value for s in self.slots]
+        return f"{v[0]}-{v[1]}-{v[2]} {v[3]}:{v[4]}:{v[5]}"
+
+    def render(self, win):
+        """渲染所有槽位 + 分隔符 + 底行快捷键提示，终端居中"""
+        win.clear()
+        max_y, max_x = win.getmaxyx()
+
+        # 计算内容总宽度: "2026-02-12 08:54:44" = 19 字符
+        content_width = sum(s[2] for s in SLOTS) + 5  # 5 个分隔符字符 (- - 空格 : :)
+        x_off = max(0, (max_x - content_width) // 2)
+        y_off = max(0, (max_y - 2) // 2)  # 两行内容垂直居中
+
+        x = x_off
+        row_val = y_off
+        row_key = y_off + 1
+
+        separators = ["", "-", "-", " ", ":", ":"]
+        for i, s in enumerate(self.slots):
+            # 画分隔符
+            if separators[i]:
+                win.addstr(row_val, x, separators[i])
+                x += len(separators[i])
+
+            text = s.buffer if i == self.active and s.buffer else s.value
+            text = text.ljust(s.width, "_")
+
+            # 值行: 激活槽位反色
+            if i == self.active:
+                win.attron(curses.A_REVERSE)
+                win.addstr(row_val, x, text)
+                win.attroff(curses.A_REVERSE)
+            else:
+                win.addstr(row_val, x, text)
+
+            # 提示行: 快捷键居中于槽位下方
+            key_x = x + s.width // 2
+            if i == self.active:
+                win.attron(curses.A_BOLD)
+                win.addstr(row_key, key_x, s.key)
+                win.attroff(curses.A_BOLD)
+            else:
+                win.addstr(row_key, key_x, s.key)
+
+            x += s.width
+        win.refresh()
+
+
+def main(stdscr):
+    curses.curs_set(0)
+    stdscr.nodelay(False)
+    stdscr.keypad(True)
+
+    app = ChronosFlow()
+    confirmed = False
+
+    while True:
+        app.render(stdscr)
+        ch = stdscr.getch()
+
+        if ch in (27, 29):  # Esc / Ctrl+] — 取消
+            break
+        if ch in (10, 13):  # Enter — 确认
+            app.commit_buffer()
+            confirmed = True
+            break
+        if ch in (curses.KEY_BACKSPACE, 8):  # Backspace / Ctrl+H
+            app.slots[app.active].buffer = ""
+            continue
+
+        if ch < 256:
+            c = chr(ch)
+            if c in SLOT_KEYS:
+                app.jump(c)
+                continue
+            if c == "h":
+                app.move(-1)
+                continue
+            if c == "l":
+                app.move(1)
+                continue
+            if c == "j":
+                app.adjust(1)
+                continue
+            if c == "k":
+                app.adjust(-1)
+                continue
+            if "0" <= c <= "9":
+                app.input_digit(c)
+                continue
+
+    return confirmed, app.to_iso(), app.last_edited
+
+
+if __name__ == "__main__":
+    confirmed, result, active = curses.wrapper(main)
+    if confirmed:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE.write_text(f"{result}\n{active}")
+        print(result)
+    else:
+        sys.exit(1)

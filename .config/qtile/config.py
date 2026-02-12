@@ -205,7 +205,8 @@ keys = [
     Key([mod3], "h", lazy.spawn("rofihosts")),
     Key([mod3], "d", lazy.spawn("dshot | copyq copyImage -", shell=True)),
     Key([mod3, shift], "d", lazy.spawn("dshot | uploadimg -", shell=True)),
-    Key([mod3], "t", lazy.spawn("ocr")),
+    Key([mod3], "t", lazy.spawn("dtinput")),
+    Key([mod3], "c", lazy.spawn("ocr")),
     Key(
         [mod3],
         "p",
@@ -419,6 +420,9 @@ def before_window_created(client):
     elif "kitty" in client.get_wm_class() and client.window.get_name() == "float":
         client.set_size_floating(2000, 1200)
         client.center()
+    elif "kitty" in client.get_wm_class() and client.window.get_name() == "dtpick":
+        client.set_size_floating(400, 120)
+        client.center()
     elif "xfreerdp" in client.get_wm_class():
         client.focus()
         client.togroup("w", switch_group=True)
@@ -621,6 +625,7 @@ floating_layout = layout.Floating(
         Match(wm_class="copyq"),
         Match(wm_class="discord"),
         Match(wm_class="TelegramDesktop"),
+        Match(wm_class="kitty", title="dtpick"),
         # Match(wm_class="wemeetapp"),
     ],
 )
