@@ -64,8 +64,8 @@ syncthing cli config options always-local-nets add "100.64.0.0/10" 2>/dev/null |
 
 # --- Introducer-specific config ---
 if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
-    echo "==> This IS the introducer"
-    syncthing cli config defaults device auto-accept-folders set true
+    echo "==> This IS the introducer (device discovery only, no folder sync)"
+    syncthing cli config defaults device auto-accept-folders set false
     syncthing cli config gui raw-address set "127.0.0.1:8384"
 fi
 
