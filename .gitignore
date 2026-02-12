@@ -60,10 +60,3 @@ fishd.*
 /.local/share/fcitx5/rime/sync/
 /.local/share/fcitx5/rime/baidu.userdb/
 .aider*
-.config/syncthing/cert.pem
-.config/syncthing/key.pem
-.config/syncthing/index-v0.14.0.db
-.config/syncthing/https-cert.pem
-.config/syncthing/https-key.pem
-.config/syncthing/*.tmp*
-.config/syncthing/csrftokens.txt
