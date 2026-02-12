@@ -3,6 +3,7 @@ set -euo pipefail
 
 INTRODUCER_ID="6TKCCHI-IMYMGDN-B3CX2SK-T3674QH-V3B4U4G-IUS4QZI-6QO427R-G6T7PQS"
 INTRODUCER_NAME="clickstock"
+INTRODUCER_SSH="root@100.66.107.106"
 
 # Shared folders: id|label|path
 SHARED_FOLDERS=(
@@ -66,6 +67,23 @@ else
         --auto-accept-folders
 fi
 
+# --- Register this device on introducer via SSH ---
+if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
+    echo "==> Registering this device on introducer ($INTRODUCER_NAME) via SSH..."
+    HOSTNAME=$(hostname)
+    ssh "$INTRODUCER_SSH" "
+        if syncthing cli config devices list | grep -qF '$LOCAL_ID'; then
+            echo 'Device already known on introducer'
+        else
+            syncthing cli config devices add \
+                --device-id '$LOCAL_ID' \
+                --name '$HOSTNAME' \
+                --auto-accept-folders
+            echo 'Device added on introducer'
+        fi
+    "
+fi
+
 # --- Add shared folders (all nodes) ---
 for entry in "${SHARED_FOLDERS[@]}"; do
     IFS='|' read -r fid flabel fpath <<< "$entry"
@@ -86,6 +104,12 @@ for entry in "${SHARED_FOLDERS[@]}"; do
     if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
         syncthing cli config folders "$fid" devices add \
             --device-id "$INTRODUCER_ID" 2>/dev/null || true
+
+        # Also share on introducer side
+        ssh "$INTRODUCER_SSH" "
+            syncthing cli config folders '$fid' devices add \
+                --device-id '$LOCAL_ID' 2>/dev/null || true
+        "
     fi
 done
 
@@ -119,6 +143,6 @@ if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
     echo "    Introducer configured: listening on tailscale only."
     echo "    NOTE: New devices must be accepted once (via GUI or CLI), then folders auto-share."
 else
-    echo "    Configured as client. Introducer will auto-accept this device."
+    echo "    Configured as client. Registered on introducer via SSH."
     echo "    Folders will propagate via introducer mode."
 fi
