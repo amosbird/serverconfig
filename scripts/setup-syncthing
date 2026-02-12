@@ -30,25 +30,24 @@ fi
 if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
     echo "==> This IS the introducer, configuring..."
 
-    # Auto-accept devices & folders
-    syncthing cli config options set auto-accept-devices true
+    # Auto-accept folders from new devices
     syncthing cli config defaults device auto-accept-folders set true
 
     # Only listen on tailscale IP (restrict to tailnet only)
     if [ -n "$TS_IP" ]; then
         echo "==> Binding to tailscale only: tcp://$TS_IP:22000, quic://$TS_IP:22000"
-        syncthing cli config options set listen-addresses "tcp://$TS_IP:22000,quic://$TS_IP:22000"
+        syncthing cli config options raw-listen-addresses set "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
     fi
 
     # Disable global discovery & relaying (tailscale handles connectivity)
-    syncthing cli config options set global-announce-enabled false
-    syncthing cli config options set relays-enabled false
+    syncthing cli config options global-ann-enabled set false
+    syncthing cli config options relays-enabled set false
 
     # Keep local discovery for LAN peers also on tailnet
-    syncthing cli config options set local-announce-enabled true
+    syncthing cli config options local-ann-enabled set true
 
     # GUI only on localhost
-    syncthing cli config gui set address "127.0.0.1:8384"
+    syncthing cli config gui raw-address set "127.0.0.1:8384"
 fi
 
 # --- Add introducer (skip on introducer itself) ---
@@ -117,7 +116,8 @@ fi
 echo ""
 echo "==> Done!"
 if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
-    echo "    Introducer configured: auto-accept ON, listening on tailscale only."
+    echo "    Introducer configured: listening on tailscale only."
+    echo "    NOTE: New devices must be accepted once (via GUI or CLI), then folders auto-share."
 else
     echo "    Configured as client. Introducer will auto-accept this device."
     echo "    Folders will propagate via introducer mode."
