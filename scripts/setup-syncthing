@@ -15,6 +15,19 @@ SHARED_FOLDERS=(
 has_device() { syncthing cli config devices list 2>/dev/null | grep -qF "$1"; }
 has_folder() { syncthing cli config folders list 2>/dev/null | grep -qF "$1"; }
 
+set_listen_addresses() {
+    # Remove existing entries (iterate in reverse to avoid index shift)
+    local indices
+    indices=$(syncthing cli config options raw-listen-addresses list 2>/dev/null)
+    for i in $(echo "$indices" | sort -rn); do
+        syncthing cli config options raw-listen-addresses "$i" delete
+    done
+    # Add new ones
+    for addr in "$@"; do
+        syncthing cli config options raw-listen-addresses add "$addr"
+    done
+}
+
 get_tailscale_ip() {
     ip addr show tailscale0 2>/dev/null | awk '/inet / {split($2,a,"/"); print a[1]}'
 }
@@ -38,7 +51,7 @@ if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
     # Only listen on tailscale IP (restrict to tailnet only)
     if [ -n "$TS_IP" ]; then
         echo "==> Binding to tailscale only: tcp://$TS_IP:22000, quic://$TS_IP:22000"
-        syncthing cli config options raw-listen-addresses set "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
+        set_listen_addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
     fi
 
     # Disable global discovery & relaying (tailscale handles connectivity)
@@ -50,6 +63,15 @@ if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
 
     # GUI only on localhost
     syncthing cli config gui raw-address set "127.0.0.1:8384"
+fi
+
+# --- Lock down network: all nodes only use tailscale ---
+if [ -n "$TS_IP" ]; then
+    echo "==> Restricting to tailscale network"
+    set_listen_addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
+    syncthing cli config options global-ann-enabled set false
+    syncthing cli config options relays-enabled set false
+    syncthing cli config options local-ann-enabled set true
 fi
 
 # --- Add introducer (skip on introducer itself) ---
@@ -73,7 +95,7 @@ fi
 # --- Register this device on introducer via SSH ---
 if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
     echo "==> Registering this device on introducer ($INTRODUCER_NAME) via SSH..."
-    HOSTNAME=$(hostname)
+    HOSTNAME=$(hostname | tr -cd 'a-zA-Z0-9._-')
     ssh "$INTRODUCER_SSH" "
         if syncthing cli config devices list | grep -qF '$LOCAL_ID'; then
             echo 'Device already known on introducer'
