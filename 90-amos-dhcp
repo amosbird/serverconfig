@@ -2,5 +2,18 @@
 
 case "${reason}" in
 BOUND|INFORM|REBIND|REBOOT|RENEW|TIMEOUT)
-        sudo -u amos /home/amos/git/serverconfig/scripts/addroutes;;
+        sudo -u amos /home/amos/git/serverconfig/scripts/addroutes
+
+        # When wired interface gets DHCP, put its default route in table 19.
+        # Table 19 is not referenced by any ip rule, so it doesn't affect
+        # actual traffic routing. But SmartGateAgent's netlink route dump
+        # reads all tables and picks the first default route (sorted by
+        # table number). Table 19 < table 20, so SmartGateAgent detects
+        # the wired NIC and binds outbound sockets to it.
+        # Note: wired uses dhcpcd -G (nogateway) so the gateway is not added
+        # to the routing table, but $new_routers is still set from DHCP response.
+        if [[ "$interface" == en* ]] && [ -n "$new_routers" ]; then
+                ip route replace default via ${new_routers%% *} dev "$interface" table 19
+        fi
+        ;;
 esac

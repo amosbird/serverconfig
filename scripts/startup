@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 
+caps-indicator
+xset s off -dpms
+xset b off
+picom -b
+unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
+
+sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &> /tmp/xkeysnail.log &
+
 xsetroot -cursor_name left_ptr
 
-/home/amos/scripts/moveend
+# /home/amos/scripts/moveend
 
 feh --bg-scale ~/git/serverconfig/black.jpg
 # /home/amos/scripts/showstalonetray.sh 1

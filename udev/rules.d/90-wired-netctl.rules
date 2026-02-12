@@ -1,0 +1,3 @@
+# When wired ethernet appears, start its netctl profile.
+# This replaces `netctl enable` which causes 90s boot delay when device is absent.
+ACTION=="add", SUBSYSTEM=="net", NAME=="enp*", RUN+="/usr/bin/netctl start enp9s0u2u1u2-Tencent-Wired"

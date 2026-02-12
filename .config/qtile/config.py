@@ -51,7 +51,10 @@ class Shell:
             self.hide()
 
     def toggle_right(self):
-        x2 = int(self.window.qtile.current_screen.width / 2)
+        screen = self.window.qtile.current_screen
+        if screen is None or not self.window.qtile.screens:
+            return
+        x2 = int(screen.width / 2)
         if not self.visible() or self.window.float_x != x2:
             self.show_float(x2, 0)
         else:
@@ -59,8 +62,10 @@ class Shell:
 
     def show_float(self, x, y):
         win = self.window
-        win.togroup()
         screen = win.qtile.current_screen
+        if screen is None or not win.qtile.screens:
+            return
+        win.togroup()
         win.opacity = 0.95
         win._float_state = FloatStates.TOP
         win.set_size_floating(int(screen.width / 2), int(screen.height))
@@ -116,12 +121,15 @@ class ShellHolder:
 
         hook.unsubscribe.client_new(self.on_client_new)
         self.shell = Shell(client)
-        if self._spawned[1] == 2:
-            self.shell.toggle_left()
-        elif self._spawned[1] == 1:
-            self.shell.toggle_right()
-        elif self._spawned[1] == 0:
-            self.shell.show_tiled()
+        try:
+            if self._spawned[1] == 2:
+                self.shell.toggle_left()
+            elif self._spawned[1] == 1:
+                self.shell.toggle_right()
+            elif self._spawned[1] == 0:
+                self.shell.show_tiled()
+        except (IndexError, AttributeError):
+            pass
         hook.subscribe.client_killed(self.on_client_killed)
         self.spawning = False
 
@@ -264,14 +272,14 @@ keys = [
     # Key([mod4], "0", lazy.reload_config()),
     Key([ctrl], "Escape", lazy.spawn("dunstctl close-all")),
     Key([ctrl], "Eisu_Toggle", lazy.spawn("dunstctl history-pop")),
-    Key([ctrl], "F1", lazy.spawn("pulseaudio-ctl mute")),
-    Key([ctrl], "F2", lazy.spawn("pulseaudio-ctl down 3")),
-    Key([ctrl], "F3", lazy.spawn("pulseaudio-ctl up 3")),
+    Key([ctrl], "F1", lazy.spawn("pamixer --toggle-mute")),
+    Key([ctrl], "F2", lazy.spawn("pamixer --decrease 3")),
+    Key([ctrl], "F3", lazy.spawn("pamixer --increase 3")),
     Key([ctrl], "F4", lazy.spawn("pavucontrol")),
     Key([ctrl], "F10", lazy.spawn("blueman-manager")),
-    Key([], "XF86AudioLowerVolume", lazy.spawn("pulseaudio-ctl down 3")),
-    Key([], "XF86AudioRaiseVolume", lazy.spawn("pulseaudio-ctl up 3")),
-    Key([], "XF86AudioMute", lazy.spawn("pulseaudio-ctl mute")),
+    Key([], "XF86AudioLowerVolume", lazy.spawn("pamixer --decrease 3")),
+    Key([], "XF86AudioRaiseVolume", lazy.spawn("pamixer --increase 3")),
+    Key([], "XF86AudioMute", lazy.spawn("pamixer --toggle-mute")),
     Key([], "XF86MonBrightnessDown", lazy.spawn("xbacklight -5")),
     Key([], "XF86MonBrightnessUp", lazy.spawn("xbacklight +5")),
     Key([ctrl, alt], "q", lazy.window.kill()),

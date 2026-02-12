@@ -12,13 +12,13 @@ export PATH=/home/amos/scripts:$old_path:$PATH
 export MANPATH=$old_man_path:$MANPATH
 export XDG_DATA_DIRS=/usr/share
 
-caps-indicator
-xset s off -dpms
-xset b off
-picom -b
-unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
+# caps-indicator
+# xset s off -dpms
+# xset b off
+# picom -b
+# unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 
-sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &> /tmp/xkeysnail.log &
+# sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &> /tmp/xkeysnail.log &
 
 export GUI=t
 export XAPIAN_CJK_NGRAM=1

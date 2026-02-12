@@ -48,6 +48,8 @@ fishd.*
 !/aurs/*/PKGBUILD
 /.config/copyq/copyq.lock
 /.config/copyq/copyq_geometry.ini.lock*
+/.config/copyq/copyq_geometry.ini.*
+/.local/share/applications/org.telegram.desktop._*.desktop
 /.docker/.token_seed
 /.docker/.token_seed.lock
 /.docker/buildx/

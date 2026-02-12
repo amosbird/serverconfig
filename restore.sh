@@ -95,6 +95,9 @@ if [[ -n $GUI ]]; then
     update-desktop-database "$HOME/.local/share/applications"
     sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
     setxkbmap us
+    sudo cp "$DIR"/90-amos-dhcp /usr/lib/dhcpcd/dhcpcd-hooks/90-amos
+    sudo cp "$DIR"/udev/rules.d/90-wired-netctl.rules /etc/udev/rules.d/
+    sudo udevadm control --reload-rules
 fi
 
 echo 'Restored!'
