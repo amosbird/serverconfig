@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+INTRODUCER_ID="6TKCCHI-IMYMGDN-B3CX2SK-T3674QH-V3B4U4G-IUS4QZI-6QO427R-G6T7PQS"
+INTRODUCER_NAME="clickstock"
+
+# Shared folders: id|label|path
+SHARED_FOLDERS=(
+    "copilot-config|Copilot Config|~/.copilot"
+)
+
+# --- Helper ---
+has_device() { syncthing cli config devices list 2>/dev/null | grep -qF "$1"; }
+has_folder() { syncthing cli config folders list 2>/dev/null | grep -qF "$1"; }
+
+echo "==> Local Device ID:"
+syncthing cli show system | grep myID
+
+# --- Add introducer ---
+if has_device "$INTRODUCER_ID"; then
+    echo "==> Introducer already added, ensuring introducer=true + auto-accept"
+    syncthing cli config devices "$INTRODUCER_ID" introducer set true
+    syncthing cli config devices "$INTRODUCER_ID" auto-accept-folders set true
+else
+    echo "==> Adding introducer: $INTRODUCER_NAME ($INTRODUCER_ID)"
+    syncthing cli config devices add \
+        --device-id "$INTRODUCER_ID" \
+        --name "$INTRODUCER_NAME" \
+        --introducer \
+        --auto-accept-folders
+fi
+
+# --- Add shared folders ---
+for entry in "${SHARED_FOLDERS[@]}"; do
+    IFS='|' read -r fid flabel fpath <<< "$entry"
+    fpath="${fpath/#\~/$HOME}"
+    mkdir -p "$fpath"
+
+    if has_folder "$fid"; then
+        echo "==> Folder '$fid' already exists"
+    else
+        echo "==> Adding folder: $flabel ($fpath)"
+        syncthing cli config folders add \
+            --id "$fid" \
+            --label "$flabel" \
+            --path "$fpath"
+    fi
+
+    # Ensure introducer is shared on this folder
+    syncthing cli config folders "$fid" devices add \
+        --device-id "$INTRODUCER_ID" 2>/dev/null || true
+done
+
+# --- Create .stignore if missing ---
+COPILOT_STIGNORE="$HOME/.copilot/.stignore"
+COPILOT_STIGNORE_SHARED="$HOME/.copilot/.stignore-shared"
+
+if [ ! -f "$COPILOT_STIGNORE_SHARED" ]; then
+    cat > "$COPILOT_STIGNORE_SHARED" << 'IGN'
+// Syncthing selective sync for ~/.copilot
+/pkg
+/logs
+.stfolder
+*.tmp
+*.lock
+*.db-journal
+*.db-wal
+*.db-shm
+IGN
+    echo "==> Created $COPILOT_STIGNORE_SHARED"
+fi
+
+if [ ! -f "$COPILOT_STIGNORE" ]; then
+    echo '#include .stignore-shared' > "$COPILOT_STIGNORE"
+    echo "==> Created $COPILOT_STIGNORE"
+fi
+
+echo ""
+echo "==> Done! Next steps:"
+echo "    1. On the introducer ($INTRODUCER_NAME), accept this device"
+echo "    2. On the introducer, share folders to this device"
+echo "    3. Introducer mode will auto-propagate other devices & folders"
