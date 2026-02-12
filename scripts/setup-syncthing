@@ -88,8 +88,22 @@ if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
     echo "==> Registering on introducer via SSH..."
     HOSTNAME=$(hostname | tr -cd 'a-zA-Z0-9._-')
     ssh "$INTRODUCER_SSH" bash -s <<REMOTE
+        set_device_addresses() {
+            local dev_id="\$1"; shift
+            local indices
+            indices=\$(syncthing cli config devices "\$dev_id" addresses list 2>/dev/null)
+            for i in \$(echo "\$indices" | sort -rn); do
+                syncthing cli config devices "\$dev_id" addresses "\$i" delete
+            done
+            for addr in "\$@"; do
+                syncthing cli config devices "\$dev_id" addresses add "\$addr"
+            done
+        }
+
         if syncthing cli config devices list | grep -qF '$LOCAL_ID'; then
             echo 'Device already known, updating address'
+            set_device_addresses '$LOCAL_ID' \
+                'tcp://$TS_IP:22000' 'quic://$TS_IP:22000'
         else
             syncthing cli config devices add \\
                 --device-id '$LOCAL_ID' \\
@@ -100,6 +114,26 @@ if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
             echo 'Device added on introducer'
         fi
 REMOTE
+
+    # Pull all peer addresses from introducer and set locally
+    echo "==> Syncing peer addresses from introducer..."
+    ssh "$INTRODUCER_SSH" '
+        for dev in $(syncthing cli config devices list); do
+            addrs=$(syncthing cli config devices "$dev" dump-json | python3 -c "import json,sys; d=json.load(sys.stdin); print(\" \".join(a for a in d[\"addresses\"] if a != \"dynamic\"))")
+            [ -z "$addrs" ] && continue
+            echo "$dev $addrs"
+        done
+    ' | while read -r peer_id peer_addrs; do
+        [ "$peer_id" = "$LOCAL_ID" ] || [ "$peer_id" = "$INTRODUCER_ID" ] && continue
+        echo "  Setting peer $peer_id -> $peer_addrs"
+        # Clear existing addresses
+        for i in $(syncthing cli config devices "$peer_id" addresses list 2>/dev/null | sort -rn); do
+            syncthing cli config devices "$peer_id" addresses "$i" delete 2>/dev/null
+        done
+        for addr in $peer_addrs; do
+            syncthing cli config devices "$peer_id" addresses add "$addr" 2>/dev/null
+        done
+    done
 fi
 
 # --- Shared folders ---
