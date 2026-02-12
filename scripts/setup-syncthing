@@ -3,7 +3,8 @@ set -euo pipefail
 
 INTRODUCER_ID="6TKCCHI-IMYMGDN-B3CX2SK-T3674QH-V3B4U4G-IUS4QZI-6QO427R-G6T7PQS"
 INTRODUCER_NAME="clickstock"
-INTRODUCER_SSH="root@100.66.107.106"
+INTRODUCER_TS_IP="100.66.107.106"
+INTRODUCER_SSH="root@$INTRODUCER_TS_IP"
 
 # Shared folders: id|label|path
 SHARED_FOLDERS=(
@@ -63,6 +64,8 @@ else
     syncthing cli config devices add \
         --device-id "$INTRODUCER_ID" \
         --name "$INTRODUCER_NAME" \
+        --addresses "tcp://$INTRODUCER_TS_IP:22000" \
+        --addresses "quic://$INTRODUCER_TS_IP:22000" \
         --introducer \
         --auto-accept-folders
 fi
