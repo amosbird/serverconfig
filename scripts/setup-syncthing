@@ -136,7 +136,8 @@ REMOTE
     done
 fi
 
-# --- Shared folders ---
+# --- Shared folders (clients only, introducer is device-discovery only) ---
+if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
 for entry in "${SHARED_FOLDERS[@]}"; do
     IFS='|' read -r fid flabel fpath <<< "$entry"
     fpath="${fpath/#\~/$HOME}"
@@ -153,21 +154,19 @@ for entry in "${SHARED_FOLDERS[@]}"; do
     fi
 
     if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
-        syncthing cli config folders "$fid" devices add \
-            --device-id "$INTRODUCER_ID" 2>/dev/null || true
-        # Ensure folder exists on introducer with correct path (not auto-accept default)
-        ssh "$INTRODUCER_SSH" "
-            if ! syncthing cli config folders list | grep -qF '$fid'; then
-                syncthing cli config folders add \
-                    --id '$fid' \
-                    --label '$flabel' \
-                    --path '\$HOME/.copilot'
-            fi
-            syncthing cli config folders '$fid' devices add \
-                --device-id '$LOCAL_ID' 2>/dev/null || true
-        "
+        # Share folder with all peers (not introducer, it only does device discovery)
+        ssh "$INTRODUCER_SSH" '
+            for dev in $(syncthing cli config devices list); do
+                echo "$dev"
+            done
+        ' | while read -r peer_id; do
+            [ "$peer_id" = "$LOCAL_ID" ] || [ "$peer_id" = "$INTRODUCER_ID" ] && continue
+            syncthing cli config folders "$fid" devices add \
+                --device-id "$peer_id" 2>/dev/null || true
+        done
     fi
 done
+fi # end clients-only block
 
 # --- .stignore ---
 COPILOT_STIGNORE="$HOME/.copilot/.stignore"
