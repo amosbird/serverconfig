@@ -2,16 +2,18 @@
 set -euo pipefail
 
 # Architecture:
-#   Introducer (clickstock) participates in ALL shared folders.
-#   New client runs this script → registers on introducer via SSH →
-#   introducer shares folders with client → introducer's "introducer" flag
-#   automatically propagates all other peers to the new client.
-#   No client-to-client SSH needed.
+#   Private discovery server (stdiscosrv) on clickstock handles address resolution.
+#   All nodes form a direct mesh — no introducer flag, no black-box propagation.
+#   New node: runs this script → registers on seed via SSH → gets peer list →
+#   adds all peers directly → SSHes to each peer to add self.
+#   Discovery server handles address changes automatically.
 
-INTRODUCER_ID="6TKCCHI-IMYMGDN-B3CX2SK-T3674QH-V3B4U4G-IUS4QZI-6QO427R-G6T7PQS"
-INTRODUCER_NAME="clickstock"
-INTRODUCER_TS_IP="100.66.107.106"
-INTRODUCER_SSH="root@$INTRODUCER_TS_IP"
+SEED_TS_IP="100.66.107.106"
+SEED_SSH="root@$SEED_TS_IP"
+
+# Private discovery server URL (stdiscosrv on clickstock)
+DISCO_ID="ZBO5OO5-QD56IFD-EWHDC3A-QH6NXRX-3IXPNWC-3UAXFNL-AEDVQGA-U4EOGQX"
+DISCO_URL="https://$DISCO_ID@$SEED_TS_IP:8443/v2/"
 
 SHARED_FOLDERS=(
     "copilot-config|Copilot Config|~/.copilot"
@@ -44,136 +46,137 @@ set_device_addresses() {
     done
 }
 
+set_global_discovery() {
+    local indices
+    indices=$(syncthing cli config options raw-global-ann-servers list 2>/dev/null)
+    for i in $(echo "$indices" | sort -rn); do
+        syncthing cli config options raw-global-ann-servers "$i" delete
+    done
+    for url in "$@"; do
+        syncthing cli config options raw-global-ann-servers add "$url"
+    done
+}
+
 get_tailscale_ip() {
     ip addr show tailscale0 2>/dev/null | awk '/inet / {split($2,a,"/"); print a[1]}'
 }
 
 LOCAL_ID=$(syncthing cli show system | grep myID | sed 's/.*": "//;s/".*//')
 TS_IP=$(get_tailscale_ip)
-echo "==> Local Device ID: $LOCAL_ID"
+HOSTNAME=$(hostname | tr -cd 'a-zA-Z0-9._-')
+echo "==> Local: $HOSTNAME ($LOCAL_ID)"
 echo "==> Tailscale IP: ${TS_IP:-not found}"
 
 [ -z "$TS_IP" ] && { echo "ERROR: tailscale not running"; exit 1; }
-
-# Validate inputs
 [[ "$LOCAL_ID" =~ ^[A-Z0-9-]+$ ]] || { echo "ERROR: invalid device ID"; exit 1; }
 [[ "$TS_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "ERROR: invalid tailscale IP"; exit 1; }
 
-# --- Network: tailscale only ---
-echo "==> Locking down to tailscale"
+# --- Network: tailscale only, private discovery ---
+echo "==> Configuring network: tailscale + private discovery"
 set_listen_addresses "tcp://$TS_IP:22000" "quic://$TS_IP:22000"
-syncthing cli config options global-ann-enabled set false
+syncthing cli config options global-ann-enabled set true
+set_global_discovery "$DISCO_URL"
 syncthing cli config options relays-enabled set false
 syncthing cli config options local-ann-enabled set false
 syncthing cli config options natenabled set false
 syncthing cli config options always-local-nets add "100.64.0.0/10" 2>/dev/null || true
 
-# --- Introducer setup (runs on clickstock itself) ---
-if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
-    echo "==> This IS the introducer"
-    syncthing cli config defaults device auto-accept-folders set true
-    syncthing cli config gui raw-address set "127.0.0.1:8384"
-
-    # Ensure introducer has all shared folders
-    for entry in "${SHARED_FOLDERS[@]}"; do
-        IFS='|' read -r fid flabel fpath <<< "$entry"
-        fpath="${fpath/#\~/$HOME}"
-        mkdir -p "$fpath"
-        if has_folder "$fid"; then
-            echo "==> Folder '$fid' already exists on introducer"
-        else
-            echo "==> Adding folder on introducer: $flabel ($fpath)"
-            syncthing cli config folders add --id "$fid" --label "$flabel" --path "$fpath"
-        fi
-    done
-fi
-
-# --- Client setup ---
-if [ "$LOCAL_ID" != "$INTRODUCER_ID" ]; then
-    # 1. Add introducer device locally (with introducer + auto-accept-folders flags)
-    if has_device "$INTRODUCER_ID"; then
-        echo "==> Introducer already added, updating"
-        set_device_addresses "$INTRODUCER_ID" \
-            "tcp://$INTRODUCER_TS_IP:22000" "quic://$INTRODUCER_TS_IP:22000"
-        syncthing cli config devices "$INTRODUCER_ID" introducer set true
-        syncthing cli config devices "$INTRODUCER_ID" auto-accept-folders set true
+# --- Register on seed and get peer list ---
+echo "==> Registering on seed ($SEED_TS_IP) via SSH..."
+PEER_DATA=$(ssh "$SEED_SSH" bash -s <<REMOTE
+    # Register this device on seed's syncthing (so seed can relay discovery)
+    if syncthing cli config devices list 2>/dev/null | grep -qF '$LOCAL_ID'; then
+        # Update address
+        indices=\$(syncthing cli config devices '$LOCAL_ID' addresses list 2>/dev/null)
+        for i in \$(echo "\$indices" | sort -rn); do
+            syncthing cli config devices '$LOCAL_ID' addresses "\$i" delete
+        done
+        syncthing cli config devices '$LOCAL_ID' addresses add 'tcp://$TS_IP:22000'
+        syncthing cli config devices '$LOCAL_ID' addresses add 'quic://$TS_IP:22000'
     else
-        echo "==> Adding introducer: $INTRODUCER_NAME"
-        syncthing cli config devices add \
-            --device-id "$INTRODUCER_ID" \
-            --name "$INTRODUCER_NAME" \
-            --addresses "tcp://$INTRODUCER_TS_IP:22000" \
-            --addresses "quic://$INTRODUCER_TS_IP:22000" \
-            --introducer \
+        syncthing cli config devices add \\
+            --device-id '$LOCAL_ID' \\
+            --name '$HOSTNAME' \\
+            --addresses 'tcp://$TS_IP:22000' \\
+            --addresses 'quic://$TS_IP:22000' \\
             --auto-accept-folders
+        >&2 echo "Registered $HOSTNAME on seed"
     fi
 
-    # 2. Register self on introducer + share folders via SSH
-    echo "==> Registering on introducer via SSH..."
-    HOSTNAME=$(hostname | tr -cd 'a-zA-Z0-9._-')
-
-    # Build folder share commands for the remote script
-    FOLDER_CMDS=""
-    for entry in "${SHARED_FOLDERS[@]}"; do
-        IFS='|' read -r fid flabel fpath <<< "$entry"
-        FOLDER_CMDS+="syncthing cli config folders '$fid' devices add --device-id '$LOCAL_ID' 2>/dev/null || true; "
+    # Share all folders with this device on seed
+    for fid in copilot-config; do
+        syncthing cli config folders "\$fid" devices add --device-id '$LOCAL_ID' 2>/dev/null || true
     done
 
-    ssh "$INTRODUCER_SSH" bash -s <<REMOTE
-        set_device_addresses() {
-            local dev_id="\$1"; shift
-            local indices
-            indices=\$(syncthing cli config devices "\$dev_id" addresses list 2>/dev/null)
-            for i in \$(echo "\$indices" | sort -rn); do
-                syncthing cli config devices "\$dev_id" addresses "\$i" delete
-            done
-            for addr in "\$@"; do
-                syncthing cli config devices "\$dev_id" addresses add "\$addr"
-            done
-        }
-
-        if syncthing cli config devices list | grep -qF '$LOCAL_ID'; then
-            echo 'Device already known, updating address'
-            set_device_addresses '$LOCAL_ID' 'tcp://$TS_IP:22000' 'quic://$TS_IP:22000'
-        else
-            syncthing cli config devices add \\
-                --device-id '$LOCAL_ID' \\
-                --name '$HOSTNAME' \\
-                --addresses 'tcp://$TS_IP:22000' \\
-                --addresses 'quic://$TS_IP:22000' \\
-                --auto-accept-folders
-            echo 'Device registered on introducer'
-        fi
-
-        # Share all folders with this client on the introducer
-        $FOLDER_CMDS
-        echo 'Folder sharing configured on introducer'
+    # Output all known peers (device_id|name|addresses)
+    for dev in \$(syncthing cli config devices list 2>/dev/null); do
+        name=\$(syncthing cli config devices "\$dev" name get 2>/dev/null)
+        addrs=\$(syncthing cli config devices "\$dev" dump-json 2>/dev/null | \\
+            python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(a for a in d['addresses'] if a != 'dynamic'))" 2>/dev/null)
+        echo "\$dev|\$name|\$addrs"
+    done
 REMOTE
+)
 
-    # 3. Add shared folders locally
-    for entry in "${SHARED_FOLDERS[@]}"; do
-        IFS='|' read -r fid flabel fpath <<< "$entry"
-        fpath="${fpath/#\~/$HOME}"
-        mkdir -p "$fpath"
-        if has_folder "$fid"; then
-            echo "==> Folder '$fid' already exists"
-        else
-            echo "==> Adding folder: $flabel ($fpath)"
-            syncthing cli config folders add --id "$fid" --label "$flabel" --path "$fpath"
-        fi
-        # Ensure introducer is in the folder's device list
-        syncthing cli config folders "$fid" devices add \
-            --device-id "$INTRODUCER_ID" 2>/dev/null || true
+# --- Add all peers directly (full mesh, no introducer) ---
+echo "==> Building mesh with peers..."
+echo "$PEER_DATA" | while IFS='|' read -r peer_id peer_name peer_addrs; do
+    [ -z "$peer_id" ] && continue
+    [ "$peer_id" = "$LOCAL_ID" ] && continue
+    [[ "$peer_id" =~ ^[A-Z0-9-]+$ ]] || continue
+
+    if has_device "$peer_id"; then
+        echo "  Updating: $peer_name ($peer_id)"
+        set_device_addresses "$peer_id" "dynamic" $peer_addrs
+    else
+        echo "  Adding: $peer_name ($peer_id)"
+        syncthing cli config devices add \
+            --device-id "$peer_id" --name "$peer_name" \
+            --addresses "dynamic" \
+            $(for a in $peer_addrs; do echo "--addresses $a"; done)
+    fi
+
+    # SSH to peer to add ourselves (bidirectional)
+    peer_ip=$(echo "$peer_addrs" | grep -oP '(?<=tcp://)[0-9.]+' | head -1)
+    if [ -n "$peer_ip" ]; then
+        echo "    Registering on $peer_name ($peer_ip)..."
+        ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$peer_ip" "
+            syncthing cli config devices list 2>/dev/null | grep -qF '$LOCAL_ID' || \
+                syncthing cli config devices add --device-id '$LOCAL_ID' --name '$HOSTNAME' \
+                    --addresses 'dynamic' --addresses 'tcp://$TS_IP:22000' --addresses 'quic://$TS_IP:22000' 2>/dev/null
+            for fid in copilot-config; do
+                syncthing cli config folders \"\$fid\" devices add --device-id '$LOCAL_ID' 2>/dev/null || true
+            done
+        " 2>/dev/null || echo "    Warning: could not reach $peer_ip"
+    fi
+done
+
+# --- Shared folders ---
+echo "==> Configuring shared folders..."
+for entry in "${SHARED_FOLDERS[@]}"; do
+    IFS='|' read -r fid flabel fpath <<< "$entry"
+    fpath="${fpath/#\~/$HOME}"
+    mkdir -p "$fpath"
+
+    if has_folder "$fid"; then
+        echo "  Folder '$fid' exists"
+    else
+        echo "  Adding folder: $flabel ($fpath)"
+        syncthing cli config folders add --id "$fid" --label "$flabel" --path "$fpath"
+    fi
+
+    # Share with all known peers
+    echo "$PEER_DATA" | while IFS='|' read -r peer_id _ _; do
+        [ -z "$peer_id" ] || [ "$peer_id" = "$LOCAL_ID" ] && continue
+        [[ "$peer_id" =~ ^[A-Z0-9-]+$ ]] || continue
+        syncthing cli config folders "$fid" devices add --device-id "$peer_id" 2>/dev/null || true
     done
-    # Introducer will propagate other peers automatically via introducer mechanism
-fi
+done
 
 # --- .stignore ---
-COPILOT_STIGNORE="$HOME/.copilot/.stignore"
-COPILOT_STIGNORE_SHARED="$HOME/.copilot/.stignore-shared"
-
-if [ ! -f "$COPILOT_STIGNORE_SHARED" ]; then
-    cat > "$COPILOT_STIGNORE_SHARED" << 'IGN'
+COPILOT_DIR="$HOME/.copilot"
+if [ ! -f "$COPILOT_DIR/.stignore-shared" ]; then
+    cat > "$COPILOT_DIR/.stignore-shared" << 'IGN'
 // Syncthing selective sync for ~/.copilot
 /pkg
 /logs
@@ -184,18 +187,14 @@ if [ ! -f "$COPILOT_STIGNORE_SHARED" ]; then
 *.db-wal
 *.db-shm
 IGN
-    echo "==> Created $COPILOT_STIGNORE_SHARED"
+    echo "==> Created .stignore-shared"
 fi
-
-if [ ! -f "$COPILOT_STIGNORE" ]; then
-    echo '#include .stignore-shared' > "$COPILOT_STIGNORE"
-    echo "==> Created $COPILOT_STIGNORE"
+if [ ! -f "$COPILOT_DIR/.stignore" ]; then
+    echo '#include .stignore-shared' > "$COPILOT_DIR/.stignore"
+    echo "==> Created .stignore"
 fi
 
 echo ""
-echo "==> Done! ($LOCAL_ID)"
-if [ "$LOCAL_ID" = "$INTRODUCER_ID" ]; then
-    echo "    Introducer ready. New clients will be auto-discovered."
-else
-    echo "    Registered with introducer. Other peers will be introduced automatically."
-fi
+echo "==> Done! Mesh configured for $HOSTNAME"
+echo "    Discovery: $DISCO_URL"
+echo "    Peers: $(echo "$PEER_DATA" | grep -v "$LOCAL_ID" | grep -c '^[A-Z]') nodes"
