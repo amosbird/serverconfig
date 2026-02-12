@@ -2,16 +2,18 @@
 set -euo pipefail
 
 # Architecture:
-#   Private discovery server (stdiscosrv) on clickstock handles address resolution.
-#   All nodes form a direct mesh — no introducer flag, no black-box propagation.
-#   New node: runs this script → registers on seed via SSH → gets peer list →
-#   adds all peers directly → SSHes to each peer to add self.
-#   Discovery server handles address changes automatically.
+#   clickstock runs ONLY stdiscosrv (private discovery) + a peer registry file.
+#   clickstock does NOT run syncthing and does NOT sync data.
+#   Clients form a direct mesh: every client connects to every other client.
+#   New node: runs this script → registers in peer registry on clickstock →
+#   gets peer list → adds all peers locally → SSHes to each peer to add self.
+#   Discovery server handles ongoing address resolution.
 
 SEED_TS_IP="100.66.107.106"
 SEED_SSH="root@$SEED_TS_IP"
+PEER_REGISTRY="/var/lib/syncthing-discosrv/peers.txt"
 
-# Private discovery server URL (stdiscosrv on clickstock)
+# Private discovery server (stdiscosrv on clickstock, no syncthing)
 DISCO_ID="ZBO5OO5-QD56IFD-EWHDC3A-QH6NXRX-3IXPNWC-3UAXFNL-AEDVQGA-U4EOGQX"
 DISCO_URL="https://$DISCO_ID@$SEED_TS_IP:8443/v2/"
 
@@ -81,78 +83,62 @@ syncthing cli config options local-ann-enabled set false
 syncthing cli config options natenabled set false
 syncthing cli config options always-local-nets add "100.64.0.0/10" 2>/dev/null || true
 
-# --- Register on seed and get peer list ---
-echo "==> Registering on seed ($SEED_TS_IP) via SSH..."
+# --- Remove clickstock from devices if present (it no longer syncs) ---
+CLICKSTOCK_ID="6TKCCHI-IMYMGDN-B3CX2SK-T3674QH-V3B4U4G-IUS4QZI-6QO427R-G6T7PQS"
+if has_device "$CLICKSTOCK_ID"; then
+    echo "==> Removing clickstock (no longer a sync peer)"
+    syncthing cli config devices "$CLICKSTOCK_ID" delete 2>/dev/null || true
+fi
+
+# --- Register in peer registry and get peer list ---
+echo "==> Registering in peer registry on seed..."
 PEER_DATA=$(ssh "$SEED_SSH" bash -s <<REMOTE
-    # Register this device on seed's syncthing (so seed can relay discovery)
-    if syncthing cli config devices list 2>/dev/null | grep -qF '$LOCAL_ID'; then
-        # Update address
-        indices=\$(syncthing cli config devices '$LOCAL_ID' addresses list 2>/dev/null)
-        for i in \$(echo "\$indices" | sort -rn); do
-            syncthing cli config devices '$LOCAL_ID' addresses "\$i" delete
-        done
-        syncthing cli config devices '$LOCAL_ID' addresses add 'tcp://$TS_IP:22000'
-        syncthing cli config devices '$LOCAL_ID' addresses add 'quic://$TS_IP:22000'
-    else
-        syncthing cli config devices add \\
-            --device-id '$LOCAL_ID' \\
-            --name '$HOSTNAME' \\
-            --addresses 'tcp://$TS_IP:22000' \\
-            --addresses 'quic://$TS_IP:22000' \\
-            --auto-accept-folders
-        >&2 echo "Registered $HOSTNAME on seed"
+    REGISTRY='$PEER_REGISTRY'
+    touch "\$REGISTRY"
+
+    # Update or add this device
+    if grep -qF '$LOCAL_ID' "\$REGISTRY"; then
+        sed -i '/^$LOCAL_ID|/d' "\$REGISTRY"
     fi
+    echo '$LOCAL_ID|$HOSTNAME|$TS_IP' >> "\$REGISTRY"
 
-    # Share all folders with this device on seed
-    for fid in copilot-config; do
-        syncthing cli config folders "\$fid" devices add --device-id '$LOCAL_ID' 2>/dev/null || true
-    done
-
-    # Output all known peers (device_id|name|addresses)
-    for dev in \$(syncthing cli config devices list 2>/dev/null); do
-        name=\$(syncthing cli config devices "\$dev" name get 2>/dev/null)
-        addrs=\$(syncthing cli config devices "\$dev" dump-json 2>/dev/null | \\
-            python3 -c "import json,sys; d=json.load(sys.stdin); print(' '.join(a for a in d['addresses'] if a != 'dynamic'))" 2>/dev/null)
-        echo "\$dev|\$name|\$addrs"
-    done
+    cat "\$REGISTRY"
 REMOTE
 )
 
-# --- Add all peers directly (full mesh, no introducer) ---
-echo "==> Building mesh with peers..."
-echo "$PEER_DATA" | while IFS='|' read -r peer_id peer_name peer_addrs; do
+# --- Add all peers (full mesh) ---
+echo "==> Building mesh..."
+echo "$PEER_DATA" | while IFS='|' read -r peer_id peer_name peer_ip; do
     [ -z "$peer_id" ] && continue
     [ "$peer_id" = "$LOCAL_ID" ] && continue
     [[ "$peer_id" =~ ^[A-Z0-9-]+$ ]] || continue
 
     if has_device "$peer_id"; then
-        echo "  Updating: $peer_name ($peer_id)"
-        set_device_addresses "$peer_id" "dynamic" $peer_addrs
+        echo "  Updating: $peer_name ($peer_ip)"
+        set_device_addresses "$peer_id" "dynamic" "tcp://$peer_ip:22000" "quic://$peer_ip:22000"
     else
-        echo "  Adding: $peer_name ($peer_id)"
+        echo "  Adding: $peer_name ($peer_ip)"
         syncthing cli config devices add \
             --device-id "$peer_id" --name "$peer_name" \
             --addresses "dynamic" \
-            $(for a in $peer_addrs; do echo "--addresses $a"; done)
+            --addresses "tcp://$peer_ip:22000" \
+            --addresses "quic://$peer_ip:22000"
     fi
 
-    # SSH to peer to add ourselves (bidirectional)
-    peer_ip=$(echo "$peer_addrs" | grep -oP '(?<=tcp://)[0-9.]+' | head -1)
-    if [ -n "$peer_ip" ]; then
-        echo "    Registering on $peer_name ($peer_ip)..."
-        ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$peer_ip" "
-            syncthing cli config devices list 2>/dev/null | grep -qF '$LOCAL_ID' || \
-                syncthing cli config devices add --device-id '$LOCAL_ID' --name '$HOSTNAME' \
-                    --addresses 'dynamic' --addresses 'tcp://$TS_IP:22000' --addresses 'quic://$TS_IP:22000' 2>/dev/null
-            for fid in copilot-config; do
-                syncthing cli config folders \"\$fid\" devices add --device-id '$LOCAL_ID' 2>/dev/null || true
-            done
-        " 2>/dev/null || echo "    Warning: could not reach $peer_ip"
-    fi
+    # Bidirectional: SSH to peer to add ourselves
+    echo "    -> Registering on $peer_name..."
+    ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "$peer_ip" "
+        syncthing cli config devices list 2>/dev/null | grep -qF '$LOCAL_ID' || \
+            syncthing cli config devices add --device-id '$LOCAL_ID' --name '$HOSTNAME' \
+                --addresses 'dynamic' --addresses 'tcp://$TS_IP:22000' --addresses 'quic://$TS_IP:22000' 2>/dev/null
+        for fid in copilot-config; do
+            syncthing cli config folders \"\$fid\" devices add --device-id '$LOCAL_ID' 2>/dev/null || true
+        done
+    " 2>/dev/null || echo "    Warning: could not reach $peer_ip"
 done
 
 # --- Shared folders ---
-echo "==> Configuring shared folders..."
+echo "==> Configuring folders..."
 for entry in "${SHARED_FOLDERS[@]}"; do
     IFS='|' read -r fid flabel fpath <<< "$entry"
     fpath="${fpath/#\~/$HOME}"
@@ -161,11 +147,11 @@ for entry in "${SHARED_FOLDERS[@]}"; do
     if has_folder "$fid"; then
         echo "  Folder '$fid' exists"
     else
-        echo "  Adding folder: $flabel ($fpath)"
+        echo "  Adding: $flabel ($fpath)"
         syncthing cli config folders add --id "$fid" --label "$flabel" --path "$fpath"
     fi
 
-    # Share with all known peers
+    # Share with all peers
     echo "$PEER_DATA" | while IFS='|' read -r peer_id _ _; do
         [ -z "$peer_id" ] || [ "$peer_id" = "$LOCAL_ID" ] && continue
         [[ "$peer_id" =~ ^[A-Z0-9-]+$ ]] || continue
@@ -194,7 +180,7 @@ if [ ! -f "$COPILOT_DIR/.stignore" ]; then
     echo "==> Created .stignore"
 fi
 
+TOTAL_PEERS=$(echo "$PEER_DATA" | grep -v "$LOCAL_ID" | grep -c '^[A-Z]' || true)
 echo ""
-echo "==> Done! Mesh configured for $HOSTNAME"
-echo "    Discovery: $DISCO_URL"
-echo "    Peers: $(echo "$PEER_DATA" | grep -v "$LOCAL_ID" | grep -c '^[A-Z]') nodes"
+echo "==> Done! $HOSTNAME in mesh with $TOTAL_PEERS peer(s)"
+echo "    Discovery: private stdiscosrv @ $SEED_TS_IP"
