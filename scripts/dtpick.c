@@ -262,7 +262,7 @@ int main(void) {
 
     XSetWindowAttributes swa;
     swa.override_redirect = True;
-    swa.event_mask = ExposureMask | KeyPressMask | FocusChangeMask;
+    swa.event_mask = ExposureMask | KeyPressMask;
     Window win = XCreateWindow(dpy, RootWindow(dpy, scr), wx, wy, win_w, win_h, 0,
                                CopyFromParent, InputOutput, vis,
                                CWOverrideRedirect | CWEventMask, &swa);
@@ -270,9 +270,14 @@ int main(void) {
     /* set window title */
     XStoreName(dpy, win, "dtpick");
 
-    /* grab keyboard */
+    /* grab keyboard with retry (another grab may briefly hold it) */
     XMapRaised(dpy, win);
-    XGrabKeyboard(dpy, win, True, GrabModeAsync, GrabModeAsync, CurrentTime);
+    XSetInputFocus(dpy, win, RevertToParent, CurrentTime);
+    for (int i = 0; i < 50; i++) {
+        if (XGrabKeyboard(dpy, win, True, GrabModeAsync, GrabModeAsync, CurrentTime) == GrabSuccess)
+            break;
+        usleep(10000); /* 10ms */
+    }
 
     XftDraw *xd = XftDrawCreate(dpy, win, vis, cmap);
     XftColor col_bg = xft_alloc(dpy, cmap, vis, BG_COLOR);
@@ -347,7 +352,6 @@ int main(void) {
         XEvent ev;
         XNextEvent(dpy, &ev);
         if (ev.type == Expose) continue;
-        if (ev.type == FocusOut) { running = 0; continue; }
         if (ev.type != KeyPress) continue;
 
         KeySym ksym;
