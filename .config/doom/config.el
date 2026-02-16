@@ -1,5 +1,8 @@
 ;;; private/amos/config.el -*- lexical-binding: t; no-byte-compile: t; -*-
 
+(setq mouse-wheel-scroll-amount '(1 ((shift) . hscroll))
+      mouse-wheel-scroll-amount-horizontal 1)
+
 (load! "+bindings")
 (load! "+lsp")
 
