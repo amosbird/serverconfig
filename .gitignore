@@ -62,3 +62,4 @@ fishd.*
 /.local/share/fcitx5/rime/sync/
 /.local/share/fcitx5/rime/baidu.userdb/
 .aider*
+.local/share/applications/mimeinfo.cache
