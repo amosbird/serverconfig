@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 
 set -e
+paru -Sy --noconfirm archlinux-keyring
 paru -Syu --noconfirm
