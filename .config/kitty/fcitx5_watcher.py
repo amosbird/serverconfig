@@ -41,7 +41,7 @@ def _fcitx5_context(action: str, ctx_id: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-    except FileNotFoundError:
+    except Exception:
         pass
 
 
@@ -50,13 +50,24 @@ def on_focus_change(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     focused = data.get("focused", False)
     ctx = _ctx_for_window(window)
 
-    if focused:
-        if _last_focused_ctx and _last_focused_ctx != ctx:
-            _fcitx5_context("save", _last_focused_ctx)
-        _fcitx5_context("restore", ctx)
-        _last_focused_ctx = ctx
-    else:
-        _fcitx5_context("save", ctx)
+    if not focused:
+        return
+
+    # Save current IM state (belongs to previous window) synchronously,
+    # then restore this window's state.
+    if _last_focused_ctx and _last_focused_ctx != ctx:
+        try:
+            subprocess.run(
+                [CONTEXT_CMD, "save", _last_focused_ctx],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=1,
+            )
+        except Exception:
+            pass
+
+    _fcitx5_context("restore", ctx)
+    _last_focused_ctx = ctx
 
 
 def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
