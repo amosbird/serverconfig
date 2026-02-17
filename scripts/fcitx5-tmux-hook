@@ -1,0 +1,48 @@
+#!/bin/bash
+# fcitx5-tmux-hook: called by tmux on pane focus events
+#
+# Shell-agnostic. No shell configuration needed.
+# Constructs a deterministic context ID from tmux's own metadata:
+#   tmux-<hostname>-<session_name>-<window_index>-<pane_index>
+#
+# Local:  calls fcitx5-context directly
+# Remote: sends via OSC 1337 SetUserVar through SSH/tmux passthrough
+#
+# Usage (in tmux hooks):
+#   fcitx5-tmux-hook focus-in <pane_id>
+#   fcitx5-tmux-hook focus-out <pane_id>
+
+_get_ctx_id() {
+    local pane_id="$1"
+    local host session win_idx pane_idx
+    host=$(hostname -s 2>/dev/null || echo "unknown")
+    session=$(tmux display-message -p -t "$pane_id" '#S' 2>/dev/null || echo "_")
+    win_idx=$(tmux display-message -p -t "$pane_id" '#I' 2>/dev/null || echo "_")
+    pane_idx=$(tmux display-message -p -t "$pane_id" '#P' 2>/dev/null || echo "_")
+    echo "tmux-${host}-${session}-${win_idx}-${pane_idx}"
+}
+
+_send_user_var() {
+    local key="fcitx5_ctx"
+    local value
+    value=$(printf '%s' "$1" | base64)
+
+    if [[ -n "$TMUX" ]]; then
+        printf '\ePtmux;\e\e]1337;SetUserVar=%s=%s\a\e\\' "$key" "$value"
+    else
+        printf '\e]1337;SetUserVar=%s=%s\a' "$key" "$value"
+    fi
+}
+
+ctx_id=$(_get_ctx_id "$2")
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [[ -z "$SSH_CONNECTION" ]]; then
+    case "$1" in
+        focus-out) "$SCRIPT_DIR/fcitx5-context" save "$ctx_id" 2>/dev/null & ;;
+        focus-in)  "$SCRIPT_DIR/fcitx5-context" restore "$ctx_id" 2>/dev/null & ;;
+    esac
+else
+    _send_user_var "$1:$ctx_id"
+fi

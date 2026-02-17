@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""
+Docker wrapper for user namespace bind mount environments.
+
+Automatically detects bind mounts from /proc/self/mountinfo and remaps
+volume mount paths so Docker sees the correct paths inside the namespace.
+
+Also auto-injects --net=host for 'docker run' when not specified.
+
+Usage:
+    1. Place this script in your PATH before /usr/bin/docker
+    2. Or: export PATH="$HOME/scripts:$PATH"
+
+Environment variables:
+    DOCKER_WRAPPER_DEBUG=1          Enable debug logging to stderr
+    DOCKER_WRAPPER_NO_NET_HOST=1    Disable auto --net=host injection
+    DOCKER_REMAP_HOST_PREFIX        Override bind mount prefix (source)
+    DOCKER_REMAP_REAL_PREFIX        Override real path prefix (target)
+"""
+
+import os
+import re
+import sys
+import shutil
+from pathlib import Path
+from typing import Optional, List, Tuple
+
+REAL_DOCKER = "/usr/bin/docker"
+
+
+def parse_mountinfo() -> dict:
+    """
+    Parse /proc/self/mountinfo to build mount mapping.
+    
+    mountinfo format (space-separated):
+    mount_id parent_id major:minor root mount_point options ... - fstype source options
+    
+    Returns dict mapping device (major:minor) to list of (mount_point, root) tuples.
+    """
+    devices = {}
+    try:
+        with open("/proc/self/mountinfo", "r") as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 5:
+                    continue
+                
+                # parts[2] = major:minor (device)
+                # parts[3] = root (source path within filesystem)
+                # parts[4] = mount_point (where it's mounted)
+                device = parts[2]
+                root = parts[3]
+                mount_point = parts[4]
+                
+                if device not in devices:
+                    devices[device] = []
+                devices[device].append((mount_point, root))
+    except FileNotFoundError:
+        pass
+    
+    return devices
+
+
+def find_remap_prefix() -> Optional[Tuple[str, str]]:
+    """
+    Find the bind mount prefix that applies to current working directory.
+    Returns (bind_mount_prefix, real_path_prefix) or None if no remapping needed.
+    
+    Strategy:
+    1. Find which mount contains cwd
+    2. Find the root mount for the same device (root="/")
+    3. Calculate the real path: base_mount_point + subdir_root
+    
+    Example:
+    - /tmp/gentoo/home/amos mounted from /amos on device 259:1
+    - /data mounted from / on device 259:1
+    - Therefore: /tmp/gentoo/home/amos -> /data/amos
+    """
+    cwd = os.getcwd()
+    devices = parse_mountinfo()
+    
+    # Find which bind mount contains cwd
+    bind_mount = None
+    bind_root = None
+    bind_device = None
+    
+    for device, mounts in devices.items():
+        for mount_point, root in mounts:
+            if cwd.startswith(mount_point + "/") or cwd == mount_point:
+                # This mount contains cwd
+                if root != "/":  # This is a bind mount (not the root of filesystem)
+                    if bind_mount is None or len(mount_point) > len(bind_mount):
+                        bind_mount = mount_point
+                        bind_root = root
+                        bind_device = device
+    
+    if not bind_mount:
+        return None
+    
+    # Find the root mount for the same device
+    root_mount = None
+    for mount_point, root in devices.get(bind_device, []):
+        if root == "/":
+            root_mount = mount_point
+            break
+    
+    if not root_mount:
+        return None
+    
+    # Calculate real path prefix
+    # bind_mount (/tmp/gentoo/home/amos) -> root_mount + bind_root (/data + /amos = /data/amos)
+    real_prefix = root_mount.rstrip("/") + bind_root
+    
+    return (bind_mount, real_prefix)
+
+
+def detect_remap() -> Optional[Tuple[str, str]]:
+    """
+    Auto-detect the path remapping from current environment.
+    Returns (bind_mount_prefix, real_path_prefix) tuple.
+    """
+    # Method 1: Check environment variable override
+    host_prefix = os.environ.get("DOCKER_REMAP_HOST_PREFIX")
+    real_prefix = os.environ.get("DOCKER_REMAP_REAL_PREFIX")
+    if host_prefix and real_prefix:
+        return (host_prefix, real_prefix)
+    
+    # Method 2: Parse mountinfo
+    return find_remap_prefix()
+
+
+class DockerArgParser:
+    """Parse and rewrite Docker command line arguments for path remapping."""
+    
+    def __init__(self, host_prefix: str, container_prefix: str):
+        self.host_prefix = host_prefix
+        self.container_prefix = container_prefix
+    
+    def remap_path(self, path: str) -> str:
+        """Remap a host path if it starts with the bind mount prefix."""
+        if path.startswith(self.host_prefix):
+            return self.container_prefix + path[len(self.host_prefix):]
+        return path
+    
+    def remap_volume(self, vol_spec: str) -> str:
+        """
+        Remap volume specification. Only remap SOURCE (host path).
+        Formats: src:dst, src:dst:opts
+        
+        Source is the host path seen by Docker daemon — needs remap.
+        Destination is the container-internal path — must NOT be remapped.
+        Named volumes (no leading /) are passed through unchanged.
+        """
+        parts = vol_spec.split(":")
+        if len(parts) >= 2:
+            src = parts[0]
+            # Skip named volumes (no leading /)
+            if not src.startswith("/") and not src.startswith("."):
+                return vol_spec
+            # Expand relative source path to absolute
+            if not src.startswith("/"):
+                src = os.path.abspath(src)
+            # Only remap source (host path), not destination (container path)
+            parts[0] = self.remap_path(src)
+            return ":".join(parts)
+        return vol_spec
+    
+    def remap_mount(self, mount_spec: str) -> str:
+        """
+        Remap --mount specification. Only remap source (host path).
+        Format: type=bind,source=/path,target=/path[,...]
+        Target is container-internal and must NOT be remapped.
+        """
+        parts = mount_spec.split(",")
+        new_parts = []
+        for part in parts:
+            if part.startswith("source=") or part.startswith("src="):
+                key, val = part.split("=", 1)
+                new_parts.append(f"{key}={self.remap_path(val)}")
+            else:
+                new_parts.append(part)
+        return ",".join(new_parts)
+    
+    def remap_device(self, dev_spec: str) -> str:
+        """
+        Remap --device specification.
+        Format: host_device:container_device[:permissions]
+        """
+        parts = dev_spec.split(":")
+        if len(parts) >= 1:
+            parts[0] = self.remap_path(parts[0])
+        if len(parts) >= 2:
+            parts[1] = self.remap_path(parts[1])
+        return ":".join(parts)
+
+    def _handle_flag_with_value(self, args: List[str], i: int,
+                                short: Optional[str], long: str,
+                                transform) -> Tuple[List[str], int]:
+        """
+        Generic handler for a flag that takes a value needing transformation.
+        
+        Handles these forms:
+          --long value         (separate arg)
+          --long=value         (= form)
+          -X value             (short, separate arg)
+          -Xvalue              (short, attached)
+        
+        Returns (new_args_fragment, new_index).
+        """
+        arg = args[i]
+        result = []
+        
+        # --long=value
+        prefix = f"--{long}="
+        if arg.startswith(prefix):
+            val = arg[len(prefix):]
+            result.append(f"{prefix}{transform(val)}")
+            return result, i + 1
+
+        # --long value
+        if arg == f"--{long}":
+            result.append(arg)
+            i += 1
+            if i < len(args):
+                result.append(transform(args[i]))
+                return result, i + 1
+            return result, i
+
+        if short:
+            # -X value  (exact short flag)
+            if arg == f"-{short}":
+                result.append(arg)
+                i += 1
+                if i < len(args):
+                    result.append(transform(args[i]))
+                    return result, i + 1
+                return result, i
+            
+            # -Xvalue  (attached)
+            if arg.startswith(f"-{short}") and len(arg) > 2 and not arg.startswith("--"):
+                val = arg[2:]
+                result.append(f"-{short}{transform(val)}")
+                return result, i + 1
+
+        return None, i
+
+    def process_args(self, args: List[str]) -> List[str]:
+        """Process all Docker arguments and apply path remapping."""
+        new_args = []
+        i = 0
+        
+        # Options that take a host path and need remapping.
+        # (short_flag_or_None, long_flag, transform_function)
+        #
+        # NOTE: --workdir/-w is a CONTAINER-INTERNAL path, do NOT remap.
+        # Volume destination is also container-internal, handled in remap_volume.
+        path_options = [
+            # Volume / mount
+            ("v", "volume",     self.remap_volume),
+            (None, "mount",     self.remap_mount),
+            # Environment file (host path read by docker daemon)
+            (None, "env-file",  self.remap_path),
+            # CID file (host path written by docker daemon)
+            (None, "cidfile",   self.remap_path),
+            # Label file (host path read by docker daemon)
+            (None, "label-file", self.remap_path),
+            # Device mapping
+            (None, "device",    self.remap_device),
+            # Log options that might contain paths (e.g. --log-opt path=...)
+            (None, "log-opt",   self._remap_log_opt),
+            # Compose: --file / -f
+            ("f", "file",       self.remap_path),
+            # Security options that may reference file paths
+            (None, "security-opt", self._remap_security_opt),
+            # PID file
+            (None, "pidfile",   self.remap_path),
+        ]
+        
+        while i < len(args):
+            arg = args[i]
+            
+            handled = False
+            for short, long, transform in path_options:
+                result, new_i = self._handle_flag_with_value(args, i, short, long, transform)
+                if result is not None:
+                    new_args.extend(result)
+                    i = new_i
+                    handled = True
+                    break
+            
+            if not handled:
+                # Pass through unchanged
+                new_args.append(arg)
+                i += 1
+        
+        return new_args
+
+    def _remap_log_opt(self, opt: str) -> str:
+        """Remap log-opt values that contain paths (e.g. path=/some/path)."""
+        if "=" in opt:
+            key, val = opt.split("=", 1)
+            if key in ("path", "labels-file", "env-file"):
+                return f"{key}={self.remap_path(val)}"
+        return opt
+
+    def _remap_security_opt(self, opt: str) -> str:
+        """Remap security-opt values like seccomp=/path/to/profile.json."""
+        if "=" in opt:
+            key, val = opt.split("=", 1)
+            if key in ("seccomp", "apparmor") and val.startswith("/"):
+                return f"{key}={self.remap_path(val)}"
+        return opt
+
+
+def has_network_option(args: List[str]) -> bool:
+    """Check if --network or --net option is already present in args."""
+    for arg in args:
+        if arg in ("--network", "--net"):
+            return True
+        if arg.startswith("--network=") or arg.startswith("--net="):
+            return True
+    return False
+
+
+def inject_network_host(args: List[str]) -> List[str]:
+    """
+    Inject --net=host after 'run' subcommand if no network option is present.
+    Returns modified args list.
+    """
+    if not args:
+        return args
+    
+    # Find 'run' subcommand position
+    run_idx = None
+    for i, arg in enumerate(args):
+        if arg == "run":
+            run_idx = i
+            break
+    
+    if run_idx is None:
+        return args
+    
+    # Check if network option already exists (in args after 'run')
+    if has_network_option(args[run_idx + 1:]):
+        return args
+    
+    # Inject --net=host right after 'run'
+    new_args = args[:run_idx + 1] + ["--net=host"] + args[run_idx + 1:]
+    return new_args
+
+
+def main():
+    args = sys.argv[1:]
+    
+    # Check for debug mode
+    debug = os.environ.get("DOCKER_WRAPPER_DEBUG", "").lower() in ("1", "true", "yes")
+    
+    # Auto-inject --net=host for 'docker run' if not specified
+    # Can be disabled via DOCKER_WRAPPER_NO_NET_HOST=1
+    if not os.environ.get("DOCKER_WRAPPER_NO_NET_HOST", "").lower() in ("1", "true", "yes"):
+        old_args = args
+        args = inject_network_host(args)
+        if debug and args != old_args:
+            print(f"[docker-wrapper] Injected --net=host", file=sys.stderr)
+    
+    # Detect remapping
+    remap = detect_remap()
+    
+    if remap:
+        host_prefix, container_prefix = remap
+        if debug:
+            print(f"[docker-wrapper] Detected remap: {host_prefix} -> {container_prefix}", 
+                  file=sys.stderr)
+        
+        parser = DockerArgParser(host_prefix, container_prefix)
+        args = parser.process_args(args)
+        
+        if debug:
+            print(f"[docker-wrapper] Rewritten args: {args}", file=sys.stderr)
+    elif debug:
+        print("[docker-wrapper] No remapping detected", file=sys.stderr)
+    
+    # Execute real docker
+    os.execv(REAL_DOCKER, [REAL_DOCKER] + args)
+
+
+if __name__ == "__main__":
+    main()

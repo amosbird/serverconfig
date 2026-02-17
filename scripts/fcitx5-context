@@ -1,0 +1,66 @@
+#!/bin/bash
+# fcitx5-context: per-window/pane input method state manager
+# Works LOCALLY — calls fcitx5-remote directly via D-Bus
+#
+# Usage:
+#   fcitx5-context save <context-id>
+#   fcitx5-context restore <context-id>
+#   fcitx5-context query
+#   fcitx5-context clean [max-age-minutes]
+
+STATE_DIR="/tmp/fcitx5-ctx-${UID:-$(id -u)}"
+
+_query() {
+    local active im_name
+    active=$(fcitx5-remote 2>/dev/null) || return 1
+    im_name=$(fcitx5-remote -n 2>/dev/null)
+    echo "${active}:${im_name}"
+}
+
+save() {
+    local ctx_id="$1"
+    [[ -z "$ctx_id" ]] && return 1
+    mkdir -p "$STATE_DIR"
+    _query > "${STATE_DIR}/${ctx_id}"
+}
+
+restore() {
+    local ctx_id="$1"
+    [[ -z "$ctx_id" ]] && return 1
+
+    local state_file="${STATE_DIR}/${ctx_id}"
+    [[ -f "$state_file" ]] || return 0
+
+    local data active im_name
+    data=$(cat "$state_file")
+    active="${data%%:*}"
+    im_name="${data#*:}"
+
+    case "$active" in
+        1) fcitx5-remote -c 2>/dev/null ;;
+        2)
+            if [[ -n "$im_name" ]]; then
+                fcitx5-remote -s "$im_name" 2>/dev/null
+            else
+                fcitx5-remote -o 2>/dev/null
+            fi
+            ;;
+    esac
+}
+
+clean() {
+    local max_age="${1:-60}"
+    [[ -d "$STATE_DIR" ]] || return 0
+    find "$STATE_DIR" -type f -mmin "+${max_age}" -delete 2>/dev/null
+}
+
+case "$1" in
+    save)    save "$2" ;;
+    restore) restore "$2" ;;
+    query)   _query ;;
+    clean)   clean "$2" ;;
+    *)
+        echo "Usage: fcitx5-context {save|restore|query|clean} [context-id|max-age]" >&2
+        exit 1
+        ;;
+esac

@@ -144,7 +144,6 @@
         :gnemv "C-<comma>"     #'centaur-tabs-backward-tab
         :gnemv "C-<period>"    #'centaur-tabs-forward-tab
         )
-
       :gn "M-W"                   #'+amos/kill-current-buffer
       :gn "M-w"                   #'+amos/wipe-current-buffer
       :gn "C-w"                   #'+amos/close-current-buffer ;; bury
