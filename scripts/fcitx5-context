@@ -29,7 +29,11 @@ restore() {
     [[ -z "$ctx_id" ]] && return 1
 
     local state_file="${STATE_DIR}/${ctx_id}"
-    [[ -f "$state_file" ]] || return 0
+    if [[ ! -f "$state_file" ]]; then
+        # New window/pane: default to IM disabled
+        fcitx5-remote -c 2>/dev/null
+        return 0
+    fi
 
     local data active im_name
     data=$(cat "$state_file")
