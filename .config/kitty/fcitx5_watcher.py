@@ -19,6 +19,7 @@ Install: add to kitty.conf:
 
 import subprocess
 import os
+import sys
 from typing import Any
 
 from kitty.boss import Boss
@@ -26,8 +27,14 @@ from kitty.window import Window
 
 CONTEXT_CMD = os.path.expanduser("~/scripts/fcitx5-context")
 KITTY_PID = os.getpid()
+DEBUG = os.environ.get("FCITX5_WATCHER_DEBUG", "")
 
 _last_focused_ctx: str | None = None
+
+
+def _log(msg: str) -> None:
+    if DEBUG:
+        print(f"[fcitx5-watcher] {msg}", file=sys.stderr, flush=True)
 
 
 def _ctx_for_window(window: Window) -> str:
@@ -77,6 +84,7 @@ def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     """
     key = data.get("key", "")
     value = data.get("value", "")
+    _log(f"set_user_var: key={key} value={value}")
 
     if key != "fcitx5_ctx" or not value:
         return

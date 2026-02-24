@@ -27,10 +27,16 @@ _send_user_var() {
     local value
     value=$(printf '%s' "$1" | base64)
 
-    if [[ -n "$TMUX" ]]; then
-        printf '\ePtmux;\e\e]1337;SetUserVar=%s=%s\a\e\\' "$key" "$value"
-    else
-        printf '\e]1337;SetUserVar=%s=%s\a' "$key" "$value"
+    # tmux run-shell's stdout is not a tty; write to the active pane's tty instead
+    local tty
+    tty=$(tmux display-message -p '#{pane_tty}' 2>/dev/null)
+
+    if [[ -n "$tty" && -w "$tty" ]]; then
+        if [[ -n "$TMUX" ]]; then
+            printf '\ePtmux;\e\e]1337;SetUserVar=%s=%s\a\e\\' "$key" "$value" > "$tty"
+        else
+            printf '\e]1337;SetUserVar=%s=%s\a' "$key" "$value" > "$tty"
+        fi
     fi
 }
 
