@@ -5,12 +5,8 @@ EAPI=8
 
 inherit autotools eapi9-pipestatus elisp-common flag-o-matic readme.gentoo-r1 toolchain-funcs
 
-inherit git-r3
-EGIT_REPO_URI="https://github.com/amosbird/emacs.git"
-EGIT_BRANCH="master"
-EGIT_CHECKOUT_DIR="${WORKDIR}/emacs"
-EGIT_CLONE_TYPE="shallow"
-S="${EGIT_CHECKOUT_DIR}"
+PROPERTIES="live"
+S="${WORKDIR}/emacs"
 SLOT="${PV%%.*}-vcs"
 KEYWORDS="amd64"
 
@@ -143,12 +139,20 @@ QA_CONFIG_IMPL_DECL_SKIP=(
 	statvfs64 re_set_syntax re_compile_pattern re_search re_match
 )
 
+src_unpack() {
+	local tarball="${T}/${P}-master.tar.gz"
+	einfo "Downloading latest master snapshot from GitHub..."
+	wget --progress=bar:force -O "${tarball}" \
+		"https://github.com/amosbird/emacs/archive/refs/heads/master.tar.gz" \
+		|| die "Failed to download snapshot"
+	tar xf "${tarball}" -C "${WORKDIR}" || die
+	mv "${WORKDIR}/emacs-master" "${S}" || die
+}
+
 src_prepare() {
 	FULL_VERSION=$(sed -n 's/^AC_INIT([^,]*,[^0-9.]*\([0-9.]*\).*/\1/p' \
 		configure.ac)
 	[[ ${FULL_VERSION} ]] || die "Cannot determine current Emacs version"
-	einfo "Emacs branch: ${EGIT_BRANCH}"
-	einfo "Commit: ${EGIT_VERSION}"
 	einfo "Emacs version number: ${FULL_VERSION}"
 	[[ ${FULL_VERSION} =~ ^${PV%.*}(\..*)?$ ]] \
 		|| die "Upstream version number changed to ${FULL_VERSION}"
