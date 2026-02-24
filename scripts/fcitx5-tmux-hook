@@ -1,16 +1,17 @@
 #!/bin/bash
-# fcitx5-tmux-hook: called by tmux on pane focus events
+# fcitx5-tmux-hook: called by tmux on pane focus/switch events
 #
 # Shell-agnostic. No shell configuration needed.
 # Constructs a deterministic context ID from tmux's own metadata:
 #   tmux-<hostname>-<session_name>-<window_index>-<pane_index>
 #
-# Local:  calls fcitx5-context directly
-# Remote: sends via OSC 1337 SetUserVar through SSH/tmux passthrough
+# Sends OSC 1337 SetUserVar via DCS passthrough to the outer terminal (kitty).
+# Works identically on local and remote machines.
 #
-# Usage (in tmux hooks):
-#   fcitx5-tmux-hook focus-in <pane_id>
-#   fcitx5-tmux-hook focus-out <pane_id>
+# Usage:
+#   fcitx5-tmux-hook focus-in <pane_id>    (pane-focus-in hook)
+#   fcitx5-tmux-hook focus-out <pane_id>   (pane-focus-out hook)
+#   fcitx5-tmux-hook <pane_id>             (after-select-pane: handles both)
 
 _get_ctx_id() {
     local pane_id="$1"
@@ -27,28 +28,36 @@ _send_user_var() {
     local value
     value=$(printf '%s' "$1" | base64)
 
-    # tmux run-shell's stdout is not a tty; write to the active pane's tty instead
-    local tty
-    tty=$(tmux display-message -p '#{pane_tty}' 2>/dev/null)
+    local client_tty
+    client_tty=$(tmux display-message -p '#{client_tty}' 2>/dev/null)
 
-    if [[ -n "$tty" && -w "$tty" ]]; then
-        if [[ -n "$TMUX" ]]; then
-            printf '\ePtmux;\e\e]1337;SetUserVar=%s=%s\a\e\\' "$key" "$value" > "$tty"
-        else
-            printf '\e]1337;SetUserVar=%s=%s\a' "$key" "$value" > "$tty"
-        fi
+    if [[ -n "$client_tty" && -w "$client_tty" ]]; then
+        # Write raw OSC directly to client tty (bypasses tmux, no DCS wrapper needed)
+        printf '\e]1337;SetUserVar=%s=%s\a' "$key" "$value" > "$client_tty"
     fi
 }
 
-ctx_id=$(_get_ctx_id "$2")
+# Unified mode: fcitx5-tmux-hook <pane_id>
+# For after-select-pane / after-select-window hooks.
+# Tracks previous pane via @fcitx5_last_ctx, sends both focus-out and focus-in.
+if [[ $# -eq 1 && "$1" != "focus-in" && "$1" != "focus-out" ]]; then
+    pane_id="$1"
+    ctx_id=$(_get_ctx_id "$pane_id")
+    last_ctx=$(tmux show-option -gqv @fcitx5_last_ctx 2>/dev/null)
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if [[ "$last_ctx" == "$ctx_id" ]]; then
+        exit 0
+    fi
 
-if [[ -z "$SSH_CONNECTION" ]]; then
-    case "$1" in
-        focus-out) "$SCRIPT_DIR/fcitx5-context" save "$ctx_id" 2>/dev/null & ;;
-        focus-in)  "$SCRIPT_DIR/fcitx5-context" restore "$ctx_id" 2>/dev/null & ;;
-    esac
-else
-    _send_user_var "$1:$ctx_id"
+    if [[ -n "$last_ctx" ]]; then
+        _send_user_var "focus-out:$last_ctx"
+    fi
+    _send_user_var "focus-in:$ctx_id"
+    tmux set-option -gq @fcitx5_last_ctx "$ctx_id"
+    exit 0
 fi
+
+# Explicit mode: fcitx5-tmux-hook focus-in/focus-out <pane_id>
+# For pane-focus-in / pane-focus-out hooks.
+ctx_id=$(_get_ctx_id "$2")
+_send_user_var "$1:$ctx_id"
