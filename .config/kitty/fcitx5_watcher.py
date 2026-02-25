@@ -60,6 +60,9 @@ def on_focus_change(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     ctx = _ctx_for_window(window)
 
     if not focused:
+        # WM focus-out (e.g. switched to another app): save current state
+        if _last_focused_ctx:
+            _fcitx5_context("save", _last_focused_ctx)
         return
 
     # Save current IM state (belongs to previous window) synchronously,
