@@ -42,11 +42,13 @@ def _ctx_for_window(window: Window) -> str:
 
 
 def _fcitx5_context(action: str, ctx_id: str) -> None:
+    """Run fcitx5-context synchronously to ensure strict ordering."""
     try:
-        subprocess.Popen(
+        subprocess.run(
             [CONTEXT_CMD, action, ctx_id],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=1,
         )
     except Exception:
         pass
