@@ -82,6 +82,7 @@ def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     Remote tmux pane switch signal.
     fcitx5-tmux-hook sends: SetUserVar=fcitx5_ctx=<base64 of "focus-in:<ctx_id>">
     """
+    global _last_focused_ctx
     key = data.get("key", "")
     value = data.get("value", "")
     _log(f"set_user_var: key={key} value={value}")
@@ -98,6 +99,7 @@ def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
         _fcitx5_context("save", ctx_id)
     elif action == "focus-in":
         _fcitx5_context("restore", ctx_id)
+        _last_focused_ctx = ctx_id
 
 
 def on_close(boss: Boss, window: Window, data: dict[str, Any]) -> None:
