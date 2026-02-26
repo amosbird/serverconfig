@@ -101,10 +101,11 @@ def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
 
     action, ctx_id = parts
     if action == "focus-out":
-        _fcitx5_context("save", ctx_id)
+        _fcitx5_context("save", f"{_ctx_for_window(window)}-{ctx_id}")
     elif action == "focus-in":
-        _fcitx5_context("restore", ctx_id)
-        _last_focused_ctx = ctx_id
+        full_ctx_id = f"{_ctx_for_window(window)}-{ctx_id}"
+        _fcitx5_context("restore", full_ctx_id)
+        _last_focused_ctx = full_ctx_id
 
 
 def on_close(boss: Boss, window: Window, data: dict[str, Any]) -> None:
