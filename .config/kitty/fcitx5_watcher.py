@@ -19,7 +19,6 @@ Install: add to kitty.conf:
 
 import subprocess
 import os
-import sys
 from typing import Any
 
 from kitty.boss import Boss
@@ -82,7 +81,9 @@ def on_focus_change(boss: Boss, window: Window, data: dict[str, Any]) -> None:
 def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     """
     Remote tmux pane switch signal.
-    fcitx5-tmux-hook sends: SetUserVar=fcitx5_ctx=<base64 of "focus-in:<ctx_id>">
+    fcitx5-tmux-hook sends OSC 1337 SetUserVar with base64-encoded payload;
+    kitty decodes it and passes the plain text here as data["value"].
+    Format: "focus-in:<ctx_id>" or "focus-out:<ctx_id>"
     """
     key = data.get("key", "")
     value = data.get("value", "")
@@ -90,15 +91,7 @@ def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     if key != "fcitx5_ctx" or not value:
         return
 
-    # Decode value (kitty passes it as string, but check if we need to handle bytes/padding)
-    # The hook sends: base64("action:ctx_id")
-    import base64
-    try:
-        decoded = base64.b64decode(value).decode('utf-8')
-    except Exception:
-        return
-
-    parts = decoded.split(":", 1)
+    parts = value.split(":", 1)
     if len(parts) != 2:
         return
 

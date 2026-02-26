@@ -3,9 +3,9 @@
 #
 # Shell-agnostic. No shell configuration needed.
 # Constructs a deterministic context ID from tmux's own metadata:
-#   tmux-<hostname>-<session_name>-<window_index>-<pane_index>
+#   tmux-<hostname>-<session_name>-<pane_unique_id>
 #
-# Sends OSC 1337 SetUserVar via DCS passthrough to the outer terminal (kitty).
+# Sends OSC 1337 SetUserVar directly to the client tty (raw, no DCS wrapper).
 # Works identically on local and remote machines.
 #
 # Usage:
@@ -15,7 +15,7 @@
 
 _get_ctx_id() {
     local pane_id="$1"
-    local host session win_idx pane_idx
+    local host session unique_pane_id
     host=$(hostname -s 2>/dev/null || echo "unknown")
     session=$(tmux display-message -p -t "$pane_id" '#S' 2>/dev/null || echo "_")
     # Use pane_id (%1, %2) which is stable across moves/renumbers
