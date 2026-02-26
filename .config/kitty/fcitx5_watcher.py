@@ -27,18 +27,21 @@ from kitty.window import Window
 
 CONTEXT_CMD = os.path.expanduser("~/scripts/fcitx5-context")
 KITTY_PID = os.getpid()
-DEBUG = os.environ.get("FCITX5_WATCHER_DEBUG", "")
 
-_last_focused_ctx: str | None = None
-
-
-def _log(msg: str) -> None:
-    if DEBUG:
-        print(f"[fcitx5-watcher] {msg}", file=sys.stderr, flush=True)
+_last_focused_ctx: dict[int, str] = {}
 
 
 def _ctx_for_window(window: Window) -> str:
     return f"kitty-{KITTY_PID}-{window.id}"
+
+
+def _get_active_ctx(window: Window) -> str:
+    """Get the currently active context for a window (base or tmux)."""
+    return _last_focused_ctx.get(window.id, _ctx_for_window(window))
+
+
+def _set_active_ctx(window: Window, ctx: str) -> None:
+    _last_focused_ctx[window.id] = ctx
 
 
 def _fcitx5_context(action: str, ctx_id: str) -> None:
@@ -55,31 +58,25 @@ def _fcitx5_context(action: str, ctx_id: str) -> None:
 
 
 def on_focus_change(boss: Boss, window: Window, data: dict[str, Any]) -> None:
-    global _last_focused_ctx
     focused = data.get("focused", False)
-    ctx = _ctx_for_window(window)
 
+    # When losing focus, save the current state of *this* window
     if not focused:
-        # WM focus-out (e.g. switched to another app): save current state
-        if _last_focused_ctx:
-            _fcitx5_context("save", _last_focused_ctx)
+        current_ctx = _get_active_ctx(window)
+        _fcitx5_context("save", current_ctx)
         return
 
-    # Save current IM state (belongs to previous window) synchronously,
-    # then restore this window's state.
-    if _last_focused_ctx and _last_focused_ctx != ctx:
-        try:
-            subprocess.run(
-                [CONTEXT_CMD, "save", _last_focused_ctx],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=1,
-            )
-        except Exception:
-            pass
+    # When gaining focus:
+    # 1. We might have switched FROM another window. Save that one's state first.
+    #    (But we don't know which one it was easily here, relying on its own focus-out event is safer
+    #     but kitty events are async. For now, we rely on the focus-out of the previous window
+    #     having already fired or firing soon. If we track global last, we can ensure it.)
 
-    _fcitx5_context("restore", ctx)
-    _last_focused_ctx = ctx
+    # 2. Restore the state of *this* window.
+    #    Crucially: Restore the LAST KNOWN state (which might be a tmux context),
+    #    not just the base window context.
+    target_ctx = _get_active_ctx(window)
+    _fcitx5_context("restore", target_ctx)
 
 
 def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
@@ -87,29 +84,46 @@ def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     Remote tmux pane switch signal.
     fcitx5-tmux-hook sends: SetUserVar=fcitx5_ctx=<base64 of "focus-in:<ctx_id>">
     """
-    global _last_focused_ctx
     key = data.get("key", "")
     value = data.get("value", "")
-    _log(f"set_user_var: key={key} value={value}")
 
     if key != "fcitx5_ctx" or not value:
         return
 
-    parts = value.split(":", 1)
+    # Decode value (kitty passes it as string, but check if we need to handle bytes/padding)
+    # The hook sends: base64("action:ctx_id")
+    import base64
+    try:
+        decoded = base64.b64decode(value).decode('utf-8')
+    except Exception:
+        return
+
+    parts = decoded.split(":", 1)
     if len(parts) != 2:
         return
 
-    action, ctx_id = parts
+    action, tmux_ctx_id = parts
+    base_ctx = _ctx_for_window(window)
+    full_ctx_id = f"{base_ctx}-{tmux_ctx_id}"
+
     if action == "focus-out":
-        _fcitx5_context("save", f"{_ctx_for_window(window)}-{ctx_id}")
+        # Remote says it's losing focus (e.g. pane switch)
+        _fcitx5_context("save", full_ctx_id)
+
     elif action == "focus-in":
-        full_ctx_id = f"{_ctx_for_window(window)}-{ctx_id}"
+        # Remote says it's gaining focus
+
+        # Optimization: If the target context is already what we think is active,
+        # do nothing to avoid double-restore race with on_focus_change(True).
+        current_active = _get_active_ctx(window)
+        if current_active == full_ctx_id:
+            return
+
         _fcitx5_context("restore", full_ctx_id)
-        _last_focused_ctx = full_ctx_id
+        # Update the memory so on_focus_change(True) restores this later
+        _set_active_ctx(window, full_ctx_id)
 
 
 def on_close(boss: Boss, window: Window, data: dict[str, Any]) -> None:
-    global _last_focused_ctx
-    ctx = _ctx_for_window(window)
-    if _last_focused_ctx == ctx:
-        _last_focused_ctx = None
+    if window.id in _last_focused_ctx:
+        del _last_focused_ctx[window.id]

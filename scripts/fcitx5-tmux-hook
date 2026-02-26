@@ -18,9 +18,15 @@ _get_ctx_id() {
     local host session win_idx pane_idx
     host=$(hostname -s 2>/dev/null || echo "unknown")
     session=$(tmux display-message -p -t "$pane_id" '#S' 2>/dev/null || echo "_")
-    win_idx=$(tmux display-message -p -t "$pane_id" '#I' 2>/dev/null || echo "_")
-    pane_idx=$(tmux display-message -p -t "$pane_id" '#P' 2>/dev/null || echo "_")
-    echo "tmux-${host}-${session}-${win_idx}-${pane_idx}"
+    # Use pane_id (%1, %2) which is stable across moves/renumbers
+    # instead of #I-#P which changes.
+    # This fixes "random pane" issues if panes are reordered.
+    unique_pane_id=$(tmux display-message -p -t "$pane_id" '#D' 2>/dev/null || echo "_")
+    # Remove the % prefix for cleaner IDs
+    unique_pane_id=${unique_pane_id%%%}
+    unique_pane_id=${unique_pane_id#%}
+
+    echo "tmux-${host}-${session}-${unique_pane_id}"
 }
 
 _send_user_var() {
@@ -31,33 +37,28 @@ _send_user_var() {
     local client_tty
     client_tty=$(tmux display-message -p '#{client_tty}' 2>/dev/null)
 
-    if [[ -n "$client_tty" && -w "$client_tty" ]]; then
-        # Write raw OSC directly to client tty (bypasses tmux, no DCS wrapper needed)
-        printf '\e]1337;SetUserVar=%s=%s\a' "$key" "$value" > "$client_tty"
+    if [[ -n "$client_tty" ]]; then
+        # Check if writable, otherwise try to use tmux display-message to passthrough if needed
+        # But usually client_tty is writable by the user who owns the tmux server process
+        # Using base64 to ensure no weird character issues in the protocol
+        printf '\e]1337;SetUserVar=%s=%s\a' "$key" "$value" > "$client_tty" 2>/dev/null
     fi
 }
 
-# Unified mode: fcitx5-tmux-hook <pane_id>
-# For after-select-pane / after-select-window hooks.
-# Tracks previous pane via @fcitx5_last_ctx, sends both focus-out and focus-in.
-if [[ $# -eq 1 && "$1" != "focus-in" && "$1" != "focus-out" ]]; then
-    pane_id="$1"
-    ctx_id=$(_get_ctx_id "$pane_id")
-    last_ctx=$(tmux show-option -gqv @fcitx5_last_ctx 2>/dev/null)
-
-    if [[ "$last_ctx" == "$ctx_id" ]]; then
-        exit 0
-    fi
-
-    if [[ -n "$last_ctx" ]]; then
-        _send_user_var "focus-out:$last_ctx"
-    fi
-    _send_user_var "focus-in:$ctx_id"
-    tmux set-option -gq @fcitx5_last_ctx "$ctx_id"
+# Explicit mode: fcitx5-tmux-hook focus-in/focus-out <pane_id>
+# For pane-focus-in / pane-focus-out hooks.
+if [[ "$1" == "focus-in" || "$1" == "focus-out" ]]; then
+    ctx_id=$(_get_ctx_id "$2")
+    _send_user_var "$1:$ctx_id"
     exit 0
 fi
 
-# Explicit mode: fcitx5-tmux-hook focus-in/focus-out <pane_id>
-# For pane-focus-in / pane-focus-out hooks.
-ctx_id=$(_get_ctx_id "$2")
-_send_user_var "$1:$ctx_id"
+# Fallback for unified mode (if called without action) - just treat as focus-in
+# But since we enabled explicit focus-out hook in tmux.conf, we can simplify this.
+# Or keep it for backward compat / manual calls.
+if [[ $# -eq 1 ]]; then
+    pane_id="$1"
+    ctx_id=$(_get_ctx_id "$pane_id")
+    _send_user_var "focus-in:$ctx_id"
+    exit 0
+fi
