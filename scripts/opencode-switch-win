@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+# opencode-switch-win - Fuzzy switch tmux windows in the opencode session.
+# Intended to be run inside tmux display-popup.
+# Current window is placed first and pre-selected.
+
+current=$(tmux display-message -p '#I')
+wins=$(tmux list-windows -F '#I #W' 2>/dev/null)
+[ -z "$wins" ] && exit 0
+
+# Move current window to top
+current_line=$(echo "$wins" | grep "^${current} ")
+rest=$(echo "$wins" | grep -v "^${current} ")
+if [ -n "$rest" ]; then
+    wins=$(printf '%s\n%s' "$current_line" "$rest")
+else
+    wins="$current_line"
+fi
+
+selected=$(echo "$wins" | fzf --reverse --no-sort --cycle --bind 'esc:abort')
+if [ -n "$selected" ]; then
+    index=$(echo "$selected" | awk '{print $1}')
+    tmux select-window -t "$index"
+fi

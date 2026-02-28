@@ -72,6 +72,7 @@ ln -sf "$DIR/.tmux" $HOME/
 ln -sf "$DIR/.tmux/.tmux.conf" $HOME/
 
 ln -sf "/tmp/gentoo/emacs" $HOME/.emacs.d
+ln -sf "$DIR/.abemacs" $HOME/
 
 lesskey "$DIR/lesskey"
 

@@ -1,3 +1,7 @@
+# tmux config for opencode — runs in its own kitty window on socket tmux-opencode.
+# Similar to .tmux.conf.htop: no prefix, transparent key passthrough.
+# Window switching via popup (Ctrl-s, Alt-g).
+
 set -ga terminal-overrides ",*:RGB"
 set -g default-shell /bin/bash
 set -g default-command $SHELL
@@ -8,30 +12,56 @@ set -g xterm-keys on
 set -g base-index 1
 set -g pane-base-index 1
 set -g automatic-rename on
+set -g automatic-rename-format '#{b:pane_current_path} - #{s/^OC . //:pane_title}'
 set -g aggressive-resize on
 set -g visual-bell off
 set -g window-size largest
 set -g mouse on
 set -g prefix None
 set -g prefix2 None
-set -g status off
 set -g detach-on-destroy off
+set -g renumber-windows on
+
+# Status bar — minimal, shows window list
+set -g status on
+set -g status-position top
+set -g status-style 'bg=#1a1a2e,fg=#ffffd7'
+set -g status-left ''
+set -g status-right ''
+set -g status-justify left
+set -g window-status-format '#[fg=#585858] #I #W '
+set -g window-status-current-format '#[fg=#6c5ce7,bold] #I #W '
+set -g window-status-separator ''
 
 set -g window-active-style 'bg=#141414'
 
-bind -n C-] send-keys Escape
-bind -n C-j send-keys Down
-bind -n C-k send-keys Up
+# Popup: fuzzy switch window (Ctrl-s)
+bind -n C-s display-popup -E -w 60% -h 50% "opencode-switch-win"
 
+# Popup: jump to dir, open new opencode window (Alt-g)
+bind -n M-g display-popup -E -w 60% -h 50% "opencode-jump-win"
+
+# Tab cycling (Ctrl-9 / Ctrl-0 via Kitty remap → S-F9 / S-F10)
+bind -n S-F9 previous-window
+bind -n S-F10 next-window
+
+# Direct window switching (Alt-1 through Alt-8)
+bind -n M-1 select-window -t 1
+bind -n M-2 select-window -t 2
+bind -n M-3 select-window -t 3
+bind -n M-4 select-window -t 4
+bind -n M-5 select-window -t 5
+bind -n M-6 select-window -t 6
+bind -n M-7 select-window -t 7
+bind -n M-8 select-window -t 8
+
+# Copy mode — same style as your other configs
 bind -Tcopy-mode-vi C-[ send -X copy-pipe-and-cancel 'clipserver'
 bind -Tcopy-mode-vi C-] send -X copy-pipe-and-cancel 'clipserver'
 bind -Tcopy-mode-vi y send -X copy-pipe 'clipserver'
 bind -Tcopy-mode-vi q send -X clear-selection
 unbind -Tcopy-mode-vi MouseDragEnd1Pane
 
-# change this only after 3.2
-# unbind -Tcopy-mode-vi DoubleClick1Pane
-# bind -Tcopy-mode-vi SecondClick1Pane send -X select-word
 bind -Tcopy-mode-vi DoubleClick1Pane send -X select-word
 bind -Tcopy-mode-vi TripleClick1Pane send -X select-line
 
@@ -39,30 +69,15 @@ bind -Tcopy-mode-vi v send-keys -X begin-selection
 bind -Tcopy-mode-vi C-v send-keys -X rectangle-toggle
 bind -Tcopy-mode-vi d send-keys -X halfpage-down
 bind -Tcopy-mode-vi u send-keys -X halfpage-up
-bind -Tcopy-mode-vi H resize-pane -L 5
-bind -Tcopy-mode-vi J resize-pane -D 5
-bind -Tcopy-mode-vi K resize-pane -U 5
-bind -Tcopy-mode-vi L resize-pane -R 5
 bind -Tcopy-mode-vi C-g send -X cancel
 
-# change this only after 3.2
 unbind-key DoubleClick1Pane
 bind -n SecondClick1Pane copy-mode\; send -X select-word
-# bind DoubleClick1Pane copy-mode\; send -X select-word
 bind -n TripleClick1Pane copy-mode\; send -X select-line
 
 bind -n MouseDown1Pane   select-pane -t = \; send-keys -M
 bind -n MouseDown1Status select-window -t =
-# bind MouseDown3Pane   if-shell -F -t = "#{mouse_any_flag}" "select-pane -t=\; send-keys -M" "select-pane -mt="
 bind -n MouseDrag1Pane   if-shell -F -t = "#{mouse_any_flag}" "if -Ft= \"#{pane_in_mode}\" \"copy-mode -M\" \"send-keys -M\"" "copy-mode -M"
 bind -n WheelUpPane      if-shell -F -t = "#{mouse_any_flag}" "send-keys -M" "if -Ft= \"#{pane_in_mode}\" \"send-keys -M\" \"copy-mode -et=\""
-bind -n WheelUpStatus    previous-window
-bind -n WheelDownStatus  next-window
 
-# bind M-s copy-mode\; command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
-bind -Tcopy-mode-vi M-s command-prompt -i -p "(search up)" "send -X search-backward-incremental \"%%%\""
-bind -Tcopy-mode-vi M-u send -X search-backward ❯
-bind -Tcopy-mode-vi M-n send -X search-forward ❯
-
-set -g word-separators "‘’ ='`;+|[](){},?-\\\\\"⏎❯"
-bind -n MouseDown3Pane select-pane \; copy-mode \; send -X clear-selection \; send -l lbve \; send -X stop-selection\; send -X copy-pipe-and-cancel "echo"\; set-buffer -b "amos" -a " "\; paste-buffer -b "amos"
+set -g word-separators "'' ='`;+|[](){},?-\\\\\"⏎❯"

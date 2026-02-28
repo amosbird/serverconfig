@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+export TMUX=$TMPDIR/tmux-amos
+
+echo "
+
+Output :
+---------------------------------------------------"
+
+case "$1" in
+debug)
+    kitten @ --to unix:/tmp/kitty_sock focus-window --match id:1
+    tmux run -t amos "fish -c 'tmuxgdb deb'"
+    ;;
+debug_test)
+    kitten @ --to unix:/tmp/kitty_sock focus-window --match id:1
+    tmux run -t amos "fish -c 'tmuxgdb deb_test'"
+    ;;
+bench)
+    env LD_PRELOAD="$cc_ld_preload" LD_LIBRARY_PATH="$cc_ld_library_path" ./bench --benchmark_color=false
+    ;;
+test)
+    env LD_PRELOAD="$cc_ld_preload" LD_LIBRARY_PATH="$cc_ld_library_path" ./rel_test
+    ;;
+*)
+    env LD_PRELOAD="$cc_ld_preload" LD_LIBRARY_PATH="$cc_ld_library_path" ./rel
+    # ./rel
+    ;;
+esac

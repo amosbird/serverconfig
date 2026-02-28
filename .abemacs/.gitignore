@@ -1,0 +1,27 @@
+# Emacs generated files
+*.elc
+eln-cache/
+auto-save-list/
+backup/
+autosave/
+tramp-autosave/
+var/
+eshell/
+url/
+custom.el
+package-quickstart.el
+package-quickstart.el~
+transient/
+.lsp-session*
+bookmarks
+recentf
+saveplace
+savehist
+abbrev_defs
+projectile-bookmarks.eld
+*.eld
+elpa/
+tramp
+history
+tree-sitter/
+snippets/

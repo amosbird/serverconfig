@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# startopencode-tmux - Start opencode in a dedicated tmux server.
+# Each tmux window runs one opencode instance per project.
+# Usage:
+#   startopencode-tmux                  # start or re-attach
+#   startopencode-tmux /path/to/project # start in specific project dir
+
+export TMUX=${TMPDIR:-/tmp}/tmux-opencode
+
+PROJECT_PATH="${1:-$HOME}"
+PROJECT_PATH=$(realpath "$PROJECT_PATH")
+
+exec tmux -f ~/.tmux/.tmux.conf.opencode -u new-session -A -s opencode -c "$PROJECT_PATH" opencode

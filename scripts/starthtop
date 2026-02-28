@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-export HTOP_SUSPEND=1
 export TMUX=$TMPDIR/tmux-htop
 
 tmux -f ~/.tmux/.tmux.conf.htop -u new-session -A -s htop htop

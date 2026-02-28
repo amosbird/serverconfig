@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+# opencode-jump-win - Jump to a directory and open a new opencode window.
+# Intended to be run inside tmux display-popup.
+
+dir=$(jump-top | fzf +m --reverse --cycle --bind 'esc:abort')
+if [ -n "$dir" ]; then
+    dir=$(echo "$dir" | sed "s|^~|$HOME|")
+    tmux new-window -c "$dir" opencode
+fi

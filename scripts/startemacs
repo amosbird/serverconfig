@@ -2,12 +2,15 @@
 
 export COLORTERM=truecolor
 
-if echo 1 | socat - UNIX-CONNECT:/tmp/emacs.dtach &> /dev/null; then
+EMACS_DIR="$HOME/.abemacs"
+DTACH_SOCK=/tmp/abemacs.dtach
+SERVER_NAME="abemacs"
+
+if echo 1 | socat - UNIX-CONNECT:$DTACH_SOCK &> /dev/null; then
     printf "\e[?1006l\e[?1000l\e[?1002l\e[?1003l\e[?1000h\e[?1002h\e[?1003h" # enable mouse
     printf "\e[?2004h" # enable bracketed paste
-    # printf "\e[>5u" # enable kitty keyboard extension
-    exec dtach -a /tmp/emacs.dtach -E -z
+    printf "\e[>1u" # enable kitty keyboard protocol (disambiguate mode)
+    exec dtach -a $DTACH_SOCK -E -z
 else
-    # export PATH=/tmp/gentoo/home/amos/git/emacs/src:$PATH
-    exec dtach -A /tmp/emacs.dtach -E -z emacsclient -a '' -t -cc
+    exec dtach -A $DTACH_SOCK -E -z emacs --init-directory="$EMACS_DIR" -nw
 fi
