@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+
+# opencode-search - Search opencode sessions and jump to tmux window.
+# Queries session titles + user message snippets from SQLite, pipes to fzf.
+# On selection: jumps to existing tmux window or opens new one.
+# Intended to be run inside tmux display-popup (opencode tmux server).
+
+DB="${HOME}/.local/share/opencode/opencode.db"
+[ ! -f "$DB" ] && echo "DB not found: $DB" >&2 && exit 1
+
+# Query sessions: id, title, dir, time, user-message snippet (for fzf search)
+candidates=$(sqlite3 -separator $'\t' "$DB" "
+  SELECT
+    s.id,
+    s.title,
+    replace(s.directory, '$HOME/', '~/'),
+    strftime('%m-%d', s.time_updated / 1000, 'unixepoch', 'localtime'),
+    replace(
+      substr(group_concat(json_extract(p.data, '\$.text'), ' '), 1, 200),
+      char(10), ' '
+    )
+  FROM session s
+  LEFT JOIN message m ON m.session_id = s.id
+    AND json_extract(m.data, '\$.role') = 'user'
+  LEFT JOIN part p ON p.message_id = m.id
+    AND json_extract(p.data, '\$.type') = 'text'
+  WHERE s.title IS NOT NULL AND s.title != ''
+  GROUP BY s.id
+  ORDER BY s.time_updated DESC;
+")
+
+[ -z "$candidates" ] && echo "No sessions found" >&2 && exit 0
+
+# Write preview script to a tmp file (avoids quote-hell in fzf --preview)
+preview_script=$(mktemp)
+trap 'rm -f "$preview_script"' EXIT
+cat > "$preview_script" << 'PREVIEW'
+#!/usr/bin/env bash
+DB="${HOME}/.local/share/opencode/opencode.db"
+SID="$1"
+sqlite3 "$DB" "
+  SELECT json_extract(m.data, '\$.role') || ':  ' ||
+    substr(
+      replace(
+        group_concat(
+          CASE WHEN json_extract(p.data, '\$.type') = 'text'
+               THEN json_extract(p.data, '\$.text')
+          END, ''
+        ),
+        char(10), ' '
+      ), 1, 200
+    )
+  FROM message m
+  LEFT JOIN part p ON p.message_id = m.id
+  WHERE m.session_id = '$SID'
+    AND json_extract(m.data, '\$.role') = 'user'
+  GROUP BY m.id
+  ORDER BY m.time_created ASC
+  LIMIT 20;
+"
+PREVIEW
+chmod +x "$preview_script"
+
+selected=$(echo "$candidates" | fzf \
+  --delimiter=$'\t' \
+  --with-nth='2,3,4' \
+  --nth='2,5' \
+  --reverse --no-sort --cycle \
+  --header='Search sessions (title + message content)' \
+  --preview="$preview_script {1}" \
+  --preview-window='right:50%:wrap' \
+  --bind 'esc:abort' \
+)
+
+[ -z "$selected" ] && exit 0
+
+session_id=$(echo "$selected" | cut -f1)
+session_title=$(echo "$selected" | cut -f2)
+session_dir=$(echo "$selected" | cut -f3 | sed "s|^~/|$HOME/|")
+
+# Match tmux window by pane_title prefix.
+# opencode truncates long titles to ~37 chars + "...", so match first 30 chars.
+title_prefix=$(echo "$session_title" | cut -c1-30)
+match=$(tmux list-panes -a -F '#{window_index}'$'\t''#{pane_title}' 2>/dev/null |
+  awk -F$'\t' -v p="OC | ${title_prefix}" 'index($2, p) == 1 {print $1; exit}')
+
+if [ -n "$match" ]; then
+  tmux select-window -t "$match"
+else
+  [ ! -d "$session_dir" ] && session_dir="$HOME"
+  tmux new-window -c "$session_dir" "opencode --session '$session_id'"
+fi

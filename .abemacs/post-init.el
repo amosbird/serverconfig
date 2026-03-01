@@ -790,6 +790,51 @@
   :after evil
   :config (global-evil-surround-mode 1))
 
+;; move-text — move lines/regions up and down
+(use-package move-text
+  :commands (move-text-up move-text-down))
+
+;; smartparens — structural editing (slurp/barf s-expressions)
+;; M-r absorbs the next expression into the current sexp (slurp)
+;; M-R pushes the last expression out of the current sexp (barf)
+(use-package smartparens
+  :hook (prog-mode . smartparens-mode)
+  :config
+  (require 'smartparens-config)
+  (sp-pair "{" nil :post-handlers '(("||\n[i]" "RET") ("| " " "))
+           :unless '(sp-point-before-word-p sp-point-before-same-p))
+  (sp-pair "(" nil :post-handlers '(("||\n[i]" "RET") ("| " " "))
+           :unless '(sp-point-before-word-p sp-point-before-same-p))
+  (sp-pair "[" nil :post-handlers '(("| " " "))
+           :unless '(sp-point-before-word-p sp-point-before-same-p))
+  (define-key evil-insert-state-map (kbd "M-r") #'sp-slurp-hybrid-sexp)
+  (define-key evil-insert-state-map (kbd "M-R") #'sp-forward-barf-sexp))
+
+;; surround-with-pair — M-( M-) M-{ M-} etc. in insert mode
+(with-eval-after-load 'evil-surround
+  (defun amos/surround-with-pair (c &optional back)
+    (let* ((e (save-excursion
+                (if back
+                    (amos/backward-word-insert)
+                  (amos/forward-word-insert))
+                (point)))
+           (b (point)))
+      (if (< b e)
+          (evil-surround-region b e t c)
+        (save-excursion
+          (evil-surround-region e b t c))
+        (forward-char 1))))
+  (define-key evil-insert-state-map (kbd "M-{") (lambda () (interactive) (amos/surround-with-pair ?} t)))
+  (define-key evil-insert-state-map (kbd "M-}") (lambda () (interactive) (amos/surround-with-pair ?})))
+  (define-key evil-insert-state-map (kbd "M-(") (lambda () (interactive) (amos/surround-with-pair ?\) t)))
+  (define-key evil-insert-state-map (kbd "M-)") (lambda () (interactive) (amos/surround-with-pair ?\))))
+  (define-key evil-insert-state-map (kbd "M-,") (lambda () (interactive) (amos/surround-with-pair ?> t)))
+  (define-key evil-insert-state-map (kbd "M-.") (lambda () (interactive) (amos/surround-with-pair ?>)))
+  (define-key evil-insert-state-map (kbd "M-'") (lambda () (interactive) (amos/surround-with-pair ?\')))
+  (define-key evil-insert-state-map (kbd "M-_") (lambda () (interactive) (amos/surround-with-pair ?\' t)))
+  (define-key evil-insert-state-map (kbd "M-\"") (lambda () (interactive) (amos/surround-with-pair ?\")))
+  (define-key evil-insert-state-map (kbd "M-p") (lambda () (interactive) (amos/surround-with-pair ?\" t))))
+
 ;; evil-exchange — gx to swap two text regions
 (use-package evil-exchange
   :after evil
@@ -935,9 +980,11 @@
   (define-key evil-normal-state-map "-" #'evil-end-of-line)
   (define-key evil-visual-state-map "-" #'evil-end-of-line)
 
-  ;; C-j/C-k — move line up/down
+  ;; C-j/C-k — move line up/down (autoloaded via use-package below)
   (define-key evil-normal-state-map (kbd "C-j") #'move-text-down)
   (define-key evil-normal-state-map (kbd "C-k") #'move-text-up)
+  (define-key evil-visual-state-map (kbd "C-j") #'move-text-down)
+  (define-key evil-visual-state-map (kbd "C-k") #'move-text-up)
 
   ;; < > keep visual selection after indent
   (defun amos/visual-indent ()
@@ -1512,6 +1559,36 @@ trigger preview). Otherwise call vertico-insert."
     (interactive)
     (unless (bound-and-true-p consult--preview-function)
       (vertico-insert))))
+
+;; Minibuffer keybindings — match doom config for consistent editing experience
+(dolist (map (list minibuffer-local-map
+                   minibuffer-local-ns-map
+                   minibuffer-local-completion-map
+                   minibuffer-local-must-match-map
+                   minibuffer-local-shell-command-map
+                   read-expression-map))
+  (define-key map [escape]        #'abort-recursive-edit)
+  (define-key map (kbd "C-a")     #'move-beginning-of-line)
+  (define-key map (kbd "C-b")     #'backward-char)
+  (define-key map (kbd "C-f")     #'forward-char)
+  (define-key map (kbd "C-d")     #'amos/delete-char)
+  (define-key map (kbd "C-o")     #'amos/kill-line)
+  (define-key map (kbd "C-u")     #'amos/backward-kill-to-bol)
+  (define-key map (kbd "C-k")     #'previous-line-or-history-element)
+  (define-key map (kbd "C-j")     #'next-line-or-history-element)
+  (define-key map (kbd "C-n")     #'next-line-or-history-element)
+  (define-key map (kbd "C-p")     #'previous-line-or-history-element)
+  (define-key map (kbd "M-b")     #'amos/backward-word-insert)
+  (define-key map (kbd "M-f")     #'amos/forward-word-insert)
+  (define-key map (kbd "M-B")     #'amos/backward-subword-insert)
+  (define-key map (kbd "M-F")     #'amos/forward-subword-insert)
+  (define-key map (kbd "M-d")     #'amos/delete-forward-word)
+  (define-key map (kbd "M-D")     #'amos/delete-forward-subword)
+  (define-key map (kbd "M-z")     #'undo)
+  (define-key map (kbd "DEL")     #'amos/delete-backward-char)
+  (define-key map (kbd "M-DEL")   #'amos/delete-backward-word)
+  (define-key map (kbd "M-<backspace>") #'amos/delete-backward-word)
+  (define-key map [134217855]     #'amos/delete-backward-word))
 
 ;; consult yank-word — C-w pulls word at cursor into minibuffer search
 (defun amos/consult-yank-word (&optional arg)

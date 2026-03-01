@@ -40,8 +40,15 @@ set -g window-active-style 'bg=#141414'
 bind -n C-j send-keys Down
 bind -n C-k send-keys Up
 
+# C-o → C-k (kill to end of line, since C-k is remapped above)
+bind -n C-o send-keys C-k
+
 # Popup: fuzzy switch window (Ctrl-s)
 bind -n C-s display-popup -E -w 60% -h 50% "opencode-switch-win"
+
+# Popup: search sessions across DB (Alt-s / Ctrl-Shift-s via S-F4)
+bind -n M-s display-popup -E -w 80% -h 70% "opencode-search"
+bind -n S-F4 display-popup -E -w 80% -h 70% "opencode-search"
 
 # Popup: jump to dir, open new opencode window (Alt-g)
 bind -n M-g display-popup -E -w 60% -h 50% "opencode-jump-win"
@@ -84,5 +91,9 @@ bind -n MouseDown1Pane   select-pane -t = \; send-keys -M
 bind -n MouseDown1Status select-window -t =
 bind -n MouseDrag1Pane   if-shell -F -t = "#{mouse_any_flag}" "if -Ft= \"#{pane_in_mode}\" \"copy-mode -M\" \"send-keys -M\"" "copy-mode -M"
 bind -n WheelUpPane      if-shell -F -t = "#{mouse_any_flag}" "send-keys -M" "if -Ft= \"#{pane_in_mode}\" \"send-keys -M\" \"copy-mode -et=\""
+
+# fcitx5 input method context switching
+set-hook -g pane-focus-out "run-shell '$HOME/scripts/fcitx5-tmux-hook focus-out #{pane_id}'"
+set-hook -g pane-focus-in "run-shell '$HOME/scripts/fcitx5-tmux-hook focus-in #{pane_id}'"
 
 set -g word-separators "'' ='`;+|[](){},?-\\\\\"⏎❯"
