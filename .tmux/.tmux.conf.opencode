@@ -27,13 +27,18 @@ set -g status on
 set -g status-position top
 set -g status-style 'bg=#1a1a2e,fg=#ffffd7'
 set -g status-left ''
-set -g status-right ''
+set -g status-right '#[fg=#aaaaaa] #(whoami)@#h '
+set -g status-right-length 60
 set -g status-justify left
 set -g window-status-format '#[fg=#585858] #I #W '
 set -g window-status-current-format '#[fg=#6c5ce7,bold] #I #W '
 set -g window-status-separator ''
 
 set -g window-active-style 'bg=#141414'
+
+# C-j / C-k → Down / Up (for fzf, opencode list navigation, etc.)
+bind -n C-j send-keys Down
+bind -n C-k send-keys Up
 
 # Popup: fuzzy switch window (Ctrl-s)
 bind -n C-s display-popup -E -w 60% -h 50% "opencode-switch-win"
