@@ -1,6 +1,6 @@
 ---
 name: aidoc
-description: 记录 AI 对话产出的知识到 aidoc 仓库。当用户说"记录到 aidoc"、"存到 aidoc"、"保存这个知识点"时使用此 skill。
+description: 记录 AI 对话产出的知识到 aidoc 仓库。当用户说"记录到 aidoc"、"存到 aidoc"、"保存这个知识点"时使用此 skill。只在用户消息中明确提到 "aidoc" 关键词时才触发，不要自行决定记录。
 ---
 
 # AI Doc 知识库

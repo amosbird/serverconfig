@@ -423,6 +423,7 @@
   (evil-search-module 'evil-search)     ; Use evil search (supports / ? n N)
   (evil-symbol-word-search t)            ; # and * search by symbol, not word
   (evil-ex-search-vim-style-regexp t)    ; \( \) \| in ex search (Vim compat)
+  (evil-ex-substitute-global t)           ; :s/foo/bar/ replaces all occurrences; add /g to revert
   (evil-ex-interactive-search-highlight 'selected-window) ; Only highlight in current window
   (evil-split-window-below t)           ; :sp opens new window below
   (evil-vsplit-window-right t)          ; :vs opens new window to the right
@@ -2009,8 +2010,16 @@ Ensures one ● per line with proper padding and face."
   (defun amos/flymake-goto-error (&optional prev)
     (setq evil-move-beyond-eol t)
     (advice-add #'evil-normal-post-command :after #'amos/flymake--restore-eol)
-    (if prev (flymake-goto-prev-error 1)
-      (flymake-goto-next-error 1)))
+    (condition-case _err
+        (if prev (flymake-goto-prev-error 1)
+          (flymake-goto-next-error 1))
+      (user-error
+       ;; Wrap around: jump to first/last diagnostic
+       (goto-char (if prev (point-max) (point-min)))
+       (condition-case nil
+           (if prev (flymake-goto-prev-error 1)
+             (flymake-goto-next-error 1))
+         (user-error (message "No flymake diagnostics"))))))
   (defun amos/flymake-goto-next-error ()
     (interactive) (amos/flymake-goto-error))
   (defun amos/flymake-goto-prev-error ()
