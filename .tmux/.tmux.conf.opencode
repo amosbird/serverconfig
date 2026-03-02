@@ -46,8 +46,7 @@ bind -n C-o send-keys C-k
 # Popup: fuzzy switch window (Ctrl-s)
 bind -n C-s display-popup -E -w 60% -h 50% "opencode-switch-win"
 
-# Popup: search sessions across DB (Alt-s / Ctrl-Shift-s via S-F4)
-bind -n M-s display-popup -E -w 80% -h 70% "opencode-search"
+# Popup: search sessions across DB (Ctrl-Shift-s via S-F4)
 bind -n S-F4 display-popup -E -w 80% -h 70% "opencode-search"
 
 # Popup: jump to dir, open new opencode window (Alt-g)

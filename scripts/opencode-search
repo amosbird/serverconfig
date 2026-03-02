@@ -1,86 +1,149 @@
 #!/usr/bin/env bash
 
-# opencode-search - Search opencode sessions and jump to tmux window.
-# Queries session titles + user message snippets from SQLite, pipes to fzf.
-# On selection: jumps to existing tmux window or opens new one.
+# opencode-search - Search opencode sessions by title and message content.
+# Uses FTS5 index (separate DB) for fast full-text search with pinyin support.
 # Intended to be run inside tmux display-popup (opencode tmux server).
 
 DB="${HOME}/.local/share/opencode/opencode.db"
+INDEX_DB="${HOME}/.local/share/opencode/search.db"
 [ ! -f "$DB" ] && echo "DB not found: $DB" >&2 && exit 1
 
-# Query sessions: id, title, dir, time, user-message snippet (for fzf search)
-candidates=$(sqlite3 -separator $'\t' "$DB" "
-  SELECT
-    s.id,
-    s.title,
-    replace(s.directory, '$HOME/', '~/'),
-    strftime('%m-%d', s.time_updated / 1000, 'unixepoch', 'localtime'),
-    replace(
-      substr(group_concat(json_extract(p.data, '\$.text'), ' '), 1, 200),
-      char(10), ' '
-    )
-  FROM session s
-  LEFT JOIN message m ON m.session_id = s.id
-    AND json_extract(m.data, '\$.role') = 'user'
-  LEFT JOIN part p ON p.message_id = m.id
-    AND json_extract(p.data, '\$.type') = 'text'
-  WHERE s.title IS NOT NULL AND s.title != ''
-  GROUP BY s.id
-  ORDER BY s.time_updated DESC;
-")
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 
-[ -z "$candidates" ] && echo "No sessions found" >&2 && exit 0
+# --- Build / update FTS5 index (Go binary, ~11ms incremental) ---
 
-# Write preview script to a tmp file (avoids quote-hell in fzf --preview)
-preview_script=$(mktemp)
-trap 'rm -f "$preview_script"' EXIT
-cat > "$preview_script" << 'PREVIEW'
-#!/usr/bin/env bash
-DB="${HOME}/.local/share/opencode/opencode.db"
-SID="$1"
-sqlite3 "$DB" "
-  SELECT json_extract(m.data, '\$.role') || ':  ' ||
-    substr(
-      replace(
-        group_concat(
-          CASE WHEN json_extract(p.data, '\$.type') = 'text'
-               THEN json_extract(p.data, '\$.text')
-          END, ''
-        ),
-        char(10), ' '
-      ), 1, 200
-    )
-  FROM message m
-  LEFT JOIN part p ON p.message_id = m.id
-  WHERE m.session_id = '$SID'
-    AND json_extract(m.data, '\$.role') = 'user'
-  GROUP BY m.id
-  ORDER BY m.time_created ASC
-  LIMIT 20;
-"
-PREVIEW
-chmod +x "$preview_script"
+"$SCRIPT_DIR/opencode-search-index" 2>/dev/null
 
-selected=$(echo "$candidates" | fzf \
+# --- Search helper (called by fzf change:reload) ---
+
+search() {
+  local q="$1"
+  if [ -z "$q" ]; then
+    # No query: list all sessions by recency
+    sqlite3 -separator $'\t' "$DB" "
+      SELECT id, title,
+        replace(directory, '$HOME/', '~/'),
+        strftime('%m-%d', time_updated / 1000, 'unixepoch', 'localtime')
+      FROM session
+      WHERE title IS NOT NULL AND title != ''
+      ORDER BY time_updated DESC;
+    "
+  else
+    # Tokenize and sanitize input
+    local tokens=()
+    for token in $q; do
+      token=$(printf '%s' "$token" | tr -d '"*^{}():')
+      [ -n "$token" ] && tokens+=("$token")
+    done
+    [ ${#tokens[@]} -eq 0 ] && return
+
+    # Build SQL: for each token, find sessions matching it in ANY column
+    # (text, pinyin, initials, title), then INTERSECT all token results.
+    # This lets "niantie bug" match pinyin "niantie" AND text "bug".
+    local ctes="" intersect="" n=0
+    for token in "${tokens[@]}"; do
+      local safe_tok=$(printf '%s' "$token" | sed "s/'/''/g")
+      local fts_tok="\"${safe_tok}\"*"
+      local like_tok=$(printf '%s' "$safe_tok" | tr -d ' ')
+      n=$((n + 1))
+      ctes="${ctes}${ctes:+,}
+      tok${n} AS (
+        SELECT DISTINCT session_id FROM idx.part_fts
+          WHERE text_content MATCH '${fts_tok}'
+        UNION
+        SELECT DISTINCT session_id FROM idx.part_fts
+          WHERE pinyin_content MATCH '${fts_tok}'
+        UNION
+        SELECT DISTINCT session_id FROM idx.part_initials
+          WHERE initials LIKE '%${like_tok}%'
+        UNION
+        SELECT id FROM session
+          WHERE title LIKE '%${safe_tok}%'
+      )"
+      intersect="${intersect}${intersect:+
+        INTERSECT
+      }SELECT session_id FROM tok${n}"
+    done
+
+    sqlite3 -separator $'\t' "$DB" "
+      ATTACH DATABASE '$INDEX_DB' AS idx;
+      WITH ${ctes},
+      all_matches AS (
+        ${intersect}
+      )
+      SELECT s.id, s.title,
+        replace(s.directory, '$HOME/', '~/'),
+        strftime('%m-%d', s.time_updated / 1000, 'unixepoch', 'localtime')
+      FROM session s
+      JOIN all_matches m ON s.id = m.session_id
+      WHERE s.title IS NOT NULL AND s.title != ''
+      ORDER BY s.time_updated DESC;
+      DETACH DATABASE idx;
+    "
+  fi
+}
+
+# --- Preview helper (called by fzf --preview) ---
+
+preview() {
+  local sid="$1"
+  sqlite3 "$DB" "
+    SELECT CASE json_extract(m.data, '\$.role')
+             WHEN 'user' THEN '▶ '
+             WHEN 'assistant' THEN '◀ '
+             ELSE '  '
+           END ||
+      substr(
+        replace(
+          group_concat(
+            CASE WHEN json_extract(p.data, '\$.type') = 'text'
+                 THEN json_extract(p.data, '\$.text')
+            END, ''
+          ),
+          char(10), ' '
+        ), 1, 300
+      )
+    FROM message m
+    LEFT JOIN part p ON p.message_id = m.id
+    WHERE m.session_id = '$sid'
+    GROUP BY m.id
+    ORDER BY json_extract(m.data, '\$.createdAt') ASC
+    LIMIT 50;
+  "
+}
+
+# --- Main: dispatch by argument ---
+
+case "${1:-}" in
+  --search) search "$2" ; exit ;;
+  --preview) preview "$2" ; exit ;;
+esac
+
+# --- fzf UI ---
+
+SELF=$(readlink -f "$0")
+
+selected=$(fzf \
   --delimiter=$'\t' \
   --with-nth='2,3,4' \
-  --nth='2,5' \
   --reverse --no-sort --cycle \
-  --header='Search sessions (title + message content)' \
-  --preview="$preview_script {1}" \
+  --disabled \
+  --header='Search sessions (title + content + pinyin)' \
+  --bind="start:reload:\"$SELF\" --search ''" \
+  --bind="change:reload:\"$SELF\" --search {q}" \
+  --preview="\"$SELF\" --preview {1}" \
   --preview-window='right:50%:wrap' \
-  --bind 'esc:abort' \
+  --bind='esc:abort' \
 )
 
 [ -z "$selected" ] && exit 0
 
-session_id=$(echo "$selected" | cut -f1)
-session_title=$(echo "$selected" | cut -f2)
-session_dir=$(echo "$selected" | cut -f3 | sed "s|^~/|$HOME/|")
+session_id=$(printf '%s' "$selected" | cut -f1)
+session_title=$(printf '%s' "$selected" | cut -f2)
+session_dir=$(sqlite3 "$DB" "SELECT directory FROM session WHERE id = '$session_id';")
 
-# Match tmux window by pane_title prefix.
-# opencode truncates long titles to ~37 chars + "...", so match first 30 chars.
-title_prefix=$(echo "$session_title" | cut -c1-30)
+# Match tmux window by pane_title prefix (opencode truncates to ~37 chars + "...")
+title_prefix=$(printf '%s' "$session_title" | cut -c1-30)
 match=$(tmux list-panes -a -F '#{window_index}'$'\t''#{pane_title}' 2>/dev/null |
   awk -F$'\t' -v p="OC | ${title_prefix}" 'index($2, p) == 1 {print $1; exit}')
 

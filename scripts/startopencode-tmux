@@ -11,4 +11,16 @@ export TMUX=${TMPDIR:-/tmp}/tmux-opencode
 PROJECT_PATH="${1:-$HOME}"
 PROJECT_PATH=$(realpath "$PROJECT_PATH")
 
+# Start opencode-sync daemon if not already running.
+SYNC_PID_FILE="${TMPDIR:-/tmp}/opencode-sync.pid"
+if [ -x "$SYNC_BIN" ]; then
+    if [ ! -f "$SYNC_PID_FILE" ] || ! kill -0 "$(cat "$SYNC_PID_FILE" 2>/dev/null)" 2>/dev/null; then
+        export OPENCODE_SYNC_SERVER=$(pass show misc/opencode-sync-server 2>/dev/null)
+        export OPENCODE_SYNC_TOKEN=$(pass show misc/opencode-sync-token 2>/dev/null)
+        export OPENCODE_SYNC_CA_CERT="$HOME/git/serverconfig/certs/opencode-session-server.crt"
+        nohup opencode-sync sync --daemon >"${TMPDIR:-/tmp}/opencode-sync.log" 2>&1 &
+        echo $! > "$SYNC_PID_FILE"
+    fi
+fi
+
 exec tmux -f ~/.tmux/.tmux.conf.opencode -u new-session -A -s opencode -c "$PROJECT_PATH" opencode
