@@ -1,7 +1,9 @@
 {
   "keybinds": {
+    "leader": "none",
     "messages_next": "alt+j",
     "messages_previous": "alt+k",
     "messages_last": "alt+e"
-  }
+  },
+  "scroll_speed": 1
 }

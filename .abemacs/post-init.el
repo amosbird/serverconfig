@@ -97,7 +97,7 @@
 
   ;; Custom modeline layout with frame tabs and hostname
   (doom-modeline-def-modeline 'amos
-    '(bar matches follow buffer-info buffer-position word-count parrot selection-info frame)
+    '(bar matches buffer-info buffer-position word-count parrot selection-info frame)
     '(lsp indent-info buffer-encoding major-mode process vcs check time))
 
   ;; Custom format function: fills gap between LHS and RHS with dashes
@@ -108,7 +108,7 @@
   (defun doom-modeline-format--amos ()
     "Custom modeline format with right-aligned RHS."
     (let ((lhs-forms (doom-modeline--prepare-segments
-                      '(bar matches follow buffer-info buffer-position word-count parrot selection-info frame)))
+                      '(bar matches buffer-info buffer-position word-count parrot selection-info frame)))
           (rhs-forms (doom-modeline--prepare-segments
                       '(lsp indent-info buffer-encoding major-mode process vcs check time))))
       (list lhs-forms
@@ -133,6 +133,18 @@
                 (setq-default mode-line-format (list "%e" '(:eval (doom-modeline-format--amos))))))
 
   (doom-modeline-mode 1)
+
+  ;; Hide "WT" (git worktree indicator) from vcs segment
+  (advice-add #'doom-modeline--in-git-worktree-p :override #'ignore)
+
+  ;; Hide "@" (git branch icon fallback) from vcs segment
+  ;; When doom-modeline-icon is nil, the text fallback "@" is shown; suppress it.
+  (advice-add #'doom-modeline-vcs-icon :filter-args
+              (lambda (args)
+                "Replace \"@\" text fallback with empty string in vcs icon."
+                (if (equal (nth 2 args) "@")
+                    (append (list (nth 0 args) (nth 1 args) "") (nthcdr 3 args))
+                  args)))
 
   ;; Fix buffers created before doom-modeline (e.g. *Messages*) that have
   ;; buffer-local mode-line-format set to nil by early-init.el
@@ -188,6 +200,11 @@
 (setq-default line-spacing 0.1)         ; Line spacing
 (setq visible-bell nil)                 ; Disable visible bell
 (setq ring-bell-function #'ignore)      ; Disable audible bell
+
+;; Smooth scrolling — scroll one line at a time instead of recentering
+(setq scroll-conservatively 101)        ; Never recenter on cursor movement
+(setq scroll-margin 0)                  ; No margin lines when scrolling
+(setq scroll-preserve-screen-position t) ; Keep cursor screen position on scroll
 
 ;; Window dividers — thin line separators; clean up vertical-border face in terminal
 (setq window-divider-default-bottom-width 1
@@ -968,12 +985,13 @@
   (define-key evil-normal-state-map "gp" #'amos/reselect-paste)
 
   ;; 0 — toggle between BOL and first non-blank character
-  (defun amos/toggle-bol ()
-    (interactive)
+  (evil-define-motion amos/toggle-bol ()
+    "Move to first non-blank, or to BOL if already there."
+    :type exclusive
     (let ((col (current-column)))
       (back-to-indentation)
       (when (= col (current-column))
-        (evil-beginning-of-line))))
+        (move-beginning-of-line nil))))
   (define-key evil-normal-state-map "0" #'amos/toggle-bol)
   (define-key evil-visual-state-map "0" #'amos/toggle-bol)
 
@@ -1292,6 +1310,13 @@ in normal state for a second press."
     (kill-current-buffer))
   (define-key evil-normal-state-map (kbd "M-W") #'amos/kill-current-buffer)
   (define-key evil-normal-state-map (kbd "M-w") #'amos/wipe-current-buffer)
+
+  ;; Visual yank — keep cursor at original position instead of jumping to selection start
+  (defun amos/evil-yank-keep-cursor-a (orig-fn &rest args)
+    (let ((marker (if (evil-visual-state-p) evil-visual-point (point-marker))))
+      (apply orig-fn args)
+      (goto-char (marker-position marker))))
+  (advice-add #'evil-yank :around #'amos/evil-yank-keep-cursor-a)
 
   ;; gd — go to definition, gr — find references, gf — find file at point
   (define-key evil-normal-state-map "gd" #'xref-find-definitions)
@@ -1846,6 +1871,8 @@ trigger preview). Otherwise call vertico-insert."
   (advice-add #'git-gutter:before-string :override #'amos/git-gutter-before-string)
   ;; Ensure realign margins are set before git-gutter renders signs
   (advice-add #'git-gutter:put-signs :before (lambda (&rest _) (realign-windows)))
+  ;; After git-gutter finishes placing all signs, merge with flymake indicators
+  (advice-add #'git-gutter:view-diff-infos :after (lambda (&rest _) (amos--margin-merge-buffer)))
   ;; Recenter after hunk navigation
   (advice-add #'git-gutter:next-hunk :after (lambda (_) (recenter)))
   (advice-add #'git-gutter:previous-hunk :after (lambda (_) (recenter)))
@@ -1915,7 +1942,7 @@ trigger preview). Otherwise call vertico-insert."
         '("-XX:+UseParallelGC" "-XX:GCTimeRatio=4"
           "-XX:AdaptiveSizePolicyWeight=90"
           "-Dsun.zip.disableMemoryMapping=true" "-Xmx4G" "-Xms1G"))
-  ;; Pad code-action lightbulb to right edge of realign margin
+  ;; Pad code-action lightbulb to right edge of realign margin, then merge
   (defun amos/eglot-code-action-suggestion-a (orig-fn &rest args)
     "Advice around `eglot-code-action-suggestion' to pad margin indicator."
     (apply orig-fn args)
@@ -1927,8 +1954,128 @@ trigger preview). Otherwise call vertico-insert."
           (overlay-put eglot--suggestion-overlay 'before-string
                        (propertize " " 'display
                                    `((margin ,(cadar disp))
-                                     ,(amos/make-margin-indicator (cadr disp)))))))))
-  (advice-add #'eglot-code-action-suggestion :around #'amos/eglot-code-action-suggestion-a))
+                                     ,(amos/make-margin-indicator (cadr disp)))))))
+      ;; Merge with git-gutter/flymake on the same line
+      (let ((bol (save-excursion (goto-char (overlay-start eglot--suggestion-overlay))
+                                 (line-beginning-position))))
+        (amos--margin-merge-at bol))))
+  (advice-add #'eglot-code-action-suggestion :around #'amos/eglot-code-action-suggestion-a)
+  ;; When eglot deletes its suggestion overlay (lightbulb), restore any
+  ;; git-gutter/flymake indicators that were hidden during the merge.
+  (defun amos/eglot-delete-overlay-restore-a (orig-fn ov)
+    "Around advice for `delete-overlay': restore margin merge after eglot removal."
+    (let ((bol (when (and (overlayp ov)
+                          (overlay-get ov 'eglot--overlay)
+                          (overlay-buffer ov))
+                 (save-excursion (goto-char (overlay-start ov))
+                                 (line-beginning-position)))))
+      (funcall orig-fn ov)
+      (when bol (amos--margin-merge-at bol))))
+  (advice-add #'delete-overlay :around #'amos/eglot-delete-overlay-restore-a)
+
+  ;; ── C++ Inheritance & Call Hierarchy Navigation ──
+  ;; Clangd supports Call Hierarchy (LSP 3.16) and Type Hierarchy (LSP 3.17)
+  ;; but eglot doesn't expose them. Custom jsonrpc calls below.
+
+  ;; Call Hierarchy — inheritance-aware incoming/outgoing calls
+  (defun amos/eglot--call-hierarchy-item ()
+    "Prepare a CallHierarchyItem at point via LSP."
+    (let* ((server (eglot--current-server-or-lose))
+           (items (jsonrpc-request server :textDocument/prepareCallHierarchy
+                                  (eglot--TextDocumentPositionParams))))
+      (and items (> (length items) 0) (aref items 0))))
+
+  (defun amos/eglot--call-to-xref (call incoming)
+    "Convert a call hierarchy CALL to an xref item.
+INCOMING non-nil means extract :from, otherwise :to."
+    (let* ((item (plist-get call (if incoming :from :to)))
+           (uri (plist-get item :uri))
+           (start (plist-get (plist-get item :selectionRange) :start))
+           (name (plist-get item :name))
+           (detail (or (plist-get item :detail) "")))
+      (xref-make (format "%s %s" name detail)
+                 (xref-make-file-location (eglot--uri-to-path uri)
+                                          (1+ (plist-get start :line))
+                                          (plist-get start :character)))))
+
+  (defun amos/eglot-incoming-calls ()
+    "Show all callers of method at point (inheritance-aware).
+Unlike `xref-find-references', this finds calls through base class pointers."
+    (interactive)
+    (if-let* ((item (amos/eglot--call-hierarchy-item))
+              (calls (jsonrpc-request (eglot--current-server-or-lose)
+                                      :callHierarchy/incomingCalls `(:item ,item)))
+              (xrefs (mapcar (lambda (c) (amos/eglot--call-to-xref c t))
+                             (append calls nil))))
+        (if (= 1 (length xrefs))
+            (xref-pop-to-location (car xrefs))
+          (xref--show-xrefs xrefs nil))
+      (message "No incoming calls found")))
+
+  (defun amos/eglot-outgoing-calls ()
+    "Show all callees from the method at point."
+    (interactive)
+    (if-let* ((item (amos/eglot--call-hierarchy-item))
+              (calls (jsonrpc-request (eglot--current-server-or-lose)
+                                      :callHierarchy/outgoingCalls `(:item ,item)))
+              (xrefs (mapcar (lambda (c) (amos/eglot--call-to-xref c nil))
+                             (append calls nil))))
+        (if (= 1 (length xrefs))
+            (xref-pop-to-location (car xrefs))
+          (xref--show-xrefs xrefs nil))
+      (message "No outgoing calls found")))
+
+  ;; Type Hierarchy — supertypes / subtypes
+  (defun amos/eglot--type-hierarchy-item ()
+    "Prepare a TypeHierarchyItem at point via LSP."
+    (let* ((server (eglot--current-server-or-lose))
+           (items (jsonrpc-request server :textDocument/prepareTypeHierarchy
+                                  (eglot--TextDocumentPositionParams))))
+      (and items (> (length items) 0) (aref items 0))))
+
+  (defun amos/eglot--type-to-xref (item)
+    "Convert a TypeHierarchyItem to an xref item."
+    (let* ((uri (plist-get item :uri))
+           (start (plist-get (plist-get item :selectionRange) :start))
+           (name (plist-get item :name))
+           (detail (or (plist-get item :detail) "")))
+      (xref-make (format "%s %s" name detail)
+                 (xref-make-file-location (eglot--uri-to-path uri)
+                                          (1+ (plist-get start :line))
+                                          (plist-get start :character)))))
+
+  (defun amos/eglot-supertypes ()
+    "Show parent classes of the class at point."
+    (interactive)
+    (if-let* ((item (amos/eglot--type-hierarchy-item))
+              (types (jsonrpc-request (eglot--current-server-or-lose)
+                                      :typeHierarchy/supertypes `(:item ,item)))
+              (xrefs (mapcar #'amos/eglot--type-to-xref (append types nil))))
+        (if (= 1 (length xrefs))
+            (xref-pop-to-location (car xrefs))
+          (xref--show-xrefs xrefs nil))
+      (message "No supertypes found")))
+
+  (defun amos/eglot-subtypes ()
+    "Show derived classes of the class at point."
+    (interactive)
+    (if-let* ((item (amos/eglot--type-hierarchy-item))
+              (types (jsonrpc-request (eglot--current-server-or-lose)
+                                      :typeHierarchy/subtypes `(:item ,item)))
+              (xrefs (mapcar #'amos/eglot--type-to-xref (append types nil))))
+        (if (= 1 (length xrefs))
+            (xref-pop-to-location (car xrefs))
+          (xref--show-xrefs xrefs nil))
+      (message "No subtypes found")))
+
+  ;; Keybindings — only active when eglot is managing the buffer
+  (evil-define-key* 'normal eglot-mode-map
+    "gD" #'eglot-find-declaration         ; override → base class declaration
+    "gi" #'eglot-find-implementation      ; base virtual → all overrides
+    "gR" #'amos/eglot-incoming-calls      ; all callers (inheritance-aware)
+    "gO" #'amos/eglot-outgoing-calls      ; all callees
+    "gT" #'amos/eglot-supertypes          ; parent classes
+    "gt" #'amos/eglot-subtypes))          ; derived classes
 
 ;;;; Flymake — built-in syntax checking framework
 ;; M-, / M-. jump to prev/next error (evil normal mode)
@@ -1951,7 +2098,8 @@ trigger preview). Otherwise call vertico-insert."
   (put 'flymake-note    'flymake-margin-string '("●" compilation-info))
   ;; Rewrite flymake overlay before-strings to use realign-mode margin padding.
   ;; Shows exactly one ● per line (highest severity wins).
-  ;; Padding spaces use default face; only ● itself gets the diagnostic color.
+  ;; Padding spaces explicitly cancel all face attributes to avoid inheriting
+  ;; the overlay's face (e.g. flymake-error underline/foreground bleeding).
   (defun amos/flymake--margin-before-string (type)
     "Build a margin before-string for flymake category TYPE."
     (when-let* ((margin-ind (get type 'flymake-margin-string))
@@ -1960,24 +2108,26 @@ trigger preview). Otherwise call vertico-insert."
       (let* ((margin-w (or (car (window-margins)) 4))
              (ind-w (string-width ind-str))
              (pad (max 0 (- margin-w ind-w 1)))
+             ;; Explicit face spec that suppresses overlay face bleed-through
+             (pad-face '(:underline nil :inherit default))
              (padded (concat (propertize (concat " " (make-string pad ?\s))
-                                         'face 'default)
+                                         'face pad-face)
                              (propertize ind-str 'face `(:inherit ,face :underline nil)))))
         (propertize " " 'display `((margin left-margin) ,padded)))))
 
   (defun amos/flymake--reconcile-line (ov)
     "Ensure exactly one ● on the line containing overlay OV.
 The highest-severity flymake overlay wins; all others get before-string nil."
-    (let* ((bol (overlay-start ov))
+    ;; Use actual line-beginning-position, not overlay-start, because multiple
+    ;; diagnostics on the same line may start at different columns.
+    (let* ((bol (save-excursion (goto-char (overlay-start ov))
+                                (line-beginning-position)))
            (eol (save-excursion (goto-char bol) (1+ (line-end-position))))
-           (all-ovs (cl-remove-if-not
-                     (lambda (o) (overlay-get o 'category))
-                     (overlays-in bol eol)))
-           ;; Keep only flymake overlays (category is flymake-error/warning/note)
            (fm-ovs (cl-remove-if-not
                     (lambda (o)
-                      (get (overlay-get o 'category) 'flymake-margin-string))
-                    all-ovs))
+                      (and (overlay-get o 'flymake-overlay)
+                           (get (overlay-get o 'category) 'flymake-margin-string)))
+                    (overlays-in bol eol)))
            ;; Sort by severity descending — highest first
            (sorted (sort fm-ovs
                          (lambda (a b)
@@ -1994,13 +2144,17 @@ The highest-severity flymake overlay wins; all others get before-string nil."
 
   (defun amos/flymake--highlight-line-a (orig-fn &rest args)
     "After flymake creates a diagnostic overlay, fix its margin before-string.
-Ensures one ● per line with proper padding and face."
+Ensures one ● per line with proper padding and face, then merge with git-gutter."
     ;; Ensure realign-mode margins are set so (window-margins) returns
     ;; the correct width — same trick as git-gutter:put-signs advice.
     (realign-windows)
     (let ((result (apply orig-fn args)))
       (when (overlayp result)
-        (amos/flymake--reconcile-line result))
+        (amos/flymake--reconcile-line result)
+        ;; Merge with git-gutter indicator on the same line (if any)
+        (let ((bol (save-excursion (goto-char (overlay-start result))
+                                   (line-beginning-position))))
+          (amos--margin-merge-at bol)))
       result))
   (advice-add #'flymake--highlight-line :around #'amos/flymake--highlight-line-a)
   ;; Temporarily allow cursor past EOL when jumping to flymake errors, then restore
@@ -2775,9 +2929,9 @@ Ensures one ● per line with proper padding and face."
 
   ;; ── Margin indicator merge ──
   ;; When multiple packages (git-gutter, flymake, eglot) place margin indicators
-  ;; on the same line, merge them into a single string (e.g. "💡!+").
-  (defvar-local amos--margin-merge-line nil
-    "Line-beginning position of the last merged line, or nil.")
+  ;; on the same line, merge them into a single display string (e.g. "●+").
+  ;; Merge is triggered at overlay-creation time (not post-command-hook),
+  ;; so all lines are merged immediately.
 
   (defun amos--margin-extract-indicator (ov)
     "Extract raw indicator string from OV's margin before-string, or nil."
@@ -2787,48 +2941,68 @@ Ensures one ● per line with proper padding and face."
         (let ((s (cadr disp)))
           (when (stringp s) (string-trim s))))))
 
-  (defun amos--margin-restore (bol)
-    "Restore saved before-strings on line at BOL."
-    (let ((eol (save-excursion (goto-char bol) (1+ (line-end-position)))))
-      (dolist (ov (overlays-in bol eol))
-        (when-let ((saved (overlay-get ov 'amos--margin-saved)))
-          (overlay-put ov 'before-string saved)
-          (overlay-put ov 'amos--margin-saved nil)))))
-
   (defun amos--margin-merge-at (bol)
-    "Merge margin indicators on line at BOL. Returns t if merged."
+    "Merge margin indicators on line at BOL.
+When multiple overlays have margin before-strings, combine them into one.
+The first overlay keeps the merged string; others get before-string nil.
+Each overlay's original before-string is saved in `amos--margin-saved'."
     (let ((eol (save-excursion (goto-char bol) (1+ (line-end-position))))
           entries)
       (dolist (ov (overlays-in bol eol))
-        (when-let ((ind (amos--margin-extract-indicator ov)))
-          (when (> (length ind) 0)
+        ;; Check saved (already merged) or current before-string
+        (let ((ind (or (and (overlay-get ov 'amos--margin-saved)
+                            (amos--margin-extract-indicator-from
+                             (overlay-get ov 'amos--margin-saved)))
+                       (amos--margin-extract-indicator ov))))
+          (when (and ind (> (length ind) 0))
             (push (cons ov ind) entries))))
-      (when (> (length entries) 1)
+      (cond
+       ((> (length entries) 1)
         (setq entries (nreverse entries))
         (let* ((merged (mapconcat #'cdr entries))
                (primary (caar entries)))
           (dolist (entry entries)
-            (overlay-put (car entry) 'amos--margin-saved
-                         (overlay-get (car entry) 'before-string))
+            ;; Save original before-string if not already saved
+            (unless (overlay-get (car entry) 'amos--margin-saved)
+              (overlay-put (car entry) 'amos--margin-saved
+                           (overlay-get (car entry) 'before-string)))
             (unless (eq (car entry) primary)
               (overlay-put (car entry) 'before-string nil)))
+          (overlay-put primary 'amos--margin-saved
+                       (or (overlay-get primary 'amos--margin-saved)
+                           (overlay-get primary 'before-string)))
           (overlay-put primary 'before-string
                        (propertize " " 'display
                                    `((margin left-margin)
-                                     ,(amos/make-margin-indicator merged)))))
-        t)))
+                                     ,(amos/make-margin-indicator merged))))))
+       ;; Only one entry — restore if it was previously merged
+       ((= (length entries) 1)
+        (let ((ov (caar entries)))
+          (when-let ((saved (overlay-get ov 'amos--margin-saved)))
+            (overlay-put ov 'before-string saved)
+            (overlay-put ov 'amos--margin-saved nil)))))))
 
-  (defun amos/margin-merge-hook ()
-    "Post-command hook: merge margin indicators at point, restore previous line."
-    (let ((cur (line-beginning-position)))
-      (when (and amos--margin-merge-line
-                 (/= amos--margin-merge-line cur))
-        (ignore-errors (amos--margin-restore amos--margin-merge-line))
-        (setq amos--margin-merge-line nil))
-      (when (amos--margin-merge-at cur)
-        (setq amos--margin-merge-line cur))))
+  (defun amos--margin-extract-indicator-from (bs)
+    "Extract raw indicator string from before-string BS."
+    (when (stringp bs)
+      (let ((disp (get-text-property 0 'display bs)))
+        (when (and (consp disp) (consp (car disp)) (eq (caar disp) 'margin))
+          (let ((s (cadr disp)))
+            (when (stringp s) (string-trim s)))))))
 
-  (add-hook 'post-command-hook #'amos/margin-merge-hook))
+  (defun amos--margin-merge-buffer ()
+    "Merge margin indicators on all lines in the current buffer that need it."
+    (save-excursion
+      (let (seen)
+        (dolist (ov (overlays-in (point-min) (point-max)))
+          (when (or (overlay-get ov 'git-gutter)
+                    (overlay-get ov 'flymake-overlay))
+            (let ((bol (save-excursion (goto-char (overlay-start ov))
+                                       (line-beginning-position))))
+              (unless (member bol seen)
+                (push bol seen)
+                (amos--margin-merge-at bol)))))))))
+
 
 ;;;; Dired — built-in file manager
 (use-package dired
