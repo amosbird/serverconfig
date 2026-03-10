@@ -1,2 +1,4 @@
 node_modules
 bun.lock
+package.json
+oh-my-opencode-slim.json
