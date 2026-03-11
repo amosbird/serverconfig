@@ -406,6 +406,23 @@
 (global-set-key (kbd "C-x c") #'amos/workspace-new)
 (global-set-key (kbd "C-x k") #'amos/workspace-delete)
 
+;; Compatibility aliases for external scripts (e, E, synce, fish) that use
+;; Doom-style +amos/ prefix
+(defalias '+amos/workspace-new 'amos/workspace-new)
+(defalias '+amos/workspace-delete 'amos/workspace-delete)
+(defvaralias '+amos-tmux-need-switch 'amos-tmux-need-switch)
+(defvar amos-tmux-need-switch nil)
+(defun +amos/dired-jump ()
+  (interactive)
+  (amos/store-jump-history)
+  (require 'dired)
+  (dired-jump)
+  (recenter))
+(defun doom/sudo-find-file (file)
+  "Open FILE as root via TRAMP."
+  (interactive "FOpen file as root: ")
+  (find-file (concat "/sudo:root@localhost:" (expand-file-name file))))
+
 ;; Terminal key translations — kitty remaps ctrl+9/0/,/. to S-F9/F10/F1/F2
 ;; and ctrl+shift+s/d/f to S-F4/F5/F11
 (global-set-key (kbd "S-<f9>")  #'amos/workspace-switch-left)
@@ -1471,7 +1488,8 @@ in normal state for a second press."
 ;;;; Paren match highlighting
 (setq show-paren-delay 0.1
       show-paren-highlight-openparen t
-      show-paren-when-point-inside-paren t)
+      show-paren-when-point-inside-paren t
+      show-paren-priority 50)            ; Below evil-visual overlay (99)
 (add-hook 'after-init-hook #'show-paren-mode)
 
 ;;;; vundo — visual undo tree, open with C-x u
