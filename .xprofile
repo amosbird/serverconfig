@@ -39,13 +39,10 @@ export AMPLXE_RUNTOOL_OPTIONS=--no-altstack
 export QT_AUTO_SCREEN_SCALE_FACTOR=1
 export XDG_CURRENT_DESKTOP=i3
 
-case $(hostname) in
-  abt480) ;;
-
-  *)
-    export LIBVA_DRIVER_NAME=nvidia
-    ;;
-esac
+if grep -qw 'gpu=nvidia' /proc/cmdline; then
+  export LIBVA_DRIVER_NAME=nvidia
+  export GST_VAAPI_ALL_DRIVERS=1
+fi
 
 export WINEARCH=win32
 

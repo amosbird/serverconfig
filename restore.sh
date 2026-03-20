@@ -99,6 +99,9 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/90-amos-dhcp /usr/lib/dhcpcd/dhcpcd-hooks/90-amos
     sudo cp "$DIR"/udev/rules.d/90-wired-netctl.rules /etc/udev/rules.d/
     sudo udevadm control --reload-rules
+    sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable gpu-switch.service
 fi
 
 echo 'Restored!'

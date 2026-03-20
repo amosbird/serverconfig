@@ -1,36 +1,71 @@
 #!/usr/bin/env bash
 
-caps-indicator
-xset s off -dpms
-xset b off
-picom -b
-unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
+LOG="/tmp/startup.log"
+echo "=== startup begin: $(date '+%Y-%m-%d %H:%M:%S') ===" > "$LOG"
 
+run() {
+    local label="$1"
+    shift
+    echo "[$(date '+%H:%M:%S')] START $label" >> "$LOG"
+    if "$@"; then
+        echo "[$(date '+%H:%M:%S')]    OK $label" >> "$LOG"
+    else
+        echo "[$(date '+%H:%M:%S')]  FAIL $label (exit=$?)" >> "$LOG"
+    fi
+}
+
+run_bg() {
+    local label="$1"
+    shift
+    echo "[$(date '+%H:%M:%S')] START $label (bg)" >> "$LOG"
+    "$@" &
+    echo "[$(date '+%H:%M:%S')]    OK $label (pid=$!)" >> "$LOG"
+}
+
+run_fish_bg() {
+    local label="$1"
+    shift
+    local cmd="$*"
+    echo "[$(date '+%H:%M:%S')] START $label (fish bg)" >> "$LOG"
+    fish -c "$cmd" &
+    echo "[$(date '+%H:%M:%S')]    OK $label (pid=$!)" >> "$LOG"
+}
+
+run_bg "caps-indicator" caps-indicator
+run "xset-dpms" xset s off -dpms
+run "xset-bell" xset b off
+run "picom" picom -b
+run_bg "unclutter" unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
+
+echo "[$(date '+%H:%M:%S')] START xkeysnail (bg)" >> "$LOG"
 sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &> /tmp/xkeysnail.log &
+echo "[$(date '+%H:%M:%S')]    OK xkeysnail (pid=$!)" >> "$LOG"
 
-xsetroot -cursor_name left_ptr
+run "xsetroot" xsetroot -cursor_name left_ptr
 
 # /home/amos/scripts/moveend
 
-feh --bg-scale ~/git/serverconfig/black.jpg
+run "feh-wallpaper" timeout 5 feh --no-xinerama --bg-scale ~/git/serverconfig/black.jpg
 # /home/amos/scripts/showstalonetray.sh 1
 
-fish -c "dunst &> /tmp/dunst.log &"
+run_fish_bg "dunst" "dunst &> /tmp/dunst.log &"
 # fish -c "sxhkd &> /tmp/sxhkd.log &"
-fish -c "copyq &> /tmp/copyq.log &"
+run_fish_bg "copyq" "copyq &> /tmp/copyq.log &"
 # fish -c "runscrcpy  &> /dev/null &"
 # fish -c "rungnirehtet &"
-fish -c "udiskie &> /tmp/udiskie.log &"
-fish -c "/home/amos/git/microsocks/microsocks -i 0.0.0.0 -p 8080 &> /tmp/microsocks.log &"
-fish -c "libinput-gestures-setup start &> /tmp/gestures.log &"
-fish -c "clipserver -S &> /tmp/clipserver.log &"
-fish -c "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
-fish -c "miniserve -i 127.0.0.1 -p 8099 /home/amos/git/serverconfig/amos.pac &"
+run_fish_bg "udiskie" "udiskie &> /tmp/udiskie.log &"
+run_fish_bg "microsocks" "/home/amos/git/microsocks/microsocks -i 0.0.0.0 -p 8080 &> /tmp/microsocks.log &"
+run_fish_bg "libinput-gestures" "libinput-gestures-setup start &> /tmp/gestures.log &"
+run_fish_bg "clipserver" "clipserver -S &> /tmp/clipserver.log &"
+run_fish_bg "v2raysocks" "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
+run_fish_bg "miniserve" "miniserve -i 127.0.0.1 -p 8099 /home/amos/git/serverconfig/amos.pac &"
 # use to sync selection and clipboard. copyq sometimes fails to do that.
 # fish -c "parcellite &> /tmp/parcellite.log &"
 # fish -c "flameshot &> /tmp/flameshot.log &"
 # fcitx
-fish -c "fcitx5 -d"
+run_fish_bg "fcitx5" "fcitx5 -d"
 # autocutsel -fork -selection PRIMARY
 # autocutsel -fork -selection CLIPBOARD
-fish -c "kitty &"
+run_fish_bg "kitty" "kitty &"
+
+echo "=== startup end: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$LOG"

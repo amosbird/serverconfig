@@ -206,7 +206,7 @@ keys = [
     Key([mod3], "d", lazy.spawn("dshot | copyq copyImage -", shell=True)),
     Key([mod3, shift], "d", lazy.spawn("dshot | uploadimg -", shell=True)),
     Key([mod3], "t", lazy.spawn("dtinput")),
-    Key([mod3], "c", lazy.spawn("ocr")),
+    Key([mod3], "y", lazy.spawn("ocr")),
     Key(
         [mod3],
         "p",

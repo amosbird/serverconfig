@@ -8,6 +8,16 @@
       "disable": true
     }
   },
+  "mcp": {
+    "iWiki": {
+      "type": "remote",
+      "url": "{env:IWIKI_MCP_URL}",
+      "headers": {
+        "Authorization": "{env:IWIKI_MCP_TOKEN}"
+      },
+      "enabled": true
+    }
+  },
   "permission": {
     "lsp": "deny",
     "external_directory": {

@@ -1,0 +1,13 @@
+[Unit]
+Description=Switch GPU primary based on kernel cmdline
+DefaultDependencies=no
+Before=display-manager.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/amos/git/serverconfig/gpu-switch/gpu-switch.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
