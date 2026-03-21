@@ -63,3 +63,6 @@ fishd.*
 /.local/share/fcitx5/rime/baidu.userdb/
 .aider*
 .local/share/applications/mimeinfo.cache
+.config/opencode/node_modules
+.config/opencode/package.json
+.config/opencode/bun.lock
