@@ -22,6 +22,10 @@ elif [ "$current_window_id" -eq 4 ]; then
     if [ "$target_window_id" -eq 4 ]; then
         target_window_id=1
     fi
+elif [ "$current_window_id" -eq 5 ]; then
+    if [ "$target_window_id" -eq 5 ]; then
+        target_window_id=1
+    fi
 fi
 
 if ! kitty @ focus-window --match id:"$target_window_id"; then

@@ -24,6 +24,7 @@ local)
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh emacs"
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh htop"
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh opencode"
+    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh crush"
     ;;
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
@@ -50,6 +51,11 @@ lvim)
 opencode)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     fish -c startopencode-tmux
+    exit 0
+    ;;
+crush)
+    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+    fish -c startcrush-tmux
     exit 0
     ;;
 *)
