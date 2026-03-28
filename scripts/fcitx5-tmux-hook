@@ -29,6 +29,13 @@ _get_ctx_id() {
     echo "tmux-${host}-${session}-${unique_pane_id}"
 }
 
+_log() {
+    [[ -e /tmp/fcitx5-im-debug.enabled ]] || return 0
+    local ts
+    ts=$(date '+%F %T.%3N' 2>/dev/null || date '+%F %T')
+    printf '%s [fcitx5-tmux-hook pid=%s] %s\n' "$ts" "$$" "$*" >> /tmp/fcitx5-im-debug.log
+}
+
 _send_user_var() {
     local key="fcitx5_ctx"
     local value
@@ -42,6 +49,9 @@ _send_user_var() {
         # But usually client_tty is writable by the user who owns the tmux server process
         # Using base64 to ensure no weird character issues in the protocol
         printf '\e]1337;SetUserVar=%s=%s\a' "$key" "$value" > "$client_tty" 2>/dev/null
+        _log "send key=${key} payload=$1 tty=${client_tty}"
+    else
+        _log "drop key=${key} payload=$1 reason=no-client-tty"
     fi
 }
 
@@ -49,6 +59,7 @@ _send_user_var() {
 # For pane-focus-in / pane-focus-out hooks.
 if [[ "$1" == "focus-in" || "$1" == "focus-out" ]]; then
     ctx_id=$(_get_ctx_id "$2")
+    _log "event=$1 pane=$2 ctx=${ctx_id}"
     _send_user_var "$1:$ctx_id"
     exit 0
 fi
@@ -59,6 +70,7 @@ fi
 if [[ $# -eq 1 ]]; then
     pane_id="$1"
     ctx_id=$(_get_ctx_id "$pane_id")
+    _log "event=focus-in pane=$1 ctx=${ctx_id} mode=compat"
     _send_user_var "focus-in:$ctx_id"
     exit 0
 fi

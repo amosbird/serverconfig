@@ -40,11 +40,29 @@ rebuild_packages=()
 paru -Sy --noconfirm archlinux-keyring
 paru -Syu --noconfirm
 
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+
+pids=()
 for i in "${!vcs_packages[@]}"; do
     pkg_name="${vcs_packages[$i]}"
     remote_url="${vcs_remotes[$i]}"
-    if needs_git_pkg_rebuild "$pkg_name" "$remote_url"; then
-        rebuild_packages+=("$pkg_name")
+    (
+        if needs_git_pkg_rebuild "$pkg_name" "$remote_url"; then
+            printf '%s\n' "$pkg_name" > "$tmp_dir/$i"
+        fi
+    ) &
+    pids+=("$!")
+done
+
+for pid in "${pids[@]}"; do
+    wait "$pid"
+done
+
+for i in "${!vcs_packages[@]}"; do
+    marker="$tmp_dir/$i"
+    if [ -f "$marker" ]; then
+        rebuild_packages+=("$(<"$marker")")
     fi
 done
 

@@ -104,7 +104,7 @@ class ShellHolder:
                     "-T",
                     "urxvt_scratchpad",
                     "-c",
-                    "~/.config/kitty/kitty-mux.conf",
+                    "/home/amos/.config/kitty/kitty-mux.conf",
                     "--listen-on",
                     "unix:/tmp/kitty-mux-socket",
                 ],
@@ -250,12 +250,16 @@ keys = [
     Key(
         [ctrl, alt],
         "t",
-        lazy.spawn("luakit ~/git/rofi-chrome/extension/tab.html 1", shell=True),
+        lazy.spawn(
+            "luakit /home/amos/git/rofi-chrome/extension/tab.html 1", shell=True
+        ),
     ),
     Key(
         [ctrl, alt],
         "a",
-        lazy.spawn("luakit ~/git/rofi-chrome/extension/download.html 1", shell=True),
+        lazy.spawn(
+            "luakit /home/amos/git/rofi-chrome/extension/download.html 1", shell=True
+        ),
     ),
     Key([ctrl, alt], "p", lazy.spawn("showpopup.sh")),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),

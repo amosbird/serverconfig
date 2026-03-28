@@ -41,6 +41,10 @@ set -g window-active-style 'bg=#141414'
 bind -n C-j send-keys Down
 bind -n C-k send-keys Up
 
+# C-h / C-l → Left / Right
+bind -n C-h send-keys Left
+bind -n C-l send-keys Right
+
 # C-o → C-k (kill to end of line, since C-k is remapped above)
 bind -n C-o send-keys C-k
 

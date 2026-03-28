@@ -9,6 +9,15 @@
 #   fcitx5-context clean [max-age-minutes]
 
 STATE_DIR="/tmp/fcitx5-ctx-${UID:-$(id -u)}"
+LOG_FILE="/tmp/fcitx5-im-debug.log"
+LOG_ENABLE="/tmp/fcitx5-im-debug.enabled"  # touch to enable, rm to disable
+
+_log() {
+    [[ -e "$LOG_ENABLE" ]] || return 0
+    local ts
+    ts=$(date '+%F %T.%3N' 2>/dev/null || date '+%F %T')
+    printf '%s [fcitx5-context pid=%s] %s\n' "$ts" "$$" "$*" >> "$LOG_FILE"
+}
 
 _query() {
     local active im_name
@@ -17,26 +26,9 @@ _query() {
     echo "${active}:${im_name}"
 }
 
-save() {
-    local ctx_id="$1"
-    [[ -z "$ctx_id" ]] && return 1
-    mkdir -p "$STATE_DIR"
-    _query > "${STATE_DIR}/${ctx_id}"
-}
-
-restore() {
-    local ctx_id="$1"
-    [[ -z "$ctx_id" ]] && return 1
-
-    local state_file="${STATE_DIR}/${ctx_id}"
-    if [[ ! -f "$state_file" ]]; then
-        # New window/pane: default to IM disabled
-        fcitx5-remote -c 2>/dev/null
-        return 0
-    fi
-
-    local data active im_name
-    data=$(cat "$state_file")
+_apply_state() {
+    local data="$1"
+    local active im_name
     active="${data%%:*}"
     im_name="${data#*:}"
 
@@ -49,12 +41,63 @@ restore() {
                 fcitx5-remote -o 2>/dev/null
             fi
             ;;
+        *)
+            return 1
+            ;;
     esac
+
+    return 0
+}
+
+save() {
+    local ctx_id="$1"
+    [[ -z "$ctx_id" ]] && return 1
+    mkdir -p "$STATE_DIR"
+    local q
+    q=$(_query)
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        _log "save ctx=${ctx_id} query_failed rc=${rc}"
+        return "$rc"
+    fi
+    local state_file tmp_file
+    state_file="${STATE_DIR}/${ctx_id}"
+    tmp_file="${state_file}.tmp.$$"
+
+    printf '%s\n' "$q" > "$tmp_file" && mv -f "$tmp_file" "$state_file"
+    _log "save ctx=${ctx_id} state=${q} file=${state_file}"
+}
+
+restore() {
+    local ctx_id="$1"
+    [[ -z "$ctx_id" ]] && return 1
+
+    local state_file="${STATE_DIR}/${ctx_id}"
+    if [[ ! -f "$state_file" ]]; then
+        # No saved state: default to inactive (English).
+        fcitx5-remote -c 2>/dev/null
+        _log "restore ctx=${ctx_id} missing_state_file=${state_file} action=deactivate"
+        return 0
+    fi
+
+    local data
+    data=$(cat "$state_file")
+    if ! _apply_state "$data"; then
+        local cur_bad
+        cur_bad=$(_query)
+        _log "restore ctx=${ctx_id} bad_state=${data} file=${state_file} action=keep-current current=${cur_bad}"
+        return 0
+    fi
+
+    local after
+    after=$(_query)
+    _log "restore ctx=${ctx_id} from=${data} to=${after} file=${state_file}"
 }
 
 clean() {
     local max_age="${1:-60}"
     [[ -d "$STATE_DIR" ]] || return 0
+    _log "clean max_age=${max_age} dir=${STATE_DIR}"
     find "$STATE_DIR" -type f -mmin "+${max_age}" -delete 2>/dev/null
 }
 
