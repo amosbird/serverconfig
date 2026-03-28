@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Wrapper for opencode that loads MCP secrets from pass
+export DO_NOT_TRACK=1
 export IWIKI_MCP_URL="$(pass show mcp/iwiki-url)"
 export IWIKI_MCP_TOKEN="$(pass show mcp/iwiki-token)"
 export CONTEXT7_API_KEY="$(pass show mcp/context7)"
