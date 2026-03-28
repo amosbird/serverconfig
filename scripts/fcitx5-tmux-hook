@@ -23,7 +23,6 @@ _get_ctx_id() {
     # This fixes "random pane" issues if panes are reordered.
     unique_pane_id=$(tmux display-message -p -t "$pane_id" '#D' 2>/dev/null || echo "_")
     # Remove the % prefix for cleaner IDs
-    unique_pane_id=${unique_pane_id%%%}
     unique_pane_id=${unique_pane_id#%}
 
     echo "tmux-${host}-${session}-${unique_pane_id}"

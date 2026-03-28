@@ -3,9 +3,11 @@ fcitx5_watcher.py - kitty global watcher for fcitx5 IM context switching.
 
 Uses D-Bus directly (no subprocess) for ~8x faster IM state operations.
 
-Design: "save-on-switch for tmux, save-on-focus-out for base kitty,
-          no restore on focus-in (fcitx5 handles cross-app focus natively)"
-
+Design: per-pane IM state tracking that works correctly across:
+  - tmux pane switches (via OSC 1337 SetUserVar from fcitx5-tmux-hook)
+  - kitty tab/split switches (via on_focus_change)
+  - cross-app focus changes (Alt-Tab to/from kitty)
+  - popup windows (copyq etc.) that briefly steal focus
 Context ID strategy:
   - Base kitty window:  "kitty-<kitty_pid>-<window_id>"
   - Tmux pane:          "kitty-<kitty_pid>-<window_id>-tmux-<host>-<session>-<pane_id>"
@@ -13,20 +15,20 @@ Context ID strategy:
 
 Event handling:
   on_focus_change(focused=False):
-      Save only non-tmux (base kitty) contexts. Tmux contexts are saved by
-      tmux hooks via on_set_user_var, with a window-focused guard to prevent
-      corruption from transient popups (copyq etc.).
+      Save the active context's IM state (tmux or base kitty).
 
   on_focus_change(focused=True):
-      No-op. fcitx5 handles cross-app focus restoration natively. Kitty-internal
-      context switching (tmux panes) is handled by on_set_user_var.
+      If active context is a tmux pane, restore it.
+      If base context, skip — let tmux focus-in handle it (avoids the
+      first-popup bug where base ctx overwrites an uninitialized tmux pane).
 
   on_set_user_var "focus-in:<ctx>":
-      Save-on-switch: save the OLD context first, then restore the NEW one.
+      If same pane is already active (popup recovery), just restore without
+      saving. Otherwise save-on-switch: save OLD, restore NEW.
+      First-init (base→tmux with no saved state): keep current IM as-is.
 
   on_set_user_var "focus-out:<ctx>":
-      Save the outgoing pane's state, but ONLY if the kitty window is still
-      focused (guards against late events from cross-app focus loss).
+      Save outgoing pane state, only if kitty window is still focused.
 
   on_close:
       Clean up in-memory tracking dicts.
@@ -48,9 +50,8 @@ LOG_FILE = "/tmp/fcitx5-im-debug.log"
 LOG_ENABLE = "/tmp/fcitx5-im-debug.enabled"  # touch to enable, rm to disable
 
 # Per kitty-window tracking (keyed by window.id):
-_active_ctx: dict[int, str] = {}  # active context ID (base or tmux)
+_active_ctx: dict[int, str] = {}  # active context ID (in-memory, with pid)
 _window_focused: dict[int, bool] = {}  # OS-level focus state
-_last_tmux_ctx: dict[int, str] = {}  # most recent tmux ctx (for focus-in race)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +197,6 @@ def _restore_state(ctx_id: str) -> None:
     """Restore IM state for ctx_id. Defaults to inactive/English if no saved state."""
     saved_state, saved_im = _read_saved_state(ctx_id)
     if saved_state == 0:
-        # No saved state: default to inactive (English).
         _log(f"restore ctx={ctx_id} no_saved_state action=deactivate")
         _apply_im(1, "keyboard-us")
         return
@@ -230,26 +230,22 @@ def _get_active_ctx(window: Window) -> str:
 
 def on_focus_change(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     focused = data.get("focused", False)
+    was_focused = _window_focused.get(window.id, False)
     _window_focused[window.id] = bool(focused)
 
     if not focused:
-        # Save non-tmux contexts on focus-out (for kitty split/tab switches).
-        # Tmux contexts are saved by tmux hooks with a window-focused guard.
         current_ctx = _get_active_ctx(window)
-        if "-tmux-" in current_ctx:
-            _log(
-                f"focus_out window={window.id} ctx={current_ctx} "
-                "action=skip_delegate_tmux"
-            )
-            return
         _log(f"focus_out window={window.id} ctx={current_ctx}")
         _save_state(current_ctx)
         return
 
-    # Focus-in: do NOT restore. fcitx5 handles cross-app focus natively.
-    # Kitty-internal context switching (tmux panes) is handled by
-    # on_set_user_var focus-in, which arrives shortly after this event.
-    _log(f"focus_in window={window.id} action=none")
+    if not was_focused:
+        current_ctx = _get_active_ctx(window)
+        if "-tmux-" in current_ctx:
+            _log(f"focus_in window={window.id} ctx={current_ctx} action=restore")
+            _restore_state(current_ctx)
+        else:
+            _log(f"focus_in window={window.id} ctx={current_ctx} action=skip_base")
 
 
 def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
@@ -267,9 +263,6 @@ def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     action, tmux_ctx_suffix = parts
     full_ctx = f"{_base_ctx(window)}-{tmux_ctx_suffix}"
 
-    _last_tmux_ctx[window.id] = full_ctx
-
-    # Initialize focus tracking if first user_var before any focus event.
     if window.id not in _window_focused:
         try:
             _window_focused[window.id] = bool(window is boss.active_window)
@@ -278,23 +271,36 @@ def on_set_user_var(boss: Boss, window: Window, data: dict[str, Any]) -> None:
 
     _log(f"user_var window={window.id} action={action} ctx={full_ctx}")
 
+    is_focused = _window_focused.get(window.id, False)
+
     if action == "focus-in":
-        # Save-on-switch: save OLD context, then restore NEW.
         old_ctx = _get_active_ctx(window)
+        first_init = old_ctx != full_ctx and "-tmux-" not in old_ctx
         if old_ctx != full_ctx:
-            _save_state(old_ctx)
-        _restore_state(full_ctx)
-        _active_ctx[window.id] = full_ctx
+            if is_focused and not first_init:
+                _save_state(old_ctx)
+            _active_ctx[window.id] = full_ctx
+        if is_focused:
+            saved_state, saved_im = _read_saved_state(full_ctx)
+            if saved_state != 0:
+                _apply_im(saved_state, saved_im)
+                _log(f"restore ctx={full_ctx} applied={_state_to_str(saved_state, saved_im)}")
+            elif first_init:
+                _log(f"restore ctx={full_ctx} first_init=keep_current")
+                _save_state(full_ctx)
+            else:
+                _log(f"restore ctx={full_ctx} no_saved_state action=deactivate")
+                _apply_im(1, "keyboard-us")
+        else:
+            _log(f"defer_restore ctx={full_ctx} reason=window_not_focused")
 
     elif action == "focus-out":
-        # Only save if the kitty window still has focus.
-        if not _window_focused.get(window.id, False):
+        if not is_focused:
             _log(
                 f"skip_save window={window.id} ctx={full_ctx} reason=window_not_focused"
             )
             return
         _save_state(full_ctx)
-        _active_ctx[window.id] = _base_ctx(window)
 
 
 def on_close(boss: Boss, window: Window, data: dict[str, Any]) -> None:
@@ -302,4 +308,3 @@ def on_close(boss: Boss, window: Window, data: dict[str, Any]) -> None:
     _log(f"close window={wid}")
     _active_ctx.pop(wid, None)
     _window_focused.pop(wid, None)
-    _last_tmux_ctx.pop(wid, None)
