@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Wrapper for crush that loads MCP secrets from pass
+# and ensures copilot-proxy daemon is running.
+
+export DO_NOT_TRACK=1
+export CRUSH_DEBUG_WIDE=/tmp/crush_wide_debug.log
+
+# MCP secrets
+export IWIKI_MCP_URL="$(pass show mcp/iwiki-url)"
+export IWIKI_MCP_TOKEN="$(pass show mcp/iwiki-token)"
+export CONTEXT7_API_KEY="$(pass show mcp/context7)"
+export EXA_API_KEY="$(pass show mcp/exa)"
+
+# Ensure copilot-proxy daemon is running (idempotent).
+"$HOME/git/copilot-proxy/copilot-proxy" ensure 2>/dev/null
+
+exec /home/amos/git/crush/crush "$@"

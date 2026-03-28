@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# startcrush-tmux - Start crush in a dedicated tmux server.
+# Each tmux window runs one crush instance per project.
+# Usage:
+#   startcrush-tmux                  # start or re-attach
+#   startcrush-tmux /path/to/project # start in specific project dir
+
+export TMUX=${TMPDIR:-/tmp}/tmux-crush
+
+PROJECT_PATH="${1:-$HOME}"
+PROJECT_PATH=$(realpath "$PROJECT_PATH")
+
+exec tmux -f ~/.tmux/.tmux.conf.crush -u new-session -A -s crush -c "$PROJECT_PATH" crush

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+
+# crush-jump-win - Jump to a directory and open a new crush window.
+# Intended to be run inside tmux display-popup.
+
+dir=$(jump-top | fzf +m --reverse --cycle --print-query --bind 'esc:abort' | tail -1)
+if [ -n "$dir" ]; then
+    dir=$(echo "$dir" | sed "s|^~|$HOME|")
+    dir=$(eval echo "$dir")
+    if [ -d "$dir" ]; then
+        tmux new-window -c "$dir" crush
+    fi
+fi

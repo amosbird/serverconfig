@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+# crush-fork-win - Fork a new crush window in the current pane's directory.
+# Intended to be called from a tmux keybinding (no popup needed).
+
+dir=$(tmux display-message -p '#{pane_current_path}')
+if [ -n "$dir" ]; then
+    tmux new-window -c "$dir" crush
+fi

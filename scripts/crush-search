@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+
+# crush-search - Search Crush sessions by title and message content.
+# Uses FTS5 index (separate DB) for full-text search with pinyin support.
+# Opens selected session in a new crush window (or switches if already open).
+# Intended to be run inside tmux display-popup (crush tmux server).
+#
+# Crush stores per-project databases. This script reads projects.json
+# to discover all DBs and searches across all of them.
+
+PROJECTS_JSON="${HOME}/.local/share/crush/projects.json"
+INDEX_DB="${HOME}/.crush/search.db"
+
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+
+# Collect unique project DB paths from projects.json
+declare -A _seen_dbs=()
+declare -a ALL_DBS=()
+if [ -f "$PROJECTS_JSON" ]; then
+  while IFS= read -r ddir; do
+    db="$ddir/crush.db"
+    [ -f "$db" ] && [ -z "${_seen_dbs[$db]:-}" ] && ALL_DBS+=("$db") && _seen_dbs[$db]=1
+  done < <(python3 -c "
+import json, sys
+with open('$PROJECTS_JSON') as f:
+    for p in json.load(f).get('projects', []):
+        print(p['data_dir'])
+" 2>/dev/null)
+fi
+[ ${#ALL_DBS[@]} -eq 0 ] && echo "No crush databases found" >&2 && exit 1
+
+# --- Build / update FTS5 index (Go binary, ~10ms incremental) ---
+
+"$SCRIPT_DIR/crush-search-index" 2>/dev/null
+
+# --- Search helper (called by fzf change:reload) ---
+# Output: db_path \t session_id \t title \t date \t msg_count
+# Sort key (updated_at) is used for cross-DB sorting then stripped.
+# Active sessions get a ● prefix on the title.
+
+_active_sessions() {
+  tmux list-panes -a -F '#{@crush_session}' 2>/dev/null | sort -u
+}
+
+_mark_active() {
+  local active
+  active=$(_active_sessions)
+  while IFS=$'\t' read -r db sid title rest; do
+    if printf '%s\n' "$active" | grep -qxF "$sid"; then
+      printf '%s\t%s\t● %s\t%s\n' "$db" "$sid" "$title" "$rest"
+    else
+      printf '%s\t%s\t%s\t%s\n' "$db" "$sid" "$title" "$rest"
+    fi
+  done
+}
+
+search() {
+  local q="$1"
+  if [ -z "$q" ]; then
+    for db in "${ALL_DBS[@]}"; do
+      sqlite3 -separator $'\t' "$db" "
+        SELECT updated_at, '$db', id, title,
+          strftime('%m-%d', updated_at / 1000, 'unixepoch', 'localtime'),
+          message_count || ' msgs'
+        FROM sessions
+        WHERE title IS NOT NULL AND title != ''
+          AND parent_session_id IS NULL
+        ORDER BY updated_at DESC;
+      "
+    done | sort -t$'\t' -k1,1rn | cut -f2- | _mark_active
+  else
+    local tokens=()
+    for token in $q; do
+      token=$(printf '%s' "$token" | tr -d '"*^{}():')
+      [ -n "$token" ] && tokens+=("$token")
+    done
+    [ ${#tokens[@]} -eq 0 ] && return
+
+    local ctes="" intersect="" n=0
+    for token in "${tokens[@]}"; do
+      local safe_tok=$(printf '%s' "$token" | sed "s/'/''/g")
+      local fts_tok="\"${safe_tok}\"*"
+      local like_tok=$(printf '%s' "$safe_tok" | tr -d ' ')
+      n=$((n + 1))
+      ctes="${ctes}${ctes:+,}
+      tok${n} AS (
+        SELECT DISTINCT session_id FROM idx.message_fts
+          WHERE text_content MATCH '${fts_tok}'
+        UNION
+        SELECT DISTINCT session_id FROM idx.message_fts
+          WHERE pinyin_content MATCH '${fts_tok}'
+        UNION
+        SELECT DISTINCT session_id FROM idx.message_initials
+          WHERE initials LIKE '%${like_tok}%'
+      )"
+      intersect="${intersect}${intersect:+
+        INTERSECT
+      }SELECT session_id FROM tok${n}"
+    done
+
+    for db in "${ALL_DBS[@]}"; do
+      sqlite3 -separator $'\t' "$db" "
+        ATTACH DATABASE '$INDEX_DB' AS idx;
+        WITH ${ctes},
+        all_matches AS (
+          ${intersect}
+        )
+        SELECT s.updated_at, '$db', s.id, s.title,
+          strftime('%m-%d', s.updated_at / 1000, 'unixepoch', 'localtime'),
+          s.message_count || ' msgs'
+        FROM sessions s
+        JOIN all_matches m ON s.id = m.session_id
+        WHERE s.title IS NOT NULL AND s.title != ''
+          AND s.parent_session_id IS NULL
+        ORDER BY s.updated_at DESC;
+        DETACH DATABASE idx;
+      " 2>/dev/null
+    done | sort -t$'\t' -k1,1rn | cut -f2- | _mark_active
+  fi
+}
+
+# --- Preview helper (called by fzf --preview) ---
+
+preview() {
+  local db="$1" sid="$2"
+  [ ! -f "$db" ] && return
+  sqlite3 "$db" "
+    SELECT CASE m.role
+             WHEN 'user' THEN '▶ '
+             WHEN 'assistant' THEN '◀ '
+             ELSE '  '
+           END ||
+      substr(
+        replace(
+          group_concat(
+            json_extract(j.value, '\$.data.text'), ''
+          ),
+          char(10), ' '
+        ), 1, 300
+      )
+    FROM messages m,
+         json_each(m.parts) j
+    WHERE (m.session_id = '$sid'
+           OR m.session_id IN (SELECT id FROM sessions WHERE parent_session_id = '$sid'))
+      AND json_extract(j.value, '\$.type') = 'text'
+      AND json_extract(j.value, '\$.data.text') IS NOT NULL
+    GROUP BY m.id
+    ORDER BY m.created_at ASC
+    LIMIT 50;
+  "
+}
+
+# --- Delete helper (called by fzf ctrl-d via execute-silent) ---
+
+delete() {
+  local db="$1" sid="$2"
+  [ -z "$sid" ] && return
+  [ ! -f "$db" ] && return
+
+  # Active sessions (marked with ●) are silently skipped
+  if tmux list-panes -a -F '#{@crush_session}' 2>/dev/null | grep -qxF "$sid"; then
+    return
+  fi
+
+  sqlite3 "$db" "
+    PRAGMA foreign_keys = ON;
+    DELETE FROM sessions WHERE id = '$sid' OR parent_session_id = '$sid';
+  "
+
+  sqlite3 "$INDEX_DB" "
+    DELETE FROM message_fts WHERE session_id = '$sid';
+    DELETE FROM message_initials WHERE session_id = '$sid';
+  "
+}
+
+# --- Main: dispatch by argument ---
+
+case "${1:-}" in
+  --search) search "$2" ; exit ;;
+  --preview) preview "$2" "$3" ; exit ;;
+  --delete) delete "$2" "$3" ; exit ;;
+esac
+
+# --- fzf UI ---
+# Columns: 1=db_path 2=session_id 3=title 4=date 5=msg_count
+
+SELF=$(readlink -f "$0")
+HEADER_DEFAULT='Search sessions  |  enter: open  ctrl-d: delete'
+
+selected=$(fzf \
+  --delimiter=$'\t' \
+  --with-nth='3,4,5' \
+  --reverse --no-sort --cycle \
+  --disabled \
+  --header="$HEADER_DEFAULT" \
+  --bind="start:reload:\"$SELF\" --search ''" \
+  --bind="change:reload(\"$SELF\" --search {q})+change-header:$HEADER_DEFAULT" \
+  --preview="\"$SELF\" --preview {1} {2}" \
+  --preview-window='right:50%:wrap' \
+  --bind="ctrl-d:execute-silent(\"$SELF\" --delete {1} {2})+reload(\"$SELF\" --search {q})" \
+  --bind='esc:abort' \
+)
+
+[ -z "$selected" ] && exit 0
+
+db_path=$(printf '%s' "$selected" | cut -f1)
+session_id=$(printf '%s' "$selected" | cut -f2)
+data_dir=$(dirname "$db_path")
+
+project_dir=$(python3 -c "
+import json
+with open('$PROJECTS_JSON') as f:
+    for p in json.load(f).get('projects', []):
+        if p['data_dir'] == '$data_dir':
+            print(p['path']); break
+" 2>/dev/null)
+[ -z "$project_dir" ] && project_dir="$HOME"
+
+# If session is already open in a window, switch to it instead of creating a duplicate
+target_pane=$(tmux list-panes -a -F '#{@crush_session} #{window_id}' 2>/dev/null \
+  | awk -v sid="$session_id" '$1 == sid { print $2; exit }')
+
+if [ -n "$target_pane" ]; then
+  tmux select-window -t "$target_pane"
+else
+  tmux new-window "crush -c $project_dir --session $session_id"
+fi
