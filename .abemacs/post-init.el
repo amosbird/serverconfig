@@ -1330,9 +1330,11 @@ in normal state for a second press."
 
   ;; Visual yank — keep cursor at original position instead of jumping to selection start
   (defun amos/evil-yank-keep-cursor-a (orig-fn &rest args)
-    (let ((marker (if (evil-visual-state-p) evil-visual-point (point-marker))))
+    (let ((pos (if (evil-visual-state-p)
+                   (save-excursion (goto-char evil-visual-point) (point))
+                 (point))))
       (apply orig-fn args)
-      (goto-char (marker-position marker))))
+      (goto-char (min pos (point-max)))))
   (advice-add #'evil-yank :around #'amos/evil-yank-keep-cursor-a)
 
   ;; gd — go to definition, gr — find references, gf — find file at point
@@ -1484,6 +1486,8 @@ in normal state for a second press."
 
 ;;;; electric-pair — auto-close parens/quotes (built-in, lightweight smartparens alternative)
 (add-hook 'after-init-hook #'electric-pair-mode)
+;; Disable electric-pair in minibuffer — typing ( should not auto-insert )
+(add-hook 'minibuffer-setup-hook (lambda () (electric-pair-local-mode -1)))
 
 ;;;; Paren match highlighting
 (setq show-paren-delay 0.1
@@ -1604,35 +1608,109 @@ trigger preview). Otherwise call vertico-insert."
     (unless (bound-and-true-p consult--preview-function)
       (vertico-insert))))
 
+;; Minibuffer-safe word movement — avoid evil-define-command overhead that
+;; calls evil-signal-at-bob-or-eob and tries to enter insert state.
+;; These are plain Emacs commands suitable for use in the minibuffer.
+(defun amos/minibuffer-forward-word ()
+  "Forward word movement for minibuffer (no evil state changes)."
+  (interactive)
+  (if (looking-at "[ \t\r\n\v\f]")
+      (progn (re-search-forward "[^ \t\r\n\v\f]" nil t) (backward-char))
+    (amos/word-movement-internal nil 1)))
+(defun amos/minibuffer-backward-word ()
+  "Backward word movement for minibuffer (no evil state changes)."
+  (interactive)
+  (if (looking-back "[ \t\r\n\v\f]" nil)
+      (progn (re-search-backward "[^ \t\r\n\v\f]" nil t) (forward-char))
+    (amos/word-movement-internal nil -1)))
+(defun amos/minibuffer-forward-subword ()
+  "Forward subword movement for minibuffer (no evil state changes)."
+  (interactive)
+  (if (looking-at "[ \t\r\n\v\f]")
+      (progn (re-search-forward "[^ \t\r\n\v\f]" nil t) (backward-char))
+    (amos/word-movement-internal t 1)))
+(defun amos/minibuffer-backward-subword ()
+  "Backward subword movement for minibuffer (no evil state changes)."
+  (interactive)
+  (if (looking-back "[ \t\r\n\v\f]" nil)
+      (progn (re-search-backward "[^ \t\r\n\v\f]" nil t) (forward-char))
+    (amos/word-movement-internal t -1)))
+(defun amos/minibuffer-delete-forward-word ()
+  "Forward kill word for minibuffer (no evil state changes)."
+  (interactive)
+  (kill-region (point)
+               (save-excursion
+                 (if (looking-at "[ \t\r\n\v\f]")
+                     (progn (re-search-forward "[^ \t\r\n\v\f]" nil t)
+                            (backward-char))
+                   (amos/word-movement-internal nil 1))
+                 (point))))
+(defun amos/minibuffer-delete-backward-word ()
+  "Backward kill word for minibuffer (no evil state changes)."
+  (interactive)
+  (kill-region (point)
+               (save-excursion
+                 (if (looking-back "[ \t\r\n\v\f]" nil)
+                     (progn (re-search-backward "[^ \t\r\n\v\f]" nil t)
+                            (forward-char))
+                   (amos/word-movement-internal nil -1))
+                 (point))))
+(defun amos/minibuffer-delete-forward-subword ()
+  "Forward kill subword for minibuffer (no evil state changes)."
+  (interactive)
+  (kill-region (point)
+               (save-excursion
+                 (if (looking-at "[ \t\r\n\v\f]")
+                     (progn (re-search-forward "[^ \t\r\n\v\f]" nil t)
+                            (backward-char))
+                   (amos/word-movement-internal t 1))
+                 (point))))
+(defun amos/minibuffer-delete-backward-subword ()
+  "Backward kill subword for minibuffer (no evil state changes)."
+  (interactive)
+  (kill-region (point)
+               (save-excursion
+                 (if (looking-back "[ \t\r\n\v\f]" nil)
+                     (progn (re-search-backward "[^ \t\r\n\v\f]" nil t)
+                            (forward-char))
+                   (amos/word-movement-internal t -1))
+                 (point))))
+
 ;; Minibuffer keybindings — match doom config for consistent editing experience
+;; Use minibuffer-safe movement commands (no evil state transitions).
 (dolist (map (list minibuffer-local-map
                    minibuffer-local-ns-map
                    minibuffer-local-completion-map
                    minibuffer-local-must-match-map
                    minibuffer-local-shell-command-map
+                   evil-ex-completion-map
+                   evil-ex-search-keymap
                    read-expression-map))
   (define-key map [escape]        #'abort-recursive-edit)
   (define-key map (kbd "C-a")     #'move-beginning-of-line)
   (define-key map (kbd "C-b")     #'backward-char)
   (define-key map (kbd "C-f")     #'forward-char)
-  (define-key map (kbd "C-d")     #'amos/delete-char)
-  (define-key map (kbd "C-o")     #'amos/kill-line)
+  (define-key map (kbd "C-d")     #'delete-char)
+  (define-key map (kbd "C-o")     #'kill-line)
   (define-key map (kbd "C-u")     #'amos/backward-kill-to-bol)
   (define-key map (kbd "C-k")     #'previous-line-or-history-element)
   (define-key map (kbd "C-j")     #'next-line-or-history-element)
   (define-key map (kbd "C-n")     #'next-line-or-history-element)
   (define-key map (kbd "C-p")     #'previous-line-or-history-element)
-  (define-key map (kbd "M-b")     #'amos/backward-word-insert)
-  (define-key map (kbd "M-f")     #'amos/forward-word-insert)
-  (define-key map (kbd "M-B")     #'amos/backward-subword-insert)
-  (define-key map (kbd "M-F")     #'amos/forward-subword-insert)
-  (define-key map (kbd "M-d")     #'amos/delete-forward-word)
-  (define-key map (kbd "M-D")     #'amos/delete-forward-subword)
+  (define-key map (kbd "M-b")     #'amos/minibuffer-backward-word)
+  (define-key map (kbd "M-f")     #'amos/minibuffer-forward-word)
+  (define-key map (kbd "M-B")     #'amos/minibuffer-backward-subword)
+  (define-key map (kbd "M-F")     #'amos/minibuffer-forward-subword)
+  (define-key map (kbd "M-d")     #'amos/minibuffer-delete-forward-word)
+  (define-key map (kbd "M-D")     #'amos/minibuffer-delete-forward-subword)
+  (define-key map (kbd "M-y")     #'yank-pop)
   (define-key map (kbd "M-z")     #'undo)
-  (define-key map (kbd "DEL")     #'amos/delete-backward-char)
-  (define-key map (kbd "M-DEL")   #'amos/delete-backward-word)
-  (define-key map (kbd "M-<backspace>") #'amos/delete-backward-word)
-  (define-key map [134217855]     #'amos/delete-backward-word))
+  (define-key map (kbd "DEL")     #'backward-delete-char-untabify)
+  (define-key map (kbd "M-DEL")   #'amos/minibuffer-delete-backward-word)
+  (define-key map (kbd "M-<backspace>") #'amos/minibuffer-delete-backward-word)
+  (define-key map (kbd "S-<f7>")  #'amos/minibuffer-delete-backward-subword)
+  (define-key map (kbd "M-S-<backspace>") #'amos/minibuffer-delete-backward-subword)
+  (define-key map [134217855]     #'amos/minibuffer-delete-backward-word))
 
 ;; consult yank-word — C-w pulls word at cursor into minibuffer search
 (defun amos/consult-yank-word (&optional arg)
@@ -1770,6 +1848,12 @@ trigger preview). Otherwise call vertico-insert."
   (corfu-history-mode 1)
   ;; Quit corfu when leaving insert state
   (add-hook 'evil-insert-state-exit-hook #'corfu-quit)
+  ;; C-SPC: trigger completion when popup is closed, insert separator when open
+  (with-eval-after-load 'evil
+    (evil-define-key* 'insert corfu-mode-map
+      (kbd "C-SPC") #'completion-at-point)
+    (evil-define-key* 'insert corfu-map
+      (kbd "C-SPC") #'corfu-insert-separator))
   ;; Save corfu history across sessions
   (with-eval-after-load 'savehist
     (add-to-list 'savehist-additional-variables 'corfu-history)))
@@ -1795,6 +1879,7 @@ trigger preview). Otherwise call vertico-insert."
 (defun amos/consult-ripgrep (&optional arg)
   "Ripgrep search in project. With C-u prefix, include .gitignore'd files."
   (interactive "P")
+  (require 'consult)
   (let ((consult-ripgrep-args
          (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
     (consult-ripgrep)))
@@ -1802,6 +1887,7 @@ trigger preview). Otherwise call vertico-insert."
 (defun amos/consult-ripgrep-cur-dir (&optional arg)
   "Ripgrep search in current directory. With C-u prefix, include ignored files."
   (interactive "P")
+  (require 'consult)
   (let ((consult-ripgrep-args
          (concat consult-ripgrep-args (if arg " --no-ignore" ""))))
     (consult-ripgrep default-directory)))
@@ -2089,7 +2175,7 @@ Unlike `xref-find-references', this finds calls through base class pointers."
   ;; Keybindings — only active when eglot is managing the buffer
   (evil-define-key* 'normal eglot-mode-map
     "gD" #'eglot-find-declaration         ; override → base class declaration
-    "gi" #'eglot-find-implementation      ; base virtual → all overrides
+    "gI" #'eglot-find-implementation      ; base virtual → all overrides
     "gR" #'amos/eglot-incoming-calls      ; all callers (inheritance-aware)
     "gO" #'amos/eglot-outgoing-calls      ; all callees
     "gT" #'amos/eglot-supertypes          ; parent classes
@@ -3022,6 +3108,166 @@ Each overlay's original before-string is saved in `amos--margin-saved'."
                 (amos--margin-merge-at bol)))))))))
 
 
+;;;; Dired — helper functions (ported from Doom amos-dired.el)
+
+;; Dired history ring — navigate back/forward through dired directories
+(defvar amos-dired-history-ring (make-ring 200))
+(defvar amos-dired-history-index 0)
+
+(defun amos--dired-update-history (name ring _)
+  "Update history RING with directory NAME."
+  (when (or (ring-empty-p ring)
+            (file-directory-p name)
+            (not (eq name (ring-ref ring 0))))
+    (ring-insert ring (directory-file-name name))
+    (setq amos-dired-history-index 0)))
+
+(defun amos--dired-jump-history (jump)
+  "Move through dired history ring by increment JUMP."
+  (let* ((ring amos-dired-history-ring)
+         (curr-index amos-dired-history-index)
+         (goto-idx (min
+                    (max 0 (+ curr-index jump))
+                    (- (ring-length ring) 1)))
+         (jump-history (ring-ref ring goto-idx)))
+    (message "dired-history: %i/%i" (+ 1 goto-idx) (ring-length amos-dired-history-ring))
+    (when (and (not (= goto-idx curr-index)) jump-history)
+      (setq amos-dired-history-index goto-idx)
+      (find-file jump-history))))
+
+(defun amos/dired-next-history ()
+  "Move forward in dired history."
+  (interactive)
+  (amos--dired-jump-history -1))
+
+(defun amos/dired-prev-history ()
+  "Move backward in dired history."
+  (interactive)
+  (amos--dired-jump-history 1))
+
+(defun amos/dired-up-directory (&optional other-window)
+  "Go up one directory, recenter, and update history."
+  (interactive)
+  (dired-up-directory other-window)
+  (recenter)
+  (amos/store-jump-history)
+  (amos--dired-update-history default-directory amos-dired-history-ring amos-dired-history-index))
+
+;; Clipboard helpers (require dired-ranger)
+(defun amos-dired-copy-ring-string ()
+  "Get files from dired-ranger copy ring as a newline-separated string."
+  (require 'dired-ranger)
+  (let* ((data (ring-ref dired-ranger-copy-ring 0))
+         (files (cdr data)))
+    (mapconcat #'identity files "\n")))
+
+(defun amos/dired-copy-to-clipboard ()
+  "Copy dired-ranger selection to system clipboard."
+  (interactive)
+  (let ((files (shell-quote-argument (amos-dired-copy-ring-string))))
+    (if (getenv "GUI")
+        (call-process-shell-command (concat "copyq copyUriList " files) nil 0)
+      (kill-new files))))
+
+(defun amos/dired-print-clipboard ()
+  "Print dired-ranger selection in the echo area."
+  (interactive)
+  (message "%s" (amos-dired-copy-ring-string)))
+
+;; rsync marked files
+(defun amos/dired-rsync (dest)
+  "Rsync marked files in dired to DEST."
+  (interactive
+   (list (expand-file-name
+          (read-file-name "Rsync to:" (dired-dwim-target-directory)))))
+  (let ((files (dired-get-marked-files nil current-prefix-arg))
+        (cmd "rsync -arvz --progress "))
+    (dolist (file files)
+      (setq cmd (concat cmd (shell-quote-argument file) " ")))
+    (setq cmd (concat cmd (shell-quote-argument dest)))
+    (async-shell-command cmd "*rsync*")
+    (other-window 1)))
+
+;; xdg-open from dired
+(defun amos/dired-xdg-open ()
+  "Open the file at point with xdg-open."
+  (interactive)
+  (let ((file (ignore-errors (dired-get-file-for-visit))))
+    (when (and file (not (file-directory-p file)))
+      (start-process "xdg-open" nil "xdg-open" file))))
+
+;; peep-dired — preview files in other window while navigating dired
+(defvar peep-dired-peeped-buffers ()
+  "List of buffers opened by peep-dired for preview.")
+
+(defvar peep-dired-cleanup-on-disable t
+  "When non-nil, kill preview buffers when peep-dired is disabled.")
+
+(defvar peep-dired-ignored-extensions
+  '("mkv" "iso" "mp4")
+  "File extensions to skip when peeking.")
+
+(defvar peep-dired-max-size (* 10 1024 1024)
+  "Maximum file size (bytes) to preview.")
+
+(defvar peep-dired-window nil
+  "The dired window used for peep-dired.")
+
+(defun peep-dired-scroll-page-down ()
+  "Scroll the peep-dired preview window down."
+  (interactive)
+  (scroll-other-window 30))
+
+(defun peep-dired-scroll-page-up ()
+  "Scroll the peep-dired preview window up."
+  (interactive)
+  (scroll-other-window -30))
+
+(defun peep-dired-display-file-other-window ()
+  "Display the file at point in the other window (peep-dired hook)."
+  (if (eq (buffer-local-value 'major-mode (window-buffer peep-dired-window)) 'dired-mode)
+      (when (eq major-mode 'dired-mode)
+        (let ((entry-name (dired-file-name-at-point)))
+          (when entry-name
+            (unless (or (member (file-name-extension entry-name)
+                                peep-dired-ignored-extensions)
+                        (> (nth 7 (file-attributes entry-name))
+                           peep-dired-max-size))
+              (remove-hook 'find-file-hook #'recentf-track-opened-file)
+              (let ((buffer (find-file-noselect entry-name))
+                    display-buffer-alist)
+                (add-to-list 'peep-dired-peeped-buffers buffer)
+                (display-buffer buffer
+                                '((display-buffer-use-some-window)
+                                  (inhibit-switch-frame . t)
+                                  (inhibit-same-window . t))))
+              (add-hook 'find-file-hook #'recentf-track-opened-file)))))
+    (peep-dired-disable)))
+
+(defun peep-dired-disable ()
+  "Disable peep-dired preview."
+  (remove-hook 'post-command-hook #'peep-dired-display-file-other-window)
+  (setq peep-dired-window nil)
+  (delete-other-windows)
+  (when peep-dired-cleanup-on-disable
+    (mapc (lambda (b) (unless (eq b (current-buffer))
+                        (kill-buffer-if-not-modified b)))
+          peep-dired-peeped-buffers))
+  (setq peep-dired-peeped-buffers ()))
+
+(defun peep-dired-enable ()
+  "Enable peep-dired preview."
+  (unless (string= major-mode "dired-mode")
+    (error "Run peep-dired from a dired buffer"))
+  (setq peep-dired-window (selected-window))
+  (add-hook 'post-command-hook #'peep-dired-display-file-other-window 'append))
+
+(defun peep-dired-toggle ()
+  "Toggle peep-dired file preview."
+  (interactive)
+  (if peep-dired-window (peep-dired-disable)
+    (peep-dired-enable)))
+
 ;;;; Dired — built-in file manager
 (use-package dired
   :ensure nil
@@ -3044,29 +3290,52 @@ Each overlay's original before-string is saved in `amos--margin-saved'."
 
   ;; Evil bindings (aligned with Doom dired)
   (with-eval-after-load 'evil
+    ;; Clear default bindings that conflict
+    (evil-define-key* 'normal dired-mode-map
+      (kbd "SPC") nil
+      "G"   nil
+      "g"   nil
+      "e"   nil
+      "v"   nil
+      "b"   nil
+      "n"   nil
+      "N"   nil
+      (kbd "C-o") nil
+      (kbd "C-i") nil)
+    ;; Normal-state bindings
     (evil-define-key* 'normal dired-mode-map
       "q"   #'quit-window
       "j"   #'dired-next-line
       "k"   #'dired-previous-line
-      "h"   #'dired-up-directory
-      "l"   #'dired-find-file
-      (kbd "RET") #'dired-find-file
-      "d"   #'dired-flag-file-deletion
+      "h"   #'amos/dired-up-directory
+      (kbd "M-p") #'amos/dired-up-directory
+      (kbd "M-o") #'amos/dired-prev-history
+      (kbd "M-i") #'amos/dired-next-history
+      (kbd "M-n") #'amos/consult-jumpdir
+      "z"   #'dired-do-compress
+      (kbd "C-f") #'dired-omit-mode
+      (kbd "C-i") #'peep-dired-toggle
+      (kbd "C-v") #'peep-dired-scroll-page-down
+      (kbd "M-v") #'peep-dired-scroll-page-up
+      "E"   #'wdired-change-to-wdired-mode
+      "I"   #'dired-kill-subdir
+      "S"   #'hydra-dired-quick-sort/body
       "D"   #'dired-do-delete
-      "x"   #'dired-do-flagged-delete
       "f"   #'find-file
       "F"   #'dired-do-copy
-      "R"   #'dired-do-rename
-      "z"   #'dired-do-compress
-      "i"   #'dired-create-directory
-      "m"   #'dired-mark
-      "u"   #'dired-unmark
-      "w"   #'dired-copy-filename-as-kill
-      "W"   (lambda () (interactive) (dired-copy-filename-as-kill 0))
-      "E"   #'wdired-change-to-wdired-mode
       "!"   #'dired-do-shell-command
-      (kbd "C-f") #'dired-omit-mode
-      (kbd "SPC") nil)))
+      "x"   #'dired-do-flagged-delete
+      "w"   #'dired-copy-filename-as-kill
+      "i"   #'dired-create-directory
+      "W"   (lambda () (interactive) (dired-copy-filename-as-kill 0))
+      "a"   #'amos/dired-rsync
+      (kbd "C-<return>") #'amos/dired-xdg-open)
+    ;; Normal+visual state bindings
+    (evil-define-key* '(normal visual) dired-mode-map
+      "d"   #'dired-flag-file-deletion
+      "R"   #'dired-do-rename
+      "m"   #'dired-mark
+      "u"   #'dired-unmark)))
 
 (use-package dired-x :ensure nil
   :hook (dired-mode . dired-omit-mode))
@@ -3077,8 +3346,11 @@ Each overlay's original before-string is saved in `amos--margin-saved'."
   :config
   (with-eval-after-load 'evil
     (evil-define-key* 'normal dired-mode-map
-      "c"   (lambda () (interactive) (dired-ranger-copy t))
-      "y"   (lambda () (interactive) (dired-ranger-copy nil))
+      ;; c = clear ring + copy, y = append to ring
+      "c"   (lambda () (interactive) (dired-ranger-copy t)  (amos/dired-print-clipboard))
+      "C"   (lambda () (interactive) (dired-ranger-copy t)  (amos/dired-copy-to-clipboard) (amos/dired-print-clipboard))
+      "y"   (lambda () (interactive) (dired-ranger-copy nil) (amos/dired-print-clipboard))
+      "Y"   (lambda () (interactive) (dired-ranger-copy nil) (amos/dired-copy-to-clipboard) (amos/dired-print-clipboard))
       "p"   #'dired-ranger-paste
       "P"   #'dired-ranger-move)))
 
@@ -3102,7 +3374,13 @@ Each overlay's original before-string is saved in `amos--margin-saved'."
      ("gif" . "xdg-open") ("svg" . "xdg-open")
      ("doc" . "xdg-open") ("docx" . "xdg-open")
      ("xls" . "xdg-open") ("xlsx" . "xdg-open")
-     ("ppt" . "xdg-open") ("pptx" . "xdg-open"))))
+     ("ppt" . "xdg-open") ("pptx" . "xdg-open")))
+  :config
+  ;; RET and l should use dired-open-file (respects dired-open-extensions)
+  (with-eval-after-load 'evil
+    (evil-define-key* 'normal dired-mode-map
+      (kbd "RET") #'dired-open-file
+      "l"         #'dired-open-file)))
 
 ;;;; Compilation
 (setq compilation-ask-about-save nil

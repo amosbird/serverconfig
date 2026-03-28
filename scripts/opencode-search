@@ -26,6 +26,7 @@ search() {
         strftime('%m-%d', time_updated / 1000, 'unixepoch', 'localtime')
       FROM session
       WHERE title IS NOT NULL AND title != ''
+        AND parent_id IS NULL
       ORDER BY time_updated DESC;
     "
   else
@@ -77,6 +78,7 @@ search() {
       FROM session s
       JOIN all_matches m ON s.id = m.session_id
       WHERE s.title IS NOT NULL AND s.title != ''
+        AND s.parent_id IS NULL
       ORDER BY s.time_updated DESC;
       DETACH DATABASE idx;
     "

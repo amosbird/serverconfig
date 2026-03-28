@@ -89,6 +89,10 @@
       }
     }
   },
+  "snapshot": false,
+  "formatter": false,
+  "lsp": false,
+  "plugin": [],
   "mcp": {
     "iWiki": {
       "type": "remote",
@@ -97,13 +101,44 @@
         "Authorization": "{env:IWIKI_MCP_TOKEN}"
       },
       "enabled": true
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {
+        "CONTEXT7_API_KEY": "{env:CONTEXT7_API_KEY}"
+      },
+      "enabled": true
+    },
+    "grep_app": {
+      "type": "remote",
+      "url": "https://mcp.grep.app"
+    },
+    "exa": {
+      "type": "remote",
+      "url": "https://mcp.exa.ai/mcp?tools=web_search_exa",
+      "headers": {
+        "x-api-key": "{env:EXA_API_KEY}"
+      }
     }
   },
   "permission": {
+    "*": "allow",
     "lsp": "deny",
+    "bash": {
+      "*": "allow",
+      "rm -rf /*": "deny",
+      "git push *--force*": "deny",
+      "git reset --hard*": "deny"
+    },
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow"
+    },
     "external_directory": {
-      "/tmp": "allow",
-      "/tmp/**": "allow"
+      "*": "allow"
     }
   }
 }

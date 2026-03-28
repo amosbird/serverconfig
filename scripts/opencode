@@ -2,4 +2,7 @@
 # Wrapper for opencode that loads MCP secrets from pass
 export IWIKI_MCP_URL="$(pass show mcp/iwiki-url)"
 export IWIKI_MCP_TOKEN="$(pass show mcp/iwiki-token)"
-exec /home/amos/.npm-packages/bin/opencode "$@"
+export CONTEXT7_API_KEY="$(pass show mcp/context7)"
+export EXA_API_KEY="$(pass show mcp/exa)"
+
+exec ~/.npm-packages/bin/opencode "$@"
