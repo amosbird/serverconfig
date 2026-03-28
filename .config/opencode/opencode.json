@@ -7,87 +7,6 @@
     "general": {
       "disable": true
     },
-    "craftsman-plan": {
-      "description": "Craftsman Plan Mode: Structured interviews -> specification -> plan -> task breakdown",
-      "mode": "primary",
-      "temperature": 0.2,
-      "color": "#4CAF50",
-      "permission": {
-        "bash": {
-          "*": "deny",
-          "ls *": "allow",
-          "find *": "allow",
-          "tree *": "allow"
-        },
-        "edit": "allow",
-        "skill": {
-          "craftsman-*": "allow"
-        }
-      }
-    },
-    "craftsman-ralph": {
-      "description": "Craftsman Ralph Loop: Autonomous implementation orchestrator",
-      "mode": "primary",
-      "temperature": 0.1,
-      "color": "#F44336",
-      "permission": {
-        "edit": "allow",
-        "bash": {
-          "*": "allow"
-        },
-        "task": {
-          "craftsman-coder": "allow",
-          "craftsman-inspector": "allow",
-          "craftsman-phase-inspector": "allow",
-          "*": "deny"
-        }
-      }
-    },
-    "craftsman-coder": {
-      "description": "Craftsman Coder: Implements ONE task from a plan, runs preflight, commits",
-      "mode": "subagent",
-      "hidden": true,
-      "temperature": 0.3,
-      "color": "#2196F3",
-      "permission": {
-        "edit": "allow",
-        "bash": {
-          "*": "allow"
-        }
-      }
-    },
-    "craftsman-inspector": {
-      "description": "Craftsman Task Inspector: Skeptical reviewer that verifies task completion",
-      "mode": "subagent",
-      "hidden": true,
-      "temperature": 0.1,
-      "color": "#FF9800",
-      "permission": {
-        "edit": "allow",
-        "bash": {
-          "*": "allow",
-          "rm *": "deny",
-          "git push*": "deny",
-          "git reset --hard*": "deny"
-        }
-      }
-    },
-    "craftsman-phase-inspector": {
-      "description": "Craftsman Phase Inspector: Phase-level quality auditor",
-      "mode": "subagent",
-      "hidden": true,
-      "temperature": 0.1,
-      "color": "#9C27B0",
-      "permission": {
-        "edit": "allow",
-        "bash": {
-          "*": "allow",
-          "rm *": "deny",
-          "git push*": "deny",
-          "git reset --hard*": "deny"
-        }
-      }
-    }
   },
   "snapshot": false,
   "formatter": false,
@@ -100,7 +19,7 @@
       "headers": {
         "Authorization": "{env:IWIKI_MCP_TOKEN}"
       },
-      "enabled": true
+      "enabled": false
     },
     "context7": {
       "type": "remote",
