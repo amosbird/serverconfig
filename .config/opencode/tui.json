@@ -3,7 +3,10 @@
     "leader": "none",
     "messages_next": "alt+j",
     "messages_previous": "alt+k",
-    "messages_last": "alt+e"
+    "messages_last": "alt+e",
+    "messages_page_up": "pageup,alt+v",
+    "messages_page_down": "pagedown,ctrl+v",
+    "input_paste": "none"
   },
   "scroll_speed": 1
 }

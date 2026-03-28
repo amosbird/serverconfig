@@ -100,6 +100,9 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
+
+    # Setup kitty desktop-ui portal (replaces xdg-desktop-portal-termfilechooser)
+    kitten desktop-ui enable-portal
 fi
 
 echo 'Restored!'

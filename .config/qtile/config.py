@@ -242,7 +242,6 @@ keys = [
     Key([ctrl, alt], "2", lazy.spawn("togglewemeet")),
     Key([ctrl, alt], "3", lazy.spawn("echo p | nc -U /tmp/scrcpy.socket", shell=True)),
     Key([ctrl, alt], "4", lazy.group["scratchpad"].dropdown_toggle("stalonetray")),
-    Key([ctrl, alt], "5", lazy.spawn("showobs.sh")),
     Key([ctrl, alt], "8", lazy.group["scratchpad"].dropdown_toggle("chatgpt")),
     Key([ctrl, alt], "9", lazy.group["scratchpad"].dropdown_toggle("stardict")),
     Key([ctrl, alt], "0", lazy.group["scratchpad"].dropdown_toggle("tdesktop")),
@@ -261,7 +260,6 @@ keys = [
             "luakit /home/amos/git/rofi-chrome/extension/download.html 1", shell=True
         ),
     ),
-    Key([ctrl, alt], "p", lazy.spawn("showpopup.sh")),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),
     Key([ctrl, alt], "b", lazy.spawn("scanqrcode")),
     Key([ctrl, alt], "s", toggle_shell_left()),

@@ -34,6 +34,7 @@ run_fish_bg() {
 run_bg "caps-indicator" caps-indicator
 run "xset-dpms" xset s off -dpms
 run "xset-bell" xset b off
+run "feh-wallpaper" timeout 5 feh --bg-fill ~/git/serverconfig/black_4k.jpg
 run "picom" picom -b
 run_bg "unclutter" unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
 
@@ -45,11 +46,7 @@ run "xsetroot" xsetroot -cursor_name left_ptr
 
 # /home/amos/scripts/moveend
 
-run "feh-wallpaper" timeout 5 feh --no-xinerama --bg-scale ~/git/serverconfig/black.jpg
-# /home/amos/scripts/showstalonetray.sh 1
-
 run_fish_bg "dunst" "dunst &> /tmp/dunst.log &"
-# fish -c "sxhkd &> /tmp/sxhkd.log &"
 run_fish_bg "copyq" "copyq &> /tmp/copyq.log &"
 # fish -c "runscrcpy  &> /dev/null &"
 # fish -c "rungnirehtet &"

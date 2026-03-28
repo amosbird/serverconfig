@@ -3604,6 +3604,29 @@ Falls back to call-process if magit is not yet loaded."
 (setq shr-width 100)                   ; eww/shr rendering width
 (setq use-short-answers t)             ; y/n instead of yes/no
 
+;;;; Loom — Emacs frontend for opencode AI
+(use-package loom
+  :load-path "~/git/loom"
+  :commands (loom-open loom-open-new loom-sessions loom-search)
+  :custom
+  (loom-session-strategy 'new-deferred))
+
+;;;; agent-shell — comint-based LLM agent interaction via ACP
+(use-package agent-shell
+  :ensure t
+  :commands (agent-shell agent-shell-opencode-start-agent)
+  :custom
+  (agent-shell-opencode-authentication
+   (agent-shell-opencode-make-authentication :none t))
+  (agent-shell-preferred-agent-config
+   (agent-shell-opencode-make-agent-config))
+  :config
+  (require 'agent-shell-opencode)
+  ;; Evil: insert mode = newline, normal mode = send
+  (with-eval-after-load 'evil
+    (evil-define-key 'insert agent-shell-mode-map (kbd "RET") #'newline)
+    (evil-define-key 'normal agent-shell-mode-map (kbd "RET") #'comint-send-input)))
+
 ;; ============================================================================
 ;; §10 Key Bindings
 ;; ============================================================================
@@ -3619,7 +3642,8 @@ Falls back to call-process if magit is not yet loaded."
 ;;   SPC s    search            SPC n   notes/Org
 ;;   SPC t    toggle            SPC w   window
 ;;   SPC S    snippets          SPC l   comment
-;;   SPC o    Dired             SPC q   quit
+;;   SPC a    AI (loom/agent)   SPC o   Dired
+;;   SPC q    quit
 
 (amos/leader
   "" nil                                ; Clear SPC prefix
@@ -3711,6 +3735,15 @@ Falls back to call-process if magit is not yet loaded."
   "S n" 'yas-new-snippet
   "S i" 'yas-insert-snippet
   "S v" 'yas-visit-snippet-file
+
+  ;; [a]I — Loom & agent-shell
+  "a"   '(:ignore t :wk "AI")
+  "a a" '(loom-open :wk "loom session")
+  "a n" '(loom-open-new :wk "loom new")
+  "a s" '(loom-sessions :wk "loom list")
+  "a /" '(loom-search :wk "loom search")
+  "a o" '(agent-shell-opencode-start-agent :wk "agent-shell opencode")
+  "a A" '(agent-shell :wk "agent-shell (any)")
 
   ;; Common single-key bindings
   "l"   '(evilnc-comment-or-uncomment-lines :wk "comment")

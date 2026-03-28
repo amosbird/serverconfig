@@ -1,4 +1,4 @@
-;;; evil-terminal-cursor-changer.el --- Change cursor shape and color by evil state in terminal  -*- coding: utf-8; -*-
+;;; evil-terminal-cursor-changer.el --- Change cursor shape and color by evil state in terminal  -*- lexical-binding: t; coding: utf-8; -*-
 ;; Package-Version: 20171008.1
 ;; Version: 0.4
 ;;

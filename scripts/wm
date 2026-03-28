@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-
-if [[ -z $GUI ]]; then
-    source ~/.xprofile
-fi
-while true; do
-    bspwm -c $HOME/.config/bspwm/bspwmrc || break
-done

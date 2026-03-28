@@ -31,7 +31,8 @@ export QT_IM_MODULE=fcitx
 export SDL_IM_MODULE=fcitx
 export INPUT_METHOD=fcitx
 export GLFW_IM_MODULE=ibus
-export QT_QPA_PLATFORMTHEME=gtk2
+export QT_QPA_PLATFORMTHEME=xdgdesktopportal
+export GTK_USE_PORTAL=1
 export AWT_TOOLKIT=XToolkit
 export _JAVA_AWT_WM_NONREPARENTING=1
 # export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel"
@@ -51,6 +52,7 @@ _envs=(
   XCURSOR_THEME XCURSOR_SIZE
   XMODIFIERS QT_IM_MODULE GTK_IM_MODULE
   LIBVA_DRIVER_NAME GST_VAAPI_ALL_DRIVERS
+  QT_QPA_PLATFORMTHEME GTK_USE_PORTAL
 )
 dbus-update-activation-environment "${_envs[@]}"
 systemctl --user import-environment "${_envs[@]}"
