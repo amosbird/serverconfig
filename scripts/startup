@@ -44,6 +44,10 @@ echo "[$(date '+%H:%M:%S')]    OK xkeysnail (pid=$!)" >> "$LOG"
 
 run "xsetroot" xsetroot -cursor_name left_ptr
 
+run_bg "kitty-portal" kitten desktop-ui run-server
+run_bg "xdg-desktop-portal" /usr/lib/xdg-desktop-portal
+run_bg "xsettingsd" xsettingsd
+
 # /home/amos/scripts/moveend
 
 run_fish_bg "dunst" "dunst &> /tmp/dunst.log &"

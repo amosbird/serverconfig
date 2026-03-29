@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Emergency keyboard ungrab — call XUngrabKeyboard via ctypes.
+
+Bind this to a mouse button in your WM (qtile) so you can escape
+when a buggy X11 client leaks a keyboard grab.
+"""
+import ctypes
+
+libX11 = ctypes.cdll.LoadLibrary("libX11.so.6")
+libX11.XOpenDisplay.restype = ctypes.c_void_p
+libX11.XUngrabKeyboard.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+libX11.XUngrabPointer.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+
+dpy = libX11.XOpenDisplay(None)
+if dpy:
+    libX11.XUngrabKeyboard(dpy, 0)
+    libX11.XUngrabPointer(dpy, 0)
+    libX11.XFlush(dpy)
+    libX11.XCloseDisplay(dpy)

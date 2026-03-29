@@ -11,4 +11,4 @@ export TMUX=${TMPDIR:-/tmp}/tmux-crush
 PROJECT_PATH="${1:-$HOME}"
 PROJECT_PATH=$(realpath "$PROJECT_PATH")
 
-exec tmux -f ~/.tmux/.tmux.conf.crush -u new-session -A -s crush -c "$PROJECT_PATH" crush
+exec tmux -f ~/.tmux/.tmux.conf.crush -u new-session -A -s crush -c "$PROJECT_PATH" "crush --continue"

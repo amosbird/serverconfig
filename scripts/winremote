@@ -33,4 +33,9 @@ rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
 # audio=/audio-mode:1
 program=xfreerdp
 
-$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:$user /p:"$password" /v:$ip $rdp2tcp &> /tmp/freerdp.log
+$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:$user /p:"$password" /v:$ip $rdp2tcp &> /tmp/freerdp.log &
+rdp_pid=$!
+
+win-sync-theme &
+
+wait $rdp_pid

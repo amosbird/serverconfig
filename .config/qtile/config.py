@@ -4,6 +4,7 @@ from threading import Lock
 
 from libqtile import hook, layout, qtile
 from libqtile.config import (
+    Click,
     Drag,
     DropDown,
     Group,
@@ -289,6 +290,7 @@ keys = [
     Key([ctrl, alt], "k", lazy.layout.previous()),
     # Key([ctrl, alt], "Tab", focus_previous_window()),
     Key([mod4], "w", lazy.next_layout()),
+    Key([mod4], "t", lazy.spawn("theme toggle")),
 ]
 
 mouse = [
@@ -301,6 +303,7 @@ mouse = [
     Drag(
         [lock], "Button3", lazy.window.set_size_floating(), start=lazy.window.get_size()
     ),
+    Click([lock], "Button2", lazy.spawn("ungrab-keyboard")),
 ]
 
 groups = [

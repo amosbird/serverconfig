@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+# Sync current Linux theme (dark/light) to remote Windows via rdp2tcp.
+
+TIMEOUT=30
+
+current_theme() {
+    local val
+    val=$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)
+    if [[ "$val" == *dark* ]]; then
+        echo dark
+    else
+        echo light
+    fi
+}
+
+wait_for_rdp() {
+    local elapsed=0
+    while (( elapsed < TIMEOUT )); do
+        if pgrep -x xfreerdp &>/dev/null; then
+            sleep 3
+            return 0
+        fi
+        sleep 1
+        (( elapsed++ ))
+    done
+    return 1
+}
+
+mode=$(current_theme)
+if [[ "$mode" == "dark" ]]; then
+    value=0
+else
+    value=1
+fi
+
+if ! wait_for_rdp; then
+    echo "xfreerdp not running after ${TIMEOUT}s" >&2
+    exit 1
+fi
+
+cmd="powershell -NoProfile -Command \"Set-ItemProperty -Path HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize -Name AppsUseLightTheme -Value $value; Set-ItemProperty -Path HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize -Name SystemUsesLightTheme -Value $value\""
+
+printf '%s\n' "$cmd" > /dev/udp/127.0.0.1/9333
