@@ -41,9 +41,7 @@
     "attribution": {
       "trailer_style": "none",
       "generated_with": false
-    },
-    "sandbox": true,
-    "sandbox_symlink_depth": 1
+    }
   },
   "permissions": {
     "allowed_tools": [
