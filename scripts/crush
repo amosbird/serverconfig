@@ -3,7 +3,6 @@
 # and ensures copilot-proxy daemon is running.
 
 export DO_NOT_TRACK=1
-export CRUSH_DEBUG_WIDE=/tmp/crush_wide_debug.log
 
 # MCP secrets
 export IWIKI_MCP_URL="$(pass show mcp/iwiki-url)"
@@ -19,4 +18,4 @@ else
     "$HOME/git/copilot-proxy/copilot-proxy" sync 2>/dev/null
 fi
 
-exec "$HOME/git/crush/crush" "$@"
+exec "$HOME/git/crush/crush" --yolo "$@"
