@@ -23,14 +23,12 @@ local)
     # export PATH=$HOME/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh emacs"
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh htop"
-    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh opencode"
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh crush"
     ;;
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH emacs
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH htop
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH opencode
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH crush
     # kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH lvim
     ;;
@@ -49,18 +47,13 @@ lvim)
     fish -c startlvim
     exit 0
     ;;
-opencode)
-    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    fish -c startopencode-tmux
-    exit 0
-    ;;
 crush)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     fish -c startcrush-tmux
     exit 0
     ;;
 *)
-    echo "tstart.sh android|local|prefix|opencode [project_path]"
+    echo "tstart.sh android|local|prefix|crush [project_path]"
     exit 1
     ;;
 esac
