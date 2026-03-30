@@ -6,7 +6,6 @@
 dir=$(jump-top | fzf +m --reverse --cycle --print-query --bind 'esc:abort' | tail -1)
 if [ -n "$dir" ]; then
     dir=$(echo "$dir" | sed "s|^~|$HOME|")
-    dir=$(eval echo "$dir")
     if [ -d "$dir" ]; then
         tmux new-window -c "$dir" crush
     fi

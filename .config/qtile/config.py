@@ -247,13 +247,7 @@ keys = [
     Key([ctrl, alt], "9", lazy.group["scratchpad"].dropdown_toggle("stardict")),
     Key([ctrl, alt], "0", lazy.group["scratchpad"].dropdown_toggle("tdesktop")),
     Key([ctrl, alt], "minus", lazy.group["scratchpad"].dropdown_toggle("discord")),
-    Key(
-        [ctrl, alt],
-        "t",
-        lazy.spawn(
-            "luakit /home/amos/git/rofi-chrome/extension/tab.html 1", shell=True
-        ),
-    ),
+    Key([ctrl, alt], "t", lazy.spawn("rofi-hister")),
     Key(
         [ctrl, alt],
         "a",
