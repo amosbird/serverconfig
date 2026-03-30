@@ -161,9 +161,9 @@ function fish_user_key_bindings
         commandline $cmd
     end
 
-    function ls-commandline -d "execute exa"
+    function ls-commandline -d "execute eza"
         if string match -r '^ *$' (commandline) > /dev/null 2>&1
-            commandline "exa"
+            commandline "eza"
             commandline -f execute
         else
             return

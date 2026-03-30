@@ -1,3 +1,3 @@
 function ll --description 'List contents of directory using long format'
-	exa -l $argv
+	eza -l $argv
 end

@@ -69,3 +69,9 @@ done
 if ((${#rebuild_packages[@]} > 0)); then
     paru -S --noconfirm --rebuild "${rebuild_packages[@]}"
 fi
+
+if [[ -x "$HOME/.local/bin/mise" ]]; then
+    "$HOME/.local/bin/mise" self-update -y
+    "$HOME/.local/bin/mise" upgrade -y
+    "$HOME/.local/bin/mise" prune -y
+fi

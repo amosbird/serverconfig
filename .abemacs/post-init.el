@@ -3611,21 +3611,7 @@ Falls back to call-process if magit is not yet loaded."
   :custom
   (loom-session-strategy 'new-deferred))
 
-;;;; agent-shell — comint-based LLM agent interaction via ACP
-(use-package agent-shell
-  :ensure t
-  :commands (agent-shell agent-shell-opencode-start-agent)
-  :custom
-  (agent-shell-opencode-authentication
-   (agent-shell-opencode-make-authentication :none t))
-  (agent-shell-preferred-agent-config
-   (agent-shell-opencode-make-agent-config))
-  :config
-  (require 'agent-shell-opencode)
-  ;; Evil: insert mode = newline, normal mode = send
-  (with-eval-after-load 'evil
-    (evil-define-key 'insert agent-shell-mode-map (kbd "RET") #'newline)
-    (evil-define-key 'normal agent-shell-mode-map (kbd "RET") #'comint-send-input)))
+
 
 ;; ============================================================================
 ;; §10 Key Bindings

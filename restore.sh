@@ -92,6 +92,17 @@ if [[ $# == 0 ]]; then
     echo -e "5\ny\n" | gpg --command-fd 0 --expert --edit-key C3BFA922206F41DA trust
 fi
 
+MISE_BIN="$HOME/.local/bin/mise"
+if [[ -x "$MISE_BIN" ]]; then
+    "$MISE_BIN" self-update -y
+else
+    mkdir -p "$HOME/.local/bin"
+    curl -fsSL https://mise.run | MISE_INSTALL_PATH="$MISE_BIN" sh
+fi
+"$MISE_BIN" install -y
+"$MISE_BIN" upgrade -y
+"$MISE_BIN" prune -y
+
 if [[ -n $GUI ]]; then
     update-desktop-database "$HOME/.local/share/applications"
     sudo cp "$DIR"/90-amos-dhcp /usr/lib/dhcpcd/dhcpcd-hooks/90-amos

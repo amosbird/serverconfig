@@ -1,0 +1,13 @@
+[tools]
+direnv = "latest"
+eza = "latest"
+ripgrep = "latest"
+fd = "latest"
+fzf = "latest"
+k6 = "latest"
+shfmt = "latest"
+"aqua:gsamokovarov/jump" = "latest"
+"ubi:docker/docker-credential-helpers" = { version = "latest", exe = "docker-credential-pass" }
+
+[settings]
+experimental = true

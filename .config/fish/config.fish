@@ -15,7 +15,7 @@ set -x GPG_TTY (tty)
 # set -x HADOOP_CONF_DIR /tmp/gentoo/etc/hadoop
 
 set -e LS_COLORS
-alias l exa
+alias l eza
 alias declare set
 alias vim nvim
 
@@ -64,7 +64,7 @@ if not set -q fish_initialized
     set -U fish_initialized 1
 end
 
-set -g fish_user_paths $HOME/scripts $HOME/.emacs.d/bin $HOME/.local/bin $HOME/.npm-packages/bin $HOME/.cargo/bin
+set -g fish_user_paths $HOME/scripts $HOME/.emacs.d/bin $HOME/.local/share/mise/shims $HOME/.local/bin $HOME/.npm-packages/bin $HOME/.cargo/bin
 contains -- /usr/share/fish/vendor_completions.d $fish_complete_path
 or set -g fish_complete_path $fish_complete_path[1..-2] /usr/share/fish/vendor_completions.d $fish_complete_path[-1]
 
