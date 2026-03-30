@@ -8,6 +8,8 @@ k6 = "latest"
 shfmt = "latest"
 "aqua:gsamokovarov/jump" = "latest"
 "ubi:docker/docker-credential-helpers" = { version = "latest", exe = "docker-credential-pass" }
+atuin = "latest"
+"aqua:fish-shell/fish-shell" = "latest"
 
 [settings]
 experimental = true

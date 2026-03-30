@@ -1,7 +1,35 @@
 stty -ixon 2>/dev/null
-set fish_color_command --bold
 set fish_greeting
 set FISH_CLIPBOARD_CMD cat
+
+set fish_color_autosuggestion 555 brblack
+set fish_color_cancel -r
+set fish_color_command --bold
+set fish_color_comment red
+set fish_color_cwd green
+set fish_color_cwd_root red
+set fish_color_end brmagenta
+set fish_color_error brred
+set fish_color_escape bryellow --bold
+set fish_color_history_current --bold
+set fish_color_host normal
+set fish_color_host_remote yellow
+set fish_color_match --background=brblue
+set fish_color_normal normal
+set fish_color_operator bryellow
+set fish_color_param cyan
+set fish_color_quote yellow
+set fish_color_redirection brblue
+set fish_color_search_match bryellow --background=brblack
+set fish_color_selection white --bold --background=brblack
+set fish_color_status red
+set fish_color_user brgreen
+set fish_color_valid_path --underline
+set fish_pager_color_completion
+set fish_pager_color_description B3A06D yellow
+set fish_pager_color_prefix white --bold --underline
+set fish_pager_color_progress brwhite --background=cyan
+set fish_pager_color_selected_background -r
 
 set -x CORES (getconf _NPROCESSORS_ONLN)
 set -x MAKEFLAGS -j$CORES
@@ -10,9 +38,7 @@ set -x SHELL /bin/bash
 set -x EDITOR eee
 set -x VISUAL eee
 set -x DIRENV_LOG_FORMAT ""
-set -x UID (id -u)
 set -x GPG_TTY (tty)
-# set -x HADOOP_CONF_DIR /tmp/gentoo/etc/hadoop
 
 set -e LS_COLORS
 alias l eza
@@ -32,47 +58,6 @@ and function __direnv_export_eval --on-event fish_prompt
     end
     eval (direnv export fish)
 end
-
-if not set -q fish_initialized
-    set -U fish_color_autosuggestion 555 brblack
-    set -U fish_color_cancel -r
-    set -U fish_color_comment red
-    set -U fish_color_cwd green
-    set -U fish_color_cwd_root red
-    set -U fish_color_end brmagenta
-    set -U fish_color_error brred
-    set -U fish_color_escape bryellow --bold
-    set -U fish_color_history_current --bold
-    set -U fish_color_host normal
-    set -U fish_color_match --background=brblue
-    set -U fish_color_normal normal
-    set -U fish_color_operator bryellow
-    set -U fish_color_param cyan
-    set -U fish_color_quote yellow
-    set -U fish_color_redirection brblue
-    set -U fish_color_search_match bryellow '--background=brblack'
-    set -U fish_color_selection white --bold '--background=brblack'
-    set -U fish_color_status red
-    set -U fish_color_user brgreen
-    set -U fish_color_valid_path --underline
-    set -U fish_key_bindings fish_default_key_bindings
-    set -U fish_pager_color_completion
-    set -U fish_pager_color_description B3A06D yellow
-    set -U fish_pager_color_prefix white --bold --underline
-    set -U fish_pager_color_progress brwhite '--background=cyan'
-
-    set -U fish_initialized 1
-end
-
-set -g fish_user_paths $HOME/scripts $HOME/.emacs.d/bin $HOME/.local/share/mise/shims $HOME/.local/bin $HOME/.npm-packages/bin $HOME/.cargo/bin
-contains -- /usr/share/fish/vendor_completions.d $fish_complete_path
-or set -g fish_complete_path $fish_complete_path[1..-2] /usr/share/fish/vendor_completions.d $fish_complete_path[-1]
-
-# set -x TERM xterm-256color
-# >>> conda initialize >>>
-# !! Contents within this block are managed by 'conda init' !!
-# eval /tmp/gentoo/miniconda3/bin/conda "shell.fish" "hook" $argv | source
-# <<< conda initialize <<<
 
 set -gx ATUIN_SESSION (atuin uuid)
 
