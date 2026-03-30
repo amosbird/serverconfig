@@ -19,7 +19,7 @@ if process_check.returncode != 0:
             "urxvt_scratchpad",
             "bash",
             "-c",
-            "env SHELL=/tmp/gentoo/bin/fish tmux -f /home/amos/.tmux/.tmux.conf.gui -L gui new -A -s gui",
+            "env SHELL=$HOME/.local/share/mise/shims/fish tmux -f /home/amos/.tmux/.tmux.conf.gui -L gui new -A -s gui",
         ]
     )
     time.sleep(0.2)  # Wait for wid file
