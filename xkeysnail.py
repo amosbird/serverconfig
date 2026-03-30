@@ -110,7 +110,6 @@ define_keymap(
         # Cursor
         K("C-k"): with_mark(K("up")),
         K("C-j"): with_mark(K("down")),
-        K("C-LM-t"): K("LM-t"),
         K("C-LM-a"): K("LM-d"),
         K("C-key_0"): K("LM-F12"),
         K("C-key_9"): K("LM-F11"),

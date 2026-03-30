@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+exec rofi -modi blocks -show blocks \
+    -blocks-wrap rofi-hister-blocks \
+    -kb-remove-char-forward 'Delete' \
+    -kb-delete-entry 'Shift+Delete,Control+d'
