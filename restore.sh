@@ -57,6 +57,10 @@ for dotconfig in "$DIR/.config/"*; do
     ln -sf "../$dotconfig" $HOME/.config/
 done
 
+if [[ ! -f "$HOME/.config/fish/fish_variables" ]]; then
+    printf '# VERSION: 3.0\nSETUVAR __fish_initialized:4300\n' > "$HOME/.config/fish/fish_variables"
+fi
+
 mkdir -p $HOME/.local/share/
 
 ln -sf /tmp/gentoo/usr/share/grc $HOME/.local/share/
@@ -102,6 +106,13 @@ fi
 "$MISE_BIN" install -y
 "$MISE_BIN" upgrade -y
 "$MISE_BIN" prune -y
+
+# Link mise-installed binaries directly to ~/.local/bin (bypass shims)
+"$MISE_BIN" bin-paths | while read -r bin; do
+    for f in "$bin"/*; do
+        [[ -f "$f" && -x "$f" ]] && ln -sf "$f" "$HOME/.local/bin/"
+    done
+done
 
 if [[ -n $GUI ]]; then
     update-desktop-database "$HOME/.local/share/applications"
