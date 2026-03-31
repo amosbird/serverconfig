@@ -196,6 +196,33 @@ def on_set_user_var(
     elif action == "focus-out":
         pass
 
+    elif action == "popup-open":
+        popup_ctx = f"{full_ctx}-popup"
+        _im_state.pop(popup_ctx, None)
+        _im_state[popup_ctx] = "keyboard-us"
+        _active_ctx[window.id] = popup_ctx
+        if is_focused:
+            _log(f"popup_open ctx={popup_ctx} action=deactivate")
+            _apply_im("keyboard-us")
+        else:
+            _log(f"popup_open ctx={popup_ctx} deferred")
+
+    elif action == "popup-close":
+        popup_ctx = f"{full_ctx}-popup"
+        _im_state.pop(popup_ctx, None)
+        _active_ctx[window.id] = full_ctx
+        if is_focused:
+            saved = _im_state.get(full_ctx)
+            if saved is None:
+                _log(f"popup_close ctx={full_ctx} no_state action=deactivate")
+                _apply_im("keyboard-us")
+                _im_state[full_ctx] = "keyboard-us"
+            else:
+                _log(f"popup_close ctx={full_ctx} restore={saved}")
+                _apply_im(saved)
+        else:
+            _log(f"popup_close ctx={full_ctx} deferred")
+
 
 def on_close(
     boss: Boss, window: Window, data: dict[str, Any]

@@ -63,6 +63,15 @@ if [[ "$1" == "focus-in" || "$1" == "focus-out" ]]; then
     exit 0
 fi
 
+# Popup mode: fcitx5-tmux-hook popup-open/popup-close <pane_id>
+# For popup-open / popup-close hooks.
+if [[ "$1" == "popup-open" || "$1" == "popup-close" ]]; then
+    ctx_id=$(_get_ctx_id "$2")
+    _log "event=$1 pane=$2 ctx=${ctx_id}"
+    _send_user_var "$1:$ctx_id"
+    exit 0
+fi
+
 # Fallback for unified mode (if called without action) - just treat as focus-in
 # But since we enabled explicit focus-out hook in tmux.conf, we can simplify this.
 # Or keep it for backward compat / manual calls.
