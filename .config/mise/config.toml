@@ -10,6 +10,7 @@ shfmt = "latest"
 "ubi:docker/docker-credential-helpers" = { version = "latest", exe = "docker-credential-pass" }
 atuin = "latest"
 "aqua:fish-shell/fish-shell" = "latest"
+sqlc = "latest"
 
 [settings]
 experimental = true
