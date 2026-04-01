@@ -71,7 +71,7 @@ run_fish_bg "miniserve" "miniserve -i 127.0.0.1 -p 8099 /home/amos/git/servercon
 run_fish_bg "fcitx5" "fcitx5 -d"
 # autocutsel -fork -selection PRIMARY
 # autocutsel -fork -selection CLIPBOARD
-run_fish_bg "hister" "/tmp/gentoo/opt/bin/hister listen &> /tmp/hister.log &"
+run_fish_bg "hister" "hister listen &> /tmp/hister.log &"
 run_fish_bg "kitty" "kitty &"
 
 echo "=== startup end: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$LOG"

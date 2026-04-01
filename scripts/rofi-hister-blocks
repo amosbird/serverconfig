@@ -12,12 +12,12 @@ import re
 import subprocess
 import sys
 import threading
-
-import threading
+import urllib.parse
 
 VIVALDI_CDP_PORT = 9222
 BLOCKLIST_SCRIPT = "/home/amos/scripts/rofi-browser-blocklist.sh"
-HISTER_BIN = "/tmp/gentoo/opt/bin/hister"
+HISTER_BIN = "hister"
+GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
 
 entries = []
 blocklist = []
@@ -158,6 +158,26 @@ def activate_vivaldi_tab(url):
     return False
 
 
+def open_url(url):
+    subprocess.Popen(
+        ["qtile", "cmd-obj", "-o", "group", "f", "-f", "toscreen"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.Popen(
+        ["/home/amos/scripts/vivaldi", url],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def google_search(query):
+    if not query or not query.strip():
+        return
+    url = GOOGLE_SEARCH_URL + urllib.parse.quote_plus(query.strip())
+    open_url(url)
+
+
 def open_entry(data):
     kind = data.get("kind", "")
     url = data.get("url", "")
@@ -255,10 +275,8 @@ def main():
             delete_entry(data, current_query)
 
         elif name == "execute custom input":
-            current_query = value
-            if debounce_timer is not None:
-                debounce_timer.cancel()
-            do_search(value)
+            google_search(current_query or value)
+            sys.exit(0)
 
 
 if __name__ == "__main__":
