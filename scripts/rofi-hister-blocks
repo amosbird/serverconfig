@@ -78,10 +78,12 @@ def hister_search(query):
         data = json.loads(out)
         docs = data.get("documents") or []
         results = []
+        seen = set()
         for d in docs:
             url = d.get("url", "")
             title = d.get("title", "") or url
-            if url:
+            if url and url not in seen:
+                seen.add(url)
                 results.append((title, url))
         return results
     except Exception:
@@ -94,15 +96,12 @@ def match_query(query, title, url):
     return all(tok in text for tok in q.split())
 
 
-def build_entries(query):
-    global entries
+def build_tab_entries(query):
     bl = blocklist
     tabs = get_vivaldi_tabs()
-    history = hister_search(query)
-    seen = set()
     has_query = bool(query and query.strip())
     result = []
-
+    seen = set()
     for title, url in tabs:
         if is_blocked(url, bl) or url in seen:
             continue
@@ -110,14 +109,18 @@ def build_entries(query):
             continue
         seen.add(url)
         result.append(("tab", title, url))
+    return result, seen
 
+
+def build_hist_entries(query, seen):
+    bl = blocklist
+    history = hister_search(query)
+    result = []
     for title, url in history:
         if is_blocked(url, bl) or url in seen:
             continue
         seen.add(url)
         result.append(("hist", title, url))
-
-    entries = result
     return result
 
 
@@ -126,9 +129,11 @@ def format_lines(entry_list):
     for kind, title, url in entry_list:
         icon = "web-browser" if kind == "tab" else "clock"
         tag = "tab" if kind == "tab" else "hist"
-        display = f"[{tag}] {title}"
+        short_url = url.split("://", 1)[-1]
+        display = f"[{tag}] {title}  <i>{short_url}</i>"
         lines.append({
             "text": display,
+            "markup": True,
             "icon": icon,
             "data": json.dumps({"kind": kind, "url": url}),
         })
@@ -225,29 +230,40 @@ def delete_entry(data, current_query):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    result = build_entries(current_query)
-    send({"lines": format_lines(result)})
+    tab_result, seen = build_tab_entries(current_query)
+    hist_result = build_hist_entries(current_query, seen)
+    entries.clear()
+    entries.extend(tab_result + hist_result)
+    send({"lines": format_lines(entries)})
 
 
 def main():
     global blocklist
     blocklist = load_blocklist()
 
-    result = build_entries("")
+    tab_result, _ = build_tab_entries("")
+    entries.clear()
+    entries.extend(tab_result)
     send({
         "input action": "send",
         "prompt": "Web❯",
         "event format": "{\"name\":\"{{name_escaped}}\", \"value\":\"{{value_escaped}}\", \"data\":\"{{data_escaped}}\"}",
-        "lines": format_lines(result),
+        "lines": format_lines(entries),
     })
 
     current_query = ""
     debounce_timer = None
     DEBOUNCE_DELAY = 0.15
 
-    def do_search(query):
-        result = build_entries(query)
-        send({"lines": format_lines(result)})
+    def do_hist_search(query):
+        try:
+            seen = set(u for _, _, u in entries)
+            hist = build_hist_entries(query, seen)
+            if hist:
+                entries.extend(hist)
+                send({"lines": format_lines(entries)})
+        except Exception:
+            pass
 
     for line in sys.stdin:
         line = line.strip()
@@ -266,8 +282,14 @@ def main():
             current_query = value
             if debounce_timer is not None:
                 debounce_timer.cancel()
-            debounce_timer = threading.Timer(DEBOUNCE_DELAY, do_search, [value])
-            debounce_timer.start()
+            tab_result, _ = build_tab_entries(value)
+            entries.clear()
+            entries.extend(tab_result)
+            send({"lines": format_lines(entries)})
+            if value and value.strip():
+                debounce_timer = threading.Timer(DEBOUNCE_DELAY, do_hist_search, [value])
+                debounce_timer.daemon = True
+                debounce_timer.start()
 
         elif name == "select entry":
             try:
