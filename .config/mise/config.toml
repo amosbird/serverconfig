@@ -9,7 +9,7 @@ shfmt = "latest"
 "ubi:gsamokovarov/jump" = "latest"
 "ubi:docker/docker-credential-helpers" = { version = "latest", exe = "docker-credential-pass" }
 atuin = "latest"
-"ubi:fish-shell/fish-shell" = "latest"
+"ubi:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
 sqlc = "latest"
 
 [settings]
