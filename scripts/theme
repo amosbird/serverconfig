@@ -158,7 +158,14 @@ def set_windows_theme(mode):
         f"Set-ItemProperty -Path HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize "
         f"-Name AppsUseLightTheme -Value {value}; "
         f"Set-ItemProperty -Path HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize "
-        f"-Name SystemUsesLightTheme -Value {value}"
+        f"-Name SystemUsesLightTheme -Value {value}; "
+        f"Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
+        f"public class NativeMethods {{ "
+        f"[DllImport(\\\"user32.dll\\\", SetLastError = true, CharSet = CharSet.Auto)] "
+        f"public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult); "
+        f"}}'; "
+        f"[UIntPtr]$result = [UIntPtr]::Zero; "
+        f"[NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'ImmersiveColorSet', 2, 5000, [ref]$result)"
         f'"'
     )
     try:

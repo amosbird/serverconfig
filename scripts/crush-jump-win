@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 
-dir=$(jump-top | fzf +m --reverse --cycle \
-  --bind 'esc:abort,alt-enter:become(echo {q})')
-if [ -n "$dir" ]; then
+while true; do
+    dir=$(jump-top | fzf +m --reverse --cycle \
+      --bind 'esc:abort,alt-enter:become(echo {q})')
+    if [ -z "$dir" ]; then
+        break
+    fi
     dir=$(echo "$dir" | sed "s|^~|$HOME|")
     if [ ! -d "$dir" ]; then
-        tmux display-message "Directory not found: $dir"
-        exit 1
+        jump clean
+        continue
     fi
     cd "$dir" && jump chdir
     tmux new-window -c "$dir" crush
-fi
+    break
+done
