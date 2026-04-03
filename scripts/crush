@@ -3,6 +3,9 @@
 # and ensures copilot-proxy daemon is running.
 
 export DO_NOT_TRACK=1
+export GOTRACEBACK=all
+export CRUSH_LOG_LEVEL=debug
+export CRUSH_LOG_FILE="$HOME/.crush/logs/debug.log"
 
 # MCP secrets
 export IWIKI_MCP_URL="$(pass show mcp/iwiki-url)"
@@ -15,4 +18,5 @@ if [ -n "$GUI" ]; then
     "$HOME/git/copilot-proxy/copilot-proxy" ensure 2>/dev/null
 fi
 
-exec "$HOME/git/crush/crush" --yolo "$@"
+CRASH_LOG="$HOME/.crush/logs/crash.log"
+exec "$HOME/git/crush/crush" --yolo "$@" 2> >(tee -a "$CRASH_LOG" >&2)
