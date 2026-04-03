@@ -289,6 +289,10 @@
         ("\\*\\(?:Warnings\\|Backtrace\\)\\*"
          (display-buffer-in-side-window)
          (side . bottom) (window-height . 0.25))
+        ;; envrc — bottom (direnv errors)
+        ("\\*envrc\\*"
+         (display-buffer-in-side-window)
+         (side . bottom) (window-height . 0.25))
         ;; Calc — bottom
         ("\\*Calc"
          (display-buffer-in-side-window)
@@ -486,6 +490,7 @@
   (add-to-list 'evil-buffer-regexps '(" \\*string-output\\*" . nil))
   (add-to-list 'evil-buffer-regexps '(" \\*string-pixel-width\\*" . nil))
   (add-to-list 'evil-buffer-regexps '("\\*Native-compile-Log\\*" . nil))
+  (add-to-list 'evil-buffer-regexps '("\\*envrc\\*" . nil))
 
   ;; Cursor style — different colors/shapes per state for mode identification
   (setq evil-default-cursor #'ignore)    ; Don't reset cursor on every refresh (prevents flicker)
@@ -2041,6 +2046,21 @@ trigger preview). Otherwise call vertico-insert."
         '(:documentHighlightProvider :inlayHintProvider
           :documentOnTypeFormattingProvider
           :semanticTokensProvider))
+  (global-eldoc-mode -1)
+  (setq eglot-stay-out-of '(eldoc))
+  (advice-add #'flymake-eldoc-function :override #'ignore)
+  ;; clangd arguments
+  (add-to-list 'eglot-server-programs
+               '((c-mode c++-mode c-ts-mode c++-ts-mode)
+                 . ("clangd"
+                    "--log=error"
+                    "--malloc-trim"
+                    "--background-index"
+                    "--clang-tidy"
+                    "--completion-style=detailed"
+                    "--pch-storage=memory"
+                    "--header-insertion=never"
+                    "--header-insertion-decorators=0")))
   ;; Java JVM arguments
   (setq eglot-java-eclipse-jdt-args
         '("-XX:+UseParallelGC" "-XX:GCTimeRatio=4"
@@ -2792,6 +2812,13 @@ Ensures one ● per line with proper padding and face, then merge with git-gutte
   :hook (after-init . envrc-global-mode)
   :bind (("C-x d" . envrc-allow)
          ("C-x a" . envrc-reload)))
+
+(defun amos/reload-envrc-on-save ()
+  "Auto-reload envrc when saving a .envrc file."
+  (when (and buffer-file-name
+             (string-equal (file-name-nondirectory buffer-file-name) ".envrc"))
+    (envrc-reload)))
+(add-hook 'after-save-hook #'amos/reload-envrc-on-save)
 
 ;;;; yasnippet — code snippets/templates
 (use-package yasnippet
@@ -3749,7 +3776,7 @@ Falls back to call-process if magit is not yet loaded."
   (interactive)
   (if-let* ((filename (or buffer-file-name
                           (bound-and-true-p list-buffers-directory))))
-      (message (kill-new (concat filename ":" (number-to-string (line-number-at-pos)) "\n")))
+      (message (kill-new (concat filename ":" (number-to-string (line-number-at-pos)))))
     (error "Buffer is not visiting a file")))
 
 (defun amos/rename-current-buffer-file ()
