@@ -51,7 +51,7 @@
 ;;
 ;;; Code:
 
-(eval-when-compile (require 'cl))
+(eval-when-compile (require 'cl-lib))
 
 (add-to-list 'debug-ignored-errors "^Nothing to rotate$")
 

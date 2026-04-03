@@ -410,8 +410,8 @@
 ;; Doom-style +amos/ prefix
 (defalias '+amos/workspace-new 'amos/workspace-new)
 (defalias '+amos/workspace-delete 'amos/workspace-delete)
-(defvaralias '+amos-tmux-need-switch 'amos-tmux-need-switch)
 (defvar amos-tmux-need-switch nil)
+(defvaralias '+amos-tmux-need-switch 'amos-tmux-need-switch)
 (defun +amos/dired-jump ()
   (interactive)
   (amos/store-jump-history)
@@ -3358,8 +3358,11 @@ Each overlay's original before-string is saved in `amos--margin-saved'."
   :after dired
   :bind (:map dired-mode-map ("TAB" . dired-subtree-toggle)))
 
+(use-package hydra
+  :defer t)
+
 (use-package dired-quick-sort           ; s for quick sorting
-  :after dired
+  :after (dired hydra)
   :config (dired-quick-sort-setup))
 
 ;;;; dired-open — open files with external programs
@@ -3604,13 +3607,6 @@ Falls back to call-process if magit is not yet loaded."
 (setq shr-width 100)                   ; eww/shr rendering width
 (setq use-short-answers t)             ; y/n instead of yes/no
 
-;;;; Loom — Emacs frontend for opencode AI
-(use-package loom
-  :load-path "~/git/loom"
-  :commands (loom-open loom-open-new loom-sessions loom-search)
-  :custom
-  (loom-session-strategy 'new-deferred))
-
 
 
 ;; ============================================================================
@@ -3628,7 +3624,7 @@ Falls back to call-process if magit is not yet loaded."
 ;;   SPC s    search            SPC n   notes/Org
 ;;   SPC t    toggle            SPC w   window
 ;;   SPC S    snippets          SPC l   comment
-;;   SPC a    AI (loom/agent)   SPC o   Dired
+;;                              SPC o   Dired
 ;;   SPC q    quit
 
 (amos/leader
@@ -3721,15 +3717,6 @@ Falls back to call-process if magit is not yet loaded."
   "S n" 'yas-new-snippet
   "S i" 'yas-insert-snippet
   "S v" 'yas-visit-snippet-file
-
-  ;; [a]I — Loom & agent-shell
-  "a"   '(:ignore t :wk "AI")
-  "a a" '(loom-open :wk "loom session")
-  "a n" '(loom-open-new :wk "loom new")
-  "a s" '(loom-sessions :wk "loom list")
-  "a /" '(loom-search :wk "loom search")
-  "a o" '(agent-shell-opencode-start-agent :wk "agent-shell opencode")
-  "a A" '(agent-shell :wk "agent-shell (any)")
 
   ;; Common single-key bindings
   "l"   '(evilnc-comment-or-uncomment-lines :wk "comment")
