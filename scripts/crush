@@ -4,8 +4,6 @@
 
 export DO_NOT_TRACK=1
 export GOTRACEBACK=all
-export CRUSH_LOG_LEVEL=debug
-export CRUSH_LOG_FILE="$HOME/.crush/logs/debug.log"
 
 # MCP secrets
 export IWIKI_MCP_URL="$(pass show mcp/iwiki-url)"
