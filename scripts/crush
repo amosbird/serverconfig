@@ -11,11 +11,8 @@ export CONTEXT7_API_KEY="$(pass show mcp/context7)"
 export EXA_API_KEY="$(pass show mcp/exa)"
 
 # Ensure copilot-proxy daemon is running (idempotent), only when GUI is available.
-# In non-GUI (CLI) mode, just sync models to crush.json.
 if [ -n "$GUI" ]; then
     "$HOME/git/copilot-proxy/copilot-proxy" ensure 2>/dev/null
-else
-    "$HOME/git/copilot-proxy/copilot-proxy" sync 2>/dev/null
 fi
 
 exec "$HOME/git/crush/crush" --yolo "$@"
