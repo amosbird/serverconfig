@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = xkeyboard-config
+
+[Action]
+Description = Restoring custom XKB symbols...
+When = PostTransaction
+Exec = /bin/bash -c 'cp /home/amos/git/serverconfig/xkb/symbols/{us,pc,inet} /usr/share/X11/xkb/symbols/ && DISPLAY=:0 setxkbmap us 2>/dev/null'

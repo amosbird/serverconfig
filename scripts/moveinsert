@@ -19,6 +19,7 @@ onlyscreen() {
     fi
 
     eval "$cmd"
+    feh --bg-fill ~/git/serverconfig/black_4k.jpg
 }
 
 case $(hostname) in

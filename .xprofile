@@ -57,9 +57,6 @@ _envs=(
 dbus-update-activation-environment "${_envs[@]}"
 systemctl --user import-environment "${_envs[@]}"
 
-# Load custom XKB keymap from git repo (survives xkeyboard-config updates)
-_xkb_dir="$HOME/git/serverconfig/xkb"
-setxkbmap -I"$_xkb_dir" -layout us -print | xkbcomp -I"$_xkb_dir" - "$DISPLAY" 2>/dev/null
 
 # export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/lib64/pkgconfig
 eval "$(ssh-agent)"

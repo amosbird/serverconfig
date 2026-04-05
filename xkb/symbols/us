@@ -21,7 +21,7 @@ xkb_symbols "basic" {
     key <AD02> {	[	  w,	W		,  slash   ]	};
     key <AD03> {	[	  e,	E		,  braceleft   ]	};
     key <AD04> {	[	  r,	R		,  braceright   ]	};
-    key <AD05> {	[	  t,	T		,  { Y, E, S, space, T, H, I, S, space, I, S, space, D, O, G }]	};
+    key <AD05> {	[	  t,	T		]	};
     key <AD06> {	[	  y,	Y		]	};
     key <AD07> {	[	  u,	U		]	};
     key <AD08> {	[	  i,	I		]	};
