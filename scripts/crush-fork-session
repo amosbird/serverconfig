@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# crush-fork-session — Fork the current crush session into a new tmux window.
+
+session_id=$(tmux show-option -pqv @crush_session)
+cwd=$(tmux display-message -p '#{pane_current_path}')
+
+if [ -z "$session_id" ]; then
+    tmux display-message "Fork: no @crush_session in this pane"
+    exit 1
+fi
+
+cd "$cwd" || exit 1
+
+id=$("$HOME/git/crush/crush" session fork "$session_id" 2>&1)
+if [ $? -ne 0 ]; then
+    tmux display-message "Fork failed: $id"
+    exit 1
+fi
+
+tmux new-window -c "$cwd" "crush --session $id"

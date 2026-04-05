@@ -99,6 +99,9 @@ search() {
         UNION
         SELECT DISTINCT session_id FROM idx.message_initials
           WHERE initials LIKE '%${like_tok}%'
+        UNION
+        SELECT DISTINCT id AS session_id FROM sessions
+          WHERE title LIKE '%${safe_tok}%'
       )"
       intersect="${intersect}${intersect:+
         INTERSECT
