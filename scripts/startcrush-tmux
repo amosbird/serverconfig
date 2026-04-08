@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 
-# startcrush-tmux - Start crush in a dedicated tmux server.
-# Each tmux window runs one crush instance per project.
-# Usage:
-#   startcrush-tmux                  # start or re-attach
-#   startcrush-tmux /path/to/project # start in specific project dir
+# Crush auto-detects tmux/psmux and manages the session internally.
 
-export TMUX=${TMPDIR:-/tmp}/tmux-crush
+export DO_NOT_TRACK=1
+export GOTRACEBACK=all
 
-PROJECT_PATH="${1:-$HOME}"
-PROJECT_PATH=$(realpath "$PROJECT_PATH")
+# MCP secrets
+export IWIKI_MCP_URL="$(pass show mcp/iwiki-url)"
+export IWIKI_MCP_TOKEN="$(pass show mcp/iwiki-token)"
+export CONTEXT7_API_KEY="$(pass show mcp/context7)"
+export EXA_API_KEY="$(pass show mcp/exa)"
 
-exec tmux -f ~/.tmux/.tmux.conf.crush -u new-session -A -s crush -c "$PROJECT_PATH" "crush --continue"
+CRASH_LOG="$HOME/.crush/logs/crash.log"
+exec "$HOME/git/crush/crush" "$@" 2> >(tee -a "$CRASH_LOG" >&2)
