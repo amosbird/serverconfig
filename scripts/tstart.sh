@@ -4,7 +4,7 @@ export LANG=en_US.UTF-8
 export SHELL=$HOME/.local/bin/fish # for tmux command
 export TERM=xterm-kitty
 # export TMPDIR=/tmp/gentoo/tmp
-export TMPDIR=/tmp
+export TMPDIR=${TMPDIR:-/tmp}
 export SSH_AUTH_SOCK=$TMPDIR/ssh_auth_sock
 export KITTY_LISTEN_ON=unix:$TMPDIR/kitty_sock
 export NPROC=$(nproc)
@@ -31,6 +31,12 @@ prefix)
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH htop
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH crush
     # kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH lvim
+    ;;
+remote_local)
+    export KITTY_LISTEN_ON=unix:$HOME/tmp/kitty_sock
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh emacs"
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh htop"
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh crush"
     ;;
 emacs)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
