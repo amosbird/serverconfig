@@ -6,10 +6,10 @@ fd = "latest"
 fzf = "latest"
 k6 = "latest"
 shfmt = "latest"
-"ubi:gsamokovarov/jump" = "latest"
-"ubi:docker/docker-credential-helpers" = { version = "latest", exe = "docker-credential-pass" }
+"github:gsamokovarov/jump" = "latest"
+"github:docker/docker-credential-helpers" = { version = "latest", exe = "docker-credential-pass" }
 atuin = "latest"
-"ubi:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
+"github:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
 sqlc = "latest"
 
 [settings]

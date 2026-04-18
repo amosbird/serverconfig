@@ -381,6 +381,7 @@ for i in ["w", "e", "d", "f", "v", "n", "i", "o", "c"]:
 
 dgroups_app_rules = [
     Rule(Match(wm_class="kitty", title="local"), group="e"),
+    Rule(Match(wm_class="kitty", title="work"), group="v"),
     Rule(Match(wm_class="kitty", title="remote"), group="i"),
     Rule(Match(wm_class="kitty", title="weechat"), group="c"),
     Rule(Match(wm_class="wemeetapp"), group="2"),

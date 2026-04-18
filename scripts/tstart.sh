@@ -33,10 +33,14 @@ prefix)
     # kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH lvim
     ;;
 remote_local)
+    source /tmp/gentoo/etc/profile
+    export PATH=$HOME/scripts:$PATH
+    export TMPDIR=$HOME/tmp
+    export DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock
     export KITTY_LISTEN_ON=unix:$HOME/tmp/kitty_sock
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh emacs"
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh htop"
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh crush"
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh emacs"
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh htop"
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH TMPDIR=$HOME/tmp DBUS_SESSION_BUS_ADDRESS=unix:path=$HOME/tmp/dbus_sock tstart.sh crush"
     ;;
 emacs)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
