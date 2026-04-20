@@ -97,6 +97,7 @@ if [[ $# == 0 ]]; then
 fi
 
 MISE_BIN="$HOME/.local/bin/mise"
+export GITHUB_TOKEN=${GITHUB_TOKEN:-$(pass show github/api-token 2>/dev/null)}
 if [[ -x "$MISE_BIN" ]]; then
     "$MISE_BIN" self-update -y
 else

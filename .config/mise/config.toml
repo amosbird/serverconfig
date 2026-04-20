@@ -11,6 +11,7 @@ shfmt = "latest"
 atuin = "latest"
 "github:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
 sqlc = "latest"
+"github:amosbird/clipserver" = "latest"
 
 [settings]
 experimental = true
