@@ -34,7 +34,7 @@
     "yolo": true,
     "disable_metrics": true,
     "disable_provider_auto_update": true,
-    "max_tokens_to_summarize": 500000,
+    "max_tokens_to_summarize": 950000,
     "auto_lsp": false,
     "auto_title": false,
     "context_paths": [
