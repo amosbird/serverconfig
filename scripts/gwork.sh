@@ -2,7 +2,7 @@
 
 HOST=100.88.203.53
 
-ssh $HOST 'killwork; rm -f /tmp/{kitty_sock,dbus_sock,remote-clipservice.sock}'
+ssh $HOST '$HOME/scripts/killwork; rm -f /tmp/{kitty_sock,dbus_sock,remote-clipservice.sock}'
 
 UUID=$(uuidgen)
 SSH_MASTER_CTRL=/tmp/ssh-master.$UUID
