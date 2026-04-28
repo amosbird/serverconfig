@@ -3802,10 +3802,15 @@ Falls back to call-process if magit is not yet loaded."
 
 ;;;; Terminal mouse support — enable mouse clicks and scrolling in terminal
 (unless (display-graphic-p)
-  (xterm-mouse-mode 1)
   ;; Terminal scroll bindings
-  (global-set-key (kbd "<mouse-4>") (lambda () (interactive) (scroll-down 3)))
-  (global-set-key (kbd "<mouse-5>") (lambda () (interactive) (scroll-up 3))))
+  (global-set-key (kbd "<mouse-4>") (lambda () (interactive) (scroll-down 1)))
+  (global-set-key (kbd "<mouse-5>") (lambda () (interactive) (scroll-up 1)))
+  (global-set-key (kbd "<wheel-up>") (lambda () (interactive) (scroll-down 1)))
+  (global-set-key (kbd "<wheel-down>") (lambda () (interactive) (scroll-up 1)))
+  (global-set-key (kbd "<wheel-left>") (lambda () (interactive) (scroll-left 1)))
+  (global-set-key (kbd "<wheel-right>") (lambda () (interactive) (scroll-right 1)))
+  (global-set-key (kbd "<mouse-6>") (lambda () (interactive) (scroll-left 1)))
+  (global-set-key (kbd "<mouse-7>") (lambda () (interactive) (scroll-right 1))))
 
 ;;;; Server — emacsclient support
 ;; Usage: emacsclient -s <server-name> <file>
