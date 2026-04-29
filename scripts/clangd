@@ -16,12 +16,27 @@ elif [ -f "$file2" ]; then
     compile_commands_file="$file2"
 fi
 
+extra_args=()
+
 if [ -f "$compile_commands_file" ]; then
+    # Detect Docker/container path mapping:
+    # If compile_commands.json has a different root than $PWD, inject --path-mappings.
+    # e.g. compile_commands has "/ClickHouse/build" but we're in "/home/user/worktree".
+    db_dir=$(jq --raw-output '.[0].directory' "$compile_commands_file")
+    if [ -n "$db_dir" ]; then
+        # Extract the root: "/ClickHouse/build" → "/ClickHouse"
+        db_root=$(echo "$db_dir" | sed -E 's|^(/[^/]+).*|\1|')
+        if [ -n "$db_root" ] && [ "$db_root" != "/" ] && [ ! -d "$db_root" ]; then
+            # The root directory from compile_commands doesn't exist on the host,
+            # so it's a container path. Map it to $PWD.
+            extra_args+=("--path-mappings=${db_root}=${PWD}")
+        fi
+    fi
 
     command=$(jq --raw-output '.[0].command' "$compile_commands_file")
     executable=$(echo "$command" | sed -E 's|([^ ]*/)[^ ]+.*|\1clangd|')
     if [ -x "$executable" ]; then
-        exec "$executable" "$@"
+        exec "$executable" "${extra_args[@]}" "$@"
     fi
 fi
 
@@ -37,4 +52,4 @@ if [ -z "$clangd_path" ]; then
     exit 1
 fi
 
-exec clangd "$@"
+exec clangd "${extra_args[@]}" "$@"

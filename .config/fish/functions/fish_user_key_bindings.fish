@@ -254,7 +254,7 @@ function fish_user_key_bindings
     bind \e` proxy-commandline
     bind \cq gdb-commandline
     bind \em ls-commandline
-    bind ctrl-i __fzf_complete
+    bind tab __fzf_complete
     bind \eG open-magit
     bind \ep updir
     bind \en br

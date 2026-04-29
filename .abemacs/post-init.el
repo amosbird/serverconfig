@@ -19,6 +19,8 @@
 
 ;;; Code:
 
+(setq delete-by-moving-to-trash nil)
+
 ;; ============================================================================
 ;; §1 UI & Theme
 ;; ============================================================================
@@ -2199,7 +2201,8 @@ Unlike `xref-find-references', this finds calls through base class pointers."
     "gR" #'amos/eglot-incoming-calls      ; all callers (inheritance-aware)
     "gO" #'amos/eglot-outgoing-calls      ; all callees
     "gT" #'amos/eglot-supertypes          ; parent classes
-    "gt" #'amos/eglot-subtypes))          ; derived classes
+    "gt" #'amos/eglot-subtypes            ; derived classes
+    "ge" #'eglot-code-actions))          ; derived classes
 
 ;;;; Flymake — built-in syntax checking framework
 ;; M-, / M-. jump to prev/next error (evil normal mode)
@@ -2312,7 +2315,7 @@ Ensures one ● per line with proper padding and face, then merge with git-gutte
 (defvar amos/flymake-popup--frame nil "Child frame for flymake diagnostics.")
 (defvar amos/flymake-popup--timer nil "Idle timer for flymake popup.")
 (defvar amos/flymake-popup-delay 0.2 "Seconds of idle before showing popup.")
-(defvar amos/flymake-popup-width 65 "Max width of diagnostic popup.")
+(defvar amos/flymake-popup-width 100 "Max width of diagnostic popup.")
 
 (defvar amos/flymake-popup--frame-parameters
   '((no-accept-focus . t)
@@ -2355,15 +2358,19 @@ Ensures one ● per line with proper padding and face, then merge with git-gutte
 
 (defun amos/flymake-popup--format-message (message)
   "Word-wrap MESSAGE to fit `amos/flymake-popup-width'."
-  (let* ((lines (split-string message "\n"))
-         (width (min amos/flymake-popup-width
-                     (apply #'max (mapcar #'string-width lines)))))
-    (mapcar (lambda (line)
-              (with-temp-buffer
-                (insert line)
-                (move-to-column width t)
-                (buffer-substring (point-min) (point))))
-            lines)))
+  (let* ((raw-lines (split-string message "\n"))
+         (wrapped '()))
+    (dolist (line raw-lines)
+      (if (<= (string-width line) amos/flymake-popup-width)
+          (push line wrapped)
+        ;; Word-wrap long lines
+        (with-temp-buffer
+          (insert line)
+          (let ((fill-column amos/flymake-popup-width))
+            (fill-region (point-min) (point-max)))
+          (dolist (sub (split-string (buffer-string) "\n"))
+            (push sub wrapped)))))
+    (nreverse wrapped)))
 
 (defun amos/flymake-popup--ensure-frame ()
   "Create or return the child frame for flymake diagnostics."

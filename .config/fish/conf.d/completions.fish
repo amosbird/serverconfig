@@ -1,17 +1,30 @@
+function __fish_clickhouse_src_root
+    set -l base ~/git/ClickHouse
+    set -l active "$base/.active-worktree"
+    if test -f "$active"
+        set -l wt (cat "$active")
+        if test -d "$wt"
+            echo "$wt"
+            return
+        end
+    end
+    echo "$base/src"
+end
+
 function __fish_clickhouse_get_stateless_query_tests
-    find $CLICKHOUSE_STATELESS_QUERY_TESTS_DIR \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.http' -o -iname '*.expect' \) -type f -printf '%f\n'
+    find (__fish_clickhouse_src_root)/tests/queries/0_stateless \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.http' -o -iname '*.expect' \) -type f -printf '%f\n' 2>/dev/null
 end
 
 function __fish_clickhouse_get_stateful_query_tests
-    find $CLICKHOUSE_STATEFUL_QUERY_TESTS_DIR \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.http' -o -iname '*.expect' \) -type f -printf '%f\n'
+    find (__fish_clickhouse_src_root)/tests/queries/1_stateful \( -iname '*.sh' -o -iname '*.sql' -o -iname '*.http' -o -iname '*.expect' \) -type f -printf '%f\n' 2>/dev/null
 end
 
 function __fish_clickhouse_get_performance_tests
-    find $CLICKHOUSE_PERF_TESTS_DIR \( -iname '*.xml' \) -type f -printf '%f\n'
+    find (__fish_clickhouse_src_root)/tests/performance \( -iname '*.xml' \) -type f -printf '%f\n' 2>/dev/null
 end
 
 function __fish_clickhouse_get_integration_tests
-    find $CLICKHOUSE_TESTS_INTEGRATION_PATH \( -iname 'test_*' \) -type d -printf '%f\n'
+    find (__fish_clickhouse_src_root)/tests/integration \( -iname 'test_*' \) -type d -printf '%f\n' 2>/dev/null
 end
 
 function __fish_netctl_get_profiles
