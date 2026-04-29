@@ -2,3 +2,17 @@
 
 pkill -f "kitty -o allow_remote_control=yes --listen-on unix:/tmp/kitty_sock -T local" || :
 pkill -f "kitty -o allow_remote_control=yes --listen-on unix:/tmp/kitty\..* -T work" || :
+
+pid=$(pgrep -f "tstart.sh remote_local" || :)
+
+if [ -z "$pid" ]; then
+    exit 0
+fi
+
+while [ "$(ps -o uid= -p $pid | tr -d '[:space:]')" != "0" ]; do
+    top_pid=$pid
+    pid=$(ps -o ppid= -p $pid)
+    [ -z "$pid" ] && break
+done
+
+kill $top_pid

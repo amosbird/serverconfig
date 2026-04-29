@@ -2,7 +2,7 @@
 
 HOST=100.88.203.53
 
-ssh $HOST 'pid=$(pgrep -f "tstart.sh remote_local" || :); if [ -n "$pid" ]; then while [ "$(ps -o uid= -p $pid | tr -d "[:space:]")" != "0" ]; do top_pid=$pid; pid=$(ps -o ppid= -p $pid); [ -z "$pid" ] && break; done; kill $top_pid; fi; rm -f /tmp/{kitty_sock,dbus_sock,remote-clipservice.sock}'
+ssh $HOST '$HOME/scripts/killwork; rm -f /tmp/{kitty_sock,dbus_sock,remote-clipservice.sock}'
 
 UUID=$(uuidgen)
 SSH_MASTER_CTRL=/tmp/ssh-master.$UUID
