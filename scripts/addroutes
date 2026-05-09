@@ -55,6 +55,10 @@ fi
 
 sudo ip r f table cn
 
+for pref in 1000 2500 3000 4000; do
+    while sudo ip rule del pref $pref 2>/dev/null; do :; done
+done
+
 # Lower metrics are considered better and take precedence over higher costs.
 # http://0pointer.de/lennart/projects/ifmetric/ : The default metric for a route
 # in the Linux kernel is 0, meaning the highest priority.
@@ -102,8 +106,7 @@ sudo ip rule add to 169.254.0.0/16 lookup main pref 3000
 sudo ip rule add table cn pref 4000
 
 while read -r subnet _ d; do
-    sudo ip r a $subnet dev $d table cn
-    :
+    sudo ip rule add to $subnet lookup main pref 1000
 done < <(ip route show table main scope link)
 
 sudo ip -batch - <<EOF

@@ -3809,6 +3809,12 @@ Falls back to call-process if magit is not yet loaded."
 
 ;;;; Terminal mouse support — enable mouse clicks and scrolling in terminal
 (unless (display-graphic-p)
+  ;; Disable 1003 (all-motion tracking) — kitty 0.46 (69a25691c) fixed X11 mouse
+  ;; motion handling, causing touchpad to flood Emacs with motion events and freeze it
+  (advice-add 'xterm-mouse--tracking-sequence :filter-return
+              (lambda (seqs)
+                (cl-remove-if (lambda (s) (string-match-p "1003" s)) seqs)))
+  (xterm-mouse-mode 1)
   ;; Terminal scroll bindings
   (global-set-key (kbd "<mouse-4>") (lambda () (interactive) (scroll-down 1)))
   (global-set-key (kbd "<mouse-5>") (lambda () (interactive) (scroll-up 1)))
