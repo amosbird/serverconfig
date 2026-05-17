@@ -94,6 +94,9 @@ if [ -z "$existing_rule" ]; then
 fi
 sudo ip rule add fwmark 0x1 lookup ioa pref 2500
 
+# 10.0.0.0/8 → ioa for Tencent intranet IPs
+# Excluded: LAN subnets (pref 1000), non-Tencent ranges below (pref 2000)
+sudo ip rule add to 10.255.0.0/16 lookup main pref 2000
 sudo ip rule add to 10.0.0.0/8 lookup ioa pref 2500
 
 # Fix docker with tailscale exit node
