@@ -30,7 +30,7 @@ xkb_symbols "pc105" {
 
     key <RTSH> {	[ Shift_R		]	};
     key <RCTL> {	[ Control_R		]	};
-    key <RWIN> {	[ Super_R		]	};
+    key <RWIN> {	[ Super_L		]	};
     key <MENU> {	[ Menu			]	};
 
     // Beginning of modifier mappings.
@@ -38,7 +38,7 @@ xkb_symbols "pc105" {
     modifier_map Lock   { Caps_Lock };
     modifier_map Control{ Control_L, Control_R, <HKTG> };
     modifier_map Mod2   { Num_Lock };
-    modifier_map Mod4   { Super_L, Super_R };
+    modifier_map Mod4   { Super_L };
 
     // Fake keys for virtual<->real modifiers mapping:
     key <LVL3> {	[ ISO_Level3_Shift	]	};
@@ -53,8 +53,8 @@ xkb_symbols "pc105" {
     key <SUPR> {	[ NoSymbol, Super_L	]	};
     modifier_map Mod4   { <SUPR> };
 
-    key <HYPR> {	[ NoSymbol, Hyper_L	]	};
-    key <RALT> {    [ Hyper_L     ]   };
+    key <HYPR> {	[ NoSymbol, Super_R	]	};
+    key <RALT> {    [ Super_R     ]   };
     modifier_map Mod3   { <HYPR>, <RALT> };
     // End of modifier mappings.
 

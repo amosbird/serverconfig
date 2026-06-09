@@ -117,7 +117,7 @@ done
 
 if [[ -n $GUI ]]; then
     update-desktop-database "$HOME/.local/share/applications"
-    sudo cp -r "$DIR"/xkb/* /usr/share/X11/xkb/symbols/
+    sudo cp "$DIR"/xkb/symbols/{us,pc,inet} /usr/share/X11/xkb/symbols/
     setxkbmap us
     sudo mkdir -p /etc/pacman.d/hooks
     sudo cp "$DIR"/xkb-restore.hook /etc/pacman.d/hooks/xkb-restore.hook

@@ -22,8 +22,8 @@ from libqtile.utils import send_notification
 from libqtile.configurable import Configurable
 
 
-mod3 = "mod3"
-mod4 = "mod4"
+super_r = "mod3"
+super_l = "mod4"
 mod5 = "mod5"
 alt = "mod1"
 ctrl = "control"
@@ -183,61 +183,61 @@ def show_shell(qtile: Qtile):
 
 
 keys = [
-    Key([mod3], "e", lazy.spawn("rofi -show emoji -modi emoji")),
+    Key([super_r], "e", lazy.spawn("rofi -show emoji -modi emoji")),
     Key(
-        [mod3],
+        [super_r],
         "a",
         lazy.spawn("kitty -T float /home/amos/git/work/scripts/insert-cluster.sh"),
     ),
-    Key([mod3], "c", lazy.spawn("roficalc")),
-    Key([mod3, shift], "c", lazy.spawn("colorinsert")),
-    Key([mod3], "w", lazy.spawn("rofiurl")),
-    Key([mod3], "f", lazy.spawn("copyq toggle")),
-    Key([mod3], "0", lazy.spawn("sleep 0.1 && inputstr 0.0.0.0", shell=True)),
-    Key([mod3], "1", lazy.spawn("sleep 0.1 && inputstr 127.0.0.1", shell=True)),
+    Key([super_r], "c", lazy.spawn("roficalc")),
+    Key([super_r, shift], "c", lazy.spawn("colorinsert")),
+    Key([super_r], "w", lazy.spawn("rofiurl")),
+    Key([super_r], "f", lazy.spawn("copyq toggle")),
+    Key([super_r], "0", lazy.spawn("sleep 0.1 && inputstr 0.0.0.0", shell=True)),
+    Key([super_r], "1", lazy.spawn("sleep 0.1 && inputstr 127.0.0.1", shell=True)),
     Key(
-        [mod3],
+        [super_r],
         "2",
         lazy.spawn('joinwemeet "$(xclip -selection clipboard -out)"', shell=True),
     ),
-    Key([mod3], "3", lazy.spawn("rofipass")),
-    Key([mod3], "4", lazy.spawn("inputstr amosbird@gmail.com")),
-    Key([mod3], "r", lazy.spawn("rofidbtbl")),
-    Key([mod3], "h", lazy.spawn("rofihosts")),
-    Key([mod3], "d", lazy.spawn("dshot | copyq copyImage -", shell=True)),
-    Key([mod3, shift], "d", lazy.spawn("dshot | uploadimg -", shell=True)),
-    Key([mod3], "t", lazy.spawn("dtinput")),
-    Key([mod3], "y", lazy.spawn("ocr")),
+    Key([super_r], "3", lazy.spawn("rofipass")),
+    Key([super_r], "4", lazy.spawn("inputstr amosbird@gmail.com")),
+    Key([super_r], "r", lazy.spawn("rofidbtbl")),
+    Key([super_r], "h", lazy.spawn("rofihosts")),
+    Key([super_r], "d", lazy.spawn("dshot | copyq copyImage -", shell=True)),
+    Key([super_r, shift], "d", lazy.spawn("dshot | uploadimg -", shell=True)),
+    Key([super_r], "t", lazy.spawn("dtinput")),
+    Key([super_r], "y", lazy.spawn("ocr")),
     Key(
-        [mod3],
+        [super_r],
         "p",
         lazy.spawn("flameshot gui -r | pngquant - | copyq copyImage -", shell=True),
     ),
     Key(
-        [mod3, shift],
+        [super_r, shift],
         "p",
         lazy.spawn("flameshot gui -r | pngquant - | uploadimg -", shell=True),
     ),
     Key(
-        [mod3],
+        [super_r],
         "u",
         lazy.spawn("xclip -selection clipboard -out | upload -", shell=True),
     ),
-    Key([mod3], "o", lazy.spawn("openclipboard")),
-    Key([mod3, shift], "r", lazy.spawn("teiler")),
+    Key([super_r], "o", lazy.spawn("openclipboard")),
+    Key([super_r, shift], "r", lazy.spawn("teiler")),
     Key(
-        [mod3], "g", lazy.spawn('url "www.google.com/search?pws=0&gl=us&gws_rd=cr&q="')
+        [super_r], "g", lazy.spawn('url "www.google.com/search?pws=0&gl=us&gws_rd=cr&q="')
     ),
     Key(
-        [mod3],
+        [super_r],
         "k",
         lazy.spawn('inputstr "$(pass show scripts/otp | bash)"', shell=True),
     ),
-    Key([mod3], "s", lazy.spawn("/home/amos/git/work/scripts/rofitsearch")),
-    Key([mod3], "v", lazy.spawn("rofisound")),
-    Key([mod4, shift], "f", lazy.window.toggle_fullscreen()),
-    Key([mod4], "f", lazy.window.toggle_floating()),
-    Key([mod4], "z", lazy.spawn("lockscreen")),
+    Key([super_r], "s", lazy.spawn("/home/amos/git/work/scripts/rofitsearch")),
+    Key([super_r], "v", lazy.spawn("rofisound")),
+    Key([super_l, shift], "f", lazy.window.toggle_fullscreen()),
+    Key([super_l], "f", lazy.window.toggle_floating()),
+    Key([super_l], "z", lazy.spawn("lockscreen")),
     Key([ctrl, alt], "Eisu_toggle", lazy.spawn("toggleaudio")),
     Key([ctrl, alt], "1", lazy.group["scratchpad"].dropdown_toggle("ioa")),
     Key([ctrl, alt], "2", lazy.spawn("togglewemeet")),
@@ -260,13 +260,13 @@ keys = [
     Key([ctrl, alt], "s", toggle_shell_left()),
     Key([ctrl, alt], "l", toggle_shell_right()),
     Key([ctrl, alt], "h", show_shell()),
-    Key([mod4], "s", lazy.spawn("kitty fish")),
-    Key([mod4], "Home", lazy.spawn("movehome")),
-    Key([mod4], "End", lazy.spawn("moveend")),
-    Key([mod4], "Insert", lazy.spawn("moveinsert")),
-    Key([mod4], "Delete", lazy.spawn("lxrandr")),
+    Key([super_l], "s", lazy.spawn("kitty fish")),
+    Key([super_l], "Home", lazy.spawn("movehome")),
+    Key([super_l], "End", lazy.spawn("moveend")),
+    Key([super_l], "Insert", lazy.spawn("moveinsert")),
+    Key([super_l], "Delete", lazy.spawn("lxrandr")),
     Key([ctrl, alt], "r", lazy.spawn("rofi-runner")),
-    Key([mod4], "0", lazy.reload_config()),
+    Key([super_l], "0", lazy.reload_config()),
     Key([ctrl], "Escape", lazy.spawn("dunstctl close-all")),
     Key([ctrl], "Eisu_Toggle", lazy.spawn("dunstctl history-pop")),
     Key([ctrl], "F1", lazy.spawn("pamixer --toggle-mute")),
@@ -283,8 +283,8 @@ keys = [
     Key([ctrl, alt], "j", lazy.layout.next()),
     Key([ctrl, alt], "k", lazy.layout.previous()),
     # Key([ctrl, alt], "Tab", focus_previous_window()),
-    Key([mod4], "w", lazy.next_layout()),
-    Key([mod4], "t", lazy.spawn("theme toggle")),
+    Key([super_l], "w", lazy.next_layout()),
+    Key([super_l], "t", lazy.spawn("theme toggle")),
 ]
 
 mouse = [
