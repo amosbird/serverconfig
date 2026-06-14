@@ -2539,17 +2539,11 @@ Ensures one ● per line with proper padding and face, then merge with git-gutte
 ;; §7 Language Support
 ;; ============================================================================
 
-;;;; treesit-auto — automatically use tree-sitter major modes
-;; Tree-sitter provides faster, more accurate syntax highlighting and structural editing
-;; Grammar .so files are installed by system package manager; Emacs finds them via dynamic linker
-(use-package treesit-auto
-  :demand t
-  :custom
-  (treesit-auto-install nil)             ; Don't auto-download; use system-installed grammars
-  (treesit-font-lock-level 4)            ; Maximum highlighting detail
-  :config
-  (treesit-auto-add-to-auto-mode-alist 'all)
-  (global-treesit-auto-mode))
+;;;; Tree-sitter — built-in auto-mode support (Emacs 31+)
+;; Emacs 31 natively remaps traditional modes to tree-sitter variants
+;; when grammars are available.  No third-party package needed.
+(setq treesit-enabled-modes t)           ; Auto-use ts-modes when grammar available
+(setq treesit-font-lock-level 4)         ; Maximum highlighting detail
 
 ;; Language major modes — just install the package; LSP is managed by Eglot in §6
 (use-package rust-mode       :mode "\\.rs\\'")

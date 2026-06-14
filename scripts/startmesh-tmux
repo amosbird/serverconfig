@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+export DO_NOT_TRACK=1
+export COLORTERM=truecolor
+
+# MCP secrets — single `pass show` call. All four keys live in one
+# entry (`mcp/env`) as KEY=value lines, so gpg only decrypts once.
+set -a
+eval "$(pass show mcp/env)"
+set +a
+
+DTACH_SOCK=/tmp/mesh.dtach
+CRASH_LOG="$HOME/.mesh/logs/crash.log"
+mkdir -p "$(dirname "$CRASH_LOG")"
+
+MESH_BIN="$HOME/git/mesh/target/release/mesh"
+
+# Always log to a known file so post-hoc debugging doesn't depend on
+# the user having set MESH_LOG / RUST_LOG before launch.
+export MESH_LOG="${MESH_LOG:-/tmp/mesh.log}"
+export RUST_LOG="${RUST_LOG:-mesh_tui=info,mesh_bus=info,mesh_copilot=info,mesh_store=warn}"
+
+# TEMP perf diagnostic: log slow frames (>2ms) + slow keystroke/
+# inbound handling to MESH_LOG, plus a baseline line every 120
+# frames. Remove once the TUI lag root-cause is found.
+export MESH_PERF=1
+
+# If a mesh server is already running under dtach, just attach.
+# Mirror the terminal-state restore other startup scripts do — dtach
+# doesn't resend mouse/bracketed-paste/kitty-keyboard enable
+# sequences on re-attach.
+if echo 1 | socat - UNIX-CONNECT:$DTACH_SOCK &> /dev/null; then
+    printf "\e[?1006l\e[?1000l\e[?1002l\e[?1003l\e[?1000h\e[?1002h\e[?1003h" # enable mouse
+    printf "\e[?2004h" # enable bracketed paste
+    printf "\e[>1u" # enable kitty keyboard protocol (disambiguate mode)
+    exec dtach -a $DTACH_SOCK -E -z -r winch
+else
+    exec dtach -A $DTACH_SOCK -E -z -r winch "$MESH_BIN" "$@" 2> >(tee -a "$CRASH_LOG" >&2)
+fi
