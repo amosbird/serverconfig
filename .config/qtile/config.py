@@ -611,7 +611,11 @@ cursor_warp = False
 floating_layout = layout.Floating(
     # border_width=0,
     border_width=ConditionalBorderWidth(
-        default=8, matches=[(Match(title="urxvt_scratchpad"), 0)]
+        default=8,
+        matches=[
+            (Match(title="urxvt_scratchpad"), 0),
+            (Match(wm_class="flameshot"), 0),
+        ],
     ),
     # border_focus="#1D1F21",
     # border_normal="#1D1F21",
