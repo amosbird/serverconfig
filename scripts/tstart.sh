@@ -24,14 +24,14 @@ local)
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh emacs"
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh htop"
     kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh crush"
-    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh mesh"
+    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh abush"
     ;;
 prefix)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH emacs
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH htop
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH crush
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH mesh
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH abush
     # kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH lvim
     ;;
 remote_local)
@@ -42,7 +42,7 @@ remote_local)
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh emacs"
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh htop"
     kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh crush"
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh mesh"
+    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh abush"
     ;;
 emacs)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
@@ -64,13 +64,13 @@ crush)
     fish -c startcrush-tmux
     exit 0
     ;;
-mesh)
+abush)
     export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    fish -c startmesh-tmux
+    fish -c startabush
     exit 0
     ;;
 *)
-    echo "tstart.sh android|local|prefix|crush|mesh [project_path]"
+    echo "tstart.sh android|local|prefix|crush|abush [project_path]"
     exit 1
     ;;
 esac

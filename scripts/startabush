@@ -9,19 +9,19 @@ set -a
 eval "$(pass show mcp/env)"
 set +a
 
-CRASH_LOG="$HOME/.mesh/logs/crash.log"
+CRASH_LOG="$HOME/.abush/logs/crash.log"
 mkdir -p "$(dirname "$CRASH_LOG")"
 
-MESH_BIN="$HOME/git/mesh/target/release/mesh"
+ABUSH_BIN="$HOME/git/abush/target/release/abush"
 
 # Always log to a known file so post-hoc debugging doesn't depend on
-# the user having set MESH_LOG / RUST_LOG before launch.
-export MESH_LOG="${MESH_LOG:-/tmp/mesh.log}"
-export RUST_LOG="${RUST_LOG:-mesh_tui=info,mesh_bus=info,mesh_copilot=info,mesh_store=warn}"
+# the user having set ABUSH_LOG / RUST_LOG before launch.
+export ABUSH_LOG="${ABUSH_LOG:-/tmp/abush.log}"
+export RUST_LOG="${RUST_LOG:-abush_tui=info,abush_bus=info,abush_copilot=info,abush_store=warn}"
 
 # TEMP perf diagnostic: log slow frames (>2ms) + slow keystroke/
-# inbound handling to MESH_LOG, plus a baseline line every 120
+# inbound handling to ABUSH_LOG, plus a baseline line every 120
 # frames. Remove once the TUI lag root-cause is found.
-export MESH_PERF=1
+export ABUSH_PERF=1
 
-exec "$MESH_BIN" "$@" 2> >(tee -a "$CRASH_LOG" >&2)
+exec "$ABUSH_BIN" "$@" 2> >(tee -a "$CRASH_LOG" >&2)
