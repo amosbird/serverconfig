@@ -12,8 +12,8 @@ atuin = "latest"
 "github:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
 sqlc = "latest"
 "github:amosbird/clipserver" = "latest"
-rust = "latest"
 zig = "latest"
+micromamba = "latest"
 
 [settings]
 experimental = true
