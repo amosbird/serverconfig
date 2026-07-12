@@ -1,13 +1,58 @@
 #!/usr/bin/env bash
 
-pkill mpv
+# Media player wrapper: plays media files with mpv
+# - Directory arg: recursively find and play all media files
+# - File arg: play all media in same directory, starting from selected file
 
-f=$(realpath "$1")
+readonly COVER="$HOME/Pictures/cover.png"
+readonly EXTENSIONS='mp[34]|m4[av]|aac|flac|webm|avi|ts|m[ko]v|ogg|opus|wma|wav'
 
-if [ -d "$f" ]; then
-    cd "$f"
-    perl -e 'use File::Find::Rule; @p = qw(mpv --player-operation-mode=pseudo-gui --loop-playlist=inf --external-file=/home/amos/Pictures/cover.png --force-window --geometry=1280x800 --image-display-duration=inf --vid=1); @l = File::Find::Rule->file()->name( qr/\.(?:mp[34]|m4[av]|aac|flac|webm|avi|ts|m[ko]v)$/i )->in( (".") ); system(@p, @l)'
+mpv_opts=(
+    --player-operation-mode=pseudo-gui
+    --loop-playlist=inf
+    --force-window
+    --geometry=1280x800
+    --image-display-duration=inf
+    --vid=1
+)
+[[ -f "$COVER" ]] && mpv_opts+=(--external-file="$COVER")
+
+target=$(realpath "$1")
+
+if [[ -d "$target" ]]; then
+    mapfile -t files < <(
+        find "$target" -type f -regextype posix-extended \
+            -iregex ".*\\.($EXTENSIONS)" | sort
+    )
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "No media files found in: $target" >&2
+        exit 1
+    fi
+
+    exec mpv "${mpv_opts[@]}" -- "${files[@]}"
 else
-    cd "$(dirname "$f")"
-    perl -e 'use List::Util qw(first); @p = qw(mpv --player-operation-mode=pseudo-gui --loop-playlist=inf --external-file=/home/amos/Pictures/cover.png --force-window --geometry=1280x800 --image-display-duration=inf --vid=1); @l = grep /\.(?:mp[34]|m4[av]|aac|flac|avi|ts|webm|m[ko]v)$/i, <*>;; $n=@l; $i = first { $l[$_] =~ /\Q$ARGV[0]/ } 0..$#l; system(@p, @l[$i-$n..$i-1])' "$(basename "$f")"
+    dir=$(dirname "$target")
+    base=$(basename "$target")
+
+    mapfile -t files < <(
+        find "$dir" -maxdepth 1 -type f -regextype posix-extended \
+            -iregex ".*\\.($EXTENSIONS)" | sort
+    )
+
+    if [[ ${#files[@]} -eq 0 ]]; then
+        echo "No media files found in: $dir" >&2
+        exit 1
+    fi
+
+    # Find index of selected file for --playlist-start
+    start=0
+    for i in "${!files[@]}"; do
+        if [[ "${files[$i]}" == "$target" ]]; then
+            start=$i
+            break
+        fi
+    done
+
+    exec mpv "${mpv_opts[@]}" --playlist-start="$start" -- "${files[@]}"
 fi
