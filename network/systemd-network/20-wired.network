@@ -1,0 +1,23 @@
+# systemd-networkd: wired ethernet with 802.1X (Tencent office)
+# wpa_supplicant handles auth; networkd handles DHCP after carrier up
+[Match]
+Type=ether
+Name=enp*
+
+[Network]
+DHCP=yes
+DNS=127.0.0.1
+DNSDefaultRoute=false
+
+[DHCPv4]
+UseDNS=false
+UseNTP=false
+# Match original DhcpcdOptions='-L -G': no gateway from wired
+UseGateway=false
+UseRoutes=false
+# Wired gets lower metric (higher priority)
+RouteMetric=100
+SendHostname=false
+
+[IPv6AcceptRA]
+UseDNS=false

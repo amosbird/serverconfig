@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# network-fallback — keep policy routing consistent with the exit node
+#
+# A selected exit node installs `default dev tailscale0` (table 52), so all
+# default traffic then depends on that tunnel working. When it can't carry
+# traffic the route is a black hole and everything breaks. The causes vary —
+# captive portal, UDP blocked, DERP unreachable, exit node offline — but the
+# response is always the same, so this daemon reconciles one bit of state:
+#
+#     exit node selected AND usable  -> no rule, normal policy routing
+#     exit node selected but broken  -> `ip rule pref 100 lookup main`,
+#                                       straight out the physical gateway
+#     no exit node selected          -> no rule; nothing to bypass
+#
+# DESIGN RULE: breakage() is a pure function of external facts and never reads
+# the bypass state. An earlier version consulted it (to stop DHCP option 114,
+# which persists after login, from pinning the bypass on forever) and
+# self-oscillated at ~1Hz: bypass on -> skip the portal check -> tailscale looks
+# healthy -> bypass off -> portal detected again -> repeat. Any judgement that
+# depends on its own output does this. So "is the portal still intercepting?"
+# must be answerable on its own — which is exactly what RFC 8908 provides.
+#
+# Facts, evaluated in order:
+#
+#   1. exit node selected?    tailscale status --json .ExitNodeStatus
+#   2. portal intercepting?   DHCP option 114 (RFC 8910) -> capport API
+#   3. tunnel broken?         .ExitNodeStatus.Online, .Health[]
+#
+# Wakeups come from `tailscale debug watch-ipn` (tailscaled state changes) and
+# from network-reconfigure restarting this unit on link changes — the latter
+# matters because joining a portal network may produce no tailscale event at
+# all. watch-ipn is an explicitly unstable interface, so nothing is parsed out
+# of it; it only says "something changed, look again".
+
+set -euo pipefail
+
+PREF=100
+PROBE_URL="http://connectivitycheck.gstatic.com/generate_204"
+CAPPORT_ACCEPT="Accept: application/captive+json"
+# Re-check cadence. The bypass state is abnormal and self-clearing depends on
+# noticing recovery, so it is checked often; the healthy state only needs to
+# catch a rule installed behind the daemon's back, so it idles slowly.
+RECHECK_SECS=20
+IDLE_SECS=120
+
+log()   { logger -t network-fallback "$*"; }
+trace() { logger -t network-fallback -p daemon.debug "trace: $*"; }
+
+# Run something as the logged-in user's desktop session.
+as_user() {
+    sudo -u amos DISPLAY=:0 \
+        DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus "$@" 2>/dev/null || true
+}
+
+notify() { log "$1: $2"; as_user notify-send -a "Network" "$1" "$2"; }
+
+has_bypass() { ip rule show pref "$PREF" | grep -q .; }
+
+# --- captive portal (RFC 8910 discovery + RFC 8908 API) ----------------------
+# Fetched once per reconcile; CAPPORT_URL/CAPPORT_BODY are the cached result.
+CAPPORT_URL="" CAPPORT_BODY=""
+
+capport_probe() {
+    local iface
+    CAPPORT_URL="" CAPPORT_BODY=""
+    iface=$(ip -4 route show default | awk '{print $5; exit}')
+    [ -n "$iface" ] || return 0
+    # networkctl exits non-zero on options it can't parse (e.g. 43); ignore it.
+    CAPPORT_URL=$({ networkctl dhcp-lease "$iface" 2>/dev/null || true; } |
+        awk 'tolower($0) ~ /captive portal/ {print $NF; exit}')
+    [ -n "$CAPPORT_URL" ] || return 0
+    # This URL is reachable pre-authentication by design (walled garden).
+    CAPPORT_BODY=$(curl -sf -m 5 -H "$CAPPORT_ACCEPT" "$CAPPORT_URL" 2>/dev/null || true)
+    jq -e 'has("captive")' <<<"$CAPPORT_BODY" >/dev/null 2>&1 || CAPPORT_BODY=""
+}
+
+# Is a captive portal intercepting traffic *right now*? Answerable on its own,
+# without reference to the bypass rule — that is what keeps this stable.
+portal_intercepting() {
+    local out code final
+    [ -n "$CAPPORT_URL" ] || return 1        # no option 114: not a portal network
+
+    if [ -n "$CAPPORT_BODY" ]; then          # the portal's authoritative answer
+        trace "capport $CAPPORT_URL -> $(jq -c . <<<"$CAPPORT_BODY")"
+        jq -e '.captive' <<<"$CAPPORT_BODY" >/dev/null 2>&1
+        return
+    fi
+
+    # No usable capport API: fall back to probing. Interception has a positive
+    # signature — the plain-HTTP probe is answered by something that is not the
+    # real endpoint, i.e. redirected elsewhere or given a non-204 body.
+    #
+    # A failed request is NOT that signature: it means the network is down, and
+    # treating it as a portal is how an unrelated outage used to pin the bypass
+    # on (the probe cannot succeed while the tunnel is broken, so it looked like
+    # a portal forever). Unreachable => report "not intercepting" and let the
+    # tailscale health checks below describe the real fault.
+    out=$(curl -sL -o /dev/null -m 5 -w '%{http_code} %{url_effective}' "$PROBE_URL" 2>/dev/null || true)
+    code=${out%% *} final=${out#* }
+    trace "capport $CAPPORT_URL has no API; probe -> ${out:-unreachable}"
+    case "$code" in
+        000|"") return 1 ;;                  # unreachable: an outage, not a portal
+        204)    return 1 ;;                  # the real endpoint answered: clear
+        *)      [ "$final" != "$PROBE_URL" ] ;;   # redirected => intercepted
+    esac
+}
+
+# A browser will not find the portal on its own: portals intercept plain HTTP
+# only and cannot touch HTTPS, which is all a modern browser emits — so the
+# login page simply never appears. Option 114 hands us the address, so open it.
+open_portal() {
+    local page
+    page=$(jq -r '.["user-portal-url"] // empty' <<<"$CAPPORT_BODY" 2>/dev/null || true)
+    page="${page:-$CAPPORT_URL}"
+    [ -n "$page" ] || return 0
+    trace "opening login page $page"
+    as_user xdg-open "$page"
+}
+
+# --- diagnostics ------------------------------------------------------------
+# The machine is unreachable while it sits behind a portal, so the journal is
+# the only evidence available afterwards. Answers "was DNS hijacked, or did
+# SmartDNS serve a stale cache entry?": a hijack returns the gateway's own
+# address, while a stale entry shows a plausible address with a decayed TTL.
+trace_dns() {
+    local domain=connectivitycheck.gstatic.com dhcp local_ans ttl dhcp_ans
+    dhcp=$(awk '/^server / {print $2; exit}' /etc/smartdns/dhcp-dns.conf 2>/dev/null || true)
+    local_ans=$(dig +short +timeout=2 +tries=1 "$domain" @127.0.0.1 2>/dev/null | tr '\n' ',')
+    ttl=$(dig +noall +answer +timeout=2 +tries=1 "$domain" @127.0.0.1 2>/dev/null |
+              awk '$4 == "A" {print $2; exit}')
+    [ -n "$dhcp" ] &&
+        dhcp_ans=$(dig +short +timeout=2 +tries=1 "$domain" @"$dhcp" 2>/dev/null | tr '\n' ',')
+    trace "dns smartdns=[${local_ans:-none}] ttl=${ttl:-?} dhcp(${dhcp:-none})=[${dhcp_ans:-none}]" \
+          "$([ "${local_ans:-}" = "${dhcp_ans:-}" ] && echo same || echo DIFFER)"
+}
+
+# --- judgement --------------------------------------------------------------
+# Empty output = exit node usable (or none selected); otherwise the reason.
+# Pure function of external state — deliberately does not look at the rule.
+# Reads the CAPPORT_* globals; the caller refreshes them first.
+breakage() {
+    local status
+    status=$(tailscale status --json 2>/dev/null) || return 0
+
+    # Nothing to bypass when no exit node is selected.
+    jq -e '.ExitNodeStatus != null' <<<"$status" >/dev/null 2>&1 || return 0
+
+    if portal_intercepting; then
+        echo "captive portal"
+        return 0
+    fi
+
+    jq -r '
+        if (.ExitNodeStatus.Online | not) then "exit node is offline"
+        else [.Health[]?] | join("; ")
+        end' <<<"$status" 2>/dev/null
+}
+
+reconcile() {
+    local reason
+    # Must run here, not inside the $(breakage) subshell, or the globals it
+    # sets would be lost before open_portal could use them.
+    capport_probe
+    reason=$(breakage) || return 0
+
+    if [ -n "$reason" ]; then
+        has_bypass && return 0
+        # Tolerate EEXIST: a stale rule from a previous run is still correct.
+        ip rule add lookup main pref "$PREF" 2>/dev/null || true
+        notify "Exit node unusable" "Bypassing — $reason"
+        trace_dns
+        [ "$reason" = "captive portal" ] && open_portal
+    else
+        has_bypass || return 0
+        while ip rule del pref "$PREF" 2>/dev/null; do :; done
+        notify "Exit node restored" "Normal routing resumed"
+    fi
+    return 0
+}
+
+reconcile
+while :; do
+    # Wait for an event, but never indefinitely: while the bypass is installed
+    # the machine may be behind a portal that tailscale considers perfectly
+    # healthy, so no event is coming and the rule would never come off (an
+    # outage during testing pinned it on for exactly this reason).
+    #
+    # The timeout is always armed — deciding to block forever *before* entering
+    # read is wrong, because the bypass may be installed while already blocked,
+    # and that branch would then never be reconsidered. Idle cost is one
+    # `ip rule show` per interval, which is why the healthy state polls slowly.
+    if has_bypass; then
+        read -r -t "$RECHECK_SECS" _ || true
+    else
+        read -r -t "$IDLE_SECS" _ || { reconcile; continue; }
+    fi
+
+    # Debounce: the stream is chatty while the network is active (engine stats,
+    # not just state changes), and each reconcile forks tailscale+jq. Drain the
+    # backlog first so a burst costs one reconcile instead of dozens.
+    while IFS= read -r -t 0.5 _; do :; done
+    reconcile
+done < <(tailscale debug watch-ipn --netmap=false 2>/dev/null)

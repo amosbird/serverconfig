@@ -1,0 +1,23 @@
+# systemd-networkd: wireless interface
+# Handles DHCP for all wifi connections managed by iwd
+[Match]
+Type=wlan
+
+[Network]
+DHCP=yes
+# DNS handled by SmartDNS on 127.0.0.1
+DNS=127.0.0.1
+DNSDefaultRoute=false
+
+[DHCPv4]
+# Don't use DHCP-provided DNS in resolv.conf
+UseDNS=false
+# Don't install DHCP-provided NTP
+UseNTP=false
+# Wi-Fi gets higher metric (lower priority than wired)
+RouteMetric=600
+# Don't send hostname
+SendHostname=false
+
+[IPv6AcceptRA]
+UseDNS=false

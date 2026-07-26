@@ -1,0 +1,22 @@
+# systemd-networkd: Tencent-WiFi EAP-TLS (special — no gateway, for IOA routing)
+# This overrides 25-wireless.network for Tencent-WiFi specifically
+[Match]
+Type=wlan
+SSID=Tencent-WiFi
+
+[Network]
+DHCP=yes
+DNS=127.0.0.1
+DNSDefaultRoute=false
+
+[DHCPv4]
+UseDNS=false
+UseNTP=false
+# Match original netctl behavior: -L --nogateway
+UseGateway=false
+UseRoutes=false
+RouteMetric=600
+SendHostname=false
+
+[IPv6AcceptRA]
+UseDNS=false

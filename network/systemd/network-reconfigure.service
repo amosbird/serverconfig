@@ -1,0 +1,11 @@
+[Unit]
+Description=Reconfigure network (IOA routing, Tailscale LAN, DHCP DNS, SmartDNS)
+After=network-online.target ipset.service tailscaled.service
+Wants=network-online.target ipset.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/amos/scripts/network-reconfigure
+
+[Install]
+WantedBy=multi-user.target

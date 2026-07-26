@@ -1,0 +1,3 @@
+# When wired ethernet appears, start wpa_supplicant for 802.1X auth
+# systemd-networkd handles DHCP after carrier comes up
+ACTION=="add", SUBSYSTEM=="net", NAME=="enp*", TAG+="systemd", ENV{SYSTEMD_WANTS}="wpa_supplicant@%k.service"

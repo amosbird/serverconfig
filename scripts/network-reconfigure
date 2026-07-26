@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# network-reconfigure — reconcile network state after link change
+#
+# Triggered at boot and on every wifi/link change (systemd path unit).
+# Idempotent: cleans before applying.
+
+set -euo pipefail
+
+IFACE="${1:-wlan0}"
+MARK="0x1"
+CHAIN="NETMODE_IOA"
+IOA_CIDRS=("9.0.0.0/8" "10.0.0.0/8")
+
+clean_pref() { while ip rule del pref "$1" 2>/dev/null; do :; done; }
+
+# --- Policy routing ---
+for p in 1000 1500 2000 2500; do clean_pref "$p"; done
+iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null || true
+iptables -t mangle -F "$CHAIN" 2>/dev/null || true
+iptables -t mangle -X "$CHAIN" 2>/dev/null || true
+
+# 1000: directly-connected subnets (LAN, docker)
+# Wait for DHCP to install the link route (up to 10s)
+for _ in {1..10}; do
+    ip route show table main scope link dev "$IFACE" | grep -q . && break
+    sleep 1
+done
+while read -r subnet _; do
+    ip rule add to "$subnet" lookup main pref 1000
+done < <(ip route show table main scope link)
+
+# 1500: Tailscale CGNAT
+ip rule add to 100.64.0.0/10 lookup 52 pref 1500
+
+# 2000: non-Tencent 10.x exclusion
+ip rule add to 10.255.0.0/16 lookup main pref 2000
+
+# 2500: IOA (tinyproxy uid, ipset fwmark, Tencent CIDRs)
+tid=$(id -u tinyproxy 2>/dev/null || true)
+[ -n "$tid" ] && ip rule add uidrange "$tid-$tid" lookup ioa pref 2500
+ip rule add fwmark "$MARK" lookup ioa pref 2500
+for cidr in "${IOA_CIDRS[@]}"; do
+    ip rule add to "$cidr" lookup ioa pref 2500
+done
+
+iptables -t mangle -N "$CHAIN"
+iptables -t mangle -A "$CHAIN" -m set --match-set ioa dst -j MARK --set-xmark "$MARK"
+iptables -t mangle -A OUTPUT -j "$CHAIN"
+
+# --- Tailscale LAN awareness ---
+tailscale status &>/dev/null && \
+    tailscale set --exit-node-allow-lan-access=true 2>/dev/null || true
+
+# --- DHCP DNS → SmartDNS (captive portal fallback) ---
+for _ in {1..10}; do
+    dns=$(networkctl dhcp-lease "$IFACE" 2>/dev/null \
+        | awk '/domain name server/ {print $NF}' || true)
+    [ -n "${dns:-}" ] && break
+    sleep 1
+done
+
+if [ -n "${dns:-}" ]; then
+    printf '# DHCP DNS from %s\n' "$IFACE" > /etc/smartdns/dhcp-dns.conf
+    printf 'server %s\n' $dns >> /etc/smartdns/dhcp-dns.conf
+else
+    echo "# No DHCP DNS" > /etc/smartdns/dhcp-dns.conf
+fi
+
+systemctl restart smartdns 2>/dev/null || true
+
+# Re-evaluate the exit-node bypass. Needed on every link change: joining a
+# captive-portal network may produce no tailscale event at all, so the daemon
+# would otherwise stay blocked and never notice.
+systemctl restart --no-block network-fallback.service 2>/dev/null || true

@@ -1,0 +1,391 @@
+#!/usr/bin/env bash
+# netmode — network mode controller
+#
+# Manages policy routing modes cleanly, idempotently, with clear ownership.
+# Each mode can be applied/removed independently. Multiple modes can coexist.
+#
+# Usage:
+#   netmode status          Show current state
+#   netmode ioa on|off      Toggle IOA corporate routing
+#   netmode cn on|off       Toggle China IP bypass routing
+#   netmode apply           Re-apply all active modes (e.g. after wifi change)
+#   netmode reset           Remove ALL custom rules (clean slate)
+
+set -euo pipefail
+
+# --- Constants ---
+STATE_DIR="/run/netmode"
+IOA_STATE="$STATE_DIR/ioa"
+CN_STATE="$STATE_DIR/cn"
+DNS_MODE_STATE="$STATE_DIR/dns-mode"
+
+# Config source (in git repo)
+NETMODE_CONF_DIR="/home/amos/git/serverconfig/network/smartdns"
+SMARTDNS_MODE_FILE="/etc/smartdns/mode.conf"
+
+# IOA routing
+IOA_MARK="0x1"
+IOA_CHAIN="NETMODE_IOA"
+IOA_TABLE="ioa"
+TINYPROXY_USER="tinyproxy"
+
+# Tencent intranet CIDRs routed via IOA
+IOA_CIDRS=(
+    "9.0.0.0/8"
+    "10.0.0.0/8"
+    "11.0.0.0/16"
+)
+# Excluded from IOA (stays in main, checked before IOA at pref 2000)
+IOA_EXCLUDE=(
+    "10.255.0.0/16"
+)
+# Tailscale subnets — must bypass IOA (pref 1500, before IOA's 2500)
+TAILSCALE_NETS=(
+    "100.64.0.0/10"
+)
+
+# CN routing
+CN_TABLE="cn"
+
+# RFC1918 + link-local — always protected
+PRIVATE_NETS=(
+    "192.168.0.0/16"
+    "172.16.0.0/12"
+    "10.0.0.0/8"
+    "169.254.0.0/16"
+)
+
+# --- Helpers ---
+
+ensure_root() {
+    if ((UID != 0)) && [[ -z "${SUDO_UID:-}" ]]; then
+        exec sudo "$0" "$@"
+    fi
+}
+
+get_wifi_gateway() {
+    # Find the default gateway on the physical (non-virtual, non-wired) interface
+    local gw=""
+    local iface=""
+    read -r _ _ gw _ iface _ < <(ip -4 route show default 2>/dev/null | head -1) || true
+    if [ -n "$gw" ]; then
+        echo "$gw"
+    fi
+}
+
+notify() {
+    local user_id
+    user_id=$(id -u "${SUDO_USER:-amos}" 2>/dev/null || echo 1000)
+    sudo -u "${SUDO_USER:-amos}" \
+        DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$user_id/bus" \
+        notify-send -a "netmode" "$*" 2>/dev/null || true
+}
+
+# Clean all rules at a specific preference
+clean_pref() {
+    local pref="$1"
+    while ip rule del pref "$pref" 2>/dev/null; do :; done
+}
+
+# --- DNS Mode ---
+
+dns_mode() {
+    local mode="$1"  # travel | ioa | office
+    local src="$NETMODE_CONF_DIR/mode-${mode}.conf"
+    if [ ! -f "$src" ]; then
+        echo "ERROR: DNS mode config not found: $src" >&2
+        return 1
+    fi
+    cp "$src" "$SMARTDNS_MODE_FILE"
+    systemctl reload smartdns 2>/dev/null || systemctl restart smartdns 2>/dev/null || true
+    echo "$mode" > "$DNS_MODE_STATE"
+    echo "  DNS mode: $mode"
+}
+
+# --- Mode: IOA ---
+
+ioa_on() {
+    echo "Enabling IOA routing..."
+    mkdir -p "$STATE_DIR"
+
+    # Preflight: verify IOA tunnel is up and table has a route
+    if ! ip route show table "$IOA_TABLE" 2>/dev/null | grep -q .; then
+        echo "ERROR: ioa routing table is empty (IOA tunnel not running?)" >&2
+        echo "       Start IOA client first, then retry." >&2
+        return 1
+    fi
+    if ! ip link show tun0 up 2>/dev/null | grep -q UP; then
+        echo "WARNING: tun0 is not UP; IOA routing may not work." >&2
+    fi
+
+    # Verify ipset exists (created by ipset.service from /etc/ipset.conf)
+    if ! ipset list ioa -t &>/dev/null; then
+        echo "ERROR: ipset 'ioa' does not exist. Is ipset.service running?" >&2
+        return 1
+    fi
+
+    # Clean existing IOA rules (idempotent)
+    ioa_off_quiet
+
+    # pref 1000: protect directly-connected subnets (LAN, Docker bridge, etc.)
+    while read -r subnet _ _; do
+        ip rule add to "$subnet" lookup main pref 1000
+    done < <(ip route show table main scope link)
+
+    # pref 1500: Tailscale traffic bypasses IOA (goes to Tailscale's own rules at 5209+)
+    for cidr in "${TAILSCALE_NETS[@]}"; do
+        ip rule add to "$cidr" lookup main pref 1500
+    done
+    # Also protect Tailscale subnet routes (from table 52)
+    if ip route show table 52 &>/dev/null; then
+        while read -r subnet _; do
+            ip rule add to "$subnet" lookup 52 pref 1500
+        done < <(ip route show table 52)
+    fi
+
+    # iptables: create chain for IOA marking
+    iptables -t mangle -N "$IOA_CHAIN" 2>/dev/null || iptables -t mangle -F "$IOA_CHAIN"
+    iptables -t mangle -A "$IOA_CHAIN" -m set --match-set ioa dst -j MARK --set-xmark "$IOA_MARK"
+
+    # Hook chain into OUTPUT (if not already)
+    if ! iptables -t mangle -C OUTPUT -j "$IOA_CHAIN" 2>/dev/null; then
+        iptables -t mangle -A OUTPUT -j "$IOA_CHAIN"
+    fi
+
+    # pref 2000: exclude specific ranges from IOA
+    for cidr in "${IOA_EXCLUDE[@]}"; do
+        ip rule add to "$cidr" lookup main pref 2000
+    done
+
+    # pref 2500: IOA routing
+    # tinyproxy uid — route its traffic via IOA unconditionally
+    local tid
+    tid=$(id -u "$TINYPROXY_USER" 2>/dev/null || echo "")
+    if [ -n "$tid" ]; then
+        ip rule add uidrange "$tid-$tid" lookup "$IOA_TABLE" pref 2500
+    fi
+    # fwmark (ipset matches from SmartDNS → iptables)
+    ip rule add fwmark "$IOA_MARK" lookup "$IOA_TABLE" pref 2500
+    # Tencent CIDRs (hardcoded intranet ranges)
+    for cidr in "${IOA_CIDRS[@]}"; do
+        ip rule add to "$cidr" lookup "$IOA_TABLE" pref 2500
+    done
+
+    # pref 3000: protect private networks (Docker, Tailscale, LAN)
+    for cidr in "${PRIVATE_NETS[@]}"; do
+        ip rule add to "$cidr" lookup main pref 3000
+    done
+
+    touch "$IOA_STATE"
+    dns_mode ioa
+    notify "IOA routing enabled"
+    echo "IOA routing enabled."
+}
+
+ioa_off_quiet() {
+    # Remove IOA-specific rules
+    clean_pref 1000
+    clean_pref 1500
+    clean_pref 2000
+    clean_pref 2500
+    clean_pref 3000
+
+    # Remove iptables chain
+    iptables -t mangle -D OUTPUT -j "$IOA_CHAIN" 2>/dev/null || true
+    iptables -t mangle -F "$IOA_CHAIN" 2>/dev/null || true
+    iptables -t mangle -X "$IOA_CHAIN" 2>/dev/null || true
+
+    rm -f "$IOA_STATE"
+}
+
+ioa_off() {
+    echo "Disabling IOA routing..."
+    ioa_off_quiet
+    dns_mode travel
+    notify "IOA routing disabled"
+    echo "IOA routing disabled."
+}
+
+# --- Mode: CN ---
+
+cn_on() {
+    echo "Enabling CN routing..."
+    mkdir -p "$STATE_DIR"
+
+    local gw
+    gw=$(get_wifi_gateway)
+    if [ -z "$gw" ]; then
+        echo "ERROR: No default gateway found. Cannot set up CN routing." >&2
+        return 1
+    fi
+
+    # Clean existing CN rules
+    cn_off_quiet
+
+    # Populate cn route table from ~/.routefile
+    if [ -f "$HOME/.routefile" ] || [ -f "/home/amos/.routefile" ]; then
+        local routefile="${HOME}/.routefile"
+        [ -f "$routefile" ] || routefile="/home/amos/.routefile"
+        ip route flush table "$CN_TABLE" 2>/dev/null || true
+        ip -batch - <<< "$(sed "s/GATEWAY/$gw/" "$routefile")"
+    else
+        echo "WARNING: ~/.routefile not found. Run 'updateroutes' first." >&2
+    fi
+
+    # Add VPS IPs to cn table
+    if command -v pass &>/dev/null; then
+        for h in $(pass show vps_ip_list 2>/dev/null); do
+            ip route add "$h" via "$gw" table "$CN_TABLE" 2>/dev/null || true
+        done
+    fi
+
+    # pref 4000: lookup cn table
+    ip rule add table "$CN_TABLE" pref 4000
+
+    # pref 3000: protect private networks
+    for cidr in "${PRIVATE_NETS[@]}"; do
+        ip rule add to "$cidr" lookup main pref 3000 2>/dev/null || true
+    done
+
+    touch "$CN_STATE"
+    notify "CN routing enabled (gw=$gw)"
+    echo "CN routing enabled (gateway: $gw)."
+}
+
+cn_off_quiet() {
+    clean_pref 4000
+    # Don't flush cn table — it's expensive to rebuild; just remove the rule
+    rm -f "$CN_STATE"
+}
+
+cn_off() {
+    echo "Disabling CN routing..."
+    cn_off_quiet
+    # Also clean pref 3000 if IOA is not active
+    if [ ! -f "$IOA_STATE" ]; then
+        clean_pref 3000
+    fi
+    notify "CN routing disabled"
+    echo "CN routing disabled."
+}
+
+# --- Commands ---
+
+cmd_status() {
+    echo "=== netmode status ==="
+    printf "  DNS:  %s\n" "$(cat "$DNS_MODE_STATE" 2>/dev/null || echo 'unknown (default travel)')"
+
+    printf "  IOA:  "
+    if [ -f "$IOA_STATE" ]; then
+        echo "ON"
+        echo "        rules: $(ip rule show pref 2500 | wc -l) at pref 2500"
+        echo "        ioa table routes: $(ip route show table ioa 2>/dev/null | wc -l)"
+    else
+        echo "OFF"
+    fi
+
+    printf "  CN:   "
+    if [ -f "$CN_STATE" ]; then
+        echo "ON"
+        echo "        rules: $(ip rule show pref 4000 | wc -l) at pref 4000"
+        echo "        cn table routes: $(ip route show table cn 2>/dev/null | wc -l)"
+    else
+        echo "OFF"
+    fi
+
+    echo ""
+    echo "  Default route: $(ip -4 route show default | head -1)"
+    echo "  DNS: $(dig +short +timeout=2 google.com @127.0.0.1 2>/dev/null | head -1 || echo 'FAILED')"
+}
+
+cmd_apply() {
+    # Re-apply active modes (useful after wifi change)
+    if [ -f "$IOA_STATE" ]; then
+        ioa_on
+    fi
+    if [ -f "$CN_STATE" ]; then
+        cn_on
+    fi
+    if [ ! -f "$IOA_STATE" ] && [ ! -f "$CN_STATE" ]; then
+        echo "No active modes. Nothing to apply."
+    fi
+}
+
+cmd_reset() {
+    echo "Resetting all netmode rules..."
+    ioa_off_quiet
+    cn_off_quiet
+    clean_pref 1000
+    clean_pref 1500
+    clean_pref 2000
+    clean_pref 2500
+    clean_pref 3000
+    clean_pref 4000
+    dns_mode travel
+    notify "All custom routing cleared"
+    echo "All custom routing rules removed."
+}
+
+cmd_office() {
+    echo "Switching to office mode (wired LAN, no tunnel)..."
+    mkdir -p "$STATE_DIR"
+    # Office doesn't need IOA tunnel routing — intranet is directly reachable
+    ioa_off_quiet
+    dns_mode office
+    notify "Office mode (wired LAN)"
+    echo "Office mode active. Intranet DNS via LAN."
+}
+
+cmd_dns() {
+    local mode="${1:-}"
+    case "$mode" in
+        travel|ioa|office)
+            dns_mode "$mode"
+            ;;
+        *)
+            echo "Usage: netmode dns travel|ioa|office"
+            echo "  Current: $(cat "$DNS_MODE_STATE" 2>/dev/null || echo 'unknown')"
+            exit 1
+            ;;
+    esac
+}
+
+# --- Main ---
+
+ensure_root "$@"
+
+case "${1:-}" in
+    status) cmd_status ;;
+    ioa)
+        case "${2:-}" in
+            on)  ioa_on ;;
+            off) ioa_off ;;
+            *)   echo "Usage: netmode ioa on|off"; exit 1 ;;
+        esac
+        ;;
+    cn)
+        case "${2:-}" in
+            on)  cn_on ;;
+            off) cn_off ;;
+            *)   echo "Usage: netmode cn on|off"; exit 1 ;;
+        esac
+        ;;
+    office) cmd_office ;;
+    dns)    cmd_dns "${2:-}" ;;
+    apply)  cmd_apply ;;
+    reset)  cmd_reset ;;
+    *)
+        echo "Usage: netmode {status|ioa on|off|cn on|off|office|dns MODE|apply|reset}"
+        echo ""
+        echo "  status  — show current routing & DNS modes"
+        echo "  ioa on  — enable IOA routing + IOA DNS (requires tunnel)"
+        echo "  ioa off — disable IOA routing, switch DNS to travel"
+        echo "  office  — office LAN mode (intranet DNS, no tunnel routing)"
+        echo "  cn on   — enable China IP bypass routing"
+        echo "  cn off  — disable China IP bypass routing"
+        echo "  dns MODE— switch DNS only (travel|ioa|office)"
+        echo "  apply   — re-apply active modes (after wifi change)"
+        echo "  reset   — remove ALL custom rules, DNS → travel"
+        exit 1
+        ;;
+esac

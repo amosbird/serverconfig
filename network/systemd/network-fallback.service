@@ -1,0 +1,15 @@
+[Unit]
+Description=Bypass exit node when the tailscale tunnel is unusable
+After=tailscaled.service
+Wants=tailscaled.service
+
+[Service]
+# Long-running: blocks on tailscaled's IPN bus for connectivity changes.
+# The loop ends if tailscaled restarts (socket EOF), so reconnect.
+Type=simple
+ExecStart=/home/amos/scripts/network-fallback
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

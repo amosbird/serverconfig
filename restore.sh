@@ -121,12 +121,32 @@ if [[ -n $GUI ]]; then
     setxkbmap us
     sudo mkdir -p /etc/pacman.d/hooks
     sudo cp "$DIR"/xkb-restore.hook /etc/pacman.d/hooks/xkb-restore.hook
-    sudo cp "$DIR"/90-amos-dhcp /usr/lib/dhcpcd/dhcpcd-hooks/90-amos
-    sudo cp "$DIR"/udev/rules.d/90-wired-netctl.rules /etc/udev/rules.d/
-    sudo udevadm control --reload-rules
+
+    # Network stack: iwd + systemd-networkd (see network/README.md).
+    # Config only — no service is started or stopped here, so running restore.sh
+    # never drops the connection. Switching stacks is migrate.sh's job.
+    sudo mkdir -p /etc/iwd /etc/systemd/network /etc/systemd/system/wpa_supplicant@.service.d
+    sudo cp "$DIR"/network/iwd/main.conf /etc/iwd/main.conf
+    sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
+    sudo cp "$DIR"/network/systemd/wpa_supplicant@.service.d/override.conf \
+        /etc/systemd/system/wpa_supplicant@.service.d/override.conf
+    sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service,fallback.service} \
+        /etc/systemd/system/
+    sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
+    # SmartDNS base config; mode-*.conf are switched by `netmode`, and
+    # dhcp-dns.conf is rewritten per-link by network-reconfigure.
+    sudo mkdir -p /etc/smartdns
+    sudo cp "$DIR"/network/smartdns/{smartdns,mode-travel,mode-ioa,mode-office}.conf /etc/smartdns/
+    [[ -e /etc/smartdns/mode.conf ]] ||
+        sudo cp "$DIR"/network/smartdns/mode-travel.conf /etc/smartdns/mode.conf
+    [[ -e /etc/smartdns/dhcp-dns.conf ]] ||
+        sudo cp "$DIR"/network/smartdns/dhcp-dns.conf /etc/smartdns/dhcp-dns.conf
+
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
+    sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
+    sudo systemctl enable network-reconfigure.path network-fallback.service
 
     # Setup kitty desktop-ui portal (replaces xdg-desktop-portal-termfilechooser)
     kitten desktop-ui enable-portal

@@ -1,0 +1,8 @@
+# Do not manage tailscale, docker, tun, veth interfaces
+# These are fully managed by their own daemons (tailscaled, dockerd, IOA)
+[Match]
+Name=tailscale* tun* docker* br-* veth*
+
+[Link]
+Unmanaged=yes
+RequiredForOnline=no

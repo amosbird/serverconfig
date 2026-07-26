@@ -16,16 +16,20 @@ export NO_PROXY=1
 # user=Administrator
 # password=$(pass show windows)
 ip=$(pass show windows_qtw)
+ip=100.125.242.70
 user=Tencent_Go
 password=$(pass show gpg)
 
+# log="/log-filters:com.freerdp.client.x11.cliprdr:trace"
 # size="/size:1920x1080 /smart-sizing:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g')"
 # debug=/log-level:trace
 # clipboard=/clipboard:use-selection:PRIMARY
+log=/log-level:trace
 # log=/log-filters:com.freerdp.channels.cliprdr.client:trace
 # log=/log-filters:com.freerdp.channels.audin.client:trace
 rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
 # compression="-glyph-cache /network:modem /compression /bpp:8 -themes -wallpaper"
+# compression="/compression /network:lan"
 
 # effect="+aero +menu-anims +window-drag +fonts /bpp:32"
 # program=~/git/FreeRDP/release/client/X11/xfreerdp
@@ -33,7 +37,7 @@ rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
 # audio=/audio-mode:1
 program=xfreerdp
 
-$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $cliphoard /u:$user /p:"$password" /v:$ip $rdp2tcp &> /tmp/freerdp.log &
+$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /rfx /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $clipboard /u:$user /p:"$password" /v:$ip $rdp2tcp &> /tmp/freerdp.log &
 rdp_pid=$!
 
 win-sync-theme &
