@@ -1,0 +1,29 @@
+model = "copilot/claude-opus-4.6"
+
+[auto_summary]
+threshold_ratio = 0.5
+
+[mcp.iWiki]
+type = "http"
+url = "$IWIKI_MCP_URL"
+disabled = true
+[mcp.iWiki.headers]
+Authorization = "$IWIKI_MCP_TOKEN"
+
+[mcp.context7]
+type = "http"
+url = "https://mcp.context7.com/mcp"
+disabled = true
+[mcp.context7.headers]
+CONTEXT7_API_KEY = "$CONTEXT7_API_KEY"
+
+[mcp.grep_app]
+type = "http"
+url = "https://mcp.grep.app"
+disabled = true
+
+[mcp.exa]
+type = "http"
+url = "https://mcp.exa.ai/mcp?tools=web_search_exa"
+[mcp.exa.headers]
+x-api-key = "$EXA_API_KEY"
