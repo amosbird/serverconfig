@@ -62,7 +62,10 @@ as_user() {
 
 notify() { log "$1: $2"; as_user notify-send -a "Network" "$1" "$2"; }
 
-has_bypass() { ip rule show pref "$PREF" | grep -q .; }
+# Not `| grep -q`: that exits on the first line, the writer takes SIGPIPE, and
+# `pipefail` then reports the pipeline as failed — so a rule that *is* present
+# reads as absent. Compare the output instead.
+has_bypass() { [ -n "$(ip rule show pref "$PREF")" ]; }
 
 # --- captive portal (RFC 8910 discovery + RFC 8908 API) ----------------------
 # Fetched once per reconcile; CAPPORT_URL/CAPPORT_BODY are the cached result.
@@ -133,11 +136,17 @@ open_portal() {
 trace_dns() {
     local domain=connectivitycheck.gstatic.com dhcp local_ans ttl dhcp_ans
     dhcp=$(awk '/^server / {print $2; exit}' /etc/smartdns/dhcp-dns.conf 2>/dev/null || true)
-    local_ans=$(dig +short +timeout=2 +tries=1 "$domain" @127.0.0.1 2>/dev/null | tr '\n' ',')
-    ttl=$(dig +noall +answer +timeout=2 +tries=1 "$domain" @127.0.0.1 2>/dev/null |
+    # Every dig gets `|| true`: it exits 9 when no server answers, and under
+    # `pipefail` that status would propagate out of the assignment and kill the
+    # daemon — at the one moment its diagnostics are worth having.
+    local_ans=$({ dig +short +timeout=2 +tries=1 "$domain" @127.0.0.1 2>/dev/null || true; } |
+                    tr '\n' ',')
+    ttl=$({ dig +noall +answer +timeout=2 +tries=1 "$domain" @127.0.0.1 2>/dev/null || true; } |
               awk '$4 == "A" {print $2; exit}')
-    [ -n "$dhcp" ] &&
-        dhcp_ans=$(dig +short +timeout=2 +tries=1 "$domain" @"$dhcp" 2>/dev/null | tr '\n' ',')
+    if [ -n "$dhcp" ]; then
+        dhcp_ans=$({ dig +short +timeout=2 +tries=1 "$domain" @"$dhcp" 2>/dev/null || true; } |
+                       tr '\n' ',')
+    fi
     trace "dns smartdns=[${local_ans:-none}] ttl=${ttl:-?} dhcp(${dhcp:-none})=[${dhcp_ans:-none}]" \
           "$([ "${local_ans:-}" = "${dhcp_ans:-}" ] && echo same || echo DIFFER)"
 }
@@ -176,7 +185,7 @@ reconcile() {
         # Tolerate EEXIST: a stale rule from a previous run is still correct.
         ip rule add lookup main pref "$PREF" 2>/dev/null || true
         notify "Exit node unusable" "Bypassing — $reason"
-        trace_dns
+        trace_dns || true
         [ "$reason" = "captive portal" ] && open_portal
     else
         has_bypass || return 0
@@ -186,7 +195,7 @@ reconcile() {
     return 0
 }
 
-reconcile
+reconcile || true
 while :; do
     # Wait for an event, but never indefinitely: while the bypass is installed
     # the machine may be behind a portal that tailscale considers perfectly
@@ -200,12 +209,12 @@ while :; do
     if has_bypass; then
         read -r -t "$RECHECK_SECS" _ || true
     else
-        read -r -t "$IDLE_SECS" _ || { reconcile; continue; }
+        read -r -t "$IDLE_SECS" _ || { reconcile || true; continue; }
     fi
 
     # Debounce: the stream is chatty while the network is active (engine stats,
     # not just state changes), and each reconcile forks tailscale+jq. Drain the
     # backlog first so a burst costs one reconcile instead of dozens.
     while IFS= read -r -t 0.5 _; do :; done
-    reconcile
+    reconcile || true
 done < <(tailscale debug watch-ipn --netmap=false 2>/dev/null)

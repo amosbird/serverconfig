@@ -185,15 +185,47 @@ properties keep that from happening:
   only tolerates kernel errors — so a single malformed entry would silently
   truncate everything after it. Addresses are matched against an IPv4/CIDR
   pattern before being emitted.
-- **Cached sources.** Both the DERP list and the IOA gateway addresses are
+- **Cached sources.** Both the DERP list and the IOA endpoint addresses are
   cached under `/var/lib/network-reconfigure/`. Neither source is reliable at
   the moment this runs: tailscaled may be down, and SmartDNS is restarted by
-  this very script.
+  this very script. The IOA endpoints are *unioned* with the cache rather than
+  replacing it: SmartDNS answers with whichever of several valid endpoints
+  measured fastest at that instant, so replacing would leave the others
+  unprotected.
+- **One list, two consumers.** That same file feeds both the underlay route
+  table and the `ioa_underlay` ipset that exempts those addresses from marking.
+  They were resolved separately once, drifted apart for the reason above, and an
+  endpoint that was in the set but not in the table got routed into the very
+  tunnel it builds — which kills IOA and takes DNS with it.
 
 The rule itself is installed whenever the table has content, even if this run
 could not rebuild it, so a momentarily missing default route cannot strip
 protection that is already in place. If the table really is empty the rule is
 withheld and the reason is logged.
+
+### Failing safe
+
+The script deletes every rule it owns before rebuilding them, so an abort in
+between is worse than not running at all: packets stay marked for a tunnel that
+has no rule to reach it, and the machine goes offline with nothing left running
+to repair it. Two things prevent that.
+
+An `ERR` trap removes the `mangle OUTPUT` jump — the same
+`iptables -t mangle -D OUTPUT -j NETMODE_IOA` that was the manual recovery every
+time this happened. Unmarked traffic falls through to table main, which works.
+Marking is an optimisation; being reachable is not.
+
+The last step then checks the one invariant that has ever taken the machine
+offline: it asks the kernel, via `ip route get <endpoint> mark 1`, whether an
+IOA tunnel endpoint would be routed into the IOA tunnel. If so it removes the
+jump itself and logs which address was wrong.
+
+This matters because `set -euo pipefail` is unusually sharp here. `ip route show
+table X` exits 2 when the table has never been created — the state of every
+table on a cold boot; `dig` exits 9 when no server answers — which happens
+because this script restarts SmartDNS; and `grep` exits 1 on no match. Under
+`pipefail` each of those killed the run mid-rebuild. They are all handled now,
+but the trap is what makes the next one survivable.
 
 ### Known limitation
 

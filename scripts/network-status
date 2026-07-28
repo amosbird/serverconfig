@@ -5,7 +5,10 @@
 # and nothing is written, so it can be run as a normal user and its answer is
 # never stale.
 
-set -uo pipefail
+# No pipefail: this script is full of "is there anything here" checks, and a
+# `cmd | grep -q` pipeline reports 141 when grep exits early and the writer
+# takes SIGPIPE. Counting output avoids the question entirely.
+set -u
 
 P_IOA_UNDERLAY=490
 P_UNDERLAY=500
@@ -13,8 +16,10 @@ P_IOA=2500
 P_CN=4000
 P_ESCAPE=4500
 
-rules() { ip -4 rule show pref "$1" 2>/dev/null; }
-count() { rules "$1" | grep -c . ; }
+rules()   { ip -4 rule show pref "$1" 2>/dev/null; }
+count()   { rules "$1" | wc -l; }
+routes()  { ip route show table "$1" 2>/dev/null | wc -l; }
+present() { [ -n "$(rules "$1")" ]; }
 
 printf 'interfaces\n'
 ip -4 -o addr show scope global |
@@ -22,21 +27,21 @@ ip -4 -o addr show scope global |
 printf '  %-12s %s\n' default "$(ip -4 route show default | head -1)"
 
 printf '\nunderlay (never enters a tunnel)\n'
-printf '  ioa escape    %s\n' "$(rules "$P_IOA_UNDERLAY" | grep -q . && echo pinned || echo MISSING)"
+printf '  ioa escape    %s\n' "$(present "$P_IOA_UNDERLAY" && echo pinned || echo MISSING)"
 printf '  rules         %s\n' "$(count "$P_UNDERLAY")"
 printf '  routes        %s (derp, control plane, dns upstreams, ioa gateways)\n' \
-    "$(ip route show table underlay 2>/dev/null | grep -c .)"
+    "$(routes underlay)"
 
 printf '\noverlay\n'
-if [ "$(ip route show table ioa 2>/dev/null | grep -c .)" -gt 0 ]; then
+if [ "$(routes ioa)" -gt 0 ]; then
     printf '  IOA           %s rules, tun0 %s\n' "$(count "$P_IOA")" \
         "$(ip -4 addr show tun0 &>/dev/null && echo up || echo down)"
 else
     printf '  IOA           no route in table ioa (tunnel down)\n'
 fi
-printf '  China direct  %s routes\n' "$(ip route show table cn 2>/dev/null | grep -c .)"
+printf '  China direct  %s routes\n' "$(routes cn)"
 printf '  tailnet       %s\n' \
-    "$(ip route show table 52 2>/dev/null | grep -q . && echo "table 52 populated" || echo "table 52 empty (tailscale down)")"
+    "$([ "$(routes 52)" -gt 0 ] && echo "table 52 populated" || echo "table 52 empty (tailscale down)")"
 
 printf '\nexit node\n'
 if command -v tailscale >/dev/null; then
@@ -48,7 +53,7 @@ if command -v tailscale >/dev/null; then
 else
     printf '  tailscale not installed\n'
 fi
-if rules "$P_ESCAPE" | grep -q .; then
+if present "$P_ESCAPE"; then
     printf '  BYPASSED — exit node unusable, traffic on the physical gateway\n'
 fi
 
