@@ -178,9 +178,18 @@ into the tunnel it is trying to build, and tailscaled deadlocks. Three
 properties keep that from happening:
 
 - **Staged rebuild.** Routes are built in table 501 and swapped in only if the
-  result is at least as large as what is already live. A run during a DNS
-  outage or with tailscaled down keeps the previous table instead of replacing
-  it with a shorter one.
+  result holds at least three quarters of what is already live. A run during a
+  DNS outage or with tailscaled down keeps the previous table instead of
+  replacing it with a much shorter one. The threshold is not "at least as
+  large": the DERP list churns by a route or two between runs, and rejecting on
+  any shrink froze the table permanently — a newly resolved IOA endpoint could
+  never get in, while the ipset that exempts it moved ahead.
+- **Identity before size.** A table built for a *different* network is never a
+  candidate to keep, however large it is. Its routes read "via the old
+  gateway", so keeping it does not preserve protection, it installs a black
+  hole — and the size guard would then defend that black hole against every
+  correct rebuild that followed. If no route in the live table points at the
+  current physical gateway, the table is treated as absent.
 - **Validated input.** `ip -batch` stops at the first *parse* error — `-force`
   only tolerates kernel errors — so a single malformed entry would silently
   truncate everything after it. Addresses are matched against an IPv4/CIDR
@@ -206,26 +215,48 @@ withheld and the reason is logged.
 ### Failing safe
 
 The script deletes every rule it owns before rebuilding them, so an abort in
-between is worse than not running at all: packets stay marked for a tunnel that
-has no rule to reach it, and the machine goes offline with nothing left running
-to repair it. Two things prevent that.
+between is worse than not running at all, and the machine goes offline with
+nothing left running to repair it. Three things prevent that.
 
-An `ERR` trap removes the `mangle OUTPUT` jump — the same
-`iptables -t mangle -D OUTPUT -j NETMODE_IOA` that was the manual recovery every
-time this happened. Unmarked traffic falls through to table main, which works.
-Marking is an optimisation; being reachable is not.
+An `ERR` trap restores a minimal safe state. It removes the `mangle OUTPUT`
+jump — the same `iptables -t mangle -D OUTPUT -j NETMODE_IOA` that was the
+manual recovery every time this happened — so unmarked traffic falls through to
+table main, which works. Marking is an optimisation; being reachable is not. It
+also puts the `pref 500` underlay rule back if the table still has routes,
+because the worse failure is the other one: with that rule missing and
+tailscale's own catch-all at `pref 5270` still live, tailscale's control plane
+and DERP traffic goes into the tunnel it is building, and removing the mangle
+jump does nothing for it.
 
-The last step then checks the one invariant that has ever taken the machine
-offline: it asks the kernel, via `ip route get <endpoint> mark 1`, whether an
-IOA tunnel endpoint would be routed into the IOA tunnel. If so it removes the
-jump itself and logs which address was wrong.
+The trap only works because the shell is `set -Eeuo pipefail`. Without `-E` an
+ERR trap is not inherited by shell functions, so a failure inside `warn` or
+`has_routes` would kill the script with the recovery hook silently skipped —
+exactly the situation it exists for.
+
+The last step then checks both directions of the one invariant that has ever
+taken the machine offline, by asking the kernel the same question a packet
+asks. `ip route get <ioa-endpoint> mark 1`: if an IOA tunnel endpoint would be
+routed into the IOA tunnel, the jump comes out. `ip route get <derp-relay>`: if
+an underlay address would be routed into tailscale0, `pref 5270` comes out
+(tailscale reinstalls it on its next reconfiguration, so the removal unblocks
+the daemon rather than changing anything). The IOA check reads the endpoint
+*cache*, not the ipset: the set holds only endpoints already proven to be in
+the underlay table, so iterating it could only ever confirm what is known good.
+
+A `flock` serialises runs. The `.path` unit fires several times per DHCP renew,
+and the destructive middle of the script is not safe against a second copy: one
+run's `ip route flush table 500` lands while another has already installed the
+rule pointing at it. Both waits for the link were also hoisted above the reset;
+they used to sit in the middle of it, leaving a ten-second window with no
+overlay rules at all while tailscale's catch-all was still live.
 
 This matters because `set -euo pipefail` is unusually sharp here. `ip route show
 table X` exits 2 when the table has never been created — the state of every
 table on a cold boot; `dig` exits 9 when no server answers — which happens
-because this script restarts SmartDNS; and `grep` exits 1 on no match. Under
-`pipefail` each of those killed the run mid-rebuild. They are all handled now,
-but the trap is what makes the next one survivable.
+because this script restarts SmartDNS; `cat` exits 1 on a cache that does not
+exist yet; `grep` exits 1 on no match; and `head` closes the pipe, SIGPIPEing
+its writer. Under `pipefail` each of those killed a run mid-rebuild. They are
+all handled now, but the trap is what makes the next one survivable.
 
 ### Known limitation
 

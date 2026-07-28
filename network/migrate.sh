@@ -201,6 +201,26 @@ rollback() {
     systemctl disable --now network-fallback.service 2>/dev/null || true
     rm -f /etc/systemd/system/network-{reconfigure.path,reconfigure.service,fallback.service}
 
+    # Undo the policy routing those units installed. Stopping them does not:
+    # rules, tables, the mangle chain and the ipset all live in the kernel and
+    # outlast the process that made them. Left behind under netctl, with nothing
+    # running to reconcile them, they are a black hole — the underlay table
+    # still points at a gateway that may be gone, and NETMODE_IOA still marks
+    # traffic for a table nothing maintains.
+    for p in 490 500 1000 2000 2500 3000 3500 4000 4500; do
+        while ip rule del pref "$p" 2>/dev/null; do :; done
+    done
+    for t in 500 501 cn ioa; do ip route flush table "$t" 2>/dev/null || true; done
+    iptables -t mangle -D OUTPUT -j NETMODE_IOA 2>/dev/null || true
+    iptables -t mangle -F NETMODE_IOA 2>/dev/null || true
+    iptables -t mangle -X NETMODE_IOA 2>/dev/null || true
+    while read -r n; do
+        [ -n "$n" ] && { iptables -t nat -D POSTROUTING "$n" 2>/dev/null || true; }
+    done < <(iptables -t nat -L POSTROUTING --line-numbers -n |
+                 awk '/SNAT/ && /mark match 0x1/ {print $1}' | sort -rn)
+    ipset destroy ioa_underlay 2>/dev/null || true
+    rm -rf /var/lib/network-reconfigure
+
     # Restore the pre-iwd hooks (kept in network/rollback/ for exactly this)
     cp "$DIR/rollback/90-wired-netctl.rules" /etc/udev/rules.d/ 2>/dev/null || true
     cp "$DIR/rollback/90-amos-dhcp" /usr/lib/dhcpcd/dhcpcd-hooks/90-amos 2>/dev/null || true

@@ -44,27 +44,58 @@
 # captures IOA and tailnet traffic, so an exit-node failure would take the
 # unrelated IOA tunnel down with it.
 
-set -euo pipefail
+set -Eeuo pipefail
+
+# `-E` is not decoration. Without it the ERR trap below is not inherited by
+# shell functions, so a failure inside `warn`, `has_routes` or `physical_gateway`
+# kills the script with the recovery hook silently skipped — which is the exact
+# situation the trap exists for.
 
 # A partially-applied rule set is dangerous in a way a failed run is not: the
 # underlay protection can be gone while the exit-node catch-all is still there,
 # which deadlocks tailscaled. `set -e` alone hides that — the script simply
 # stops, leaving whatever it had managed to install. Report the failing line so
 # the journal shows what happened instead of an unexplained exit code.
-# The reset below removes every overlay rule and the mangle jump before the new
-# ones are built, so an abort in between leaves packets marked for a tunnel that
-# has no rule to reach it — the machine goes offline, and the manual recovery is
-# always the same `iptables -t mangle -D OUTPUT -j NETMODE_IOA`. Do that here
-# instead: unmarked traffic falls through to table main, which still works.
+# Two things go wrong when a run stops half-way, and the trap has to undo both.
+#
+# Packets stay marked for a tunnel that no longer has a rule to reach it. The
+# manual recovery was always `iptables -t mangle -D OUTPUT -j NETMODE_IOA`;
+# unmarked traffic falls through to table main, which works.
+#
+# And the underlay rule may not have been reinstalled yet, while tailscale's own
+# catch-all at pref 5270 is still live — so tailscale's control-plane and DERP
+# traffic goes into the tunnel it is building, which deadlocks tailscaled. That
+# one is worse, and removing the mangle jump does nothing for it. Put the rule
+# back if the table it points at still has routes.
 abort() {
     local rc=$1 line=$2
     logger -t network-reconfigure -p daemon.err \
-        "aborted at line $line (exit $rc); removing the mangle jump to stay online"
+        "aborted at line $line (exit $rc); restoring a minimal safe state"
     iptables -t mangle -D OUTPUT -j "${CHAIN:-NETMODE_IOA}" 2>/dev/null || true
+    if [ "$({ ip route show table "${UNDERLAY_TABLE:-500}" 2>/dev/null || true; } |
+              wc -l)" -gt 0 ] &&
+       [ "$({ ip -4 rule show pref "${P_UNDERLAY:-500}" 2>/dev/null || true; } |
+              wc -l)" -eq 0 ]; then
+        ip rule add lookup "${UNDERLAY_TABLE:-500}" pref "${P_UNDERLAY:-500}" 2>/dev/null || true
+    fi
 }
 trap 'abort $? $LINENO' ERR
 
 IFACE="${1:-wlan0}"
+
+# One reconciler at a time. There was no lock, and the destructive middle of
+# this script is not safe against a second copy: run B's `ip route flush table
+# 500` lands while run A has already installed the rule that points at it, so
+# for the duration of B's re-add every underlay packet falls through to
+# tailscale's catch-all — into the tunnel it is building. The .path unit fires
+# several times per DHCP renew, so the interleaving is ordinary, not exotic.
+#
+# `-w` rather than `-n`: a link change that arrives mid-run is real and must not
+# be dropped. The wait is bounded so a wedged run cannot queue events forever.
+if [ -z "${NETWORK_RECONFIGURE_LOCKED:-}" ]; then
+    export NETWORK_RECONFIGURE_LOCKED=1
+    exec flock -w 60 /run/lock/network-reconfigure.lock "$0" "$@"
+fi
 
 # --- Firewall marks -----------------------------------------------------------
 # Bit 0 is ours; the mask is not cosmetic. Tailscale marks its underlay packets
@@ -204,6 +235,26 @@ ensure_rt_table 101 cn
 ensure_rt_table 400 ioa
 
 # ==============================================================================
+# Wait for the link before touching anything
+# ==============================================================================
+# Both waits are up to 10s, and they used to sit in the middle of the rebuild.
+# That put a ten-second window after the reset in which no local, IOA, tailnet,
+# private or CN rule existed while tailscale's catch-all at pref 5270 was still
+# live — every LAN and private packet went into the exit node, and a failure
+# during the sleep left the machine there. Nothing below needs the reset to have
+# happened, so wait first and keep the destructive window to milliseconds.
+for _ in {1..10}; do
+    [ -n "$(ip route show table main scope link dev "$IFACE" 2>/dev/null)" ] && break
+    sleep 1
+done || true
+for _ in {1..10}; do
+    dns=$(networkctl dhcp-lease "$IFACE" 2>/dev/null |
+              awk '/domain name server/ {print $NF}' || true)
+    [ -n "${dns:-}" ] && break
+    sleep 1
+done || true
+
+# ==============================================================================
 # Reset everything this script owns
 # ==============================================================================
 # P_IOA_UNDERLAY is deliberately absent: it holds IOA's escape rule, which is
@@ -330,6 +381,17 @@ if [ -n "${underlay_gw:-}" ]; then
     # absence of one. Treating it as something to protect turns a single failed
     # run into a permanent outage, since nothing else rebuilds the table.
     if [ "$live" -eq 0 ]; then live=-1; fi
+    # Neither is a table built for a different network. Its routes are "via the
+    # old gateway", so keeping it does not preserve protection, it installs a
+    # black hole — and the guard below would then defend that black hole against
+    # every correct rebuild that followed. The cn block says the same thing
+    # about its own table. Size only decides between two tables that are both
+    # reachable; identity decides whether the old one is a candidate at all.
+    if [ "$live" -gt 0 ] &&
+       [ -z "$({ ip route show table "$UNDERLAY_TABLE" 2>/dev/null || true; } |
+                   awk -v gw="$underlay_gw" '$3 == gw {print; exit}')" ]; then
+        live=-1
+    fi
     # A shrinking table usually means a source was unavailable, not that the
     # network changed — but the DERP list churns by a route or two between runs,
     # and rejecting on any shrink froze the table permanently: a newly resolved
@@ -341,11 +403,10 @@ if [ -n "${underlay_gw:-}" ]; then
         { ip route show table "$UNDERLAY_STAGE" 2>/dev/null || true; } |
             sed "s|\$| table $UNDERLAY_TABLE|; s|^|route add |" |
             ip -force -batch - 2>/dev/null || true
+    else
+        warn "underlay rebuild produced $staged routes against $live live; kept the old table"
     fi
     ip route flush table "$UNDERLAY_STAGE" 2>/dev/null || true
-    if [ "$staged" -lt "$floor" ]; then
-        warn "underlay rebuild produced $staged of $live routes; kept the old table"
-    fi
 else
     warn "no default gateway; leaving the underlay table alone"
 fi
@@ -362,10 +423,6 @@ fi
 # ==============================================================================
 # 1000 — local: directly-connected subnets
 # ==============================================================================
-for _ in {1..10}; do
-    [ -n "$(ip route show table main scope link dev "$IFACE" 2>/dev/null)" ] && break
-    sleep 1
-done || true
 while read -r subnet _; do
     ip rule add to "$subnet" lookup main pref "$P_LOCAL"
 done < <(ip route show table main scope link)
@@ -431,7 +488,7 @@ iptables -t mangle -A OUTPUT -j "$CHAIN"
 # out tun0 still carrying that source, and replies never come back. SNAT fixes
 # the source on the way out.
 if ip -4 addr show tun0 &>/dev/null; then
-    tun_ip=$(ip -4 -o addr show tun0 | awk '{print $4}' | cut -d/ -f1 | head -1)
+    tun_ip=$(ip -4 -o addr show tun0 | awk -F'[ /]+' '{print $4; exit}')
     if [ -n "${tun_ip:-}" ]; then
         iptables -t nat -A POSTROUTING \
             -m mark --mark "$IOA_MARK" -o tun0 -j SNAT --to-source "$tun_ip"
@@ -483,13 +540,6 @@ fi
 tailscale status &>/dev/null &&
     tailscale set --exit-node-allow-lan-access=true 2>/dev/null || true
 
-for _ in {1..10}; do
-    dns=$(networkctl dhcp-lease "$IFACE" 2>/dev/null |
-              awk '/domain name server/ {print $NF}' || true)
-    [ -n "${dns:-}" ] && break
-    sleep 1
-done || true
-
 if [ -n "${dns:-}" ]; then
     printf '# DHCP DNS from %s\n' "$IFACE" > /etc/smartdns/dhcp-dns.conf
     printf 'server %s\n' $dns >> /etc/smartdns/dhcp-dns.conf
@@ -501,8 +551,13 @@ fi
 # comes up after 802.1X against the corporate switch — so no other signal is
 # needed. Everything in that file resolves only on the LAN, which is why it is
 # emptied rather than left stale when the cable is out.
+#
+# `|| warn`: OFFICE_SRC lives in the git worktree, which is not a dependency of
+# this unit — on a boot where /home is not mounted yet it is simply absent, and
+# that must not stop the run before smartdns is restarted below.
 if wired_up; then
-    cp "$OFFICE_SRC" "$OFFICE_DST"
+    cp "$OFFICE_SRC" "$OFFICE_DST" 2>/dev/null ||
+        warn "cannot read $OFFICE_SRC; leaving $OFFICE_DST as it is"
 else
     echo "# Not on the office LAN" > "$OFFICE_DST"
 fi
@@ -522,15 +577,36 @@ systemctl restart --no-block network-fallback.service 2>/dev/null || true
 # jump by hand. Ask the kernel directly — `route get ... mark 1` is the same
 # lookup a marked packet gets — and if the answer is wrong, remove the jump
 # ourselves. Marking is an optimisation; being reachable is not.
+#
+# Read from the cache, not from the ipset. The set holds only the endpoints that
+# were proven to be in the underlay table, so iterating it can only ever confirm
+# what is already known good. The dangerous ones are exactly the ones the set
+# left out: unexempted, so SmartDNS's `ioa` set marks them into the tunnel.
 bad_endpoint=""
 while read -r ip; do
     [ -n "$ip" ] || continue
     case "$({ ip route get "$ip" mark 1 2>/dev/null || true; } | head -1)" in
         *"dev tun0"*) bad_endpoint="$ip" ;;
     esac
-done < <({ ipset list "$IOA_UNDERLAY_SET" 2>/dev/null || true; } | tail -n +9)
+done < <(cat "$IOA_ENDPOINT_CACHE" 2>/dev/null || true)
 
 if [ -n "$bad_endpoint" ]; then
     warn "IOA endpoint $bad_endpoint still routes into tun0; removing the mangle jump"
     iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null || true
+fi
+
+# The symmetric failure was never checked, and it is the worse of the two: a
+# DERP relay or the control plane routed into tailscale0 deadlocks tailscaled
+# and takes DNS with it. Reachable whenever the underlay rule is missing while
+# tailscale's own catch-all at pref 5270 is live. Same question to the kernel.
+ts_probe=$({ cat "$DERP_CACHE" 2>/dev/null || true; } | valid_ipv4 1)
+if [ -n "${ts_probe:-}" ]; then
+    case "$({ ip route get "$ts_probe" 2>/dev/null || true; } | head -1)" in
+        *"dev tailscale0"*)
+            warn "underlay address $ts_probe routes into tailscale0; dropping pref 5270"
+            # Tailscale reinstalls this rule on its next reconfiguration, so
+            # removing it is a stopgap that unblocks the daemon, not a change.
+            while ip rule del pref 5270 2>/dev/null; do :; done
+            ;;
+    esac
 fi

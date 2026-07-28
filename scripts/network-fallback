@@ -195,6 +195,13 @@ reconcile() {
     return 0
 }
 
+# See the loop below: exits the daemon on EOF, returns on a timeout.
+eof_or_timeout() {
+    [ "$1" -gt 128 ] && return 0
+    trace "watch stream closed; exiting so systemd reconnects"
+    exit 0
+}
+
 reconcile || true
 while :; do
     # Wait for an event, but never indefinitely: while the bypass is installed
