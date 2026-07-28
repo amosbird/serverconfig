@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# network-status — what the routing layer is actually doing, read-only.
+#
+# Everything here comes from the kernel or from a live query; nothing is cached
+# and nothing is written, so it can be run as a normal user and its answer is
+# never stale.
+
+set -uo pipefail
+
+P_IOA_UNDERLAY=490
+P_UNDERLAY=500
+P_IOA=2500
+P_CN=4000
+P_ESCAPE=4500
+
+rules() { ip -4 rule show pref "$1" 2>/dev/null; }
+count() { rules "$1" | grep -c . ; }
+
+printf 'interfaces\n'
+ip -4 -o addr show scope global |
+    awk '{printf "  %-12s %s\n", $2, $4}'
+printf '  %-12s %s\n' default "$(ip -4 route show default | head -1)"
+
+printf '\nunderlay (never enters a tunnel)\n'
+printf '  ioa escape    %s\n' "$(rules "$P_IOA_UNDERLAY" | grep -q . && echo pinned || echo MISSING)"
+printf '  rules         %s\n' "$(count "$P_UNDERLAY")"
+printf '  routes        %s (derp, control plane, dns upstreams, ioa gateways)\n' \
+    "$(ip route show table underlay 2>/dev/null | grep -c .)"
+
+printf '\noverlay\n'
+if [ "$(ip route show table ioa 2>/dev/null | grep -c .)" -gt 0 ]; then
+    printf '  IOA           %s rules, tun0 %s\n' "$(count "$P_IOA")" \
+        "$(ip -4 addr show tun0 &>/dev/null && echo up || echo down)"
+else
+    printf '  IOA           no route in table ioa (tunnel down)\n'
+fi
+printf '  China direct  %s routes\n' "$(ip route show table cn 2>/dev/null | grep -c .)"
+printf '  tailnet       %s\n' \
+    "$(ip route show table 52 2>/dev/null | grep -q . && echo "table 52 populated" || echo "table 52 empty (tailscale down)")"
+
+printf '\nexit node\n'
+if command -v tailscale >/dev/null; then
+    tailscale status --json 2>/dev/null | jq -r '
+        if .ExitNodeStatus == null then "  none selected"
+        else "  \(.ExitNodeStatus.ID)  online=\(.ExitNodeStatus.Online)" end,
+        (if (.Health | length) > 0 then "  health: \(.Health | join("; "))" else empty end)
+    ' 2>/dev/null || printf '  tailscaled not responding\n'
+else
+    printf '  tailscale not installed\n'
+fi
+if rules "$P_ESCAPE" | grep -q .; then
+    printf '  BYPASSED — exit node unusable, traffic on the physical gateway\n'
+fi
+
+printf '\ndns\n'
+printf '  resolv.conf   %s\n' "$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ')"
+printf '  dhcp upstream %s\n' \
+    "$(awk '/^server/ {print $2}' /etc/smartdns/dhcp-dns.conf 2>/dev/null | tr '\n' ' ' || echo none)"
+printf '  office LAN    %s\n' \
+    "$(grep -qE '^\s*(server|nameserver)' /etc/smartdns/office.conf 2>/dev/null &&
+       echo active || echo inactive)"
+printf '  resolves      %s\n' \
+    "$(dig +short +timeout=2 +tries=1 google.com @127.0.0.1 2>/dev/null | head -1 || echo FAILED)"

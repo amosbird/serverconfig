@@ -63,6 +63,8 @@ CHAIN="NETMODE_IOA"
 # would make that walk an order of magnitude longer. A table costs one rule and
 # an LPM lookup.
 UNDERLAY_TABLE="500"
+# Built here first, then swapped in. Never referenced by a rule.
+UNDERLAY_STAGE="501"
 # Tailscale's control plane. Anycast, stable, and needed before DNS works.
 TS_CONTROL_NETS=("192.200.0.0/24" "199.165.136.0/24")
 # SmartDNS's own upstreams. /etc/resolv.conf points at SmartDNS, so if these
@@ -74,7 +76,13 @@ DNS_UPSTREAMS=("8.8.8.8" "1.1.1.1" "114.114.114.114" "223.5.5.5")
 IOA_BOOTSTRAP_HOSTS=(smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com)
 # DERP relays change over time, so they are read from the live daemon and
 # cached; the cache is what makes them available while tailscaled is down.
-DERP_CACHE="/var/lib/network-reconfigure/derp-ips"
+CACHE_DIR="/var/lib/network-reconfigure"
+DERP_CACHE="$CACHE_DIR/derp-ips"
+# The IOA gateway addresses are cached for the same reason as the DERP list:
+# resolving them needs SmartDNS, which is restarted by this very script, so a
+# run that happens to land in that window would otherwise silently drop the
+# routes that keep the IOA tunnel out of the tailscale exit node.
+IOA_GW_CACHE="$CACHE_DIR/ioa-gateways"
 
 # --- Overlay ------------------------------------------------------------------
 IOA_CIDRS=("9.0.0.0/8" "10.0.0.0/8")
@@ -85,7 +93,9 @@ TAILNET_NETS=("100.64.0.0/10")
 PRIVATE_NETS=("192.168.0.0/16" "172.16.0.0/12" "169.254.0.0/16")
 CN_TABLE="cn"
 ROUTEFILE="/home/amos/.routefile"
-NETMODE_STATE="/run/netmode"
+# Office LAN additions; sourced by smartdns.conf, emptied when not on the LAN.
+OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
+OFFICE_DST="/etc/smartdns/office.conf"
 
 # Priorities, named so the bands above are visible at each call site.
 P_IOA_UNDERLAY=490  # IOA's own escape, pinned (see below)
@@ -99,6 +109,19 @@ P_CN=4000           # China direct
 # 4500 is the escape band, owned by network-fallback (see that script).
 
 clean_pref() { while ip rule del pref "$1" 2>/dev/null; do :; done; }
+
+# Is a wired interface carrying traffic? 802.1X against the corporate switch is
+# what brings it up, so this is equivalent to "on the office LAN".
+wired_up() {
+    local dev
+    for dev in /sys/class/net/enp*; do
+        [ -e "$dev" ] || continue
+        dev=${dev##*/}
+        [ "$(cat "/sys/class/net/$dev/operstate" 2>/dev/null)" = up ] || continue
+        ip -4 -o addr show "$dev" scope global | grep -q . && return 0
+    done
+    return 1
+}
 
 # Named tables must exist before they can be referenced by name. Registering
 # them here keeps the script self-contained: a fresh machine, or one whose
@@ -127,7 +150,6 @@ done
 # so it is left alone here.
 for p in 100 900 1500; do clean_pref "$p"; done
 
-ip route flush table "$UNDERLAY_TABLE" 2>/dev/null || true
 iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null || true
 iptables -t mangle -F "$CHAIN" 2>/dev/null || true
 iptables -t mangle -X "$CHAIN" 2>/dev/null || true
@@ -160,39 +182,62 @@ fi
 # rule too, but at pref 5210 — behind every overlay rule below.
 ip rule add fwmark "$TS_MARK" lookup main pref "$P_UNDERLAY"
 
-# Refresh the DERP list from the daemon when it is reachable; otherwise keep
-# the previous one. During a cold start the cache is the only source, and it is
-# what lets tailscale's bootstrap DNS work at all.
-mkdir -p "$(dirname "$DERP_CACHE")"
+# Both lists are cached. Neither source is reliable at the moment this runs:
+# tailscaled may be down, and SmartDNS is restarted by this very script. A run
+# that lands in either window must not be able to shrink the table.
+mkdir -p "$CACHE_DIR"
 if derp=$(timeout 5 tailscale debug derp-map 2>/dev/null) && [ -n "$derp" ] &&
    ips=$(jq -r '.Regions[].Nodes[].IPv4 | select(. != null and . != "")' \
             <<<"$derp" 2>/dev/null) && [ -n "$ips" ]; then
     printf '%s\n' "$ips" | sort -u > "$DERP_CACHE"
 fi
+if gw_ips=$(for host in "${IOA_BOOTSTRAP_HOSTS[@]}"; do
+                dig +short +timeout=2 +tries=1 "$host" @127.0.0.1 2>/dev/null
+            done | grep -E '^[0-9.]+$' | sort -u) && [ -n "$gw_ips" ]; then
+    printf '%s\n' "$gw_ips" > "$IOA_GW_CACHE"
+fi
 
 underlay_gw=$(ip -4 route show default | awk '{print $3; exit}')
 underlay_dev=$(ip -4 route show default | awk '{print $5; exit}')
-ip route flush table "$UNDERLAY_TABLE" 2>/dev/null || true
 
+# Build into a staging table, then swap. `ip -batch` aborts at the first bad
+# line, so writing directly into the live table means one unresolvable address
+# truncates everything after it — and since the table has to be flushed first,
+# the result is worse than not running at all. That is how the underlay
+# protection once vanished entirely, which deadlocks tailscaled: its own
+# control-plane and DERP traffic gets routed into the tunnel it is building.
+# Staging turns a partial failure into "keep what already worked".
 if [ -n "${underlay_gw:-}" ]; then
+    ip route flush table "$UNDERLAY_STAGE" 2>/dev/null || true
     {
-        for net in "${TS_CONTROL_NETS[@]}" "${DNS_UPSTREAMS[@]}"; do
-            echo "route add $net via $underlay_gw dev $underlay_dev table $UNDERLAY_TABLE"
-        done
-        [ -s "$DERP_CACHE" ] && while read -r ip; do
-            [ -n "$ip" ] &&
-                echo "route add $ip via $underlay_gw dev $underlay_dev table $UNDERLAY_TABLE"
-        done < "$DERP_CACHE"
-        # IOA's tunnel endpoints. Without these the IOA tunnel tries to
-        # establish itself through the tailscale exit node.
-        for host in "${IOA_BOOTSTRAP_HOSTS[@]}"; do
-            for ip in $(dig +short +timeout=2 +tries=1 "$host" @127.0.0.1 \
-                            2>/dev/null | grep -E '^[0-9.]+$'); do
-                echo "route add $ip via $underlay_gw dev $underlay_dev table $UNDERLAY_TABLE"
-            done
-        done
-    } | ip -batch - 2>/dev/null || true
+        printf '%s\n' "${TS_CONTROL_NETS[@]}" "${DNS_UPSTREAMS[@]}"
+        cat "$DERP_CACHE" "$IOA_GW_CACHE" 2>/dev/null
+    } | grep -E '^[0-9]' | sort -u |
+        while read -r dst; do
+            echo "route add $dst via $underlay_gw dev $underlay_dev table $UNDERLAY_STAGE"
+        done | ip -force -batch - 2>/dev/null
+
+    staged=$(ip route show table "$UNDERLAY_STAGE" 2>/dev/null | grep -c .)
+    live=$(ip route show table "$UNDERLAY_TABLE" 2>/dev/null | grep -c .)
+    # A shrinking table means a source was unavailable, not that the network
+    # changed; keep the previous one rather than lose protection.
+    if [ "$staged" -gt 0 ] && [ "$staged" -ge "$live" ]; then
+        ip route flush table "$UNDERLAY_TABLE" 2>/dev/null || true
+        ip route show table "$UNDERLAY_STAGE" |
+            sed "s|\$| table $UNDERLAY_TABLE|; s|^|route add |" |
+            ip -force -batch - 2>/dev/null
+    fi
+    ip route flush table "$UNDERLAY_STAGE" 2>/dev/null || true
+fi
+
+# The rule is installed whenever the table has content, even if this run could
+# not rebuild it — a momentarily missing default route must not strip the
+# protection that is already in place.
+if ip route show table "$UNDERLAY_TABLE" | grep -q .; then
     ip rule add lookup "$UNDERLAY_TABLE" pref "$P_UNDERLAY"
+else
+    logger -t network-reconfigure -p daemon.err \
+        "underlay table is empty; not installing pref $P_UNDERLAY"
 fi
 
 # ==============================================================================
@@ -255,15 +300,22 @@ done
 # ==============================================================================
 # 4000 — China direct
 # ==============================================================================
-if [ ! -e "$NETMODE_STATE/cn-disabled" ] && [ -f "$ROUTEFILE" ]; then
+if [ -f "$ROUTEFILE" ]; then
     gw=$(ip -4 route show default | awk '{print $3; exit}')
     if [ -n "${gw:-}" ]; then
         # Rebuilt unconditionally: the routes are "via $gw", so a table left
         # over from the previous network is worse than no table at all. ~8600
-        # routes take about 150ms as one batch.
+        # routes take about 150ms as one batch. -force keeps a single rejected
+        # route from truncating the rest, and the rule is only installed if
+        # something actually landed.
         ip route flush table "$CN_TABLE" 2>/dev/null || true
-        sed "s/GATEWAY/$gw/" "$ROUTEFILE" | ip -batch - || true
-        ip rule add table "$CN_TABLE" pref "$P_CN"
+        sed "s/GATEWAY/$gw/" "$ROUTEFILE" | ip -force -batch - 2>/dev/null || true
+        if ip route show table "$CN_TABLE" | grep -q .; then
+            ip rule add table "$CN_TABLE" pref "$P_CN"
+        else
+            logger -t network-reconfigure -p daemon.err \
+                "cn table is empty; not installing pref $P_CN"
+        fi
     fi
 fi
 
@@ -285,6 +337,16 @@ if [ -n "${dns:-}" ]; then
     printf 'server %s\n' $dns >> /etc/smartdns/dhcp-dns.conf
 else
     echo "# No DHCP DNS" > /etc/smartdns/dhcp-dns.conf
+fi
+
+# Office LAN additions. The wired link is the office by definition — it only
+# comes up after 802.1X against the corporate switch — so no other signal is
+# needed. Everything in that file resolves only on the LAN, which is why it is
+# emptied rather than left stale when the cable is out.
+if wired_up; then
+    cp "$OFFICE_SRC" "$OFFICE_DST"
+else
+    echo "# Not on the office LAN" > "$OFFICE_DST"
 fi
 
 systemctl restart smartdns 2>/dev/null || true

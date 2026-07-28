@@ -53,9 +53,6 @@ install_configs() {
 
     # Backup SmartDNS config (don't overwrite yet — applied on activate)
     cp "$DIR/smartdns/smartdns.conf" "$BACKUP_DIR/smartdns-new.conf"
-    cp "$DIR/smartdns/mode-travel.conf" "$BACKUP_DIR/mode-travel.conf"
-    cp "$DIR/smartdns/mode-ioa.conf" "$BACKUP_DIR/mode-ioa.conf"
-    cp "$DIR/smartdns/mode-office.conf" "$BACKUP_DIR/mode-office.conf"
     echo "  [ok] SmartDNS configs staged in $BACKUP_DIR (applied on activate)"
 
 
@@ -69,9 +66,6 @@ install_configs() {
     cp "$DIR/systemd/network-fallback.service" /etc/systemd/system/
     echo "  [ok] systemd units"
 
-    # Install netmode to scripts
-    ln -sf "$DIR/netmode" /home/amos/scripts/netmode
-    echo "  [ok] netmode → ~/scripts/netmode"
 
     # Reload udev and systemd
     udevadm control --reload-rules
@@ -179,10 +173,8 @@ activate() {
 
     # Apply SmartDNS config now
     cp "$BACKUP_DIR/smartdns-new.conf" /etc/smartdns/smartdns.conf
-    cp "$BACKUP_DIR/mode-travel.conf" /etc/smartdns/mode.conf
-    cp "$BACKUP_DIR/mode-ioa.conf" /etc/smartdns/mode-ioa.conf
-    cp "$BACKUP_DIR/mode-office.conf" /etc/smartdns/mode-office.conf
-    cp "$BACKUP_DIR/mode-travel.conf" /etc/smartdns/mode-travel.conf
+    # Both are rewritten by network-reconfigure; seed them so smartdns starts.
+    echo '# Not on the office LAN' > /etc/smartdns/office.conf
     touch /etc/smartdns/dhcp-dns.conf
 
     # Lock resolv.conf

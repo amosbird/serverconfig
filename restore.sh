@@ -133,12 +133,13 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service,fallback.service} \
         /etc/systemd/system/
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
-    # SmartDNS base config; mode-*.conf are switched by `netmode`, and
-    # dhcp-dns.conf is rewritten per-link by network-reconfigure.
+    # SmartDNS base config.
     sudo mkdir -p /etc/smartdns
-    sudo cp "$DIR"/network/smartdns/{smartdns,mode-travel,mode-ioa,mode-office}.conf /etc/smartdns/
-    [[ -e /etc/smartdns/mode.conf ]] ||
-        sudo cp "$DIR"/network/smartdns/mode-travel.conf /etc/smartdns/mode.conf
+    sudo cp "$DIR"/network/smartdns/smartdns.conf /etc/smartdns/
+    # office.conf and dhcp-dns.conf are rewritten per link by
+    # network-reconfigure; only seed them so smartdns can start before it runs.
+    [[ -e /etc/smartdns/office.conf ]] ||
+        echo '# Not on the office LAN' | sudo tee /etc/smartdns/office.conf >/dev/null
     [[ -e /etc/smartdns/dhcp-dns.conf ]] ||
         sudo cp "$DIR"/network/smartdns/dhcp-dns.conf /etc/smartdns/dhcp-dns.conf
 

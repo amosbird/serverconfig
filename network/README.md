@@ -155,23 +155,56 @@ cold start, which is exactly when tailscale's bootstrap DNS needs them.
 ### Ownership
 
 `network-reconfigure` owns the entire layout and reapplies it on every link
-change. `netmode` never installs a rule; it records intent and asks for
-reconvergence:
+change. There is no mode switch and no state file: China-direct routing and IOA
+are always on, and the office LAN is detected rather than declared — the wired
+link only comes up after 802.1X against the corporate switch, so its presence
+*is* the signal.
 
-```bash
-netmode status          # routing & DNS state, read from the kernel
-netmode cn off          # send China traffic via the exit node instead
-netmode dns ioa         # SmartDNS profile: travel | ioa | office
-netmode apply           # re-run the reconciler now
-netmode reset           # defaults, then reconverge
-```
+`network-status` prints what the kernel is actually doing. It is read-only and
+needs no privileges, so its answer can never be stale or contradict reality.
 
-An earlier version reimplemented the layout inside `netmode`, giving two
-sources of truth that drifted: `netmode status` reported "IOA: OFF" while the
-IOA rules were installed, because `network-reconfigure` had put them there.
-Status is now derived from the kernel, and `/run/netmode/` holds only
-intent — and only as *exceptions*, since recording the default would make it
-reappear on the next link change and silently undo the user's choice.
+An earlier version had a `netmode` tool that reimplemented the layout, giving
+two sources of truth that drifted: `netmode status` reported "IOA: OFF" while
+the IOA rules were installed, because `network-reconfigure` had put them there.
+Its remaining switches then became vacuous — `dns travel` and `dns ioa` were an
+empty file and a copy of the base config once IOA became unconditional — so the
+tool was removed rather than kept as a facade.
+
+### Failure containment
+
+The underlay table is the one thing that must never be lost: without it,
+bringing up the exit node routes tailscale's own control-plane and DERP traffic
+into the tunnel it is trying to build, and tailscaled deadlocks. Three
+properties keep that from happening:
+
+- **Staged rebuild.** Routes are built in table 501 and swapped in only if the
+  result is at least as large as what is already live. A run during a DNS
+  outage or with tailscaled down keeps the previous table instead of replacing
+  it with a shorter one.
+- **Validated input.** `ip -batch` stops at the first *parse* error — `-force`
+  only tolerates kernel errors — so a single malformed entry would silently
+  truncate everything after it. Addresses are matched against an IPv4/CIDR
+  pattern before being emitted.
+- **Cached sources.** Both the DERP list and the IOA gateway addresses are
+  cached under `/var/lib/network-reconfigure/`. Neither source is reliable at
+  the moment this runs: tailscaled may be down, and SmartDNS is restarted by
+  this very script.
+
+The rule itself is installed whenever the table has content, even if this run
+could not rebuild it, so a momentarily missing default route cannot strip
+protection that is already in place. If the table really is empty the rule is
+withheld and the reason is logged.
+
+### Known limitation
+
+Traffic to an ipset-matched IOA address advertises MSS 1240 instead of 1460.
+`connect()` picks a route before the packet reaches `mangle OUTPUT`, so the
+socket has already bound tailscale's source address and its 1280-byte MTU; the
+mark then reroutes the packets out tun0 and SNAT rewrites the source, but the
+MSS was fixed at socket setup and cannot be rewritten later (TCPMSS in OUTPUT,
+POSTROUTING and clamp-to-pmtu were all tried). Measured throughput difference
+is within noise, so this is left as-is; fixing it properly needs destination
+rules known at connect() time, which the dynamic ipset cannot provide.
 
 ## Files
 
@@ -186,7 +219,7 @@ network/
 │   └── 26-wireless-tencent.network  → /etc/systemd/network/
 ├── smartdns/
 │   ├── smartdns.conf                → /etc/smartdns/smartdns.conf
-│   ├── mode-{travel,ioa,office}.conf → /etc/smartdns/ (selected by `netmode`)
+│   ├── office.conf                  → /etc/smartdns/ (only while wired)
 │   └── dhcp-dns.conf                → /etc/smartdns/ (seed; rewritten per link)
 ├── systemd/
 │   ├── network-reconfigure.path     → /etc/systemd/system/
@@ -196,7 +229,6 @@ network/
 │       └── override.conf            → /etc/systemd/system/...
 ├── udev/
 │   └── 90-wired-8021x.rules         → /etc/udev/rules.d/
-├── netmode                          # Mode selector; asks the reconciler to re-run
 ├── migrate.sh                       # Migration/rollback script
 ├── rollback/                        # Pre-iwd hooks, kept for `migrate.sh rollback`
 └── README.md                        # This file
