@@ -8,9 +8,16 @@
 # response is always the same, so this daemon reconciles one bit of state:
 #
 #     exit node selected AND usable  -> no rule, normal policy routing
-#     exit node selected but broken  -> `ip rule pref 100 lookup main`,
+#     exit node selected but broken  -> `ip rule pref 4500 lookup main`,
 #                                       straight out the physical gateway
 #     no exit node selected          -> no rule; nothing to bypass
+#
+# The rule sits at 4500 — after IOA (2500) and the CN table (4000), immediately
+# before tailscale's own catch-all. That placement is the whole point: it must
+# take over exactly the traffic that would have used the exit node, and nothing
+# else. Installed any earlier it also swallows IOA and tailnet traffic, so a
+# dead exit node would take the unrelated IOA tunnel down with it.
+# See the band table in network-reconfigure.
 #
 # DESIGN RULE: breakage() is a pure function of external facts and never reads
 # the bypass state. An earlier version consulted it (to stop DHCP option 114,
@@ -34,7 +41,8 @@
 
 set -euo pipefail
 
-PREF=100
+# Escape band; see network-reconfigure for the full layout.
+PREF=4500
 PROBE_URL="http://connectivitycheck.gstatic.com/generate_204"
 CAPPORT_ACCEPT="Accept: application/captive+json"
 # Re-check cadence. The bypass state is abnormal and self-clearing depends on

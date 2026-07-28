@@ -61,7 +61,7 @@ exit node offline — but the response is always the same, so
 | state | action |
 |---|---|
 | exit node selected, usable | no rule, normal policy routing |
-| exit node selected, broken | `ip rule pref 100 lookup main`, straight out the physical gateway |
+| exit node selected, broken | `ip rule pref 4500 lookup main`, straight out the physical gateway |
 | no exit node selected | no rule; nothing to bypass |
 
 The judgement is a **pure function of external facts** and never reads the
@@ -105,24 +105,73 @@ group by `network-reconfigure`, so when public DoT upstreams (8.8.8.8:853) are
 unreachable SmartDNS falls back to the local DHCP DNS. Once authenticated, DoT
 resumes winning on speed-check.
 
-## IOA / Company Network
+## Policy Routing
 
-IOA domain routing is preserved in `/etc/smartdns/ioa-domains.conf`.
-Policy routing is managed by `netmode`:
+### Underlay vs overlay
+
+Traffic splits into two kinds, and they must never share a priority band:
+
+- **underlay** — the packets that make a tunnel exist: tailscale's WireGuard,
+  DERP and control-plane traffic, IOA's handshake with its gateway, and the DNS
+  lookups those depend on. Sending any of these into a tunnel is a circular
+  dependency — the tunnel cannot come up because the packets that would bring
+  it up are waiting for the tunnel. Underlay always leaves via the physical
+  gateway.
+- **overlay** — everything the user actually wants to move, split by policy
+  across tailscale / IOA / direct.
+
+Every routing bug found here was one underlay packet captured by an overlay
+rule: a full-width `MARK` erasing tailscale's own `0x80000` and dropping
+WireGuard into the IOA tunnel; the CN table grabbing Chinese DERP nodes; and
+the exit-node catch-all swallowing control-plane and bootstrap DNS, which
+deadlocked tailscaled completely. Ordering alone does not prevent this — the
+underlay band has to exist and be listed first.
+
+### Priority bands
+
+| band | purpose |
+|---|---|
+| 0-99 | kernel local |
+| 490 | IOA's own escape (`fwmark 0xa38`), installed by SmartGateAgent via `scripts/overrides/ip` and pinned here — it carries no priority of its own, so the kernel would otherwise derive one from whatever we happened to install first |
+| 500-999 | **underlay** — tunnel infrastructure, never enters a tunnel |
+| 1000-1999 | directly-connected networks |
+| 2000-2999 | IOA — Tencent intranet |
+| 3000-3999 | tailnet peers, then the private-range catch-all |
+| 4000-4999 | CN direct (4000), then the escape rule (4500) |
+| 5000+ | tailscale's own rules, then the exit node |
+
+The escape rule belongs at the bottom, not the top: it must divert exactly the
+traffic that would otherwise use the exit node. Placed early it also captures
+IOA and tailnet traffic, so an exit-node failure would take the unrelated IOA
+tunnel down with it.
+
+The underlay band is a single route table (`underlay`, id 500) rather than one
+rule per address — the kernel walks the rule list linearly for every packet,
+and the ~90 DERP relays alone would make that walk an order of magnitude
+longer. DERP addresses are read from the running daemon and cached in
+`/var/lib/network-reconfigure/derp-ips`, so they are still available during a
+cold start, which is exactly when tailscale's bootstrap DNS needs them.
+
+### Ownership
+
+`network-reconfigure` owns the entire layout and reapplies it on every link
+change. `netmode` never installs a rule; it records intent and asks for
+reconvergence:
 
 ```bash
-netmode status          # show current state
-netmode ioa on          # enable IOA routing (ipset + Tencent CIDRs → ioa table)
-netmode ioa off         # disable IOA routing (clean removal)
-netmode cn on           # enable China IP bypass (APNIC routes → physical gateway)
-netmode cn off          # disable China IP bypass
-netmode apply           # re-apply active modes after wifi reconnect
-netmode reset           # remove ALL custom rules
+netmode status          # routing & DNS state, read from the kernel
+netmode cn off          # send China traffic via the exit node instead
+netmode dns ioa         # SmartDNS profile: travel | ioa | office
+netmode apply           # re-run the reconciler now
+netmode reset           # defaults, then reconverge
 ```
 
-State is tracked in `/run/netmode/` (volatile, resets on reboot).
-Rules are idempotent: running `ioa on` twice produces the same result.
-All iptables rules live in a dedicated `NETMODE_IOA` chain for clean removal.
+An earlier version reimplemented the layout inside `netmode`, giving two
+sources of truth that drifted: `netmode status` reported "IOA: OFF" while the
+IOA rules were installed, because `network-reconfigure` had put them there.
+Status is now derived from the kernel, and `/run/netmode/` holds only
+intent — and only as *exceptions*, since recording the default would make it
+reappear on the next link change and silently undo the user's choice.
 
 ## Files
 
@@ -147,7 +196,7 @@ network/
 │       └── override.conf            → /etc/systemd/system/...
 ├── udev/
 │   └── 90-wired-8021x.rules         → /etc/udev/rules.d/
-├── netmode                          # Policy routing mode controller
+├── netmode                          # Mode selector; asks the reconciler to re-run
 ├── migrate.sh                       # Migration/rollback script
 ├── rollback/                        # Pre-iwd hooks, kept for `migrate.sh rollback`
 └── README.md                        # This file

@@ -1,60 +1,281 @@
 #!/usr/bin/env bash
-# network-reconfigure — reconcile network state after link change
+# network-reconfigure — reconcile policy routing after a link change
 #
 # Triggered at boot and on every wifi/link change (systemd path unit).
-# Idempotent: cleans before applying.
+# Idempotent: every rule this owns is removed and reinstalled on each run.
+#
+#
+# ## The one idea this file is built on
+#
+# Traffic splits into two kinds, and they must never share a priority band:
+#
+#   underlay — the packets that make a tunnel exist: tailscale's WireGuard,
+#              DERP and control-plane traffic, IOA's handshake with its
+#              gateway, and the DNS lookups those depend on. Sending any of
+#              these into a tunnel is a circular dependency: the tunnel cannot
+#              come up because the packets that would bring it up are waiting
+#              for the tunnel. Underlay always leaves via the physical gateway.
+#
+#   overlay  — everything the user actually wants to move. Split by policy
+#              across tailscale / IOA / direct.
+#
+# Every routing bug found here was one underlay packet captured by an overlay
+# rule: a full-width MARK erasing tailscale's own 0x80000 and dropping
+# WireGuard into the IOA tunnel; the CN table grabbing Chinese DERP nodes; and
+# the exit-node catch-all swallowing control-plane and bootstrap DNS, which
+# deadlocked tailscaled completely. Ordering alone does not prevent this — the
+# underlay band has to exist and be listed first.
+#
+#
+# ## Priority bands
+#
+#   0-99      kernel local
+#   490       IOA's own underlay escape (fwmark 0xa38), pinned here
+#   500-999   underlay  tunnel infrastructure — never enters a tunnel
+#   1000-1999 local     directly-connected networks
+#   2000-2999 ioa       Tencent intranet
+#   3000-3999 tailnet   peers, then the private-range catch-all
+#   4000-4999 cn        China direct, then the escape rule (4500) that
+#                       network-fallback installs when the exit node is unusable
+#   5000+     fallback  tailscale's own rules, then the exit node
+#
+# The escape rule belongs at the bottom, not the top: it must divert exactly
+# the traffic that would otherwise use the exit node. Placed early it also
+# captures IOA and tailnet traffic, so an exit-node failure would take the
+# unrelated IOA tunnel down with it.
 
 set -euo pipefail
 
 IFACE="${1:-wlan0}"
-MARK="0x1"
+
+# --- Firewall marks -----------------------------------------------------------
+# Bit 0 is ours; the mask is not cosmetic. Tailscale marks its underlay packets
+# 0x80000 so they escape its own routes, and a full-width --set-xmark erases
+# that bit, which is exactly how WireGuard traffic ended up inside the IOA
+# tunnel. Read and write only the bit we own.
+IOA_MARK="0x1/0x1"
+TS_MARK="0x80000/0xff0000"
 CHAIN="NETMODE_IOA"
+
+# --- Underlay -----------------------------------------------------------------
+# Collected into one route table rather than one rule per address: the kernel
+# walks the rule list linearly for every packet, and the ~90 DERP relays alone
+# would make that walk an order of magnitude longer. A table costs one rule and
+# an LPM lookup.
+UNDERLAY_TABLE="500"
+# Tailscale's control plane. Anycast, stable, and needed before DNS works.
+TS_CONTROL_NETS=("192.200.0.0/24" "199.165.136.0/24")
+# SmartDNS's own upstreams. /etc/resolv.conf points at SmartDNS, so if these
+# are reachable only through a tunnel then nothing can be resolved until the
+# tunnel is up — including the names needed to bring it up.
+DNS_UPSTREAMS=("8.8.8.8" "1.1.1.1" "114.114.114.114" "223.5.5.5")
+# IOA's tunnel endpoints are found by resolving these; SmartDNS keeps them in
+# its "china" group so they resolve without the tunnel.
+IOA_BOOTSTRAP_HOSTS=(smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com)
+# DERP relays change over time, so they are read from the live daemon and
+# cached; the cache is what makes them available while tailscaled is down.
+DERP_CACHE="/var/lib/network-reconfigure/derp-ips"
+
+# --- Overlay ------------------------------------------------------------------
 IOA_CIDRS=("9.0.0.0/8" "10.0.0.0/8")
+IOA_EXCLUDE=("10.255.0.0/16")
+TAILNET_NETS=("100.64.0.0/10")
+# RFC1918 + link-local, minus 10/8: that range belongs to IOA, and the part of
+# it that is the current LAN is already covered by the link-derived rules.
+PRIVATE_NETS=("192.168.0.0/16" "172.16.0.0/12" "169.254.0.0/16")
+CN_TABLE="cn"
+ROUTEFILE="/home/amos/.routefile"
+NETMODE_STATE="/run/netmode"
+
+# Priorities, named so the bands above are visible at each call site.
+P_IOA_UNDERLAY=490  # IOA's own escape, pinned (see below)
+P_UNDERLAY=500      # tunnel infrastructure
+P_LOCAL=1000        # directly-connected subnets
+P_IOA_EXCLUDE=2000  # carved out of the IOA ranges
+P_IOA=2500          # Tencent intranet
+P_TAILNET=3000      # peer addresses
+P_PRIVATE=3500      # private-range catch-all
+P_CN=4000           # China direct
+# 4500 is the escape band, owned by network-fallback (see that script).
 
 clean_pref() { while ip rule del pref "$1" 2>/dev/null; do :; done; }
 
-# --- Policy routing ---
-for p in 1000 1500 2000 2500; do clean_pref "$p"; done
+# Named tables must exist before they can be referenced by name. Registering
+# them here keeps the script self-contained: a fresh machine, or one whose
+# rt_tables was replaced by a package update, converges without manual setup.
+ensure_rt_table() {
+    grep -qE "^[[:space:]]*$1[[:space:]]+$2\b" /etc/iproute2/rt_tables ||
+        printf '%s %s\n' "$1" "$2" >> /etc/iproute2/rt_tables
+}
+ensure_rt_table "$UNDERLAY_TABLE" underlay
+ensure_rt_table 101 cn
+ensure_rt_table 400 ioa
+
+# ==============================================================================
+# Reset everything this script owns
+# ==============================================================================
+# P_IOA_UNDERLAY is deliberately absent: it holds IOA's escape rule, which is
+# re-pinned in place below. Clearing it here would delete the only copy before
+# we could read it back.
+for p in "$P_UNDERLAY" "$P_LOCAL" "$P_IOA_EXCLUDE" "$P_IOA" \
+         "$P_TAILNET" "$P_PRIVATE" "$P_CN"; do
+    clean_pref "$p"
+done
+# Priorities used by earlier versions of this script, including the escape rule
+# back when it lived at 100; drop them so an upgrade in place cannot leave a
+# stale rule behind. 4500 is owned by network-fallback and is restarted below,
+# so it is left alone here.
+for p in 100 900 1500; do clean_pref "$p"; done
+
+ip route flush table "$UNDERLAY_TABLE" 2>/dev/null || true
 iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null || true
 iptables -t mangle -F "$CHAIN" 2>/dev/null || true
 iptables -t mangle -X "$CHAIN" 2>/dev/null || true
+# Drop our SNAT rule whatever source it was created with: the tun0 address
+# changes between IOA sessions, so deleting by exact spec is unreliable.
+# Deleting by index, highest first, keeps the remaining indices valid.
+while read -r n; do
+    [ -n "$n" ] && iptables -t nat -D POSTROUTING "$n" 2>/dev/null || true
+done < <(iptables -t nat -L POSTROUTING --line-numbers -n |
+             awk '/SNAT/ && /mark match 0x1/ {print $1}' | sort -rn)
 
-# 1000: directly-connected subnets (LAN, docker)
-# Wait for DHCP to install the link route (up to 10s)
+# ==============================================================================
+# 500 — underlay: never enters a tunnel
+# ==============================================================================
+
+# IOA installs its own escape rule (fwmark 0xa38 -> table 20) through the
+# wrapper in scripts/overrides/ip, and does so without a priority — so the
+# kernel derives one as (lowest existing priority - 1). That makes its position
+# depend on our rule set: it lands just under whatever we install first, which
+# is correct but only by accident. Pin it explicitly so the placement is ours,
+# not a side effect, and so a re-add while our rules are absent cannot move it
+# somewhere harmful.
+if ioa_rule=$(ip -4 rule show | grep -m1 'fwmark 0xa38'); then
+    ioa_tbl=${ioa_rule##* }
+    while ip rule del fwmark 0xa38 2>/dev/null; do :; done
+    ip rule add fwmark 0xa38 lookup "$ioa_tbl" pref "$P_IOA_UNDERLAY"
+fi
+
+# Whatever tailscale has already marked as its own. Tailscale installs this
+# rule too, but at pref 5210 — behind every overlay rule below.
+ip rule add fwmark "$TS_MARK" lookup main pref "$P_UNDERLAY"
+
+# Refresh the DERP list from the daemon when it is reachable; otherwise keep
+# the previous one. During a cold start the cache is the only source, and it is
+# what lets tailscale's bootstrap DNS work at all.
+mkdir -p "$(dirname "$DERP_CACHE")"
+if derp=$(timeout 5 tailscale debug derp-map 2>/dev/null) && [ -n "$derp" ] &&
+   ips=$(jq -r '.Regions[].Nodes[].IPv4 | select(. != null and . != "")' \
+            <<<"$derp" 2>/dev/null) && [ -n "$ips" ]; then
+    printf '%s\n' "$ips" | sort -u > "$DERP_CACHE"
+fi
+
+underlay_gw=$(ip -4 route show default | awk '{print $3; exit}')
+underlay_dev=$(ip -4 route show default | awk '{print $5; exit}')
+ip route flush table "$UNDERLAY_TABLE" 2>/dev/null || true
+
+if [ -n "${underlay_gw:-}" ]; then
+    {
+        for net in "${TS_CONTROL_NETS[@]}" "${DNS_UPSTREAMS[@]}"; do
+            echo "route add $net via $underlay_gw dev $underlay_dev table $UNDERLAY_TABLE"
+        done
+        [ -s "$DERP_CACHE" ] && while read -r ip; do
+            [ -n "$ip" ] &&
+                echo "route add $ip via $underlay_gw dev $underlay_dev table $UNDERLAY_TABLE"
+        done < "$DERP_CACHE"
+        # IOA's tunnel endpoints. Without these the IOA tunnel tries to
+        # establish itself through the tailscale exit node.
+        for host in "${IOA_BOOTSTRAP_HOSTS[@]}"; do
+            for ip in $(dig +short +timeout=2 +tries=1 "$host" @127.0.0.1 \
+                            2>/dev/null | grep -E '^[0-9.]+$'); do
+                echo "route add $ip via $underlay_gw dev $underlay_dev table $UNDERLAY_TABLE"
+            done
+        done
+    } | ip -batch - 2>/dev/null || true
+    ip rule add lookup "$UNDERLAY_TABLE" pref "$P_UNDERLAY"
+fi
+
+# ==============================================================================
+# 1000 — local: directly-connected subnets
+# ==============================================================================
 for _ in {1..10}; do
     ip route show table main scope link dev "$IFACE" | grep -q . && break
     sleep 1
 done
 while read -r subnet _; do
-    ip rule add to "$subnet" lookup main pref 1000
+    ip rule add to "$subnet" lookup main pref "$P_LOCAL"
 done < <(ip route show table main scope link)
 
-# 1500: Tailscale CGNAT
-ip rule add to 100.64.0.0/10 lookup 52 pref 1500
+# ==============================================================================
+# 2000/2500 — IOA
+# ==============================================================================
+for cidr in "${IOA_EXCLUDE[@]}"; do
+    ip rule add to "$cidr" lookup main pref "$P_IOA_EXCLUDE"
+done
 
-# 2000: non-Tencent 10.x exclusion
-ip rule add to 10.255.0.0/16 lookup main pref 2000
-
-# 2500: IOA (tinyproxy uid, ipset fwmark, Tencent CIDRs)
 tid=$(id -u tinyproxy 2>/dev/null || true)
-[ -n "$tid" ] && ip rule add uidrange "$tid-$tid" lookup ioa pref 2500
-ip rule add fwmark "$MARK" lookup ioa pref 2500
+[ -n "$tid" ] && ip rule add uidrange "$tid-$tid" lookup ioa pref "$P_IOA"
+ip rule add fwmark "$IOA_MARK" lookup ioa pref "$P_IOA"
 for cidr in "${IOA_CIDRS[@]}"; do
-    ip rule add to "$cidr" lookup ioa pref 2500
+    ip rule add to "$cidr" lookup ioa pref "$P_IOA"
 done
 
 iptables -t mangle -N "$CHAIN"
-iptables -t mangle -A "$CHAIN" -m set --match-set ioa dst -j MARK --set-xmark "$MARK"
+# Leave underlay traffic alone, then set only our own bit.
+iptables -t mangle -A "$CHAIN" -m mark --mark "$TS_MARK" -j RETURN
+iptables -t mangle -A "$CHAIN" -m set --match-set ioa dst \
+    -j MARK --set-xmark "$IOA_MARK"
 iptables -t mangle -A OUTPUT -j "$CHAIN"
 
-# --- Tailscale LAN awareness ---
-tailscale status &>/dev/null && \
+# connect() picks a route before mangle OUTPUT runs, so a socket to an
+# ipset-matched address has already bound a source address from whichever table
+# won at that moment — usually tailscale's. The mark then reroutes the packets
+# out tun0 still carrying that source, and replies never come back. SNAT fixes
+# the source on the way out.
+if ip -4 addr show tun0 &>/dev/null; then
+    tun_ip=$(ip -4 -o addr show tun0 | awk '{print $4}' | cut -d/ -f1 | head -1)
+    [ -n "${tun_ip:-}" ] && iptables -t nat -A POSTROUTING \
+        -m mark --mark "$IOA_MARK" -o tun0 -j SNAT --to-source "$tun_ip"
+fi
+
+# ==============================================================================
+# 3000/3500 — tailnet peers, then private ranges
+# ==============================================================================
+for net in "${TAILNET_NETS[@]}"; do
+    ip rule add to "$net" lookup 52 pref "$P_TAILNET"
+done
+
+# The link-derived rules above are a snapshot, so a docker network or VM bridge
+# created later has no rule of its own and would fall through to the exit node.
+# https://github.com/tailscale/tailscale/issues/3646
+for cidr in "${PRIVATE_NETS[@]}"; do
+    ip rule add to "$cidr" lookup main pref "$P_PRIVATE"
+done
+
+# ==============================================================================
+# 4000 — China direct
+# ==============================================================================
+if [ ! -e "$NETMODE_STATE/cn-disabled" ] && [ -f "$ROUTEFILE" ]; then
+    gw=$(ip -4 route show default | awk '{print $3; exit}')
+    if [ -n "${gw:-}" ]; then
+        # Rebuilt unconditionally: the routes are "via $gw", so a table left
+        # over from the previous network is worse than no table at all. ~8600
+        # routes take about 150ms as one batch.
+        ip route flush table "$CN_TABLE" 2>/dev/null || true
+        sed "s/GATEWAY/$gw/" "$ROUTEFILE" | ip -batch - || true
+        ip rule add table "$CN_TABLE" pref "$P_CN"
+    fi
+fi
+
+# ==============================================================================
+# Services
+# ==============================================================================
+tailscale status &>/dev/null &&
     tailscale set --exit-node-allow-lan-access=true 2>/dev/null || true
 
-# --- DHCP DNS → SmartDNS (captive portal fallback) ---
 for _ in {1..10}; do
-    dns=$(networkctl dhcp-lease "$IFACE" 2>/dev/null \
-        | awk '/domain name server/ {print $NF}' || true)
+    dns=$(networkctl dhcp-lease "$IFACE" 2>/dev/null |
+              awk '/domain name server/ {print $NF}' || true)
     [ -n "${dns:-}" ] && break
     sleep 1
 done
@@ -68,7 +289,6 @@ fi
 
 systemctl restart smartdns 2>/dev/null || true
 
-# Re-evaluate the exit-node bypass. Needed on every link change: joining a
-# captive-portal network may produce no tailscale event at all, so the daemon
-# would otherwise stay blocked and never notice.
+# Re-evaluate the exit-node bypass: joining a captive-portal network may
+# produce no tailscale event at all, leaving that daemon blocked.
 systemctl restart --no-block network-fallback.service 2>/dev/null || true
