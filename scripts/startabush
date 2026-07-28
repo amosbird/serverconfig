@@ -17,11 +17,12 @@ ABUSH_BIN="$HOME/git/abush/target/release/abush"
 # Always log to a known file so post-hoc debugging doesn't depend on
 # the user having set ABUSH_LOG / RUST_LOG before launch.
 export ABUSH_LOG="${ABUSH_LOG:-/tmp/abush.log}"
+# export ABUSH_DEBUG_BUFFER=/tmp/abush-buf.log
 export RUST_LOG="${RUST_LOG:-abush_tui=info,abush_bus=info,abush_copilot=info,abush_store=warn}"
 
 # TEMP perf diagnostic: log slow frames (>2ms) + slow keystroke/
 # inbound handling to ABUSH_LOG, plus a baseline line every 120
 # frames. Remove once the TUI lag root-cause is found.
-export ABUSH_PERF=1
+# export ABUSH_PERF=1
 
 exec "$ABUSH_BIN" "$@" 2> >(tee -a "$CRASH_LOG" >&2)
