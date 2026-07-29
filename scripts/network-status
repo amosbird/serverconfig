@@ -14,7 +14,7 @@ P_IOA_UNDERLAY=490
 P_UNDERLAY=500
 P_IOA=2500
 P_CN=4000
-P_ESCAPE=4500
+DETACHED_FILE=/var/lib/network-fallback/detached-exit-node
 
 rules()   { ip -4 rule show pref "$1" 2>/dev/null; }
 count()   { rules "$1" | wc -l; }
@@ -27,7 +27,12 @@ ip -4 -o addr show scope global |
 printf '  %-12s %s\n' default "$(ip -4 route show default | head -1)"
 
 printf '\nunderlay (never enters a tunnel)\n'
-printf '  ioa escape    %s\n' "$(present "$P_IOA_UNDERLAY" && echo pinned || echo MISSING)"
+# Matched by mark, not by priority: SmartGateAgent re-adds this rule whenever the
+# tunnel reconnects and the kernel derives 499 rather than our 490, so checking
+# the priority reports MISSING for what is in fact the normal steady state.
+printf '  ioa escape    %s\n' \
+    "$(ip -4 rule show | awk '/0xa38/ {print "pref " $1; found=1}
+                              END {if (!found) print "MISSING"}' | tr -d ':')"
 printf '  rules         %s\n' "$(count "$P_UNDERLAY")"
 printf '  routes        %s (derp, control plane, dns upstreams, ioa gateways)\n' \
     "$(routes underlay)"
@@ -53,8 +58,9 @@ if command -v tailscale >/dev/null; then
 else
     printf '  tailscale not installed\n'
 fi
-if present "$P_ESCAPE"; then
-    printf '  BYPASSED — exit node unusable, traffic on the physical gateway\n'
+if [ -s "$DETACHED_FILE" ]; then
+    printf '  DETACHED by network-fallback (was %s); retrying every 20s\n' \
+        "$(cat "$DETACHED_FILE")"
 fi
 
 printf '\ndns\n'

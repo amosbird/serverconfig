@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# Fault injection for network-reconfigure, inside a network namespace.
+#
+#     sudo bash network/test-reconfigure.sh
+#
+# Nothing here touches the live routing table. Everything the script would
+# change — rules, tables, iptables — is namespaced, so a test that breaks the
+# network breaks only the namespace.
+#
+# This exists because the alternative was tried: injecting faults on the live
+# machine and trusting the script to repair them. That is circular — if the
+# script can repair it the test proves nothing, and if it cannot the machine
+# goes offline. It went offline three times before this file existed.
+#
+# The script under test is copied verbatim, with only its *external* couplings
+# stubbed: networkctl, systemctl, tailscale, dig, and the paths under /etc and
+# /var. No routing logic is replaced, so what passes here is what runs.
+set -uo pipefail
+
+# Re-exec into a network namespace, building the stubbed copy *first*, as the
+# invoking user. `unshare -r` maps the caller to nobody inside the namespace, so
+# anything that has to read the repo or write /tmp must happen out here — a
+# build that fails in there fails silently and the test then re-runs whatever
+# copy was left over, reporting a pass for code that was never exercised.
+REPO=/home/amos/git/serverconfig
+SCRIPT=""   # set once $WORK exists
+# Named, not numbered: `ip rule show` prints the name from rt_tables, so a
+# numeric comparison here would never match what the kernel reports back.
+UNDERLAY_TABLE="underlay"
+CN_TABLE="cn"
+pass=0; fail=0
+
+ok()   { printf '  \033[32mOK\033[0m   %s\n' "$*"; pass=$((pass+1)); }
+bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; fail=$((fail+1)); }
+head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+# A namespace that looks enough like the real machine for the script to run:
+# a "physical" link with a gateway, a DHCP-style resolver, and the three tables.
+setup() {
+    ip link add wlan0 type dummy
+    ip link set wlan0 up
+    ip addr add 10.36.48.162/20 dev wlan0
+    ip route add default via 10.36.48.1 dev wlan0
+    ip link add tun0 type dummy
+    ip link set tun0 up
+    ip addr add 192.168.255.10/24 dev tun0
+    ip route add default via 192.168.255.1 dev tun0 table 400
+    ip route add default via 10.36.48.1 dev wlan0 table 20
+}
+
+# The script is driven with its own helpers stubbed where they would reach
+# outside the namespace: DNS, tailscale, smartdns, the routefile.
+run_script() {
+    FORCE="${1:-0}" NSTEST=1 bash "$SCRIPT" wlan0 2>&1 | grep -vE '^\+' || true
+}
+
+# The exit status, which run_script throws away in the pipe. A run that aborts
+# leaves the reset done and the rules half-built, so "did it come back clean"
+# is a distinct question from "are the rules right" and needs its own check.
+run_status() {
+    FORCE="${1:-0}" NSTEST=1 bash "$SCRIPT" wlan0 >/dev/null 2>&1
+    echo $?
+}
+
+# Move the namespace onto a different AP: new subnet, new gateway, new
+# resolvers. This is the event that broke the live machine — the old AP's
+# resolver was its own gateway and so was covered by the subnet rule by
+# accident, and the new one hands out public addresses that are covered by
+# nothing unless they are named.
+roam_to() {
+    local subnet="$1" gw="$2" dns1="$3" dns2="$4"
+    ip addr flush dev wlan0
+    ip addr add "$subnet" dev wlan0
+    ip route replace default via "$gw" dev wlan0
+    ip route replace default via "$gw" dev wlan0 table 20
+    printf '   6 domain name server %s\n                        %s\n' \
+        "$dns1" "$dns2" > "$WORK/lease"
+}
+
+band() { ip -4 rule show pref "$1" 2>/dev/null | sed 's/^[0-9]*:[[:space:]]*//' | sort; }
+count() { ip -4 rule show pref "$1" 2>/dev/null | wc -l; }
+routes() { ip route show table "$1" 2>/dev/null | wc -l; }
+
+# Build the stubbed copy from the real script, so the test can never drift from
+# what is deployed.
+build_under_test() {
+    python3 - "$REPO/scripts/network-reconfigure" "$WORK" <<'EOF'
+import sys
+src = open(sys.argv[1]).read()
+work = sys.argv[2]
+stub = """
+networkctl() { cat WORKDIR/lease; }
+systemctl()  { return 0; }
+tailscale()  { return 1; }
+logger()     { return 0; }
+dig()        { return 9; }
+STATE_FILE_OVERRIDE=WORKDIR/last-applied
+CACHE_DIR_OVERRIDE=WORKDIR/cache
+"""
+i = src.index('IFACE="${1:-wlan0}"')
+src = src[:i] + stub.replace('WORKDIR', work) + src[i:]
+for a, b in [
+    ('CACHE_DIR="/var/lib/network-reconfigure"',
+     'CACHE_DIR="${CACHE_DIR_OVERRIDE:-/var/lib/network-reconfigure}"'),
+    ('STATE_FILE="$CACHE_DIR/last-applied"',
+     'STATE_FILE="${STATE_FILE_OVERRIDE:-$CACHE_DIR/last-applied}"'),
+    ('ROUTEFILE="/home/amos/.routefile"', 'ROUTEFILE="%s/routefile"' % work),
+    ('OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"',
+     'OFFICE_SRC="%s/office.conf"' % work),
+    ('OFFICE_DST="/etc/smartdns/office.conf"', 'OFFICE_DST="%s/office-dst.conf"' % work),
+    ('/etc/smartdns/dhcp-dns.conf', '%s/dhcp-dns.conf' % work),
+    ('/etc/smartdns/ioa-dns.conf', '%s/ioa-dns.conf' % work),
+    ('/etc/iproute2/rt_tables', '%s/rt_tables' % work),
+    ('/run/lock/network-reconfigure.lock', '%s/reconf.lock' % work),
+]:
+    src = src.replace(a, b)
+open(work + '/nr-under-test', 'w').write(src)
+EOF
+    # `python3 ... <<EOF` is the last command only by accident; make the failure
+    # explicit. A build that fails silently is how this harness once reported
+    # twelve passes for a script whose delete path had been removed.
+    [ -s "$WORK/nr-under-test" ] || return 1
+    chmod 755 "$WORK/nr-under-test"
+    cp /etc/iproute2/rt_tables "$WORK/rt_tables"
+    # Same shape as the real ~/.routefile: `ip -batch` commands, not bare route
+    # specs. The earlier fixture omitted the `route add` verb, so every batch
+    # was rejected and the cn table was never created — and no test noticed,
+    # because none of them looked at the cn table.
+    printf 'route add 1.0.1.0/24 via GATEWAY table cn\n'  > "$WORK/routefile"
+    printf 'route add 1.0.2.0/23 via GATEWAY table cn\n' >> "$WORK/routefile"
+    echo '# office' > "$WORK/office.conf"
+    # The lease is a file so a test can hand out a different resolver, which is
+    # what a roam onto another AP actually does. Two servers on a continuation
+    # line, because that wrapping is what the awk state machine exists for.
+    printf '   6 domain name server 202.152.254.230\n                        202.152.254.65\n' \
+        > "$WORK/lease"
+    chmod 644 "$WORK"/*
+    chmod 755 "$WORK/nr-under-test"
+}
+
+main() {
+    setup
+    head_ "baseline"
+    run_script 1 >/dev/null
+    local base500 base1000 base2500
+    base500=$(band 500); base1000=$(band 1000); base2500=$(band 2500)
+    [ "$(count 2500)" -gt 0 ] && ok "2500 installed ($(count 2500) rules)" \
+                              || bad "2500 empty"
+    [ "$(count 1000)" -gt 0 ] && ok "1000 installed ($(count 1000) rules)" \
+                              || bad "1000 empty"
+
+    head_ "idempotence"
+    run_script 1 >/dev/null
+    [ "$(band 2500)" = "$base2500" ] && ok "2500 unchanged" || bad "2500 drifted"
+    [ "$(band 1000)" = "$base1000" ] && ok "1000 unchanged" || bad "1000 drifted"
+
+    head_ "foreign rule injected into a band we own"
+    ip rule add to 8.8.8.8 lookup main pref 2500
+    [ "$(count 2500)" -gt "$(wc -l <<<"$base2500")" ] || bad "injection did not take"
+    run_script 0 >/dev/null
+    if [ "$(band 2500)" = "$base2500" ]; then
+        ok "foreign rule removed without FORCE"
+    else
+        bad "foreign rule survived: $(band 2500 | grep 8.8.8.8)"
+    fi
+
+    head_ "our rule deleted from a band we own"
+    ip rule del to 9.0.0.0/8 lookup ioa pref 2500 2>/dev/null
+    run_script 0 >/dev/null
+    [ "$(band 2500)" = "$base2500" ] && ok "missing rule restored without FORCE" \
+                                     || bad "not restored"
+
+    head_ "whole band deleted"
+    while ip rule del pref 1000 2>/dev/null; do :; done
+    run_script 0 >/dev/null
+    [ "$(band 1000)" = "$base1000" ] && ok "band rebuilt without FORCE" \
+                                     || bad "band not rebuilt"
+
+    head_ "band is never empty during a rebuild"
+    local zero=0 i
+    ( for i in $(seq 1 400); do count 2500; sleep 0.01; done > "$WORK/samples" ) &
+    local sampler=$!
+    sleep 0.3
+    run_script 1 >/dev/null
+    wait $sampler
+    zero=$(grep -cx 0 "$WORK/samples")
+    [ "$zero" -eq 0 ] && ok "2500 never empty ($(wc -l < "$WORK/samples") samples)" \
+                      || bad "2500 was empty $zero times"
+
+    head_ "IOA escape table stale after a roam"
+    ip route replace default via 10.36.63.9 dev wlan0 table 20
+    run_script 1 >/dev/null
+    [ "$(count 490)" -eq 0 ] && ok "pref 490 withheld while table 20 is stale" \
+                             || bad "pref 490 points at a stale table"
+    ip route replace default via 10.36.48.1 dev wlan0 table 20
+    run_script 1 >/dev/null
+    [ "$(count 490)" -eq 1 ] && ok "pref 490 restored when table 20 agrees" \
+                             || bad "pref 490 not restored"
+
+    head_ "duplicate IOA escape rule at a derived priority"
+    ip rule add fwmark 0xa38 lookup 20 pref 499
+    [ "$(ip -4 rule show | grep -c 0xa38)" -eq 2 ] || bad "injection did not take"
+    run_script 0 >/dev/null
+    [ "$(ip -4 rule show | grep -c 0xa38)" -eq 1 ] \
+        && ok "duplicate removed without FORCE" \
+        || bad "duplicate survived: $(ip -4 rule show | grep -c 0xa38) copies"
+
+    head_ "MASQUERADE survives a tun0 address change"
+    ip addr flush dev tun0
+    ip addr add 192.168.255.77/24 dev tun0
+    local nat
+    nat=$(iptables -t nat -S POSTROUTING 2>/dev/null | grep -c 'tun0.*MASQUERADE')
+    [ "$nat" -eq 1 ] && ok "NAT rule needs no refresh (address-independent)" \
+                     || bad "NAT rule count is $nat"
+
+    # From here the AP changes, so nothing below may compare against the
+    # baseline bands captured above.
+    head_ "roam onto an AP with a different subnet, gateway and resolvers"
+    roam_to 10.36.43.250/21 10.36.40.1 202.152.254.230 202.152.254.65
+    local rc
+    rc=$(run_status 0)
+    [ "$rc" -eq 0 ] && ok "reconfigure exits clean after a roam" \
+                    || bad "reconfigure exited $rc after a roam"
+
+    local b1000
+    b1000=$(band 1000)
+    grep -q 'to 10.36.40.1 lookup main'      <<<"$b1000" \
+        && ok "new gateway pinned at 1000" || bad "new gateway missing from 1000"
+    grep -q 'to 10.36.40.0/21 lookup main'   <<<"$b1000" \
+        && ok "new subnet pinned at 1000" || bad "new subnet missing from 1000"
+    # The bug that took the machine offline: public DHCP resolvers are inside no
+    # private range, so if they are not named here they follow the exit node.
+    if grep -q 'to 202.152.254.230 lookup main' <<<"$b1000" &&
+       grep -q 'to 202.152.254.65 lookup main'  <<<"$b1000"; then
+        ok "both public DHCP resolvers pinned at 1000"
+    else
+        bad "public DHCP resolvers not pinned: $b1000"
+    fi
+    # A rule that outlives the AP it was built for is a black hole, not a leftover.
+    if grep -qE 'to (10\.36\.48\.|10\.36\.32\.0/20)' <<<"$b1000"; then
+        bad "stale rules from the previous AP survived: $b1000"
+    else
+        ok "no rule from the previous AP survived"
+    fi
+
+    # Tables carry the gateway; rules do not. A stale table is the failure mode
+    # that survives a rule-level comparison, so check the contents.
+    if ip route show table "$CN_TABLE" 2>/dev/null | grep -q '10.36.48.1'; then
+        bad "cn table still points at the previous gateway"
+    elif ip route show table "$CN_TABLE" 2>/dev/null | grep -q '10.36.40.1'; then
+        ok "cn table rebuilt onto the new gateway"
+    else
+        bad "cn table has no route via either gateway"
+    fi
+    if ip route show table "$UNDERLAY_TABLE" 2>/dev/null | grep -q '10.36.48.1'; then
+        bad "underlay table still points at the previous gateway"
+    else
+        ok "underlay table carries no stale gateway"
+    fi
+
+    head_ "cold boot: no rules, no tables, no state"
+    while ip rule del pref 490  2>/dev/null; do :; done
+    while ip rule del pref 500  2>/dev/null; do :; done
+    while ip rule del pref 1000 2>/dev/null; do :; done
+    while ip rule del pref 2000 2>/dev/null; do :; done
+    while ip rule del pref 2500 2>/dev/null; do :; done
+    while ip rule del pref 4000 2>/dev/null; do :; done
+    ip route flush table "$UNDERLAY_TABLE" 2>/dev/null || true
+    ip route flush table "$CN_TABLE" 2>/dev/null || true
+    iptables -t mangle -F 2>/dev/null || true
+    rm -f "$WORK/last-applied"
+    # `ip route show` on an empty table exits 2, and under `pipefail` that used
+    # to kill the run at the first count — after the reset, before a single rule
+    # had gone back. A cold boot is exactly that state.
+    rc=$(run_status 0)
+    [ "$rc" -eq 0 ] && ok "reconfigure exits clean from a cold start" \
+                    || bad "reconfigure exited $rc from a cold start"
+    [ "$(count 1000)" -gt 0 ] && ok "1000 rebuilt from nothing ($(count 1000) rules)" \
+                              || bad "1000 still empty after a cold start"
+    [ "$(count 2500)" -gt 0 ] && ok "2500 rebuilt from nothing ($(count 2500) rules)" \
+                              || bad "2500 still empty after a cold start"
+    [ "$(routes "$UNDERLAY_TABLE")" -gt 0 ] \
+        && ok "underlay repopulated ($(routes "$UNDERLAY_TABLE") routes)" \
+        || bad "underlay still empty after a cold start"
+    [ -s "$WORK/last-applied" ] && ok "state written only after a clean run" \
+                                || bad "no state file after a clean run"
+
+    printf '\n\033[1m%s passed, %s failed\033[0m\n' "$pass" "$fail"
+    [ "$fail" -eq 0 ]
+}
+
+# A fresh directory per run, owned by the invoking user and readable inside the
+# namespace. Reusing a fixed path meant root-owned leftovers from an earlier run
+# made the rebuild fail — and it failed *silently*, so the next run tested a
+# stale copy and reported a pass for code that was never executed. A mutation
+# test caught it: the delete path was disabled and all 12 checks still passed.
+if [ -z "${IN_NETNS:-}" ]; then
+    WORK=$(mktemp -d /tmp/nstest.XXXXXX) || exit 1
+    export WORK
+    trap 'rm -rf "$WORK"' EXIT
+    # `unshare -r` maps the caller to nobody inside the namespace, so everything
+    # it must read or execute has to be world-accessible from out here.
+    chmod 755 "$WORK"
+    build_under_test || { echo "could not build the script under test"; exit 1; }
+    [ -s "$WORK/nr-under-test" ] || { echo "the built copy is empty"; exit 1; }
+    exec unshare -rn --mount bash -c \
+        "mount -t tmpfs none /run 2>/dev/null || true; IN_NETNS=1 WORK='$WORK' bash '$0'"
+fi
+
+SCRIPT="$WORK/nr-under-test"
+main

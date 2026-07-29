@@ -1,5 +1,5 @@
 [Unit]
-Description=Bypass exit node when the tailscale tunnel is unusable
+Description=Detach the tailscale exit node while it cannot carry traffic
 After=tailscaled.service
 Wants=tailscaled.service
 

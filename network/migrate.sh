@@ -176,6 +176,10 @@ activate() {
     # Both are rewritten by network-reconfigure; seed them so smartdns starts.
     echo '# Not on the office LAN' > /etc/smartdns/office.conf
     touch /etc/smartdns/dhcp-dns.conf
+    # smartdns.conf has `conf-file /etc/smartdns/ioa-dns.conf`, so it must exist
+    # before the restart below or the resolver starts against a missing include.
+    [ -e /etc/smartdns/ioa-dns.conf ] ||
+        echo '# IOA tunnel is down' > /etc/smartdns/ioa-dns.conf
 
     # Lock resolv.conf
     chattr -i /etc/resolv.conf 2>/dev/null || true
@@ -207,7 +211,7 @@ rollback() {
     # running to reconcile them, they are a black hole — the underlay table
     # still points at a gateway that may be gone, and NETMODE_IOA still marks
     # traffic for a table nothing maintains.
-    for p in 490 500 1000 2000 2500 3000 3500 4000 4500; do
+    for p in 100 490 500 900 1000 1500 2000 2500 3000 3500 4000 4500; do
         while ip rule del pref "$p" 2>/dev/null; do :; done
     done
     for t in 500 501 cn ioa; do ip route flush table "$t" 2>/dev/null || true; done
@@ -219,6 +223,10 @@ rollback() {
     done < <(iptables -t nat -L POSTROUTING --line-numbers -n |
                  awk '/SNAT/ && /mark match 0x1/ {print $1}' | sort -rn)
     ipset destroy ioa_underlay 2>/dev/null || true
+    ipset destroy ioa_intranet 2>/dev/null || true
+    rm -rf /var/lib/network-fallback /var/lib/network-reconfigure
+    rm -f /etc/smartdns/ioa-dns.conf /etc/smartdns/dhcp-dns.conf
+    sed -i '/^500 underlay$/d;/^101 cn$/d;/^400 ioa$/d' /etc/iproute2/rt_tables 2>/dev/null || true
     rm -rf /var/lib/network-reconfigure
 
     # Restore the pre-iwd hooks (kept in network/rollback/ for exactly this)
