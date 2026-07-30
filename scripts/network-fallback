@@ -154,13 +154,30 @@ exit_node_carries_traffic() {
 # precisely what is blocked, and a relayed pong would send us straight back into
 # the black hole we just escaped.
 exit_node_reachable_directly() {
-    local id="$1" name out
-    name=$(ts status --json | jq -r --arg id "$id" \
-              '.Peer[] | select(.ID == $id) | .DNSName // .HostName' | head -1)
-    [ -n "$name" ] || return 1
-    out=$(timeout 15 tailscale ping -c 3 --until-direct=false "$name" 2>/dev/null || true)
+    local addr out
+    addr=$(peer_addr "$1") || return 1
+    out=$(timeout 15 tailscale ping -c 3 --until-direct=false "$addr" 2>/dev/null || true)
     trace "reachability probe: ${out//$'\n'/ | }"
     grep -q 'via [0-9]' <<<"$out"
+}
+
+# The file holds a node ID, because that is what tailscale reports as the
+# configured exit node and it is the one name that does not change under the
+# user. `--exit-node`, however, takes only an IP or a hostname:
+#
+#     $ tailscale set --exit-node=nXPA5k1Aw811CNTRL
+#     invalid value "nXPA5k1Aw811CNTRL" for --exit-node; must be IP or hostname
+#
+# So the ID is resolved to the peer's tailnet address at the moment it is used.
+# Detaching passes an empty string and never hit this, which is why re-attaching
+# could fail on every single attempt without the detach path ever complaining:
+# observed three consecutive direct pongs at 20ms and no re-attach, twice.
+peer_addr() {
+    local addr
+    addr=$(ts status --json | jq -r --arg id "$1" \
+              '.Peer[] | select(.ID == $id) | .TailscaleIPs[0] // empty' | head -1)
+    [ -n "$addr" ] || { trace "no tailnet address for exit node $1"; return 1; }
+    printf '%s' "$addr"
 }
 
 # --- reconcile ---------------------------------------------------------------
@@ -201,9 +218,15 @@ reconcile() {
     # Nothing configured. Only our own detachment is ours to undo.
     [ -n "$detached" ] || return 0
     if exit_node_reachable_directly "$detached"; then
-        if ts set --exit-node="$detached" --exit-node-allow-lan-access; then
+        local addr
+        addr=$(peer_addr "$detached") || return 0
+        # Logged on failure. Silence here is what hid the ID-vs-address bug:
+        # the only evidence was a re-attach that never happened.
+        if ts set --exit-node="$addr" --exit-node-allow-lan-access; then
             rm -f "$DETACHED_FILE"
             notify "Exit node restored" "Direct path available again"
+        else
+            log "failed to re-attach exit node $detached ($addr); still detached"
         fi
     fi
     return 0
