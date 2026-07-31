@@ -16,8 +16,30 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKUP_DIR="/var/lib/network-migration-backup"
 
+cleanup_obsolete_policy() {
+    systemctl disable --now network-fallback.service 2>/dev/null || true
+    rm -f /etc/systemd/system/network-fallback.service
+    rm -rf /var/lib/network-fallback
+    rm -f /var/lib/network-reconfigure/derp-ips \
+        /var/lib/network-reconfigure/ioa-endpoints
+
+    # shortcut: numeric tables 500/501 were used only by the retired underlay
+    # mapping; require that exact mapping before flushing either numeric ID.
+    if grep -Eq '^[[:space:]]*500[[:space:]]+underlay([[:space:]]|$)' \
+            /etc/iproute2/rt_tables 2>/dev/null; then
+        while ip rule del pref 500 lookup underlay 2>/dev/null; do :; done
+        ip route flush table 500 2>/dev/null || true
+        ip route flush table 501 2>/dev/null || true
+        sed -i '/^[[:space:]]*500[[:space:]]\+underlay[[:space:]]*$/d' \
+            /etc/iproute2/rt_tables
+    fi
+    ipset destroy ioa_underlay 2>/dev/null || true
+    systemctl daemon-reload
+}
+
 install_configs() {
     echo "=== Installing new network configs (no network change yet) ==="
+    cleanup_obsolete_policy
 
     # Backup current state
     mkdir -p "$BACKUP_DIR"
@@ -58,12 +80,11 @@ install_configs() {
 
 
     # Install scripts to ~/scripts (already in PATH via symlink)
-    # network-reconfigure and network-fallback live in scripts/
+    # network-reconfigure lives in scripts/
 
     # Install systemd units
     cp "$DIR/systemd/network-reconfigure.path" /etc/systemd/system/
     cp "$DIR/systemd/network-reconfigure.service" /etc/systemd/system/
-    cp "$DIR/systemd/network-fallback.service" /etc/systemd/system/
     echo "  [ok] systemd units"
 
 
@@ -146,6 +167,7 @@ EOF
 
 activate() {
     echo "=== Activating iwd + systemd-networkd (will briefly drop network) ==="
+    cleanup_obsolete_policy
 
     # Install iwd if needed
     if ! pacman -Q iwd &>/dev/null; then
@@ -169,7 +191,6 @@ activate() {
     systemctl enable --now iwd.service
     systemctl enable --now systemd-networkd.service
     systemctl enable --now network-reconfigure.path
-    systemctl enable --now network-fallback.service
 
     # Apply SmartDNS config now
     cp "$BACKUP_DIR/smartdns-new.conf" /etc/smartdns/smartdns.conf
@@ -202,19 +223,25 @@ rollback() {
     systemctl disable --now iwd.service 2>/dev/null || true
     systemctl disable --now systemd-networkd.service 2>/dev/null || true
     systemctl disable --now network-reconfigure.path 2>/dev/null || true
-    systemctl disable --now network-fallback.service 2>/dev/null || true
-    rm -f /etc/systemd/system/network-{reconfigure.path,reconfigure.service,fallback.service}
+    rm -f /etc/systemd/system/network-{reconfigure.path,reconfigure.service}
 
-    # Undo the policy routing those units installed. Stopping them does not:
-    # rules, tables, the mangle chain and the ipset all live in the kernel and
-    # outlast the process that made them. Left behind under netctl, with nothing
-    # running to reconcile them, they are a black hole — the underlay table
-    # still points at a gateway that may be gone, and NETMODE_IOA still marks
-    # traffic for a table nothing maintains.
-    for p in 100 490 500 900 1000 1500 2000 2500 3000 3500 4000 4500; do
+    # Undo only policy owned by network-reconfigure. Tables 20, 230, 52 and ioa
+    # belong to the tunnel daemons and must survive rollback unchanged.
+    for p in 500 1000 1500 2500 3000; do
         while ip rule del pref "$p" 2>/dev/null; do :; done
     done
-    for t in 500 501 cn ioa; do ip route flush table "$t" 2>/dev/null || true; done
+    ip route flush table cn 2>/dev/null || true
+    ip route flush table cn_stage 2>/dev/null || true
+
+    # shortcut: numeric tables 500/501 were used only by the retired underlay
+    # mapping; require that exact mapping before flushing either numeric ID.
+    if grep -Eq '^[[:space:]]*500[[:space:]]+underlay([[:space:]]|$)' \
+            /etc/iproute2/rt_tables 2>/dev/null; then
+        ip route flush table 500 2>/dev/null || true
+        ip route flush table 501 2>/dev/null || true
+        sed -i '/^[[:space:]]*500[[:space:]]\+underlay[[:space:]]*$/d' \
+            /etc/iproute2/rt_tables
+    fi
     iptables -t mangle -D OUTPUT -j NETMODE_IOA 2>/dev/null || true
     iptables -t mangle -F NETMODE_IOA 2>/dev/null || true
     iptables -t mangle -X NETMODE_IOA 2>/dev/null || true
@@ -222,11 +249,8 @@ rollback() {
         [ -n "$n" ] && { iptables -t nat -D POSTROUTING "$n" 2>/dev/null || true; }
     done < <(iptables -t nat -L POSTROUTING --line-numbers -n |
                  awk '/SNAT/ && /mark match 0x1/ {print $1}' | sort -rn)
-    ipset destroy ioa_underlay 2>/dev/null || true
     ipset destroy ioa_intranet 2>/dev/null || true
-    rm -rf /var/lib/network-fallback /var/lib/network-reconfigure
     rm -f /etc/smartdns/ioa-dns.conf /etc/smartdns/dhcp-dns.conf
-    sed -i '/^500 underlay$/d;/^101 cn$/d;/^400 ioa$/d' /etc/iproute2/rt_tables 2>/dev/null || true
     rm -rf /var/lib/network-reconfigure
 
     # Restore the pre-iwd hooks (kept in network/rollback/ for exactly this)

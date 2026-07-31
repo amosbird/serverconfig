@@ -130,7 +130,7 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
     sudo cp "$DIR"/network/systemd/wpa_supplicant@.service.d/override.conf \
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
-    sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service,fallback.service} \
+    sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
     # SmartDNS base config.
@@ -149,7 +149,7 @@ if [[ -n $GUI ]]; then
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
-    sudo systemctl enable network-reconfigure.path network-fallback.service
+    sudo systemctl enable network-reconfigure.path
 
     # Setup kitty desktop-ui portal (replaces xdg-desktop-portal-termfilechooser)
     kitten desktop-ui enable-portal
