@@ -35,6 +35,7 @@ LOG_FILE = "/tmp/fcitx5-im-debug.log"
 LOG_ENABLE = "/tmp/fcitx5-im-debug.enabled"
 
 _active_ctx: dict[int, str] = {}
+_ctx_stack: dict[int, list[str]] = {}
 _im_state: dict[str, str] = {}
 _window_focused: dict[int, bool] = {}
 
@@ -196,6 +197,28 @@ def on_set_user_var(
     elif action == "focus-out":
         pass
 
+    elif action in ("push", "switch"):
+        old_ctx = _get_active_ctx(window)
+        if action == "push":
+            _ctx_stack.setdefault(window.id, []).append(old_ctx)
+        _active_ctx[window.id] = full_ctx
+        if is_focused:
+            saved = _im_state.get(full_ctx, "keyboard-us")
+            _im_state.setdefault(full_ctx, saved)
+            _log(f"{action} ctx={full_ctx} restore={saved}")
+            _apply_im(saved)
+
+    elif action == "pop":
+        _im_state.pop(full_ctx, None)
+        stack = _ctx_stack.get(window.id)
+        parent_ctx = stack.pop() if stack else _base_ctx(window)
+        _active_ctx[window.id] = parent_ctx
+        if is_focused:
+            saved = _im_state.get(parent_ctx, "keyboard-us")
+            _im_state.setdefault(parent_ctx, saved)
+            _log(f"pop ctx={full_ctx} parent={parent_ctx} restore={saved}")
+            _apply_im(saved)
+
     elif action == "popup-open":
         popup_ctx = f"{full_ctx}-popup"
         _im_state.pop(popup_ctx, None)
@@ -234,4 +257,5 @@ def on_close(
     for k in to_remove:
         del _im_state[k]
     _active_ctx.pop(wid, None)
+    _ctx_stack.pop(wid, None)
     _window_focused.pop(wid, None)
