@@ -62,12 +62,14 @@ setup() {
 # The script is driven with its own helpers stubbed where they would reach
 # outside the namespace: DNS, tailscale, smartdns, the routefile.
 run_script() {
-    FORCE="${1:-0}" NSTEST=1 bash "$SCRIPT" wlan0 2>&1 | grep -vE '^\+' || true
+    FORCE="${1:-0}" NSTEST=1 bash "$SCRIPT" wlan0 2>&1 | grep -vE '^\+'
+    local rc=${PIPESTATUS[0]}
+    return "$rc"
 }
 
-# The exit status, which run_script throws away in the pipe. A run that aborts
-# leaves the reset done and the rules half-built, so "did it come back clean"
-# is a distinct question from "are the rules right" and needs its own check.
+# Run only for status when output is irrelevant. A run that aborts leaves the
+# reset done and the rules half-built, so "did it come back clean" is distinct
+# from "are the rules right" and needs its own check.
 run_status() {
     FORCE="${1:-0}" NSTEST=1 bash "$SCRIPT" wlan0 >/dev/null 2>&1
     echo $?
@@ -263,12 +265,28 @@ main() {
     [ "$(awk '$2 == "cn_stage" {print $1}' "$WORK/rt_tables")" = "$stage_id" ] \
         && ok "existing unique cn_stage ID is reused" \
         || bad "cn_stage ID changed after registration"
-    local base500 base1000 base2500 chain
+    local base500 base1000 base2500 chain duplicate_rc
     base500=$(band 500); base1000=$(band 1000); base2500=$(band 2500)
     [ "$(count 2500)" -gt 0 ] && ok "2500 installed ($(count 2500) rules)" \
                               || bad "2500 empty"
     [ "$(count 1000)" -gt 0 ] && ok "1000 installed ($(count 1000) rules)" \
                               || bad "1000 empty"
+
+    head_ "duplicate installed policy rule"
+    if ip rule add fwmark 0x1/0xffffffff lookup ioa pref 2500 2>/dev/null; then
+        [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 2 ] \
+            || bad "kernel accepted but did not expose the duplicate owned rule"
+        run_script 0 >/dev/null
+        duplicate_rc=$?
+        if [ "$duplicate_rc" -eq 0 ] &&
+           [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ]; then
+            ok "duplicate owned rule triggers non-FORCE reconciliation"
+        else
+            bad "duplicate owned rule survived non-FORCE run (rc=$duplicate_rc): $(band 2500)"
+        fi
+    else
+        ok "kernel rejects duplicate owned rules"
+    fi
 
     head_ "policy ownership and ordering"
     [ "$(count 500)" -eq 1 ] && ok "Tailscale mark has one early escape rule" \

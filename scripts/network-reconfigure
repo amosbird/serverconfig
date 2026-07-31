@@ -80,7 +80,7 @@ reconcile_pref() {
         # shellcheck disable=SC2086 # kernel-rendered rule is an argument list
         ip rule del pref "$pref" $have
     done <<<"$({ ip -4 rule show pref "$pref" 2>/dev/null || true; })"
-    [ "$(normalise_band "$(band_fingerprint "$pref")")" = \
+    [ "$(normalise_actual_band "$(band_fingerprint "$pref")")" = \
         "$(printf '%s\n' "${desired[@]}" | grep -v '^$' | sort | paste -sd';' -)" ]
 }
 
@@ -259,7 +259,8 @@ for net in "${TAILNET_NETS[@]}"; do
 done
 DESIRED_BANDS[$P_TAILNET]=$(band_of "${tailnet_band[@]}")
 
-normalise_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort -u | paste -sd';' -; }
+normalise_desired_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort -u | paste -sd';' -; }
+normalise_actual_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort | paste -sd';' -; }
 band_fingerprint() {
     ip -4 rule show pref "$1" 2>/dev/null | sed 's/^[0-9]*:[[:space:]]*//' |
         while read -r rule; do normalise_rule "$rule"; done
@@ -268,7 +269,8 @@ band_fingerprint() {
 desired_fingerprint() {
     local band
     for band in "${!DESIRED_BANDS[@]}"; do
-        printf '%s|%s\n' "$band" "$(normalise_band "${DESIRED_BANDS[$band]}")"
+        printf '%s|%s\n' "$band" \
+            "$(normalise_desired_band "${DESIRED_BANDS[$band]}")"
     done | sort
 }
 
@@ -276,7 +278,7 @@ actual_fingerprint() {
     local band
     for band in "${!DESIRED_BANDS[@]}"; do
         printf '%s|%s\n' "$band" \
-            "$(normalise_band "$(band_fingerprint "$band" | paste -sd';' -)")"
+            "$(normalise_actual_band "$(band_fingerprint "$band" | paste -sd';' -)")"
     done | sort
 }
 
