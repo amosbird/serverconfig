@@ -47,8 +47,11 @@ setup() {
     ip route add default via 192.168.255.1 dev tun0 table 400
     ip route add default via 10.36.48.1 dev wlan0 table 20
     ip route add default via 10.36.48.1 dev wlan0 table 230
+    ip route add default dev tun0 table 52
     ip route add blackhole 198.18.0.0/15 table 52
     ip rule add fwmark 0xa38 lookup 20 pref 490
+    ip rule add fwmark 0x80000/0xff0000 lookup main pref 5210
+    ip rule add lookup 52 pref 5270
 }
 
 # The script is driven with its own helpers stubbed where they would reach
@@ -83,12 +86,22 @@ band() { ip -4 rule show pref "$1" 2>/dev/null | sed 's/^[0-9]*:[[:space:]]*//' 
 count() { ip -4 rule show pref "$1" 2>/dev/null | wc -l; }
 routes() { ip route show table "$1" 2>/dev/null | wc -l; }
 
-snapshot_owner_tables() {
-    local table
+snapshot_owner_state() {
+    local table pref
     for table in 20 230 52; do
-        printf '%s|' "$table"
+        printf 'table %s|' "$table"
         ip route show table "$table" | sort | paste -sd';' -
     done
+    for pref in 490 5210; do
+        printf 'pref %s|' "$pref"
+        band "$pref" | paste -sd';' -
+    done
+}
+
+full_width_fwmark_rule() {
+    local pref=$1 mark=$2 table=$3
+    band "$pref" | grep -Eq \
+        "^from all fwmark $mark(/0xffffffff)? lookup $table$"
 }
 
 route_table() {
@@ -161,7 +174,7 @@ EOF
 main() {
     setup
     local owner_before
-    owner_before=$(snapshot_owner_tables)
+    owner_before=$(snapshot_owner_state)
     head_ "baseline"
     run_script 1 >/dev/null
     local base500 base1000 base2500 chain
@@ -183,9 +196,9 @@ main() {
     ! ip -4 rule show | grep -qE 'to (192\.168\.0\.0/16|172\.16\.0\.0/12|169\.254\.0\.0/16)' \
         && ok "no broad private-network bypass remains" \
         || bad "broad private-network bypass remains"
-    [ "$(snapshot_owner_tables)" = "$owner_before" ] \
-        && ok "tables 20, 230 and 52 are untouched" \
-        || bad "a tunnel-owned table changed"
+    [ "$(snapshot_owner_state)" = "$owner_before" ] \
+        && ok "tunnel-owned tables and rules are untouched" \
+        || bad "tunnel-owned tables or rules changed"
 
     head_ "direct routes override IOA business policy"
     [ "$(route_table 10.20.1.1)" = cn ] && ok "routefile overrides static 10/8 IOA" \
@@ -207,8 +220,17 @@ main() {
         && ok "all non-zero marks are preserved" || bad "non-zero mark guard missing"
     grep -q -- '--set-xmark 0x1/0xffffffff' <<<"$chain" \
         && ok "IOA business mark is written exactly" || bad "IOA mark write is not exact"
-    grep -q 'fwmark 0x1 lookup ioa' <<<"$(band 2500)" \
-        && ok "IOA rule matches exact mark" || bad "IOA rule still matches only bit zero"
+    full_width_fwmark_rule 2500 0x1 ioa \
+        && ok "IOA rule matches the exact full-width mark" \
+        || bad "IOA rule does not match exactly 0x1/0xffffffff"
+    [ "$(band 500 | grep -Fxc 'from all fwmark 0x80000/0xff0000 lookup main')" -eq 1 ] \
+        && ok "pref 500 contains the complete Tailscale mark rule exactly once" \
+        || bad "pref 500 lacks the complete Tailscale mark rule: $(band 500)"
+    while ip rule del pref 5210 2>/dev/null; do :; done
+    [ "$(route_table 203.0.113.1 'mark 0x80000')" = main ] \
+        && ok "pref 500 routes the Tailscale mark to main" \
+        || bad "Tailscale mark fell through pref 500"
+    ip rule add fwmark 0x80000/0xff0000 lookup main pref 5210
     [ "$(route_table 10.30.1.1 'mark 0xa38')" = 20 ] \
         && ok "SmartGateAgent mark remains owner-routed" \
         || bad "SmartGateAgent mark was captured"
@@ -218,6 +240,12 @@ main() {
     [ "$(route_table 10.30.1.1 'mark 0xa39')" != ioa ] \
         && ok "low-bit collision does not match IOA" \
         || bad "0xa39 incorrectly matched IOA business mark"
+
+    for private in 192.168.200.1 172.31.200.1 169.254.200.1; do
+        [ "$(route_table "$private")" = 52 ] \
+            && ok "$private follows the Tailscale table" \
+            || bad "$private bypassed the Tailscale table"
+    done
 
     head_ "idempotence"
     run_script 1 >/dev/null
@@ -268,15 +296,15 @@ main() {
     # From here the AP changes, so nothing below may compare against the
     # baseline bands captured above.
     head_ "roam onto an AP with a different subnet, gateway and resolvers"
-    owner_before=$(snapshot_owner_tables)
+    owner_before=$(snapshot_owner_state)
     roam_to 10.36.43.250/21 10.36.40.1 202.152.254.230 202.152.254.65
     local rc
     rc=$(run_status 0)
     [ "$rc" -eq 0 ] && ok "reconfigure exits clean after a roam" \
                     || bad "reconfigure exited $rc after a roam"
-    [ "$(snapshot_owner_tables)" = "$owner_before" ] \
-        && ok "roam leaves tables 20, 230 and 52 to tunnel owners" \
-        || bad "roam modified a tunnel-owned table"
+    [ "$(snapshot_owner_state)" = "$owner_before" ] \
+        && ok "roam preserves tunnel-owned tables and rules" \
+        || bad "roam modified tunnel-owned tables or rules"
 
     local b1000
     b1000=$(band 1000)
@@ -309,7 +337,14 @@ main() {
         bad "cn table has no route via either gateway"
     fi
     head_ "cold boot: no owned rules, no cn table, no state"
-    owner_before=$(snapshot_owner_tables)
+    # Restore owner sentinels independently before the cold-boot run.
+    while ip rule del pref 490 2>/dev/null; do :; done
+    while ip rule del pref 5210 2>/dev/null; do :; done
+    while ip rule del pref 5270 2>/dev/null; do :; done
+    ip rule add fwmark 0xa38 lookup 20 pref 490
+    ip rule add fwmark 0x80000/0xff0000 lookup main pref 5210
+    ip rule add lookup 52 pref 5270
+    owner_before=$(snapshot_owner_state)
     while ip rule del pref 500  2>/dev/null; do :; done
     while ip rule del pref 1000 2>/dev/null; do :; done
     while ip rule del pref 1500 2>/dev/null; do :; done
@@ -328,9 +363,9 @@ main() {
                               || bad "1000 still empty after a cold start"
     [ "$(count 2500)" -gt 0 ] && ok "2500 rebuilt from nothing ($(count 2500) rules)" \
                               || bad "2500 still empty after a cold start"
-    [ "$(snapshot_owner_tables)" = "$owner_before" ] \
-        && ok "cold boot leaves tables 20, 230 and 52 to tunnel owners" \
-        || bad "cold boot modified a tunnel-owned table"
+    [ "$(snapshot_owner_state)" = "$owner_before" ] \
+        && ok "cold boot preserves tunnel-owned tables and rules" \
+        || bad "cold boot modified tunnel-owned tables or rules"
     [ -s "$WORK/last-applied" ] && ok "state written only after a clean run" \
                                 || bad "no state file after a clean run"
 
