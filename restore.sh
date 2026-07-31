@@ -140,6 +140,8 @@ if [[ -n $GUI ]]; then
     fi
     sudo rm -f /etc/systemd/system/network-fallback.service
     sudo rm -rf /var/lib/network-fallback
+    sudo rm -f /var/lib/network-reconfigure/derp-ips \
+        /var/lib/network-reconfigure/ioa-endpoints
     sudo systemctl daemon-reload
     # SmartDNS base config.
     sudo mkdir -p /etc/smartdns

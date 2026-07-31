@@ -6,8 +6,7 @@ set -Eeuo pipefail
 abort() {
     local rc=$1 line=$2
     logger -t network-reconfigure -p daemon.err \
-        "aborted at line $line (exit $rc); removing the incomplete IOA mark hook"
-    iptables -t mangle -D OUTPUT -j "${CHAIN:-NETMODE_IOA}" 2>/dev/null || true
+        "aborted at line $line (exit $rc); active IOA marking left in place"
 }
 trap 'abort $? $LINENO' ERR
 
@@ -21,6 +20,7 @@ fi
 IOA_MARK="0x1/0xffffffff"
 TS_MARK="0x80000/0xff0000"
 CHAIN="NETMODE_IOA"
+NEXT_CHAIN="NETMODE_IOA_NEXT"
 IOA_INTRANET_SET="ioa_intranet"
 IOA_INTRANET_CIDRS=("9.0.0.0/8" "10.0.0.0/8" "100.12.0.0/16")
 IOA_STATIC_CIDRS=("10.0.0.0/8" "100.12.0.0/16")
@@ -321,6 +321,33 @@ trap 'finish_state $?' EXIT
 for p in 100 900 2000 3500 4000 4500; do clean_pref "$p"; done
 rm -f "$CACHE_DIR/derp-ips" "$CACHE_DIR/ioa-endpoints"
 
+valid_ipv4() {
+    local address=$1 octets octet
+    IFS=. read -r -a octets <<<"$address"
+    [ "${#octets[@]}" -eq 4 ] || return 1
+    for octet in "${octets[@]}"; do
+        [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] && [ "$octet" -le 255 ] || return 1
+    done
+}
+
+parse_routefile() {
+    local line prefix address length
+    local grammar='^[[:space:]]*route[[:space:]]+(add|replace)[[:space:]]+([^[:space:]]+)[[:space:]]+via[[:space:]]+GATEWAY[[:space:]]+table[[:space:]]+cn[[:space:]]*$'
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" =~ $grammar ]] || return 1
+        prefix=${BASH_REMATCH[2]}
+        address=${prefix%/*}
+        if [[ "$prefix" == */* ]]; then
+            length=${prefix##*/}
+            [[ "$length" =~ ^(0|[1-9]|[12][0-9]|3[0-2])$ ]] || return 1
+        fi
+        valid_ipv4 "$address" || return 1
+        printf 'route replace %s via %s table %s\n' "$prefix" "$1" "$CN_STAGE_TABLE"
+    done < "$ROUTEFILE"
+}
+
 # A missing or empty routefile authoritatively disables cn. Remove its rule first
 # so flushing the now-unreachable table cannot interrupt packet lookup.
 if [ ! -s "$ROUTEFILE" ]; then
@@ -334,13 +361,13 @@ else
         warn "no default gateway; leaving the cn table alone"
     else
         ip route flush table "$CN_STAGE_TABLE" 2>/dev/null || true
-        # Stage first: any parse/netlink failure aborts without changing active cn.
-        sed -E "s/GATEWAY/$gw/g; s/table[[:space:]]+$CN_TABLE([[:space:]]|$)/table $CN_STAGE_TABLE\\1/g" \
-            "$ROUTEFILE" | ip -batch -
-        expected_routes=$(grep -Ec \
-            '^[[:space:]]*route[[:space:]]+(add|replace)[[:space:]]+' "$ROUTEFILE")
+        # Parse a narrow data grammar and generate the staging commands ourselves.
+        route_batch=$(parse_routefile "$gw")
+        expected_routes=$(grep -c '^route replace ' <<<"$route_batch")
+        [ "$expected_routes" -gt 0 ]
+        ip -batch - <<<"$route_batch"
         staged_routes=$(count_routes "$CN_STAGE_TABLE")
-        [ "$expected_routes" -gt 0 ] && [ "$staged_routes" -eq "$expected_routes" ]
+        [ "$staged_routes" -eq "$expected_routes" ]
 
         stage_routes=$(ip route show table "$CN_STAGE_TABLE" | sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//')
         while read -r route; do
@@ -357,23 +384,28 @@ else
     fi
 fi
 
-# Preserve every existing owner mark. Only unmarked addresses present in both
-# SmartDNS's dynamic set and the bounded intranet set receive exact mark 0x1.
-iptables -t mangle -N "$CHAIN" 2>/dev/null || true
-iptables -t mangle -F "$CHAIN"
-iptables -t mangle -A "$CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
+# Build an independent chain before switching OUTPUT, so construction failures leave
+# the previously healthy hook and chain byte-identical.
+while iptables -t mangle -D OUTPUT -j "$NEXT_CHAIN" 2>/dev/null; do :; done
+iptables -t mangle -F "$NEXT_CHAIN" 2>/dev/null || true
+iptables -t mangle -X "$NEXT_CHAIN" 2>/dev/null || true
+iptables -t mangle -N "$NEXT_CHAIN"
+iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
 ensure_ipset ioa
 ensure_ipset "$IOA_INTRANET_SET" hash:net
 ipset flush "$IOA_INTRANET_SET"
 for cidr in "${IOA_INTRANET_CIDRS[@]}"; do
     ipset add "$IOA_INTRANET_SET" "$cidr"
 done
-iptables -t mangle -A "$CHAIN" \
+iptables -t mangle -A "$NEXT_CHAIN" \
     -m set --match-set ioa dst \
     -m set --match-set "$IOA_INTRANET_SET" dst \
     -j MARK --set-xmark 0x1/0xffffffff
-iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null ||
-    iptables -t mangle -I OUTPUT 1 -j "$CHAIN"
+iptables -t mangle -I OUTPUT 1 -j "$NEXT_CHAIN"
+while iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null; do :; done
+iptables -t mangle -F "$CHAIN" 2>/dev/null || true
+iptables -t mangle -X "$CHAIN" 2>/dev/null || true
+iptables -t mangle -E "$NEXT_CHAIN" "$CHAIN"
 
 # Manage only the repository-owned exact NAT rule; similar rules belong to others.
 while iptables -t nat -D POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 \

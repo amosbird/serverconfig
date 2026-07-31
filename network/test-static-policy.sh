@@ -38,6 +38,11 @@ if ! awk '
     fail=1
 fi
 reject 'restore leaves Tailscale alone' 'tailscale|tailscaled' restore.sh
+if ! grep -Fq 'sudo rm -f /var/lib/network-reconfigure/derp-ips' restore.sh ||
+   ! grep -Fq '/var/lib/network-reconfigure/ioa-endpoints' restore.sh; then
+    echo 'FAIL restore does not remove obsolete network cache files' >&2
+    fail=1
+fi
 reject 'no exit-node mutation in local tools' \
     'tailscale (set --exit-node=|down|up)|systemctl restart tailscaled' \
     scripts/network-reconfigure scripts/netfix scripts/network-status

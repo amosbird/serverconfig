@@ -105,6 +105,11 @@ snapshot_owner_state() {
     done
 }
 
+snapshot_marking() {
+    iptables -t mangle -S OUTPUT | grep -- '-j NETMODE_IOA' || true
+    iptables -t mangle -S NETMODE_IOA 2>/dev/null || true
+}
+
 full_width_fwmark_rule() {
     local pref=$1 mark=$2 table=$3
     band "$pref" | grep -Eq \
@@ -147,6 +152,12 @@ systemctl()  { return 0; }
 tailscale()  { return 1; }
 logger()     { return 0; }
 dig()        { return 9; }
+iptables() {
+    if [ "${FAIL_NEXT_MARK:-0}" = 1 ] && [ " $* " = " -t mangle -A NETMODE_IOA_NEXT -m set --match-set ioa dst -m set --match-set ioa_intranet dst -j MARK --set-xmark 0x1/0xffffffff " ]; then
+        return 42
+    fi
+    command iptables "$@"
+}
 STATE_FILE_OVERRIDE=WORKDIR/last-applied
 CACHE_DIR_OVERRIDE=WORKDIR/cache
 RT_TABLES_OVERRIDE=WORKDIR/rt_tables
@@ -414,14 +425,52 @@ main() {
         && ok "equivalent duplicate and foreign stale rule are removed" \
         || bad "pref 2500 did not converge exactly: $(band 2500)"
 
-    head_ "routefile failures preserve the active cn table"
-    local cn_before
+    head_ "routefile failures preserve active policy"
+    local cn_before marking_before malicious_owner_before table52_before invalid_route
     cn_before=$(ip route show table cn | sed -E 's/[[:space:]]+$//' | sort)
+    marking_before=$(snapshot_marking)
     printf 'route add malformed via GATEWAY table cn\n' > "$WORK/routefile"
     [ "$(run_status 1)" -ne 0 ] \
         && ok "malformed routefile fails the run" || bad "malformed routefile was accepted"
     [ "$(ip route show table cn | sed -E 's/[[:space:]]+$//' | sort)" = "$cn_before" ] \
         && ok "failed staging batch preserves old cn" || bad "failed batch changed cn"
+    [ "$(snapshot_marking)" = "$marking_before" ] \
+        && ok "failed staging preserves the active marking chain and hook byte-for-byte" \
+        || bad "failed staging changed the active marking chain or hook"
+    [ "$(FAIL_NEXT_MARK=1 run_status 1)" -ne 0 ] \
+        && ok "mark-chain construction failure aborts the run" \
+        || bad "mark-chain construction failure was ignored"
+    [ "$(snapshot_marking)" = "$marking_before" ] \
+        && ok "mark-chain construction failure preserves the active hook" \
+        || bad "mark-chain construction failure changed the active hook"
+
+    malicious_owner_before=$(snapshot_owner_state)
+    table52_before=$(ip route show table 52 | sort)
+    printf '%s\n' \
+        'route add 1.0.3.0/24 via GATEWAY table cn' \
+        'route flush table 52' > "$WORK/routefile"
+    [ "$(run_status 1)" -ne 0 ] \
+        && ok "routefile rejects commands outside the route grammar" \
+        || bad "routefile executed an out-of-grammar command"
+    [ "$(snapshot_owner_state)" = "$malicious_owner_before" ] &&
+        [ "$(ip route show table 52 | sort)" = "$table52_before" ] \
+        && ok "rejected routefile preserves owner state and table 52" \
+        || bad "rejected routefile changed owner state or table 52"
+    [ "$(ip route show table cn | sed -E 's/[[:space:]]+$//' | sort)" = "$cn_before" ] \
+        && ok "rejected routefile preserves old cn" || bad "rejected routefile changed cn"
+
+    for invalid_route in \
+        'route add 256.0.0.1/24 via GATEWAY table cn' \
+        'route add 1.0.1.0/33 via GATEWAY table cn' \
+        'route add 1.0.1.0/24 via 10.36.48.1 table cn' \
+        'route add 1.0.1.0/24 via GATEWAY table main' \
+        'route add 1.0.1.0/24 via GATEWAY table cn metric 1'; do
+        printf '%s\n' "$invalid_route" > "$WORK/routefile"
+        [ "$(run_status 1)" -ne 0 ] \
+            && ok "routefile rejects: $invalid_route" \
+            || bad "routefile accepted: $invalid_route"
+    done
+
     printf 'route add 1.0.1.0/24 via GATEWAY table cn\nroute add 1.0.2.0/23 via GATEWAY table cn\n' > "$WORK/routefile"
     run_script 1 >/dev/null
 

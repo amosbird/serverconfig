@@ -139,12 +139,15 @@ The reconciler then:
 `rt_tables` registrations. An existing unique, non-conflicting ID is reused. Exhaustion or a
 conflict fails visibly rather than borrowing another table's ID.
 
-A non-empty routefile is first rewritten for the current gateway and loaded into `cn_stage`.
-The route count must match before the active `cn` table is changed. A staging or validation
-failure therefore leaves the previous active `cn` table unchanged. During active reconciliation,
-new routes are installed before stale routes are deleted to reduce the update window, but a
-netlink failure can leave a partial active update and is reported as an error. A missing or empty
-routefile is authoritative and safely disables the `cn` rule and routes.
+A non-empty routefile is parsed as data, not executed as an `ip -batch` program. Its only accepted
+non-comment grammar is `route add|replace IPv4[/prefix] via GATEWAY table cn`, with an IPv4 prefix
+length from 0 through 32 and no trailing tokens. The reconciler emits its own `route replace`
+commands into `cn_stage` using the current gateway. The route count must match before the active
+`cn` table is changed, so malformed input or a staging failure leaves both `cn` and the active
+marking hook unchanged. During active reconciliation, new routes are installed before stale routes
+are deleted to reduce the update window, but a netlink failure can leave a partial active update
+and is reported as an error. A missing or empty routefile is authoritative and safely disables the
+`cn` rule and routes.
 
 ### Fingerprints and convergence
 
@@ -199,4 +202,6 @@ rollback atomically removes its dynamic `rt_tables` registration only when both 
 are unique. A duplicate name or conflicting ID is warned about and preserved to avoid deleting a
 foreign registration. Unrelated rules sharing repository priorities survive. SmartGateAgent
 tables `20`, `230`, and `ioa` and Tailscale table `52` and exit-node preferences are never
-flushed or changed by rollback.
+flushed or changed by rollback. Legacy tables `500` and `501` are also retained because they have
+no independent ownership record; leaving possible disk/kernel garbage is safer than deleting a
+foreign route table.
