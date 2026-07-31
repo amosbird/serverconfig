@@ -41,9 +41,12 @@ reject 'restore leaves Tailscale alone' 'tailscale|tailscaled' restore.sh
 reject 'no exit-node mutation in local tools' \
     'tailscale (set --exit-node=|down|up)|systemctl restart tailscaled' \
     scripts/network-reconfigure scripts/netfix scripts/network-status
-reject 'no DERP or IOA endpoint caches' \
+reject 'netfix delegates all network mutation to the reconciler' \
+    '^[[:space:]]*(ip rule (add|del)|ip route (add|del|replace|flush)|iptables .*-[AIDFX]|ipset (add|del|create|destroy|flush)|tailscale (set|up|down)|systemctl (restart|stop) tailscaled)' \
+    scripts/netfix
+reject 'operator tools do not inspect DERP or IOA endpoint caches' \
     'DERP_CACHE|derp-ips|IOA_ENDPOINT_CACHE|ioa-endpoints|IOA_BOOTSTRAP_HOSTS' \
-    scripts/network-reconfigure scripts/netfix scripts/network-status
+    scripts/netfix scripts/network-status
 reject 'no underlay tables' 'UNDERLAY_TABLE|UNDERLAY_STAGE|lookup underlay|table 50[01]' \
     scripts/network-reconfigure scripts/netfix scripts/network-status
 reject 'no broad private bypass' \

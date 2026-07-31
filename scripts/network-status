@@ -1,74 +1,54 @@
 #!/usr/bin/env bash
-# network-status — what the routing layer is actually doing, read-only.
-#
-# Everything here comes from the kernel or from a live query; nothing is cached
-# and nothing is written, so it can be run as a normal user and its answer is
-# never stale.
+# network-status — read-only view of repository-owned policy and tunnel-owned state.
 
-# No pipefail: this script is full of "is there anything here" checks, and a
-# `cmd | grep -q` pipeline reports 141 when grep exits early and the writer
-# takes SIGPIPE. Counting output avoids the question entirely.
 set -u
 
-P_IOA_UNDERLAY=490
-P_UNDERLAY=500
-P_IOA=2500
-P_CN=4000
-DETACHED_FILE=/var/lib/network-fallback/detached-exit-node
-
-rules()   { ip -4 rule show pref "$1" 2>/dev/null; }
-count()   { rules "$1" | wc -l; }
-routes()  { ip route show table "$1" 2>/dev/null | wc -l; }
-present() { [ -n "$(rules "$1")" ]; }
+rules()  { ip -4 rule show pref "$1" 2>/dev/null; }
+routes() { ip -4 route show table "$1" 2>/dev/null | wc -l; }
 
 printf 'interfaces\n'
-ip -4 -o addr show scope global |
+ip -4 -o addr show scope global 2>/dev/null |
     awk '{printf "  %-12s %s\n", $2, $4}'
-printf '  %-12s %s\n' default "$(ip -4 route show default | head -1)"
+printf '  %-12s %s\n' default "$(ip -4 route show table main default 2>/dev/null | head -1)"
+printf '  scope link\n'
+ip -4 route show table main scope link 2>/dev/null | sed 's/^/    /'
 
-printf '\nunderlay (never enters a tunnel)\n'
-# Matched by mark, not by priority: SmartGateAgent re-adds this rule whenever the
-# tunnel reconnects and the kernel derives 499 rather than our 490, so checking
-# the priority reports MISSING for what is in fact the normal steady state.
-printf '  ioa escape    %s\n' \
-    "$(ip -4 rule show | awk '/0xa38/ {print "pref " $1; found=1}
-                              END {if (!found) print "MISSING"}' | tr -d ':')"
-printf '  rules         %s\n' "$(count "$P_UNDERLAY")"
-printf '  routes        %s (derp, control plane, dns upstreams, ioa gateways)\n' \
-    "$(routes underlay)"
-
-printf '\noverlay\n'
-if [ "$(routes ioa)" -gt 0 ]; then
-    printf '  IOA           %s rules, tun0 %s\n' "$(count "$P_IOA")" \
-        "$(ip -4 addr show tun0 &>/dev/null && echo up || echo down)"
+printf '\nlocal direct\n'
+local_rules=$(rules 1000)
+if [ -n "$local_rules" ]; then
+    printf '%s\n' "$local_rules" | sed 's/^/  /'
 else
-    printf '  IOA           no route in table ioa (tunnel down)\n'
+    printf '  pref 1000 missing\n'
 fi
-printf '  China direct  %s routes\n' "$(routes cn)"
-printf '  tailnet       %s\n' \
-    "$([ "$(routes 52)" -gt 0 ] && echo "table 52 populated" || echo "table 52 empty (tailscale down)")"
 
-printf '\nexit node\n'
+printf '\nroutefile direct\n'
+printf '  cn routes     %s\n' "$(routes cn)"
+printf '  pref 1500     %s\n' "$([ -n "$(rules 1500)" ] && echo present || echo missing)"
+
+printf '\nIOA business\n'
+printf '  table ioa     %s\n' \
+    "$([ "$(routes ioa)" -gt 0 ] && echo populated || echo empty)"
+printf '  tun0          %s\n' \
+    "$([ -n "$(ip -4 -o addr show tun0 2>/dev/null)" ] && echo up || echo down)"
+printf '  pref 2500\n'
+ioa_rules=$(rules 2500)
+[ -n "$ioa_rules" ] && printf '%s\n' "$ioa_rules" | sed 's/^/    /' || printf '    missing\n'
+printf '  owner 0xa38   %s\n' \
+    "$(ip -4 rule show 2>/dev/null | awk '
+        /fwmark 0xa38/ {print "pref " $1; found=1}
+        END {if (!found) print "missing"}' | tr -d ':')"
+
+printf '\nTailscale\n'
+printf '  table 52      %s\n' \
+    "$([ "$(routes 52)" -gt 0 ] && echo populated || echo empty)"
+printf '  pref 3000     %s\n' "$([ -n "$(rules 3000)" ] && echo present || echo missing)"
 if command -v tailscale >/dev/null; then
     tailscale status --json 2>/dev/null | jq -r '
-        if .ExitNodeStatus == null then "  none selected"
-        else "  \(.ExitNodeStatus.ID)  online=\(.ExitNodeStatus.Online)" end,
-        (if (.Health | length) > 0 then "  health: \(.Health | join("; "))" else empty end)
+        "  backend       \(.BackendState // "unknown")",
+        (if .ExitNodeStatus == null then "  exit node     none"
+         else "  exit node     \(.ExitNodeStatus.ID) online=\(.ExitNodeStatus.Online)" end),
+        (if (.Health | length) > 0 then "  health        \(.Health | join("; "))" else empty end)
     ' 2>/dev/null || printf '  tailscaled not responding\n'
 else
     printf '  tailscale not installed\n'
 fi
-if [ -s "$DETACHED_FILE" ]; then
-    printf '  DETACHED by network-fallback (was %s); retrying every 20s\n' \
-        "$(cat "$DETACHED_FILE")"
-fi
-
-printf '\ndns\n'
-printf '  resolv.conf   %s\n' "$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ')"
-printf '  dhcp upstream %s\n' \
-    "$(awk '/^server/ {print $2}' /etc/smartdns/dhcp-dns.conf 2>/dev/null | tr '\n' ' ' || echo none)"
-printf '  office LAN    %s\n' \
-    "$(grep -qE '^\s*(server|nameserver)' /etc/smartdns/office.conf 2>/dev/null &&
-       echo active || echo inactive)"
-printf '  resolves      %s\n' \
-    "$(dig +short +timeout=2 +tries=1 google.com @127.0.0.1 2>/dev/null | head -1 || echo FAILED)"

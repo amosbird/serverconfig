@@ -1,38 +1,12 @@
 #!/usr/bin/env bash
-# netfix — one-shot repair, verification and diagnostics for the network stack.
-#
-# Run this when the network misbehaves:
-#
-#     sudo bash ~/git/serverconfig/scripts/netfix
-#
-# It is safe to run at any time and safe to lose the terminal while it runs.
-# Everything it does goes to /var/log/netfix.log as well as the screen.
-#
-# The contract that matters: THIS SCRIPT NEVER LEAVES YOU OFFLINE. A watchdog
-# is armed before anything is touched, and an EXIT trap runs on every path —
-# success, failure, Ctrl-C, SSH disconnect, or a hang. If connectivity is not
-# working when it finishes, it strips policy routing back to the one
-# configuration that always works (plain default route, no marking, no exit
-# node) and says so.
+# netfix — reconcile repository-owned policy, then verify it without changing either tunnel.
 
-set -uo pipefail   # deliberately NOT -e: this script must reach its own end
+set -uo pipefail # deliberately not -e: report every failed invariant
 
 LOG=/var/log/netfix.log
 REPO=/home/amos/git/serverconfig
 RECONFIGURE="$REPO/scripts/network-reconfigure"
 IFACE_DEFAULT=wlan0
-# Long enough to cover the worst-case serial run, not just the typical one:
-# reconfigure (bounded at 120s) + the connectivity probes + the 60s tailscale
-# soak with its per-sample curls comes to roughly 340s. A watchdog that fires
-# during a healthy run is not a safety net, it is the outage.
-WATCHDOG_SECS=600
-# The connectivity probe is pinned to an address so it needs no DNS.
-#
-# `https://www.google.com` was wrong in a way that cost a whole debugging
-# session: when the exit node is a black hole, DNS dies first, so the probe
-# reported "offline" whether or not routing was fine — and the log then said
-# HTTP 000 for a DNS failure. Separate the two questions. DNS gets its own line
-# in the report; this one asks only whether packets reach the internet.
 PROBE_HOST=connectivitycheck.gstatic.com
 PROBE_IP=216.239.32.117
 PROBE="http://$PROBE_HOST/generate_204"
@@ -48,232 +22,76 @@ ok()   { printf '  \033[32mOK\033[0m   %s\n' "$*"; }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; }
 info() { printf '       %s\n' "$*"; }
 
-printf '\n========================================================\n'
-printf 'netfix %s  (log: %s)\n' "$(date -Is)" "$LOG"
-printf '========================================================\n'
-
-# --- the safety net, armed before anything is touched -------------------------
-# Two independent guarantees, because the failure we are recovering from has
-# repeatedly killed the terminal that was driving the fix.
-#
-#   1. A detached watchdog. It survives this script being killed by any signal,
-#      including SIGKILL and a dropped SSH session. If the marker file still
-#      exists after WATCHDOG_SECS, the fix hung, and it restores connectivity.
-#   2. An EXIT trap for the ordinary paths.
-
-MARKER=/run/netfix.running
-: > "$MARKER"
-
-# The last-resort configuration. Not "the right routing" — the routing that is
-# always reachable: no marking, no exit node, plain default route.
-cat > /run/netfix-restore <<'RESTORE'
-#!/usr/bin/env bash
-iptables -t mangle -D OUTPUT -j NETMODE_IOA 2>/dev/null
-tailscale set --exit-node= 2>/dev/null
-while ip rule del pref 4500 2>/dev/null; do :; done
-logger -t netfix -p daemon.err "watchdog fired: detached exit node, stripped marking"
-RESTORE
-chmod +x /run/netfix-restore
-
-setsid bash -c "
-    sleep $WATCHDOG_SECS
-    [ -e '$MARKER' ] || exit 0
-    /run/netfix-restore
-" >/dev/null 2>&1 < /dev/null &
-WATCHDOG_PID=$!
-info "watchdog armed (pid $WATCHDOG_PID, ${WATCHDOG_SECS}s)"
-
 online() {
     curl -s -o /dev/null -m 8 -w '%{http_code}' \
         --resolve "$PROBE_HOST:80:$PROBE_IP" "$PROBE" 2>/dev/null
 }
 
-finish() {
-    local rc=$?
-    # Disarm first. `finish` ends in `exit`, which re-triggers the EXIT trap, so
-    # without this a Ctrl-C or a dropped SSH session runs the whole body twice —
-    # including a second `/run/netfix-restore`, and the second pass runs with the
-    # marker already gone and the watchdog already killed.
-    trap - EXIT INT TERM HUP
-    rm -f "$MARKER"
-    kill "$WATCHDOG_PID" 2>/dev/null
+printf '\n========================================================\n'
+printf 'netfix %s  (log: %s)\n' "$(date -Is)" "$LOG"
+printf '========================================================\n'
 
-    say "FINAL CHECK"
-    local code
-    code=$(online)
-    if [ "$code" = "204" ]; then
-        ok "internet reachable (HTTP $code)"
-    else
-        bad "internet NOT reachable (HTTP ${code:-000}) — stripping to the safe configuration"
-        /run/netfix-restore
-        sleep 2
-        code=$(online)
-        [ "$code" = "204" ] &&
-            ok "recovered after stripping (HTTP $code); routing is degraded but you are online" ||
-            bad "still unreachable (HTTP ${code:-000}) — see $LOG"
-    fi
-    printf '\nlog: %s\n' "$LOG"
-    exit "$rc"
-}
-trap finish EXIT INT TERM HUP
-
-# --- 0. context ---------------------------------------------------------------
-say "BEFORE"
-IFACE=$(ip -4 route show table main default 2>/dev/null |
-            awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/ {print $5; exit}')
-IFACE=${IFACE:-$IFACE_DEFAULT}
-GW=$(ip -4 route show table main default 2>/dev/null |
-         awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/ {print $3; exit}')
-SSID=$(iwctl station "$IFACE" show 2>/dev/null |
-           awk -F'  +' '/Connected network/ {print $3; exit}')
-info "iface=$IFACE gw=${GW:-none} ssid=${SSID:-unknown}"
-info "backend=$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "?"')"
-info "online before fix: HTTP $(online)"
-
-# --- 1. clear the state that makes runs fail ----------------------------------
-# `ipset create -exist` fails when the set exists with different parameters, and
-# SmartDNS creates `ioa` with a larger maxelem than we asked for. The reconciler
-# no longer cares, but a set left over from a *previous* version of this stack
-# can still have the wrong type, so drop anything unreferenced.
-say "RESET"
-iptables -t mangle -D OUTPUT -j NETMODE_IOA 2>/dev/null
-ip route flush table 501 2>/dev/null
-# Deliberately NOT removing /run/lock/network-reconfigure.lock. A running
-# reconfigure holds a flock on that inode; unlinking it does not release the
-# lock, it just means the next run creates a fresh inode and the two proceed
-# concurrently — which is the exact interleaving the lock exists to prevent.
-# `flock -w` already handles a stale lock without help.
-# pref 4500 was the old exit-node bypass. It is a black hole now that nothing
-# maintains it, so remove any left over from a previous version.
-while ip rule del pref 4500 2>/dev/null; do :; done
-ok "cleared stale mangle jump, staging table and legacy bypass"
-
-# --- 2. reconcile -------------------------------------------------------------
-say "RECONFIGURE"
-# FORCE=1: the reconciler skips its work when nothing about the network moved,
-# which is right for the .path unit but wrong here — this is the operator asking
-# for a rebuild precisely because something is broken that the state check
-# cannot see.
-if FORCE=1 timeout 120 bash "$RECONFIGURE" "$IFACE"; then
-    ok "network-reconfigure completed (rc=0)"
-else
-    bad "network-reconfigure failed (rc=$?) — see the journal below"
-fi
-
-# --- 3. verify the routing invariants ----------------------------------------
-say "VERIFY"
+iface=$(ip -4 route show table main default 2>/dev/null |
+    awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/ {print $5; exit}')
+iface=${iface:-$IFACE_DEFAULT}
 fail=0
 
-n=$(ip route show table 500 2>/dev/null | wc -l)
-[ "$n" -gt 10 ] && ok "underlay table: $n routes" ||
-    { bad "underlay table nearly empty ($n routes)"; fail=1; }
-
-n=$(ip route show table cn 2>/dev/null | wc -l)
-[ "$n" -gt 1000 ] && ok "cn table: $n routes" ||
-    { bad "cn table nearly empty ($n routes)"; fail=1; }
-
-for p in 500 1000 2500 4000; do
-    [ -n "$(ip -4 rule show pref $p)" ] && ok "pref $p present" ||
-        { bad "pref $p MISSING"; fail=1; }
-done
-
-# The invariant that has taken this machine offline every time: an IOA tunnel
-# endpoint must never route into the IOA tunnel.
-while read -r ip; do
-    [ -n "$ip" ] || continue
-    case "$(ip route get "$ip" mark 1 2>/dev/null | head -1)" in
-        *"dev tun0"*) bad "IOA endpoint $ip routes INTO tun0"; fail=1 ;;
-        *)            ok "IOA endpoint $ip stays off the tunnel" ;;
-    esac
-done < <(cat /var/lib/network-reconfigure/ioa-endpoints 2>/dev/null)
-
-# The symmetric one: an underlay address must never route into tailscale0.
-derp=$(head -1 /var/lib/network-reconfigure/derp-ips 2>/dev/null)
-if [ -n "$derp" ]; then
-    case "$(ip route get "$derp" 2>/dev/null | head -1)" in
-        *"dev tailscale0"*) bad "DERP $derp routes INTO tailscale0"; fail=1 ;;
-        *)                  ok "DERP $derp stays off the tunnel" ;;
-    esac
+say "RECONFIGURE"
+# FORCE is intentional: an operator repair must not be skipped by the reconciler cache.
+if timeout 120 env FORCE=1 "$RECONFIGURE" "$iface"; then
+    ok "network policy reconciled"
+else
+    bad "network policy reconcile failed"
+    fail=1
 fi
 
-# --- 4. connectivity ----------------------------------------------------------
-say "CONNECTIVITY"
-code=$(online);                                    [ "$code" = 204 ] &&
-    ok "internet: HTTP $code" || { bad "internet: HTTP ${code:-000}"; fail=1; }
-code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$IOA_PROBE" 2>/dev/null)
-[ -n "$code" ] && [ "$code" != 000 ] &&
-    ok "IOA intranet: HTTP $code" || bad "IOA intranet: HTTP ${code:-000} (tunnel may be down)"
-info "public IP: $(curl -s -m 10 https://api.ipify.org 2>/dev/null || echo unknown)"
-info "DNS: $(dig +short +timeout=2 +tries=1 google.com @127.0.0.1 2>/dev/null | head -1 || echo FAILED)"
+say "OWNED POLICY"
+n=$(ip route show table cn 2>/dev/null | wc -l)
+[ "$n" -gt 1000 ] && ok "direct table: $n routes" || {
+    bad "direct table nearly empty ($n routes)"
+    fail=1
+}
 
-# --- 5. bring tailscale up and confirm it stays up ----------------------------
-# The point of the exercise: every outage has happened seconds to a minute
-# *after* tailscale came up, so a fix that is only verified with it down is not
-# verified at all. Watched for a full minute, because the failure mode was
-# oscillation — the first ten seconds always looked fine.
-say "TAILSCALE"
-if [ "${NETFIX_TAILSCALE:-1}" = 1 ]; then
-    # No `| head`: it closes the pipe after N lines and SIGPIPEs `tailscale up`
-    # mid-handshake, which on this access point takes tens of seconds. That
-    # produced a half-started daemon and a fake outage during testing.
-    tailscale up 2>&1
-    sleep 8
-    flaps=0
-    for i in $(seq 1 6); do
-        code=$(online)
-        node=$(tailscale status --json 2>/dev/null |
-                   jq -r '.ExitNodeStatus.ID // "detached"')
-        info "t+$((8 + i * 10))s  http=$code  exit-node=$node  ip=$(
-              curl -s -m 6 https://api.ipify.org 2>/dev/null || echo -)"
-        [ "$code" = 204 ] || flaps=$((flaps + 1))
-        sleep 10
-    done
-    if [ "$flaps" -eq 0 ]; then
-        ok "tailscale up, connectivity stable across 60s"
+for spec in \
+    '500:fwmark 0x80000/0xff0000 lookup main' \
+    '1500:lookup cn' \
+    '2500:fwmark 0x1 lookup ioa' \
+    '2500:to 10.0.0.0/8 lookup ioa' \
+    '2500:to 100.12.0.0/16 lookup ioa' \
+    '3000:to 100.64.0.0/10 lookup 52'
+do
+    pref=${spec%%:*}
+    text=${spec#*:}
+    if ip -4 rule show pref "$pref" 2>/dev/null | grep -Fq "$text"; then
+        ok "$text"
     else
-        bad "connectivity dropped in $flaps of 6 samples with tailscale up"
+        bad "missing: $text"
         fail=1
     fi
-else
-    info "skipped (NETFIX_TAILSCALE=0)"
-fi
-
-state=$(tailscale status --json 2>/dev/null | jq -r '.BackendState // "?"')
-info "backend: $state"
-if [ "$state" = Running ]; then
-    info "health: $(tailscale status --json 2>/dev/null | jq -c '.Health // []')"
-    info "exit node: $(tailscale status --json 2>/dev/null |
-                       jq -r '.ExitNodeStatus.ID // "none"')"
-    info "through the tunnel: HTTP $(curl -s -o /dev/null -m 8 --interface tailscale0 \
-              -w '%{http_code}' "$PROBE" 2>/dev/null || echo 000)"
-fi
-if [ -s /var/lib/network-fallback/detached-exit-node ]; then
-    info "exit node DETACHED by network-fallback (was $(
-          cat /var/lib/network-fallback/detached-exit-node))"
-fi
-# This access point blocks TLS to the DERP relays, which makes tailscale report
-# a health error roughly once a minute even though peer-to-peer UDP is fine.
-# Record the distinction so the next outage does not have to rediscover it.
-for ip in $(tailscale debug derp-map 2>/dev/null |
-                jq -r '.Regions."3".Nodes[].IPv4' 2>/dev/null | head -2); do
-    if timeout 6 curl -s -o /dev/null -k "https://$ip/derp" --max-time 5 2>/dev/null; then
-        ok "DERP $ip: TLS reachable"
-    else
-        info "DERP $ip: TLS blocked by this network (expected here; UDP still works)"
-    fi
 done
 
-# --- 6. evidence --------------------------------------------------------------
-say "STATE"
-echo "--- ip -4 rule show"; ip -4 rule show
-echo "--- default routes"; ip -4 route show table main | head -5
-echo "--- mangle OUTPUT"; iptables -t mangle -S OUTPUT
-echo "--- NETMODE_IOA"; iptables -t mangle -S NETMODE_IOA 2>/dev/null || echo "(no chain)"
-echo "--- ipset ioa_intranet"; ipset list ioa_intranet 2>/dev/null | tail -n +9
-echo "--- services"; systemctl is-active smartdns tailscaled network-fallback | paste -sd' '
-echo "--- journal (network-reconfigure/fallback, last 30)"
-journalctl -t network-reconfigure -t network-fallback --since "-30min" --no-pager | tail -30
+say "CONNECTIVITY (READ-ONLY)"
+code=$(online)
+[ "$code" = 204 ] && ok "internet: HTTP $code" || \
+    bad "internet: HTTP ${code:-000} (fail-closed; route selection unchanged)"
+code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$IOA_PROBE" 2>/dev/null)
+[ -n "$code" ] && [ "$code" != 000 ] && ok "IOA intranet: HTTP $code" || \
+    bad "IOA intranet: HTTP ${code:-000}"
+info "DNS: $(dig +short +timeout=2 +tries=1 google.com @127.0.0.1 2>/dev/null |
+    head -1 || echo FAILED)"
+
+tailscale status --json 2>/dev/null | jq -r '
+    "       exit node: " +
+    (if .ExitNodeStatus == null then "none"
+     else "\(.ExitNodeStatus.ID) online=\(.ExitNodeStatus.Online)" end),
+    (if (.Health | length) > 0 then "       health: \(.Health | join("; "))" else empty end)
+' 2>/dev/null || bad "tailscaled not responding"
 
 say "RESULT"
-[ "$fail" -eq 0 ] && ok "all checks passed" || bad "$fail check(s) failed — details above"
-exit 0
+if [ "$fail" -eq 0 ]; then
+    ok "owned policy checks passed"
+else
+    bad "$fail owned-policy check(s) failed"
+fi
+printf '\nlog: %s\n' "$LOG"
+exit "$fail"
