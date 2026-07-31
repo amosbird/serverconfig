@@ -23,23 +23,38 @@ cleanup_obsolete_policy() {
     rm -f /var/lib/network-reconfigure/derp-ips \
         /var/lib/network-reconfigure/ioa-endpoints
 
-    # shortcut: numeric tables 500/501 were used only by the retired underlay
-    # mapping; require that exact mapping before flushing either numeric ID.
-    if grep -Eq '^[[:space:]]*500[[:space:]]+underlay([[:space:]]|$)' \
-            /etc/iproute2/rt_tables 2>/dev/null; then
-        while ip rule del pref 500 lookup underlay 2>/dev/null; do :; done
-        ip route flush table 500 2>/dev/null || true
-        ip route flush table 501 2>/dev/null || true
-        sed -i '/^[[:space:]]*500[[:space:]]\+underlay[[:space:]]*$/d' \
-            /etc/iproute2/rt_tables
-    fi
+    # The new reconciler has already replaced pref 500. Route tables 500 and 501
+    # have no independent ownership record, so leave their contents untouched.
+    sed -i '/^[[:space:]]*500[[:space:]]\+underlay[[:space:]]*$/d' \
+        /etc/iproute2/rt_tables
     ipset destroy ioa_underlay 2>/dev/null || true
     systemctl daemon-reload
 }
 
+cleanup_owned_rules() {
+    local pref rule
+    for pref in 500 1000 1500 2500 3000; do
+        while read -r rule; do
+            rule=${rule#*:}
+            rule=${rule#"${rule%%[![:space:]]*}"}
+            case "$pref:$rule" in
+                '500:from all fwmark 0x80000/0xff0000 lookup main'|\
+                '1000:from all to '*' lookup main'|\
+                '1500:from all lookup cn'|\
+                '2500:from all fwmark 0x1/0xffffffff lookup ioa'|\
+                '2500:from all to 10.0.0.0/8 lookup ioa'|\
+                '2500:from all to 100.12.0.0/16 lookup ioa'|\
+                '3000:from all to 100.64.0.0/10 lookup 52')
+                    # shellcheck disable=SC2086 # kernel-rendered rule is an argument list
+                    ip rule del pref "$pref" $rule 2>/dev/null || true
+                    ;;
+            esac
+        done < <(ip -4 rule show pref "$pref" 2>/dev/null || true)
+    done
+}
+
 install_configs() {
     echo "=== Installing new network configs (no network change yet) ==="
-    cleanup_obsolete_policy
 
     # Backup current state
     mkdir -p "$BACKUP_DIR"
@@ -119,16 +134,13 @@ install_iwd_profiles() {
                  ! -name '*.open' ! -perm 600 2>/dev/null)
     if [ -n "$loose" ]; then
         echo "  [WARN] credential files are not mode 600:"
-        echo "$loose" | sed 's/^/           /'
+        printf '           %s\n' "${loose//$'\n'/$'\n           '}"
         echo "         fix with: sudo chmod 600 <file>"
     fi
 
     # Convert netctl WPA-PSK profiles to iwd .psk format
     for f in /etc/netctl/wlp0s20f3-*; do
         [ -f "$f" ] || continue
-        local profile_name
-        profile_name="$(basename "$f" | sed 's/^wlp0s20f3-//')"
-
         local security essid key
         security=$(grep -oP '^Security=\K.*' "$f" 2>/dev/null || echo "")
         essid=$(grep -oP '^ESSID=\K.*' "$f" 2>/dev/null | sed "s/^'//;s/'$//;s/\\\\//g" || echo "")
@@ -167,7 +179,6 @@ EOF
 
 activate() {
     echo "=== Activating iwd + systemd-networkd (will briefly drop network) ==="
-    cleanup_obsolete_policy
 
     # Install iwd if needed
     if ! pacman -Q iwd &>/dev/null; then
@@ -191,6 +202,10 @@ activate() {
     systemctl enable --now iwd.service
     systemctl enable --now systemd-networkd.service
     systemctl enable --now network-reconfigure.path
+
+    # Establish replacement policy before retiring fallback state.
+    FORCE=1 "$DIR/../scripts/network-reconfigure" wlan0
+    cleanup_obsolete_policy
 
     # Apply SmartDNS config now
     cp "$BACKUP_DIR/smartdns-new.conf" /etc/smartdns/smartdns.conf
@@ -225,23 +240,16 @@ rollback() {
     systemctl disable --now network-reconfigure.path 2>/dev/null || true
     rm -f /etc/systemd/system/network-{reconfigure.path,reconfigure.service}
 
-    # Undo only policy owned by network-reconfigure. Tables 20, 230, 52 and ioa
-    # belong to the tunnel daemons and must survive rollback unchanged.
-    for p in 500 1000 1500 2500 3000; do
-        while ip rule del pref "$p" 2>/dev/null; do :; done
-    done
+    # Match complete repository rule shapes so unrelated rules sharing a
+    # preference survive rollback.
+    cleanup_owned_rules
     ip route flush table cn 2>/dev/null || true
     ip route flush table cn_stage 2>/dev/null || true
 
-    # shortcut: numeric tables 500/501 were used only by the retired underlay
-    # mapping; require that exact mapping before flushing either numeric ID.
-    if grep -Eq '^[[:space:]]*500[[:space:]]+underlay([[:space:]]|$)' \
-            /etc/iproute2/rt_tables 2>/dev/null; then
-        ip route flush table 500 2>/dev/null || true
-        ip route flush table 501 2>/dev/null || true
-        sed -i '/^[[:space:]]*500[[:space:]]\+underlay[[:space:]]*$/d' \
-            /etc/iproute2/rt_tables
-    fi
+    # Remove only the obsolete mapping. Tables 500 and 501 have no independent
+    # ownership record and are therefore never flushed automatically.
+    sed -i '/^[[:space:]]*500[[:space:]]\+underlay[[:space:]]*$/d' \
+        /etc/iproute2/rt_tables
     iptables -t mangle -D OUTPUT -j NETMODE_IOA 2>/dev/null || true
     iptables -t mangle -F NETMODE_IOA 2>/dev/null || true
     iptables -t mangle -X NETMODE_IOA 2>/dev/null || true
@@ -334,6 +342,10 @@ verify() {
         echo "  === SOME CHECKS FAILED — consider 'sudo bash network/migrate.sh rollback' ==="
     fi
 }
+
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
 
 case "${1:-}" in
     install)  install_configs ;;
