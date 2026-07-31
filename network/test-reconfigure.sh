@@ -119,12 +119,21 @@ route_table() {
 }
 
 # Build the stubbed copy from the real script, so the test can never drift from
-# what is deployed.
+# what is deployed. Every rewrite is deliberately one-for-one: if production
+# moves or duplicates an external path, the harness must fail closed rather
+# than execute an incompletely isolated copy.
 build_under_test() {
     python3 - "$REPO/scripts/network-reconfigure" "$WORK" <<'EOF'
 import sys
 src = open(sys.argv[1]).read()
 work = sys.argv[2]
+
+def replace_once(old, new):
+    count = src.count(old)
+    if count != 1:
+        raise SystemExit("expected exactly one occurrence of %r, found %d" % (old, count))
+    return src.replace(old, new)
+
 stub = """
 networkctl() { cat WORKDIR/lease; }
 systemctl()  { return 0; }
@@ -134,9 +143,14 @@ dig()        { return 9; }
 STATE_FILE_OVERRIDE=WORKDIR/last-applied
 CACHE_DIR_OVERRIDE=WORKDIR/cache
 """
-i = src.index('IFACE="${1:-wlan0}"')
+marker = 'IFACE="${1:-wlan0}"'
+if src.count(marker) != 1:
+    raise SystemExit("expected exactly one stub insertion marker, found %d" % src.count(marker))
+i = src.index(marker)
 src = src[:i] + stub.replace('WORKDIR', work) + src[i:]
-for a, b in [
+for old, new in [
+    ('exec flock -w 60 /run/lock/network-reconfigure.lock "$0" "$@"',
+     'exec flock -w 60 "%s/reconf.lock" "$0" "$@"' % work),
     ('CACHE_DIR="/var/lib/network-reconfigure"',
      'CACHE_DIR="${CACHE_DIR_OVERRIDE:-/var/lib/network-reconfigure}"'),
     ('STATE_FILE="$CACHE_DIR/last-applied"',
@@ -145,12 +159,20 @@ for a, b in [
     ('OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"',
      'OFFICE_SRC="%s/office.conf"' % work),
     ('OFFICE_DST="/etc/smartdns/office.conf"', 'OFFICE_DST="%s/office-dst.conf"' % work),
-    ('/etc/smartdns/dhcp-dns.conf', '%s/dhcp-dns.conf' % work),
-    ('/etc/smartdns/ioa-dns.conf', '%s/ioa-dns.conf' % work),
-    ('/etc/iproute2/rt_tables', '%s/rt_tables' % work),
-    ('/run/lock/network-reconfigure.lock', '%s/reconf.lock' % work),
+    ('write_if_changed /etc/smartdns/dhcp-dns.conf ' + '\\' + '\n',
+     'write_if_changed %s/dhcp-dns.conf ' % work + '\\' + '\n'),
+    ('write_if_changed /etc/smartdns/dhcp-dns.conf "# No DHCP DNS"',
+     'write_if_changed %s/dhcp-dns.conf "# No DHCP DNS"' % work),
+    ('write_if_changed /etc/smartdns/ioa-dns.conf ' + '\\' + '\n',
+     'write_if_changed %s/ioa-dns.conf ' % work + '\\' + '\n'),
+    ('write_if_changed /etc/smartdns/ioa-dns.conf "# IOA tunnel is down"',
+     'write_if_changed %s/ioa-dns.conf "# IOA tunnel is down"' % work),
+    ('grep -qE "^[[:space:]]*$1[[:space:]]+$2\\b" /etc/iproute2/rt_tables',
+     'grep -qE "^[[:space:]]*$1[[:space:]]+$2\\b" %s/rt_tables' % work),
+    ("printf '%s %s\\n' \"$1\" \"$2\" >> /etc/iproute2/rt_tables",
+     "printf '%s %s\\n' \"$1\" \"$2\" >> " + work + "/rt_tables"),
 ]:
-    src = src.replace(a, b)
+    src = replace_once(old, new)
 open(work + '/nr-under-test', 'w').write(src)
 EOF
     # `python3 ... <<EOF` is the last command only by accident; make the failure
@@ -179,8 +201,23 @@ EOF
 
 main() {
     setup
-    local owner_before route_error route_rc
+    local owner_before route_error route_rc table pref
     owner_before=$(snapshot_owner_state)
+
+    for table in 20 230 52; do
+        if grep -Eq "^table $table\|.+" <<<"$owner_before"; then
+            ok "owner snapshot includes table $table"
+        else
+            bad "owner snapshot omitted or emptied table $table"
+        fi
+    done
+    for pref in 490 5210 5270; do
+        if grep -Eq "^pref $pref\|.+" <<<"$owner_before"; then
+            ok "owner snapshot includes pref $pref"
+        else
+            bad "owner snapshot omitted or emptied pref $pref"
+        fi
+    done
 
     route_error=$(route_table invalid-destination 2>&1)
     route_rc=$?
@@ -189,14 +226,6 @@ main() {
     else
         bad "route lookup error reported rc=$route_rc output=$route_error"
     fi
-
-    while ip rule del pref 5270 2>/dev/null; do :; done
-    if [ "$(snapshot_owner_state)" != "$owner_before" ]; then
-        ok "owner snapshot includes pref 5270"
-    else
-        bad "owner snapshot omitted pref 5270"
-    fi
-    ip rule add lookup 52 pref 5270
 
     head_ "baseline"
     run_script 1 >/dev/null
@@ -212,8 +241,15 @@ main() {
                                || bad "Tailscale mark escape is missing or duplicated"
     [ "$(count 1500)" -eq 1 ] && ok "routefile has one direct lookup rule" \
                                 || bad "routefile direct rule missing"
-    [ "$(count 2500)" -eq 3 ] && ok "IOA has exact mark and two static CIDRs" \
-                                || bad "unexpected IOA business rule count: $(count 2500)"
+    [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ] \
+        && ok "IOA has exactly one full-width mark rule" \
+        || bad "IOA exact mark rule is missing or duplicated"
+    [ "$(band 2500 | grep -Fxc 'from all to 10.0.0.0/8 lookup ioa')" -eq 1 ] \
+        && ok "IOA has exactly one 10/8 rule" \
+        || bad "IOA 10/8 rule is missing or duplicated"
+    [ "$(band 2500 | grep -Fxc 'from all to 100.12.0.0/16 lookup ioa')" -eq 1 ] \
+        && ok "IOA has exactly one 100.12/16 rule" \
+        || bad "IOA 100.12/16 rule is missing or duplicated"
     ! band 2500 | grep -q '9.0.0.0/8' && ok "9/8 is not statically routed to IOA" \
                                            || bad "9/8 still has a static IOA rule"
     ! ip -4 rule show | grep -qE 'to (192\.168\.0\.0/16|172\.16\.0\.0/12|169\.254\.0\.0/16)' \
@@ -396,6 +432,24 @@ main() {
     [ "$fail" -eq 0 ]
 }
 
+# Never trust IN_NETNS by itself: a caller can forge it and otherwise run setup
+# against the host. The outer process records both namespace identity forms and
+# the inner process must differ in both before the first `ip` mutation.
+current_netns_link=$(readlink /proc/self/ns/net) || exit 1
+current_netns_inode=$(stat -Lc %i /proc/self/ns/net) || exit 1
+if [ -n "${IN_NETNS:-}" ]; then
+    host_netns_fd_link=$(readlink "/proc/self/fd/${HOST_NETNS_FD:-missing}" 2>/dev/null || true)
+    host_netns_fd_inode=$(stat -Lc %i "/proc/self/fd/${HOST_NETNS_FD:-missing}" 2>/dev/null || true)
+    if [ -z "${HOST_NETNS_LINK:-}" ] || [ -z "${HOST_NETNS_INODE:-}" ] ||
+       [ "$host_netns_fd_link" != "$HOST_NETNS_LINK" ] ||
+       [ "$host_netns_fd_inode" != "$HOST_NETNS_INODE" ] ||
+       [ "$current_netns_link" = "$HOST_NETNS_LINK" ] ||
+       [ "$current_netns_inode" = "$HOST_NETNS_INODE" ]; then
+        echo "refusing to run without a verified network namespace" >&2
+        exit 1
+    fi
+fi
+
 # A fresh directory per run, owned by the invoking user and readable inside the
 # namespace. Reusing a fixed path meant root-owned leftovers from an earlier run
 # made the rebuild fail — and it failed *silently*, so the next run tested a
@@ -410,6 +464,10 @@ if [ -z "${IN_NETNS:-}" ]; then
     chmod 755 "$WORK"
     build_under_test || { echo "could not build the script under test"; exit 1; }
     [ -s "$WORK/nr-under-test" ] || { echo "the built copy is empty"; exit 1; }
+    exec 9</proc/self/ns/net
+    export HOST_NETNS_FD=9
+    export HOST_NETNS_LINK=$current_netns_link
+    export HOST_NETNS_INODE=$current_netns_inode
     exec unshare -rn --mount bash -c \
         "mount -t tmpfs none /run 2>/dev/null || true; IN_NETNS=1 WORK='$WORK' bash '$0'"
 fi
