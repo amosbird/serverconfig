@@ -60,6 +60,39 @@ cleanup_owned_nat() {
         -o tun0 -j MASQUERADE 2>/dev/null; do :; done
 }
 
+cleanup_stage_registration() {
+    local rt_tables=$1 tmp rc
+    tmp=$(mktemp "$rt_tables.XXXXXX")
+    # shortcut: rt_tables is tiny, so buffer one snapshot to validate and rewrite atomically.
+    if awk '
+        { lines[NR] = $0 }
+        $1 !~ /^#/ && $2 == "cn_stage" { name_count++; id = $1; target[NR] = 1 }
+        END {
+            if (name_count == 0) exit 3
+            if (name_count != 1) exit 2
+            for (line = 1; line <= NR; line++) {
+                split(lines[line], fields)
+                if (fields[1] !~ /^#/ && fields[1] == id) id_count++
+            }
+            if (id_count != 1) exit 2
+            for (line = 1; line <= NR; line++) if (!target[line]) print lines[line]
+        }
+    ' "$rt_tables" >"$tmp"; then
+        chmod --reference="$rt_tables" "$tmp"
+        chown --reference="$rt_tables" "$tmp"
+        mv "$tmp" "$rt_tables"
+        return
+    else
+        rc=$?
+    fi
+    rm -f "$tmp"
+    if [ "$rc" -eq 2 ]; then
+        echo "  [WARN] cn_stage registration is ambiguous; leaving $rt_tables unchanged" >&2
+    elif [ "$rc" -ne 3 ]; then
+        echo "  [WARN] could not inspect cn_stage registration in $rt_tables" >&2
+    fi
+}
+
 install_configs() {
     echo "=== Installing new network configs (no network change yet) ==="
 
@@ -251,7 +284,10 @@ rollback() {
     # preference survive rollback.
     cleanup_owned_rules
     ip route flush table cn 2>/dev/null || true
+    # Flush by the repository-owned name before unregistering it. Only remove the
+    # registration when both its dynamic name and ID identify exactly one entry.
     ip route flush table cn_stage 2>/dev/null || true
+    cleanup_stage_registration /etc/iproute2/rt_tables
 
     # Remove only the obsolete mapping. Tables 500 and 501 have no independent
     # ownership record and are therefore never flushed automatically.

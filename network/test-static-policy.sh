@@ -333,6 +333,73 @@ if ! grep -Fq 'cleanup_owned_rules' network/migrate.sh; then
     echo 'FAIL rollback does not use owned rule shapes' >&2
     fail=1
 fi
+
+stage_registration_cleanup_contract() {
+    local sandbox rt_tables before output
+    sandbox=$(mktemp -d)
+    rt_tables="$sandbox/rt_tables"
+
+    # Source the helper and pass only disposable fixtures; never redirect the production CLI.
+    source network/migrate.sh
+
+    cat >"$rt_tables" <<'EOF'
+# reserved values
+255 local
+10042 cn_stage
+101 cn
+EOF
+    cleanup_stage_registration "$rt_tables"
+    if grep -Eq '^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$' "$rt_tables"; then
+        echo 'FAIL rollback keeps a unique owned cn_stage registration' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback removes a unique owned cn_stage registration'
+
+    cat >"$rt_tables" <<'EOF'
+10042 cn_stage
+10043 cn_stage
+101 cn
+EOF
+    before=$(cat "$rt_tables")
+    output=$(cleanup_stage_registration "$rt_tables" 2>&1)
+    if [ "$(cat "$rt_tables")" != "$before" ] ||
+       ! grep -Fq 'cn_stage registration is ambiguous' <<<"$output"; then
+        echo 'FAIL rollback mutates duplicate cn_stage name registrations' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback preserves duplicate cn_stage name registrations'
+
+    cat >"$rt_tables" <<'EOF'
+10042 cn_stage
+10042 foreign
+101 cn
+EOF
+    before=$(cat "$rt_tables")
+    output=$(cleanup_stage_registration "$rt_tables" 2>&1)
+    if [ "$(cat "$rt_tables")" != "$before" ] ||
+       ! grep -Fq 'cn_stage registration is ambiguous' <<<"$output"; then
+        echo 'FAIL rollback mutates a cn_stage registration with an ID conflict' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback preserves cn_stage registrations with ID conflicts'
+    rm -rf "$sandbox"
+}
+
+if ! stage_registration_cleanup_contract; then
+    fail=1
+fi
+
+if ! grep -Fq "cleanup_stage_registration /etc/iproute2/rt_tables" network/migrate.sh; then
+    echo 'FAIL rollback does not pass the fixed live rt_tables path to cleanup' >&2
+    fail=1
+fi
+if grep -Eq 'RT_TABLES_(OVERRIDE|TEST)|MIGRATE_.*RT_TABLES' network/migrate.sh; then
+    echo 'FAIL migration CLI exposes an rt_tables environment override' >&2
+    fail=1
+fi
 if ! grep -Fq "sed -i '/^[[:space:]]*500[[:space:]]\\+underlay" network/migrate.sh; then
     echo 'FAIL obsolete underlay mapping is not removed' >&2
     fail=1

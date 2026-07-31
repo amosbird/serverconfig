@@ -193,7 +193,10 @@ preferences or owner-managed routes.
 
 Rollback/removal is ownership-based rather than priority-wide: it deletes only exact
 repository-owned rule shapes at priorities 500, 1000, 1500, 2500, and 3000, table `cn`, the
-dynamically registered `cn_stage` table, `NETMODE_IOA`, `ioa_intranet`, generated SmartDNS
-fragments, and repository-owned legacy mark-`0x1` NAT state. Unrelated rules sharing those
-priorities survive. SmartGateAgent tables `20`, `230`, and `ioa` and Tailscale table `52` and
-exit-node preferences are never flushed or changed by rollback.
+`cn_stage` routes, `NETMODE_IOA`, `ioa_intranet`, generated SmartDNS fragments, and
+repository-owned legacy mark-`0x1` NAT state. After flushing `cn_stage` by its owned name,
+rollback atomically removes its dynamic `rt_tables` registration only when both the name and ID
+are unique. A duplicate name or conflicting ID is warned about and preserved to avoid deleting a
+foreign registration. Unrelated rules sharing repository priorities survive. SmartGateAgent
+tables `20`, `230`, and `ioa` and Tailscale table `52` and exit-node preferences are never
+flushed or changed by rollback.
