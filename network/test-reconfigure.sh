@@ -35,7 +35,7 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$*"; fail=$((fail+1)); }
 head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 # A namespace that looks enough like the real machine for the script to run:
-# a "physical" link with a gateway, a DHCP-style resolver, and the three tables.
+# a "physical" link with a gateway, a DHCP-style resolver, and tunnel-owner sentinels.
 setup() {
     ip link add wlan0 type dummy
     ip link set wlan0 up
@@ -46,6 +46,9 @@ setup() {
     ip addr add 192.168.255.10/24 dev tun0
     ip route add default via 192.168.255.1 dev tun0 table 400
     ip route add default via 10.36.48.1 dev wlan0 table 20
+    ip route add default via 10.36.48.1 dev wlan0 table 230
+    ip route add blackhole 198.18.0.0/15 table 52
+    ip rule add fwmark 0xa38 lookup 20 pref 490
 }
 
 # The script is driven with its own helpers stubbed where they would reach
@@ -72,7 +75,6 @@ roam_to() {
     ip addr flush dev wlan0
     ip addr add "$subnet" dev wlan0
     ip route replace default via "$gw" dev wlan0
-    ip route replace default via "$gw" dev wlan0 table 20
     printf '   6 domain name server %s\n                        %s\n' \
         "$dns1" "$dns2" > "$WORK/lease"
 }
@@ -80,6 +82,22 @@ roam_to() {
 band() { ip -4 rule show pref "$1" 2>/dev/null | sed 's/^[0-9]*:[[:space:]]*//' | sort; }
 count() { ip -4 rule show pref "$1" 2>/dev/null | wc -l; }
 routes() { ip route show table "$1" 2>/dev/null | wc -l; }
+
+snapshot_owner_tables() {
+    local table
+    for table in 20 230 52; do
+        printf '%s|' "$table"
+        ip route show table "$table" | sort | paste -sd';' -
+    done
+}
+
+route_table() {
+    local args=()
+    [ -n "${2:-}" ] && read -r -a args <<<"$2"
+    ip route get "$1" "${args[@]}" 2>/dev/null |
+        awk '{for (i=1; i<=NF; i++) if ($i == "table") {print $(i+1); found=1; exit}}
+             END {if (!found) print "main"}'
+}
 
 # Build the stubbed copy from the real script, so the test can never drift from
 # what is deployed.
@@ -128,6 +146,8 @@ EOF
     # because none of them looked at the cn table.
     printf 'route add 1.0.1.0/24 via GATEWAY table cn\n'  > "$WORK/routefile"
     printf 'route add 1.0.2.0/23 via GATEWAY table cn\n' >> "$WORK/routefile"
+    printf 'route add 10.20.0.0/16 via GATEWAY table cn\n' >> "$WORK/routefile"
+    printf 'route add 100.12.34.0/24 via GATEWAY table cn\n' >> "$WORK/routefile"
     echo '# office' > "$WORK/office.conf"
     # The lease is a file so a test can hand out a different resolver, which is
     # what a roam onto another AP actually does. Two servers on a continuation
@@ -140,14 +160,64 @@ EOF
 
 main() {
     setup
+    local owner_before
+    owner_before=$(snapshot_owner_tables)
     head_ "baseline"
     run_script 1 >/dev/null
-    local base500 base1000 base2500
+    local base500 base1000 base2500 chain
     base500=$(band 500); base1000=$(band 1000); base2500=$(band 2500)
     [ "$(count 2500)" -gt 0 ] && ok "2500 installed ($(count 2500) rules)" \
                               || bad "2500 empty"
     [ "$(count 1000)" -gt 0 ] && ok "1000 installed ($(count 1000) rules)" \
                               || bad "1000 empty"
+
+    head_ "policy ownership and ordering"
+    [ "$(count 500)" -eq 1 ] && ok "Tailscale mark has one early escape rule" \
+                               || bad "Tailscale mark escape is missing or duplicated"
+    [ "$(count 1500)" -eq 1 ] && ok "routefile has one direct lookup rule" \
+                                || bad "routefile direct rule missing"
+    [ "$(count 2500)" -eq 3 ] && ok "IOA has exact mark and two static CIDRs" \
+                                || bad "unexpected IOA business rule count: $(count 2500)"
+    ! band 2500 | grep -q '9.0.0.0/8' && ok "9/8 is not statically routed to IOA" \
+                                           || bad "9/8 still has a static IOA rule"
+    ! ip -4 rule show | grep -qE 'to (192\.168\.0\.0/16|172\.16\.0\.0/12|169\.254\.0\.0/16)' \
+        && ok "no broad private-network bypass remains" \
+        || bad "broad private-network bypass remains"
+    [ "$(snapshot_owner_tables)" = "$owner_before" ] \
+        && ok "tables 20, 230 and 52 are untouched" \
+        || bad "a tunnel-owned table changed"
+
+    head_ "direct routes override IOA business policy"
+    [ "$(route_table 10.20.1.1)" = cn ] && ok "routefile overrides static 10/8 IOA" \
+                                        || bad "routefile lost to static 10/8"
+    [ "$(route_table 100.12.34.5)" = cn ] \
+        && ok "routefile overrides static 100.12/16 IOA" \
+        || bad "routefile lost to static 100.12/16"
+    [ "$(route_table 10.20.1.1 'mark 0x1')" = cn ] \
+        && ok "routefile overrides SmartDNS business mark" \
+        || bad "routefile lost to SmartDNS mark"
+    [ "$(route_table 10.36.48.1)" = main ] && ok "connected 10/8 LAN overrides IOA" \
+                                            || bad "connected LAN routed into IOA"
+
+    head_ "NETMODE_IOA only classifies unmarked business packets"
+    ipset add ioa 9.1.2.3 -exist
+    ipset add ioa 10.20.1.1 -exist
+    chain=$(iptables -t mangle -S NETMODE_IOA)
+    grep -q -- '! --mark 0x0/0xffffffff -j RETURN' <<<"$chain" \
+        && ok "all non-zero marks are preserved" || bad "non-zero mark guard missing"
+    grep -q -- '--set-xmark 0x1/0xffffffff' <<<"$chain" \
+        && ok "IOA business mark is written exactly" || bad "IOA mark write is not exact"
+    grep -q 'fwmark 0x1 lookup ioa' <<<"$(band 2500)" \
+        && ok "IOA rule matches exact mark" || bad "IOA rule still matches only bit zero"
+    [ "$(route_table 10.30.1.1 'mark 0xa38')" = 20 ] \
+        && ok "SmartGateAgent mark remains owner-routed" \
+        || bad "SmartGateAgent mark was captured"
+    [ "$(route_table 10.30.1.1 'mark 0x80000')" = main ] \
+        && ok "Tailscale mark remains owner-routed" \
+        || bad "Tailscale mark was captured"
+    [ "$(route_table 10.30.1.1 'mark 0xa39')" != ioa ] \
+        && ok "low-bit collision does not match IOA" \
+        || bad "0xa39 incorrectly matched IOA business mark"
 
     head_ "idempotence"
     run_script 1 >/dev/null
@@ -165,7 +235,7 @@ main() {
     fi
 
     head_ "our rule deleted from a band we own"
-    ip rule del to 9.0.0.0/8 lookup ioa pref 2500 2>/dev/null
+    ip rule del to 10.0.0.0/8 lookup ioa pref 2500 2>/dev/null
     run_script 0 >/dev/null
     [ "$(band 2500)" = "$base2500" ] && ok "missing rule restored without FORCE" \
                                      || bad "not restored"
@@ -187,24 +257,6 @@ main() {
     [ "$zero" -eq 0 ] && ok "2500 never empty ($(wc -l < "$WORK/samples") samples)" \
                       || bad "2500 was empty $zero times"
 
-    head_ "IOA escape table stale after a roam"
-    ip route replace default via 10.36.63.9 dev wlan0 table 20
-    run_script 1 >/dev/null
-    [ "$(count 490)" -eq 0 ] && ok "pref 490 withheld while table 20 is stale" \
-                             || bad "pref 490 points at a stale table"
-    ip route replace default via 10.36.48.1 dev wlan0 table 20
-    run_script 1 >/dev/null
-    [ "$(count 490)" -eq 1 ] && ok "pref 490 restored when table 20 agrees" \
-                             || bad "pref 490 not restored"
-
-    head_ "duplicate IOA escape rule at a derived priority"
-    ip rule add fwmark 0xa38 lookup 20 pref 499
-    [ "$(ip -4 rule show | grep -c 0xa38)" -eq 2 ] || bad "injection did not take"
-    run_script 0 >/dev/null
-    [ "$(ip -4 rule show | grep -c 0xa38)" -eq 1 ] \
-        && ok "duplicate removed without FORCE" \
-        || bad "duplicate survived: $(ip -4 rule show | grep -c 0xa38) copies"
-
     head_ "MASQUERADE survives a tun0 address change"
     ip addr flush dev tun0
     ip addr add 192.168.255.77/24 dev tun0
@@ -216,11 +268,15 @@ main() {
     # From here the AP changes, so nothing below may compare against the
     # baseline bands captured above.
     head_ "roam onto an AP with a different subnet, gateway and resolvers"
+    owner_before=$(snapshot_owner_tables)
     roam_to 10.36.43.250/21 10.36.40.1 202.152.254.230 202.152.254.65
     local rc
     rc=$(run_status 0)
     [ "$rc" -eq 0 ] && ok "reconfigure exits clean after a roam" \
                     || bad "reconfigure exited $rc after a roam"
+    [ "$(snapshot_owner_tables)" = "$owner_before" ] \
+        && ok "roam leaves tables 20, 230 and 52 to tunnel owners" \
+        || bad "roam modified a tunnel-owned table"
 
     local b1000
     b1000=$(band 1000)
@@ -252,20 +308,13 @@ main() {
     else
         bad "cn table has no route via either gateway"
     fi
-    if ip route show table "$UNDERLAY_TABLE" 2>/dev/null | grep -q '10.36.48.1'; then
-        bad "underlay table still points at the previous gateway"
-    else
-        ok "underlay table carries no stale gateway"
-    fi
-
-    head_ "cold boot: no rules, no tables, no state"
-    while ip rule del pref 490  2>/dev/null; do :; done
+    head_ "cold boot: no owned rules, no cn table, no state"
+    owner_before=$(snapshot_owner_tables)
     while ip rule del pref 500  2>/dev/null; do :; done
     while ip rule del pref 1000 2>/dev/null; do :; done
-    while ip rule del pref 2000 2>/dev/null; do :; done
+    while ip rule del pref 1500 2>/dev/null; do :; done
     while ip rule del pref 2500 2>/dev/null; do :; done
-    while ip rule del pref 4000 2>/dev/null; do :; done
-    ip route flush table "$UNDERLAY_TABLE" 2>/dev/null || true
+    while ip rule del pref 3000 2>/dev/null; do :; done
     ip route flush table "$CN_TABLE" 2>/dev/null || true
     iptables -t mangle -F 2>/dev/null || true
     rm -f "$WORK/last-applied"
@@ -279,9 +328,9 @@ main() {
                               || bad "1000 still empty after a cold start"
     [ "$(count 2500)" -gt 0 ] && ok "2500 rebuilt from nothing ($(count 2500) rules)" \
                               || bad "2500 still empty after a cold start"
-    [ "$(routes "$UNDERLAY_TABLE")" -gt 0 ] \
-        && ok "underlay repopulated ($(routes "$UNDERLAY_TABLE") routes)" \
-        || bad "underlay still empty after a cold start"
+    [ "$(snapshot_owner_tables)" = "$owner_before" ] \
+        && ok "cold boot leaves tables 20, 230 and 52 to tunnel owners" \
+        || bad "cold boot modified a tunnel-owned table"
     [ -s "$WORK/last-applied" ] && ok "state written only after a clean run" \
                                 || bad "no state file after a clean run"
 
