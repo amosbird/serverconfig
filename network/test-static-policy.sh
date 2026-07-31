@@ -53,6 +53,7 @@ netfix_runtime_contract() {
         rm -rf "$sandbox"
         return 1
     fi
+    # shellcheck disable=SC2016 # literal source lines, not shell expressions
     if [ "$(grep -Fxc 'RECONFIGURE="$REPO/scripts/network-reconfigure"' scripts/netfix)" -ne 1 ] ||
        [ "$(grep -Fxc '    main "$RECONFIGURE"' scripts/netfix)" -ne 1 ]; then
         echo 'FAIL netfix CLI does not pass the fixed reconciler to main exactly once' >&2
@@ -117,6 +118,7 @@ EOF
 
     run_contract() {
         : >"$log"
+        # shellcheck disable=SC2016 # positional parameters belong to the inner shell
         output=$(env -i NETFIX_COMMAND_LOG="$log" PATH="$fakebin" /usr/bin/bash -c \
             'source "$1"; main "$2"' bash "$1" "$fakebin/reconfigure" 2>&1)
         rc=$?
@@ -171,28 +173,143 @@ if ! netfix_runtime_contract; then
     fail=1
 fi
 
-status_fake=$(mktemp -d)
-printf '#!/usr/bin/env bash\nexit 0\n' >"$status_fake/ip"
-cat >"$status_fake/tailscale" <<'EOF'
+status_runtime_contract() {
+    local sandbox fakebin log candidate output rc command mode mutation
+    sandbox=$(mktemp -d)
+    fakebin="$sandbox/bin"
+    log="$sandbox/calls"
+    mkdir -p "$fakebin"
+
+    # shortcut: PATH interception covers the current sensitive tool set; extend it and the
+    # allowlist together if network-status intentionally gains another read-only query tool.
+    if grep -Eq '/usr/(s?bin)/(ip|iptables|ipset|nft|systemctl|tailscale)([[:space:]]|$)' \
+        scripts/network-status; then
+        echo 'FAIL network-status bypasses PATH for a sensitive command' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+
+    cat >"$fakebin/sensitive-command" <<'EOF'
 #!/usr/bin/env bash
-case "$TAILSCALE_TEST" in
-    failed) exit 1 ;;
-    empty) exit 0 ;;
-    malformed) printf 'not JSON\n' ;;
+command=${0##*/}
+printf '%s' "$command" >>"$STATUS_COMMAND_LOG"
+printf '|%s' "$@" >>"$STATUS_COMMAND_LOG"
+printf '\n' >>"$STATUS_COMMAND_LOG"
+case "$command|$*" in
+    'ip|-4 -o addr show scope global') echo '2: wlan0 inet 192.0.2.10/24 scope global wlan0' ;;
+    'ip|-4 route show table main default') echo 'default via 192.0.2.1 dev wlan0' ;;
+    'ip|-4 route show table main scope link') echo '192.0.2.0/24 dev wlan0 scope link' ;;
+    'ip|-4 rule show pref 1000') echo '1000: from all to 192.0.2.0/24 lookup main' ;;
+    'ip|-4 route show table cn') echo '203.0.113.0/24 via 192.0.2.1 dev wlan0' ;;
+    'ip|-4 rule show pref 1500') echo '1500: from all lookup cn' ;;
+    'ip|-4 route show table ioa') echo '10.0.0.0/8 dev tun0' ;;
+    'ip|-4 -o addr show tun0') echo '8: tun0 inet 198.51.100.2/24 scope global tun0' ;;
+    'ip|-4 rule show pref 2500') echo '2500: from all to 10.0.0.0/8 lookup ioa' ;;
+    'ip|-4 rule show') echo '490: from all fwmark 0xa38 lookup main' ;;
+    'ip|-4 route show table 52') echo 'default dev tailscale0' ;;
+    'ip|-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
+    'tailscale|status --json')
+        case "${TAILSCALE_TEST-ok}" in
+            failed) exit 1 ;;
+            empty) exit 0 ;;
+            malformed) printf 'not JSON\n' ;;
+            *) printf '{"BackendState":"Running","Health":[]}\n' ;;
+        esac
+        ;;
 esac
 EOF
-chmod +x "$status_fake/ip" "$status_fake/tailscale"
-for mode in failed empty malformed; do
-    status_output=$(TAILSCALE_TEST="$mode" PATH="$status_fake:$PATH" bash scripts/network-status)
-    status_rc=$?
-    if [ "$status_rc" -eq 0 ] && grep -Fq 'tailscaled not responding' <<<"$status_output"; then
-        printf 'OK   network-status reports %s tailscale JSON and remains read-only\n' "$mode"
-    else
-        printf 'FAIL network-status hides %s tailscale JSON or returns nonzero\n' "$mode" >&2
-        fail=1
+    chmod +x "$fakebin/sensitive-command"
+    ln -s /usr/bin/bash "$fakebin/bash"
+    for command in ip tailscale systemctl iptables ipset nft; do
+        ln -s sensitive-command "$fakebin/$command"
+    done
+    for command in awk wc head sed tr; do
+        ln -s "/usr/bin/$command" "$fakebin/$command"
+    done
+    cat >"$fakebin/jq" <<'EOF'
+#!/usr/bin/env bash
+IFS= read -r input || true
+case "${TAILSCALE_TEST-ok}:$input" in
+    failed:*|empty:*|malformed:*) exit 1 ;;
+    ok:'{"BackendState":"Running","Health":[]}')
+        printf '  backend       Running\n  exit node     none\n'
+        ;;
+    *) exit 1 ;;
+esac
+EOF
+    chmod +x "$fakebin/jq"
+
+    run_contract() {
+        : >"$log"
+        output=$(/usr/bin/env -i STATUS_COMMAND_LOG="$log" TAILSCALE_TEST="${mode-ok}" \
+            PATH="$fakebin" /usr/bin/bash "$1" 2>&1)
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+            printf 'runtime candidate failed (%s):\n%s\n' "$rc" "$output" >&2
+            return 1
+        fi
+        while IFS= read -r command; do
+            case "$command" in
+                'ip|-4|-o|addr|show|scope|global'| \
+                'ip|-4|route|show|table|main|default'| \
+                'ip|-4|route|show|table|main|scope|link'| \
+                'ip|-4|rule|show|pref|1000'| \
+                'ip|-4|route|show|table|cn'| \
+                'ip|-4|rule|show|pref|1500'| \
+                'ip|-4|route|show|table|ioa'| \
+                'ip|-4|-o|addr|show|tun0'| \
+                'ip|-4|rule|show|pref|2500'| \
+                'ip|-4|rule|show'| \
+                'ip|-4|route|show|table|52'| \
+                'ip|-4|rule|show|pref|3000'| \
+                'tailscale|status|--json') ;;
+                *) printf 'disallowed network-status command: %s\n' "$command" >&2; return 1 ;;
+            esac
+        done <"$log"
+        [ "$(grep -Fxc 'tailscale|status|--json' "$log")" -eq 1 ] || {
+            echo 'runtime contract requires exactly one tailscale status query' >&2
+            return 1
+        }
+    }
+
+    mode=ok
+    if ! run_contract scripts/network-status ||
+       ! grep -Fq 'backend       Running' <<<"$output"; then
+        echo 'FAIL network-status runtime command contract or status data failed' >&2
+        rm -rf "$sandbox"
+        return 1
     fi
-done
-rm -rf "$status_fake"
+    echo 'OK   network-status runtime commands are read-only status queries'
+
+    for mutation in 'ip rule del pref 1000' 'tailscale down'; do
+        candidate="$sandbox/network-status-with-mutation"
+        awk -v mutation="$mutation" '/^set -u$/ { print mutation } { print }' \
+            scripts/network-status >"$candidate"
+        if run_contract "$candidate" >/dev/null 2>&1; then
+            printf 'FAIL network-status runtime contract accepted injected %s\n' "$mutation" >&2
+            rm -rf "$sandbox"
+            return 1
+        fi
+    done
+    echo 'OK   network-status runtime contract rejects injected mutations'
+
+    for mode in failed empty malformed; do
+        if run_contract scripts/network-status &&
+           grep -Fq 'tailscaled not responding' <<<"$output"; then
+            printf 'OK   network-status reports %s tailscale JSON without mutation\n' "$mode"
+        else
+            printf 'FAIL network-status hides %s tailscale JSON or violates contract\n' \
+                "$mode" >&2
+            rm -rf "$sandbox"
+            return 1
+        fi
+    done
+    rm -rf "$sandbox"
+}
+
+if ! status_runtime_contract; then
+    fail=1
+fi
 reject 'operator tools do not inspect DERP or IOA endpoint caches' \
     'DERP_CACHE|derp-ips|IOA_ENDPOINT_CACHE|ioa-endpoints|IOA_BOOTSTRAP_HOSTS' \
     scripts/netfix scripts/network-status
