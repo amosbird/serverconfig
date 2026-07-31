@@ -40,6 +40,8 @@ setup() {
     ip link add wlan0 type dummy
     ip link set wlan0 up
     ip addr add 10.36.48.162/20 dev wlan0
+    # Model gateways exposed both as a host scope-link route and as the default gateway.
+    ip route add 10.36.48.1/32 dev wlan0 scope link
     ip route add default via 10.36.48.1 dev wlan0
     ip link add tun0 type dummy
     ip link set tun0 up
@@ -229,6 +231,23 @@ main() {
     fi
 
     head_ "baseline"
+    if ip route show table main scope link | grep -Fq '10.36.48.1 dev wlan0'; then
+        ok "fixture exposes the gateway as a scope-link host route"
+    else
+        bad "fixture lacks a scope-link gateway host route"
+    fi
+    local baseline_rc
+    baseline_rc=$(run_status 1)
+    if [ "$baseline_rc" -eq 0 ]; then
+        ok "forced run accepts duplicate desired gateway inputs"
+    else
+        bad "forced run exited $baseline_rc for duplicate desired gateway inputs"
+    fi
+    if [ "$(band 1000 | grep -Fxc 'from all to 10.36.48.1 lookup main')" -eq 1 ]; then
+        ok "duplicate desired gateway inputs converge to one canonical rule"
+    else
+        bad "gateway rule did not converge uniquely: $(band 1000)"
+    fi
     run_script 1 >/dev/null
     local stage_id
     stage_id=$(awk '$2 == "cn_stage" {print $1}' "$WORK/rt_tables")

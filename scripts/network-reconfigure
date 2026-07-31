@@ -48,14 +48,19 @@ normalise_rule() {
     sed -E 's/fwmark (0x[0-9a-f]+)( lookup)/fwmark \1\/0xffffffff\2/' <<<"$1"
 }
 
+canonical_rules() {
+    local spec
+    for spec in "$@"; do
+        [ -n "$spec" ] && normalise_rule "$spec"
+    done | sort -u
+}
+
 # Add desired rules before deleting stale rules, then prove the owned band is exact.
 reconcile_pref() {
     local pref=$1 spec have normalised
     shift
     local desired=() remaining=()
-    for spec in "$@"; do
-        [ -n "$spec" ] && desired+=("$(normalise_rule "$spec")")
-    done
+    mapfile -t desired < <(canonical_rules "$@")
     for spec in "${desired[@]}"; do
         # shellcheck disable=SC2086 # rule specs are intentional argument lists
         ip rule add $spec pref "$pref" 2>/dev/null || true
@@ -223,7 +228,7 @@ routefile_state=$(sha256sum "$ROUTEFILE" 2>/dev/null | awk '{print $1}' || print
 current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-} routefile=$routefile_state"
 
 declare -A DESIRED_BANDS
-band_of() { local IFS=';'; echo "$*"; }
+band_of() { canonical_rules "$@" | paste -sd';' -; }
 
 DESIRED_BANDS[$P_TS]="from all fwmark $TS_MARK lookup main"
 
@@ -254,7 +259,7 @@ for net in "${TAILNET_NETS[@]}"; do
 done
 DESIRED_BANDS[$P_TAILNET]=$(band_of "${tailnet_band[@]}")
 
-normalise_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort | paste -sd';' -; }
+normalise_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort -u | paste -sd';' -; }
 band_fingerprint() {
     ip -4 rule show pref "$1" 2>/dev/null | sed 's/^[0-9]*:[[:space:]]*//' |
         while read -r rule; do normalise_rule "$rule"; done
