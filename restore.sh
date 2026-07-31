@@ -123,8 +123,8 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/xkb-restore.hook /etc/pacman.d/hooks/xkb-restore.hook
 
     # Network stack: iwd + systemd-networkd (see network/README.md).
-    # Config only — no service is started or stopped here, so running restore.sh
-    # never drops the connection. Switching stacks is migrate.sh's job.
+    # Config only, except retiring the obsolete fallback preference updater below.
+    # No link-managing service or tunnel is stopped, so restore.sh does not drop the connection.
     sudo mkdir -p /etc/iwd /etc/systemd/network /etc/systemd/system/wpa_supplicant@.service.d
     sudo cp "$DIR"/network/iwd/main.conf /etc/iwd/main.conf
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
@@ -133,6 +133,14 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
+
+    # Retiring fallback only stops its policy-preference updates; it does not alter links.
+    if sudo test -e /etc/systemd/system/network-fallback.service; then
+        sudo systemctl disable --now network-fallback.service
+    fi
+    sudo rm -f /etc/systemd/system/network-fallback.service
+    sudo rm -rf /var/lib/network-fallback
+    sudo systemctl daemon-reload
     # SmartDNS base config.
     sudo mkdir -p /etc/smartdns
     sudo cp "$DIR"/network/smartdns/smartdns.conf /etc/smartdns/

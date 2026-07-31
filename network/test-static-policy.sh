@@ -22,7 +22,22 @@ reject() {
     echo 'FAIL network-fallback unit remains'; fail=1;
 }
 reject 'no fallback deployment references' \
-    'cp .*network-fallback|systemctl enable .*network-fallback' restore.sh network/migrate.sh
+    'cp .*network-fallback|systemctl enable( --now)? .*network-fallback' \
+    restore.sh network/migrate.sh
+if ! awk '
+    /sudo systemctl disable --now network-fallback\.service/ { disabled = NR }
+    /sudo rm -f \/etc\/systemd\/system\/network-fallback\.service/ { unit_removed = NR }
+    /sudo rm -rf \/var\/lib\/network-fallback/ { state_removed = NR }
+    /sudo systemctl daemon-reload/ { reload = NR }
+    END {
+        exit !(disabled && disabled < unit_removed && unit_removed < state_removed &&
+               state_removed < reload)
+    }
+' restore.sh; then
+    echo 'FAIL restore does not safely retire the installed fallback before daemon-reload' >&2
+    fail=1
+fi
+reject 'restore leaves Tailscale alone' 'tailscale|tailscaled' restore.sh
 reject 'no exit-node mutation in local tools' \
     'tailscale (set --exit-node=|down|up)|systemctl restart tailscaled' \
     scripts/network-reconfigure scripts/netfix scripts/network-status
