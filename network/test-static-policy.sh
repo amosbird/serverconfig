@@ -337,13 +337,15 @@ if ! grep -Fq 'cleanup_owned_rules' network/migrate.sh; then
 fi
 
 stage_registration_cleanup_contract() {
-    local sandbox rt_tables lock ip_log fake_ip before output cleanup_pid holder_pid
+    local sandbox rt_tables lock ip_log fake_ip ip_fail before output cleanup_pid holder_pid
     sandbox=$(mktemp -d)
     rt_tables="$sandbox/rt_tables"
     lock="$sandbox/network-reconfigure.lock"
     ip_log="$sandbox/ip.log"
     fake_ip="$sandbox/ip"
-    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\n' "$ip_log" >"$fake_ip"
+    ip_fail="$sandbox/ip.fail"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\n[ ! -e %q ]\n' \
+        "$ip_log" "$ip_fail" >"$fake_ip"
     chmod +x "$fake_ip"
 
     # Source the helper and pass only disposable fixtures; never redirect the production CLI.
@@ -363,6 +365,28 @@ EOF
         return 1
     fi
     echo 'OK   rollback removes a unique owned cn_stage registration'
+
+    cat >"$rt_tables" <<'EOF'
+10042 cn_stage
+101 cn
+EOF
+    : >"$ip_log"
+    touch "$ip_fail"
+    before=$(cat "$rt_tables")
+    if output=$(cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip" 2>&1); then
+        echo 'FAIL cleanup helper reports success after its route flush fails' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    rm -f "$ip_fail"
+    if [ "$(cat "$rt_tables")" != "$before" ] ||
+       [ "$(cat "$ip_log")" != 'route flush table 10042' ] ||
+       ! grep -Fq 'could not flush cn_stage table 10042' <<<"$output"; then
+        echo 'FAIL rollback unregisters cn_stage after its route flush fails' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback retains cn_stage registration when its route flush fails'
 
     cat >"$rt_tables" <<'EOF'
 10042 cn_stage

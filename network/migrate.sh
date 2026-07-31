@@ -79,7 +79,11 @@ cleanup_stage_registration() (
         awk -v id="$stage_id" \
             '!($1 !~ /^#/ && $1 == id && $2 == "cn_stage")' \
             "$target_file" >"$tmp"
-        "$ip_bin" route flush table "$stage_id" 2>/dev/null || true
+        if ! "$ip_bin" route flush table "$stage_id" 2>/dev/null; then
+            rm -f "$tmp"
+            echo "  [WARN] could not flush cn_stage table $stage_id; leaving $target_file unchanged" >&2
+            return 1
+        fi
         chmod --reference="$target_file" "$tmp"
         chown --reference="$target_file" "$tmp"
         mv "$tmp" "$target_file"
@@ -288,7 +292,7 @@ rollback() {
     ip route flush table cn 2>/dev/null || true
     # Validate, flush, and unregister staging ownership under the reconfigure lock.
     cleanup_stage_registration \
-        /etc/iproute2/rt_tables /run/lock/network-reconfigure.lock /usr/bin/ip
+        /etc/iproute2/rt_tables /run/lock/network-reconfigure.lock /usr/bin/ip || true
 
     # Remove only the obsolete mapping. Tables 500 and 501 have no independent
     # ownership record and are therefore never flushed automatically.
