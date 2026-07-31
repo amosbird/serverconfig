@@ -54,52 +54,44 @@ if ! grep -Fq "sed -i '/^[[:space:]]*500[[:space:]]\\+underlay" network/migrate.
     fail=1
 fi
 
-# Exercise rollback rule selection through a fake ip command. The fixture includes
-# foreign rules at repository-used preferences; only repository-owned shapes may be deleted.
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-cat > "$tmp/ip" <<'EOF'
-#!/usr/bin/env bash
-if [ "$1 $2 $3 $4 $5" = '-4 rule show pref 500' ]; then
-    printf '%s\n' \
-        '500: from all fwmark 0x80000/0xff0000 lookup main' \
-        '500: from 192.0.2.10 lookup main'
-elif [ "$1 $2 $3 $4 $5" = '-4 rule show pref 1000' ]; then
-    printf '%s\n' \
-        '1000: from all to 192.168.1.0/24 lookup main' \
-        '1000: from 198.51.100.7 lookup main'
-elif [ "$1 $2 $3 $4 $5" = '-4 rule show pref 1500' ]; then
-    printf '%s\n' '1500: from all lookup cn' '1500: from all lookup foreign'
-elif [ "$1 $2 $3 $4 $5" = '-4 rule show pref 2500' ]; then
-    printf '%s\n' \
-        '2500: from all fwmark 0x1/0xffffffff lookup ioa' \
-        '2500: from all to 10.0.0.0/8 lookup ioa' \
-        '2500: from 203.0.113.8 lookup ioa'
-elif [ "$1 $2 $3 $4 $5" = '-4 rule show pref 3000' ]; then
-    printf '%s\n' \
-        '3000: from all to 100.64.0.0/10 lookup 52' \
-        '3000: from all lookup 52'
-elif [ "$1 $2" = 'rule del' ]; then
-    printf '%s\n' "$*" >> "$IP_LOG"
-fi
-EOF
-chmod +x "$tmp/ip"
-IP_LOG="$tmp/deleted" PATH="$tmp:$PATH" MIGRATE_LIB_ONLY=1 \
-    bash -c 'source network/migrate.sh; cleanup_owned_rules'
-cat > "$tmp/expected" <<'EOF'
-rule del pref 500 from all fwmark 0x80000/0xff0000 lookup main
-rule del pref 1000 from all to 192.168.1.0/24 lookup main
-rule del pref 1500 from all lookup cn
-rule del pref 2500 from all fwmark 0x1/0xffffffff lookup ioa
-rule del pref 2500 from all to 10.0.0.0/8 lookup ioa
-rule del pref 3000 from all to 100.64.0.0/10 lookup 52
-EOF
-if ! cmp -s "$tmp/expected" "$tmp/deleted"; then
-    echo 'FAIL rollback rule cleanup deleted outside owned shapes' >&2
-    diff -u "$tmp/expected" "$tmp/deleted" >&2 || true
-    fail=1
+# Exercise rollback against rules rendered by the installed kernel/iproute2. Run every
+# mutation in a verified network namespace so this test cannot touch live policy.
+host_netns_link=$(readlink /proc/self/ns/net) || exit 1
+host_netns_inode=$(stat -Lc %i /proc/self/ns/net) || exit 1
+exec 9</proc/self/ns/net
+# shellcheck disable=SC2016 # inner script expands only inside the namespace
+if unshare -rn bash -c '
+    set -euo pipefail
+    migrate=$1
+    expected_link=$2
+    expected_inode=$3
+    host_fd_link=$(readlink /proc/self/fd/9)
+    host_fd_inode=$(stat -Lc %i /proc/self/fd/9)
+    current_link=$(readlink /proc/self/ns/net)
+    current_inode=$(stat -Lc %i /proc/self/ns/net)
+    if [ "$host_fd_link" != "$expected_link" ] ||
+       [ "$host_fd_inode" != "$expected_inode" ] ||
+       [ "$current_link" = "$expected_link" ] ||
+       [ "$current_inode" = "$expected_inode" ]; then
+        echo "refusing to mutate rules without a verified network namespace" >&2
+        exit 1
+    fi
+
+    ip rule add pref 2500 fwmark 0x1/0xffffffff lookup ioa
+    ip rule add pref 2500 fwmark 0x1/0x1 lookup ioa
+    ip rule add pref 2500 from 203.0.113.8 lookup ioa
+    source "$migrate"
+    cleanup_owned_rules
+
+    rules=$(ip -4 rule show pref 2500)
+    expected=$(printf "2500:\tfrom all fwmark 0x1/0x1 lookup ioa\n"\
+"2500:\tfrom 203.0.113.8 lookup ioa")
+    [ "$rules" = "$expected" ]
+' bash "$ROOT/network/migrate.sh" "$host_netns_link" "$host_netns_inode"; then
+    echo 'OK   rollback normalizes kernel-rendered mark masks and preserves foreign rules'
 else
-    echo 'OK   rollback preserves foreign same-preference rules'
+    echo 'FAIL rollback mishandles kernel-rendered mark masks or foreign rules' >&2
+    fail=1
 fi
 
 exit "$fail"

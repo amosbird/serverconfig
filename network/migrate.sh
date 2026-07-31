@@ -37,11 +37,13 @@ cleanup_owned_rules() {
         while read -r rule; do
             rule=${rule#*:}
             rule=${rule#"${rule%%[![:space:]]*}"}
+            # iproute2 may omit the full-width mark mask; normalize its explicit form.
+            rule=${rule/fwmark 0x1\/0xffffffff/fwmark 0x1}
             case "$pref:$rule" in
                 '500:from all fwmark 0x80000/0xff0000 lookup main'|\
                 '1000:from all to '*' lookup main'|\
                 '1500:from all lookup cn'|\
-                '2500:from all fwmark 0x1/0xffffffff lookup ioa'|\
+                '2500:from all fwmark 0x1 lookup ioa'|\
                 '2500:from all to 10.0.0.0/8 lookup ioa'|\
                 '2500:from all to 100.12.0.0/16 lookup ioa'|\
                 '3000:from all to 100.64.0.0/10 lookup 52')
