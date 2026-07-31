@@ -158,6 +158,22 @@ iptables() {
     fi
     command iptables "$@"
 }
+iptables-restore() {
+    local rules before after rc
+    rules=$(cat)
+    if [ "${FAIL_MARK_RESTORE:-0}" = 1 ]; then
+        before=$(iptables-save -t mangle)
+        rules=${rules/COMMIT/-A NETMODE_IOA_MISSING -j ACCEPT$'\n'COMMIT}
+        set +e
+        command iptables-restore "$@" <<<"$rules" 2>/dev/null
+        rc=$?
+        set -e
+        after=$(iptables-save -t mangle)
+        [ "$before" = "$after" ] && : > WORKDIR/failed-restore-was-atomic
+        return "${rc:-1}"
+    fi
+    command iptables-restore "$@" <<<"$rules"
+}
 STATE_FILE_OVERRIDE=WORKDIR/last-applied
 CACHE_DIR_OVERRIDE=WORKDIR/cache
 RT_TABLES_OVERRIDE=WORKDIR/rt_tables
@@ -437,12 +453,34 @@ main() {
     [ "$(snapshot_marking)" = "$marking_before" ] \
         && ok "failed staging preserves the active marking chain and hook byte-for-byte" \
         || bad "failed staging changed the active marking chain or hook"
+    printf '%s\n' \
+        'route add 1.0.1.0/24 via GATEWAY table cn' \
+        'route add 1.0.2.0/23 via GATEWAY table cn' \
+        'route add 10.20.0.0/16 via GATEWAY table cn' \
+        'route add 100.12.34.0/24 via GATEWAY table cn' > "$WORK/routefile"
     [ "$(FAIL_NEXT_MARK=1 run_status 1)" -ne 0 ] \
         && ok "mark-chain construction failure aborts the run" \
         || bad "mark-chain construction failure was ignored"
     [ "$(snapshot_marking)" = "$marking_before" ] \
         && ok "mark-chain construction failure preserves the active hook" \
         || bad "mark-chain construction failure changed the active hook"
+
+    rm -f "$WORK/failed-restore-was-atomic"
+    [ "$(FAIL_MARK_RESTORE=1 run_status 1)" -ne 0 ] \
+        && ok "mark-chain switch failure aborts the run" \
+        || bad "mark-chain switch failure was ignored"
+    [ -e "$WORK/failed-restore-was-atomic" ] &&
+        [ "$(snapshot_marking)" = "$marking_before" ] \
+        && ok "failed mark-chain transaction preserves the complete pre-switch ruleset" \
+        || bad "failed mark-chain transaction partially changed active marking"
+    run_script 1 >/dev/null
+    if ! iptables -t mangle -S NETMODE_IOA_NEXT >/dev/null 2>&1 &&
+       [ "$(iptables -t mangle -S OUTPUT |
+            grep -Fxc -- '-A OUTPUT -j NETMODE_IOA')" -eq 1 ]; then
+        ok "successful mark-chain transaction leaves one hook and no staging chain"
+    else
+        bad "successful mark-chain transaction left a duplicate hook or staging chain"
+    fi
 
     malicious_owner_before=$(snapshot_owner_state)
     table52_before=$(ip route show table 52 | sort)

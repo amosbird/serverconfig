@@ -384,7 +384,7 @@ else
     fi
 fi
 
-# Build an independent chain before switching OUTPUT, so construction failures leave
+# Build an independent chain before switching, so construction failures leave
 # the previously healthy hook and chain byte-identical.
 while iptables -t mangle -D OUTPUT -j "$NEXT_CHAIN" 2>/dev/null; do :; done
 iptables -t mangle -F "$NEXT_CHAIN" 2>/dev/null || true
@@ -401,11 +401,22 @@ iptables -t mangle -A "$NEXT_CHAIN" \
     -m set --match-set ioa dst \
     -m set --match-set "$IOA_INTRANET_SET" dst \
     -j MARK --set-xmark 0x1/0xffffffff
-iptables -t mangle -I OUTPUT 1 -j "$NEXT_CHAIN"
-while iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null; do :; done
-iptables -t mangle -F "$CHAIN" 2>/dev/null || true
-iptables -t mangle -X "$CHAIN" 2>/dev/null || true
-iptables -t mangle -E "$NEXT_CHAIN" "$CHAIN"
+
+# iptables-restore applies one table at COMMIT. Rebuild the stable chain and
+# deduplicate its hook in that transaction; a rejected command changes nothing.
+mark_transaction=$(printf '%s\n' '*mangle' ":$CHAIN - [0:0]")
+while read -r _; do
+    mark_transaction+=$'\n'"-D OUTPUT -j $CHAIN"
+done < <(iptables -t mangle -S OUTPUT | grep -Fx -- "-A OUTPUT -j $CHAIN" || true)
+mark_transaction+=$'\n'"-I OUTPUT 1 -j $CHAIN"
+mark_transaction+=$'\n'"-F $CHAIN"
+while read -r rule; do
+    mark_transaction+=$'\n'"${rule/-A $NEXT_CHAIN /-A $CHAIN }"
+done < <(iptables -t mangle -S "$NEXT_CHAIN" | grep "^-A $NEXT_CHAIN ")
+mark_transaction+=$'\n'"-F $NEXT_CHAIN"
+mark_transaction+=$'\n'"-X $NEXT_CHAIN"
+mark_transaction+=$'\nCOMMIT'
+iptables-restore --noflush <<<"$mark_transaction"
 
 # Manage only the repository-owned exact NAT rule; similar rules belong to others.
 while iptables -t nat -D POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 \
