@@ -80,12 +80,20 @@ code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$IOA_PROBE" 2>/dev/null)
 info "DNS: $(dig +short +timeout=2 +tries=1 google.com @127.0.0.1 2>/dev/null |
     head -1 || echo FAILED)"
 
-tailscale status --json 2>/dev/null | jq -r '
+if tailscale_json=$(tailscale status --json 2>/dev/null) &&
+   [ -n "$tailscale_json" ] &&
+   jq -r '
     "       exit node: " +
     (if .ExitNodeStatus == null then "none"
      else "\(.ExitNodeStatus.ID) online=\(.ExitNodeStatus.Online)" end),
     (if (.Health | length) > 0 then "       health: \(.Health | join("; "))" else empty end)
-' 2>/dev/null || bad "tailscaled not responding"
+' <<<"$tailscale_json" 2>/dev/null
+then
+    :
+else
+    bad "tailscaled not responding"
+    fail=1
+fi
 
 say "RESULT"
 if [ "$fail" -eq 0 ]; then

@@ -43,12 +43,19 @@ printf '  table 52      %s\n' \
     "$([ "$(routes 52)" -gt 0 ] && echo populated || echo empty)"
 printf '  pref 3000     %s\n' "$([ -n "$(rules 3000)" ] && echo present || echo missing)"
 if command -v tailscale >/dev/null; then
-    tailscale status --json 2>/dev/null | jq -r '
+    if tailscale_json=$(tailscale status --json 2>/dev/null) &&
+       [ -n "$tailscale_json" ] &&
+       jq -r '
         "  backend       \(.BackendState // "unknown")",
         (if .ExitNodeStatus == null then "  exit node     none"
          else "  exit node     \(.ExitNodeStatus.ID) online=\(.ExitNodeStatus.Online)" end),
         (if (.Health | length) > 0 then "  health        \(.Health | join("; "))" else empty end)
-    ' 2>/dev/null || printf '  tailscaled not responding\n'
+    ' <<<"$tailscale_json" 2>/dev/null
+    then
+        :
+    else
+        printf '  tailscaled not responding\n'
+    fi
 else
     printf '  tailscale not installed\n'
 fi

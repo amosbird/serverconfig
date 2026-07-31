@@ -41,9 +41,86 @@ reject 'restore leaves Tailscale alone' 'tailscale|tailscaled' restore.sh
 reject 'no exit-node mutation in local tools' \
     'tailscale (set --exit-node=|down|up)|systemctl restart tailscaled' \
     scripts/network-reconfigure scripts/netfix scripts/network-status
-reject 'netfix delegates all network mutation to the reconciler' \
-    '^[[:space:]]*(ip rule (add|del)|ip route (add|del|replace|flush)|iptables .*-[AIDFX]|ipset (add|del|create|destroy|flush)|tailscale (set|up|down)|systemctl (restart|stop) tailscaled)' \
-    scripts/netfix
+audit_netfix() {
+    python3 - "$1" <<'PY_AUDIT'
+import re, shlex, sys
+path = sys.argv[1]
+allowed = tuple(map(re.compile, (
+    r"ip(?:\s+-4)?\s+rule\s+show(?:\s|$)",
+    r"ip(?:\s+-4)?\s+route\s+(?:show|get)(?:\s|$)",
+    r"ip(?:\s+-4)?(?:\s+-o)?\s+addr\s+show(?:\s|$)",
+    r"iptables\s+-S(?:\s|$)", r"ipset\s+list(?:\s|$)",
+    r"systemctl\s+is-active(?:\s|$)", r"tailscale\s+status\s+--json(?:\s|$)",
+)))
+sensitive = re.compile(r"(?:^|/)(ip|iptables|ipset|systemctl|tailscale)$")
+text = open(path, encoding="utf-8").read()
+for number, raw in enumerate(text.splitlines(), 1):
+    line = raw.split("#", 1)[0].strip()
+    if not line:
+        continue
+    try:
+        words = shlex.split(line, comments=True, posix=True)
+    except ValueError:
+        words = re.findall(r"[^\s|;]+", line.removesuffix("\\"))
+    for index, word in enumerate(words):
+        command = word.strip("$();{}")
+        if sensitive.search(command):
+            shape = " ".join([command.rsplit("/", 1)[-1], *words[index + 1:]])
+            if not any(pattern.match(shape) for pattern in allowed):
+                print(f"{path}:{number}: disallowed sensitive command: {line}", file=sys.stderr)
+                sys.exit(1)
+if len(re.findall(r'env\s+FORCE=1\s+"\$RECONFIGURE"', text)) != 1:
+    print(f'{path}: expected exactly one env FORCE=1 "$RECONFIGURE"', file=sys.stderr)
+    sys.exit(1)
+PY_AUDIT
+}
+
+if audit_netfix scripts/netfix; then
+    echo 'OK   netfix sensitive commands match the read-only allowlist'
+else
+    echo 'FAIL netfix sensitive-command allowlist audit failed' >&2
+    fail=1
+fi
+for mutation in \
+    '/usr/bin/ip -4 rule del pref 500' \
+    'command ip route flush table main' \
+    'iptables --flush' \
+    'tailscale down'
+do
+    candidate=$(mktemp)
+    cp scripts/netfix "$candidate"
+    printf '\n%s\n' "$mutation" >>"$candidate"
+    if audit_netfix "$candidate" >/dev/null 2>&1; then
+        printf 'FAIL netfix auditor accepted mutation: %s\n' "$mutation" >&2
+        fail=1
+    else
+        printf 'OK   netfix auditor rejects mutation: %s\n' "$mutation"
+    fi
+    rm -f "$candidate"
+done
+
+status_fake=$(mktemp -d)
+printf '#!/usr/bin/env bash\nexit 0\n' >"$status_fake/ip"
+cat >"$status_fake/tailscale" <<'EOF'
+#!/usr/bin/env bash
+case "$TAILSCALE_TEST" in
+    failed) exit 1 ;;
+    empty) exit 0 ;;
+    malformed) printf 'not JSON\n' ;;
+esac
+EOF
+chmod +x "$status_fake/ip" "$status_fake/tailscale"
+for mode in failed empty malformed; do
+    status_output=$(TAILSCALE_TEST="$mode" PATH="$status_fake:$PATH" bash scripts/network-status)
+    status_rc=$?
+    if [ "$status_rc" -eq 0 ] && grep -Fq 'tailscaled not responding' <<<"$status_output"; then
+        printf 'OK   network-status reports %s tailscale JSON and remains read-only\n' "$mode"
+    else
+        printf 'FAIL network-status hides %s tailscale JSON or returns nonzero\n' "$mode" >&2
+        fail=1
+    fi
+done
+rm -rf "$status_fake"
 reject 'operator tools do not inspect DERP or IOA endpoint caches' \
     'DERP_CACHE|derp-ips|IOA_ENDPOINT_CACHE|ioa-endpoints|IOA_BOOTSTRAP_HOSTS' \
     scripts/netfix scripts/network-status
