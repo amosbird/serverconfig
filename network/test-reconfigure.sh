@@ -92,7 +92,7 @@ snapshot_owner_state() {
         printf 'table %s|' "$table"
         ip route show table "$table" | sort | paste -sd';' -
     done
-    for pref in 490 5210; do
+    for pref in 490 5210 5270; do
         printf 'pref %s|' "$pref"
         band "$pref" | paste -sd';' -
     done
@@ -105,11 +105,17 @@ full_width_fwmark_rule() {
 }
 
 route_table() {
-    local args=()
+    local args=() output rc table
     [ -n "${2:-}" ] && read -r -a args <<<"$2"
-    ip route get "$1" "${args[@]}" 2>/dev/null |
-        awk '{for (i=1; i<=NF; i++) if ($i == "table") {print $(i+1); found=1; exit}}
-             END {if (!found) print "main"}'
+    output=$(ip route get "$1" "${args[@]}" 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf 'ERROR: ip route get %s failed (%s): %s\n' "$1" "$rc" "$output" >&2
+        return "$rc"
+    fi
+    table=$(awk '{for (i=1; i<=NF; i++) if ($i == "table") {print $(i+1); exit}}' \
+        <<<"$output")
+    printf '%s\n' "${table:-main}"
 }
 
 # Build the stubbed copy from the real script, so the test can never drift from
@@ -173,8 +179,25 @@ EOF
 
 main() {
     setup
-    local owner_before
+    local owner_before route_error route_rc
     owner_before=$(snapshot_owner_state)
+
+    route_error=$(route_table invalid-destination 2>&1)
+    route_rc=$?
+    if [ "$route_rc" -ne 0 ] && [[ "$route_error" == ERROR:* ]]; then
+        ok "route lookup errors are distinguishable from main-table hits"
+    else
+        bad "route lookup error reported rc=$route_rc output=$route_error"
+    fi
+
+    while ip rule del pref 5270 2>/dev/null; do :; done
+    if [ "$(snapshot_owner_state)" != "$owner_before" ]; then
+        ok "owner snapshot includes pref 5270"
+    else
+        bad "owner snapshot omitted pref 5270"
+    fi
+    ip rule add lookup 52 pref 5270
+
     head_ "baseline"
     run_script 1 >/dev/null
     local base500 base1000 base2500 chain
