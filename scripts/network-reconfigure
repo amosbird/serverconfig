@@ -26,8 +26,8 @@ IOA_INTRANET_CIDRS=("9.0.0.0/8" "10.0.0.0/8" "100.12.0.0/16")
 IOA_STATIC_CIDRS=("10.0.0.0/8" "100.12.0.0/16")
 TAILNET_NETS=("100.64.0.0/10")
 CN_TABLE="cn"
-CN_STAGE_TABLE=102
-CN_STAGE_NAME="cn_stage"
+CN_STAGE_TABLE="cn_stage"
+RT_TABLES="${RT_TABLES_OVERRIDE:-/etc/iproute2/rt_tables}"
 IOA_TABLE="ioa"
 IOA_RESOLVER="192.168.255.10"
 ROUTEFILE="/home/amos/.routefile"
@@ -113,11 +113,39 @@ wired_up() {
 }
 
 ensure_rt_table() {
-    grep -qE "^[[:space:]]*$1[[:space:]]+$2\b" /etc/iproute2/rt_tables ||
-        printf '%s %s\n' "$1" "$2" >> /etc/iproute2/rt_tables
+    grep -qE "^[[:space:]]*$1[[:space:]]+$2\b" "$RT_TABLES" ||
+        printf '%s %s\n' "$1" "$2" >> "$RT_TABLES"
 }
+
+register_stage_table() {
+    local id tmp
+    id=$(awk -v name="$CN_STAGE_TABLE" '
+        $1 !~ /^#/ && $2 == name { registrations++; value = $1 }
+        END { if (registrations == 1) print value }
+    ' "$RT_TABLES")
+    if [ -n "$id" ] && ! awk -v id="$id" -v name="$CN_STAGE_TABLE" '
+        $1 !~ /^#/ && $1 == id && $2 != name { found = 1 }
+        END { exit !found }
+    ' "$RT_TABLES"; then
+        return
+    fi
+
+    # shortcut: reserve a bounded private range; fail rather than guess if it is exhausted.
+    id=$(awk '
+        $1 !~ /^#/ { used[$1] = 1 }
+        END { for (id = 10000; id <= 10999; id++) if (!used[id]) { print id; exit } }
+    ' "$RT_TABLES")
+    [ -n "$id" ]
+    tmp=$(mktemp "$RT_TABLES.XXXXXX")
+    awk -v name="$CN_STAGE_TABLE" '$1 ~ /^#/ || $2 != name' "$RT_TABLES" > "$tmp"
+    printf '%s %s\n' "$id" "$CN_STAGE_TABLE" >> "$tmp"
+    chmod --reference="$RT_TABLES" "$tmp"
+    chown --reference="$RT_TABLES" "$tmp"
+    mv "$tmp" "$RT_TABLES"
+}
+
 ensure_rt_table 101 "$CN_TABLE"
-ensure_rt_table "$CN_STAGE_TABLE" "$CN_STAGE_NAME"
+register_stage_table
 ensure_rt_table 400 "$IOA_TABLE"
 
 ensure_ipset() {

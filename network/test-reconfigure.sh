@@ -49,6 +49,7 @@ setup() {
     ip route add default via 192.168.255.1 dev tun0 table 400
     ip route add default dev owner0 table 20
     ip route add default dev owner0 table 230
+    ip route add blackhole 203.0.113.0/24 table 102
     ip route add default dev tun0 table 52
     ip route add blackhole 198.18.0.0/15 table 52
     ip rule add fwmark 0xa38 lookup 20 pref 490
@@ -144,6 +145,7 @@ logger()     { return 0; }
 dig()        { return 9; }
 STATE_FILE_OVERRIDE=WORKDIR/last-applied
 CACHE_DIR_OVERRIDE=WORKDIR/cache
+RT_TABLES_OVERRIDE=WORKDIR/rt_tables
 """
 marker = 'IFACE="${1:-wlan0}"'
 if src.count(marker) != 1:
@@ -169,10 +171,6 @@ for old, new in [
      'write_if_changed %s/ioa-dns.conf ' % work + '\\' + '\n'),
     ('write_if_changed /etc/smartdns/ioa-dns.conf "# IOA tunnel is down"',
      'write_if_changed %s/ioa-dns.conf "# IOA tunnel is down"' % work),
-    ('grep -qE "^[[:space:]]*$1[[:space:]]+$2\\b" /etc/iproute2/rt_tables',
-     'grep -qE "^[[:space:]]*$1[[:space:]]+$2\\b" %s/rt_tables' % work),
-    ("printf '%s %s\\n' \"$1\" \"$2\" >> /etc/iproute2/rt_tables",
-     "printf '%s %s\\n' \"$1\" \"$2\" >> " + work + "/rt_tables"),
 ]:
     src = replace_once(old, new)
 open(work + '/nr-under-test', 'w').write(src)
@@ -183,6 +181,7 @@ EOF
     [ -s "$WORK/nr-under-test" ] || return 1
     chmod 755 "$WORK/nr-under-test"
     cp /etc/iproute2/rt_tables "$WORK/rt_tables"
+    printf '102 kwai\n' >> "$WORK/rt_tables"
     # Same shape as the real ~/.routefile: `ip -batch` commands, not bare route
     # specs. The earlier fixture omitted the `route add` verb, so every batch
     # was rejected and the cn table was never created — and no test noticed,
@@ -231,6 +230,20 @@ main() {
 
     head_ "baseline"
     run_script 1 >/dev/null
+    local stage_id
+    stage_id=$(awk '$2 == "cn_stage" {print $1}' "$WORK/rt_tables")
+    [ "$(awk '$2 == "cn_stage" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 1 ] &&
+        [ "$stage_id" != 102 ] &&
+        [ "$(awk -v id="$stage_id" '$1 == id {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 1 ] \
+        && ok "cn_stage has one unique non-conflicting table ID ($stage_id)" \
+        || bad "cn_stage registration conflicts: $(grep -E '[[:space:]](cn_stage|kwai)$' "$WORK/rt_tables")"
+    ip route show table 102 | grep -Fq 'blackhole 203.0.113.0/24' \
+        && ok "foreign kwai staging sentinel is untouched" \
+        || bad "foreign kwai staging sentinel was changed"
+    run_script 1 >/dev/null
+    [ "$(awk '$2 == "cn_stage" {print $1}' "$WORK/rt_tables")" = "$stage_id" ] \
+        && ok "existing unique cn_stage ID is reused" \
+        || bad "cn_stage ID changed after registration"
     local base500 base1000 base2500 chain
     base500=$(band 500); base1000=$(band 1000); base2500=$(band 2500)
     [ "$(count 2500)" -gt 0 ] && ok "2500 installed ($(count 2500) rules)" \
@@ -572,4 +585,5 @@ if [ -z "${IN_NETNS:-}" ]; then
 fi
 
 SCRIPT="$WORK/nr-under-test"
+mount --bind "$WORK" /etc/iproute2 || exit 1
 main
