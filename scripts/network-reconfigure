@@ -1,308 +1,81 @@
 #!/usr/bin/env bash
-# network-reconfigure — reconcile policy routing after a link change
-#
-# Triggered at boot and on every wifi/link change (systemd path unit).
-# Idempotent: every rule this owns is removed and reinstalled on each run.
-#
-#
-# ## The one idea this file is built on
-#
-# Traffic splits into two kinds, and they must never share a priority band:
-#
-#   underlay — the packets that make a tunnel exist: tailscale's WireGuard,
-#              DERP and control-plane traffic, IOA's handshake with its
-#              gateway, and the DNS lookups those depend on. Sending any of
-#              these into a tunnel is a circular dependency: the tunnel cannot
-#              come up because the packets that would bring it up are waiting
-#              for the tunnel. Underlay always leaves via the physical gateway.
-#
-#   overlay  — everything the user actually wants to move. Split by policy
-#              across tailscale / IOA / direct.
-#
-# Every routing bug found here was one underlay packet captured by an overlay
-# rule: a full-width MARK erasing tailscale's own 0x80000 and dropping
-# WireGuard into the IOA tunnel; the CN table grabbing Chinese DERP nodes; and
-# the exit-node catch-all swallowing control-plane and bootstrap DNS, which
-# deadlocked tailscaled completely. Ordering alone does not prevent this — the
-# underlay band has to exist and be listed first.
-#
-#
-# ## Priority bands
-#
-#   0-99      kernel local
-#   490       IOA's own underlay escape (fwmark 0xa38), pinned here
-#   500-999   underlay  tunnel infrastructure — never enters a tunnel
-#   1000-1999 local     directly-connected networks
-#   2000-2999 ioa       Tencent intranet
-#   3000-3999 tailnet   peers, then the private-range catch-all
-#   4000-4999 cn        China direct
-#   5000+     tailscale's own rules, then the exit node
-#
-# Nothing here reacts to the exit node being broken. A routing rule cannot
-# rescue a connection that has already bound a tailscale source address, so
-# network-fallback detaches the exit node instead — see that script.
+# network-reconfigure — reconcile repository-owned network policy after link changes
 
 set -Eeuo pipefail
 
-# `-E` is not decoration. Without it the ERR trap below is not inherited by
-# shell functions, so a failure inside `warn`, `has_routes` or `physical_gateway`
-# kills the script with the recovery hook silently skipped — which is the exact
-# situation the trap exists for.
-
-# A partially-applied rule set is dangerous in a way a failed run is not: the
-# underlay protection can be gone while the exit-node catch-all is still there,
-# which deadlocks tailscaled. `set -e` alone hides that — the script simply
-# stops, leaving whatever it had managed to install. Report the failing line so
-# the journal shows what happened instead of an unexplained exit code.
-# Two things go wrong when a run stops half-way, and the trap has to undo both.
-#
-# Packets stay marked for a tunnel that no longer has a rule to reach it. The
-# manual recovery was always `iptables -t mangle -D OUTPUT -j NETMODE_IOA`;
-# unmarked traffic falls through to table main, which works.
-#
-# And the underlay rule may not have been reinstalled yet, while tailscale's own
-# catch-all at pref 5270 is still live — so tailscale's control-plane and DERP
-# traffic goes into the tunnel it is building, which deadlocks tailscaled. That
-# one is worse, and removing the mangle jump does nothing for it. Put the rule
-# back if the table it points at still has routes.
 abort() {
     local rc=$1 line=$2
     logger -t network-reconfigure -p daemon.err \
-        "aborted at line $line (exit $rc); restoring a minimal safe state"
+        "aborted at line $line (exit $rc); removing the incomplete IOA mark hook"
     iptables -t mangle -D OUTPUT -j "${CHAIN:-NETMODE_IOA}" 2>/dev/null || true
-    if [ "$({ ip route show table "${UNDERLAY_TABLE:-underlay}" 2>/dev/null || true; } |
-              wc -l)" -gt 0 ] &&
-       [ "$({ ip -4 rule show pref "${P_UNDERLAY:-500}" 2>/dev/null || true; } |
-              wc -l)" -eq 0 ]; then
-        ip rule add lookup "${UNDERLAY_TABLE:-underlay}" pref "${P_UNDERLAY:-500}" 2>/dev/null || true
-    fi
 }
 trap 'abort $? $LINENO' ERR
 
 IFACE="${1:-wlan0}"
 
-# One reconciler at a time. There was no lock, and the destructive middle of
-# this script is not safe against a second copy: run B's `ip route flush table
-# 500` lands while run A has already installed the rule that points at it, so
-# for the duration of B's re-add every underlay packet falls through to
-# tailscale's catch-all — into the tunnel it is building. The .path unit fires
-# several times per DHCP renew, so the interleaving is ordinary, not exotic.
-#
-# `-w` rather than `-n`: a link change that arrives mid-run is real and must not
-# be dropped. The wait is bounded so a wedged run cannot queue events forever.
 if [ -z "${NETWORK_RECONFIGURE_LOCKED:-}" ]; then
     export NETWORK_RECONFIGURE_LOCKED=1
     exec flock -w 60 /run/lock/network-reconfigure.lock "$0" "$@"
 fi
 
-# --- Firewall marks -----------------------------------------------------------
-# Bit 0 is ours; the mask is not cosmetic. Tailscale marks its underlay packets
-# 0x80000 so they escape its own routes, and a full-width --set-xmark erases
-# that bit, which is exactly how WireGuard traffic ended up inside the IOA
-# tunnel. Read and write only the bit we own.
-IOA_MARK="0x1/0x1"
+IOA_MARK="0x1/0xffffffff"
 TS_MARK="0x80000/0xff0000"
 CHAIN="NETMODE_IOA"
-
-# --- Underlay -----------------------------------------------------------------
-# Collected into one route table rather than one rule per address: the kernel
-# walks the rule list linearly for every packet, and the ~90 DERP relays alone
-# would make that walk an order of magnitude longer. A table costs one rule and
-# an LPM lookup.
-UNDERLAY_TABLE="underlay"
-# Built here first, then swapped in. Never referenced by a rule.
-UNDERLAY_STAGE="501"
-# Tailscale's control plane. Anycast, stable, and needed before DNS works.
-TS_CONTROL_NETS=("192.200.0.0/24" "199.165.136.0/24")
-# SmartDNS's own upstreams. /etc/resolv.conf points at SmartDNS, so if these
-# are reachable only through a tunnel then nothing can be resolved until the
-# tunnel is up — including the names needed to bring it up.
-#
-# This list is only the fixed part. The upstream SmartDNS actually prefers is
-# the one handed out by DHCP, and that one is discovered at run time and added
-# below — see dhcp_dns_servers(). Listing only these four was the bug that made
-# the whole stack look network-dependent: on a network whose DHCP DNS happens to
-# be the gateway (172.20.0.1) the pref 1000 link rule covers it by accident, and
-# everything works; on a network that hands out a public resolver
-# (202.152.254.230 here) nothing covers it, so the moment tailscale installs its
-# catch-all the resolver is reached through the exit node. If that exit path is
-# a black hole — this access point blocks DERP TLS and UDP — every lookup dies,
-# and with it the whole machine. It was never the access point. It was that the
-# one address DNS cannot live without was missing from the table whose entire
-# job is "must not need a tunnel".
-DNS_UPSTREAMS=("8.8.8.8" "1.1.1.1" "114.114.114.114" "223.5.5.5")
-# IOA's tunnel endpoints are found by resolving these; SmartDNS keeps them in
-# its "china" group so they resolve without the tunnel.
-IOA_BOOTSTRAP_HOSTS=(smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com)
-# DERP relays change over time, so they are read from the live daemon and
-# cached; the cache is what makes them available while tailscaled is down.
-CACHE_DIR="/var/lib/network-reconfigure"
-DERP_CACHE="$CACHE_DIR/derp-ips"
-# The IOA gateway addresses are cached for the same reason as the DERP list:
-# resolving them needs SmartDNS, which is restarted by this very script, so a
-# run that happens to land in that window would otherwise silently drop the
-# routes that keep the IOA tunnel out of the tailscale exit node.
-#
-# One list, one file, used for both the route table and the ipset that exempts
-# these addresses from marking. They were two lists once, resolved separately,
-# and SmartDNS answers with whichever address measured fastest at that instant —
-# so the set and the table disagreed, and an endpoint present in the set but
-# absent from the table got routed into the very tunnel it builds.
-IOA_ENDPOINT_CACHE="$CACHE_DIR/ioa-endpoints"
-# The IOA intranet ranges, as an ipset so the mark chain can require membership.
-# Built from IOA_CIDRS on every run; see the chain construction for why the
-# whitelist exists.
 IOA_INTRANET_SET="ioa_intranet"
-
-# --- Overlay ------------------------------------------------------------------
-# The IOA intranet. Also the whitelist that decides what may be marked — see
-# IOA_INTRANET_SET below, which is built from exactly this list.
-#
-# 100.12.0.0/16 is where every IOA service actually resolves (git/tapd/iwiki/
-# mirrors are all 100.12.0.x). It is RFC 6598 carrier-grade NAT space, not
-# RFC 1918, which is why it was missed: it does not look like an intranet.
-# Traffic to it reached the tunnel only because the ipset marked it, never
-# because a rule named it — so the ipset was load-bearing and unbounded at the
-# same time. Naming the range makes the routing explicit and lets the mark
-# become what it should always have been: a hint, not the whole mechanism.
-IOA_CIDRS=("9.0.0.0/8" "10.0.0.0/8" "100.12.0.0/16")
-IOA_EXCLUDE=("10.255.0.0/16")
+IOA_INTRANET_CIDRS=("9.0.0.0/8" "10.0.0.0/8" "100.12.0.0/16")
+IOA_STATIC_CIDRS=("10.0.0.0/8" "100.12.0.0/16")
 TAILNET_NETS=("100.64.0.0/10")
-# RFC1918 + link-local, minus 10/8: that range belongs to IOA, and the part of
-# it that is the current LAN is already covered by the link-derived rules.
-PRIVATE_NETS=("192.168.0.0/16" "172.16.0.0/12" "169.254.0.0/16")
 CN_TABLE="cn"
-# SmartGateAgent's table: one `default via 192.168.255.1 dev tun0`. It empties
-# the table itself when the tunnel drops, and an empty table is a pass-through,
-# which is why nothing here gates on tunnel liveness.
 IOA_TABLE="ioa"
-# IOA installs its own escape rule (fwmark 0xa38 -> table 20) through the
-# wrapper in scripts/overrides/ip, and does so without a priority, so the kernel
-# derives one as (lowest existing priority - 1). We re-pin it at 490 on every
-# reconcile, but the pin does not stick and cannot: the agent re-adds the rule
-# whenever the tunnel reconnects, long after this script has run, and it lands
-# at 499. Observed live. That is cosmetic — 499 is still ahead of the underlay
-# band — so this is repair rather than prevention.
-IOA_ESCAPE_MARK="0xa38"
-IOA_ESCAPE_TABLE="20"
-# The intranet resolver, reachable only through tun0. Written into
-# /etc/smartdns/ioa-dns.conf while the tunnel is up and withdrawn when it is not.
 IOA_RESOLVER="192.168.255.10"
 ROUTEFILE="/home/amos/.routefile"
-# Office LAN additions; sourced by smartdns.conf, emptied when not on the LAN.
 OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
 OFFICE_DST="/etc/smartdns/office.conf"
+P_TS=500
+P_LOCAL=1000
+P_CN=1500
+P_IOA=2500
+P_TAILNET=3000
 
-# Priorities, named so the bands above are visible at each call site.
-P_IOA_UNDERLAY=490  # IOA's own escape, pinned (see below)
-P_UNDERLAY=500      # tunnel infrastructure
-P_LOCAL=1000        # directly-connected subnets
-P_IOA_EXCLUDE=2000  # carved out of the IOA ranges
-P_IOA=2500          # Tencent intranet
-P_TAILNET=3000      # peer addresses
-P_PRIVATE=3500      # private-range catch-all
-P_CN=4000           # China direct
-
-# Anything that leaves the rule set weaker than intended goes to the journal:
-# a degraded run looks identical to a good one from the outside.
 warn() { logger -t network-reconfigure -p daemon.err "$*"; }
 
 clean_pref() { while ip rule del pref "$1" 2>/dev/null; do :; done; }
 
-# Reconcile one priority band to exactly the given rules, without ever emptying
-# it. This is the same add-before-delete discipline the underlay table uses, and
-# for the same reason: `clean_pref` followed by a rebuild leaves the band empty
-# for as long as the rebuild takes, and the rebuild is not fast — between the
-# reset and the underlay rule going back in sit a `tailscale debug derp-map`
-# (5s timeout) and three `dig` calls. Traffic that should have matched the band
-# falls through to tailscale's catch-all at pref 5270 for that whole window,
-# which on a network where the exit node is a black hole means an outage.
-#
-# Each argument is a rule spec exactly as `ip rule show` prints it, minus the
-# "NNNN:" prefix. The round-trip is exact for every shape used here — to,
-# fwmark, uidrange, plain lookup — verified in a network namespace.
-#
-# The specs must use the kernel's own spelling, which for a table means its
-# rt_tables *name*: `ip rule add lookup 500` is printed back as
-# `lookup underlay`. That is why the table constants below are names rather than
-# numbers. Comparing a request against the printout in the other vocabulary
-# would never match, and the band would be deleted and re-added on every run —
-# precisely the churn this function exists to end.
-#
-# Adds come first so the band is never empty; only then is anything present but
-# unwanted removed. Unquoted `$spec`/`$have` on purpose: they are argument
-# lists, not strings.
+# Add desired rules before deleting stale rules, so an owned band is never empty.
 reconcile_pref() {
     local pref=$1 spec have
     shift
-    # An empty band is a real request — "this priority should hold nothing" —
-    # and `read -a` on an empty string yields a single empty element, so filter.
     local kept=()
     for spec in "$@"; do
         [ -n "$spec" ] && kept+=("$spec")
     done
     set -- "${kept[@]}"
     for spec in "$@"; do
+        # shellcheck disable=SC2086 # rule specs are intentional argument lists
         ip rule add $spec pref "$pref" 2>/dev/null || true
     done
     while read -r have; do
         [ -n "$have" ] || continue
         have=${have#*:}
-        have=${have#"${have%%[![:space:]]*}"}     # strip the leading tab
+        have=${have#"${have%%[![:space:]]*}"}
         for spec in "$@"; do
             [ "$have" = "$spec" ] && continue 2
         done
+        # shellcheck disable=SC2086 # kernel-rendered rule is an argument list
         ip rule del $have pref "$pref" 2>/dev/null || true
     done <<<"$({ ip -4 rule show pref "$pref" 2>/dev/null || true; })"
 }
 
-# The gateway of the *physical* link, never a tunnel's.
-#
-# `ip route show default` is wrong here: bringing up an exit node replaces the
-# default route, and for a moment there is none at all. A run triggered in that
-# window — and `tailscale up` triggers one, because creating tailscale0 writes
-# to /run/systemd/netif/links — would see no gateway and skip rebuilding the
-# underlay table, which is precisely the table that keeps tailscale working.
-# Tailscale keeps its own default in table 52, so table main still holds the
-# physical one.
 physical_gateway() {
     ip -4 route show table main default 2>/dev/null |
         awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/ {print $3; exit}'
 }
+
 physical_device() {
     ip -4 route show table main default 2>/dev/null |
         awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/ {print $5; exit}'
 }
 
-# The resolvers this network handed out over DHCP.
-#
-# These are underlay by definition: SmartDNS forwards to them, /etc/resolv.conf
-# points at SmartDNS, so a resolver that can only be reached through a tunnel
-# means nothing resolves until the tunnel is up — including the names needed to
-# bring it up. Whether that is fatal depends on an accident of addressing (a
-# gateway-address resolver is covered by the link rules, a public one is not),
-# which is exactly the kind of accident this table exists to remove.
-#
-# Read from the lease rather than from /etc/smartdns/dhcp-dns.conf: that file is
-# something this script writes, and deriving a route from our own output would
-# survive a stale write. The lease is what the network said.
-#
-# The awk state machine exists because networkctl wraps multi-value fields onto
-# continuation lines:
-#
-#       6 domain name server 202.152.254.230
-#                            202.152.254.65
-#      51 lease time         1h
-#
-# Reading only the matching line finds the first resolver and silently drops the
-# rest. A missed resolver is not cosmetic — it is an address DNS may depend on
-# that nothing pins, which is precisely the outage this function was written to
-# end. Stay in the field until a line arrives that starts a new one.
-# Sorted, because the answer feeds both the change check and a config file, and
-# neither cares about order while a DHCP server is free to vary it between
-# renewals. Unsorted, a renewal that merely reordered the same two resolvers
-# looked like a network change: a full rebuild plus a smartdns restart, for an
-# identical resolver set.
 dhcp_dns_servers() {
     { networkctl dhcp-lease "$1" 2>/dev/null || true; } |
         awk '
@@ -312,29 +85,9 @@ dhcp_dns_servers() {
         ' | sort -u
 }
 
-# Two shell traps meet in this script, and both look like ordinary idioms:
-#
-#   `grep -c` exits 1 when the count is zero, and an empty table is the normal
-#   state on a cold boot — under `set -e` that kills the script mid-way, leaving
-#   the rule set half-applied.
-#
-#   `grep -q` exits as soon as it matches, so the writer upstream takes SIGPIPE
-#   and the pipeline reports 141 under `pipefail`. A *non-empty* table is then
-#   read as empty, and the larger the table the more reliably it happens.
-#
-#   `ip route show table X` exits 2 when the table has never been created, which
-#   is the state of every table on a cold boot. Redirecting stderr hides the
-#   message but not the status, so `pipefail` still propagates it. That is what
-#   killed this script at the first count on a freshly booted machine — after
-#   the reset, before a single rule had been reinstalled.
-#
-# Both answers are counts, so absorb the status and count what came out.
 count_routes() { { ip route show table "$1" 2>/dev/null || true; } | wc -l; }
-count_rules()  { { ip -4 rule show pref "$1" 2>/dev/null || true; } | wc -l; }
-has_routes()   { [ "$(count_routes "$1")" -gt 0 ]; }
+has_routes() { [ "$(count_routes "$1")" -gt 0 ]; }
 
-# Is a wired interface carrying traffic? 802.1X against the corporate switch is
-# what brings it up, so this is equivalent to "on the office LAN".
 wired_up() {
     local dev
     for dev in /sys/class/net/enp*; do
@@ -346,43 +99,19 @@ wired_up() {
     return 1
 }
 
-# Named tables must exist before they can be referenced by name. Registering
-# them here keeps the script self-contained: a fresh machine, or one whose
-# rt_tables was replaced by a package update, converges without manual setup.
 ensure_rt_table() {
     grep -qE "^[[:space:]]*$1[[:space:]]+$2\b" /etc/iproute2/rt_tables ||
         printf '%s %s\n' "$1" "$2" >> /etc/iproute2/rt_tables
 }
-# Numbers here, names everywhere else: this is the one place that has to know
-# both, because it is what teaches iproute2 the mapping.
-ensure_rt_table 500 "$UNDERLAY_TABLE"
 ensure_rt_table 101 "$CN_TABLE"
 ensure_rt_table 400 "$IOA_TABLE"
 
-# `ipset create -exist` is not the idempotent operation its name suggests: it
-# tolerates a set that already exists only if every creation parameter matches.
-# SmartDNS creates `ioa` with `maxelem 655360`; we asked for the default 65536,
-# so once SmartDNS won the race the call failed — for thirty-nine consecutive
-# runs, each one aborting after the reset. Whether it fails is decided by which
-# daemon started first, which is why it looked like a property of the network.
-#
-# The set's parameters are not ours to dictate; only its existence matters. Ask
-# for existence.
 ensure_ipset() {
     local name=$1 type=${2:-hash:ip}
     ipset list -n "$name" >/dev/null 2>&1 ||
         ipset create "$name" "$type" family inet -exist
 }
 
-# ==============================================================================
-# Wait for the link before touching anything
-# ==============================================================================
-# Both waits are up to 10s, and they used to sit in the middle of the rebuild.
-# That put a ten-second window after the reset in which no local, IOA, tailnet,
-# private or CN rule existed while tailscale's catch-all at pref 5270 was still
-# live — every LAN and private packet went into the exit node, and a failure
-# during the sleep left the machine there. Nothing below needs the reset to have
-# happened, so wait first and keep the destructive window to milliseconds.
 for _ in {1..10}; do
     [ -n "$(ip route show table main scope link dev "$IFACE" 2>/dev/null)" ] && break
     sleep 1
@@ -393,39 +122,12 @@ for _ in {1..10}; do
     sleep 1
 done || true
 
-# ==============================================================================
-# SmartDNS: cheap, and therefore unconditional
-# ==============================================================================
-# This runs on every trigger, before the change check below, because it is three
-# file writes and costs nothing — and because two of the three follow things the
-# change check deliberately ignores.
-#
-# smartdns is restarted only when a file actually changed. That matters: the
-# .path unit fires dozens of times an hour, and restarting the resolver on each
-# one is a DNS outage of its own, however brief.
-#
-# Content is passed as an argument rather than on stdin: a pipeline puts the
-# function in a subshell, and SMARTDNS_CHANGED set there would never reach the
-# caller — the restart would then never happen and the whole section would be a
-# no-op that looks like it works.
-#
-# The "did it change" answer is that global rather than an exit status, also on
-# purpose. A function whose ordinary return is non-zero is a trap under `set -e`:
-# harmless as `f && x=1` mid-block, fatal the moment it ends up as the last
-# statement of a function. This file has been killed by exactly that shape
-# before.
+# Keep SmartDNS fragments atomic and restart only when their contents change.
 SMARTDNS_CHANGED=0
 write_if_changed() {
     local dst=$1 content=$2 tmp
-    # The temporary file is created beside the destination, not in /tmp: /tmp is
-    # tmpfs, so a cross-filesystem `mv` is a copy plus unlink rather than a
-    # rename, and smartdns can read a half-written config. Same directory means
-    # rename(2), which is atomic.
     tmp=$(mktemp "$dst.XXXXXX" 2>/dev/null) ||
         { warn "cannot create a temp file beside $dst; leaving it as it is"; return 0; }
-    # Every step guarded: this runs before the change check, so an abort here
-    # kills the run before any reconcile can happen — on a read-only or full
-    # /etc that would be every run, forever.
     if ! printf '%s\n' "$content" > "$tmp" 2>/dev/null; then
         rm -f "$tmp"
         warn "cannot write $tmp; leaving $dst as it is"
@@ -440,27 +142,18 @@ write_if_changed() {
         SMARTDNS_CHANGED=1
     else
         rm -f "$tmp"
-        warn "cannot replace $dst; leaving it as it is"
+        warn "cannot replace $dst; leaving $dst as it is"
     fi
     return 0
 }
 
 if [ -n "${dns:-}" ]; then
-    # $dns is a list; one `server` line each.
     write_if_changed /etc/smartdns/dhcp-dns.conf \
         "$(printf '# DHCP DNS from %s\n' "$IFACE"; printf 'server %s\n' $dns)"
 else
     write_if_changed /etc/smartdns/dhcp-dns.conf "# No DHCP DNS"
 fi
 
-# The IOA intranet resolver lives inside the tunnel. Naming it while the tunnel
-# is down makes every lookup that matches an IOA domain rule wait for its
-# timeout, and SmartDNS holds the answer meanwhile — so a dead tunnel becomes
-# slow DNS for unrelated traffic.
-#
-# This is the only thing in the whole script that follows tun0, which is why it
-# is here and not behind the change check: routing needs no reaction to the
-# tunnel (an empty `table ioa` is a pass-through), but DNS does.
 if [ -n "$(ip -4 -o addr show tun0 2>/dev/null)" ]; then
     write_if_changed /etc/smartdns/ioa-dns.conf \
         "server $IOA_RESOLVER -group ioa -exclude-default-group"
@@ -468,14 +161,6 @@ else
     write_if_changed /etc/smartdns/ioa-dns.conf "# IOA tunnel is down"
 fi
 
-# Office LAN additions. The wired link is the office by definition — it only
-# comes up after 802.1X against the corporate switch — so no other signal is
-# needed. Everything in that file resolves only on the LAN, which is why it is
-# emptied rather than left stale when the cable is out.
-#
-# OFFICE_SRC lives in the git worktree, which is not a dependency of this unit:
-# on a boot where /home is not mounted yet it is simply absent, and that must
-# not stop the run.
 if ! wired_up; then
     write_if_changed "$OFFICE_DST" "# Not on the office LAN"
 elif [ -r "$OFFICE_SRC" ]; then
@@ -488,168 +173,43 @@ if [ "$SMARTDNS_CHANGED" -eq 1 ]; then
     systemctl restart smartdns 2>/dev/null || true
 fi
 
-# ==============================================================================
-# Is there anything to do?
-# ==============================================================================
-# The .path unit watches /run/systemd/netif/links, which every interface writes
-# to — including the ones this script's own actions create. `tailscale up`
-# creates tailscale0, that write fires the unit, and a full rebuild lands on top
-# of tailscale's handshake.
-#
-# It lands badly. Measured, to the millisecond:
-#
-#   15:05:52.836  reconfigure starts (fired by tailscale0 appearing)
-#   15:05:52.873  tailscaled rebinds, drops its DERP connections
-#   15:05:53.063  NetInfo: udp=true          <- UDP works here
-#   15:05:55.874  derp-3 rebind-ping-fail
-#   15:05:56.065  netcheck: UDP is blocked   <- and not here
-#   15:05:57.911  reconfigure finishes
-#
-# The underlay table is flushed and rebuilt inside that window, so tailscale's
-# STUN probes go out while the DERP addresses have no route. netcheck concludes
-# UDP is blocked, gives up on a direct connection, and falls back to a relay —
-# and on an access point that blocks DERP TLS the relay is a black hole. The
-# machine goes offline seconds after tailscale comes up, and it looks exactly
-# like a routing bug in whatever was changed last. It is not. It is this script
-# interrupting a handshake it had no reason to interrupt.
-#
-# What actually needs to happen on a link change is captured entirely by the
-# gateway, the interface, and the DHCP resolvers. If none of those moved, the
-# rule set this script would build is byte-for-byte what is already installed,
-# and rebuilding it is pure risk: several seconds of flushed tables, ~8800
-# netlink events from the cn table alone (enough to make tailscaled log
-# "netlink receive: no buffer space available" and lose track of the link), and
-# a destroyed handshake.
-#
-# So: rebuild when the network changed, and not when we merely noticed
-# ourselves. FORCE=1 overrides, for the operator path (netfix, manual runs).
+CACHE_DIR="/var/lib/network-reconfigure"
 STATE_FILE="$CACHE_DIR/last-applied"
 mkdir -p "$CACHE_DIR"
-# The physical link, and nothing else. Every rule and table this script owns is
-# derived from these four values; if none of them moved, a rebuild would produce
-# byte-for-byte what is already installed.
-#
-# tun0 is deliberately absent. It belongs in the SmartDNS section above, which
-# runs unconditionally and costs a file comparison — putting it here instead
-# meant every IOA tunnel blink (86 of them today) triggered a six-second
-# rebuild, with all the damage described above. What follows a tunnel is DNS,
-# not routing: the IOA rules point at a table SmartGateAgent empties itself, and
-# an empty table is a pass-through.
 current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-}"
 
-# The rule set this run would install, computed once and used twice: to decide
-# whether anything needs doing, and then to do it. One source of truth — a
-# change check that derived the answer differently from the code that applies it
-# would eventually disagree with itself, and the disagreement would look exactly
-# like a bug in the routing.
-#
-# Every value here is either a constant or comes from the physical link, which
-# is why it can be computed before the destructive part of the script.
 declare -A DESIRED_BANDS
-
 band_of() { local IFS=';'; echo "$*"; }
 
-# 490 — IOA's own escape. The table is SmartGateAgent's and it does not follow
-# the network: after a roam it still says `default via <the previous gateway>`,
-# and this rule sits ahead of the underlay band, so IOA's own tunnel-building
-# traffic would be black-holed until the agent next reconnects. We cannot fix a
-# table we do not own, but we can decline to point at it while it is wrong — the
-# packets then fall through to the underlay and out the real gateway, which is
-# where they were trying to go.
-escape_gw=$({ ip route show table "$IOA_ESCAPE_TABLE" 2>/dev/null || true; } |
-                awk '$1 == "default" {print $3; exit}')
-if [ -n "$escape_gw" ] && [ "$escape_gw" = "$(physical_gateway)" ]; then
-    DESIRED_BANDS[$P_IOA_UNDERLAY]="from all fwmark $IOA_ESCAPE_MARK lookup $IOA_ESCAPE_TABLE"
-else
-    [ -n "$escape_gw" ] &&
-        warn "IOA escape table points at $escape_gw, not $(physical_gateway); leaving pref $P_IOA_UNDERLAY out"
-    DESIRED_BANDS[$P_IOA_UNDERLAY]=""
-fi
+DESIRED_BANDS[$P_TS]="from all fwmark $TS_MARK lookup main"
 
-# 500 — underlay. The catch-all is included only while the table has content:
-# a momentarily missing default route must not strip protection already in
-# place, and a rule pointing at an empty table would be pointless rather than
-# harmful. Tailscale installs the fwmark rule too, but at pref 5210 — behind
-# every overlay rule below, which is too late.
-underlay_band=("from all fwmark $TS_MARK lookup main")
-has_routes "$UNDERLAY_TABLE" && underlay_band+=("from all lookup $UNDERLAY_TABLE")
-DESIRED_BANDS[$P_UNDERLAY]=$(band_of "${underlay_band[@]}")
-
-# 1000 — the directly-connected networks, plus the physical link's own
-# infrastructure named explicitly. See the section further down for why the
-# gateway and resolvers cannot be left to a range comparison.
 local_band=()
 while read -r subnet _; do
-    [ -n "$subnet" ] || continue
-    local_band+=("from all to $subnet lookup main")
+    [ -n "$subnet" ] && local_band+=("from all to $subnet lookup main")
 done < <({ ip route show table main scope link 2>/dev/null || true; })
-# Duplicates are expected and harmless: the gateway is usually already covered
-# by a link route above, and reconcile_pref tolerates the repeat.
 for addr in "$(physical_gateway)" ${dns:-}; do
-    [ -n "$addr" ] || continue
-    local_band+=("from all to $addr lookup main")
+    [ -n "$addr" ] && local_band+=("from all to $addr lookup main")
 done
 DESIRED_BANDS[$P_LOCAL]=$(band_of "${local_band[@]}")
 
-# 2000/2500 — IOA. Constants; see IOA_CIDRS for why 100.12.0.0/16 is in there.
-exclude_band=()
-for cidr in "${IOA_EXCLUDE[@]}"; do
-    exclude_band+=("from all to $cidr lookup main")
-done
-DESIRED_BANDS[$P_IOA_EXCLUDE]=$(band_of "${exclude_band[@]}")
-
-ioa_band=()
-tid=$(id -u tinyproxy 2>/dev/null || true)
-[ -n "$tid" ] && ioa_band+=("from all uidrange $tid-$tid lookup $IOA_TABLE")
-ioa_band+=("from all fwmark $IOA_MARK lookup $IOA_TABLE")
-for cidr in "${IOA_CIDRS[@]}"; do
-    ioa_band+=("from all to $cidr lookup $IOA_TABLE")
-done
-DESIRED_BANDS[$P_IOA]=$(band_of "${ioa_band[@]}")
-
-# 3000/3500 — tailnet peers, then the private-range catch-all.
-tailnet_band=()
-for net in "${TAILNET_NETS[@]}"; do
-    tailnet_band+=("from all to $net lookup 52")
-done
-DESIRED_BANDS[$P_TAILNET]=$(band_of "${tailnet_band[@]}")
-
-private_band=()
-for cidr in "${PRIVATE_NETS[@]}"; do
-    private_band+=("from all to $cidr lookup main")
-done
-DESIRED_BANDS[$P_PRIVATE]=$(band_of "${private_band[@]}")
-
-# 4000 — China direct. Only while the table has content; the table itself is
-# rebuilt further down, so on a first run this is empty here and correct on the
-# next trigger.
 if has_routes "$CN_TABLE"; then
     DESIRED_BANDS[$P_CN]="from all lookup $CN_TABLE"
 else
     DESIRED_BANDS[$P_CN]=""
 fi
 
-# The state triple alone is not enough to conclude "nothing to do": it says the
-# network has not moved, not that our configuration is still what we installed.
-# So the check also compares the rule set against a fingerprint of the one this
-# run would build.
-#
-# The fingerprint is both directions at once. Checking only that our rules are
-# *present* misses the case that cost an outage: a rule nobody asked for, added
-# inside a band we own, is never removed because every later run reports "no
-# change" and exits before it can be reconciled away. `ip rule add to 8.8.8.8
-# lookup main pref 2500` is enough — 8.8.8.8 is a DNS upstream that belongs in
-# the underlay table, sending it to `main` puts it in the exit-node tunnel, and
-# DNS dies. IOA, docker and libvirt all add rules near our bands, so this is not
-# a contrived case.
-#
-# Two things cannot be expressed as rules and are checked separately: the mangle
-# jump (the verification at the end of this script removes it when an IOA
-# endpoint would enter the IOA tunnel, and nothing about that is visible in the
-# rule set) and the cn table's gateway (a rule count says nothing about where
-# 8788 routes point).
-# Both sides are normalised the same way — split on ';', sorted, rejoined — so
-# the comparison is about membership, not about the order rules happen to be in.
+ioa_band=("from all fwmark 0x1 lookup $IOA_TABLE")
+for cidr in "${IOA_STATIC_CIDRS[@]}"; do
+    ioa_band+=("from all to $cidr lookup $IOA_TABLE")
+done
+DESIRED_BANDS[$P_IOA]=$(band_of "${ioa_band[@]}")
+
+tailnet_band=()
+for net in "${TAILNET_NETS[@]}"; do
+    tailnet_band+=("from all to $net lookup 52")
+done
+DESIRED_BANDS[$P_TAILNET]=$(band_of "${tailnet_band[@]}")
+
 normalise_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort | paste -sd';' -; }
 
 desired_fingerprint() {
@@ -657,44 +217,27 @@ desired_fingerprint() {
     for band in "${!DESIRED_BANDS[@]}"; do
         printf '%s|%s\n' "$band" "$(normalise_band "${DESIRED_BANDS[$band]}")"
     done | sort
-    printf 'escape|%s\n' "$([ -n "${DESIRED_BANDS[$P_IOA_UNDERLAY]}" ] && echo 1 || echo 0)"
 }
+
 actual_fingerprint() {
     local band
     for band in "${!DESIRED_BANDS[@]}"; do
         printf '%s|%s\n' "$band" \
             "$(normalise_band "$({ ip -4 rule show pref "$band" 2>/dev/null || true; } |
-                                     sed 's/^[0-9]*:[[:space:]]*//' | paste -sd';' -)")"
+                sed 's/^[0-9]*:[[:space:]]*//' | paste -sd';' -)")"
     done | sort
-    # The IOA escape rule is counted separately because it is the one rule we
-    # re-pin without owning: SmartGateAgent re-adds it at whatever priority the
-    # kernel derives, so a duplicate appears *outside* every band we track and
-    # the per-band comparison above cannot see it.
-    printf 'escape|%s\n' "$({ ip -4 rule show 2>/dev/null || true; } |
-                                 grep -c "$IOA_ESCAPE_MARK")"
 }
 
 if [ "${FORCE:-0}" != 1 ] &&
    [ "$current_state" = "$(cat "$STATE_FILE" 2>/dev/null || true)" ] &&
-   has_routes "$UNDERLAY_TABLE" &&
    [ "$({ ip route show table "$CN_TABLE" 2>/dev/null || true; } |
           awk '{print $3; exit}')" = "$(physical_gateway)" ] &&
    iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null &&
    [ "$(desired_fingerprint)" = "$(actual_fingerprint)" ]; then
-    logger -t network-reconfigure -p daemon.info \
-        "no change ($current_state); nothing to do"
+    logger -t network-reconfigure -p daemon.info "no change ($current_state); nothing to do"
     exit 0
 fi
 
-# Recorded only when a run completes, so an aborted run is retried next time
-# rather than remembered as done.
-#
-# Every line of this is defensive against `set -e`. `[ ... ] && cmd` as the body
-# would return non-zero on an aborted run, and a non-zero EXIT trap re-fires the
-# ERR trap — so a run that merely failed to write a cache file would also have
-# `abort` tear down the mangle jump, after a reconcile that had otherwise
-# succeeded. Verified: that shape fires `abort` on a successful run whose state
-# write fails, which a full or read-only /var is enough to cause.
 finish_state() {
     if [ "$1" -eq 0 ]; then
         printf '%s' "$current_state" > "$STATE_FILE" 2>/dev/null ||
@@ -704,344 +247,13 @@ finish_state() {
 }
 trap 'finish_state $?' EXIT
 
-# ==============================================================================
-# Retire priorities this script no longer owns
-# ==============================================================================
-# The bands we *do* own are not cleared here. They are reconciled in place by
-# reconcile_pref, which adds before it deletes so a band is never empty — see
-# that function for why the old delete-then-rebuild was the outage it was.
-#
-# These four are different: nothing installs them any more, so removing them is
-# not a window, it is a repair. 100 held the IOA escape rule in an early
-# version, and 4500 the exit-node bypass that network-fallback used to install —
-# which is now a black hole rather than an escape, because nothing maintains it.
-for p in 100 900 1500 4500; do clean_pref "$p"; done
+# Retire only obsolete repository-owned policy from earlier versions.
+for p in 100 900 2000 3500 4000 4500; do clean_pref "$p"; done
+rm -f "$CACHE_DIR/derp-ips" "$CACHE_DIR/ioa-endpoints"
+ip route flush table 500 2>/dev/null || true
+ip route flush table 501 2>/dev/null || true
 
-# The IOA escape rule is the one thing we re-pin that we did not install.
-# SmartGateAgent adds it without a priority whenever the tunnel reconnects, so
-# the kernel derives one — 499, just under our underlay band — and a copy at 490
-# from the last reconcile is still there. reconcile_pref only ever looks at its
-# own priority, so it cannot see the duplicate; left alone the two accumulate.
-# Clear every copy at any priority here, then let DESIRED_BANDS put exactly one
-# back at 490.
-while ip rule del fwmark "$IOA_ESCAPE_MARK" 2>/dev/null; do :; done
-
-iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null || true
-iptables -t mangle -F "$CHAIN" 2>/dev/null || true
-iptables -t mangle -X "$CHAIN" 2>/dev/null || true
-# Drop our SNAT rule whatever source it was created with: the tun0 address
-# changes between IOA sessions, so deleting by exact spec is unreliable.
-# Deleting by index, highest first, keeps the remaining indices valid.
-while read -r n; do
-    if [ -n "$n" ]; then iptables -t nat -D POSTROUTING "$n" 2>/dev/null || true; fi
-done < <(iptables -t nat -L POSTROUTING --line-numbers -n |
-             awk '/MASQUERADE|SNAT/ && /mark match 0x1/ {print $1}' | sort -rn)
-
-# ==============================================================================
-# 500 — underlay: never enters a tunnel
-# ==============================================================================
-
-
-# Both lists are cached. Neither source is reliable at the moment this runs:
-# tailscaled may be down, and SmartDNS is restarted by this very script. A run
-# that lands in either window must not be able to shrink the table.
-mkdir -p "$CACHE_DIR"
-# A regex cannot tell 999.1.1.1 from an address, so check the octets: anything
-# that reaches the route table unvalidated makes `ip -batch` complain.
-#
-# The optional limit is applied inside the awk rather than by a trailing `head`,
-# which would close the pipe early and SIGPIPE the writer — fatal under
-# `pipefail`. Only the endpoint cache passes one; it accumulates across runs and
-# needs a ceiling, while the DERP list is a full snapshot each time (~90 relays)
-# and must not be truncated.
-valid_ipv4() {
-    awk -F. -v limit="${1:-0}" '
-        (limit == 0 || n < limit) && NF == 4 && /^[0-9.]+$/ {
-            for (i = 1; i <= 4; i++) if ($i > 255 || length($i) > 3) next
-            n++; print
-        }'
-}
-
-if derp=$(timeout 5 tailscale debug derp-map 2>/dev/null) && [ -n "$derp" ] &&
-   ips=$(jq -r '.Regions[].Nodes[].IPv4 | select(. != null and . != "")' \
-            <<<"$derp" 2>/dev/null) && [ -n "$ips" ]; then
-    printf '%s\n' "$ips" | valid_ipv4 | sort -u > "$DERP_CACHE"
-fi
-# Unioned with the cache rather than replacing it: each answer is one of several
-# valid endpoints, so replacing would drop the others and a later run that
-# resolved differently would find them unprotected. They are a handful of stable
-# public addresses, so the union stays small; cap it so a DNS oddity cannot grow
-# the list without bound.
-{
-    for host in "${IOA_BOOTSTRAP_HOSTS[@]}"; do
-        # `|| true`: dig exits 9 when no server replies, which is exactly the
-        # case the cache below exists to cover.
-        dig +short +timeout=2 +tries=1 "$host" @127.0.0.1 2>/dev/null || true
-    done
-    # The endpoint the agent is *actually* using, which is the one that matters
-    # and the one DNS is least likely to name: it picks a gateway at connect
-    # time and does not announce it. Ground truth beats a resolver.
-    { ss -tnp 2>/dev/null || true; } |
-        awk '/SmartGateAgent/ && /:443/ {print $5}' |
-        sed 's/:[0-9]*$//' || true
-    # `|| true`: on a cold boot the cache does not exist yet, and cat exits 1.
-    cat "$IOA_ENDPOINT_CACHE" 2>/dev/null || true
-} | sort -u | valid_ipv4 64 > "$IOA_ENDPOINT_CACHE.new"
-if [ -s "$IOA_ENDPOINT_CACHE.new" ]; then
-    mv "$IOA_ENDPOINT_CACHE.new" "$IOA_ENDPOINT_CACHE"
-else
-    rm -f "$IOA_ENDPOINT_CACHE.new"
-    warn "no IOA endpoint addresses resolved or cached"
-fi
-
-underlay_gw=$(physical_gateway)
-underlay_dev=$(physical_device)
-
-# Build into a staging table, then swap. `ip -batch` aborts at the first bad
-# line, so writing directly into the live table means one unresolvable address
-# truncates everything after it — and since the table has to be flushed first,
-# the result is worse than not running at all. That is how the underlay
-# protection once vanished entirely, which deadlocks tailscaled: its own
-# control-plane and DERP traffic gets routed into the tunnel it is building.
-# Staging turns a partial failure into "keep what already worked".
-if [ -n "${underlay_gw:-}" ]; then
-    ip route flush table "$UNDERLAY_STAGE" 2>/dev/null || true
-    {
-        # $dns is the DHCP resolver list, discovered before the reset above and
-        # reused here so the route table and /etc/smartdns/dhcp-dns.conf can
-        # never name different servers. Unquoted on purpose: it is a list.
-        printf '%s\n' "${TS_CONTROL_NETS[@]}" "${DNS_UPSTREAMS[@]}" ${dns:-}
-        cat "$DERP_CACHE" "$IOA_ENDPOINT_CACHE" 2>/dev/null || true
-    } | { grep -E '^[0-9]' || true; } | sort -u |
-        while read -r dst; do
-            echo "route add $dst via $underlay_gw dev $underlay_dev table $UNDERLAY_STAGE"
-        done | ip -force -batch - 2>/dev/null || true
-
-    # `grep -c` exits 1 when the count is zero, and an empty table is the
-    # normal state on a cold boot — without the guard `set -e` kills the script
-    # here and every overlay rule below silently goes missing.
-    staged=$(count_routes "$UNDERLAY_STAGE")
-    live=$(count_routes "$UNDERLAY_TABLE")
-    # An empty live table is not a previous state worth keeping — it is the
-    # absence of one. Treating it as something to protect turns a single failed
-    # run into a permanent outage, since nothing else rebuilds the table.
-    if [ "$live" -eq 0 ]; then live=-1; fi
-    # Neither is a table built for a different network. Its routes are "via the
-    # old gateway", so keeping it does not preserve protection, it installs a
-    # black hole — and the guard below would then defend that black hole against
-    # every correct rebuild that followed. The cn block says the same thing
-    # about its own table. Size only decides between two tables that are both
-    # reachable; identity decides whether the old one is a candidate at all.
-    #
-    # The test is "is the table MOSTLY on the current gateway", not "does any
-    # route match". The resolver pins below are written straight into the live
-    # table with the current gateway even when the staged swap was rejected, so
-    # a single matching route proves nothing — after one rejected rebuild on a
-    # new access point, ninety stale routes plus one fresh pin would certify the
-    # stale table as current, and every later run would be measured against its
-    # inflated size. The table would then never be replaced.
-    if [ "$live" -gt 0 ]; then
-        on_gw=$({ ip route show table "$UNDERLAY_TABLE" 2>/dev/null || true; } |
-                    awk -v gw="$underlay_gw" '$3 == gw {n++} END {print n+0}')
-        if [ "$on_gw" -lt $(( live / 2 )) ]; then live=-1; fi
-    fi
-    # A shrinking table usually means a source was unavailable, not that the
-    # network changed — but the DERP list churns by a route or two between runs,
-    # and rejecting on any shrink froze the table permanently: a newly resolved
-    # IOA endpoint could never get in, while the ipset that exempts it moved
-    # ahead. Reject a collapse (a source went away), accept the churn.
-    floor=$(( live * 3 / 4 ))
-    if [ "$staged" -gt 0 ] && [ "$staged" -ge "$floor" ]; then
-        # Add before delete, never flush-then-fill.
-        #
-        # `flush` followed by a rebuild leaves the table empty for as long as the
-        # rebuild takes, and "as long as it takes" is the wrong amount of time
-        # when tailscale is mid-handshake: its STUN probes go out during the gap,
-        # find no route to any DERP address, and netcheck concludes UDP is
-        # blocked. `replace` is idempotent per route, so applying the staged set
-        # over the live one converges to the same table without ever passing
-        # through empty. Only then are the routes that are no longer wanted
-        # removed, one at a time.
-        { ip route show table "$UNDERLAY_STAGE" 2>/dev/null || true; } |
-            sed "s|\$| table $UNDERLAY_TABLE|; s|^|route replace |" |
-            ip -force -batch - 2>/dev/null || true
-        comm -23 \
-            <({ ip route show table "$UNDERLAY_TABLE" 2>/dev/null || true; } |
-                  awk '{print $1}' | sort -u) \
-            <({ ip route show table "$UNDERLAY_STAGE" 2>/dev/null || true; } |
-                  awk '{print $1}' | sort -u) |
-            while read -r dst; do
-                [ -n "$dst" ] || continue
-                echo "route del $dst table $UNDERLAY_TABLE"
-            done | ip -force -batch - 2>/dev/null || true
-    else
-        warn "underlay rebuild produced $staged routes against $live live; kept the old table"
-    fi
-    ip route flush table "$UNDERLAY_STAGE" 2>/dev/null || true
-
-    # The DHCP resolvers go in unconditionally, outside the staged swap.
-    #
-    # Everything else in this table is an optimisation: lose a DERP relay and
-    # tailscale picks another. Lose the resolver and nothing resolves, including
-    # the names needed to recover — and on a network where the exit path is a
-    # black hole that is a total outage with no way back. It must not be
-    # contingent on a size comparison, on the previous table, or on the staging
-    # swap having been accepted. Two lines, always applied, cheapest possible
-    # insurance against the failure that has cost the most.
-    for d in ${dns:-}; do
-        ip route replace "$d" via "$underlay_gw" dev "$underlay_dev" \
-            table "$UNDERLAY_TABLE" 2>/dev/null ||
-            warn "cannot pin DHCP resolver $d into the underlay table"
-    done
-else
-    warn "no default gateway; leaving the underlay table alone"
-fi
-
-# The underlay table has just been rebuilt, so the pref 500 band's membership is
-# only known now. Everything else was decided before the destructive section.
-underlay_band=("from all fwmark $TS_MARK lookup main")
-if has_routes "$UNDERLAY_TABLE"; then
-    underlay_band+=("from all lookup $UNDERLAY_TABLE")
-else
-    warn "underlay table is empty; not installing pref $P_UNDERLAY"
-fi
-DESIRED_BANDS[$P_UNDERLAY]=$(band_of "${underlay_band[@]}")
-
-# ==============================================================================
-# 1000 — local: directly-connected subnets
-# ==============================================================================
-local_band=()
-while read -r subnet _; do
-    [ -n "$subnet" ] || continue
-    local_band+=("from all to $subnet lookup main")
-done < <({ ip route show table main scope link 2>/dev/null || true; })
-
-# The physical gateway and the DHCP resolvers, pinned to the physical link.
-#
-# The link rules above cover the LAN subnet, but not every address the LAN
-# depends on. This network hands out 10.36.48.0/20 — inside IOA's 10.0.0.0/8 —
-# so on this access point the IOA rules at pref 2500 capture the whole local
-# network, gateway included, and the previous ones (172.20.0.0/20) never did.
-# That is why the stack looked network-dependent: the overlap was an accident of
-# which access point was in range.
-#
-# Infrastructure the physical link is made of cannot be routed through anything
-# that runs on top of it. Name it explicitly rather than relying on a range
-# comparison that happens to work.
-
-
-# ==============================================================================
-# 2000/2500 — IOA
-# ==============================================================================
-
-
-# These rules point at `table ioa`, whose single route is `default via
-# 192.168.255.1 dev tun0`. SmartGateAgent owns both.
-#
-# No liveness gate, and the reason is worth recording, because adding one is the
-# obvious idea and it is wrong twice over.
-#
-# It is unnecessary. SmartGateAgent removes the route and the interface together
-# when the tunnel goes down — measured: stopping ngnclient.service leaves
-# `table ioa` empty and tun0 gone within two seconds. An empty table is not a
-# black hole: the lookup misses, and the packet falls through to the next rule
-# and out the physical link. The rules become inert on their own.
-#
-# It is also actively harmful. Gating on SmartGateAgent's :443 control sessions
-# was tried: they are short-lived, so a sample landing between them reads "down"
-# while the tunnel is fine — 29 of 30 one-second samples read down while
-# ioa.tencent answered 301 throughout. The rules were then deleted and
-# reinstalled every few seconds, which flaps the routing table under live
-# connections. A stable wrong answer beats an oscillating one.
-#
-# What actually needed bounding was scope, not lifetime: on an access point
-# handing out 10.36.48.0/20 — inside IOA's 10.0.0.0/8 — these rules captured the
-# local network and its gateway. The pref 1000 pins above fix that by naming the
-# physical link's own infrastructure explicitly.
-
-
-iptables -t mangle -N "$CHAIN" 2>/dev/null || iptables -t mangle -F "$CHAIN"
-
-# The chain is a whitelist, not a blacklist. This is the fix for the failure
-# that took this machine offline over and over.
-#
-# SmartDNS fills the `ioa` set from domain rules, and those are suffix matches:
-# `ipset /woa.com/ioa` catches sgw.woa.com, which is the tunnel's own public
-# entry point (175.27.22.2). Marking it routes the tunnel's handshake into the
-# tunnel it is building. IOA dies, DNS dies with it, and nothing left running
-# can repair it — the recovery was always `iptables -t mangle -D OUTPUT -j
-# NETMODE_IOA`, i.e. "stop trusting this set".
-#
-# Every previous attempt fought this by *excluding* the bad addresses: an
-# endpoint cache, an ioa_underlay ipset, a cgroup match. All of them are lists
-# of exceptions racing a list SmartDNS rewrites on every lookup, and a list that
-# has to be complete to be safe will eventually be incomplete. Each new endpoint
-# the agent moved to was a fresh outage.
-#
-# So invert it. The set of addresses that legitimately belong in the tunnel is
-# small, stable, and known ahead of time: the IOA intranet ranges. Require
-# membership in that whitelist *in addition to* the ipset, and a wrong entry in
-# the ipset can no longer do damage — the worst it can do is fail to help. The
-# ipset stays as the "is this actually an IOA service" signal; the whitelist
-# bounds what that signal is allowed to affect.
-#
-# The failure mode is now the safe one by construction: an unmarked packet goes
-# out the physical link and works. That is why marking can be a hint.
-ensure_ipset "$IOA_INTRANET_SET" hash:net
-ipset flush "$IOA_INTRANET_SET"
-for cidr in "${IOA_CIDRS[@]}"; do
-    ipset add "$IOA_INTRANET_SET" "$cidr" -exist 2>/dev/null ||
-        warn "cannot add $cidr to $IOA_INTRANET_SET"
-done
-
-# Anything tailscale has already claimed as its own underlay stays untouched:
-# a full-width mark here would erase its 0x80000 and drop WireGuard into the
-# IOA tunnel.
-iptables -t mangle -A "$CHAIN" -m mark --mark "$TS_MARK" -j RETURN
-# SmartDNS owns the `ioa` set. On a cold boot this script can run before it has
-# started, and referencing a set that does not exist makes iptables fail — which
-# would abort the run with the reset already done. Create it empty instead;
-# SmartDNS fills the same set in place once it is up.
-ensure_ipset ioa
-# Both conditions, or no mark. This single `-m set ... --match-set
-# $IOA_INTRANET_SET dst` is what makes every exception list above unnecessary:
-# a public tunnel endpoint is not in the intranet ranges, so it cannot be
-# marked, no matter what SmartDNS decided about it.
-iptables -t mangle -A "$CHAIN" \
-    -m set --match-set ioa dst \
-    -m set --match-set "$IOA_INTRANET_SET" dst \
-    -j MARK --set-xmark "$IOA_MARK"
-iptables -t mangle -A OUTPUT -j "$CHAIN"
-
-# connect() picks a route before mangle OUTPUT runs, so a socket to an
-# ipset-matched address has already bound a source address from whichever table
-# won at that moment — usually tailscale's. The mark then reroutes the packets
-# out tun0 still carrying that source, and replies never come back. Rewriting
-# the source on the way out fixes it.
-#
-# MASQUERADE rather than SNAT, deliberately. SNAT has to be told the address,
-# which means this rule would encode whatever tun0 happened to hold when the
-# rule was written — and since tun0 is no longer part of the change check (it is
-# followed by DNS, not by routing), a tunnel that came back with a different
-# address would keep a rule naming the old one, silently, until something
-# unrelated moved. MASQUERADE reads the interface's current address per packet,
-# so there is nothing to go stale. The cost is a conntrack lookup, on a tunnel
-# that carries intranet traffic only.
-iptables -t nat -A POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 -j MASQUERADE
-
-# ==============================================================================
-# 3000/3500 — tailnet peers, then private ranges
-# ==============================================================================
-
-
-# The link-derived rules above are a snapshot, so a docker network or VM bridge
-# created later has no rule of its own and would fall through to the exit node.
-# https://github.com/tailscale/tailscale/issues/3646
-
-
-# ==============================================================================
-# 4000 — China direct
-# ==============================================================================
+# Rebuild cn only when its physical gateway changed; avoid needless netlink churn.
 if [ ! -f "$ROUTEFILE" ]; then
     warn "no $ROUTEFILE; China traffic will use the exit node"
 else
@@ -1049,19 +261,8 @@ else
     if [ -z "${gw:-}" ]; then
         warn "no default gateway; leaving the cn table alone"
     else
-        # Rebuilt only when the gateway moved. The routes are all "via $gw", so
-        # a table from the previous network is worse than none — but a table
-        # already built for *this* gateway is exactly what we would rebuild, and
-        # rebuilding it is not free: ~8800 routes flushed and re-added is ~17600
-        # netlink events, which is enough to make tailscaled log "netlink
-        # receive: recvmsg: no buffer space available" and lose track of the
-        # link state entirely. That was observed during the same window in which
-        # tailscale gave up on its direct connection.
-        #
-        # Checking one route is enough: the table is written in a single batch,
-        # so it is either all on this gateway or all on the previous one.
         cn_gw=$({ ip route show table "$CN_TABLE" 2>/dev/null || true; } |
-                    awk '{print $3; exit}')
+            awk '{print $3; exit}')
         if [ "$cn_gw" != "$gw" ] || ! has_routes "$CN_TABLE"; then
             ip route flush table "$CN_TABLE" 2>/dev/null || true
             sed "s/GATEWAY/$gw/" "$ROUTEFILE" | ip -force -batch - 2>/dev/null || true
@@ -1075,71 +276,32 @@ else
     fi
 fi
 
-# ==============================================================================
-# Apply the rule set
-# ==============================================================================
-# One loop, from the same DESIRED_BANDS the change check consulted. Applying
-# each band in a different place from where it was decided is how the two drift
-# apart, and a drift here reads as a routing bug rather than as what it is.
+# Preserve every existing owner mark. Only unmarked addresses present in both
+# SmartDNS's dynamic set and the bounded intranet set receive exact mark 0x1.
+iptables -t mangle -N "$CHAIN" 2>/dev/null || true
+iptables -t mangle -F "$CHAIN"
+iptables -t mangle -A "$CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
+ensure_ipset ioa
+ensure_ipset "$IOA_INTRANET_SET" hash:net
+ipset flush "$IOA_INTRANET_SET"
+for cidr in "${IOA_INTRANET_CIDRS[@]}"; do
+    ipset add "$IOA_INTRANET_SET" "$cidr"
+done
+iptables -t mangle -A "$CHAIN" \
+    -m set --match-set ioa dst \
+    -m set --match-set "$IOA_INTRANET_SET" dst \
+    -j MARK --set-xmark 0x1/0xffffffff
+iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null ||
+    iptables -t mangle -I OUTPUT 1 -j "$CHAIN"
+
+# Address-independent source rewriting survives tun0 address changes.
+while read -r n; do
+    [ -n "$n" ] && iptables -t nat -D POSTROUTING "$n" 2>/dev/null || true
+done < <(iptables -t nat -L POSTROUTING --line-numbers -n |
+    awk '/MASQUERADE|SNAT/ && /mark match 0x1/ {print $1}' | sort -rn)
+iptables -t nat -A POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 -j MASQUERADE
+
 for band in "${!DESIRED_BANDS[@]}"; do
     IFS=';' read -r -a want <<<"${DESIRED_BANDS[$band]}"
     reconcile_pref "$band" "${want[@]}"
 done
-
-# ==============================================================================
-# Services
-# ==============================================================================
-tailscale status &>/dev/null &&
-    tailscale set --exit-node-allow-lan-access=true 2>/dev/null || true
-
-# network-fallback is deliberately NOT restarted here.
-#
-# It polls on its own (20s while detached, 120s while healthy), so it will
-# notice a link change without help — and restarting it destroys the one piece
-# of state it needs: which exit node it detached, and therefore whether the
-# absence of one is its doing or the user's. Every link change used to SIGTERM
-# it mid-reconcile as well, which on a churny link meant it never completed a
-# cycle.
-
-# ==============================================================================
-# Verify the one invariant that has ever taken the machine offline
-# ==============================================================================
-# If an IOA tunnel endpoint routes *into* the IOA tunnel, the tunnel cannot come
-# up, DNS goes with it, and nothing left running can repair it. Every outage
-# during development was this, and the recovery was always removing the mangle
-# jump by hand. Ask the kernel directly — `route get ... mark 1` is the same
-# lookup a marked packet gets — and if the answer is wrong, remove the jump
-# ourselves. Marking is an optimisation; being reachable is not.
-#
-# Read from the cache, not from the ipset. The set holds only the endpoints that
-# were proven to be in the underlay table, so iterating it can only ever confirm
-# what is already known good. The dangerous ones are exactly the ones the set
-# left out: unexempted, so SmartDNS's `ioa` set marks them into the tunnel.
-bad_endpoint=""
-while read -r ip; do
-    [ -n "$ip" ] || continue
-    case "$({ ip route get "$ip" mark 1 2>/dev/null || true; } | head -1)" in
-        *"dev tun0"*) bad_endpoint="$ip" ;;
-    esac
-done < <(cat "$IOA_ENDPOINT_CACHE" 2>/dev/null || true)
-
-if [ -n "$bad_endpoint" ]; then
-    warn "IOA endpoint $bad_endpoint still routes into tun0; removing the mangle jump"
-    iptables -t mangle -D OUTPUT -j "$CHAIN" 2>/dev/null || true
-fi
-
-# The symmetric failure was never checked, and it is the worse of the two: a
-# DERP relay or the control plane routed into tailscale0 deadlocks tailscaled
-# and takes DNS with it. Reachable whenever the underlay rule is missing while
-# tailscale's own catch-all at pref 5270 is live. Same question to the kernel.
-ts_probe=$({ cat "$DERP_CACHE" 2>/dev/null || true; } | valid_ipv4 1)
-if [ -n "${ts_probe:-}" ]; then
-    case "$({ ip route get "$ts_probe" 2>/dev/null || true; } | head -1)" in
-        *"dev tailscale0"*)
-            warn "underlay address $ts_probe routes into tailscale0; dropping pref 5270"
-            # Tailscale reinstalls this rule on its next reconfiguration, so
-            # removing it is a stopgap that unblocks the daemon, not a change.
-            while ip rule del pref 5270 2>/dev/null; do :; done
-            ;;
-    esac
-fi

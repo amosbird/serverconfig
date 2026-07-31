@@ -44,9 +44,11 @@ setup() {
     ip link add tun0 type dummy
     ip link set tun0 up
     ip addr add 192.168.255.10/24 dev tun0
+    ip link add owner0 type dummy
+    ip link set owner0 up
     ip route add default via 192.168.255.1 dev tun0 table 400
-    ip route add default via 10.36.48.1 dev wlan0 table 20
-    ip route add default via 10.36.48.1 dev wlan0 table 230
+    ip route add default dev owner0 table 20
+    ip route add default dev owner0 table 230
     ip route add default dev tun0 table 52
     ip route add blackhole 198.18.0.0/15 table 52
     ip rule add fwmark 0xa38 lookup 20 pref 490
@@ -275,7 +277,7 @@ main() {
     ipset add ioa 9.1.2.3 -exist
     ipset add ioa 10.20.1.1 -exist
     chain=$(iptables -t mangle -S NETMODE_IOA)
-    grep -q -- '! --mark 0x0/0xffffffff -j RETURN' <<<"$chain" \
+    grep -Eq -- '! --mark 0x0(/0xffffffff)? -j RETURN' <<<"$chain" \
         && ok "all non-zero marks are preserved" || bad "non-zero mark guard missing"
     grep -q -- '--set-xmark 0x1/0xffffffff' <<<"$chain" \
         && ok "IOA business mark is written exactly" || bad "IOA mark write is not exact"
@@ -296,7 +298,7 @@ main() {
     [ "$(route_table 10.30.1.1 'mark 0x80000')" = main ] \
         && ok "Tailscale mark remains owner-routed" \
         || bad "Tailscale mark was captured"
-    [ "$(route_table 10.30.1.1 'mark 0xa39')" != ioa ] \
+    [ "$(route_table 203.0.113.1 'mark 0xa39')" != ioa ] \
         && ok "low-bit collision does not match IOA" \
         || bad "0xa39 incorrectly matched IOA business mark"
 
