@@ -329,16 +329,22 @@ reject 'rollback does not delete whole preference bands' \
 reject 'migration does not mutate tunnel-owned policy' \
     'ip route (flush|del|replace).*table (20|230|52|ioa)|tailscale (set|up|down)' \
     network/migrate.sh
+reject 'rollback does not flush cn_stage outside the ownership lock' \
+    '^[[:space:]]*ip route flush table cn_stage' network/migrate.sh
 if ! grep -Fq 'cleanup_owned_rules' network/migrate.sh; then
     echo 'FAIL rollback does not use owned rule shapes' >&2
     fail=1
 fi
 
 stage_registration_cleanup_contract() {
-    local sandbox rt_tables lock before output cleanup_pid holder_pid
+    local sandbox rt_tables lock ip_log fake_ip before output cleanup_pid holder_pid
     sandbox=$(mktemp -d)
     rt_tables="$sandbox/rt_tables"
     lock="$sandbox/network-reconfigure.lock"
+    ip_log="$sandbox/ip.log"
+    fake_ip="$sandbox/ip"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\n' "$ip_log" >"$fake_ip"
+    chmod +x "$fake_ip"
 
     # Source the helper and pass only disposable fixtures; never redirect the production CLI.
     source network/migrate.sh
@@ -349,9 +355,10 @@ stage_registration_cleanup_contract() {
 10042 cn_stage
 101 cn
 EOF
-    cleanup_stage_registration "$rt_tables" "$lock"
-    if grep -Eq '^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$' "$rt_tables"; then
-        echo 'FAIL rollback keeps a unique owned cn_stage registration' >&2
+    cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip"
+    if grep -Eq '^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$' "$rt_tables" ||
+       [ "$(cat "$ip_log")" != 'route flush table 10042' ]; then
+        echo 'FAIL rollback does not flush a unique owned cn_stage ID before unregistering it' >&2
         rm -rf "$sandbox"
         return 1
     fi
@@ -362,9 +369,10 @@ EOF
 10043 cn_stage
 101 cn
 EOF
+    : >"$ip_log"
     before=$(cat "$rt_tables")
-    output=$(cleanup_stage_registration "$rt_tables" "$lock" 2>&1)
-    if [ "$(cat "$rt_tables")" != "$before" ] ||
+    output=$(cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip" 2>&1)
+    if [ "$(cat "$rt_tables")" != "$before" ] || [ -s "$ip_log" ] ||
        ! grep -Fq 'cn_stage registration is ambiguous' <<<"$output"; then
         echo 'FAIL rollback mutates duplicate cn_stage name registrations' >&2
         rm -rf "$sandbox"
@@ -377,9 +385,10 @@ EOF
 10042 foreign
 101 cn
 EOF
+    : >"$ip_log"
     before=$(cat "$rt_tables")
-    output=$(cleanup_stage_registration "$rt_tables" "$lock" 2>&1)
-    if [ "$(cat "$rt_tables")" != "$before" ] ||
+    output=$(cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip" 2>&1)
+    if [ "$(cat "$rt_tables")" != "$before" ] || [ -s "$ip_log" ] ||
        ! grep -Fq 'cn_stage registration is ambiguous' <<<"$output"; then
         echo 'FAIL rollback mutates a cn_stage registration with an ID conflict' >&2
         rm -rf "$sandbox"
@@ -399,7 +408,7 @@ EOF
     ' _ "$sandbox/locked" "$sandbox/release" "$rt_tables" &
     holder_pid=$!
     while [ ! -e "$sandbox/locked" ]; do sleep 0.01; done
-    cleanup_stage_registration "$rt_tables" "$lock" &
+    cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip" &
     cleanup_pid=$!
     sleep 0.1
     if ! kill -0 "$cleanup_pid" 2>/dev/null; then
@@ -427,9 +436,9 @@ if ! stage_registration_cleanup_contract; then
     fail=1
 fi
 
-if ! grep -Fq \
-    "cleanup_stage_registration /etc/iproute2/rt_tables /run/lock/network-reconfigure.lock" \
-    network/migrate.sh; then
+if ! grep -Fq "cleanup_stage_registration \\" network/migrate.sh ||
+   ! grep -Fq '/etc/iproute2/rt_tables /run/lock/network-reconfigure.lock /usr/bin/ip' \
+       network/migrate.sh; then
     echo 'FAIL rollback does not use the fixed live rt_tables and shared lock paths' >&2
     fail=1
 fi
@@ -473,6 +482,28 @@ if unshare -rn bash -c '
         -j SNAT --to-source 192.0.2.10
     iptables -t nat -A POSTROUTING -m mark --mark 0x1/0xffffffff -o tun1 -j MASQUERADE
     source "$migrate"
+
+    sandbox=$(mktemp -d)
+    rt_tables="$sandbox/rt_tables"
+    lock="$sandbox/network-reconfigure.lock"
+    printf "%s\n" "10042 cn_stage" "101 cn" >"$rt_tables"
+    ip route add blackhole 203.0.113.0/24 table 10042
+    cleanup_stage_registration "$rt_tables" "$lock" /usr/bin/ip
+    ! ip route show table 10042 | grep -q .
+    ! grep -Eq "^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$" "$rt_tables"
+
+    printf "%s\n" "10042 cn_stage" "10043 cn_stage" "101 cn" >"$rt_tables"
+    ip route add blackhole 203.0.113.0/24 table 10042
+    cleanup_stage_registration "$rt_tables" "$lock" /usr/bin/ip 2>/dev/null
+    ip route show table 10042 | grep -Fq "blackhole 203.0.113.0/24"
+    grep -Fq "10042 cn_stage" "$rt_tables"
+
+    printf "%s\n" "10042 cn_stage" "10042 foreign" "101 cn" >"$rt_tables"
+    cleanup_stage_registration "$rt_tables" "$lock" /usr/bin/ip 2>/dev/null
+    ip route show table 10042 | grep -Fq "blackhole 203.0.113.0/24"
+    grep -Fq "10042 cn_stage" "$rt_tables"
+    rm -rf "$sandbox"
+
     cleanup_owned_rules
     cleanup_owned_nat
 
@@ -489,9 +520,9 @@ if unshare -rn bash -c '
     grep -Fq -- "-A POSTROUTING -o tun1 -m mark --mark 0x1 -j MASQUERADE" \
         <<<"$nat_rules"
 ' bash "$ROOT/network/migrate.sh" "$host_netns_link" "$host_netns_inode"; then
-    echo 'OK   rollback removes exact owned state and preserves similar foreign state'
+    echo 'OK   rollback safely flushes and unregisters staging state in a real namespace'
 else
-    echo 'FAIL rollback mishandles kernel-rendered state or similar foreign state' >&2
+    echo 'FAIL rollback mishandles staging ownership or kernel-rendered state' >&2
     fail=1
 fi
 

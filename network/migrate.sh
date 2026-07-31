@@ -61,25 +61,25 @@ cleanup_owned_nat() {
 }
 
 cleanup_stage_registration() (
-    local target_file=$1 lock_path=$2 tmp rc
+    local target_file=$1 lock_path=$2 ip_bin=$3 tmp='' stage_id rc
     exec 9>"$lock_path"
     flock 9
-    tmp=$(mktemp "$target_file.XXXXXX")
-    # shortcut: rt_tables is tiny, so buffer one snapshot to validate and rewrite atomically.
-    if awk '
-        { lines[NR] = $0 }
-        $1 !~ /^#/ && $2 == "cn_stage" { name_count++; id = $1; target[NR] = 1 }
+
+    # shortcut: rt_tables is tiny, so validate one locked snapshot before changing either owner.
+    if stage_id=$(awk '
+        $1 !~ /^#/ && $2 == "cn_stage" { name_count++; id = $1 }
+        $1 !~ /^#/ { id_count[$1]++ }
         END {
             if (name_count == 0) exit 3
-            if (name_count != 1) exit 2
-            for (line = 1; line <= NR; line++) {
-                split(lines[line], fields)
-                if (fields[1] !~ /^#/ && fields[1] == id) id_count++
-            }
-            if (id_count != 1) exit 2
-            for (line = 1; line <= NR; line++) if (!target[line]) print lines[line]
+            if (name_count != 1 || id_count[id] != 1) exit 2
+            print id
         }
-    ' "$target_file" >"$tmp"; then
+    ' "$target_file"); then
+        tmp=$(mktemp "$target_file.XXXXXX")
+        awk -v id="$stage_id" \
+            '!($1 !~ /^#/ && $1 == id && $2 == "cn_stage")' \
+            "$target_file" >"$tmp"
+        "$ip_bin" route flush table "$stage_id" 2>/dev/null || true
         chmod --reference="$target_file" "$tmp"
         chown --reference="$target_file" "$tmp"
         mv "$tmp" "$target_file"
@@ -87,7 +87,7 @@ cleanup_stage_registration() (
     else
         rc=$?
     fi
-    rm -f "$tmp"
+    [ -z "$tmp" ] || rm -f "$tmp"
     if [ "$rc" -eq 2 ]; then
         echo "  [WARN] cn_stage registration is ambiguous; leaving $target_file unchanged" >&2
     elif [ "$rc" -ne 3 ]; then
@@ -286,10 +286,9 @@ rollback() {
     # preference survive rollback.
     cleanup_owned_rules
     ip route flush table cn 2>/dev/null || true
-    # Flush by the repository-owned name before unregistering it. Only remove the
-    # registration when both its dynamic name and ID identify exactly one entry.
-    ip route flush table cn_stage 2>/dev/null || true
-    cleanup_stage_registration /etc/iproute2/rt_tables /run/lock/network-reconfigure.lock
+    # Validate, flush, and unregister staging ownership under the reconfigure lock.
+    cleanup_stage_registration \
+        /etc/iproute2/rt_tables /run/lock/network-reconfigure.lock /usr/bin/ip
 
     # Remove only the obsolete mapping. Tables 500 and 501 have no independent
     # ownership record and are therefore never flushed automatically.
