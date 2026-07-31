@@ -5,17 +5,19 @@ set -uo pipefail # deliberately not -e: report every failed invariant
 
 LOG=/var/log/netfix.log
 REPO=/home/amos/git/serverconfig
-RECONFIGURE="$REPO/scripts/network-reconfigure"
+RECONFIGURE=${RECONFIGURE:-"$REPO/scripts/network-reconfigure"}
 IFACE_DEFAULT=wlan0
 PROBE_HOST=connectivitycheck.gstatic.com
 PROBE_IP=216.239.32.117
 PROBE="http://$PROBE_HOST/generate_204"
 IOA_PROBE=http://ioa.tencent.com
 
-[ "$(id -u)" -eq 0 ] || { echo "netfix: must run as root (use sudo)"; exit 1; }
-
-mkdir -p "$(dirname "$LOG")"
-exec > >(tee -a "$LOG") 2>&1
+# shortcut: test mode only bypasses privilege/log setup; fake PATH still exercises the full command path.
+if [ "${NETFIX_TEST:-0}" != 1 ]; then
+    [ "$(id -u)" -eq 0 ] || { echo "netfix: must run as root (use sudo)"; exit 1; }
+    mkdir -p "$(dirname "$LOG")"
+    exec > >(tee -a "$LOG") 2>&1
+fi
 
 say()  { printf '\n\033[1m=== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mOK\033[0m   %s\n' "$*"; }

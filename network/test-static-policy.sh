@@ -41,63 +41,118 @@ reject 'restore leaves Tailscale alone' 'tailscale|tailscaled' restore.sh
 reject 'no exit-node mutation in local tools' \
     'tailscale (set --exit-node=|down|up)|systemctl restart tailscaled' \
     scripts/network-reconfigure scripts/netfix scripts/network-status
-audit_netfix() {
-    python3 - "$1" <<'PY_AUDIT'
-import re, shlex, sys
-path = sys.argv[1]
-allowed = tuple(map(re.compile, (
-    r"ip(?:\s+-4)?\s+rule\s+show(?:\s|$)",
-    r"ip(?:\s+-4)?\s+route\s+(?:show|get)(?:\s|$)",
-    r"ip(?:\s+-4)?(?:\s+-o)?\s+addr\s+show(?:\s|$)",
-    r"iptables\s+-S(?:\s|$)", r"ipset\s+list(?:\s|$)",
-    r"systemctl\s+is-active(?:\s|$)", r"tailscale\s+status\s+--json(?:\s|$)",
-)))
-sensitive = re.compile(r"(?:^|/)(ip|iptables|ipset|systemctl|tailscale)$")
-text = open(path, encoding="utf-8").read()
-for number, raw in enumerate(text.splitlines(), 1):
-    line = raw.split("#", 1)[0].strip()
-    if not line:
-        continue
-    try:
-        words = shlex.split(line, comments=True, posix=True)
-    except ValueError:
-        words = re.findall(r"[^\s|;]+", line.removesuffix("\\"))
-    for index, word in enumerate(words):
-        command = word.strip("$();{}")
-        if sensitive.search(command):
-            shape = " ".join([command.rsplit("/", 1)[-1], *words[index + 1:]])
-            if not any(pattern.match(shape) for pattern in allowed):
-                print(f"{path}:{number}: disallowed sensitive command: {line}", file=sys.stderr)
-                sys.exit(1)
-if len(re.findall(r'env\s+FORCE=1\s+"\$RECONFIGURE"', text)) != 1:
-    print(f'{path}: expected exactly one env FORCE=1 "$RECONFIGURE"', file=sys.stderr)
-    sys.exit(1)
-PY_AUDIT
+netfix_runtime_contract() {
+    local sandbox fakebin log candidate output rc command
+    sandbox=$(mktemp -d)
+    fakebin="$sandbox/bin"
+    log="$sandbox/calls"
+    mkdir -p "$fakebin"
+
+    if ! grep -Fq 'RECONFIGURE=${RECONFIGURE:-' scripts/netfix ||
+       ! grep -Fq 'NETFIX_TEST:-0' scripts/netfix; then
+        echo 'FAIL netfix lacks safe runtime-test injection points' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+
+    cat >"$fakebin/fake-command" <<'EOF'
+#!/usr/bin/env bash
+command=${0##*/}
+printf '%s' "$command" >>"$NETFIX_COMMAND_LOG"
+case "$command" in
+    jq) printf '|%s\n' "$1" >>"$NETFIX_COMMAND_LOG" ;;
+    *) printf '|%s' "$@" >>"$NETFIX_COMMAND_LOG"; printf '\n' >>"$NETFIX_COMMAND_LOG" ;;
+esac
+case "$command" in
+    ip)
+        case "$*" in
+            '-4 route show table main default') echo 'default via 192.0.2.1 dev wlan0' ;;
+            'route show table cn')
+                i=0
+                while [ "$i" -lt 1001 ]; do echo '192.0.2.0/24 dev wlan0'; i=$((i + 1)); done
+                ;;
+            '-4 rule show pref 500') echo '500: from all fwmark 0x80000/0xff0000 lookup main' ;;
+            '-4 rule show pref 1500') echo '1500: from all lookup cn' ;;
+            '-4 rule show pref 2500')
+                echo '2500: from all fwmark 0x1 lookup ioa'
+                echo '2500: from all to 10.0.0.0/8 lookup ioa'
+                echo '2500: from all to 100.12.0.0/16 lookup ioa'
+                ;;
+            '-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
+        esac
+        ;;
+    curl) printf '204' ;;
+    dig) echo '142.250.72.14' ;;
+    tailscale) echo '{"Health":[]}' ;;
+    jq) echo '       exit node: none' ;;
+    timeout) shift; "$@" ;;
+esac
+EOF
+    chmod +x "$fakebin/fake-command"
+    for command in ip iptables ipset systemctl tailscale curl timeout jq dig; do
+        ln -s fake-command "$fakebin/$command"
+    done
+    cat >"$fakebin/reconfigure" <<'EOF'
+#!/usr/bin/env bash
+printf 'reconfigure|FORCE=%s|%s\n' "${FORCE-}" "$*" >>"$NETFIX_COMMAND_LOG"
+EOF
+    chmod +x "$fakebin/reconfigure"
+
+    run_contract() {
+        : >"$log"
+        output=$(NETFIX_TEST=1 NETFIX_COMMAND_LOG="$log" RECONFIGURE="$fakebin/reconfigure" \
+            PATH="$fakebin:/usr/bin:/bin" bash "$1" 2>&1)
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+            printf 'runtime candidate failed (%s):\n%s\n' "$rc" "$output" >&2
+            return 1
+        fi
+        while IFS= read -r command; do
+            case "$command" in
+                "timeout|120|env|FORCE=1|$fakebin/reconfigure|wlan0"| \
+                'reconfigure|FORCE=1|wlan0'| \
+                'ip|-4|route|show|table|main|default'| \
+                'ip|route|show|table|cn'| \
+                'ip|-4|rule|show|pref|500'| \
+                'ip|-4|rule|show|pref|1500'| \
+                'ip|-4|rule|show|pref|2500'| \
+                'ip|-4|rule|show|pref|3000'| \
+                'curl|-s|-o|/dev/null|-m|8|-w|%{http_code}|--resolve|connectivitycheck.gstatic.com:80:216.239.32.117|http://connectivitycheck.gstatic.com/generate_204'| \
+                'curl|-s|-o|/dev/null|-m|10|-w|%{http_code}|http://ioa.tencent.com'| \
+                'dig|+short|+timeout=2|+tries=1|google.com|@127.0.0.1'| \
+                'tailscale|status|--json'| \
+                'jq|-r') ;;
+                *) printf 'disallowed runtime command: %s\n' "$command" >&2; return 1 ;;
+            esac
+        done <"$log"
+        [ "$(grep -Fxc 'reconfigure|FORCE=1|wlan0' "$log")" -eq 1 ] || {
+            echo 'runtime contract requires exactly one FORCE=1 reconfigure' >&2
+            return 1
+        }
+    }
+
+    if ! run_contract scripts/netfix; then
+        echo 'FAIL netfix runtime command contract failed' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   netfix runtime commands are read-only except one FORCE=1 reconfigure'
+
+    candidate="$sandbox/netfix-with-mutation"
+    awk '/^say "RESULT"/ { print "iptables --flush" } { print }' scripts/netfix >"$candidate"
+    chmod +x "$candidate"
+    if run_contract "$candidate" >/dev/null 2>&1; then
+        echo 'FAIL netfix runtime contract accepted an injected mutation' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   netfix runtime contract rejects an injected mutation'
+    rm -rf "$sandbox"
 }
 
-if audit_netfix scripts/netfix; then
-    echo 'OK   netfix sensitive commands match the read-only allowlist'
-else
-    echo 'FAIL netfix sensitive-command allowlist audit failed' >&2
+if ! netfix_runtime_contract; then
     fail=1
 fi
-for mutation in \
-    '/usr/bin/ip -4 rule del pref 500' \
-    'command ip route flush table main' \
-    'iptables --flush' \
-    'tailscale down'
-do
-    candidate=$(mktemp)
-    cp scripts/netfix "$candidate"
-    printf '\n%s\n' "$mutation" >>"$candidate"
-    if audit_netfix "$candidate" >/dev/null 2>&1; then
-        printf 'FAIL netfix auditor accepted mutation: %s\n' "$mutation" >&2
-        fail=1
-    else
-        printf 'OK   netfix auditor rejects mutation: %s\n' "$mutation"
-    fi
-    rm -f "$candidate"
-done
 
 status_fake=$(mktemp -d)
 printf '#!/usr/bin/env bash\nexit 0\n' >"$status_fake/ip"
