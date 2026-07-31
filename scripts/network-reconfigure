@@ -26,6 +26,8 @@ IOA_INTRANET_CIDRS=("9.0.0.0/8" "10.0.0.0/8" "100.12.0.0/16")
 IOA_STATIC_CIDRS=("10.0.0.0/8" "100.12.0.0/16")
 TAILNET_NETS=("100.64.0.0/10")
 CN_TABLE="cn"
+CN_STAGE_TABLE=102
+CN_STAGE_NAME="cn_stage"
 IOA_TABLE="ioa"
 IOA_RESOLVER="192.168.255.10"
 ROUTEFILE="/home/amos/.routefile"
@@ -42,28 +44,39 @@ warn() { logger -t network-reconfigure -p daemon.err "$*"; }
 clean_pref() { while ip rule del pref "$1" 2>/dev/null; do :; done; }
 
 # Add desired rules before deleting stale rules, so an owned band is never empty.
+normalise_rule() {
+    sed -E 's/fwmark (0x[0-9a-f]+)( lookup)/fwmark \1\/0xffffffff\2/' <<<"$1"
+}
+
+# Add desired rules before deleting stale rules, then prove the owned band is exact.
 reconcile_pref() {
-    local pref=$1 spec have
+    local pref=$1 spec have normalised
     shift
-    local kept=()
+    local desired=() remaining=()
     for spec in "$@"; do
-        [ -n "$spec" ] && kept+=("$spec")
+        [ -n "$spec" ] && desired+=("$(normalise_rule "$spec")")
     done
-    set -- "${kept[@]}"
-    for spec in "$@"; do
+    for spec in "${desired[@]}"; do
         # shellcheck disable=SC2086 # rule specs are intentional argument lists
         ip rule add $spec pref "$pref" 2>/dev/null || true
     done
+    remaining=("${desired[@]}")
     while read -r have; do
         [ -n "$have" ] || continue
         have=${have#*:}
         have=${have#"${have%%[![:space:]]*}"}
-        for spec in "$@"; do
-            [ "$have" = "$spec" ] && continue 2
+        normalised=$(normalise_rule "$have")
+        for i in "${!remaining[@]}"; do
+            if [ "$normalised" = "${remaining[$i]}" ]; then
+                unset 'remaining[i]'
+                continue 2
+            fi
         done
         # shellcheck disable=SC2086 # kernel-rendered rule is an argument list
-        ip rule del $have pref "$pref" 2>/dev/null || true
+        ip rule del pref "$pref" $have
     done <<<"$({ ip -4 rule show pref "$pref" 2>/dev/null || true; })"
+    [ "$(normalise_band "$(band_fingerprint "$pref")")" = \
+        "$(printf '%s\n' "${desired[@]}" | grep -v '^$' | sort | paste -sd';' -)" ]
 }
 
 physical_gateway() {
@@ -104,6 +117,7 @@ ensure_rt_table() {
         printf '%s %s\n' "$1" "$2" >> /etc/iproute2/rt_tables
 }
 ensure_rt_table 101 "$CN_TABLE"
+ensure_rt_table "$CN_STAGE_TABLE" "$CN_STAGE_NAME"
 ensure_rt_table 400 "$IOA_TABLE"
 
 ensure_ipset() {
@@ -148,6 +162,7 @@ write_if_changed() {
 }
 
 if [ -n "${dns:-}" ]; then
+    # shellcheck disable=SC2086 # DNS servers intentionally expand to separate arguments
     write_if_changed /etc/smartdns/dhcp-dns.conf \
         "$(printf '# DHCP DNS from %s\n' "$IFACE"; printf 'server %s\n' $dns)"
 else
@@ -176,7 +191,8 @@ fi
 CACHE_DIR="/var/lib/network-reconfigure"
 STATE_FILE="$CACHE_DIR/last-applied"
 mkdir -p "$CACHE_DIR"
-current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-}"
+routefile_state=$(sha256sum "$ROUTEFILE" 2>/dev/null | awk '{print $1}' || printf missing)
+current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-} routefile=$routefile_state"
 
 declare -A DESIRED_BANDS
 band_of() { local IFS=';'; echo "$*"; }
@@ -211,6 +227,10 @@ done
 DESIRED_BANDS[$P_TAILNET]=$(band_of "${tailnet_band[@]}")
 
 normalise_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort | paste -sd';' -; }
+band_fingerprint() {
+    ip -4 rule show pref "$1" 2>/dev/null | sed 's/^[0-9]*:[[:space:]]*//' |
+        while read -r rule; do normalise_rule "$rule"; done
+}
 
 desired_fingerprint() {
     local band
@@ -223,9 +243,23 @@ actual_fingerprint() {
     local band
     for band in "${!DESIRED_BANDS[@]}"; do
         printf '%s|%s\n' "$band" \
-            "$(normalise_band "$({ ip -4 rule show pref "$band" 2>/dev/null || true; } |
-                sed 's/^[0-9]*:[[:space:]]*//' | paste -sd';' -)")"
+            "$(normalise_band "$(band_fingerprint "$band" | paste -sd';' -)")"
     done | sort
+}
+
+firewall_fingerprint_ok() {
+    local expected actual
+    expected=$(printf '%s\n' \
+        "-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN" \
+        "-A $CHAIN -m set --match-set ioa dst -m set \
+--match-set $IOA_INTRANET_SET dst -j MARK --set-xmark 0x1/0xffffffff")
+    actual=$(iptables -t mangle -S "$CHAIN" 2>/dev/null | grep "^-A $CHAIN " || true)
+    [ "$actual" = "$expected" ] || return 1
+    actual=$(ipset save "$IOA_INTRANET_SET" 2>/dev/null | awk '$1 == "add" {print $3}' | sort)
+    expected=$(printf '%s\n' "${IOA_INTRANET_CIDRS[@]}" | sort)
+    [ "$actual" = "$expected" ] || return 1
+    [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
+        grep -Fxc -- '-A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE')" -eq 1 ]
 }
 
 if [ "${FORCE:-0}" != 1 ] &&
@@ -233,6 +267,7 @@ if [ "${FORCE:-0}" != 1 ] &&
    [ "$({ ip route show table "$CN_TABLE" 2>/dev/null || true; } |
           awk '{print $3; exit}')" = "$(physical_gateway)" ] &&
    iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null &&
+   firewall_fingerprint_ok &&
    [ "$(desired_fingerprint)" = "$(actual_fingerprint)" ]; then
     logger -t network-reconfigure -p daemon.info "no change ($current_state); nothing to do"
     exit 0
@@ -250,29 +285,40 @@ trap 'finish_state $?' EXIT
 # Retire only obsolete repository-owned policy from earlier versions.
 for p in 100 900 2000 3500 4000 4500; do clean_pref "$p"; done
 rm -f "$CACHE_DIR/derp-ips" "$CACHE_DIR/ioa-endpoints"
-ip route flush table 500 2>/dev/null || true
-ip route flush table 501 2>/dev/null || true
 
-# Rebuild cn only when its physical gateway changed; avoid needless netlink churn.
-if [ ! -f "$ROUTEFILE" ]; then
-    warn "no $ROUTEFILE; China traffic will use the exit node"
+# A missing or empty routefile authoritatively disables cn. Remove its rule first
+# so flushing the now-unreachable table cannot interrupt packet lookup.
+if [ ! -s "$ROUTEFILE" ]; then
+    DESIRED_BANDS[$P_CN]=""
+    reconcile_pref "$P_CN"
+    ip route flush table "$CN_TABLE" 2>/dev/null || true
+    ip route flush table "$CN_STAGE_TABLE" 2>/dev/null || true
 else
     gw=$(physical_gateway)
     if [ -z "${gw:-}" ]; then
         warn "no default gateway; leaving the cn table alone"
     else
-        cn_gw=$({ ip route show table "$CN_TABLE" 2>/dev/null || true; } |
-            awk '{print $3; exit}')
-        if [ "$cn_gw" != "$gw" ] || ! has_routes "$CN_TABLE"; then
-            ip route flush table "$CN_TABLE" 2>/dev/null || true
-            sed "s/GATEWAY/$gw/" "$ROUTEFILE" | ip -force -batch - 2>/dev/null || true
-        fi
-        if has_routes "$CN_TABLE"; then
-            DESIRED_BANDS[$P_CN]="from all lookup $CN_TABLE"
-        else
-            DESIRED_BANDS[$P_CN]=""
-            warn "cn table is empty; not installing pref $P_CN"
-        fi
+        ip route flush table "$CN_STAGE_TABLE" 2>/dev/null || true
+        # Stage first: any parse/netlink failure aborts without changing active cn.
+        sed -E "s/GATEWAY/$gw/g; s/table[[:space:]]+$CN_TABLE([[:space:]]|$)/table $CN_STAGE_TABLE\\1/g" \
+            "$ROUTEFILE" | ip -batch -
+        expected_routes=$(grep -Ec \
+            '^[[:space:]]*route[[:space:]]+(add|replace)[[:space:]]+' "$ROUTEFILE")
+        staged_routes=$(count_routes "$CN_STAGE_TABLE")
+        [ "$expected_routes" -gt 0 ] && [ "$staged_routes" -eq "$expected_routes" ]
+
+        stage_routes=$(ip route show table "$CN_STAGE_TABLE" | sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//')
+        while read -r route; do
+            # shellcheck disable=SC2086 # kernel-rendered route is an argument list
+            [ -n "$route" ] && ip route replace $route table "$CN_TABLE"
+        done <<<"$stage_routes"
+        while read -r route; do
+            [ -n "$route" ] || continue
+            # shellcheck disable=SC2086 # kernel-rendered route is an argument list
+            grep -Fqx "$route" <<<"$stage_routes" || ip route del $route table "$CN_TABLE"
+        done < <(ip route show table "$CN_TABLE")
+        [ "$(ip route show table "$CN_TABLE" | sed -E 's/[[:space:]]+$//' | sort)" = "$(sort <<<"$stage_routes")" ]
+        DESIRED_BANDS[$P_CN]="from all lookup $CN_TABLE"
     fi
 fi
 
@@ -294,11 +340,9 @@ iptables -t mangle -A "$CHAIN" \
 iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null ||
     iptables -t mangle -I OUTPUT 1 -j "$CHAIN"
 
-# Address-independent source rewriting survives tun0 address changes.
-while read -r n; do
-    [ -n "$n" ] && iptables -t nat -D POSTROUTING "$n" 2>/dev/null || true
-done < <(iptables -t nat -L POSTROUTING --line-numbers -n |
-    awk '/MASQUERADE|SNAT/ && /mark match 0x1/ {print $1}' | sort -rn)
+# Manage only the repository-owned exact NAT rule; similar rules belong to others.
+while iptables -t nat -D POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 \
+    -j MASQUERADE 2>/dev/null; do :; done
 iptables -t nat -A POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 -j MASQUERADE
 
 for band in "${!DESIRED_BANDS[@]}"; do

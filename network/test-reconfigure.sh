@@ -301,12 +301,109 @@ main() {
     [ "$(route_table 203.0.113.1 'mark 0xa39')" != ioa ] \
         && ok "low-bit collision does not match IOA" \
         || bad "0xa39 incorrectly matched IOA business mark"
+    iptables -t mangle -Z NETMODE_IOA
+    ping -q -c 1 -W 1 9.1.2.3 >/dev/null 2>&1 || true
+    [ "$(iptables -t mangle -L NETMODE_IOA -nvx | awk '$3 == "MARK" {print $1}')" -eq 1 ] \
+        && ok "real unmarked packet in both sets reaches the exact mark rule" \
+        || bad "real dual-set packet did not reach the mark rule"
+    iptables -t mangle -Z NETMODE_IOA
+    for mark in 2616 524288 2; do
+        ping -q -c 1 -W 1 -m "$mark" 9.1.2.3 >/dev/null 2>&1 || true
+    done
+    nonzero_return=$(iptables -t mangle -L NETMODE_IOA -nvx | awk '$3 == "RETURN" {print $1}')
+    nonzero_mark=$(iptables -t mangle -L NETMODE_IOA -nvx | awk '$3 == "MARK" {print $1}')
+    if [ "$nonzero_return" -eq 3 ] && [ "$nonzero_mark" -eq 0 ]; then
+        ok "real packets with owner and arbitrary non-zero marks remain unchanged"
+    else
+        bad "non-zero packet counters: RETURN=$nonzero_return MARK=$nonzero_mark"
+    fi
 
     for private in 192.168.200.1 172.31.200.1 169.254.200.1; do
         [ "$(route_table "$private")" = 52 ] \
             && ok "$private follows the Tailscale table" \
             || bad "$private bypassed the Tailscale table"
     done
+
+    head_ "repository ownership boundaries"
+    ip route add blackhole 192.0.2.0/24 table 500
+    ip route add blackhole 198.51.100.0/24 table 501
+    iptables -t nat -A POSTROUTING -m mark --mark 0x1 -o owner0 -j MASQUERADE
+    iptables -t nat -A POSTROUTING -m mark --mark 0x1 -o tun0 -j SNAT --to-source 192.0.2.10
+    run_script 1 >/dev/null
+    [ "$(routes 500)" -eq 1 ] && [ "$(routes 501)" -eq 1 ] \
+        && ok "foreign tables 500/501 are untouched" || bad "foreign tables 500/501 were flushed"
+    local nat_rules
+    nat_rules=$(iptables -t nat -S POSTROUTING)
+    grep -Fq -- '-o owner0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules" &&
+        grep -Fq -- '-o tun0 -m mark --mark 0x1 -j SNAT' <<<"$nat_rules" \
+        && ok "similar foreign NAT rules are untouched" || bad "similar foreign NAT rules were removed"
+    [ "$(grep -Fc -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
+        && ok "owned NAT rule exists exactly once" || bad "owned NAT rule is missing or duplicated"
+
+    head_ "early-exit fingerprint repairs firewall and set drift"
+    iptables -t mangle -A NETMODE_IOA -j ACCEPT
+    run_script 0 >/dev/null
+    ! iptables -t mangle -S NETMODE_IOA | grep -q -- '-j ACCEPT' \
+        && ok "chain content drift triggers reconciliation" || bad "chain drift survived early exit"
+    ipset del ioa_intranet 9.0.0.0/8
+    run_script 0 >/dev/null
+    ipset test ioa_intranet 9.1.2.3 >/dev/null 2>&1 \
+        && ok "ioa_intranet drift triggers reconciliation" \
+        || bad "ioa_intranet drift survived early exit"
+    while iptables -t nat -D POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE 2>/dev/null; do :; done
+    run_script 0 >/dev/null
+    [ "$(iptables -t nat -S POSTROUTING |
+        grep -Fc -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE')" -eq 1 ] \
+        && ok "owned NAT drift triggers reconciliation" || bad "owned NAT drift survived early exit"
+
+    head_ "equivalent kernel rule spelling converges exactly"
+    ip rule add fwmark 0x1/0xffffffff lookup ioa pref 2500
+    ip rule add to 8.8.8.8 lookup main pref 2500
+    run_script 0 >/dev/null
+    [ "$(band 2500)" = "$base2500" ] \
+        && ok "equivalent duplicate and foreign stale rule are removed" \
+        || bad "pref 2500 did not converge exactly: $(band 2500)"
+
+    head_ "routefile failures preserve the active cn table"
+    local cn_before
+    cn_before=$(ip route show table cn | sed -E 's/[[:space:]]+$//' | sort)
+    printf 'route add malformed via GATEWAY table cn\n' > "$WORK/routefile"
+    [ "$(run_status 1)" -ne 0 ] \
+        && ok "malformed routefile fails the run" || bad "malformed routefile was accepted"
+    [ "$(ip route show table cn | sed -E 's/[[:space:]]+$//' | sort)" = "$cn_before" ] \
+        && ok "failed staging batch preserves old cn" || bad "failed batch changed cn"
+    printf 'route add 1.0.1.0/24 via GATEWAY table cn\nroute add 1.0.2.0/23 via GATEWAY table cn\n' > "$WORK/routefile"
+    run_script 1 >/dev/null
+
+    head_ "missing and empty routefiles authoritatively disable cn"
+    rm -f "$WORK/routefile"
+    run_script 1 >/dev/null
+    [ "$(routes cn)" -eq 0 ] && [ "$(count 1500)" -eq 0 ] \
+        && ok "missing routefile converges cn table and rule to empty" \
+        || bad "missing routefile left cn policy"
+    : > "$WORK/routefile"
+    ip route add blackhole 203.0.113.0/24 table cn
+    ip rule add lookup cn pref 1500
+    run_script 1 >/dev/null
+    [ "$(routes cn)" -eq 0 ] && [ "$(count 1500)" -eq 0 ] \
+        && ok "empty routefile converges cn table and rule to empty" \
+        || bad "empty routefile left cn policy"
+    printf 'route add 1.0.1.0/24 via GATEWAY table cn\nroute add 1.0.2.0/23 via GATEWAY table cn\n' > "$WORK/routefile"
+    run_script 1 >/dev/null
+
+    head_ "empty IOA table falls through to table 52"
+    ip route flush table 400
+    ip addr flush dev tun0
+    ip route replace default dev owner0 table 52
+    [ "$(route_table 100.100.1.1)" = 52 ] \
+        && ok "static IOA lookup falls through when tun0/table ioa are absent" \
+        || bad "empty IOA lookup did not fall through to table 52"
+    ip route replace default dev tun0 table 52
+    ip addr add 192.168.255.77/24 dev tun0
+    ip route add default via 192.168.255.1 dev tun0 table 400
+    roam_to 10.36.48.162/20 10.36.48.1 202.152.254.230 202.152.254.65
+    run_script 1 >/dev/null
+    base1000=$(band 1000)
 
     head_ "idempotence"
     run_script 1 >/dev/null
