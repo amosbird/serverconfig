@@ -45,18 +45,19 @@ Linux evaluates lower numeric priorities first. The repository-owned rules are:
 | 3000 | `100.64.0.0/10` | `52` | Reach tailnet peers through Tailscale. |
 
 SmartGateAgent chooses the priority of its own `0xa38 -> table 20` rule. The repository does
-not move, duplicate, repair, or delete that rule. Tailscale's remaining rules, including the
-selected exit-node default, follow the repository-owned bands.
+not define its position relative to repository-owned bands and does not move, duplicate, repair,
+or delete it. Among repository-owned policy, routefile lookup precedes IOA business selection.
 
-The resulting order is:
+The repository-owned order is:
 
 1. Tailscale owner-marked packets use `main`.
 2. Actual connected LAN destinations, the physical gateway, and DHCP resolvers use `main`.
 3. A destination present in `~/.routefile` uses `cn` and the physical gateway.
-4. SmartGateAgent owner-marked packets follow its table `20` rule.
-5. Exact mark `0x1`, `10.0.0.0/8`, and `100.12.0.0/16` use table `ioa`.
-6. `100.64.0.0/10` uses Tailscale table `52`.
-7. Unmatched traffic follows Tailscale's selected exit node.
+4. Exact mark `0x1`, `10.0.0.0/8`, and `100.12.0.0/16` use table `ioa`.
+5. `100.64.0.0/10` uses Tailscale table `52`.
+
+SmartGateAgent owner-marked packets follow its independently positioned table `20` rule, and
+unmatched traffic follows Tailscale's independently managed selected exit node.
 
 ### Routefile is authoritative
 
@@ -139,10 +140,11 @@ The reconciler then:
 conflict fails visibly rather than borrowing another table's ID.
 
 A non-empty routefile is first rewritten for the current gateway and loaded into `cn_stage`.
-The route count must match before the active `cn` table is changed. New active routes are
-installed before stale routes are deleted, so malformed input or a netlink failure preserves
-the last valid `cn` policy and normal reconciliation avoids an empty-routing window. A missing
-or empty routefile is authoritative and safely disables the `cn` rule and routes.
+The route count must match before the active `cn` table is changed. A staging or validation
+failure therefore leaves the previous active `cn` table unchanged. During active reconciliation,
+new routes are installed before stale routes are deleted to reduce the update window, but a
+netlink failure can leave a partial active update and is reported as an error. A missing or empty
+routefile is authoritative and safely disables the `cn` rule and routes.
 
 ### Fingerprints and convergence
 
@@ -183,8 +185,10 @@ mutating them.
 
 ## Migration and rollback
 
-Migration retires obsolete repository artifacts only after the replacement policy is active.
-It must not stop SmartDNS, SmartGateAgent, or Tailscale, and it must not mutate either tunnel's
+`network/migrate.sh install` only stages configuration and is non-destructive. Its `activate`
+step runs reconciliation before retiring fallback state, then applies the staged resolver config
+and restarts SmartDNS. `GUI=1 bash restore.sh` directly disables and removes the obsolete fallback
+service and state rather than waiting for migration activation. Neither path mutates tunnel
 preferences or owner-managed routes.
 
 Rollback/removal is ownership-based rather than priority-wide: it deletes only exact

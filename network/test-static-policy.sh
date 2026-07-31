@@ -364,17 +364,30 @@ if unshare -rn bash -c '
     ip rule add pref 2500 fwmark 0x1/0xffffffff lookup ioa
     ip rule add pref 2500 fwmark 0x1/0x1 lookup ioa
     ip rule add pref 2500 from 203.0.113.8 lookup ioa
+    iptables -t nat -A POSTROUTING -m mark --mark 0x1/0xffffffff -o tun0 -j MASQUERADE
+    iptables -t nat -A POSTROUTING -m mark --mark 0x1/0xffffffff -o tun0 \
+        -j SNAT --to-source 192.0.2.10
+    iptables -t nat -A POSTROUTING -m mark --mark 0x1/0xffffffff -o tun1 -j MASQUERADE
     source "$migrate"
     cleanup_owned_rules
+    cleanup_owned_nat
 
     rules=$(ip -4 rule show pref 2500)
     expected=$(printf "2500:\tfrom all fwmark 0x1/0x1 lookup ioa\n"\
 "2500:\tfrom 203.0.113.8 lookup ioa")
     [ "$rules" = "$expected" ]
+    nat_rules=$(iptables -t nat -S POSTROUTING)
+    ! grep -Fq -- "-A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE" \
+        <<<"$nat_rules"
+    grep -Fq -- \
+        "-A POSTROUTING -o tun0 -m mark --mark 0x1 -j SNAT --to-source 192.0.2.10" \
+        <<<"$nat_rules"
+    grep -Fq -- "-A POSTROUTING -o tun1 -m mark --mark 0x1 -j MASQUERADE" \
+        <<<"$nat_rules"
 ' bash "$ROOT/network/migrate.sh" "$host_netns_link" "$host_netns_inode"; then
-    echo 'OK   rollback normalizes kernel-rendered mark masks and preserves foreign rules'
+    echo 'OK   rollback removes exact owned state and preserves similar foreign state'
 else
-    echo 'FAIL rollback mishandles kernel-rendered mark masks or foreign rules' >&2
+    echo 'FAIL rollback mishandles kernel-rendered state or similar foreign state' >&2
     fail=1
 fi
 

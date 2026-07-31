@@ -55,6 +55,11 @@ cleanup_owned_rules() {
     done
 }
 
+cleanup_owned_nat() {
+    while iptables -t nat -D POSTROUTING -m mark --mark 0x1/0xffffffff \
+        -o tun0 -j MASQUERADE 2>/dev/null; do :; done
+}
+
 install_configs() {
     echo "=== Installing new network configs (no network change yet) ==="
 
@@ -255,10 +260,7 @@ rollback() {
     iptables -t mangle -D OUTPUT -j NETMODE_IOA 2>/dev/null || true
     iptables -t mangle -F NETMODE_IOA 2>/dev/null || true
     iptables -t mangle -X NETMODE_IOA 2>/dev/null || true
-    while read -r n; do
-        [ -n "$n" ] && { iptables -t nat -D POSTROUTING "$n" 2>/dev/null || true; }
-    done < <(iptables -t nat -L POSTROUTING --line-numbers -n |
-                 awk '/SNAT/ && /mark match 0x1/ {print $1}' | sort -rn)
+    cleanup_owned_nat
     ipset destroy ioa_intranet 2>/dev/null || true
     rm -f /etc/smartdns/ioa-dns.conf /etc/smartdns/dhcp-dns.conf
     rm -rf /var/lib/network-reconfigure
