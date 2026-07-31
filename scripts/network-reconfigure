@@ -117,9 +117,42 @@ wired_up() {
     return 1
 }
 
-ensure_rt_table() {
-    grep -qE "^[[:space:]]*$1[[:space:]]+$2\b" "$RT_TABLES" ||
-        printf '%s %s\n' "$1" "$2" >> "$RT_TABLES"
+validate_fixed_table() {
+    local id=$1 name=$2 id_count name_count exact_count
+    read -r id_count name_count exact_count < <(awk -v id="$id" -v name="$name" '
+        $1 !~ /^#/ && NF >= 2 {
+            if ($1 == id) id_count++
+            if ($2 == name) name_count++
+            if ($1 == id && $2 == name) exact_count++
+        }
+        END { print id_count + 0, name_count + 0, exact_count + 0 }
+    ' "$RT_TABLES")
+    if [ "$id_count" -eq 0 ] && [ "$name_count" -eq 0 ]; then
+        return
+    fi
+    if [ "$id_count" -eq 1 ] && [ "$name_count" -eq 1 ] && [ "$exact_count" -eq 1 ]; then
+        return
+    fi
+    warn "routing table registration is ambiguous: $id $name"
+    return 1
+}
+
+register_fixed_table() {
+    local id=$1 name=$2 tmp
+    validate_fixed_table "$id" "$name"
+    if awk -v id="$id" -v name="$name" '
+        $1 !~ /^#/ && $1 == id && $2 == name { found = 1 }
+        END { exit !found }
+    ' "$RT_TABLES"; then
+        return
+    fi
+
+    tmp=$(mktemp "$RT_TABLES.XXXXXX")
+    cat "$RT_TABLES" > "$tmp"
+    printf '%s %s\n' "$id" "$name" >> "$tmp"
+    chmod --reference="$RT_TABLES" "$tmp"
+    chown --reference="$RT_TABLES" "$tmp"
+    mv "$tmp" "$RT_TABLES"
 }
 
 register_stage_table() {
@@ -149,9 +182,11 @@ register_stage_table() {
     mv "$tmp" "$RT_TABLES"
 }
 
-ensure_rt_table 101 "$CN_TABLE"
+validate_fixed_table 101 "$CN_TABLE"
+validate_fixed_table 400 "$IOA_TABLE"
+register_fixed_table 101 "$CN_TABLE"
+register_fixed_table 400 "$IOA_TABLE"
 register_stage_table
-ensure_rt_table 400 "$IOA_TABLE"
 
 ensure_ipset() {
     local name=$1 type=${2:-hash:ip}

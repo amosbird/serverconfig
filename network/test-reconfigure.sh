@@ -95,7 +95,7 @@ routes() { ip route show table "$1" 2>/dev/null | wc -l; }
 
 snapshot_owner_state() {
     local table pref
-    for table in 20 230 52; do
+    for table in 20 230 52 400; do
         printf 'table %s|' "$table"
         ip route show table "$table" | sort | paste -sd';' -
     done
@@ -103,6 +103,34 @@ snapshot_owner_state() {
         printf 'pref %s|' "$pref"
         band "$pref" | paste -sd';' -
     done
+}
+
+snapshot_policy_state() {
+    ip -4 rule show
+    iptables-save
+}
+
+write_rt_tables() {
+    awk '$1 ~ /^#/ || ($1 != 101 && $1 != 400 && $2 != "cn" && $2 != "ioa" && $2 != "cn_stage")' \
+        /etc/iproute2/rt_tables > "$WORK/rt_tables"
+    printf '%s\n' "$@" >> "$WORK/rt_tables"
+}
+
+check_fixed_table_conflict() {
+    local name=$1 owner_before policy_before rt_tables_before rc
+    shift
+    write_rt_tables "$@"
+    owner_before=$(snapshot_owner_state)
+    policy_before=$(snapshot_policy_state)
+    rt_tables_before=$(cat "$WORK/rt_tables")
+    rc=$(run_status 1)
+    [ "$rc" -ne 0 ] \
+        && ok "$name fails closed" || bad "$name exited zero"
+    [ "$(snapshot_owner_state)" = "$owner_before" ] &&
+        [ "$(snapshot_policy_state)" = "$policy_before" ] &&
+        [ "$(cat "$WORK/rt_tables")" = "$rt_tables_before" ] \
+        && ok "$name preserves routing tables, rules, and iptables" \
+        || bad "$name mutated routing tables, rules, or iptables"
 }
 
 snapshot_marking() {
@@ -211,8 +239,7 @@ EOF
     # twelve passes for a script whose delete path had been removed.
     [ -s "$WORK/nr-under-test" ] || return 1
     chmod 755 "$WORK/nr-under-test"
-    cp /etc/iproute2/rt_tables "$WORK/rt_tables"
-    printf '102 kwai\n' >> "$WORK/rt_tables"
+    write_rt_tables '102 kwai'
     # Same shape as the real ~/.routefile: `ip -batch` commands, not bare route
     # specs. The earlier fixture omitted the `route add` verb, so every batch
     # was rejected and the cn table was never created — and no test noticed,
@@ -236,7 +263,7 @@ main() {
     local owner_before route_error route_rc table pref
     owner_before=$(snapshot_owner_state)
 
-    for table in 20 230 52; do
+    for table in 20 230 52 400; do
         if grep -Eq "^table $table\|.+" <<<"$owner_before"; then
             ok "owner snapshot includes table $table"
         else
@@ -250,6 +277,31 @@ main() {
             bad "owner snapshot omitted or emptied pref $pref"
         fi
     done
+
+    head_ "fixed routing table registration conflicts"
+    check_fixed_table_conflict 'table 101 bound to foreign name' \
+        '101 foreign' '400 ioa' '102 kwai'
+    check_fixed_table_conflict 'cn bound to another ID' \
+        '201 cn' '400 ioa' '102 kwai'
+    check_fixed_table_conflict 'duplicate exact cn mapping' \
+        '101 cn' '101 cn' '400 ioa' '102 kwai'
+    check_fixed_table_conflict 'table 400 bound to foreign name' \
+        '101 cn' '400 foreign' '102 kwai'
+
+    local fixed_owner_before fixed_rc
+    write_rt_tables '102 kwai'
+    fixed_owner_before=$(snapshot_owner_state)
+    fixed_rc=$(run_status 1)
+    if [ "$fixed_rc" -eq 0 ] &&
+       [ "$(awk '$1 == 101 && $2 == "cn" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 1 ] &&
+       [ "$(awk '$1 == 400 && $2 == "ioa" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 1 ]; then
+        ok "unused fixed table IDs register once"
+    else
+        bad "normal fixed table registration failed (rc=$fixed_rc)"
+    fi
+    [ "$(snapshot_owner_state)" = "$fixed_owner_before" ] \
+        && ok "fixed table registration preserves SmartGateAgent table 400 contents" \
+        || bad "fixed table registration changed SmartGateAgent table 400 contents"
 
     route_error=$(route_table invalid-destination 2>&1)
     route_rc=$?
