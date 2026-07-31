@@ -60,9 +60,11 @@ cleanup_owned_nat() {
         -o tun0 -j MASQUERADE 2>/dev/null; do :; done
 }
 
-cleanup_stage_registration() {
-    local rt_tables=$1 tmp rc
-    tmp=$(mktemp "$rt_tables.XXXXXX")
+cleanup_stage_registration() (
+    local target_file=$1 lock_path=$2 tmp rc
+    exec 9>"$lock_path"
+    flock 9
+    tmp=$(mktemp "$target_file.XXXXXX")
     # shortcut: rt_tables is tiny, so buffer one snapshot to validate and rewrite atomically.
     if awk '
         { lines[NR] = $0 }
@@ -77,21 +79,21 @@ cleanup_stage_registration() {
             if (id_count != 1) exit 2
             for (line = 1; line <= NR; line++) if (!target[line]) print lines[line]
         }
-    ' "$rt_tables" >"$tmp"; then
-        chmod --reference="$rt_tables" "$tmp"
-        chown --reference="$rt_tables" "$tmp"
-        mv "$tmp" "$rt_tables"
+    ' "$target_file" >"$tmp"; then
+        chmod --reference="$target_file" "$tmp"
+        chown --reference="$target_file" "$tmp"
+        mv "$tmp" "$target_file"
         return
     else
         rc=$?
     fi
     rm -f "$tmp"
     if [ "$rc" -eq 2 ]; then
-        echo "  [WARN] cn_stage registration is ambiguous; leaving $rt_tables unchanged" >&2
+        echo "  [WARN] cn_stage registration is ambiguous; leaving $target_file unchanged" >&2
     elif [ "$rc" -ne 3 ]; then
-        echo "  [WARN] could not inspect cn_stage registration in $rt_tables" >&2
+        echo "  [WARN] could not inspect cn_stage registration in $target_file" >&2
     fi
-}
+)
 
 install_configs() {
     echo "=== Installing new network configs (no network change yet) ==="
@@ -287,7 +289,7 @@ rollback() {
     # Flush by the repository-owned name before unregistering it. Only remove the
     # registration when both its dynamic name and ID identify exactly one entry.
     ip route flush table cn_stage 2>/dev/null || true
-    cleanup_stage_registration /etc/iproute2/rt_tables
+    cleanup_stage_registration /etc/iproute2/rt_tables /run/lock/network-reconfigure.lock
 
     # Remove only the obsolete mapping. Tables 500 and 501 have no independent
     # ownership record and are therefore never flushed automatically.

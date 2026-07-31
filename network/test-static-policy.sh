@@ -335,9 +335,10 @@ if ! grep -Fq 'cleanup_owned_rules' network/migrate.sh; then
 fi
 
 stage_registration_cleanup_contract() {
-    local sandbox rt_tables before output
+    local sandbox rt_tables lock before output cleanup_pid holder_pid
     sandbox=$(mktemp -d)
     rt_tables="$sandbox/rt_tables"
+    lock="$sandbox/network-reconfigure.lock"
 
     # Source the helper and pass only disposable fixtures; never redirect the production CLI.
     source network/migrate.sh
@@ -348,7 +349,7 @@ stage_registration_cleanup_contract() {
 10042 cn_stage
 101 cn
 EOF
-    cleanup_stage_registration "$rt_tables"
+    cleanup_stage_registration "$rt_tables" "$lock"
     if grep -Eq '^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$' "$rt_tables"; then
         echo 'FAIL rollback keeps a unique owned cn_stage registration' >&2
         rm -rf "$sandbox"
@@ -362,7 +363,7 @@ EOF
 101 cn
 EOF
     before=$(cat "$rt_tables")
-    output=$(cleanup_stage_registration "$rt_tables" 2>&1)
+    output=$(cleanup_stage_registration "$rt_tables" "$lock" 2>&1)
     if [ "$(cat "$rt_tables")" != "$before" ] ||
        ! grep -Fq 'cn_stage registration is ambiguous' <<<"$output"; then
         echo 'FAIL rollback mutates duplicate cn_stage name registrations' >&2
@@ -377,7 +378,7 @@ EOF
 101 cn
 EOF
     before=$(cat "$rt_tables")
-    output=$(cleanup_stage_registration "$rt_tables" 2>&1)
+    output=$(cleanup_stage_registration "$rt_tables" "$lock" 2>&1)
     if [ "$(cat "$rt_tables")" != "$before" ] ||
        ! grep -Fq 'cn_stage registration is ambiguous' <<<"$output"; then
         echo 'FAIL rollback mutates a cn_stage registration with an ID conflict' >&2
@@ -385,6 +386,40 @@ EOF
         return 1
     fi
     echo 'OK   rollback preserves cn_stage registrations with ID conflicts'
+
+    cat >"$rt_tables" <<'EOF'
+10042 cn_stage
+101 cn
+EOF
+    # shellcheck disable=SC2016 # positional arguments expand inside the helper shell
+    flock "$lock" bash -c '
+        touch "$1"
+        while [ ! -e "$2" ]; do sleep 0.01; done
+        printf "%s\n" "400 concurrent" >>"$3"
+    ' _ "$sandbox/locked" "$sandbox/release" "$rt_tables" &
+    holder_pid=$!
+    while [ ! -e "$sandbox/locked" ]; do sleep 0.01; done
+    cleanup_stage_registration "$rt_tables" "$lock" &
+    cleanup_pid=$!
+    sleep 0.1
+    if ! kill -0 "$cleanup_pid" 2>/dev/null; then
+        echo 'FAIL rollback cleanup does not wait for the reconfigure lock' >&2
+        touch "$sandbox/release"
+        wait "$holder_pid"
+        wait "$cleanup_pid" || true
+        rm -rf "$sandbox"
+        return 1
+    fi
+    touch "$sandbox/release"
+    wait "$holder_pid"
+    wait "$cleanup_pid"
+    if ! grep -Fqx '400 concurrent' "$rt_tables" ||
+       grep -Eq '^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$' "$rt_tables"; then
+        echo 'FAIL locked cleanup does not preserve the latest concurrent registration state' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback cleanup serializes and rewrites the latest registration state'
     rm -rf "$sandbox"
 }
 
@@ -392,8 +427,10 @@ if ! stage_registration_cleanup_contract; then
     fail=1
 fi
 
-if ! grep -Fq "cleanup_stage_registration /etc/iproute2/rt_tables" network/migrate.sh; then
-    echo 'FAIL rollback does not pass the fixed live rt_tables path to cleanup' >&2
+if ! grep -Fq \
+    "cleanup_stage_registration /etc/iproute2/rt_tables /run/lock/network-reconfigure.lock" \
+    network/migrate.sh; then
+    echo 'FAIL rollback does not use the fixed live rt_tables and shared lock paths' >&2
     fail=1
 fi
 if grep -Eq 'RT_TABLES_(OVERRIDE|TEST)|MIGRATE_.*RT_TABLES' network/migrate.sh; then
