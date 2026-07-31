@@ -5,19 +5,12 @@ set -uo pipefail # deliberately not -e: report every failed invariant
 
 LOG=/var/log/netfix.log
 REPO=/home/amos/git/serverconfig
-RECONFIGURE=${RECONFIGURE:-"$REPO/scripts/network-reconfigure"}
+RECONFIGURE="$REPO/scripts/network-reconfigure"
 IFACE_DEFAULT=wlan0
 PROBE_HOST=connectivitycheck.gstatic.com
 PROBE_IP=216.239.32.117
 PROBE="http://$PROBE_HOST/generate_204"
 IOA_PROBE=http://ioa.tencent.com
-
-# shortcut: test mode only bypasses privilege/log setup; fake PATH still exercises the full command path.
-if [ "${NETFIX_TEST:-0}" != 1 ]; then
-    [ "$(id -u)" -eq 0 ] || { echo "netfix: must run as root (use sudo)"; exit 1; }
-    mkdir -p "$(dirname "$LOG")"
-    exec > >(tee -a "$LOG") 2>&1
-fi
 
 say()  { printf '\n\033[1m=== %s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32mOK\033[0m   %s\n' "$*"; }
@@ -29,79 +22,89 @@ online() {
         --resolve "$PROBE_HOST:80:$PROBE_IP" "$PROBE" 2>/dev/null
 }
 
-printf '\n========================================================\n'
-printf 'netfix %s  (log: %s)\n' "$(date -Is)" "$LOG"
-printf '========================================================\n'
+main() {
+    local reconfigure="$1" iface fail n spec pref text code tailscale_json
+    printf '\n========================================================\n'
+    printf 'netfix %s  (log: %s)\n' "$(date -Is)" "$LOG"
+    printf '========================================================\n'
 
-iface=$(ip -4 route show table main default 2>/dev/null |
-    awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/ {print $5; exit}')
-iface=${iface:-$IFACE_DEFAULT}
-fail=0
+    iface=$(ip -4 route show table main default 2>/dev/null |
+        awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/ {print $5; exit}')
+    iface=${iface:-$IFACE_DEFAULT}
+    fail=0
 
-say "RECONFIGURE"
-# FORCE is intentional: an operator repair must not be skipped by the reconciler cache.
-if timeout 120 env FORCE=1 "$RECONFIGURE" "$iface"; then
-    ok "network policy reconciled"
-else
-    bad "network policy reconcile failed"
-    fail=1
-fi
-
-say "OWNED POLICY"
-n=$(ip route show table cn 2>/dev/null | wc -l)
-[ "$n" -gt 1000 ] && ok "direct table: $n routes" || {
-    bad "direct table nearly empty ($n routes)"
-    fail=1
-}
-
-for spec in \
-    '500:fwmark 0x80000/0xff0000 lookup main' \
-    '1500:lookup cn' \
-    '2500:fwmark 0x1 lookup ioa' \
-    '2500:to 10.0.0.0/8 lookup ioa' \
-    '2500:to 100.12.0.0/16 lookup ioa' \
-    '3000:to 100.64.0.0/10 lookup 52'
-do
-    pref=${spec%%:*}
-    text=${spec#*:}
-    if ip -4 rule show pref "$pref" 2>/dev/null | grep -Fq "$text"; then
-        ok "$text"
+    say "RECONFIGURE"
+    # FORCE is intentional: an operator repair must not be skipped by the reconciler cache.
+    if timeout 120 env FORCE=1 "$reconfigure" "$iface"; then
+        ok "network policy reconciled"
     else
-        bad "missing: $text"
+        bad "network policy reconcile failed"
         fail=1
     fi
-done
 
-say "CONNECTIVITY (READ-ONLY)"
-code=$(online)
-[ "$code" = 204 ] && ok "internet: HTTP $code" || \
-    bad "internet: HTTP ${code:-000} (fail-closed; route selection unchanged)"
-code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$IOA_PROBE" 2>/dev/null)
-[ -n "$code" ] && [ "$code" != 000 ] && ok "IOA intranet: HTTP $code" || \
-    bad "IOA intranet: HTTP ${code:-000}"
-info "DNS: $(dig +short +timeout=2 +tries=1 google.com @127.0.0.1 2>/dev/null |
-    head -1 || echo FAILED)"
+    say "OWNED POLICY"
+    n=$(ip route show table cn 2>/dev/null | wc -l)
+    [ "$n" -gt 1000 ] && ok "direct table: $n routes" || {
+        bad "direct table nearly empty ($n routes)"
+        fail=1
+    }
 
-if tailscale_json=$(tailscale status --json 2>/dev/null) &&
-   [ -n "$tailscale_json" ] &&
-   jq -r '
-    "       exit node: " +
-    (if .ExitNodeStatus == null then "none"
-     else "\(.ExitNodeStatus.ID) online=\(.ExitNodeStatus.Online)" end),
-    (if (.Health | length) > 0 then "       health: \(.Health | join("; "))" else empty end)
-' <<<"$tailscale_json" 2>/dev/null
-then
-    :
-else
-    bad "tailscaled not responding"
-    fail=1
+    for spec in \
+        '500:fwmark 0x80000/0xff0000 lookup main' \
+        '1500:lookup cn' \
+        '2500:fwmark 0x1 lookup ioa' \
+        '2500:to 10.0.0.0/8 lookup ioa' \
+        '2500:to 100.12.0.0/16 lookup ioa' \
+        '3000:to 100.64.0.0/10 lookup 52'
+    do
+        pref=${spec%%:*}
+        text=${spec#*:}
+        if ip -4 rule show pref "$pref" 2>/dev/null | grep -Fq "$text"; then
+            ok "$text"
+        else
+            bad "missing: $text"
+            fail=1
+        fi
+    done
+
+    say "CONNECTIVITY (READ-ONLY)"
+    code=$(online)
+    [ "$code" = 204 ] && ok "internet: HTTP $code" || \
+        bad "internet: HTTP ${code:-000} (fail-closed; route selection unchanged)"
+    code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$IOA_PROBE" 2>/dev/null)
+    [ -n "$code" ] && [ "$code" != 000 ] && ok "IOA intranet: HTTP $code" || \
+        bad "IOA intranet: HTTP ${code:-000}"
+    info "DNS: $(dig +short +timeout=2 +tries=1 google.com @127.0.0.1 2>/dev/null |
+        head -1 || echo FAILED)"
+
+    if tailscale_json=$(tailscale status --json 2>/dev/null) &&
+       [ -n "$tailscale_json" ] &&
+       jq -r '
+        "       exit node: " +
+        (if .ExitNodeStatus == null then "none"
+         else "\(.ExitNodeStatus.ID) online=\(.ExitNodeStatus.Online)" end),
+        (if (.Health | length) > 0 then "       health: \(.Health | join("; "))" else empty end)
+    ' <<<"$tailscale_json" 2>/dev/null
+    then
+        :
+    else
+        bad "tailscaled not responding"
+        fail=1
+    fi
+
+    say "RESULT"
+    if [ "$fail" -eq 0 ]; then
+        ok "owned policy checks passed"
+    else
+        bad "$fail owned-policy check(s) failed"
+    fi
+    printf '\nlog: %s\n' "$LOG"
+    return "$fail"
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    [ "$(id -u)" -eq 0 ] || { echo "netfix: must run as root (use sudo)"; exit 1; }
+    mkdir -p "$(dirname "$LOG")"
+    exec > >(tee -a "$LOG") 2>&1
+    main "$RECONFIGURE"
 fi
-
-say "RESULT"
-if [ "$fail" -eq 0 ]; then
-    ok "owned policy checks passed"
-else
-    bad "$fail owned-policy check(s) failed"
-fi
-printf '\nlog: %s\n' "$LOG"
-exit "$fail"

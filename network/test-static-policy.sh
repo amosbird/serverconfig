@@ -48,9 +48,22 @@ netfix_runtime_contract() {
     log="$sandbox/calls"
     mkdir -p "$fakebin"
 
-    if ! grep -Fq 'RECONFIGURE=${RECONFIGURE:-' scripts/netfix ||
-       ! grep -Fq 'NETFIX_TEST:-0' scripts/netfix; then
-        echo 'FAIL netfix lacks safe runtime-test injection points' >&2
+    if grep -Eq 'NETFIX_TEST|RECONFIGURE=\$\{RECONFIGURE' scripts/netfix; then
+        echo 'FAIL netfix contains production test hooks' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    if [ "$(grep -Fxc 'RECONFIGURE="$REPO/scripts/network-reconfigure"' scripts/netfix)" -ne 1 ] ||
+       [ "$(grep -Fxc '    main "$RECONFIGURE"' scripts/netfix)" -ne 1 ]; then
+        echo 'FAIL netfix CLI does not pass the fixed reconciler to main exactly once' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    # shortcut: the runtime allowlist covers current external calls; reject known absolute
+    # sensitive paths statically and extend both lists when netfix gains a command.
+    if grep -Eq '/usr/(s?bin)/(ip|iptables|ipset|nft|systemctl|tailscale)([[:space:]]|$)' \
+        scripts/netfix; then
+        echo 'FAIL netfix bypasses PATH for a sensitive command' >&2
         rm -rf "$sandbox"
         return 1
     fi
@@ -89,8 +102,12 @@ case "$command" in
 esac
 EOF
     chmod +x "$fakebin/fake-command"
-    for command in ip iptables ipset systemctl tailscale curl timeout jq dig; do
+    ln -s /usr/bin/bash "$fakebin/bash"
+    for command in ip iptables ipset nft systemctl tailscale curl timeout jq dig; do
         ln -s fake-command "$fakebin/$command"
+    done
+    for command in awk grep wc head env date; do
+        ln -s "/usr/bin/$command" "$fakebin/$command"
     done
     cat >"$fakebin/reconfigure" <<'EOF'
 #!/usr/bin/env bash
@@ -100,8 +117,8 @@ EOF
 
     run_contract() {
         : >"$log"
-        output=$(NETFIX_TEST=1 NETFIX_COMMAND_LOG="$log" RECONFIGURE="$fakebin/reconfigure" \
-            PATH="$fakebin:/usr/bin:/bin" bash "$1" 2>&1)
+        output=$(env -i NETFIX_COMMAND_LOG="$log" PATH="$fakebin" /usr/bin/bash -c \
+            'source "$1"; main "$2"' bash "$1" "$fakebin/reconfigure" 2>&1)
         rc=$?
         if [ "$rc" -ne 0 ]; then
             printf 'runtime candidate failed (%s):\n%s\n' "$rc" "$output" >&2
@@ -132,15 +149,15 @@ EOF
     }
 
     if ! run_contract scripts/netfix; then
-        echo 'FAIL netfix runtime command contract failed' >&2
+        echo 'FAIL netfix function runtime command contract failed' >&2
         rm -rf "$sandbox"
         return 1
     fi
-    echo 'OK   netfix runtime commands are read-only except one FORCE=1 reconfigure'
+    echo 'OK   netfix function commands are read-only except one FORCE=1 reconfigure'
 
     candidate="$sandbox/netfix-with-mutation"
-    awk '/^say "RESULT"/ { print "iptables --flush" } { print }' scripts/netfix >"$candidate"
-    chmod +x "$candidate"
+    awk '/^    say "RESULT"/ { print "    iptables --flush" } { print }' \
+        scripts/netfix >"$candidate"
     if run_contract "$candidate" >/dev/null 2>&1; then
         echo 'FAIL netfix runtime contract accepted an injected mutation' >&2
         rm -rf "$sandbox"
