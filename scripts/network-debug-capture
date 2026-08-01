@@ -84,6 +84,28 @@ run_snapshot() {
     done
 }
 
+wait_initial_state() {
+    local service=$1 state
+    # shortcut: five 200 ms polls bound transient systemd states to about one second.
+    for _ in 1 2 3 4 5; do
+        state=$("$TIMEOUT" --kill-after=1s 3 "$SYSTEMCTL" is-active "$service" 2>/dev/null || true)
+        case "$state" in
+            active)
+                printf 'active\n'
+                return 0
+                ;;
+            inactive | failed)
+                printf 'inactive\n'
+                return 0
+                ;;
+            activating | deactivating | reloading) ;;
+            *) return 1 ;;
+        esac
+        sleep 0.2
+    done
+    return 1
+}
+
 wait_service_state() {
     local service=$1 expected=$2 state
     # shortcut: five 200 ms polls bound asynchronous systemd job settlement to about one second.
@@ -107,50 +129,83 @@ restore_recorder() {
 }
 
 freeze_ring() (
-    local incident=$1 service=$2 initial_active=false restored=false result=0 state
+    local incident=$1 service=$2 initial_active=false needs_restore=false result=0 state
+    local cancelled=false
     : >>"$incident/manifest.tsv"
-    state=$("$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" is-active "$service" 2>/dev/null || true)
-    if [ "$state" = active ]; then
-        initial_active=true
-        append_manifest "$incident" 0 'recorder initially active' freeze
-    elif [ "$state" = inactive ]; then
-        append_manifest "$incident" 0 'recorder initially inactive' freeze
+
+    # shellcheck disable=SC2329 # Invoked by the EXIT trap below.
+    on_freeze_exit() {
+        local rc=$?
+        trap - EXIT
+        if $needs_restore; then
+            restore_recorder "$incident" "$service" || rc=1
+        fi
+        exit "$rc"
+    }
+    # shellcheck disable=SC2329 # Invoked by the signal traps below.
+    on_freeze_signal() {
+        local rc=$1
+        cancelled=true
+        trap - INT TERM HUP
+        if $needs_restore; then
+            if ! restore_recorder "$incident" "$service"; then
+                rc=1
+            fi
+            needs_restore=false
+        fi
+        exit "$rc"
+    }
+    trap on_freeze_exit EXIT
+    trap 'on_freeze_signal 130' INT
+    trap 'on_freeze_signal 143' TERM
+    trap 'on_freeze_signal 129' HUP
+
+    if state=$(wait_initial_state "$service"); then
+        if [ "$state" = active ]; then
+            initial_active=true
+            append_manifest "$incident" 0 'recorder initially active' freeze
+        else
+            append_manifest "$incident" 0 'recorder initially inactive' freeze
+        fi
     else
         append_manifest "$incident" 1 'recorder initial state' freeze
         return 1
     fi
 
-    trap 'if $initial_active && ! $restored; then restore_recorder "$incident" "$service" || result=1; fi' EXIT
     if $initial_active; then
+        # Set before stop so a signal arriving during systemctl still restores the recorder.
+        needs_restore=true
         "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" stop "$service" >/dev/null 2>&1 || true
         if wait_service_state "$service" inactive; then
             append_manifest "$incident" 0 'recorder stop' freeze
         else
             append_manifest "$incident" 1 'recorder stop' freeze
-            return 1
+            result=1
         fi
     else
         append_manifest "$incident" 0 'recorder stop skipped (initially inactive)' freeze
     fi
 
-    mkdir -p "$incident/ring"
-    if [ -d "$RING_DIR" ] && cp -a "$RING_DIR"/. "$incident/ring"/; then
-        append_manifest "$incident" 0 'ring copy' freeze
-    else
-        append_manifest "$incident" 1 'ring copy' freeze
-        return 1
+    if [ "$result" -eq 0 ]; then
+        mkdir -p "$incident/ring"
+        if [ -d "$RING_DIR" ] && cp -a "$RING_DIR"/. "$incident/ring"/; then
+            append_manifest "$incident" 0 'ring copy' freeze
+        else
+            append_manifest "$incident" 1 'ring copy' freeze
+            result=1
+        fi
     fi
 
-    if $initial_active; then
+    if $needs_restore; then
         if restore_recorder "$incident" "$service"; then
-            restored=true
+            needs_restore=false
         else
-            restored=true
-            return 1
+            result=1
         fi
-    else
+    elif ! $initial_active; then
         append_manifest "$incident" 0 'recorder start skipped (initially inactive)' freeze
     fi
+    $cancelled && result=1
     return "$result"
 )
 

@@ -24,7 +24,7 @@ assert_not_contains() {
 
 assert_no_mutations() {
     local log=$1
-    if grep -Ev '^(systemctl (is-active( --quiet)?|stop|start) network-debug-pcap\.service|tcpdump )' "$log" |
+    if grep -Ev '^(systemctl (is-active( --quiet)?|stop|start) network-debug-pcap\.service|tcpdump(-start|-done)? )' "$log" |
             grep -Eq '(systemctl|^ip |^iptables|^nft|^tailscale (down|up|set))'; then
         return 1
     fi
@@ -83,6 +83,10 @@ state=$(cat "$NETWORK_DEBUG_TEST_STATE")
 case "${1-}" in
     is-active)
         [ "${NETWORK_DEBUG_ACTIVE_FAIL:-0}" = 0 ] || exit 2
+        if [ -n "${NETWORK_DEBUG_STATE_SEQUENCE:-}" ] && [ -s "$NETWORK_DEBUG_STATE_SEQUENCE" ]; then
+            state=$(head -1 "$NETWORK_DEBUG_STATE_SEQUENCE")
+            sed -i '1d' "$NETWORK_DEBUG_STATE_SEQUENCE"
+        fi
         printf '%s\n' "$state"
         [ "$state" = active ]
         ;;
@@ -105,13 +109,24 @@ exec "$@"
 EOF
     cat >"$dir/tcpdump" <<'EOF'
 #!/usr/bin/env bash
-printf 'tcpdump %s\n' "$*" >>"$NETWORK_DEBUG_TEST_LOG"
+interface=
+for arg in "$@"; do
+    [ "$arg" = wlan0 ] || [ "$arg" = tailscale0 ] || continue
+    interface=$arg
+    break
+done
+printf 'tcpdump-start %s %s\n' "$interface" "$*" >>"$NETWORK_DEBUG_TEST_LOG"
 out=
 while [ "$#" -gt 0 ]; do
     if [ "$1" = -w ]; then out=$2; shift 2; else shift; fi
 done
 printf 'pcap\n' >"${out}0"
-printf 'tcpdump-done\n' >>"$NETWORK_DEBUG_TEST_LOG"
+printf 'tcpdump-done %s\n' "$interface" >>"$NETWORK_DEBUG_TEST_LOG"
+EOF
+    cat >"$dir/cp" <<'EOF'
+#!/usr/bin/env bash
+kill -TERM "$PPID"
+sleep 1
 EOF
     cat >"$dir/diag" <<'EOF'
 #!/usr/bin/env bash
@@ -163,6 +178,26 @@ freeze_contract() (
     assert_contains "$incident/manifest.tsv" $'0\trecorder start skipped (initially inactive)\tfreeze'
 
     rm -rf "$incident"; mkdir "$incident"; : >"$log"; printf active >"$state"
+    printf 'activating\nactive\n' >"$WORK/state-sequence"
+    NETWORK_DEBUG_STATE_SEQUENCE="$WORK/state-sequence"; export NETWORK_DEBUG_STATE_SEQUENCE
+    freeze_ring "$incident" network-debug-pcap.service
+    assert_contains "$incident/manifest.tsv" $'0\trecorder initially active\tfreeze'
+    unset NETWORK_DEBUG_STATE_SEQUENCE
+
+    rm -rf "$incident"; mkdir "$incident"; : >"$log"; printf inactive >"$state"
+    printf 'deactivating\ninactive\n' >"$WORK/state-sequence"
+    NETWORK_DEBUG_STATE_SEQUENCE="$WORK/state-sequence"; export NETWORK_DEBUG_STATE_SEQUENCE
+    freeze_ring "$incident" network-debug-pcap.service
+    assert_contains "$incident/manifest.tsv" $'0\trecorder initially inactive\tfreeze'
+    assert_not_contains "$log" 'systemctl start network-debug-pcap.service'
+    unset NETWORK_DEBUG_STATE_SEQUENCE
+
+    rm -rf "$incident"; mkdir "$incident"; : >"$log"; printf failed >"$state"
+    freeze_ring "$incident" network-debug-pcap.service
+    assert_contains "$incident/manifest.tsv" $'0\trecorder initially inactive\tfreeze'
+    assert_not_contains "$log" 'systemctl start network-debug-pcap.service'
+
+    rm -rf "$incident"; mkdir "$incident"; : >"$log"; printf active >"$state"
     NETWORK_DEBUG_ACTIVE_FAIL=1; export NETWORK_DEBUG_ACTIVE_FAIL
     if freeze_ring "$incident" network-debug-pcap.service; then fail 'state query failure was accepted'; fi
     assert_contains "$incident/manifest.tsv" $'1\trecorder initial state\tfreeze'
@@ -186,8 +221,19 @@ freeze_contract() (
     rm -rf "$incident"; mkdir "$incident"; : >"$log"; printf active >"$state"
     RING_DIR=$ring
     NETWORK_DEBUG_START_FAIL=1; export NETWORK_DEBUG_START_FAIL
+    if PATH="$fakebin:$PATH" freeze_ring "$incident" network-debug-pcap.service; then
+        fail 'TERM during copy returned success'
+    fi
+    assert_contains "$log" 'systemctl start network-debug-pcap.service'
+    assert_contains "$incident/manifest.tsv" $'1\trecorder start\tfreeze'
+    unset NETWORK_DEBUG_START_FAIL
+
+    rm -rf "$incident"; mkdir "$incident"; : >"$log"; printf active >"$state"
+    RING_DIR=$ring
+    NETWORK_DEBUG_START_FAIL=1; export NETWORK_DEBUG_START_FAIL
     if freeze_ring "$incident" network-debug-pcap.service; then fail 'start failure was accepted'; fi
     assert_contains "$incident/manifest.tsv" $'1\trecorder start\tfreeze'
+    unset NETWORK_DEBUG_START_FAIL
 )
 
 runtime_contract() (
@@ -221,15 +267,16 @@ runtime_contract() (
     [ "$(stat -c %s "$incident/before/large_command.txt")" -le 1048576 ] ||
         fail 'diagnostic output exceeded 1 MiB'
     assert_not_contains "$incident/note.txt" '[[:cntrl:]]'
-    assert_contains "$log" 'tcpdump -p -i wlan0 -s 96 -n -C 8 -W 1 -w'
-    assert_contains "$log" 'tcpdump -p -i tailscale0 -s 96 -n -C 8 -W 1 -w'
-    local tcpdump_start before_done capture_done after_start
-    tcpdump_start=$(grep -n 'tcpdump -p' "$log" | head -1 | cut -d: -f1)
-    before_done=$(grep -n 'diag-done ok' "$log" | head -1 | cut -d: -f1)
+    assert_contains "$log" 'tcpdump-start wlan0 -p -i wlan0 -s 96 -n -C 8 -W 1 -w'
+    assert_contains "$log" 'tcpdump-start tailscale0 -p -i tailscale0 -s 96 -n -C 8 -W 1 -w'
+    local wlan_start tail_start first_before capture_done after_start
+    wlan_start=$(grep -n 'tcpdump-start wlan0 ' "$log" | head -1 | cut -d: -f1)
+    tail_start=$(grep -n 'tcpdump-start tailscale0 ' "$log" | head -1 | cut -d: -f1)
+    first_before=$(grep -n 'diag-start ' "$log" | head -1 | cut -d: -f1)
     capture_done=$(grep -n 'tcpdump-done' "$log" | tail -1 | cut -d: -f1)
     after_start=$(grep -n 'diag-start ok' "$log" | tail -1 | cut -d: -f1)
-    [ "$tcpdump_start" -lt "$before_done" ] && [ "$capture_done" -lt "$after_start" ] ||
-        fail 'deep capture/snapshot order is wrong'
+    [ "$wlan_start" -lt "$first_before" ] && [ "$tail_start" -lt "$first_before" ] &&
+        [ "$capture_done" -lt "$after_start" ] || fail 'deep capture/snapshot order is wrong'
     assert_not_contains "$log" 'bugreport'
 
     # The lock covers incident creation, so a concurrent capture leaves no partial incident.
@@ -307,6 +354,8 @@ EOF
 )
 
 service_contract
+/usr/bin/tcpdump --version >/dev/null
+/usr/bin/tcpdump -d 'udp port 3478 or udp port 41641' >/dev/null
 static_script_contract
 freeze_contract
 runtime_contract
