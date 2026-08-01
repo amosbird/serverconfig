@@ -30,6 +30,13 @@ assert_no_mutations() {
     fi
 }
 
+recorder_directory_contract() {
+    local service=$1
+    assert_contains "$service" 'LogsDirectory=network-debug'
+    assert_contains "$service" 'LogsDirectoryMode=0700'
+    assert_contains "$service" 'ReadWritePaths=/var/log/network-debug'
+}
+
 service_contract() {
     [ -f "$SERVICE" ] || fail "missing service: $SERVICE"
     assert_contains "$SERVICE" 'User=root'
@@ -40,7 +47,7 @@ service_contract() {
     assert_not_contains "$SERVICE" 'CAP_NET_ADMIN'
     assert_contains "$SERVICE" 'RestrictAddressFamilies=AF_PACKET AF_INET AF_INET6 AF_NETLINK'
     assert_contains "$SERVICE" 'ProtectSystem=strict'
-    assert_contains "$SERVICE" 'ReadWritePaths=/var/log/network-debug'
+    recorder_directory_contract "$SERVICE"
     assert_contains "$SERVICE" 'ProtectHome=true'
     assert_contains "$SERVICE" 'PrivateTmp=true'
     assert_not_contains "$SERVICE" 'PrivateDevices=false'
@@ -48,6 +55,16 @@ service_contract() {
     assert_contains "$SERVICE" 'Restart=always'
     assert_not_contains "$SERVICE" 'Exec(Start|StartPre)=.*/(sh|bash)( |$)'
 }
+
+service_directory_mutation_contract() (
+    local mutated="$WORK/network-debug-pcap-mutated.service"
+    cp "$SERVICE" "$mutated"
+    sed -i '/^LogsDirectory=/d' "$mutated"
+    # shortcut: static mutation covers ordering without a systemd-capable test environment.
+    if (recorder_directory_contract "$mutated") >/dev/null 2>&1; then
+        fail 'service contract accepted missing LogsDirectory'
+    fi
+)
 
 static_script_contract() {
     [ -x "$SCRIPT" ] || fail "missing executable script: $SCRIPT"
@@ -354,6 +371,7 @@ EOF
 )
 
 service_contract
+service_directory_mutation_contract
 /usr/bin/tcpdump --version >/dev/null
 /usr/bin/tcpdump -d 'udp port 3478 or udp port 41641' >/dev/null
 static_script_contract

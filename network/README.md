@@ -170,12 +170,13 @@ This retains three important invariants across AP changes: public DHCP DNS remai
 
 ## Packet recorder and incident capture
 
-`network-debug-pcap.service` keeps a root-only packet ring under
-`/var/log/network-debug/ring`. It captures only outer `wlan0` UDP traffic on ports 3478 and
-41641, stores 96-byte snapshots, and rotates eight 8 MB files (about 64 MB maximum). The pcap
-files can contain IP addresses and packet metadata. Incident directories contain packet captures,
-command output, journals, routes, process/socket details, and optional notes; treat every incident and
-the whole debug directory as highly sensitive.
+`network-debug-pcap.service` has systemd create the root-only `/var/log/network-debug`
+directory before applying its filesystem sandbox, then keeps a packet ring under its `ring`
+subdirectory. It captures only outer `wlan0` UDP traffic on ports 3478 and 41641, stores 96-byte
+snapshots, and rotates eight 8 MB files (about 64 MB maximum). The pcap files can contain IP
+addresses and packet metadata. Incident directories contain packet captures, command output,
+journals, routes, process/socket details, and optional notes; treat every incident and the whole
+debug directory as highly sensitive.
 
 To preserve the ring, collect before/after state, and run parallel 30-second captures on `wlan0`
 and `tailscale0`:
