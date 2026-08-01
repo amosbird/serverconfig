@@ -5,21 +5,28 @@ set -euo pipefail
 
 deploy_smartdns_config_locked() (
     local source_config=$1 smartdns_dir=$2 systemctl_bin=$3
+    local preserve_source_metadata=${4:-false}
     local target="$smartdns_dir/smartdns.conf" candidate backup='' had_target=false
 
     candidate=$(mktemp "$smartdns_dir/.smartdns.conf.candidate.XXXXXX")
     trap 'rm -f "$candidate" ${backup:+"$backup"}' EXIT
     cp "$source_config" "$candidate"
 
-    if [ -e "$target" ]; then
-        had_target=true
+    if $preserve_source_metadata; then
+        chmod --reference="$source_config" "$candidate"
+        chown --reference="$source_config" "$candidate"
+    elif [ -e "$target" ]; then
         chmod --reference="$target" "$candidate"
         chown --reference="$target" "$candidate"
-        backup=$(mktemp "$smartdns_dir/.smartdns.conf.backup.XXXXXX")
-        cp -a "$target" "$backup"
     else
         chown 0:0 "$candidate"
         chmod 644 "$candidate"
+    fi
+
+    if [ -e "$target" ]; then
+        had_target=true
+        backup=$(mktemp "$smartdns_dir/.smartdns.conf.backup.XXXXXX")
+        cp -a "$target" "$backup"
     fi
 
     mv "$candidate" "$target"
@@ -40,7 +47,11 @@ deploy_smartdns_config_locked() (
         echo 'SmartDNS deployment failed and rollback restart failed' >&2
         return 2
     fi
-    echo 'SmartDNS deployment failed; previous config restored and restarted' >&2
+    if ! "$systemctl_bin" is-active --quiet smartdns.service; then
+        echo 'SmartDNS deployment failed and rollback service is inactive' >&2
+        return 2
+    fi
+    echo 'SmartDNS deployment failed; previous config restored, restarted, and active' >&2
     return 1
 )
 

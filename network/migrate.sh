@@ -284,25 +284,84 @@ restore_smartdns_backup() (
     local systemctl_bin=${3:-systemctl}
     local lock_path=${4:-/run/lock/network-reconfigure.lock}
     local restored_config="$backup_dir/smartdns.conf.bak"
+    local target_config="$smartdns_dir/smartdns.conf"
+    local target_fragment="$smartdns_dir/ioa-dns.conf"
+    local config_snapshot='' fragment_snapshot='' fragment_candidate='' deploy_rc
+    local had_config=false had_fragment=false
 
     [ -f "$restored_config" ] || return 0
     mkdir -p "$smartdns_dir"
     exec 9>"$lock_path"
     flock 9
 
+    if [ -e "$target_config" ]; then
+        had_config=true
+        config_snapshot=$(mktemp "$smartdns_dir/.smartdns.conf.live.XXXXXX")
+        cp -a "$target_config" "$config_snapshot"
+    fi
+    if [ -e "$target_fragment" ]; then
+        had_fragment=true
+        fragment_snapshot=$(mktemp "$smartdns_dir/.ioa-dns.conf.live.XXXXXX")
+        cp -a "$target_fragment" "$fragment_snapshot"
+    fi
+    trap 'rm -f ${config_snapshot:+"$config_snapshot"} \
+        ${fragment_snapshot:+"$fragment_snapshot"} \
+        ${fragment_candidate:+"$fragment_candidate"}' EXIT
+
     if grep -Eq '^[[:space:]]*conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf([[:space:]]|$)' \
             "$restored_config"; then
+        fragment_candidate=$(mktemp "$smartdns_dir/.ioa-dns.conf.candidate.XXXXXX")
         if [ -f "$backup_dir/ioa-dns.conf.bak" ]; then
-            cp "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf"
+            cp -a "$backup_dir/ioa-dns.conf.bak" "$fragment_candidate"
         else
             printf '%s\n' '# Legacy IOA resolver unavailable during rollback' \
-                >"$smartdns_dir/ioa-dns.conf"
+                >"$fragment_candidate"
+            if $had_fragment; then
+                chmod --reference="$target_fragment" "$fragment_candidate"
+                chown --reference="$target_fragment" "$fragment_candidate"
+            else
+                chown 0:0 "$fragment_candidate"
+                chmod 644 "$fragment_candidate"
+            fi
         fi
+        mv "$fragment_candidate" "$target_fragment"
+        fragment_candidate=''
     else
-        rm -f "$smartdns_dir/ioa-dns.conf"
+        rm -f "$target_fragment"
     fi
-    deploy_smartdns_config_locked "$restored_config" "$smartdns_dir" "$systemctl_bin"
-    rm -f "$smartdns_dir/dhcp-dns.conf"
+
+    if deploy_smartdns_config_locked \
+            "$restored_config" "$smartdns_dir" "$systemctl_bin" true; then
+        rm -f "$smartdns_dir/dhcp-dns.conf"
+        return 0
+    else
+        deploy_rc=$?
+    fi
+
+    # deploy_smartdns_config_locked restores this base itself; install our transaction
+    # snapshot as well so the matching base and fragment are committed together.
+    if $had_config; then
+        mv "$config_snapshot" "$target_config"
+        config_snapshot=''
+    else
+        rm -f "$target_config"
+    fi
+    if $had_fragment; then
+        mv "$fragment_snapshot" "$target_fragment"
+        fragment_snapshot=''
+    else
+        rm -f "$target_fragment"
+    fi
+    if ! "$systemctl_bin" restart smartdns.service; then
+        echo 'SmartDNS backup restore failed and live-config restart failed' >&2
+        return 2
+    fi
+    if ! "$systemctl_bin" is-active --quiet smartdns.service; then
+        echo 'SmartDNS backup restore failed and live-config service is inactive' >&2
+        return 2
+    fi
+    echo 'SmartDNS backup restore failed; original base and fragment restored and active' >&2
+    return "$deploy_rc"
 )
 
 rollback() {

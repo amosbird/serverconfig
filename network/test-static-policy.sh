@@ -66,8 +66,12 @@ if [ "$1" = restart ]; then
         : >"$SMARTDNS_BLOCK_ENTERED"
         while [ ! -e "$SMARTDNS_BLOCK_RELEASE" ]; do sleep 0.02; done
     fi
-elif [ "$1 $2" = 'is-active --quiet' ] && [ "${SMARTDNS_FAIL_ACTIVE:-0}" = 1 ]; then
-    exit 1
+elif [ "$1 $2" = 'is-active --quiet' ]; then
+    count=$(grep -c '^is-active --quiet smartdns.service$' "$SMARTDNS_TEST_CALLS")
+    if { [ "$count" -eq 1 ] && [ "${SMARTDNS_FAIL_ACTIVE:-0}" = 1 ]; } ||
+       { [ "$count" -eq 2 ] && [ "${SMARTDNS_FAIL_ROLLBACK_ACTIVE:-0}" = 1 ]; }; then
+        exit 1
+    fi
 fi
 EOF
     chmod +x "$fake_systemctl"
@@ -116,12 +120,30 @@ EOF
             "$fake_systemctl" "$sandbox/deploy.lock" >/dev/null 2>&1 ||
        ! grep -Fqx 'known good config' "$smartdns_dir/smartdns.conf" ||
        [ "$(grep -Fxc 'restart smartdns.service' "$calls")" -ne 2 ] ||
-       [ "$(grep -Fxc 'is-active --quiet smartdns.service' "$calls")" -ne 1 ]; then
+       [ "$(grep -Fxc 'is-active --quiet smartdns.service' "$calls")" -ne 2 ]; then
         echo 'FAIL inactive SmartDNS deployment was not rolled back' >&2
         rm -rf "$sandbox"
         return 1
     fi
     echo 'OK   inactive SmartDNS deployment rolls back after the active-state query'
+
+    : >"$calls"
+    set +e
+    output=$(SMARTDNS_TEST_CALLS="$calls" SMARTDNS_FAIL_ACTIVE=1 \
+        SMARTDNS_FAIL_ROLLBACK_ACTIVE=1 \
+        deploy_smartdns_config "$sandbox/new.conf" "$smartdns_dir" \
+            "$fake_systemctl" "$sandbox/deploy.lock" 2>&1)
+    rc=$?
+    set -e
+    if [ "$rc" -ne 2 ] ||
+       [ "$(grep -Fxc 'restart smartdns.service' "$calls")" -ne 2 ] ||
+       [ "$(grep -Fxc 'is-active --quiet smartdns.service' "$calls")" -ne 2 ] ||
+       [[ "$output" != *'rollback service is inactive'* ]]; then
+        echo 'FAIL inactive SmartDNS after rollback was not reported as return 2' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   SmartDNS deployment returns 2 when the rolled-back service stays inactive'
 
     : >"$calls"
     output=$(SMARTDNS_TEST_CALLS="$calls" SMARTDNS_FAIL_RESTART=1 SMARTDNS_FAIL_ROLLBACK=1 \
@@ -176,17 +198,27 @@ if ! smartdns_deployment_contract; then
 fi
 
 smartdns_rollback_contract() {
-    local sandbox smartdns_dir backup_dir fake_systemctl
+    local sandbox smartdns_dir backup_dir fake_systemctl calls old_uid old_gid rc
     sandbox=$(mktemp -d)
     smartdns_dir="$sandbox/etc/smartdns"
     backup_dir="$sandbox/backup"
     mkdir -p "$smartdns_dir" "$backup_dir"
     fake_systemctl="$sandbox/systemctl"
+    calls="$sandbox/calls"
     cat >"$fake_systemctl" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$SMARTDNS_TEST_CALLS"
+if [ "$1" = restart ]; then
+    count=$(grep -c '^restart smartdns.service$' "$SMARTDNS_TEST_CALLS")
+    if [ "$count" -eq 1 ] && [ "${SMARTDNS_FAIL_RESTART:-0}" = 1 ]; then
+        exit 1
+    fi
+fi
 exit 0
 EOF
     chmod +x "$fake_systemctl"
+    : >"$calls"
+    export SMARTDNS_TEST_CALLS="$calls"
     cat >"$backup_dir/smartdns.conf.bak" <<'EOF'
 bind 127.0.0.1:53
 conf-file /etc/smartdns/ioa-dns.conf
@@ -213,12 +245,64 @@ EOF
     printf '%s\n' 'server 192.168.255.10 -group ioa' >"$backup_dir/ioa-dns.conf.bak"
     restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
         "$fake_systemctl" "$sandbox/rollback.lock"
-    if ! cmp -s "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf"; then
-        echo 'FAIL rollback did not restore its backed-up IOA fragment' >&2
+    if ! cmp -s "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf" ||
+       [ "$(stat -c %a "$smartdns_dir/ioa-dns.conf")" != \
+            "$(stat -c %a "$backup_dir/ioa-dns.conf.bak")" ] ||
+       [ "$(stat -c %u "$smartdns_dir/ioa-dns.conf")" != \
+            "$(stat -c %u "$backup_dir/ioa-dns.conf.bak")" ] ||
+       [ "$(stat -c %g "$smartdns_dir/ioa-dns.conf")" != \
+            "$(stat -c %g "$backup_dir/ioa-dns.conf.bak")" ]; then
+        echo 'FAIL rollback did not restore its backed-up IOA fragment and metadata' >&2
         rm -rf "$sandbox"
         return 1
     fi
-    echo 'OK   rollback restores the backed-up IOA fragment'
+    echo 'OK   rollback restores the backed-up IOA fragment and metadata'
+
+    printf '%s\n' 'old live base' >"$smartdns_dir/smartdns.conf"
+    chmod 640 "$smartdns_dir/smartdns.conf"
+    old_uid=$(stat -c %u "$smartdns_dir/smartdns.conf")
+    old_gid=$(stat -c %g "$smartdns_dir/smartdns.conf")
+    printf '%s\n' 'old live fragment' >"$smartdns_dir/ioa-dns.conf"
+    chmod 600 "$smartdns_dir/ioa-dns.conf"
+    printf '%s\n' 'invalid backup base' >"$backup_dir/smartdns.conf.bak"
+    chmod 604 "$backup_dir/smartdns.conf.bak"
+    printf '%s\n' 'backup fragment' >"$backup_dir/ioa-dns.conf.bak"
+    chmod 640 "$backup_dir/ioa-dns.conf.bak"
+    : >"$calls"
+    set +e
+    SMARTDNS_FAIL_RESTART=1 restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
+        "$fake_systemctl" "$sandbox/rollback.lock" >/dev/null 2>&1
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] ||
+       ! grep -Fqx 'old live base' "$smartdns_dir/smartdns.conf" ||
+       ! grep -Fqx 'old live fragment' "$smartdns_dir/ioa-dns.conf" ||
+       [ "$(stat -c %a "$smartdns_dir/smartdns.conf")" != 640 ] ||
+       [ "$(stat -c %a "$smartdns_dir/ioa-dns.conf")" != 600 ] ||
+       [ "$(stat -c %u "$smartdns_dir/smartdns.conf")" != "$old_uid" ] ||
+       [ "$(stat -c %g "$smartdns_dir/smartdns.conf")" != "$old_gid" ] ||
+       [ "$(grep -Fxc 'restart smartdns.service' "$calls")" -ne 3 ] ||
+       [ "$(grep -Fxc 'is-active --quiet smartdns.service' "$calls")" -ne 2 ]; then
+        echo 'FAIL failed backup restore did not restore the live base and fragment transaction' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   failed backup restore atomically restores live base, fragment, metadata, and service'
+
+    rm -f "$smartdns_dir/ioa-dns.conf"
+    printf '%s\n' 'old live base without fragment' >"$smartdns_dir/smartdns.conf"
+    : >"$calls"
+    set +e
+    SMARTDNS_FAIL_RESTART=1 restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
+        "$fake_systemctl" "$sandbox/rollback.lock" >/dev/null 2>&1
+    rc=$?
+    set -e
+    if [ "$rc" -eq 0 ] || [ -e "$smartdns_dir/ioa-dns.conf" ]; then
+        echo 'FAIL failed backup restore did not restore live fragment absence' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   failed backup restore restores absence of the live IOA fragment'
 
     printf '%s\n' 'bind 127.0.0.1:53' >"$backup_dir/smartdns.conf.bak"
     restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
@@ -229,6 +313,25 @@ EOF
         return 1
     fi
     echo 'OK   rollback removes the IOA fragment only when the restored config omits it'
+
+    printf '%s\n' 'backup metadata base' >"$backup_dir/smartdns.conf.bak"
+    chmod 604 "$backup_dir/smartdns.conf.bak"
+    printf '%s\n' 'current target' >"$smartdns_dir/smartdns.conf"
+    chmod 640 "$smartdns_dir/smartdns.conf"
+    : >"$calls"
+    restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
+        "$fake_systemctl" "$sandbox/rollback.lock"
+    if [ "$(stat -c %a "$smartdns_dir/smartdns.conf")" != 604 ] ||
+       [ "$(stat -c %u "$smartdns_dir/smartdns.conf")" != \
+            "$(stat -c %u "$backup_dir/smartdns.conf.bak")" ] ||
+       [ "$(stat -c %g "$smartdns_dir/smartdns.conf")" != \
+            "$(stat -c %g "$backup_dir/smartdns.conf.bak")" ]; then
+        echo 'FAIL rollback did not preserve backup base metadata' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback preserves backup base metadata instead of target metadata'
+    unset SMARTDNS_TEST_CALLS
     rm -rf "$sandbox"
 }
 
