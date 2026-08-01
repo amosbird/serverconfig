@@ -46,22 +46,23 @@ record_command() {
     return 0
 }
 
-record_route_events() {
-    local incident=$1 phase=$2 label=route-events output temp rc size truncated=false
-    output="$incident/$phase/$label.txt"
-    mkdir -p "$incident/$phase"
-    temp=$(mktemp "$incident/$phase/.$label.XXXXXX") || return 1
-    # shortcut: retain the newest 5,000 matching events plus all-event counts and endpoints.
-    if (ulimit -f 1024; "$TIMEOUT" --kill-after=2s 20 /usr/bin/journalctl -b --since=-15min \
-            -n 30000 --no-pager -u tailscaled -u network-reconfigure.service | /usr/bin/awk '
+summarize_route_events() {
+    # shortcut: retain at most 5,000 events and 900 KB in memory; raise both limits together if
+    # incident snapshots grow beyond the 1 MiB text-file contract.
+    LC_ALL=C /usr/bin/awk -v max_events=5000 -v max_bytes=900000 '
         /monitor: RTM_(NEW|DEL)ROUTE/ { kind="route" }
         /network-reconfigure/ && !/monitor: RTM_(NEW|DEL)ROUTE/ { kind="reconfigure" }
         kind {
+            line = substr($0, 1, 512)
             count[kind]++
-            if (!(kind in first)) first[kind]=$0
-            last[kind]=$0
-            lines[++seen]=$0
-            if (seen > 5000) delete lines[seen - 5000]
+            if (!(kind in first)) first[kind]=line
+            last[kind]=line
+            lines[++tail]=line
+            bytes += length(line) + 1
+            while (tail - head >= max_events || bytes > max_bytes) {
+                bytes -= length(lines[++head]) + 1
+                delete lines[head]
+            }
             kind=""
         }
         END {
@@ -70,20 +71,34 @@ record_route_events() {
                 printf "%s count=%d\n%s first=%s\n%s last=%s\n", kind, count[kind], kind, \
                     first[kind], kind, last[kind]
             }
-            print "timeline (newest 5000 matching events):"
-            start = seen > 5000 ? seen - 4999 : 1
-            for (i = start; i <= seen; i++) print lines[i]
+            print "timeline (newest matching events within 900000 bytes, at most 5000):"
+            for (i = head + 1; i <= tail; i++) print lines[i]
         }
-    ' >"$temp" 2>&1); then
+    '
+}
+
+record_route_events() {
+    local incident=$1 phase=$2 journalctl_bin=${3:-/usr/bin/journalctl}
+    local label=route-events output temp rc size
+    output="$incident/$phase/$label.txt"
+    mkdir -p "$incident/$phase"
+    temp=$(mktemp "$incident/$phase/.$label.XXXXXX") || return 1
+    if ("$TIMEOUT" --kill-after=2s 20 "$journalctl_bin" -b --since=-15min -n 30000 \
+            --no-pager -u tailscaled -u network-reconfigure.service | summarize_route_events \
+            >"$temp"); then
         rc=0
     else
         rc=$?
     fi
     size=$(stat -c %s "$temp")
-    if ((size >= MAX_TEXT_BYTES)); then truncated=true; fi
-    head -c "$MAX_TEXT_BYTES" "$temp" >"$output"
-    rm -f "$temp"
-    append_manifest "$incident" "$rc" "$label" "$phase" "$truncated"
+    # The summarizer owns truncation semantics so the manifest never mislabels a bounded summary.
+    if ((size > MAX_TEXT_BYTES)); then
+        rm -f "$temp"
+        append_manifest "$incident" 1 "$label sanity cap exceeded" "$phase"
+        return 0
+    fi
+    mv "$temp" "$output"
+    append_manifest "$incident" "$rc" "$label" "$phase"
 }
 
 run_snapshot() {

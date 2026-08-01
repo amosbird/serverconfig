@@ -196,9 +196,12 @@ changes routes, firewall rules, tunnel preferences, or network services. `tailsc
 perform active connectivity probes while collecting diagnostics. Individual diagnostic failures and
 timeout return codes are recorded in `manifest.tsv` instead of aborting collection. Text command
 output is capped at 1 MiB per command and marked `truncated=true`; each deep pcap is capped at 8 MB.
-The snapshots include TCP/UDP sockets, TCP/UDP conntrack state, kernel network counters, interface
-statistics, bounded tailscaled goroutines, and a route-event timeline with counts and first/last
-events. Do not put passwords, tokens, or other secrets in the incident note or command line.
+The route-event summary is bounded separately: it keeps counts and first/last events, then retains the
+latest matching events in a 900 KB byte ring (at most 5,000, with each line capped at 512 bytes), so
+it remains below 1 MiB without discarding the newest timeline tail. The snapshots include TCP/UDP
+sockets, TCP/UDP conntrack state, kernel network counters, interface statistics, bounded tailscaled
+goroutines, and this route-event timeline. Do not put passwords, tokens, or other secrets in the
+incident note or command line.
 
 `--bugreport` additionally runs `tailscale bugreport --diagnose`. This can upload diagnostic logs
 to Tailscale and return a shareable identifier, so it is never run by default:

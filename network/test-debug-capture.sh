@@ -166,6 +166,67 @@ snapshot_runtime_contract() (
     snapshot_command_contract "$log"
 )
 
+route_event_summary_contract() (
+    set -euo pipefail
+    local input="$WORK/route-events-input" output="$WORK/route-events-output"
+    # shellcheck source=scripts/network-debug-capture
+    source "$SCRIPT"
+
+    cat >"$input" <<'EOF'
+Jan 01 00:00:01 host tailscaled[1]: monitor: RTM_NEWROUTE first-route
+Jan 01 00:00:02 host network-reconfigure[2]: first-reconfigure
+Jan 01 00:00:03 host ignored[3]: unrelated
+Jan 01 00:00:04 host tailscaled[1]: monitor: RTM_DELROUTE last-route
+Jan 01 00:00:05 host network-reconfigure[2]: last-reconfigure
+EOF
+    summarize_route_events <"$input" >"$output"
+    assert_contains "$output" 'route count=2'
+    assert_contains "$output" 'route first=Jan 01 00:00:01 host tailscaled[1]: monitor: RTM_NEWROUTE first-route'
+    assert_contains "$output" 'route last=Jan 01 00:00:04 host tailscaled[1]: monitor: RTM_DELROUTE last-route'
+    assert_contains "$output" 'reconfigure count=2'
+    assert_contains "$output" 'reconfigure first=Jan 01 00:00:02 host network-reconfigure[2]: first-reconfigure'
+    assert_contains "$output" 'reconfigure last=Jan 01 00:00:05 host network-reconfigure[2]: last-reconfigure'
+
+    awk 'BEGIN { for (i = 1; i <= 6000; i++) printf "event-%04d monitor: RTM_NEWROUTE\n", i }' |
+        summarize_route_events >"$output"
+    ! grep -Fxq 'event-0001 monitor: RTM_NEWROUTE' "$output" ||
+        fail 'route timeline retained the oldest event outside the first-event header'
+    assert_contains "$output" 'event-6000 monitor: RTM_NEWROUTE'
+
+    awk 'BEGIN {
+        payload = sprintf("%02000d", 0)
+        for (i = 1; i <= 600; i++) printf "long-%04d monitor: RTM_NEWROUTE %s\n", i, payload
+        print "last-event monitor: RTM_NEWROUTE complete"
+    }' | summarize_route_events >"$output"
+    [ "$(stat -c %s "$output")" -lt 1048576 ] || fail 'route timeline exceeded 1 MiB'
+    [ "$(tail -1 "$output")" = 'last-event monitor: RTM_NEWROUTE complete' ] ||
+        fail 'route timeline did not retain the complete newest event'
+)
+
+record_route_events_contract() (
+    set -euo pipefail
+    local route_incident="$WORK/route-incident" fake="$WORK/fake-journalctl"
+    # shellcheck source=scripts/network-debug-capture
+    source "$SCRIPT"
+    mkdir -p "$route_incident"
+    cat >"$fake" <<'EOF'
+#!/usr/bin/env bash
+printf 'fake monitor: RTM_NEWROUTE newest-route\n'
+exit "${FAKE_JOURNALCTL_RC:-0}"
+EOF
+    chmod +x "$fake"
+    TIMEOUT=/usr/bin/timeout
+
+    record_route_events "$route_incident" before "$fake"
+    assert_contains "$route_incident/before/route-events.txt" 'fake monitor: RTM_NEWROUTE newest-route'
+    assert_contains "$route_incident/manifest.tsv" $'0\troute-events\tbefore'
+    assert_not_contains "$route_incident/manifest.tsv" 'truncated=true'
+
+    rm -rf "$route_incident"; mkdir "$route_incident"
+    FAKE_JOURNALCTL_RC=7 record_route_events "$route_incident" after "$fake"
+    assert_contains "$route_incident/manifest.tsv" $'7\troute-events\tafter'
+)
+
 static_script_contract() {
     [ -x "$SCRIPT" ] || fail "missing executable script: $SCRIPT"
     # shellcheck disable=SC2016 # assert literal source, not this test's positional parameters
@@ -500,6 +561,8 @@ service_directory_mutation_contract
 /usr/bin/tcpdump -d 'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443' >/dev/null
 /usr/bin/tcpdump -d 'udp port 3478 or tcp port 80 or tcp port 443' >/dev/null
 static_script_contract
+route_event_summary_contract
+record_route_events_contract
 snapshot_runtime_contract
 snapshot_command_mutation_contract
 capture_manifest_mutation_contract
