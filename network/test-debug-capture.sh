@@ -37,11 +37,19 @@ recorder_directory_contract() {
     assert_contains "$service" 'ReadWritePaths=/var/log/network-debug'
 }
 
+recorder_identity_contract() {
+    local service=$1
+    assert_contains "$service" 'User=root'
+    # tcpdump already runs as root; -Z triggers a redundant libcap-ng identity change that is
+    # incompatible with the unit's capability bounding and NoNewPrivileges restrictions.
+    assert_not_contains "$service" '(^|[[:space:]])-Z([[:space:]]|$)'
+}
+
 service_contract() {
     [ -f "$SERVICE" ] || fail "missing service: $SERVICE"
-    assert_contains "$SERVICE" 'User=root'
+    recorder_identity_contract "$SERVICE"
     assert_contains "$SERVICE" 'ExecStartPre=/usr/bin/install -d -o root -g root -m 0700 /var/log/network-debug/ring'
-    assert_contains "$SERVICE" 'ExecStart=/usr/bin/tcpdump -p -i wlan0 -s 96 -n -U -Z root -w /var/log/network-debug/ring/trace.pcap -C 8 -W 8 udp port 3478 or udp port 41641'
+    assert_contains "$SERVICE" 'ExecStart=/usr/bin/tcpdump -p -i wlan0 -s 96 -n -U -w /var/log/network-debug/ring/trace.pcap -C 8 -W 8 udp port 3478 or udp port 41641'
     assert_contains "$SERVICE" 'CapabilityBoundingSet=CAP_NET_RAW'
     assert_contains "$SERVICE" 'AmbientCapabilities=CAP_NET_RAW'
     assert_not_contains "$SERVICE" 'CAP_NET_ADMIN'
@@ -55,6 +63,16 @@ service_contract() {
     assert_contains "$SERVICE" 'Restart=always'
     assert_not_contains "$SERVICE" 'Exec(Start|StartPre)=.*/(sh|bash)( |$)'
 }
+
+service_identity_mutation_contract() (
+    local mutated="$WORK/network-debug-pcap-identity-mutated.service"
+    cp "$SERVICE" "$mutated"
+    sed -i 's/ -w / -Z root -w /' "$mutated"
+    # shortcut: static mutation reproduces the forbidden invocation without touching the live unit.
+    if (recorder_identity_contract "$mutated") >/dev/null 2>&1; then
+        fail 'service contract accepted tcpdump -Z identity change'
+    fi
+)
 
 service_directory_mutation_contract() (
     local mutated="$WORK/network-debug-pcap-mutated.service"
@@ -371,6 +389,7 @@ EOF
 )
 
 service_contract
+service_identity_mutation_contract
 service_directory_mutation_contract
 /usr/bin/tcpdump --version >/dev/null
 /usr/bin/tcpdump -d 'udp port 3478 or udp port 41641' >/dev/null
