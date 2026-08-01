@@ -28,15 +28,178 @@ reject 'SmartDNS base config does not include a dynamic IOA fragment' \
     'conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf' network/smartdns/smartdns.conf
 reject 'production reconciler has no dynamic IOA DNS logic' \
     'IOA_RESOLVER|ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
-reject 'deployment does not seed a dynamic IOA DNS fragment' \
-    'ioa-dns\.conf|IOA tunnel is down' restore.sh
-# Rollback may remove the obsolete fragment, but deployment paths must not create or depend on it.
-if sed -n '/^install_configs() {/,/^}/p; /^activate() {/,/^}/p' network/migrate.sh |
+# Activation must not create or seed the legacy fragment.
+if sed -n '/^activate() {/,/^}/p' network/migrate.sh |
    grep -Eq 'ioa-dns\.conf|IOA tunnel is down'; then
-    echo 'FAIL migration install/activation depends on a dynamic IOA DNS fragment' >&2
+    echo 'FAIL migration activation depends on a dynamic IOA DNS fragment' >&2
     fail=1
 else
-    echo 'OK   migration install/activation does not depend on a dynamic IOA DNS fragment'
+    echo 'OK   migration activation does not depend on a dynamic IOA DNS fragment'
+fi
+
+smartdns_deployment_contract() {
+    local sandbox smartdns_dir fake_smartdns fake_timeout fake_systemctl calls
+    sandbox=$(mktemp -d)
+    smartdns_dir="$sandbox/etc/smartdns"
+    calls="$sandbox/calls"
+    mkdir -p "$smartdns_dir"
+    printf '%s\n' 'old config' >"$smartdns_dir/smartdns.conf"
+    cat >"$sandbox/new.conf" <<'EOF'
+bind 127.0.0.1:53
+bind-tcp 127.0.0.1:53
+server 192.0.2.53
+EOF
+
+    fake_smartdns="$sandbox/smartdns"
+    cat >"$fake_smartdns" <<'EOF'
+#!/usr/bin/env bash
+printf 'validate:%s\n' "$*" >>"$SMARTDNS_TEST_CALLS"
+config=${*: -1}
+grep -Eq '^bind 127\.0\.0\.1:[2-4][0-9]{4}$' "$config"
+grep -Eq '^bind-tcp 127\.0\.0\.1:[2-4][0-9]{4}$' "$config"
+grep -Fqx 'server 192.0.2.53' "$config"
+EOF
+    fake_timeout="$sandbox/timeout"
+    cat >"$fake_timeout" <<'EOF'
+#!/usr/bin/env bash
+shift
+"$@"
+rc=$?
+[ "$rc" -eq 0 ] && exit 124
+exit "$rc"
+EOF
+    fake_systemctl="$sandbox/systemctl"
+    cat >"$fake_systemctl" <<'EOF'
+#!/usr/bin/env bash
+printf 'restart:%s\n' "$*" >>"$SMARTDNS_TEST_CALLS"
+grep -Fqx 'server 192.0.2.53' "$SMARTDNS_TEST_DIR/smartdns.conf"
+EOF
+    chmod +x "$fake_smartdns" "$fake_timeout" "$fake_systemctl"
+
+    # shellcheck source=network/smartdns-deploy.sh
+    source network/smartdns-deploy.sh
+    if ! SMARTDNS_TEST_CALLS="$calls" SMARTDNS_TEST_DIR="$smartdns_dir" \
+        deploy_smartdns_config "$sandbox/new.conf" "$smartdns_dir" \
+            "$fake_smartdns" "$fake_timeout" "$fake_systemctl"; then
+        echo 'FAIL valid SmartDNS deployment did not complete' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    case "$(sed -n '1p' "$calls")" in
+        "validate:-f -x -p - -c $smartdns_dir/"*) ;;
+        *)
+            echo 'FAIL SmartDNS deployment did not validate before restart' >&2
+            rm -rf "$sandbox"
+            return 1
+            ;;
+    esac
+    if [ "$(sed -n '2p' "$calls")" != 'restart:restart smartdns.service' ]; then
+        echo 'FAIL SmartDNS deployment did not validate before restart' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   SmartDNS deployment validates, atomically installs, then restarts'
+
+    printf '%s\n' 'known good config' >"$smartdns_dir/smartdns.conf"
+    cat >"$fake_timeout" <<'EOF'
+#!/usr/bin/env bash
+exit 2
+EOF
+    if SMARTDNS_TEST_CALLS="$calls" SMARTDNS_TEST_DIR="$smartdns_dir" \
+        deploy_smartdns_config "$sandbox/new.conf" "$smartdns_dir" \
+            "$fake_smartdns" "$fake_timeout" "$fake_systemctl" >/dev/null 2>&1 ||
+       ! grep -Fqx 'known good config' "$smartdns_dir/smartdns.conf"; then
+        echo 'FAIL invalid SmartDNS deployment replaced the live config' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   failed SmartDNS validation preserves the live config'
+
+    cat >"$fake_timeout" <<'EOF'
+#!/usr/bin/env bash
+exit 124
+EOF
+    cat >"$fake_systemctl" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+    if SMARTDNS_TEST_CALLS="$calls" SMARTDNS_TEST_DIR="$smartdns_dir" \
+        deploy_smartdns_config "$sandbox/new.conf" "$smartdns_dir" \
+            "$fake_smartdns" "$fake_timeout" "$fake_systemctl" >/dev/null 2>&1; then
+        echo 'FAIL SmartDNS restart failure was hidden' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   SmartDNS restart failure remains visible'
+    rm -rf "$sandbox"
+}
+
+if ! smartdns_deployment_contract; then
+    fail=1
+fi
+
+smartdns_rollback_contract() {
+    local sandbox smartdns_dir backup_dir
+    sandbox=$(mktemp -d)
+    smartdns_dir="$sandbox/etc/smartdns"
+    backup_dir="$sandbox/backup"
+    mkdir -p "$smartdns_dir" "$backup_dir"
+    cat >"$backup_dir/smartdns.conf.bak" <<'EOF'
+bind 127.0.0.1:53
+conf-file /etc/smartdns/ioa-dns.conf
+EOF
+
+    source network/migrate.sh
+    restore_smartdns_backup "$smartdns_dir" "$backup_dir" false
+    if ! grep -Fqx '# Legacy IOA resolver unavailable during rollback' \
+            "$smartdns_dir/ioa-dns.conf" ||
+       ! awk '
+           $1 == "conf-file" {
+               path = $2
+               sub("^/etc/smartdns/", dir "/", path)
+               if (system("test -f \"" path "\"") != 0) exit 1
+           }
+       ' dir="$smartdns_dir" "$smartdns_dir/smartdns.conf"; then
+        echo 'FAIL rollback did not leave all restored SmartDNS includes parseable' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback seeds a safe fragment when an old config includes it'
+
+    printf '%s\n' 'server 192.168.255.10 -group ioa' >"$backup_dir/ioa-dns.conf.bak"
+    restore_smartdns_backup "$smartdns_dir" "$backup_dir" false
+    if ! cmp -s "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf"; then
+        echo 'FAIL rollback did not restore its backed-up IOA fragment' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback restores the backed-up IOA fragment'
+
+    printf '%s\n' 'bind 127.0.0.1:53' >"$backup_dir/smartdns.conf.bak"
+    restore_smartdns_backup "$smartdns_dir" "$backup_dir" false
+    if [ -e "$smartdns_dir/ioa-dns.conf" ]; then
+        echo 'FAIL rollback retained an obsolete unreferenced IOA fragment' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback removes the IOA fragment only when the restored config omits it'
+    rm -rf "$sandbox"
+}
+
+if ! smartdns_rollback_contract; then
+    fail=1
+fi
+
+if ! awk '
+    /office\.conf/ && /sudo tee/ { office = NR }
+    /dhcp-dns\.conf/ && /sudo cp/ { dhcp = NR }
+    /smartdns-deploy\.sh/ { deploy = NR }
+    END { exit !(office && dhcp && deploy && office < deploy && dhcp < deploy) }
+' restore.sh; then
+    echo 'FAIL restore does not seed SmartDNS fragments before safe deployment' >&2
+    fail=1
+else
+    echo 'OK   restore seeds SmartDNS fragments before safe deployment'
 fi
 
 [ ! -e scripts/network-fallback ] || { echo 'FAIL network-fallback script remains'; fail=1; }

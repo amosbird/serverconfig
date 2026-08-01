@@ -105,6 +105,9 @@ install_configs() {
     # Backup current state
     mkdir -p "$BACKUP_DIR"
     cp -a /etc/smartdns/smartdns.conf "$BACKUP_DIR/smartdns.conf.bak" 2>/dev/null || true
+    # Backup the legacy fragment too: the saved base config may include it.
+    rm -f "$BACKUP_DIR/ioa-dns.conf.bak"
+    cp -a /etc/smartdns/ioa-dns.conf "$BACKUP_DIR/ioa-dns.conf.bak" 2>/dev/null || true
     cp -a /etc/resolv.conf "$BACKUP_DIR/resolv.conf.bak" 2>/dev/null || true
     ip rule save > "$BACKUP_DIR/ip-rules.bak" 2>/dev/null || true
     iptables-save > "$BACKUP_DIR/iptables.bak" 2>/dev/null || true
@@ -253,24 +256,44 @@ activate() {
     FORCE=1 "$DIR/../scripts/network-reconfigure" wlan0
     cleanup_obsolete_policy
 
-    # Apply SmartDNS config now
-    cp "$BACKUP_DIR/smartdns-new.conf" /etc/smartdns/smartdns.conf
-    # Both fragments are rewritten by network-reconfigure; seed them so SmartDNS starts.
+    # Apply the staged config only after its includes exist and validation succeeds.
+    mkdir -p /etc/smartdns
     echo '# Not on the office LAN' > /etc/smartdns/office.conf
     touch /etc/smartdns/dhcp-dns.conf
+    "$DIR/smartdns-deploy.sh" "$BACKUP_DIR/smartdns-new.conf"
 
     # Lock resolv.conf
     chattr -i /etc/resolv.conf 2>/dev/null || true
     echo "nameserver 127.0.0.1" > /etc/resolv.conf
     chattr +i /etc/resolv.conf
 
-    # Restart SmartDNS with new config
-    systemctl restart smartdns.service
-
     echo ""
     echo "=== Migration active. Verifying... ==="
     sleep 3
     verify
+}
+
+restore_smartdns_backup() {
+    local smartdns_dir=${1:-/etc/smartdns} backup_dir=${2:-$BACKUP_DIR}
+    local restart=${3:-true} systemctl_bin=${4:-systemctl}
+
+    [ -f "$backup_dir/smartdns.conf.bak" ] || return 0
+    mkdir -p "$smartdns_dir"
+    cp "$backup_dir/smartdns.conf.bak" "$smartdns_dir/smartdns.conf"
+    if grep -Eq '^[[:space:]]*conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf([[:space:]]|$)' \
+            "$smartdns_dir/smartdns.conf"; then
+        if [ -f "$backup_dir/ioa-dns.conf.bak" ]; then
+            cp "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf"
+        else
+            printf '%s\n' '# Legacy IOA resolver unavailable during rollback' \
+                >"$smartdns_dir/ioa-dns.conf"
+        fi
+    else
+        rm -f "$smartdns_dir/ioa-dns.conf"
+    fi
+    if [ "$restart" = true ]; then
+        "$systemctl_bin" restart smartdns.service 2>/dev/null || true
+    fi
 }
 
 rollback() {
@@ -299,7 +322,7 @@ rollback() {
     iptables -t mangle -X NETMODE_IOA 2>/dev/null || true
     cleanup_owned_nat
     ipset destroy ioa_intranet 2>/dev/null || true
-    rm -f /etc/smartdns/ioa-dns.conf /etc/smartdns/dhcp-dns.conf
+    rm -f /etc/smartdns/dhcp-dns.conf
     rm -rf /var/lib/network-reconfigure
 
     # Restore the pre-iwd hooks (kept in network/rollback/ for exactly this)
@@ -307,11 +330,8 @@ rollback() {
     cp "$DIR/rollback/90-amos-dhcp" /usr/lib/dhcpcd/dhcpcd-hooks/90-amos 2>/dev/null || true
     rm -f /etc/udev/rules.d/90-wired-8021x.rules
 
-    # Restore SmartDNS
-    if [ -f "$BACKUP_DIR/smartdns.conf.bak" ]; then
-        cp "$BACKUP_DIR/smartdns.conf.bak" /etc/smartdns/smartdns.conf
-        systemctl restart smartdns.service 2>/dev/null || true
-    fi
+    # Restore SmartDNS and any legacy fragment it references before restarting it.
+    restore_smartdns_backup
 
     # Restore resolv.conf
     chattr -i /etc/resolv.conf 2>/dev/null || true

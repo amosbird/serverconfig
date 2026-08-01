@@ -143,15 +143,13 @@ if [[ -n $GUI ]]; then
     sudo rm -f /var/lib/network-reconfigure/derp-ips \
         /var/lib/network-reconfigure/ioa-endpoints
     sudo systemctl daemon-reload
-    # SmartDNS base config.
+    # SmartDNS includes must exist before validating and atomically installing the base config.
     sudo mkdir -p /etc/smartdns
-    sudo cp "$DIR"/network/smartdns/smartdns.conf /etc/smartdns/
-    # office.conf and dhcp-dns.conf are rewritten per link by network-reconfigure;
-    # only seed them so SmartDNS can start before it runs.
     [[ -e /etc/smartdns/office.conf ]] ||
         echo '# Not on the office LAN' | sudo tee /etc/smartdns/office.conf >/dev/null
     [[ -e /etc/smartdns/dhcp-dns.conf ]] ||
         sudo cp "$DIR"/network/smartdns/dhcp-dns.conf /etc/smartdns/dhcp-dns.conf
+    sudo "$DIR"/network/smartdns-deploy.sh "$DIR"/network/smartdns/smartdns.conf
 
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
     sudo udevadm control --reload-rules
