@@ -222,11 +222,19 @@ start_deep() {
 }
 
 wait_deep() {
-    local incident=$1 wlan_rc tail_rc
+    local incident=$1 wlan_rc tail_rc wlan_label='tcpdump wlan0' tail_label='tcpdump tailscale0'
     if wait "$deep_wlan_pid"; then wlan_rc=0; else wlan_rc=$?; fi
     if wait "$deep_tail_pid"; then tail_rc=0; else tail_rc=$?; fi
-    append_manifest "$incident" "$wlan_rc" 'tcpdump wlan0' capture
-    append_manifest "$incident" "$tail_rc" 'tcpdump tailscale0' capture
+    if [ "$wlan_rc" -eq 124 ]; then
+        wlan_rc=0
+        wlan_label+=' (duration complete)'
+    fi
+    if [ "$tail_rc" -eq 124 ]; then
+        tail_rc=0
+        tail_label+=' (duration complete)'
+    fi
+    append_manifest "$incident" "$wlan_rc" "$wlan_label" capture
+    append_manifest "$incident" "$tail_rc" "$tail_label" capture
 }
 
 prune_incidents() {

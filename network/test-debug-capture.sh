@@ -22,6 +22,20 @@ assert_not_contains() {
     ! grep -Eq -- "$pattern" "$file" || fail "$file contains forbidden pattern: $pattern"
 }
 
+assert_capture_success() {
+    local manifest=$1
+    assert_contains "$manifest" $'0\ttcpdump wlan0 (duration complete)\tcapture'
+    assert_contains "$manifest" $'0\ttcpdump tailscale0 (duration complete)\tcapture'
+}
+
+capture_manifest_mutation_contract() (
+    local manifest="$WORK/capture-manifest-mutated.tsv"
+    printf '124\ttcpdump wlan0\tcapture\n124\ttcpdump tailscale0\tcapture\n' >"$manifest"
+    if (assert_capture_success "$manifest") >/dev/null 2>&1; then
+        fail 'capture contract accepted timeout rc 124 as a failure'
+    fi
+)
+
 assert_no_mutations() {
     local log=$1
     if grep -Ev '^(systemctl (is-active( --quiet)?|stop|start) network-debug-pcap\.service|tcpdump(-start|-done)? )' "$log" |
@@ -140,7 +154,12 @@ EOF
 #!/usr/bin/env bash
 while [[ ${1-} == --* ]]; do shift; done
 shift
-exec "$@"
+"$@"
+rc=$?
+if [ "${NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC:-0}" -ne 0 ] && [ "${1##*/}" = tcpdump ]; then
+    exit "$NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC"
+fi
+exit "$rc"
 EOF
     cat >"$dir/tcpdump" <<'EOF'
 #!/usr/bin/env bash
@@ -287,8 +306,10 @@ runtime_contract() (
         "large command|5|$fakebin/diag|huge"
     )
 
+    NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC=124; export NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC
     capture_main "$base" network-debug-pcap.service 0 false "$lock" \
         $'safe note\nwith\tcontrols\033[31m'
+    unset NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC
 
     mapfile -t incidents < <(find "$base" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
     [ "${#incidents[@]}" -eq 1 ] || fail 'capture did not create exactly one incident'
@@ -296,6 +317,14 @@ runtime_contract() (
     [ -f "$incident/ring/trace.pcap0" ] || fail 'ring file was not copied'
     [ -f "$incident/wlan0.pcap0" ] || fail 'bounded wlan capture missing'
     [ -f "$incident/tailscale0.pcap0" ] || fail 'bounded tailscale capture missing'
+    assert_capture_success "$incident/manifest.tsv"
+    local failed_capture="$WORK/failed-capture"
+    mkdir "$failed_capture"
+    (exit 125) & deep_wlan_pid=$!
+    (exit 1) & deep_tail_pid=$!
+    wait_deep "$failed_capture"
+    assert_contains "$failed_capture/manifest.tsv" $'125\ttcpdump wlan0\tcapture'
+    assert_contains "$failed_capture/manifest.tsv" $'1\ttcpdump tailscale0\tcapture'
     assert_contains "$incident/manifest.tsv" $'0\tworking command\tbefore'
     assert_contains "$incident/manifest.tsv" $'1\tfailing command\tbefore'
     assert_contains "$incident/manifest.tsv" $'truncated=true\tlarge command\tbefore'
@@ -394,6 +423,7 @@ service_directory_mutation_contract
 /usr/bin/tcpdump --version >/dev/null
 /usr/bin/tcpdump -d 'udp port 3478 or udp port 41641' >/dev/null
 static_script_contract
+capture_manifest_mutation_contract
 freeze_contract
 runtime_contract
 cli_contract
