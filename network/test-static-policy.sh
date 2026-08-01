@@ -197,6 +197,17 @@ if ! smartdns_deployment_contract; then
     fail=1
 fi
 
+# shellcheck disable=SC2016 # fragment variables are literal source text
+if ! grep -Fq 'local -a fragments=(office.conf dhcp-dns.conf ioa-dns.conf)' \
+        network/migrate.sh ||
+   [ "$(grep -Fxc '            cp -a "/etc/smartdns/$fragment" "$BACKUP_DIR/$fragment.bak"' \
+        network/migrate.sh)" -ne 1 ]; then
+    echo 'FAIL install does not back up every repository-managed SmartDNS fragment with metadata' >&2
+    fail=1
+else
+    echo 'OK   install backs up all repository-managed SmartDNS fragments with metadata'
+fi
+
 smartdns_rollback_contract() {
     local sandbox smartdns_dir backup_dir fake_systemctl calls old_uid old_gid rc
     sandbox=$(mktemp -d)
@@ -221,14 +232,28 @@ EOF
     export SMARTDNS_TEST_CALLS="$calls"
     cat >"$backup_dir/smartdns.conf.bak" <<'EOF'
 bind 127.0.0.1:53
+conf-file /etc/smartdns/office.conf
+conf-file /etc/smartdns/dhcp-dns.conf
 conf-file /etc/smartdns/ioa-dns.conf
 EOF
+    printf '%s\n' 'nameserver /office.example/192.0.2.1' >"$backup_dir/office.conf.bak"
+    chmod 600 "$backup_dir/office.conf.bak"
+    printf '%s\n' 'server 192.168.255.10 -group ioa' >"$backup_dir/ioa-dns.conf.bak"
+    chmod 640 "$backup_dir/ioa-dns.conf.bak"
 
     source network/migrate.sh
     restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
         "$fake_systemctl" "$sandbox/rollback.lock"
-    if ! grep -Fqx '# Legacy IOA resolver unavailable during rollback' \
-            "$smartdns_dir/ioa-dns.conf" ||
+    if ! cmp -s "$backup_dir/office.conf.bak" "$smartdns_dir/office.conf" ||
+       ! cmp -s "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf" ||
+       [ "$(stat -c %a "$smartdns_dir/office.conf")" != 600 ] ||
+       [ "$(stat -c %a "$smartdns_dir/ioa-dns.conf")" != 640 ] ||
+       [ "$(stat -c %u:%g "$smartdns_dir/office.conf")" != \
+            "$(stat -c %u:%g "$backup_dir/office.conf.bak")" ] ||
+       [ "$(stat -c %u:%g "$smartdns_dir/ioa-dns.conf")" != \
+            "$(stat -c %u:%g "$backup_dir/ioa-dns.conf.bak")" ] ||
+       [ ! -f "$smartdns_dir/dhcp-dns.conf" ] ||
+       [ -s "$smartdns_dir/dhcp-dns.conf" ] ||
        ! awk '
            $1 == "conf-file" {
                path = $2
@@ -236,38 +261,29 @@ EOF
                if (system("test -f \"" path "\"") != 0) exit 1
            }
        ' dir="$smartdns_dir" "$smartdns_dir/smartdns.conf"; then
-        echo 'FAIL rollback did not leave all restored SmartDNS includes parseable' >&2
+        echo 'FAIL rollback did not restore or safely seed every referenced fragment' >&2
         rm -rf "$sandbox"
         return 1
     fi
-    echo 'OK   rollback seeds a safe fragment when an old config includes it'
-
-    printf '%s\n' 'server 192.168.255.10 -group ioa' >"$backup_dir/ioa-dns.conf.bak"
-    restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
-        "$fake_systemctl" "$sandbox/rollback.lock"
-    if ! cmp -s "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf" ||
-       [ "$(stat -c %a "$smartdns_dir/ioa-dns.conf")" != \
-            "$(stat -c %a "$backup_dir/ioa-dns.conf.bak")" ] ||
-       [ "$(stat -c %u "$smartdns_dir/ioa-dns.conf")" != \
-            "$(stat -c %u "$backup_dir/ioa-dns.conf.bak")" ] ||
-       [ "$(stat -c %g "$smartdns_dir/ioa-dns.conf")" != \
-            "$(stat -c %g "$backup_dir/ioa-dns.conf.bak")" ]; then
-        echo 'FAIL rollback did not restore its backed-up IOA fragment and metadata' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback restores the backed-up IOA fragment and metadata'
+    echo 'OK   rollback restores backed fragments and safely seeds missing ones'
 
     printf '%s\n' 'old live base' >"$smartdns_dir/smartdns.conf"
     chmod 640 "$smartdns_dir/smartdns.conf"
     old_uid=$(stat -c %u "$smartdns_dir/smartdns.conf")
     old_gid=$(stat -c %g "$smartdns_dir/smartdns.conf")
-    printf '%s\n' 'old live fragment' >"$smartdns_dir/ioa-dns.conf"
-    chmod 600 "$smartdns_dir/ioa-dns.conf"
+    printf '%s\n' 'old live office' >"$smartdns_dir/office.conf"
+    chmod 601 "$smartdns_dir/office.conf"
+    printf '%s\n' 'old live DHCP' >"$smartdns_dir/dhcp-dns.conf"
+    chmod 602 "$smartdns_dir/dhcp-dns.conf"
+    rm -f "$smartdns_dir/ioa-dns.conf"
     printf '%s\n' 'invalid backup base' >"$backup_dir/smartdns.conf.bak"
     chmod 604 "$backup_dir/smartdns.conf.bak"
-    printf '%s\n' 'backup fragment' >"$backup_dir/ioa-dns.conf.bak"
-    chmod 640 "$backup_dir/ioa-dns.conf.bak"
+    printf '%s\n' 'backup office' >"$backup_dir/office.conf.bak"
+    chmod 610 "$backup_dir/office.conf.bak"
+    printf '%s\n' 'backup DHCP' >"$backup_dir/dhcp-dns.conf.bak"
+    chmod 620 "$backup_dir/dhcp-dns.conf.bak"
+    printf '%s\n' 'backup IOA' >"$backup_dir/ioa-dns.conf.bak"
+    chmod 630 "$backup_dir/ioa-dns.conf.bak"
     : >"$calls"
     set +e
     SMARTDNS_FAIL_RESTART=1 restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
@@ -276,33 +292,21 @@ EOF
     set -e
     if [ "$rc" -eq 0 ] ||
        ! grep -Fqx 'old live base' "$smartdns_dir/smartdns.conf" ||
-       ! grep -Fqx 'old live fragment' "$smartdns_dir/ioa-dns.conf" ||
+       ! grep -Fqx 'old live office' "$smartdns_dir/office.conf" ||
+       ! grep -Fqx 'old live DHCP' "$smartdns_dir/dhcp-dns.conf" ||
+       [ -e "$smartdns_dir/ioa-dns.conf" ] ||
        [ "$(stat -c %a "$smartdns_dir/smartdns.conf")" != 640 ] ||
-       [ "$(stat -c %a "$smartdns_dir/ioa-dns.conf")" != 600 ] ||
+       [ "$(stat -c %a "$smartdns_dir/office.conf")" != 601 ] ||
+       [ "$(stat -c %a "$smartdns_dir/dhcp-dns.conf")" != 602 ] ||
        [ "$(stat -c %u "$smartdns_dir/smartdns.conf")" != "$old_uid" ] ||
        [ "$(stat -c %g "$smartdns_dir/smartdns.conf")" != "$old_gid" ] ||
        [ "$(grep -Fxc 'restart smartdns.service' "$calls")" -ne 3 ] ||
        [ "$(grep -Fxc 'is-active --quiet smartdns.service' "$calls")" -ne 2 ]; then
-        echo 'FAIL failed backup restore did not restore the live base and fragment transaction' >&2
+        echo 'FAIL failed backup restore did not restore all live fragments and absence' >&2
         rm -rf "$sandbox"
         return 1
     fi
-    echo 'OK   failed backup restore atomically restores live base, fragment, metadata, and service'
-
-    rm -f "$smartdns_dir/ioa-dns.conf"
-    printf '%s\n' 'old live base without fragment' >"$smartdns_dir/smartdns.conf"
-    : >"$calls"
-    set +e
-    SMARTDNS_FAIL_RESTART=1 restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
-        "$fake_systemctl" "$sandbox/rollback.lock" >/dev/null 2>&1
-    rc=$?
-    set -e
-    if [ "$rc" -eq 0 ] || [ -e "$smartdns_dir/ioa-dns.conf" ]; then
-        echo 'FAIL failed backup restore did not restore live fragment absence' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   failed backup restore restores absence of the live IOA fragment'
+    echo 'OK   failed backup restore atomically restores all live fragment states'
 
     printf '%s\n' 'bind 127.0.0.1:53' >"$backup_dir/smartdns.conf.bak"
     restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
@@ -312,7 +316,12 @@ EOF
         rm -rf "$sandbox"
         return 1
     fi
-    echo 'OK   rollback removes the IOA fragment only when the restored config omits it'
+    if [ ! -e "$smartdns_dir/office.conf" ] || [ ! -e "$smartdns_dir/dhcp-dns.conf" ]; then
+        echo 'FAIL rollback removed non-obsolete repository-managed fragments' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   rollback removes only the obsolete unreferenced IOA fragment'
 
     printf '%s\n' 'backup metadata base' >"$backup_dir/smartdns.conf.bak"
     chmod 604 "$backup_dir/smartdns.conf.bak"

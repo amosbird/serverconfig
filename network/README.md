@@ -211,11 +211,13 @@ repository-owned rule shapes at priorities 500, 1000, 1500, 2500, and 3000, tabl
 repository-owned legacy mark-`0x1` NAT state. After flushing `cn_stage` by its owned name,
 rollback atomically removes its dynamic `rt_tables` registration only when both the name and ID
 are unique. A duplicate name or conflicting ID is warned about and preserved to avoid deleting a
-foreign registration. Rollback restores a backed-up legacy `ioa-dns.conf` whenever the restored
-SmartDNS config includes it; if no fragment was backed up, it creates an empty comment-only fragment
-before using the same failure-safe transaction to restore and restart the old base config. It
-removes the obsolete fragment only when the restored config does not reference it. Unrelated rules
-sharing repository priorities survive. SmartGateAgent tables `20`,
+foreign registration. Rollback treats the repository-managed `office.conf`, `dhcp-dns.conf`, and
+`ioa-dns.conf` files as one transaction with the base config. It restores backed-up fragments with
+their metadata and creates safe empty placeholders for referenced fragments that had no backup, so
+every restored `conf-file` target exists before SmartDNS restarts. A failed deployment restores each
+fragment's original content, metadata, or absence. The obsolete IOA fragment is removed only when
+the restored config does not reference it; office and DHCP fragments are retained conservatively.
+Unrelated rules sharing repository priorities survive. SmartGateAgent tables `20`,
 `230`, and `ioa` and Tailscale table `52` and exit-node preferences are never
 flushed or changed by rollback. Legacy tables `500` and `501` are also retained because they have
 no independent ownership record; leaving possible disk/kernel garbage is safer than deleting a
