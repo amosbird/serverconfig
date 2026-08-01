@@ -132,6 +132,7 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
+    sudo cp "$DIR"/network/systemd/network-debug-pcap.service /etc/systemd/system/
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
     # Retiring fallback only stops its policy-preference updates; it does not alter links.
@@ -156,6 +157,11 @@ if [[ -n $GUI ]]; then
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
     sudo systemctl enable network-reconfigure.path
+    [ -x /usr/bin/tcpdump ] || {
+        echo 'tcpdump is required; network-debug-pcap.service was not enabled' >&2
+        exit 1
+    }
+    sudo systemctl enable --now network-debug-pcap.service
 
     # Setup kitty desktop-ui portal (replaces xdg-desktop-portal-termfilechooser)
     kitten desktop-ui enable-portal

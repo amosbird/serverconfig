@@ -168,14 +168,42 @@ exactly.
 This retains three important invariants across AP changes: public DHCP DNS remains reachable,
 `cn` routes use the current gateway, and tunnel-owned tables and marks remain untouched.
 
+## Packet recorder and incident capture
+
+`network-debug-pcap.service` keeps a root-only packet ring under
+`/var/log/network-debug/ring`. It captures only outer `wlan0` UDP traffic on ports 3478 and
+41641, stores 96-byte snapshots, and rotates eight 8 MB files (about 64 MB maximum). The pcap
+files can contain IP addresses and packet metadata; treat the whole directory as private.
+
+To preserve the ring, collect before/after state, and run parallel 30-second captures on `wlan0`
+and `tailscale0`:
+
+```bash
+scripts/network-debug-capture "optional incident note"
+```
+
+The command uses non-interactive `sudo -n`, writes a root-only incident under
+`/var/log/network-debug/incidents`, and retains the newest five incidents. It temporarily stops
+only the recorder service while copying the ring, then restores it if it was active. It never
+changes routes, firewall rules, tunnel preferences, or network services. Individual diagnostic
+failures and timeout return codes are recorded in `manifest.tsv` instead of aborting collection.
+
+`--bugreport` additionally runs `tailscale bugreport --diagnose`. This can upload diagnostic logs
+to Tailscale and return a shareable identifier, so it is never run by default:
+
+```bash
+scripts/network-debug-capture --bugreport "incident note"
+```
+
 ## Testing and diagnostics
 
-Run the three repository checks:
+Run the four repository checks:
 
 ```bash
 bash network/test-ip-override.sh
 sudo -n bash network/test-reconfigure.sh
 bash network/test-static-policy.sh
+bash network/test-debug-capture.sh
 ```
 
 `network/test-reconfigure.sh` runs destructive routing, firewall, roaming, cold-start, and

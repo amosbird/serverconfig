@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+SYSTEMCTL=${SYSTEMCTL:-/usr/bin/systemctl}
+TIMEOUT=${TIMEOUT:-/usr/bin/timeout}
+TCPDUMP=${TCPDUMP:-/usr/bin/tcpdump}
+RING_DIR=${RING_DIR:-/var/log/network-debug/ring}
+
+diagnostic_commands=()
+
+sanitize_note() {
+    LC_ALL=C tr -d '[:cntrl:]'
+}
+
+record_command() {
+    local incident=$1 phase=$2 label=$3 limit=$4
+    shift 4
+    local output="$incident/$phase/${label//[^A-Za-z0-9_.-]/_}.txt" rc
+    mkdir -p "$incident/$phase"
+    if "$TIMEOUT" --kill-after=2s "$limit" "$@" >"$output" 2>&1; then
+        rc=0
+    else
+        rc=$?
+    fi
+    printf '%s\t%s\t%s\n' "$rc" "$label" "$phase" >>"$incident/manifest.tsv"
+    return 0
+}
+
+run_snapshot() {
+    local incident=$1 phase=$2 entry label limit command
+    shift 2
+    if ((${#diagnostic_commands[@]})); then
+        for entry in "${diagnostic_commands[@]}"; do
+            IFS='|' read -r label limit command entry <<<"$entry"
+            record_command "$incident" "$phase" "$label" "$limit" "$command" "$entry"
+        done
+        return
+    fi
+
+    record_command "$incident" "$phase" date 5 /usr/bin/date --iso-8601=seconds
+    record_command "$incident" "$phase" uname 5 /usr/bin/uname -a
+    record_command "$incident" "$phase" uptime 5 /usr/bin/uptime
+    record_command "$incident" "$phase" iw-link 5 /usr/bin/iw dev wlan0 link
+    record_command "$incident" "$phase" ip-addr 5 /usr/bin/ip addr show
+    record_command "$incident" "$phase" ip-rule 5 /usr/bin/ip rule show
+    for entry in main 52 ioa 20 230 cn; do
+        record_command "$incident" "$phase" "ip-route-$entry" 5 /usr/bin/ip route show table "$entry"
+    done
+    record_command "$incident" "$phase" iptables-mangle 10 /usr/bin/iptables-save -t mangle
+    record_command "$incident" "$phase" iptables-nat 10 /usr/bin/iptables-save -t nat
+    record_command "$incident" "$phase" nft-ruleset 10 /usr/bin/nft list ruleset
+    record_command "$incident" "$phase" conntrack 10 /usr/bin/conntrack -L -p udp
+    record_command "$incident" "$phase" ss-tailscaled 5 /usr/bin/ss -uapn
+    record_command "$incident" "$phase" sysctl-src-valid-mark 5 /usr/sbin/sysctl net.ipv4.conf.all.src_valid_mark
+    record_command "$incident" "$phase" sysctl-rp-filter 5 /usr/sbin/sysctl -a --pattern 'net.ipv4.conf.*.rp_filter'
+    record_command "$incident" "$phase" tailscale-version 10 /usr/bin/tailscale version
+    record_command "$incident" "$phase" tailscale-status 10 /usr/bin/tailscale status --json
+    record_command "$incident" "$phase" tailscale-prefs 10 /usr/bin/tailscale debug prefs
+    record_command "$incident" "$phase" tailscale-netcheck 20 /usr/bin/tailscale netcheck
+    record_command "$incident" "$phase" tailscale-metrics 10 /usr/bin/tailscale debug metrics
+    record_command "$incident" "$phase" tailscale-derp-map 10 /usr/bin/tailscale debug derp-map
+    for entry in tailscaled systemd-networkd network-reconfigure smartdns ngnclient; do
+        record_command "$incident" "$phase" "journal-$entry" 15 /usr/bin/journalctl -b -u "$entry" --no-pager
+    done
+}
+
+freeze_ring() (
+    local incident=$1 service=$2 active=false
+    trap 'if $active; then "$SYSTEMCTL" start "$service" >/dev/null 2>&1 || true; fi' EXIT
+    if "$SYSTEMCTL" is-active --quiet "$service"; then
+        active=true
+        "$SYSTEMCTL" stop "$service" || return
+    fi
+    mkdir -p "$incident/ring"
+    if [ -d "$RING_DIR" ]; then
+        cp -a "$RING_DIR"/. "$incident/ring"/
+    fi
+)
+
+run_deep_capture() {
+    local incident=$1 duration=$2 wlan_pid tail_pid wlan_rc tail_rc
+    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -i wlan0 -s 96 -n \
+        -w "$incident/wlan0.pcap" 'udp port 3478 or udp port 41641' \
+        >"$incident/wlan0-tcpdump.txt" 2>&1 &
+    wlan_pid=$!
+    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -i tailscale0 -s 96 -n \
+        -w "$incident/tailscale0.pcap" 'udp port 3478' \
+        >"$incident/tailscale0-tcpdump.txt" 2>&1 &
+    tail_pid=$!
+    if wait "$wlan_pid"; then wlan_rc=0; else wlan_rc=$?; fi
+    if wait "$tail_pid"; then tail_rc=0; else tail_rc=$?; fi
+    printf '%s\t%s\t%s\n' "$wlan_rc" 'tcpdump wlan0' capture >>"$incident/manifest.tsv"
+    printf '%s\t%s\t%s\n' "$tail_rc" 'tcpdump tailscale0' capture >>"$incident/manifest.tsv"
+}
+
+prune_incidents() {
+    local base=$1 path i
+    local -a paths
+    mapfile -t paths < <(find "$base" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
+        sort -nr | cut -d' ' -f2-)
+    if ((${#paths[@]} > 5)); then
+        for ((i = 5; i < ${#paths[@]}; i++)); do
+            path=${paths[i]}
+            [[ $path == "$base"/* ]] && rm -rf -- "$path"
+        done
+    fi
+}
+
+capture_main() {
+    local base=$1 service=$2 duration=$3 bugreport=$4
+    shift 4
+    local timestamp incident note=${*:-}
+    umask 077
+    install -d -m 0700 "$base"
+    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+    incident=$(mktemp -d "$base/$timestamp.XXXXXX") || return 1
+    chmod 0700 "$incident"
+    : >"$incident/manifest.tsv"
+    if [ -n "$note" ]; then
+        printf '%s' "$note" | sanitize_note >"$incident/note.txt"
+    fi
+
+    freeze_ring "$incident" "$service"
+    run_snapshot "$incident" before
+    run_deep_capture "$incident" "$duration"
+    run_snapshot "$incident" after
+    if $bugreport; then
+        record_command "$incident" after tailscale-bugreport 120 /usr/bin/tailscale bugreport --diagnose
+    fi
+    find "$incident" -type d -exec chmod 0700 {} +
+    find "$incident" -type f -exec chmod 0600 {} +
+    prune_incidents "$base"
+    printf 'Network debug capture complete: %s\n' "$incident"
+    printf 'If required after preserving evidence, run tailscale down manually.\n'
+}
+
+main() {
+    local bugreport=false
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        exec sudo -n -- "$0" "$@"
+    fi
+    if [ "${1-}" = --bugreport ]; then
+        bugreport=true
+        shift
+    elif [ "${1-}" = --help ]; then
+        printf 'Usage: %s [--bugreport] [note ...]\n' "$0"
+        return
+    fi
+    capture_main /var/log/network-debug/incidents network-debug-pcap.service 30 "$bugreport" "$@"
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
+fi
