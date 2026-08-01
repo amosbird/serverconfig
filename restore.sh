@@ -125,6 +125,10 @@ if [[ -n $GUI ]]; then
     # Network stack: iwd + systemd-networkd (see network/README.md).
     # Config only, except retiring the obsolete fallback preference updater below.
     # No link-managing service or tunnel is stopped, so restore.sh does not drop the connection.
+    [ -x /usr/bin/tcpdump ] || {
+        echo 'tcpdump is required; network debug units were not installed' >&2
+        exit 1
+    }
     sudo mkdir -p /etc/iwd /etc/systemd/network /etc/systemd/system/wpa_supplicant@.service.d
     sudo cp "$DIR"/network/iwd/main.conf /etc/iwd/main.conf
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
@@ -157,11 +161,10 @@ if [[ -n $GUI ]]; then
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
     sudo systemctl enable network-reconfigure.path
-    [ -x /usr/bin/tcpdump ] || {
-        echo 'tcpdump is required; network-debug-pcap.service was not enabled' >&2
-        exit 1
-    }
-    sudo systemctl enable --now network-debug-pcap.service
+    # An explicit deployment restarts the recorder, resetting its current packet ring.
+    sudo systemctl enable network-debug-pcap.service
+    sudo systemctl restart network-debug-pcap.service
+    sudo systemctl is-active --quiet network-debug-pcap.service
 
     # Setup kitty desktop-ui portal (replaces xdg-desktop-portal-termfilechooser)
     kitten desktop-ui enable-portal

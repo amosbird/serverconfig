@@ -6,23 +6,23 @@ After=network.target
 Type=simple
 User=root
 ExecStartPre=/usr/bin/install -d -o root -g root -m 0700 /var/log/network-debug/ring
-ExecStart=/usr/bin/tcpdump -i wlan0 -s 96 -n -U -Z root -w /var/log/network-debug/ring/trace.pcap -C 8 -W 8 udp port 3478 or udp port 41641
+ExecStart=/usr/bin/tcpdump -p -i wlan0 -s 96 -n -U -Z root -w /var/log/network-debug/ring/trace.pcap -C 8 -W 8 udp port 3478 or udp port 41641
 Restart=always
 RestartSec=5
 UMask=0077
-CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
-AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/var/log/network-debug
 ProtectHome=true
 PrivateTmp=true
-PrivateDevices=false
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
+RestrictAddressFamilies=AF_PACKET AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

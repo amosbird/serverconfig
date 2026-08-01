@@ -173,7 +173,9 @@ This retains three important invariants across AP changes: public DHCP DNS remai
 `network-debug-pcap.service` keeps a root-only packet ring under
 `/var/log/network-debug/ring`. It captures only outer `wlan0` UDP traffic on ports 3478 and
 41641, stores 96-byte snapshots, and rotates eight 8 MB files (about 64 MB maximum). The pcap
-files can contain IP addresses and packet metadata; treat the whole directory as private.
+files can contain IP addresses and packet metadata. Incident directories contain packet captures,
+command output, journals, routes, process/socket details, and optional notes; treat every incident and
+the whole debug directory as highly sensitive.
 
 To preserve the ring, collect before/after state, and run parallel 30-second captures on `wlan0`
 and `tailscale0`:
@@ -185,8 +187,11 @@ scripts/network-debug-capture "optional incident note"
 The command uses non-interactive `sudo -n`, writes a root-only incident under
 `/var/log/network-debug/incidents`, and retains the newest five incidents. It temporarily stops
 only the recorder service while copying the ring, then restores it if it was active. It never
-changes routes, firewall rules, tunnel preferences, or network services. Individual diagnostic
-failures and timeout return codes are recorded in `manifest.tsv` instead of aborting collection.
+changes routes, firewall rules, tunnel preferences, or network services. `tailscale netcheck` does
+perform active connectivity probes while collecting diagnostics. Individual diagnostic failures and
+timeout return codes are recorded in `manifest.tsv` instead of aborting collection. Text command
+output is capped at 1 MiB per command and marked `truncated=true`; each deep pcap is capped at 8 MB.
+Do not put passwords, tokens, or other secrets in the incident note or command line.
 
 `--bugreport` additionally runs `tailscale bugreport --diagnose`. This can upload diagnostic logs
 to Tailscale and return a shareable identifier, so it is never run by default:
@@ -229,7 +234,8 @@ config and restarts SmartDNS. The restart and active-state check validate the ac
 configuration, including its current fragments. If either fails, deployment atomically restores the
 previous base config and restarts it. `GUI=1 bash restore.sh` uses the same failure-safe deployment
 and directly disables and removes the obsolete fallback service and state rather than waiting for
-migration activation. The complete replace/restart/rollback transaction shares
+migration activation. Deploying the recorder unit explicitly restarts it, which resets the existing
+packet ring. The complete replace/restart/rollback transaction shares
 `/run/lock/network-reconfigure.lock` with the reconciler, so fragment updates and restarts cannot
 interleave. Neither path mutates tunnel preferences or owner-managed routes.
 

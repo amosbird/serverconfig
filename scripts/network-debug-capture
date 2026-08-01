@@ -31,7 +31,7 @@ record_command() {
     mkdir -p "$incident/$phase"
     temp=$(mktemp "$incident/$phase/.${label//[^A-Za-z0-9_.-]/_}.XXXXXX") || return 1
     # shortcut: RLIMIT_FSIZE is the kernel-enforced 1 MiB ceiling; retain the partial output and rc.
-    if (ulimit -f 2048; "$TIMEOUT" --kill-after=2s "$limit" "$@") >"$temp" 2>&1; then
+    if (ulimit -f 1024; "$TIMEOUT" --kill-after=2s "$limit" "$@") >"$temp" 2>&1; then
         rc=0
     else
         rc=$?
@@ -113,8 +113,11 @@ freeze_ring() (
     if [ "$state" = active ]; then
         initial_active=true
         append_manifest "$incident" 0 'recorder initially active' freeze
-    else
+    elif [ "$state" = inactive ]; then
         append_manifest "$incident" 0 'recorder initially inactive' freeze
+    else
+        append_manifest "$incident" 1 'recorder initial state' freeze
+        return 1
     fi
 
     trap 'if $initial_active && ! $restored; then restore_recorder "$incident" "$service" || result=1; fi' EXIT

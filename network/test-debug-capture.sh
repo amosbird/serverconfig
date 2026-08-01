@@ -82,6 +82,7 @@ printf 'systemctl %s\n' "$*" >>"$NETWORK_DEBUG_TEST_LOG"
 state=$(cat "$NETWORK_DEBUG_TEST_STATE")
 case "${1-}" in
     is-active)
+        [ "${NETWORK_DEBUG_ACTIVE_FAIL:-0}" = 0 ] || exit 2
         printf '%s\n' "$state"
         [ "$state" = active ]
         ;;
@@ -125,7 +126,7 @@ EOF
 }
 
 load_script() {
-    local fakebin=$1 ring=$2 log=$3 state=$4
+    local fakebin=$1 ring=$2 log=$3 state_file=$4
     # shellcheck source=scripts/network-debug-capture
     source "$SCRIPT"
     SYSTEMCTL="$fakebin/systemctl"
@@ -133,7 +134,7 @@ load_script() {
     TCPDUMP="$fakebin/tcpdump"
     RING_DIR=$ring
     NETWORK_DEBUG_TEST_LOG=$log
-    NETWORK_DEBUG_TEST_STATE=$state
+    NETWORK_DEBUG_TEST_STATE=$state_file
     export NETWORK_DEBUG_TEST_LOG NETWORK_DEBUG_TEST_STATE
 }
 
@@ -160,6 +161,13 @@ freeze_contract() (
     assert_not_contains "$log" 'systemctl stop network-debug-pcap.service'
     assert_not_contains "$log" 'systemctl start network-debug-pcap.service'
     assert_contains "$incident/manifest.tsv" $'0\trecorder start skipped (initially inactive)\tfreeze'
+
+    rm -rf "$incident"; mkdir "$incident"; : >"$log"; printf active >"$state"
+    NETWORK_DEBUG_ACTIVE_FAIL=1; export NETWORK_DEBUG_ACTIVE_FAIL
+    if freeze_ring "$incident" network-debug-pcap.service; then fail 'state query failure was accepted'; fi
+    assert_contains "$incident/manifest.tsv" $'1\trecorder initial state\tfreeze'
+    assert_not_contains "$log" 'systemctl stop network-debug-pcap.service'
+    unset NETWORK_DEBUG_ACTIVE_FAIL
 
     rm -rf "$incident"; mkdir "$incident"; : >"$log"; printf active >"$state"
     NETWORK_DEBUG_STOP_FAIL=1; export NETWORK_DEBUG_STOP_FAIL
