@@ -46,6 +46,46 @@ record_command() {
     return 0
 }
 
+record_route_events() {
+    local incident=$1 phase=$2 label=route-events output temp rc size truncated=false
+    output="$incident/$phase/$label.txt"
+    mkdir -p "$incident/$phase"
+    temp=$(mktemp "$incident/$phase/.$label.XXXXXX") || return 1
+    # shortcut: retain the newest 5,000 matching events plus all-event counts and endpoints.
+    if (ulimit -f 1024; "$TIMEOUT" --kill-after=2s 20 /usr/bin/journalctl -b --since=-15min \
+            -n 30000 --no-pager -u tailscaled -u network-reconfigure.service | /usr/bin/awk '
+        /monitor: RTM_(NEW|DEL)ROUTE/ { kind="route" }
+        /network-reconfigure/ && !/monitor: RTM_(NEW|DEL)ROUTE/ { kind="reconfigure" }
+        kind {
+            count[kind]++
+            if (!(kind in first)) first[kind]=$0
+            last[kind]=$0
+            lines[++seen]=$0
+            if (seen > 5000) delete lines[seen - 5000]
+            kind=""
+        }
+        END {
+            for (i = 1; i <= 2; i++) {
+                kind = (i == 1 ? "route" : "reconfigure")
+                printf "%s count=%d\n%s first=%s\n%s last=%s\n", kind, count[kind], kind, \
+                    first[kind], kind, last[kind]
+            }
+            print "timeline (newest 5000 matching events):"
+            start = seen > 5000 ? seen - 4999 : 1
+            for (i = start; i <= seen; i++) print lines[i]
+        }
+    ' >"$temp" 2>&1); then
+        rc=0
+    else
+        rc=$?
+    fi
+    size=$(stat -c %s "$temp")
+    if ((size >= MAX_TEXT_BYTES)); then truncated=true; fi
+    head -c "$MAX_TEXT_BYTES" "$temp" >"$output"
+    rm -f "$temp"
+    append_manifest "$incident" "$rc" "$label" "$phase" "$truncated"
+}
+
 run_snapshot() {
     local incident=$1 phase=$2 entry label limit command
     if ((${#diagnostic_commands[@]})); then
@@ -61,6 +101,7 @@ run_snapshot() {
     record_command "$incident" "$phase" uptime 5 /usr/bin/uptime
     record_command "$incident" "$phase" iw-link 5 /usr/bin/iw dev wlan0 link
     record_command "$incident" "$phase" ip-addr 5 /usr/bin/ip addr show
+    record_command "$incident" "$phase" ip-link-stats 5 /usr/bin/ip -s link
     record_command "$incident" "$phase" ip-rule 5 /usr/bin/ip rule show
     for entry in main 52 ioa 20 230 cn; do
         record_command "$incident" "$phase" "ip-route-$entry" 5 /usr/bin/ip route show table "$entry"
@@ -68,8 +109,15 @@ run_snapshot() {
     record_command "$incident" "$phase" iptables-mangle 10 /usr/bin/iptables-save -t mangle
     record_command "$incident" "$phase" iptables-nat 10 /usr/bin/iptables-save -t nat
     record_command "$incident" "$phase" nft-ruleset 10 /usr/bin/nft list ruleset
-    record_command "$incident" "$phase" conntrack 10 /usr/bin/conntrack -L -p udp
-    record_command "$incident" "$phase" ss-tailscaled 5 /usr/bin/ss -uapn
+    record_command "$incident" "$phase" conntrack-udp 10 /usr/bin/conntrack -L -p udp
+    record_command "$incident" "$phase" conntrack-tcp 10 /usr/bin/conntrack -L -p tcp
+    record_command "$incident" "$phase" ss-tcp 5 /usr/bin/ss -tapne
+    record_command "$incident" "$phase" ss-udp 5 /usr/bin/ss -uapne
+    record_command "$incident" "$phase" proc-net-snmp 5 /usr/bin/cat /proc/net/snmp
+    record_command "$incident" "$phase" proc-net-netstat 5 /usr/bin/cat /proc/net/netstat
+    if [ -x /usr/bin/nstat ]; then
+        record_command "$incident" "$phase" nstat 5 /usr/bin/nstat -asz
+    fi
     record_command "$incident" "$phase" sysctl-src-valid-mark 5 /usr/sbin/sysctl net.ipv4.conf.all.src_valid_mark
     record_command "$incident" "$phase" sysctl-rp-filter 5 /usr/sbin/sysctl -a --pattern 'net.ipv4.conf.*.rp_filter'
     record_command "$incident" "$phase" tailscale-version 10 /usr/bin/tailscale version
@@ -78,6 +126,8 @@ run_snapshot() {
     record_command "$incident" "$phase" tailscale-netcheck 20 /usr/bin/tailscale netcheck
     record_command "$incident" "$phase" tailscale-metrics 10 /usr/bin/tailscale debug metrics
     record_command "$incident" "$phase" tailscale-derp-map 10 /usr/bin/tailscale debug derp-map
+    record_command "$incident" "$phase" tailscale-goroutines 15 /usr/bin/tailscale debug daemon-goroutines
+    record_route_events "$incident" "$phase"
     for entry in tailscaled systemd-networkd network-reconfigure smartdns ngnclient; do
         record_command "$incident" "$phase" "journal-$entry" 15 \
             /usr/bin/journalctl -b -u "$entry" --since=-15min -n 5000 --no-pager
@@ -212,11 +262,13 @@ freeze_ring() (
 start_deep() {
     local incident=$1 duration=$2
     "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -p -i wlan0 -s 96 -n \
-        -C 8 -W 1 -w "$incident/wlan0.pcap" 'udp port 3478 or udp port 41641' \
+        -C 8 -W 1 -w "$incident/wlan0.pcap" \
+        'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443' \
         >"$incident/wlan0-tcpdump.txt" 2>&1 &
     deep_wlan_pid=$!
     "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -p -i tailscale0 -s 96 -n \
-        -C 8 -W 1 -w "$incident/tailscale0.pcap" 'udp port 3478' \
+        -C 8 -W 1 -w "$incident/tailscale0.pcap" \
+        'udp port 3478 or tcp port 80 or tcp port 443' \
         >"$incident/tailscale0-tcpdump.txt" 2>&1 &
     deep_tail_pid=$!
 }

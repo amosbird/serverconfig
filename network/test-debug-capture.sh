@@ -98,6 +98,74 @@ service_directory_mutation_contract() (
     fi
 )
 
+snapshot_command_contract() {
+    local script=$1 command
+    # shellcheck disable=SC2016 # Assert literal script source, not test variables.
+    local -a commands=(
+        'record_command "$incident" "$phase" ip-link-stats 5 /usr/bin/ip -s link'
+        'record_command "$incident" "$phase" conntrack-tcp 10 /usr/bin/conntrack -L -p tcp'
+        'record_command "$incident" "$phase" ss-tcp 5 /usr/bin/ss -tapne'
+        'record_command "$incident" "$phase" ss-udp 5 /usr/bin/ss -uapne'
+        'record_command "$incident" "$phase" tailscale-goroutines 15 /usr/bin/tailscale debug daemon-goroutines'
+        'record_command "$incident" "$phase" proc-net-snmp 5 /usr/bin/cat /proc/net/snmp'
+        'record_command "$incident" "$phase" proc-net-netstat 5 /usr/bin/cat /proc/net/netstat'
+        'record_command "$incident" "$phase" nstat 5 /usr/bin/nstat -asz'
+        'record_route_events "$incident" "$phase"'
+    )
+    for command in "${commands[@]}"; do
+        assert_contains "$script" "$command"
+    done
+}
+
+snapshot_command_mutation_contract() (
+    local command mutated="$WORK/network-debug-capture-snapshot-mutated"
+    # shellcheck disable=SC2016 # Remove literal script source, not test variables.
+    local -a commands=(
+        'record_command "$incident" "$phase" ip-link-stats 5 /usr/bin/ip -s link'
+        'record_command "$incident" "$phase" conntrack-tcp 10 /usr/bin/conntrack -L -p tcp'
+        'record_command "$incident" "$phase" ss-tcp 5 /usr/bin/ss -tapne'
+        'record_command "$incident" "$phase" ss-udp 5 /usr/bin/ss -uapne'
+        'record_command "$incident" "$phase" tailscale-goroutines 15 /usr/bin/tailscale debug daemon-goroutines'
+        'record_command "$incident" "$phase" proc-net-snmp 5 /usr/bin/cat /proc/net/snmp'
+        'record_command "$incident" "$phase" proc-net-netstat 5 /usr/bin/cat /proc/net/netstat'
+        'record_command "$incident" "$phase" nstat 5 /usr/bin/nstat -asz'
+        'record_route_events "$incident" "$phase"'
+    )
+    for command in "${commands[@]}"; do
+        cp "$SCRIPT" "$mutated"
+        grep -Fv -- "$command" "$mutated" >"$mutated.tmp"
+        mv "$mutated.tmp" "$mutated"
+        if (snapshot_command_contract "$mutated") >/dev/null 2>&1; then
+            fail "snapshot contract accepted missing command: $command"
+        fi
+    done
+)
+
+snapshot_runtime_contract() (
+    local log="$WORK/snapshot-commands"
+    # shellcheck source=scripts/network-debug-capture
+    source "$SCRIPT"
+    : >"$log"
+    # Capture run_snapshot's argv without executing host diagnostics.
+    record_command() {
+        local incident=$1 phase=$2 label=$3 limit=$4
+        shift 4
+        {
+            # shellcheck disable=SC2016 # Emit literal runtime-contract source.
+            printf 'record_command "$incident" "$phase" %s %s' "$label" "$limit"
+            printf ' %q' "$@"
+            printf '\n'
+        } >>"$log"
+    }
+    record_route_events() {
+        # shellcheck disable=SC2016 # Emit literal runtime-contract source.
+        printf 'record_route_events "$incident" "$phase"\n' >>"$log"
+    }
+    diagnostic_commands=()
+    run_snapshot "$WORK/snapshot" before
+    snapshot_command_contract "$log"
+)
+
 static_script_contract() {
     [ -x "$SCRIPT" ] || fail "missing executable script: $SCRIPT"
     # shellcheck disable=SC2016 # assert literal source, not this test's positional parameters
@@ -106,6 +174,11 @@ static_script_contract() {
     assert_contains "$SCRIPT" 'capture_main /var/log/network-debug/incidents network-debug-pcap.service 30 "$bugreport"'
     # shellcheck disable=SC2016 # Assert literal shell source.
     assert_contains "$SCRIPT" '/usr/bin/journalctl -b -u "$entry" --since=-15min -n 5000 --no-pager'
+    assert_contains "$SCRIPT" "'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443'"
+    assert_contains "$SCRIPT" "'udp port 3478 or tcp port 80 or tcp port 443'"
+    assert_contains "$SCRIPT" 'MAX_TEXT_BYTES=1048576'
+    assert_contains "$SCRIPT" 'monitor: RTM_(NEW|DEL)ROUTE'
+    snapshot_command_contract "$SCRIPT"
     assert_not_contains "$SCRIPT" '^[[:space:]]*(/usr/bin/)?tailscale (down|up|set)( |$)'
     assert_not_contains "$SCRIPT" 'systemctl (restart|stop|start) (tailscaled|systemd-networkd|network-reconfigure|smartdns|ngnclient)'
 
@@ -332,7 +405,9 @@ runtime_contract() (
         fail 'diagnostic output exceeded 1 MiB'
     assert_not_contains "$incident/note.txt" '[[:cntrl:]]'
     assert_contains "$log" 'tcpdump-start wlan0 -p -i wlan0 -s 96 -n -C 8 -W 1 -w'
+    assert_contains "$log" 'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443'
     assert_contains "$log" 'tcpdump-start tailscale0 -p -i tailscale0 -s 96 -n -C 8 -W 1 -w'
+    assert_contains "$log" 'udp port 3478 or tcp port 80 or tcp port 443'
     local wlan_start tail_start first_before capture_done after_start
     wlan_start=$(grep -n 'tcpdump-start wlan0 ' "$log" | head -1 | cut -d: -f1)
     tail_start=$(grep -n 'tcpdump-start tailscale0 ' "$log" | head -1 | cut -d: -f1)
@@ -422,7 +497,11 @@ service_identity_mutation_contract
 service_directory_mutation_contract
 /usr/bin/tcpdump --version >/dev/null
 /usr/bin/tcpdump -d 'udp port 3478 or udp port 41641' >/dev/null
+/usr/bin/tcpdump -d 'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443' >/dev/null
+/usr/bin/tcpdump -d 'udp port 3478 or tcp port 80 or tcp port 443' >/dev/null
 static_script_contract
+snapshot_runtime_contract
+snapshot_command_mutation_contract
 capture_manifest_mutation_contract
 freeze_contract
 runtime_contract

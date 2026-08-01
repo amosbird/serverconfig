@@ -173,8 +173,12 @@ This retains three important invariants across AP changes: public DHCP DNS remai
 `network-debug-pcap.service` has systemd create the root-only `/var/log/network-debug`
 directory before applying its filesystem sandbox, then keeps a packet ring under its `ring`
 subdirectory. It captures only outer `wlan0` UDP traffic on ports 3478 and 41641, stores 96-byte
-snapshots, and rotates eight 8 MB files (about 64 MB maximum). The pcap files can contain IP
-addresses and packet metadata. Incident directories contain packet captures, command output,
+snapshots, and rotates eight 8 MB files (about 64 MB maximum). The service ring remains UDP-only.
+The incident command's 30-second deep captures additionally include TCP ports 80 and 443 on
+`wlan0` and `tailscale0`, with one 8 MB file per interface, to diagnose DERP/control traffic entering
+the tunnel. These deep captures record destination IP addresses and ports plus up to 96 bytes from
+each packet, including TCP and TLS handshake headers. They generally do not contain plaintext
+application payload, but remain highly sensitive. Incident directories also contain command output,
 journals, routes, process/socket details, and optional notes; treat every incident and the whole
 debug directory as highly sensitive.
 
@@ -192,7 +196,9 @@ changes routes, firewall rules, tunnel preferences, or network services. `tailsc
 perform active connectivity probes while collecting diagnostics. Individual diagnostic failures and
 timeout return codes are recorded in `manifest.tsv` instead of aborting collection. Text command
 output is capped at 1 MiB per command and marked `truncated=true`; each deep pcap is capped at 8 MB.
-Do not put passwords, tokens, or other secrets in the incident note or command line.
+The snapshots include TCP/UDP sockets, TCP/UDP conntrack state, kernel network counters, interface
+statistics, bounded tailscaled goroutines, and a route-event timeline with counts and first/last
+events. Do not put passwords, tokens, or other secrets in the incident note or command line.
 
 `--bugreport` additionally runs `tailscale bugreport --diagnose`. This can upload diagnostic logs
 to Tailscale and return a shareable identifier, so it is never run by default:
