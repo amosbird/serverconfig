@@ -38,7 +38,7 @@ else
     echo 'OK   migration activation does not depend on a dynamic IOA DNS fragment'
 fi
 
-smartdns_deployment_contract() {
+smartdns_deployment_contract() (
     local sandbox smartdns_dir fake_systemctl calls output first_pid second_pid old_uid old_gid
     sandbox=$(mktemp -d)
     smartdns_dir="$sandbox/etc/smartdns"
@@ -78,6 +78,62 @@ EOF
 
     # shellcheck source=network/smartdns-deploy.sh
     source network/smartdns-deploy.sh
+
+    # Inject failures without a live filesystem or service. Each wrapper delegates by default.
+    mktemp() {
+        if [ "${SMARTDNS_FAIL_MKTEMP:-0}" = 1 ]; then return 1; fi
+        command mktemp "$@"
+    }
+    cp() {
+        if [ "${SMARTDNS_FAIL_CP:-0}" = 1 ]; then return 1; fi
+        command cp "$@"
+    }
+    chmod() {
+        if [ "${SMARTDNS_FAIL_CHMOD:-0}" = 1 ]; then return 1; fi
+        command chmod "$@"
+    }
+    chown() {
+        if [ "${SMARTDNS_FAIL_CHOWN:-0}" = 1 ]; then return 1; fi
+        command chown "$@"
+    }
+    mv() {
+        if [ "${SMARTDNS_FAIL_CANDIDATE_MV:-0}" = 1 ] &&
+           [[ "${1:-}" = *'.smartdns.conf.candidate.'* ]]; then
+            return 1
+        fi
+        command mv "$@"
+    }
+
+    assert_pre_install_failure() (
+        local description=$1 source=$2 failure=${3:-}
+        printf '%s\n' 'known good config' >"$smartdns_dir/smartdns.conf"
+        : >"$calls"
+        if [ -n "$failure" ]; then
+            export "${failure?}"
+        fi
+        if SMARTDNS_TEST_CALLS="$calls" \
+            deploy_smartdns_config "$source" "$smartdns_dir" \
+                "$fake_systemctl" "$sandbox/deploy.lock" >/dev/null 2>&1 ||
+           ! grep -Fqx 'known good config' "$smartdns_dir/smartdns.conf" ||
+           [ -s "$calls" ]; then
+            printf 'FAIL %s changed the target or called systemctl\n' "$description" >&2
+            return 1
+        fi
+        printf 'OK   %s leaves the old config untouched and does not call systemctl\n' \
+            "$description"
+    )
+
+    assert_pre_install_failure 'missing SmartDNS source' "$sandbox/missing.conf" || return 1
+    assert_pre_install_failure 'SmartDNS candidate mktemp failure' "$sandbox/new.conf" \
+        SMARTDNS_FAIL_MKTEMP=1 || return 1
+    assert_pre_install_failure 'SmartDNS source copy failure' "$sandbox/new.conf" \
+        SMARTDNS_FAIL_CP=1 || return 1
+    assert_pre_install_failure 'SmartDNS candidate chmod failure' "$sandbox/new.conf" \
+        SMARTDNS_FAIL_CHMOD=1 || return 1
+    assert_pre_install_failure 'SmartDNS candidate chown failure' "$sandbox/new.conf" \
+        SMARTDNS_FAIL_CHOWN=1 || return 1
+    assert_pre_install_failure 'SmartDNS candidate install failure' "$sandbox/new.conf" \
+        SMARTDNS_FAIL_CANDIDATE_MV=1 || return 1
 
     : >"$calls"
     if ! SMARTDNS_TEST_CALLS="$calls" \
@@ -191,7 +247,7 @@ EOF
     fi
     echo 'OK   SmartDNS deployment lock serializes complete transactions'
     rm -rf "$sandbox"
-}
+)
 
 if ! smartdns_deployment_contract; then
     fail=1
