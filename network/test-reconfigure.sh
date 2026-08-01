@@ -176,7 +176,7 @@ def replace_once(old, new):
 
 stub = """
 networkctl() { cat WORKDIR/lease; }
-systemctl()  { return 0; }
+systemctl()  { printf '%s\n' "$*" >> WORKDIR/systemctl-calls; return 0; }
 tailscale()  { return 1; }
 logger()     { return 0; }
 dig()        { return 9; }
@@ -226,10 +226,6 @@ for old, new in [
      'write_if_changed %s/dhcp-dns.conf ' % work + '\\' + '\n'),
     ('write_if_changed /etc/smartdns/dhcp-dns.conf "# No DHCP DNS"',
      'write_if_changed %s/dhcp-dns.conf "# No DHCP DNS"' % work),
-    ('write_if_changed /etc/smartdns/ioa-dns.conf ' + '\\' + '\n',
-     'write_if_changed %s/ioa-dns.conf ' % work + '\\' + '\n'),
-    ('write_if_changed /etc/smartdns/ioa-dns.conf "# IOA tunnel is down"',
-     'write_if_changed %s/ioa-dns.conf "# IOA tunnel is down"' % work),
 ]:
     src = replace_once(old, new)
 open(work + '/nr-under-test', 'w').write(src)
@@ -389,6 +385,50 @@ main() {
     [ "$(snapshot_owner_state)" = "$owner_before" ] \
         && ok "tunnel-owned tables and rules are untouched" \
         || bad "tunnel-owned tables or rules changed"
+
+    head_ "SmartDNS fragments ignore tun0 and track DHCP content"
+    rm -f "$WORK/ioa-dns.conf"
+    : > "$WORK/systemctl-calls"
+    ip addr flush dev tun0
+    run_script 1 >/dev/null
+    if [ ! -e "$WORK/ioa-dns.conf" ] &&
+       ! grep -Fq 'restart smartdns' "$WORK/systemctl-calls"; then
+        ok "tun0 down writes no IOA fragment and does not restart SmartDNS"
+    else
+        bad "tun0 down changed IOA DNS state or restarted SmartDNS"
+    fi
+    : > "$WORK/systemctl-calls"
+    ip addr add 192.168.255.10/24 dev tun0
+    run_script 1 >/dev/null
+    ip addr replace 192.168.255.77/24 dev tun0
+    ip route replace default dev tun0 table 52
+    run_script 1 >/dev/null
+    if [ ! -e "$WORK/ioa-dns.conf" ] &&
+       ! grep -Fq 'restart smartdns' "$WORK/systemctl-calls"; then
+        ok "tun0 up and address changes write no IOA fragment and do not restart SmartDNS"
+    else
+        bad "tun0 up or address change changed IOA DNS state or restarted SmartDNS"
+    fi
+    : > "$WORK/systemctl-calls"
+    printf '   6 domain name server 203.0.113.53\n' > "$WORK/lease"
+    run_script 1 >/dev/null
+    if grep -Fqx '# DHCP DNS from wlan0' "$WORK/dhcp-dns.conf" &&
+       grep -Fqx 'server 203.0.113.53' "$WORK/dhcp-dns.conf" &&
+       [ "$(grep -Fxc 'restart smartdns' "$WORK/systemctl-calls")" -eq 1 ]; then
+        ok "changed DHCP DNS rewrites its fragment and restarts SmartDNS once"
+    else
+        bad "changed DHCP DNS was not applied exactly once"
+    fi
+    : > "$WORK/systemctl-calls"
+    run_script 1 >/dev/null
+    if ! grep -Fq 'restart smartdns' "$WORK/systemctl-calls"; then
+        ok "unchanged DHCP DNS does not restart SmartDNS"
+    else
+        bad "unchanged DHCP DNS restarted SmartDNS"
+    fi
+    printf '   6 domain name server 202.152.254.230\n                        202.152.254.65\n' \
+        > "$WORK/lease"
+    run_script 1 >/dev/null
 
     head_ "direct routes override IOA business policy"
     [ "$(route_table 10.20.1.1)" = cn ] && ok "routefile overrides static 10/8 IOA" \

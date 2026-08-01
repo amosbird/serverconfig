@@ -4,6 +4,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 fail=0
+IOA_SERVER='server 192.168.255.10 -group ioa -exclude-default-group'
 reject() {
     local description="$1" pattern="$2"
     shift 2
@@ -16,6 +17,27 @@ reject() {
     fi
     rm -f /tmp/network-static.$$
 }
+
+if [ "$(grep -Fxc "$IOA_SERVER" network/smartdns/smartdns.conf)" -ne 1 ]; then
+    echo 'FAIL SmartDNS base config does not contain exactly one permanent IOA resolver' >&2
+    fail=1
+else
+    echo 'OK   SmartDNS base config contains exactly one permanent IOA resolver'
+fi
+reject 'SmartDNS base config does not include a dynamic IOA fragment' \
+    'conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf' network/smartdns/smartdns.conf
+reject 'production reconciler has no dynamic IOA DNS logic' \
+    'IOA_RESOLVER|ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
+reject 'deployment does not seed a dynamic IOA DNS fragment' \
+    'ioa-dns\.conf|IOA tunnel is down' restore.sh
+# Rollback may remove the obsolete fragment, but deployment paths must not create or depend on it.
+if sed -n '/^install_configs() {/,/^}/p; /^activate() {/,/^}/p' network/migrate.sh |
+   grep -Eq 'ioa-dns\.conf|IOA tunnel is down'; then
+    echo 'FAIL migration install/activation depends on a dynamic IOA DNS fragment' >&2
+    fail=1
+else
+    echo 'OK   migration install/activation does not depend on a dynamic IOA DNS fragment'
+fi
 
 [ ! -e scripts/network-fallback ] || { echo 'FAIL network-fallback script remains'; fail=1; }
 [ ! -e network/systemd/network-fallback.service ] || {

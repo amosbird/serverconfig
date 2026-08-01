@@ -146,14 +146,12 @@ if [[ -n $GUI ]]; then
     # SmartDNS base config.
     sudo mkdir -p /etc/smartdns
     sudo cp "$DIR"/network/smartdns/smartdns.conf /etc/smartdns/
-    # office.conf, dhcp-dns.conf and ioa-dns.conf are rewritten per link by
-    # network-reconfigure; only seed them so smartdns can start before it runs.
+    # office.conf and dhcp-dns.conf are rewritten per link by network-reconfigure;
+    # only seed them so SmartDNS can start before it runs.
     [[ -e /etc/smartdns/office.conf ]] ||
         echo '# Not on the office LAN' | sudo tee /etc/smartdns/office.conf >/dev/null
     [[ -e /etc/smartdns/dhcp-dns.conf ]] ||
         sudo cp "$DIR"/network/smartdns/dhcp-dns.conf /etc/smartdns/dhcp-dns.conf
-    [[ -e /etc/smartdns/ioa-dns.conf ]] ||
-        echo '# IOA tunnel is down' | sudo tee /etc/smartdns/ioa-dns.conf >/dev/null
 
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
     sudo udevadm control --reload-rules

@@ -20,7 +20,7 @@ Ownership is deliberately narrow:
 - **`scripts/network-reconfigure`** owns the repository's rules at priorities 500, 1000,
   1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage` table;
   `ipset ioa_intranet`; the `NETMODE_IOA` chain and its OUTPUT hook; the exact IOA
-  MASQUERADE rule; and generated SmartDNS fragments.
+  MASQUERADE rule; and the generated DHCP and office SmartDNS fragments.
 - **SmartDNS** owns the domain-derived `ipset ioa` membership.
 - **SmartGateAgent** owns `tun0`, mark `0xa38`, tables `20` and `230`, and the contents and
   lifetime of table `ioa`. The `scripts/overrides/ip` wrapper only rewrites its unqualified
@@ -77,6 +77,13 @@ exceptions because a LAN can overlap `10/8` and a DHCP resolver can be a public 
 
 ## SmartDNS IOA classification
 
+The IOA upstream is permanently declared in the base SmartDNS configuration as
+`server 192.168.255.10 -group ioa -exclude-default-group`. It is not generated from
+`tun0` state: link down/up and address-change events neither rewrite an IOA fragment nor restart
+SmartDNS. When IOA is unavailable, IOA-group names fail closed and may wait for the upstream
+timeout; they do not fall back to a public resolver. Ordinary default-group DNS remains independent
+and continues through its default and DHCP upstreams.
+
 SmartDNS adds addresses resolved for configured IOA domains to dynamic `ipset ioa`.
 `network-reconfigure` maintains a second set, `ioa_intranet`, containing:
 
@@ -126,7 +133,7 @@ Tailscale and SmartGateAgent receive link changes independently and repair their
 
 The reconciler then:
 
-1. atomically updates generated SmartDNS fragments when their content changes;
+1. atomically updates the generated DHCP and office SmartDNS fragments when their content changes;
 2. derives actual connected-LAN, gateway, and DHCP DNS rules;
 3. stages routefile routes, validates them, and updates `cn` for the current gateway;
 4. reconciles only the five repository-owned priority bands;

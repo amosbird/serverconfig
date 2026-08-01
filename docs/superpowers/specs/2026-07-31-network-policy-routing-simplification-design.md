@@ -158,7 +158,13 @@ Table `ioa` is therefore populated by SmartGateAgent through the override, while
 - ordering the `cn`, IOA business, and tailnet policy rules;
 - `ipset ioa_intranet`;
 - the minimal `NETMODE_IOA` chain and exact business mark rule;
-- SmartDNS fragments that depend on the physical DHCP lease or presence of `tun0`.
+- SmartDNS DHCP and office fragments that depend on the physical link. The IOA resolver is
+  permanently configured in the base SmartDNS config and never generated from `tun0` state.
+
+SmartDNS always configures `192.168.255.10` in the excluded `ioa` group. When `tun0` is absent,
+IOA names fail closed and may time out rather than using a public resolver; the default group remains
+independent. The reconciler never generates an IOA DNS fragment or restarts SmartDNS for `tun0`
+down/up or address changes.
 
 On AP or DHCP changes it updates only those objects. It does not react to `tailscale0` or `tun0` as routing-change inputs and does not operate tables `20`, `230`, `52`, or Tailscale preferences.
 

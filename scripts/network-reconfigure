@@ -29,7 +29,6 @@ CN_TABLE="cn"
 CN_STAGE_TABLE="cn_stage"
 RT_TABLES="${RT_TABLES_OVERRIDE:-/etc/iproute2/rt_tables}"
 IOA_TABLE="ioa"
-IOA_RESOLVER="192.168.255.10"
 ROUTEFILE="/home/amos/.routefile"
 OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
 OFFICE_DST="/etc/smartdns/office.conf"
@@ -235,13 +234,6 @@ if [ -n "${dns:-}" ]; then
         "$(printf '# DHCP DNS from %s\n' "$IFACE"; printf 'server %s\n' $dns)"
 else
     write_if_changed /etc/smartdns/dhcp-dns.conf "# No DHCP DNS"
-fi
-
-if [ -n "$(ip -4 -o addr show tun0 2>/dev/null)" ]; then
-    write_if_changed /etc/smartdns/ioa-dns.conf \
-        "server $IOA_RESOLVER -group ioa -exclude-default-group"
-else
-    write_if_changed /etc/smartdns/ioa-dns.conf "# IOA tunnel is down"
 fi
 
 if ! wired_up; then

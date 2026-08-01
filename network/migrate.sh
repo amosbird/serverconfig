@@ -255,13 +255,9 @@ activate() {
 
     # Apply SmartDNS config now
     cp "$BACKUP_DIR/smartdns-new.conf" /etc/smartdns/smartdns.conf
-    # Both are rewritten by network-reconfigure; seed them so smartdns starts.
+    # Both fragments are rewritten by network-reconfigure; seed them so SmartDNS starts.
     echo '# Not on the office LAN' > /etc/smartdns/office.conf
     touch /etc/smartdns/dhcp-dns.conf
-    # smartdns.conf has `conf-file /etc/smartdns/ioa-dns.conf`, so it must exist
-    # before the restart below or the resolver starts against a missing include.
-    [ -e /etc/smartdns/ioa-dns.conf ] ||
-        echo '# IOA tunnel is down' > /etc/smartdns/ioa-dns.conf
 
     # Lock resolv.conf
     chattr -i /etc/resolv.conf 2>/dev/null || true
