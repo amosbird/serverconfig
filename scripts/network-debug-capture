@@ -66,10 +66,10 @@ run_snapshot() {
 
 freeze_ring() (
     local incident=$1 service=$2 active=false
-    trap 'if $active; then "$SYSTEMCTL" start "$service" >/dev/null 2>&1 || true; fi' EXIT
-    if "$SYSTEMCTL" is-active --quiet "$service"; then
+    trap 'if $active; then "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" start "$service" >/dev/null 2>&1 || true; fi' EXIT
+    if "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" is-active --quiet "$service"; then
         active=true
-        "$SYSTEMCTL" stop "$service" || return
+        "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" stop "$service" || return
     fi
     mkdir -p "$incident/ring"
     if [ -d "$RING_DIR" ]; then
