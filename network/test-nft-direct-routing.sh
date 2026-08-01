@@ -2,16 +2,21 @@
 # Characterize nftables route-output policy routing without touching the live network stack.
 set -euo pipefail
 
-readonly PREFIX=nft-direct-routing-$$
-readonly CLIENT=${PREFIX}-client
-readonly PHYSICAL=${PREFIX}-physical
-readonly EXIT=${PREFIX}-exit
-readonly CN_IP=203.0.113.10
-readonly OTHER_IP=198.51.100.10
 WORK=$(mktemp -d)
 readonly WORK
+readonly TOKEN=${WORK##*.}
+readonly PREFIX=ndr-${TOKEN: -8}
+readonly CLIENT=${PREFIX}-c
+readonly PHYSICAL=${PREFIX}-p
+readonly EXIT=${PREFIX}-e
+readonly CN_IP=203.0.113.10
+readonly OTHER_IP=198.51.100.10
 TCPDUMP_PIDS=()
 SERVER_PIDS=()
+BACKGROUND_PIDS=()
+declare -A NS_CREATED=()
+declare -A NS_INODE=()
+CLEANED_UP=0
 
 fail() {
     printf 'FAIL %s\n' "$*" >&2
@@ -33,13 +38,23 @@ ns() {
 }
 
 cleanup() {
-    local pid namespace
-    for pid in "${TCPDUMP_PIDS[@]}" "${SERVER_PIDS[@]}"; do
+    local pid namespace current_inode
+    [ "$CLEANED_UP" -eq 0 ] || return
+    CLEANED_UP=1
+    for pid in "${TCPDUMP_PIDS[@]}" "${SERVER_PIDS[@]}" "${BACKGROUND_PIDS[@]}"; do
         [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
     done
-    wait 2>/dev/null || true
+    for pid in "${TCPDUMP_PIDS[@]}" "${SERVER_PIDS[@]}" "${BACKGROUND_PIDS[@]}"; do
+        [ -n "$pid" ] && wait "$pid" 2>/dev/null || true
+    done
     for namespace in "$CLIENT" "$PHYSICAL" "$EXIT"; do
-        ip netns del "$namespace" 2>/dev/null || true
+        [ "${NS_CREATED[$namespace]:-0}" -eq 1 ] || continue
+        current_inode=$(stat -Lc '%d:%i' "/run/netns/$namespace" 2>/dev/null || true)
+        if [ -n "$current_inode" ] && [ "$current_inode" = "${NS_INODE[$namespace]}" ]; then
+            ip netns del "$namespace" 2>/dev/null || true
+        else
+            printf 'WARN refusing to delete replaced namespace: %s\n' "$namespace" >&2
+        fi
     done
     if [ "${KEEP_WORK:-0}" = 1 ]; then
         printf 'Artifacts retained at %s\n' "$WORK" >&2
@@ -47,7 +62,9 @@ cleanup() {
         rm -rf "$WORK"
     fi
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 assert_eq() {
     local description=$1 expected=$2 actual=$3
@@ -63,10 +80,12 @@ assert_contains() {
     printf 'OK   %s\n' "$description"
 }
 
-for dependency in ip nft python3 tcpdump ping conntrack awk sed grep pkill; do
+for dependency in ip nft python3 tcpdump ping conntrack awk sed grep flock stat stdbuf; do
     need "$dependency"
 done
 [ "${EUID:-$(id -u)}" -eq 0 ] || fail 'run with sudo/root; only temporary netns are changed'
+exec 9>/run/lock/test-nft-direct-routing.lock
+flock 9
 for namespace in "$CLIENT" "$PHYSICAL" "$EXIT"; do
     ! ip netns list | awk '{print $1}' | grep -Fxq "$namespace" ||
         fail "namespace already exists: $namespace"
@@ -137,10 +156,42 @@ else:
 print(f"peer={response.decode()} local={sock.getsockname()[0]} mark={sock.getsockopt(socket.SOL_SOCKET, socket.SO_MARK):#x}")
 PY
 
+# shortcut: fresh socket-per-probe avoids stale connected-route state; this is a sampled packet-path
+# observer, not proof that every packet crossing the commit boundary was delivered.
+cat >"$WORK/atomic-observer.py" <<'PY'
+import pathlib
+import socket
+import sys
+import time
+
+stop_path, ready_path, log_path, cn_ip, other_ip = sys.argv[1:]
+with open(log_path, "w", buffering=1) as log:
+    rounds = 0
+    while not pathlib.Path(stop_path).exists() or rounds < 20:
+        for label, destination in (("CN", cn_ip), ("OTHER", other_ip)):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.settimeout(0.2)
+            try:
+                sock.sendto(f"atomic-{label}-{rounds}".encode(), (destination, 4040))
+                peer, _ = sock.recvfrom(128)
+                result = peer.decode()
+            except TimeoutError:
+                result = "timeout"
+            finally:
+                sock.close()
+            log.write(f"{label} {result}\n")
+        rounds += 1
+        if rounds == 1:
+            pathlib.Path(ready_path).touch()
+        time.sleep(0.002)
+PY
+
 # The only host-level mutations are creation/removal of these three named namespaces. All links,
 # addresses, routes, sysctls, nftables objects, and conntrack state are created inside them.
 for namespace in "$CLIENT" "$PHYSICAL" "$EXIT"; do
     ip netns add "$namespace"
+    NS_CREATED[$namespace]=1
+    NS_INODE[$namespace]=$(stat -Lc '%d:%i' "/run/netns/$namespace")
     ns "$namespace" ip link set lo up
 done
 ns "$CLIENT" ip link add physical0 type veth peer name client0 netns "$PHYSICAL"
@@ -162,7 +213,10 @@ ns "$PHYSICAL" ip link set client0 up
 ns "$EXIT" ip link set client0 mtu 1280 up
 
 ns "$CLIENT" ip route add default via 192.0.2.1 dev physical0
+ns "$CLIENT" ip route add default via 192.0.2.1 dev physical0 table 20
 ns "$CLIENT" ip route add default via 100.64.0.1 dev exit0 table 52
+ns "$CLIENT" ip rule add priority 40 fwmark 0xa38 lookup 20
+ns "$CLIENT" ip rule add priority 41 fwmark 0x80000 lookup main
 ns "$CLIENT" ip rule add priority 50 fwmark 0x2 lookup main
 ns "$CLIENT" ip rule add priority 60 fwmark 0 lookup 52
 ns "$PHYSICAL" ip route add 100.64.0.0/24 via 192.0.2.2
@@ -198,7 +252,6 @@ start_captures() {
 
 stop_captures() {
     local pid
-    ns "$CLIENT" pkill -INT tcpdump 2>/dev/null || true
     for pid in "${TCPDUMP_PIDS[@]}"; do
         kill -INT "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
@@ -242,18 +295,21 @@ result=$(run_socket tcp connected "$OTHER_IP" 0 a-other)
 assert_contains 'ordinary destination uses exit peer' "$result" 'peer=exit'
 for mark in 0x80000 0xa38; do
     result=$(run_socket udp connected "$CN_IP" "$mark" "owner-$mark")
-    assert_contains "owner mark $mark is preserved" "$result" "mark=$mark"
-    assert_contains "owner mark $mark remains on initial exit path" \
-        "$(cat "$WORK/exit.log" 2>/dev/null || true)" "UDP 100.64.0.2 owner-$mark"
+    assert_contains "owner mark $mark is preserved by nft classification" "$result" "mark=$mark"
+    assert_contains "owner mark $mark follows its physical RPDB table" \
+        "$(cat "$WORK/physical.log" 2>/dev/null || true)" \
+        "UDP 192.0.2.2 owner-$mark"
 done
 sleep 0.2
 stop_captures
 A_SOURCE=$(packet_source "$WORK/physical.pcap.txt" "$CN_IP")
 A_MSS=$(syn_mss "$WORK/physical.pcap.txt" "$CN_IP")
 assert_eq 'CN packet source without NAT' '100.64.0.2' "$A_SOURCE"
-assert_eq 'CN SYN MSS keeps initial table-52 MTU' '1240' "$A_MSS"
+# Synthetic topology result: this characterizes the MSS chosen from the initial table-52 route,
+# not an Internet-path PMTU or a production tunnel's negotiated MSS.
+assert_eq 'synthetic CN SYN MSS keeps initial table-52 MTU' '1240' "$A_MSS"
 assert_contains 'ICMP follows physical path' "$(cat "$WORK/physical.pcap.txt")" " > $CN_IP: ICMP echo request"
-printf 'RESULT A_source=%s A_mss=%s A_conntrack=%s\n' "$A_SOURCE" "$A_MSS" \
+printf 'RESULT A_source=%s A_mss_synthetic=%s A_conntrack=%s\n' "$A_SOURCE" "$A_MSS" \
     "$(ns "$CLIENT" conntrack -L 2>/dev/null | grep -c "dst=$CN_IP" || true)"
 
 printf '\n== B: exact-mark postrouting masquerade ==\n'
@@ -276,48 +332,69 @@ stop_captures
 B_SOURCE=$(packet_source "$WORK/physical.pcap.txt" "$CN_IP")
 B_MSS=$(syn_mss "$WORK/physical.pcap.txt" "$CN_IP")
 assert_eq 'CN wire source with exact-mark masquerade' '192.0.2.2' "$B_SOURCE"
-assert_eq 'CN SYN MSS remains initial-path MSS under NAT' '1240' "$B_MSS"
+assert_eq 'synthetic CN SYN MSS remains initial-path MSS under NAT' '1240' "$B_MSS"
 assert_contains 'conntrack records initial table-52 source' "$B_CONNTRACK" 'src=100.64.0.2'
 assert_contains 'conntrack records masqueraded reply destination' "$B_CONNTRACK" 'dst=192.0.2.2'
-printf 'RESULT B_source=%s B_mss=%s\n' "$B_SOURCE" "$B_MSS"
+printf 'RESULT B_source=%s B_mss_synthetic=%s\n' "$B_SOURCE" "$B_MSS"
 printf 'RESULT B_conntrack=%s\n' "$(tr '\n' ';' <<<"$B_CONNTRACK")"
 
-printf '\n== C: atomic interval-set updates ==\n'
-{
-    echo 'flush set inet direct cn_direct'
-    printf 'add element inet direct cn_direct { '
-    for i in $(seq 0 1000); do
-        printf '10.%d.%d.%d' "$((i / 65536))" "$(((i / 256) % 256))" "$((i % 256))"
-        [ "$i" -eq 1000 ] || printf ', '
-    done
-    echo ' }'
-} >"$WORK/set-update.nft"
+printf '\n== C: observed atomic interval-set update ==\n'
+cat >"$WORK/set-update.nft" <<EOF
+flush set inet direct cn_direct
+add element inet direct cn_direct { $OTHER_IP }
+EOF
 ns "$CLIENT" nft -c -f "$WORK/set-update.nft"
 ns "$CLIENT" conntrack -F >/dev/null 2>&1 || true
-sleep 0.1
-ns "$CLIENT" ip monitor route >"$WORK/route-monitor.log" 2>&1 &
+
+: >"$WORK/route-monitor.log"
+ns "$CLIENT" stdbuf -oL ip monitor route >"$WORK/route-monitor.log" 2>&1 &
 monitor_pid=$!
-sleep 0.1
-ns "$CLIENT" nft -f "$WORK/set-update.nft"
+BACKGROUND_PIDS+=("$monitor_pid")
+# ip monitor has no ready event when the route stream is idle. stdbuf plus this startup delay only
+# establishes the observation window; the result below is limited to received rtnetlink notifications.
 sleep 0.2
+
+ns "$CLIENT" python3 "$WORK/atomic-observer.py" "$WORK/observer.stop" \
+    "$WORK/observer.ready" "$WORK/observer.log" "$CN_IP" "$OTHER_IP" &
+observer_pid=$!
+BACKGROUND_PIDS+=("$observer_pid")
+for _ in $(seq 1 100); do
+    [ -e "$WORK/observer.ready" ] && break
+    sleep 0.01
+done
+[ -e "$WORK/observer.ready" ] || fail 'atomic traffic observer did not become ready'
+ns "$CLIENT" nft -f "$WORK/set-update.nft"
+touch "$WORK/observer.stop"
+wait "$observer_pid"
 kill "$monitor_pid" 2>/dev/null || true
 wait "$monitor_pid" 2>/dev/null || true
-SET_COUNT=$(ns "$CLIENT" nft -j list set inet direct cn_direct |
-    python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(len(x["set"].get("elem", [])) for x in d["nftables"] if "set" in x))')
-assert_eq 'transaction installs 1001 prefixes' '1001' "$SET_COUNT"
-assert_eq 'set update emits no route events' '0' "$(wc -l <"$WORK/route-monitor.log")"
-printf 'flush set inet direct cn_direct\nadd element inet direct cn_direct { broken }\n' \
-    >"$WORK/bad-update.nft"
-if ns "$CLIENT" nft -c -f "$WORK/bad-update.nft" >/dev/null 2>&1; then
-    fail 'malformed set unexpectedly passed nft -c'
+
+assert_eq 'active set contains replacement prefix' '1' \
+    "$(ns "$CLIENT" nft -j list set inet direct cn_direct |
+        python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(len(x["set"].get("elem", [])) for x in d["nftables"] if "set" in x))')"
+assert_eq 'set update produced observed rtnetlink notifications' '0' \
+    "$(wc -l <"$WORK/route-monitor.log")"
+assert_eq 'concurrent UDP observer saw no response timeout' '0' \
+    "$(grep -c ' timeout$' "$WORK/observer.log" || true)"
+for state in 'CN physical' 'OTHER exit' 'OTHER physical'; do
+    grep -Fxq "$state" "$WORK/observer.log" || fail "observer did not see transition state: $state"
+done
+printf 'OK   sampled concurrent UDP flows changed from old to new classification without timeout\n'
+
+cat >"$WORK/bad-update.nft" <<EOF
+flush set inet direct cn_direct
+add rule inet direct classify ip daddr @missing_commit_set counter
+EOF
+if ns "$CLIENT" nft -f "$WORK/bad-update.nft" >"$WORK/bad-update.out" 2>&1; then
+    fail 'transaction referencing a missing set unexpectedly committed'
 fi
-if ns "$CLIENT" nft -f "$WORK/bad-update.nft" >/dev/null 2>&1; then
-    fail 'malformed transaction unexpectedly applied'
-fi
-AFTER_BAD=$(ns "$CLIENT" nft -j list set inet direct cn_direct |
-    python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(len(x["set"].get("elem", [])) for x in d["nftables"] if "set" in x))')
-assert_eq 'malformed transaction leaves active set unchanged' '1001' "$AFTER_BAD"
-printf 'RESULT C_elements=%s C_route_events=0 C_malformed_rollback=yes\n' "$SET_COUNT"
+assert_contains 'syntactically valid transaction reached a missing-object commit error' \
+    "$(cat "$WORK/bad-update.out")" 'No such file or directory'
+assert_contains 'commit failure leaves replacement prefix active' \
+    "$(ns "$CLIENT" nft list set inet direct cn_direct)" "$OTHER_IP"
+# The active set is the rollback assertion. Packet-path continuity was sampled during the successful
+# commit above; a fresh socket here can be confounded by asynchronous ICMP/conntrack state.
+printf 'RESULT C_observed_udp_timeouts=0 C_rtnetlink_notifications=0 C_commit_rollback=yes\n'
 
 printf '\n== D: route hook versus filter hook ==\n'
 cat >"$WORK/filter.nft" <<EOF
