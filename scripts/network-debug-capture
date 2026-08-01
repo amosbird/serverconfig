@@ -5,30 +5,49 @@ SYSTEMCTL=${SYSTEMCTL:-/usr/bin/systemctl}
 TIMEOUT=${TIMEOUT:-/usr/bin/timeout}
 TCPDUMP=${TCPDUMP:-/usr/bin/tcpdump}
 RING_DIR=${RING_DIR:-/var/log/network-debug/ring}
+MAX_TEXT_BYTES=1048576
 
 diagnostic_commands=()
+deep_wlan_pid=
+deep_tail_pid=
 
 sanitize_note() {
     LC_ALL=C tr -d '[:cntrl:]'
 }
 
+append_manifest() {
+    local incident=$1 rc=$2 label=$3 phase=$4 truncated=${5:-false}
+    if $truncated; then
+        printf '%s\ttruncated=true\t%s\t%s\n' "$rc" "$label" "$phase" >>"$incident/manifest.tsv"
+    else
+        printf '%s\t%s\t%s\n' "$rc" "$label" "$phase" >>"$incident/manifest.tsv"
+    fi
+}
+
 record_command() {
     local incident=$1 phase=$2 label=$3 limit=$4
     shift 4
-    local output="$incident/$phase/${label//[^A-Za-z0-9_.-]/_}.txt" rc
+    local output="$incident/$phase/${label//[^A-Za-z0-9_.-]/_}.txt" temp rc size truncated=false
     mkdir -p "$incident/$phase"
-    if "$TIMEOUT" --kill-after=2s "$limit" "$@" >"$output" 2>&1; then
+    temp=$(mktemp "$incident/$phase/.${label//[^A-Za-z0-9_.-]/_}.XXXXXX") || return 1
+    # shortcut: RLIMIT_FSIZE is the kernel-enforced 1 MiB ceiling; retain the partial output and rc.
+    if (ulimit -f 2048; "$TIMEOUT" --kill-after=2s "$limit" "$@") >"$temp" 2>&1; then
         rc=0
     else
         rc=$?
     fi
-    printf '%s\t%s\t%s\n' "$rc" "$label" "$phase" >>"$incident/manifest.tsv"
+    size=$(stat -c %s "$temp")
+    if ((size >= MAX_TEXT_BYTES)); then
+        truncated=true
+    fi
+    head -c "$MAX_TEXT_BYTES" "$temp" >"$output"
+    rm -f "$temp"
+    append_manifest "$incident" "$rc" "$label" "$phase" "$truncated"
     return 0
 }
 
 run_snapshot() {
     local incident=$1 phase=$2 entry label limit command
-    shift 2
     if ((${#diagnostic_commands[@]})); then
         for entry in "${diagnostic_commands[@]}"; do
             IFS='|' read -r label limit command entry <<<"$entry"
@@ -60,37 +79,96 @@ run_snapshot() {
     record_command "$incident" "$phase" tailscale-metrics 10 /usr/bin/tailscale debug metrics
     record_command "$incident" "$phase" tailscale-derp-map 10 /usr/bin/tailscale debug derp-map
     for entry in tailscaled systemd-networkd network-reconfigure smartdns ngnclient; do
-        record_command "$incident" "$phase" "journal-$entry" 15 /usr/bin/journalctl -b -u "$entry" --no-pager
+        record_command "$incident" "$phase" "journal-$entry" 15 \
+            /usr/bin/journalctl -b -u "$entry" --since=-15min -n 5000 --no-pager
     done
 }
 
+wait_service_state() {
+    local service=$1 expected=$2 state
+    # shortcut: five 200 ms polls bound asynchronous systemd job settlement to about one second.
+    for _ in 1 2 3 4 5; do
+        state=$("$TIMEOUT" --kill-after=1s 3 "$SYSTEMCTL" is-active "$service" 2>/dev/null || true)
+        [ "$state" = "$expected" ] && return 0
+        sleep 0.2
+    done
+    return 1
+}
+
+restore_recorder() {
+    local incident=$1 service=$2
+    "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" start "$service" >/dev/null 2>&1 || true
+    if wait_service_state "$service" active; then
+        append_manifest "$incident" 0 'recorder start' freeze
+        return 0
+    fi
+    append_manifest "$incident" 1 'recorder start' freeze
+    return 1
+}
+
 freeze_ring() (
-    local incident=$1 service=$2 active=false
-    trap 'if $active; then "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" start "$service" >/dev/null 2>&1 || true; fi' EXIT
-    if "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" is-active --quiet "$service"; then
-        active=true
-        "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" stop "$service" || return
+    local incident=$1 service=$2 initial_active=false restored=false result=0 state
+    : >>"$incident/manifest.tsv"
+    state=$("$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" is-active "$service" 2>/dev/null || true)
+    if [ "$state" = active ]; then
+        initial_active=true
+        append_manifest "$incident" 0 'recorder initially active' freeze
+    else
+        append_manifest "$incident" 0 'recorder initially inactive' freeze
     fi
+
+    trap 'if $initial_active && ! $restored; then restore_recorder "$incident" "$service" || result=1; fi' EXIT
+    if $initial_active; then
+        "$TIMEOUT" --kill-after=2s 15 "$SYSTEMCTL" stop "$service" >/dev/null 2>&1 || true
+        if wait_service_state "$service" inactive; then
+            append_manifest "$incident" 0 'recorder stop' freeze
+        else
+            append_manifest "$incident" 1 'recorder stop' freeze
+            return 1
+        fi
+    else
+        append_manifest "$incident" 0 'recorder stop skipped (initially inactive)' freeze
+    fi
+
     mkdir -p "$incident/ring"
-    if [ -d "$RING_DIR" ]; then
-        cp -a "$RING_DIR"/. "$incident/ring"/
+    if [ -d "$RING_DIR" ] && cp -a "$RING_DIR"/. "$incident/ring"/; then
+        append_manifest "$incident" 0 'ring copy' freeze
+    else
+        append_manifest "$incident" 1 'ring copy' freeze
+        return 1
     fi
+
+    if $initial_active; then
+        if restore_recorder "$incident" "$service"; then
+            restored=true
+        else
+            restored=true
+            return 1
+        fi
+    else
+        append_manifest "$incident" 0 'recorder start skipped (initially inactive)' freeze
+    fi
+    return "$result"
 )
 
-run_deep_capture() {
-    local incident=$1 duration=$2 wlan_pid tail_pid wlan_rc tail_rc
-    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -i wlan0 -s 96 -n \
-        -w "$incident/wlan0.pcap" 'udp port 3478 or udp port 41641' \
+start_deep() {
+    local incident=$1 duration=$2
+    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -p -i wlan0 -s 96 -n \
+        -C 8 -W 1 -w "$incident/wlan0.pcap" 'udp port 3478 or udp port 41641' \
         >"$incident/wlan0-tcpdump.txt" 2>&1 &
-    wlan_pid=$!
-    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -i tailscale0 -s 96 -n \
-        -w "$incident/tailscale0.pcap" 'udp port 3478' \
+    deep_wlan_pid=$!
+    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -p -i tailscale0 -s 96 -n \
+        -C 8 -W 1 -w "$incident/tailscale0.pcap" 'udp port 3478' \
         >"$incident/tailscale0-tcpdump.txt" 2>&1 &
-    tail_pid=$!
-    if wait "$wlan_pid"; then wlan_rc=0; else wlan_rc=$?; fi
-    if wait "$tail_pid"; then tail_rc=0; else tail_rc=$?; fi
-    printf '%s\t%s\t%s\n' "$wlan_rc" 'tcpdump wlan0' capture >>"$incident/manifest.tsv"
-    printf '%s\t%s\t%s\n' "$tail_rc" 'tcpdump tailscale0' capture >>"$incident/manifest.tsv"
+    deep_tail_pid=$!
+}
+
+wait_deep() {
+    local incident=$1 wlan_rc tail_rc
+    if wait "$deep_wlan_pid"; then wlan_rc=0; else wlan_rc=$?; fi
+    if wait "$deep_tail_pid"; then tail_rc=0; else tail_rc=$?; fi
+    append_manifest "$incident" "$wlan_rc" 'tcpdump wlan0' capture
+    append_manifest "$incident" "$tail_rc" 'tcpdump tailscale0' capture
 }
 
 prune_incidents() {
@@ -106,11 +184,18 @@ prune_incidents() {
     fi
 }
 
-capture_main() {
-    local base=$1 service=$2 duration=$3 bugreport=$4
-    shift 4
-    local timestamp incident note=${*:-}
+capture_main() (
+    local base=$1 service=$2 duration=$3 bugreport=$4 lock=$5
+    shift 5
+    local timestamp incident note=${*:-} lock_fd
     umask 077
+    install -d -m 0700 "$(dirname "$lock")"
+    exec {lock_fd}>"$lock"
+    if ! flock -n "$lock_fd"; then
+        printf 'FAILED: another network debug capture is running\n' >&2
+        return 1
+    fi
+
     install -d -m 0700 "$base"
     timestamp=$(date -u +%Y%m%dT%H%M%SZ)
     incident=$(mktemp -d "$base/$timestamp.XXXXXX") || return 1
@@ -120,9 +205,16 @@ capture_main() {
         printf '%s' "$note" | sanitize_note >"$incident/note.txt"
     fi
 
-    freeze_ring "$incident" "$service"
+    if ! freeze_ring "$incident" "$service"; then
+        find "$incident" -type d -exec chmod 0700 {} +
+        find "$incident" -type f -exec chmod 0600 {} +
+        prune_incidents "$base"
+        printf 'FAILED: recorder freeze/copy/restore failed; evidence retained: %s\n' "$incident" >&2
+        return 1
+    fi
+    start_deep "$incident" "$duration"
     run_snapshot "$incident" before
-    run_deep_capture "$incident" "$duration"
+    wait_deep "$incident"
     run_snapshot "$incident" after
     if $bugreport; then
         record_command "$incident" after tailscale-bugreport 120 /usr/bin/tailscale bugreport --diagnose
@@ -132,7 +224,7 @@ capture_main() {
     prune_incidents "$base"
     printf 'Network debug capture complete: %s\n' "$incident"
     printf 'If required after preserving evidence, run tailscale down manually.\n'
-}
+)
 
 main() {
     local bugreport=false
@@ -146,7 +238,8 @@ main() {
         printf 'Usage: %s [--bugreport] [note ...]\n' "$0"
         return
     fi
-    capture_main /var/log/network-debug/incidents network-debug-pcap.service 30 "$bugreport" "$@"
+    capture_main /var/log/network-debug/incidents network-debug-pcap.service 30 "$bugreport" \
+        /run/lock/network-debug-capture.lock "$@"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
