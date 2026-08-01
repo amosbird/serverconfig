@@ -196,11 +196,14 @@ mutating them.
 ## Migration and rollback
 
 `network/migrate.sh install` only stages configuration and is non-destructive. Its `activate`
-step runs reconciliation before retiring fallback state, then validates the staged resolver config
-on a disposable high loopback port, atomically installs it, and restarts SmartDNS. `GUI=1 bash
-restore.sh` uses the same validated atomic resolver deployment and directly disables and removes the
-obsolete fallback service and state rather than waiting for migration activation. Neither path
-mutates tunnel preferences or owner-managed routes.
+step runs reconciliation before retiring fallback state, then atomically installs the staged base
+config and restarts SmartDNS. The restart and active-state check validate the actual complete
+configuration, including its current fragments. If either fails, deployment atomically restores the
+previous base config and restarts it. `GUI=1 bash restore.sh` uses the same failure-safe deployment
+and directly disables and removes the obsolete fallback service and state rather than waiting for
+migration activation. The complete replace/restart/rollback transaction shares
+`/run/lock/network-reconfigure.lock` with the reconciler, so fragment updates and restarts cannot
+interleave. Neither path mutates tunnel preferences or owner-managed routes.
 
 Rollback/removal is ownership-based rather than priority-wide: it deletes only exact
 repository-owned rule shapes at priorities 500, 1000, 1500, 2500, and 3000, table `cn`, the
@@ -210,8 +213,9 @@ rollback atomically removes its dynamic `rt_tables` registration only when both 
 are unique. A duplicate name or conflicting ID is warned about and preserved to avoid deleting a
 foreign registration. Rollback restores a backed-up legacy `ioa-dns.conf` whenever the restored
 SmartDNS config includes it; if no fragment was backed up, it creates an empty comment-only fragment
-before restarting SmartDNS. It removes the obsolete fragment only when the restored config does not
-reference it. Unrelated rules sharing repository priorities survive. SmartGateAgent tables `20`,
+before using the same failure-safe transaction to restore and restart the old base config. It
+removes the obsolete fragment only when the restored config does not reference it. Unrelated rules
+sharing repository priorities survive. SmartGateAgent tables `20`,
 `230`, and `ioa` and Tailscale table `52` and exit-node preferences are never
 flushed or changed by rollback. Legacy tables `500` and `501` are also retained because they have
 no independent ownership record; leaving possible disk/kernel garbage is safer than deleting a

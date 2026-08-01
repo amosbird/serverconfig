@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2031 # sourced helpers use subshell functions; caller locals remain unchanged
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -38,99 +39,135 @@ else
 fi
 
 smartdns_deployment_contract() {
-    local sandbox smartdns_dir fake_smartdns fake_timeout fake_systemctl calls
+    local sandbox smartdns_dir fake_systemctl calls output first_pid second_pid old_uid old_gid
     sandbox=$(mktemp -d)
     smartdns_dir="$sandbox/etc/smartdns"
     calls="$sandbox/calls"
     mkdir -p "$smartdns_dir"
     printf '%s\n' 'old config' >"$smartdns_dir/smartdns.conf"
-    cat >"$sandbox/new.conf" <<'EOF'
-bind 127.0.0.1:53
-bind-tcp 127.0.0.1:53
-server 192.0.2.53
-EOF
+    chmod 600 "$smartdns_dir/smartdns.conf"
+    old_uid=$(stat -c %u "$smartdns_dir/smartdns.conf")
+    old_gid=$(stat -c %g "$smartdns_dir/smartdns.conf")
+    printf '%s\n' 'new config' >"$sandbox/new.conf"
 
-    fake_smartdns="$sandbox/smartdns"
-    cat >"$fake_smartdns" <<'EOF'
-#!/usr/bin/env bash
-printf 'validate:%s\n' "$*" >>"$SMARTDNS_TEST_CALLS"
-config=${*: -1}
-grep -Eq '^bind 127\.0\.0\.1:[2-4][0-9]{4}$' "$config"
-grep -Eq '^bind-tcp 127\.0\.0\.1:[2-4][0-9]{4}$' "$config"
-grep -Fqx 'server 192.0.2.53' "$config"
-EOF
-    fake_timeout="$sandbox/timeout"
-    cat >"$fake_timeout" <<'EOF'
-#!/usr/bin/env bash
-shift
-"$@"
-rc=$?
-[ "$rc" -eq 0 ] && exit 124
-exit "$rc"
-EOF
     fake_systemctl="$sandbox/systemctl"
     cat >"$fake_systemctl" <<'EOF'
 #!/usr/bin/env bash
-printf 'restart:%s\n' "$*" >>"$SMARTDNS_TEST_CALLS"
-grep -Fqx 'server 192.0.2.53' "$SMARTDNS_TEST_DIR/smartdns.conf"
+printf '%s\n' "$*" >>"$SMARTDNS_TEST_CALLS"
+if [ "$1" = restart ]; then
+    count=$(grep -c '^restart smartdns.service$' "$SMARTDNS_TEST_CALLS")
+    if [ "$count" -eq 1 ] && [ "${SMARTDNS_FAIL_RESTART:-0}" = 1 ]; then
+        exit 1
+    fi
+    if [ "$count" -eq 2 ] && [ "${SMARTDNS_FAIL_ROLLBACK:-0}" = 1 ]; then
+        exit 1
+    fi
+    if [ -n "${SMARTDNS_BLOCK_ENTERED:-}" ] && [ "$count" -eq 1 ]; then
+        : >"$SMARTDNS_BLOCK_ENTERED"
+        while [ ! -e "$SMARTDNS_BLOCK_RELEASE" ]; do sleep 0.02; done
+    fi
+elif [ "$1 $2" = 'is-active --quiet' ] && [ "${SMARTDNS_FAIL_ACTIVE:-0}" = 1 ]; then
+    exit 1
+fi
 EOF
-    chmod +x "$fake_smartdns" "$fake_timeout" "$fake_systemctl"
+    chmod +x "$fake_systemctl"
 
     # shellcheck source=network/smartdns-deploy.sh
     source network/smartdns-deploy.sh
-    if ! SMARTDNS_TEST_CALLS="$calls" SMARTDNS_TEST_DIR="$smartdns_dir" \
+
+    : >"$calls"
+    if ! SMARTDNS_TEST_CALLS="$calls" \
         deploy_smartdns_config "$sandbox/new.conf" "$smartdns_dir" \
-            "$fake_smartdns" "$fake_timeout" "$fake_systemctl"; then
+            "$fake_systemctl" "$sandbox/deploy.lock"; then
         echo 'FAIL valid SmartDNS deployment did not complete' >&2
         rm -rf "$sandbox"
         return 1
     fi
-    case "$(sed -n '1p' "$calls")" in
-        "validate:-f -x -p - -c $smartdns_dir/"*) ;;
-        *)
-            echo 'FAIL SmartDNS deployment did not validate before restart' >&2
-            rm -rf "$sandbox"
-            return 1
-            ;;
-    esac
-    if [ "$(sed -n '2p' "$calls")" != 'restart:restart smartdns.service' ]; then
-        echo 'FAIL SmartDNS deployment did not validate before restart' >&2
+    if ! grep -Fqx 'new config' "$smartdns_dir/smartdns.conf" ||
+       [ "$(stat -c %a "$smartdns_dir/smartdns.conf")" != 600 ] ||
+       [ "$(stat -c %u "$smartdns_dir/smartdns.conf")" != "$old_uid" ] ||
+       [ "$(stat -c %g "$smartdns_dir/smartdns.conf")" != "$old_gid" ] ||
+       [ "$(sed -n '1p' "$calls")" != 'restart smartdns.service' ] ||
+       [ "$(sed -n '2p' "$calls")" != 'is-active --quiet smartdns.service' ]; then
+        echo 'FAIL successful SmartDNS deployment contract was not met' >&2
         rm -rf "$sandbox"
         return 1
     fi
-    echo 'OK   SmartDNS deployment validates, atomically installs, then restarts'
+    echo 'OK   SmartDNS deployment preserves mode and owner, restarts, and checks active state'
 
     printf '%s\n' 'known good config' >"$smartdns_dir/smartdns.conf"
-    cat >"$fake_timeout" <<'EOF'
-#!/usr/bin/env bash
-exit 2
-EOF
-    if SMARTDNS_TEST_CALLS="$calls" SMARTDNS_TEST_DIR="$smartdns_dir" \
+    chmod 640 "$smartdns_dir/smartdns.conf"
+    : >"$calls"
+    if SMARTDNS_TEST_CALLS="$calls" SMARTDNS_FAIL_RESTART=1 \
         deploy_smartdns_config "$sandbox/new.conf" "$smartdns_dir" \
-            "$fake_smartdns" "$fake_timeout" "$fake_systemctl" >/dev/null 2>&1 ||
-       ! grep -Fqx 'known good config' "$smartdns_dir/smartdns.conf"; then
-        echo 'FAIL invalid SmartDNS deployment replaced the live config' >&2
+            "$fake_systemctl" "$sandbox/deploy.lock" >/dev/null 2>&1 ||
+       ! grep -Fqx 'known good config' "$smartdns_dir/smartdns.conf" ||
+       [ "$(stat -c %a "$smartdns_dir/smartdns.conf")" != 640 ] ||
+       [ "$(grep -Fxc 'restart smartdns.service' "$calls")" -ne 2 ]; then
+        echo 'FAIL failed SmartDNS restart did not atomically restore the old config' >&2
         rm -rf "$sandbox"
         return 1
     fi
-    echo 'OK   failed SmartDNS validation preserves the live config'
+    echo 'OK   failed SmartDNS restart restores bytes and mode, then restarts the old service'
 
-    cat >"$fake_timeout" <<'EOF'
-#!/usr/bin/env bash
-exit 124
-EOF
-    cat >"$fake_systemctl" <<'EOF'
-#!/usr/bin/env bash
-exit 1
-EOF
-    if SMARTDNS_TEST_CALLS="$calls" SMARTDNS_TEST_DIR="$smartdns_dir" \
+    : >"$calls"
+    if SMARTDNS_TEST_CALLS="$calls" SMARTDNS_FAIL_ACTIVE=1 \
         deploy_smartdns_config "$sandbox/new.conf" "$smartdns_dir" \
-            "$fake_smartdns" "$fake_timeout" "$fake_systemctl" >/dev/null 2>&1; then
-        echo 'FAIL SmartDNS restart failure was hidden' >&2
+            "$fake_systemctl" "$sandbox/deploy.lock" >/dev/null 2>&1 ||
+       ! grep -Fqx 'known good config' "$smartdns_dir/smartdns.conf" ||
+       [ "$(grep -Fxc 'restart smartdns.service' "$calls")" -ne 2 ] ||
+       [ "$(grep -Fxc 'is-active --quiet smartdns.service' "$calls")" -ne 1 ]; then
+        echo 'FAIL inactive SmartDNS deployment was not rolled back' >&2
         rm -rf "$sandbox"
         return 1
     fi
-    echo 'OK   SmartDNS restart failure remains visible'
+    echo 'OK   inactive SmartDNS deployment rolls back after the active-state query'
+
+    : >"$calls"
+    output=$(SMARTDNS_TEST_CALLS="$calls" SMARTDNS_FAIL_RESTART=1 SMARTDNS_FAIL_ROLLBACK=1 \
+        deploy_smartdns_config "$sandbox/new.conf" "$smartdns_dir" \
+            "$fake_systemctl" "$sandbox/deploy.lock" 2>&1) && {
+        echo 'FAIL rollback restart failure was hidden' >&2
+        rm -rf "$sandbox"
+        return 1
+    }
+    if [[ "$output" != *'rollback restart failed'* ]]; then
+        echo 'FAIL rollback restart failure was not distinguished' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   SmartDNS deployment distinguishes rollback restart failure'
+
+    printf '%s\n' 'first config' >"$sandbox/first.conf"
+    printf '%s\n' 'second config' >"$sandbox/second.conf"
+    : >"$calls"
+    SMARTDNS_TEST_CALLS="$calls" SMARTDNS_BLOCK_ENTERED="$sandbox/entered" \
+        SMARTDNS_BLOCK_RELEASE="$sandbox/release" \
+        deploy_smartdns_config "$sandbox/first.conf" "$smartdns_dir" \
+            "$fake_systemctl" "$sandbox/deploy.lock" &
+    first_pid=$!
+    while [ ! -e "$sandbox/entered" ]; do sleep 0.02; done
+    SMARTDNS_TEST_CALLS="$calls" \
+        deploy_smartdns_config "$sandbox/second.conf" "$smartdns_dir" \
+            "$fake_systemctl" "$sandbox/deploy.lock" &
+    second_pid=$!
+    sleep 0.1
+    if ! grep -Fqx 'first config' "$smartdns_dir/smartdns.conf" ||
+       ! kill -0 "$second_pid" 2>/dev/null; then
+        echo 'FAIL SmartDNS deployment lock did not serialize transactions' >&2
+        : >"$sandbox/release"
+        wait "$first_pid" "$second_pid" || true
+        rm -rf "$sandbox"
+        return 1
+    fi
+    : >"$sandbox/release"
+    wait "$first_pid" "$second_pid"
+    if ! grep -Fqx 'second config' "$smartdns_dir/smartdns.conf"; then
+        echo 'FAIL blocked SmartDNS deployment did not finish' >&2
+        rm -rf "$sandbox"
+        return 1
+    fi
+    echo 'OK   SmartDNS deployment lock serializes complete transactions'
     rm -rf "$sandbox"
 }
 
@@ -139,18 +176,25 @@ if ! smartdns_deployment_contract; then
 fi
 
 smartdns_rollback_contract() {
-    local sandbox smartdns_dir backup_dir
+    local sandbox smartdns_dir backup_dir fake_systemctl
     sandbox=$(mktemp -d)
     smartdns_dir="$sandbox/etc/smartdns"
     backup_dir="$sandbox/backup"
     mkdir -p "$smartdns_dir" "$backup_dir"
+    fake_systemctl="$sandbox/systemctl"
+    cat >"$fake_systemctl" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$fake_systemctl"
     cat >"$backup_dir/smartdns.conf.bak" <<'EOF'
 bind 127.0.0.1:53
 conf-file /etc/smartdns/ioa-dns.conf
 EOF
 
     source network/migrate.sh
-    restore_smartdns_backup "$smartdns_dir" "$backup_dir" false
+    restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
+        "$fake_systemctl" "$sandbox/rollback.lock"
     if ! grep -Fqx '# Legacy IOA resolver unavailable during rollback' \
             "$smartdns_dir/ioa-dns.conf" ||
        ! awk '
@@ -167,7 +211,8 @@ EOF
     echo 'OK   rollback seeds a safe fragment when an old config includes it'
 
     printf '%s\n' 'server 192.168.255.10 -group ioa' >"$backup_dir/ioa-dns.conf.bak"
-    restore_smartdns_backup "$smartdns_dir" "$backup_dir" false
+    restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
+        "$fake_systemctl" "$sandbox/rollback.lock"
     if ! cmp -s "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf"; then
         echo 'FAIL rollback did not restore its backed-up IOA fragment' >&2
         rm -rf "$sandbox"
@@ -176,7 +221,8 @@ EOF
     echo 'OK   rollback restores the backed-up IOA fragment'
 
     printf '%s\n' 'bind 127.0.0.1:53' >"$backup_dir/smartdns.conf.bak"
-    restore_smartdns_backup "$smartdns_dir" "$backup_dir" false
+    restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
+        "$fake_systemctl" "$sandbox/rollback.lock"
     if [ -e "$smartdns_dir/ioa-dns.conf" ]; then
         echo 'FAIL rollback retained an obsolete unreferenced IOA fragment' >&2
         rm -rf "$sandbox"

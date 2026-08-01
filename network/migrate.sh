@@ -13,8 +13,10 @@
 
 set -euo pipefail
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_DIR="/var/lib/network-migration-backup"
+# shellcheck source=network/smartdns-deploy.sh
+source "$DIR/smartdns-deploy.sh"
 
 cleanup_obsolete_policy() {
     systemctl disable --now network-fallback.service 2>/dev/null || true
@@ -104,10 +106,14 @@ install_configs() {
 
     # Backup current state
     mkdir -p "$BACKUP_DIR"
-    cp -a /etc/smartdns/smartdns.conf "$BACKUP_DIR/smartdns.conf.bak" 2>/dev/null || true
+    if [ -f /etc/smartdns/smartdns.conf ]; then
+        cp -a /etc/smartdns/smartdns.conf "$BACKUP_DIR/smartdns.conf.bak"
+    fi
     # Backup the legacy fragment too: the saved base config may include it.
     rm -f "$BACKUP_DIR/ioa-dns.conf.bak"
-    cp -a /etc/smartdns/ioa-dns.conf "$BACKUP_DIR/ioa-dns.conf.bak" 2>/dev/null || true
+    if [ -f /etc/smartdns/ioa-dns.conf ]; then
+        cp -a /etc/smartdns/ioa-dns.conf "$BACKUP_DIR/ioa-dns.conf.bak"
+    fi
     cp -a /etc/resolv.conf "$BACKUP_DIR/resolv.conf.bak" 2>/dev/null || true
     ip rule save > "$BACKUP_DIR/ip-rules.bak" 2>/dev/null || true
     iptables-save > "$BACKUP_DIR/iptables.bak" 2>/dev/null || true
@@ -273,15 +279,19 @@ activate() {
     verify
 }
 
-restore_smartdns_backup() {
+restore_smartdns_backup() (
     local smartdns_dir=${1:-/etc/smartdns} backup_dir=${2:-$BACKUP_DIR}
-    local restart=${3:-true} systemctl_bin=${4:-systemctl}
+    local systemctl_bin=${3:-systemctl}
+    local lock_path=${4:-/run/lock/network-reconfigure.lock}
+    local restored_config="$backup_dir/smartdns.conf.bak"
 
-    [ -f "$backup_dir/smartdns.conf.bak" ] || return 0
+    [ -f "$restored_config" ] || return 0
     mkdir -p "$smartdns_dir"
-    cp "$backup_dir/smartdns.conf.bak" "$smartdns_dir/smartdns.conf"
+    exec 9>"$lock_path"
+    flock 9
+
     if grep -Eq '^[[:space:]]*conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf([[:space:]]|$)' \
-            "$smartdns_dir/smartdns.conf"; then
+            "$restored_config"; then
         if [ -f "$backup_dir/ioa-dns.conf.bak" ]; then
             cp "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf"
         else
@@ -291,10 +301,9 @@ restore_smartdns_backup() {
     else
         rm -f "$smartdns_dir/ioa-dns.conf"
     fi
-    if [ "$restart" = true ]; then
-        "$systemctl_bin" restart smartdns.service 2>/dev/null || true
-    fi
-}
+    deploy_smartdns_config_locked "$restored_config" "$smartdns_dir" "$systemctl_bin"
+    rm -f "$smartdns_dir/dhcp-dns.conf"
+)
 
 rollback() {
     echo "=== Rolling back to netctl + dhcpcd ==="
@@ -322,16 +331,14 @@ rollback() {
     iptables -t mangle -X NETMODE_IOA 2>/dev/null || true
     cleanup_owned_nat
     ipset destroy ioa_intranet 2>/dev/null || true
-    rm -f /etc/smartdns/dhcp-dns.conf
-    rm -rf /var/lib/network-reconfigure
-
+    # Restore SmartDNS and any legacy fragment it references before restarting it.
+    restore_smartdns_backup
     # Restore the pre-iwd hooks (kept in network/rollback/ for exactly this)
     cp "$DIR/rollback/90-wired-netctl.rules" /etc/udev/rules.d/ 2>/dev/null || true
     cp "$DIR/rollback/90-amos-dhcp" /usr/lib/dhcpcd/dhcpcd-hooks/90-amos 2>/dev/null || true
     rm -f /etc/udev/rules.d/90-wired-8021x.rules
 
-    # Restore SmartDNS and any legacy fragment it references before restarting it.
-    restore_smartdns_backup
+    rm -rf /var/lib/network-reconfigure
 
     # Restore resolv.conf
     chattr -i /etc/resolv.conf 2>/dev/null || true
