@@ -19,6 +19,24 @@ reject() {
     rm -f /tmp/network-static.$$
 }
 
+reject 'SmartDNS caching and nonzero TTL rewrites are disabled' \
+    '^(prefetch-domain yes|serve-expired yes|rr-ttl-(min|max)[[:space:]]+[1-9])' \
+    network/smartdns/smartdns.conf
+for directive in \
+    'cache-size 0' \
+    'cache-persist no' \
+    'prefetch-domain no' \
+    'serve-expired no' \
+    'rr-ttl-min 0' \
+    'bind 127.0.0.1:53 -no-cache -no-serve-expired' \
+    'bind-tcp 127.0.0.1:53 -no-cache -no-serve-expired'
+do
+    if [ "$(grep -Fxc "$directive" network/smartdns/smartdns.conf)" -ne 1 ]; then
+        echo "FAIL SmartDNS cache directive is not unique: $directive" >&2
+        fail=1
+    fi
+done
+
 if [ "$(grep -Fxc "$IOA_SERVER" network/smartdns/smartdns.conf)" -ne 1 ]; then
     echo 'FAIL SmartDNS base config does not contain exactly one permanent IOA resolver' >&2
     fail=1

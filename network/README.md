@@ -80,9 +80,12 @@ exceptions because a LAN can overlap `10/8` and a DHCP resolver can be a public 
 The IOA upstream is permanently declared in the base SmartDNS configuration as
 `server 192.168.255.10 -group ioa -exclude-default-group`. It is not generated from
 `tun0` state: link down/up and address-change events neither rewrite an IOA fragment nor restart
-SmartDNS. When IOA is unavailable, IOA-group names fail closed and may wait for the upstream
-timeout; they do not fall back to a public resolver. Ordinary default-group DNS remains independent
-and continues through its default and DHCP upstreams.
+SmartDNS. SmartDNS caching is disabled globally and on both listeners: every client query reaches
+the selected upstream, expired answers are never served, and no prefetch runs. `rr-ttl-min 0`
+disables SmartDNS's built-in 600-second TTL floor so clients receive the upstream TTL unchanged.
+When IOA is unavailable, IOA-group names fail closed and may wait for the upstream timeout; they do
+not fall back to a public resolver. Ordinary default-group DNS remains independent and continues
+through its default and DHCP upstreams.
 
 SmartDNS adds addresses resolved for configured IOA domains to dynamic `ipset ioa`.
 `network-reconfigure` maintains a second set, `ioa_intranet`, containing:
