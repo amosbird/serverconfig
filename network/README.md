@@ -16,7 +16,9 @@ The intended outcomes are:
 Ownership is deliberately narrow:
 
 - **systemd-networkd and the kernel** own `main`, interface addresses, connected routes, and
-  the physical default route.
+  the physical default route. The repository installs `ManageForeignRoutingPolicyRules=no` and
+  `ManageForeignRoutes=no`, so networkd does not garbage-collect route/rule objects owned by
+  Tailscale, SmartGateAgent, or `network-reconfigure`.
 - **`scripts/network-reconfigure`** owns the repository's rules at priorities 500, 1000,
   1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage` table;
   `ipset ioa_intranet`; the `NETMODE_IOA` chain and its OUTPUT hook; the exact IOA
@@ -110,6 +112,11 @@ DERP/control paths and recovers its own link. SmartGateAgent establishes `tun0`,
 physical escapes in tables `20` and `230`, and installs or removes the IOA route in table
 `ioa`. Repository code does not discover tunnel endpoints or construct alternate transport
 paths.
+
+SmartGateAgent's table `ioa` default is `default dev tun0` without a gateway. Marked IOA traffic
+still enters the TUN device, while tailscaled's Linux all-table fallback ignores the route because
+it has no gateway. During a physical-link outage Tailscale waits for a physical underlay; it must
+never select `tun0`.
 
 The selected Tailscale exit node is intentionally **fail-closed**. If the exit node is
 unavailable, unmatched/default traffic may stop until Tailscale recovers. Local code must not
