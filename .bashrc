@@ -2,6 +2,10 @@
 
 stty -ixon 2> /dev/null
 
-export PATH="$HOME/scripts:$HOME/.emacs.d/bin:$HOME/.local/bin:$HOME/.npm-packages/bin:$HOME/.cargo/bin:$HOME/.mambatools/bin:$PATH"
+if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; then
+    export PATH="$HOME/scripts:$HOME/.emacs.d/bin:$HOME/.local/bin:$HOME/.npm-packages/bin:$HOME/.cargo/bin:$PATH:$HOME/.mambatools/bin"
+else
+    export PATH="$HOME/scripts:$HOME/.emacs.d/bin:$HOME/.local/bin:$HOME/.npm-packages/bin:$HOME/.cargo/bin:$HOME/.mambatools/bin:$PATH"
+fi
 
 # User specific environment and startup programs
