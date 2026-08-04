@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-"""
-rofi-hister — Vivaldi tabs + Hister full-text history search via rofi-blocks.
+"""Fast, live Vivaldi tab and Hister history search for rofi-blocks."""
 
-Runs as the backend for rofi -modi blocks -show blocks -blocks-wrap rofi-hister.
-Communicates with rofi-blocks via JSON on stdin/stdout.
-"""
-
+import html
 import http.client
 import json
 import re
@@ -18,13 +14,16 @@ import urllib.parse
 VIVALDI_CDP_PORT = 9222
 BLOCKLIST_SCRIPT = "/home/amos/scripts/rofi-browser-blocklist.sh"
 HISTER_BIN = "hister"
+HISTORY_LIMIT = 50
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
-URL_RE = re.compile(r"^(ftp|http|https)://[^ \"]+$")
+URL_RE = re.compile(r'^(ftp|http|https)://[^ "]+$')
 DOMAIN_RE = re.compile(r"^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/\S*)?$")
-
 
 entries = []
 blocklist = []
+tabs = []
+state_lock = threading.Lock()
+send_lock = threading.Lock()
 
 
 def load_blocklist():
@@ -38,141 +37,172 @@ def load_blocklist():
             if len(parts) == 2:
                 patterns.append(re.compile(parts[1]))
         return patterns
-    except Exception:
+    except (OSError, subprocess.SubprocessError, re.error):
         return []
 
 
-def is_blocked(url, bl):
-    return any(p.search(url) for p in bl)
+def is_blocked(url, patterns):
+    return any(pattern.search(url) for pattern in patterns)
+
+
+def cdp_request(path, conn=None):
+    conn = conn or http.client.HTTPConnection(
+        "127.0.0.1", VIVALDI_CDP_PORT, timeout=1
+    )
+    try:
+        conn.request("GET", path)
+        response = conn.getresponse()
+        if response.status >= 400:
+            return None
+        body = response.read()
+        if not body:
+            return True
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return body.decode(errors="replace")
+    finally:
+        conn.close()
 
 
 def get_vivaldi_tabs():
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", VIVALDI_CDP_PORT, timeout=1)
-        conn.request("GET", "/json")
-        pages = json.loads(conn.getresponse().read())
-        conn.close()
-        tabs = []
-        for p in pages:
-            url = p.get("url", "")
-            title = p.get("title", "")
-            if url and title and url.startswith(("http://", "https://", "file://")):
-                tabs.append((title, url))
-        return tabs
-    except Exception:
+        pages = cdp_request("/json") or []
+    except (OSError, json.JSONDecodeError):
         return []
+
+    result = []
+    for page in pages:
+        if page.get("type") != "page":
+            continue
+        url = page.get("url", "")
+        title = page.get("title", "")
+        if url and title and url.startswith(("http://", "https://", "file://")):
+            result.append((title, url, page.get("id", "")))
+    return result
+
+
+def build_hister_query(query):
+    # Keep only word tokens so user punctuation cannot become FTS query syntax.
+    return " ".join(f"{token}*" for token in re.findall(r"\w+", query))
+
+
+def parse_hister_json(output):
+    # shortcut: Hister 2.0 emits a trailing comma when a limited result page is full.
+    return json.loads(re.sub(r",\s*]$", "]", output))
 
 
 def hister_search(query):
-    if not query or not query.strip():
+    search_query = build_hister_query(query)
+    if not search_query:
         return []
-    tokens = query.split()
-    prefixed = " ".join(t + "*" if not t.endswith("*") else t for t in tokens)
+
     try:
-        out = subprocess.check_output(
-            [HISTER_BIN, "search", "-f", "json", prefixed],
+        result = subprocess.run(
+            [
+                HISTER_BIN,
+                "search",
+                "-f",
+                "json",
+                "-F",
+                "url,title",
+                "-L",
+                str(HISTORY_LIMIT),
+                search_query,
+            ],
+            stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
-            timeout=5,
+            timeout=3,
+            check=True,
         )
-        data = json.loads(out)
-        docs = data.get("documents") or []
-        results = []
-        seen = set()
-        for d in docs:
-            url = d.get("url", "")
-            title = d.get("title", "") or url
-            if url and url not in seen:
-                seen.add(url)
-                results.append((title, url))
-        return results
-    except Exception:
+        data = parse_hister_json(result.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
         return []
+
+    # Hister 2 returns an array; older builds wrapped it in {"documents": [...]}.
+    documents = data if isinstance(data, list) else data.get("documents") or []
+    results = []
+    seen = set()
+    for document in documents:
+        url = document.get("url", "")
+        title = document.get("title", "") or url
+        if url and url not in seen:
+            seen.add(url)
+            results.append((title, url))
+    return results
 
 
 def match_query(query, title, url):
-    q = query.lower()
-    text = f"{title} {url}".lower()
-    return all(tok in text for tok in q.split())
+    text = f"{title} {url}".casefold()
+    return all(token.casefold() in text for token in query.split())
 
 
-def build_tab_entries(query):
-    bl = blocklist
-    tabs = get_vivaldi_tabs()
-    has_query = bool(query and query.strip())
+def build_tab_entries(query, current_tabs=None):
+    current_tabs = tabs if current_tabs is None else current_tabs
+    has_query = bool(query.strip())
     result = []
-    seen = set()
-    for title, url in tabs:
-        if is_blocked(url, bl) or url in seen:
+    for title, url, target_id in current_tabs:
+        if is_blocked(url, blocklist):
             continue
         if has_query and not match_query(query, title, url):
             continue
-        seen.add(url)
-        result.append(("tab", title, url))
-    return result, seen
+        result.append(("tab", title, url, target_id))
+    return result
 
 
-def build_hist_entries(query, seen):
-    bl = blocklist
-    history = hister_search(query)
-    result = []
+def merge_results(tab_entries, history, patterns=None, open_tabs=None):
+    patterns = blocklist if patterns is None else patterns
+    open_tabs = tabs if open_tabs is None else open_tabs
+    open_by_url = {}
+    for title, url, target_id in open_tabs:
+        open_by_url.setdefault(url, []).append((title, target_id))
+    result = list(tab_entries)
+    seen_history = {url for _, _, url, _ in result}
     for title, url in history:
-        if is_blocked(url, bl) or url in seen:
+        if url in seen_history or is_blocked(url, patterns):
             continue
-        seen.add(url)
-        result.append(("hist", title, url))
+        seen_history.add(url)
+        matching_tabs = open_by_url.get(url)
+        if matching_tabs:
+            result.extend(
+                ("tab", tab_title, url, target_id)
+                for tab_title, target_id in matching_tabs
+            )
+        else:
+            result.append(("hist", title, url, ""))
     return result
 
 
 def format_lines(entry_list):
     lines = []
-    for kind, title, url in entry_list:
-        icon = "web-browser" if kind == "tab" else "clock"
-        tag = "tab" if kind == "tab" else "hist"
+    for index, (kind, title, url, _) in enumerate(entry_list):
         short_url = url.split("://", 1)[-1]
-        display = f"[{tag}] {title}  <i>{short_url}</i>"
-        lines.append({
-            "text": display,
-            "markup": True,
-            "icon": icon,
-            "data": json.dumps({"kind": kind, "url": url}),
-        })
+        display = f"[{kind}] {html.escape(title)}  <i>{html.escape(short_url)}</i>"
+        lines.append({"text": display, "markup": True, "data": str(index)})
     return lines
 
 
 def send(obj):
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+    with send_lock:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
 
 
-def activate_vivaldi_tab(url):
+def activate_vivaldi_tab(target_id):
+    if not target_id:
+        return False
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", VIVALDI_CDP_PORT, timeout=1)
-        conn.request("GET", "/json")
-        pages = json.loads(conn.getresponse().read())
-        conn.close()
-        for p in pages:
-            if p.get("url") == url:
-                page_id = p.get("id")
-                if page_id:
-                    conn2 = http.client.HTTPConnection(
-                        "127.0.0.1", VIVALDI_CDP_PORT, timeout=1
-                    )
-                    conn2.request("GET", f"/json/activate/{page_id}")
-                    conn2.getresponse()
-                    conn2.close()
-                return True
-    except Exception:
-        pass
-    return False
+        return bool(cdp_request(f"/json/activate/{target_id}"))
+    except (OSError, json.JSONDecodeError):
+        return False
 
 
-def open_url(url):
-    subprocess.Popen(
-        ["qtile", "cmd-obj", "-o", "group", "f", "-f", "toscreen"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+def focus_browser_group():
+    send({"command": "focus-browser"})
+
+
+def launch_url(url):
     subprocess.Popen(
         ["/home/amos/scripts/vivaldi", url],
         stdout=subprocess.DEVNULL,
@@ -180,10 +210,15 @@ def open_url(url):
     )
 
 
+def open_url(url):
+    focus_browser_group()
+    launch_url(url)
+
+
 def open_or_search(text):
-    if not text or not text.strip():
-        return
     text = text.strip()
+    if not text:
+        return
     if URL_RE.match(text):
         url = text
     elif DOMAIN_RE.match(text):
@@ -196,79 +231,70 @@ def open_or_search(text):
 def open_entry(data):
     kind = data.get("kind", "")
     url = data.get("url", "")
+    target_id = data.get("target_id", "")
     if not url:
         return
-
-    subprocess.Popen(
-        ["qtile", "cmd-obj", "-o", "group", "f", "-f", "toscreen"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    if kind == "tab":
-        if not activate_vivaldi_tab(url):
-            subprocess.Popen(
-                ["/home/amos/scripts/vivaldi", url],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+    if kind == "tab" and activate_vivaldi_tab(target_id):
+        focus_browser_group()
     else:
-        subprocess.Popen(
-            ["/home/amos/scripts/vivaldi", url],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        focus_browser_group()
+        launch_url(url)
 
 
 def delete_entry(data, current_query):
     url = data.get("url", "")
-    kind = data.get("kind", "")
-    if not url or kind != "hist":
+    if not url or data.get("kind") != "hist":
         return
     subprocess.run(
         [HISTER_BIN, "delete", url],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        check=False,
     )
-    tab_result, seen = build_tab_entries(current_query)
-    hist_result = build_hist_entries(current_query, seen)
-    entries.clear()
-    entries.extend(tab_result + hist_result)
-    send({"lines": format_lines(entries)})
+    result = merge_results(build_tab_entries(current_query), hister_search(current_query))
+    with state_lock:
+        entries[:] = result
+    send({"lines": format_lines(result)})
 
 
 def main():
-    global blocklist
+    global blocklist, tabs
     blocklist = load_blocklist()
-
-    tab_result, _ = build_tab_entries("")
-    entries.clear()
-    entries.extend(tab_result)
-    send({
-        "input action": "send",
-        "prompt": "Web❯",
-        "event format": "{\"name\":\"{{name_escaped}}\", \"value\":\"{{value_escaped}}\", \"data\":\"{{data_escaped}}\"}",
-        "lines": format_lines(entries),
-    })
+    # Tabs cannot change while rofi owns the keyboard, so one CDP fetch per invocation is enough.
+    tabs = get_vivaldi_tabs()
+    initial = build_tab_entries("")
+    with state_lock:
+        entries[:] = initial
+    send(
+        {
+            "input action": "send",
+            "prompt": "Web❯",
+            "event format": '{"name":"{{name_escaped}}", "value":"{{value_escaped}}", '
+            '"data":"{{data_escaped}}"}',
+            "lines": format_lines(initial),
+        }
+    )
 
     current_query = ""
     debounce_timer = None
-    DEBOUNCE_DELAY = 0.15
+    generation = 0
 
-    def do_hist_search(query):
+    def search_history(query, search_generation):
+        tab_entries = build_tab_entries(query)
+        result = merge_results(tab_entries, hister_search(query))
+        with state_lock:
+            if search_generation != generation:
+                return
+            entries[:] = result
+        send({"lines": format_lines(result)})
+
+    def get_event_entry(raw_data):
         try:
-            seen = set(u for _, _, u in entries)
-            hist = build_hist_entries(query, seen)
-            if hist:
-                entries.extend(hist)
-                send({"lines": format_lines(entries)})
-        except Exception:
-            pass
+            return entries[int(raw_data)]
+        except (ValueError, IndexError):
+            return None
 
     for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
@@ -280,35 +306,34 @@ def main():
 
         if name == "input change":
             current_query = value
+            generation += 1
             if debounce_timer is not None:
                 debounce_timer.cancel()
-            tab_result, _ = build_tab_entries(value)
-            entries.clear()
-            entries.extend(tab_result)
-            send({"lines": format_lines(entries)})
-            if value and value.strip():
-                debounce_timer = threading.Timer(DEBOUNCE_DELAY, do_hist_search, [value])
+            if value.strip():
+                debounce_timer = threading.Timer(0.12, search_history, (value, generation))
                 debounce_timer.daemon = True
                 debounce_timer.start()
+            else:
+                tab_entries = build_tab_entries("")
+                with state_lock:
+                    entries[:] = tab_entries
+                send({"lines": format_lines(tab_entries)})
 
-        elif name == "select entry":
-            try:
-                data = json.loads(raw_data)
-            except (json.JSONDecodeError, TypeError):
+        elif name in ("select entry", "delete entry"):
+            with state_lock:
+                entry = get_event_entry(raw_data)
+            if entry is None:
                 continue
-            open_entry(data)
-            sys.exit(0)
-
-        elif name == "delete entry":
-            try:
-                data = json.loads(raw_data)
-            except (json.JSONDecodeError, TypeError):
-                continue
+            kind, _, url, target_id = entry
+            data = {"kind": kind, "url": url, "target_id": target_id}
+            if name == "select entry":
+                open_entry(data)
+                return
             delete_entry(data, current_query)
 
         elif name == "execute custom input":
             open_or_search(current_query or value)
-            sys.exit(0)
+            return
 
 
 if __name__ == "__main__":

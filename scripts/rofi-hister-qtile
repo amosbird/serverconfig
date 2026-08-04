@@ -1,0 +1,12 @@
+#!/usr/bin/python
+import sys
+
+from libqtile.command.client import InteractiveCommandClient
+
+
+client = InteractiveCommandClient()
+print("ready", flush=True)
+for line in sys.stdin:
+    if line.strip() == "focus":
+        client.group["f"].toscreen()
+        print("focused", flush=True)

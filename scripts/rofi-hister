@@ -1,5 +1,47 @@
 #!/usr/bin/env bash
-exec rofi -modi blocks -show blocks \
-    -blocks-wrap rofi-hister-blocks \
+
+# Start Qtile's Python client while the menu opens, so its ~300ms imports are off the selection path.
+coproc QTILE { exec rofi-hister-qtile; }
+qtile_pid=$QTILE_PID
+exec {qtile_out}<&"${QTILE[0]}" {qtile_in}>&"${QTILE[1]}"
+
+# Preload the first page before rofi opens. rofi-blocks otherwise paints an empty list first and
+# only consumes the backend's initial output on the next GLib event-loop iteration.
+coproc BACKEND { exec rofi-hister-blocks; }
+backend_pid=$BACKEND_PID
+exec {backend_out}<&"${BACKEND[0]}" {backend_in}>&"${BACKEND[1]}"
+read -r initial <&$backend_out || exit 1
+
+focus_done=$(mktemp)
+rm -f "$focus_done"
+{
+    printf '%s\n' "$initial"
+    while IFS= read -r line <&$backend_out; do
+        if [[ $line == '{"command": "focus-browser"}' ]]; then
+            read -r ready <&$qtile_out
+            printf 'focus\n' >&$qtile_in
+            read -r focused <&$qtile_out
+            touch "$focus_done"
+        else
+            printf '%s\n' "$line"
+        fi
+    done
+} | rofi -modi blocks -show blocks \
+    -blocks-prompt 'Web❯' \
     -kb-remove-char-forward 'Delete' \
-    -kb-delete-entry 'Shift+Delete,Control+d'
+    -kb-delete-entry 'Shift+Delete,Control+d' \
+    >&$backend_in &
+rofi_pid=$!
+
+# rofi-blocks keeps the dialog open after selection (RELOAD_DIALOG). Whichever side exits first
+# must terminate the other side, otherwise rofi remains open or the backend is orphaned.
+wait -n -p finished "$rofi_pid" "$backend_pid"
+status=$?
+for _ in {1..100}; do
+    [[ -e $focus_done ]] && break
+    sleep 0.001
+done
+rm -f "$focus_done"
+kill "$rofi_pid" "$backend_pid" "$qtile_pid" 2>/dev/null
+wait "$rofi_pid" "$backend_pid" "$qtile_pid" 2>/dev/null
+exit "$status"
