@@ -250,6 +250,7 @@ fi
 
 CACHE_DIR="/var/lib/network-reconfigure"
 STATE_FILE="$CACHE_DIR/last-applied"
+CN_STATE_FILE="$CACHE_DIR/cn-last-applied"
 mkdir -p "$CACHE_DIR"
 routefile_state=$(sha256sum "$ROUTEFILE" 2>/dev/null | awk '{print $1}' || printf missing)
 current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-} routefile=$routefile_state"
@@ -375,40 +376,70 @@ parse_routefile() {
     done < "$ROUTEFILE"
 }
 
-# A missing or empty routefile authoritatively disables cn. Remove its rule first
-# so flushing the now-unreachable table cannot interrupt packet lookup.
-if [ ! -s "$ROUTEFILE" ]; then
+write_cn_state() {
+    local content=$1 tmp
+    tmp=$(mktemp "$CN_STATE_FILE.XXXXXX")
+    printf '%s' "$content" >"$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$CN_STATE_FILE"
+}
+
+# A missing or empty routefile authoritatively disables cn. Heavy CN work has its own state gate,
+# so unrelated policy or virtual-interface changes never rewrite a healthy route table.
+cn_route_batch=''
+cn_expected_routes=0
+if [ -s "$ROUTEFILE" ]; then
+    gw=$(physical_gateway)
+    dev=$(physical_device)
+    if [ -n "${gw:-}" ]; then
+        cn_route_batch=$(parse_routefile "$gw")
+        cn_expected_routes=$(grep -c '^route replace ' <<<"$cn_route_batch")
+        [ "$cn_expected_routes" -gt 0 ]
+    fi
+else
+    gw=$(physical_gateway)
+    dev=$(physical_device)
+fi
+cn_expected_state="routefile=$routefile_state dev=${dev:-} gw=${gw:-} count=$cn_expected_routes"
+cn_rebuild=false
+if [ "${FORCE_CN:-0}" = 1 ] ||
+   [ "$cn_expected_state" != "$(cat "$CN_STATE_FILE" 2>/dev/null || true)" ] ||
+   [ "$(count_routes "$CN_TABLE")" -ne "$cn_expected_routes" ]; then
+    cn_rebuild=true
+fi
+
+if $cn_rebuild && [ ! -s "$ROUTEFILE" ]; then
     DESIRED_BANDS[$P_CN]=""
     reconcile_pref "$P_CN"
     ip route flush table "$CN_TABLE" 2>/dev/null || true
     ip route flush table "$CN_STAGE_TABLE" 2>/dev/null || true
-else
-    gw=$(physical_gateway)
-    if [ -z "${gw:-}" ]; then
-        warn "no default gateway; leaving the cn table alone"
-    else
-        ip route flush table "$CN_STAGE_TABLE" 2>/dev/null || true
-        # Parse a narrow data grammar and generate the staging commands ourselves.
-        route_batch=$(parse_routefile "$gw")
-        expected_routes=$(grep -c '^route replace ' <<<"$route_batch")
-        [ "$expected_routes" -gt 0 ]
-        ip -batch - <<<"$route_batch"
-        staged_routes=$(count_routes "$CN_STAGE_TABLE")
-        [ "$staged_routes" -eq "$expected_routes" ]
+    write_cn_state "$cn_expected_state"
+elif $cn_rebuild && [ -z "${gw:-}" ]; then
+    warn "no default gateway; leaving the cn table and state alone"
+elif $cn_rebuild; then
+    ip route flush table "$CN_STAGE_TABLE" 2>/dev/null || true
+    ip -batch - <<<"$cn_route_batch"
+    staged_routes=$(count_routes "$CN_STAGE_TABLE")
+    [ "$staged_routes" -eq "$cn_expected_routes" ]
 
-        stage_routes=$(ip route show table "$CN_STAGE_TABLE" | sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//')
-        while read -r route; do
-            # shellcheck disable=SC2086 # kernel-rendered route is an argument list
-            [ -n "$route" ] && ip route replace $route table "$CN_TABLE"
-        done <<<"$stage_routes"
-        while read -r route; do
-            [ -n "$route" ] || continue
-            # shellcheck disable=SC2086 # kernel-rendered route is an argument list
-            grep -Fqx "$route" <<<"$stage_routes" || ip route del $route table "$CN_TABLE"
-        done < <(ip route show table "$CN_TABLE")
-        [ "$(ip route show table "$CN_TABLE" | sed -E 's/[[:space:]]+$//' | sort)" = "$(sort <<<"$stage_routes")" ]
-        DESIRED_BANDS[$P_CN]="from all lookup $CN_TABLE"
-    fi
+    stage_routes=$(ip route show table "$CN_STAGE_TABLE" | sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//')
+    while read -r route; do
+        # shellcheck disable=SC2086 # kernel-rendered route is an argument list
+        [ -n "$route" ] && ip route replace $route table "$CN_TABLE"
+    done <<<"$stage_routes"
+    while read -r route; do
+        [ -n "$route" ] || continue
+        # shellcheck disable=SC2086 # kernel-rendered route is an argument list
+        grep -Fqx "$route" <<<"$stage_routes" || ip route del $route table "$CN_TABLE"
+    done < <(ip route show table "$CN_TABLE")
+    [ "$(ip route show table "$CN_TABLE" | sed -E 's/[[:space:]]+$//' | sort)" = "$(sort <<<"$stage_routes")" ]
+    write_cn_state "$cn_expected_state"
+fi
+
+if has_routes "$CN_TABLE"; then
+    DESIRED_BANDS[$P_CN]="from all lookup $CN_TABLE"
+else
+    DESIRED_BANDS[$P_CN]=""
 fi
 
 # Build an independent chain before switching, so construction failures leave

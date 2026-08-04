@@ -180,6 +180,10 @@ systemctl()  { printf '%s\n' "$*" >> WORKDIR/systemctl-calls; return 0; }
 tailscale()  { return 1; }
 logger()     { return 0; }
 dig()        { return 9; }
+ip() {
+    printf '%s\n' "$*" >> WORKDIR/ip-calls
+    command ip "$@"
+}
 iptables() {
     if [ "${FAIL_NEXT_MARK:-0}" = 1 ] && [ " $* " = " -t mangle -A NETMODE_IOA_NEXT -m set --match-set ioa dst -m set --match-set ioa_intranet dst -j MARK --set-xmark 0x1/0xffffffff " ]; then
         return 42
@@ -203,6 +207,7 @@ iptables-restore() {
     command iptables-restore "$@" <<<"$rules"
 }
 STATE_FILE_OVERRIDE=WORKDIR/last-applied
+CN_STATE_FILE_OVERRIDE=WORKDIR/cn-last-applied
 CACHE_DIR_OVERRIDE=WORKDIR/cache
 RT_TABLES_OVERRIDE=WORKDIR/rt_tables
 """
@@ -218,6 +223,8 @@ for old, new in [
      'CACHE_DIR="${CACHE_DIR_OVERRIDE:-/var/lib/network-reconfigure}"'),
     ('STATE_FILE="$CACHE_DIR/last-applied"',
      'STATE_FILE="${STATE_FILE_OVERRIDE:-$CACHE_DIR/last-applied}"'),
+    ('CN_STATE_FILE="$CACHE_DIR/cn-last-applied"',
+     'CN_STATE_FILE="${CN_STATE_FILE_OVERRIDE:-$CACHE_DIR/cn-last-applied}"'),
     ('ROUTEFILE="/home/amos/.routefile"', 'ROUTEFILE="%s/routefile"' % work),
     ('OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"',
      'OFFICE_SRC="%s/office.conf"' % work),
@@ -340,6 +347,38 @@ main() {
     [ "$(awk '$2 == "cn_stage" {print $1}' "$WORK/rt_tables")" = "$stage_id" ] \
         && ok "existing unique cn_stage ID is reused" \
         || bad "cn_stage ID changed after registration"
+
+    head_ "CN rebuild gating"
+    : > "$WORK/ip-calls"
+    run_script 1 >/dev/null
+    if ! grep -Eq '(^| )route (flush|add|replace|del).*table (cn|cn_stage)|-batch -' \
+            "$WORK/ip-calls"; then
+        ok "ordinary FORCE leaves healthy CN tables untouched"
+    else
+        bad "ordinary FORCE mutated healthy CN tables"
+    fi
+    : > "$WORK/ip-calls"
+    FORCE_CN=1 run_script 0 >/dev/null
+    if grep -Eq '(^| )route (flush|add|replace|del).*table (cn|cn_stage)|-batch -' \
+            "$WORK/ip-calls"; then
+        ok "FORCE_CN rebuilds CN tables"
+    else
+        bad "FORCE_CN did not rebuild CN tables"
+    fi
+    local cn_state_before
+    cn_state_before=$(cat "$WORK/cn-last-applied")
+    printf 'route add malformed via GATEWAY table cn\n' > "$WORK/routefile"
+    run_status 0 >/dev/null
+    [ "$(cat "$WORK/cn-last-applied")" = "$cn_state_before" ] \
+        && ok "failed CN rebuild preserves its state" \
+        || bad "failed CN rebuild advanced its state"
+    printf '%s\n' \
+        'route add 1.0.1.0/24 via GATEWAY table cn' \
+        'route add 1.0.2.0/23 via GATEWAY table cn' \
+        'route add 10.20.0.0/16 via GATEWAY table cn' \
+        'route add 100.12.34.0/24 via GATEWAY table cn' > "$WORK/routefile"
+    FORCE_CN=1 run_script 0 >/dev/null
+
     local base500 base1000 base2500 chain duplicate_rc
     base500=$(band 500); base1000=$(band 1000); base2500=$(band 2500)
     [ "$(count 2500)" -gt 0 ] && ok "2500 installed ($(count 2500) rules)" \
