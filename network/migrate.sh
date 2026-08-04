@@ -136,6 +136,10 @@ install_configs() {
     mkdir -p /etc/systemd/network
     cp "$DIR/systemd-network/"*.network /etc/systemd/network/
     echo "  [ok] /etc/systemd/network/*.network"
+    mkdir -p /etc/systemd/networkd.conf.d
+    cp "$DIR/systemd-networkd.conf.d/foreign-routing.conf" \
+        /etc/systemd/networkd.conf.d/foreign-routing.conf
+    echo "  [ok] /etc/systemd/networkd.conf.d/foreign-routing.conf"
 
     # Install wpa_supplicant@ override
     mkdir -p /etc/systemd/system/wpa_supplicant@.service.d
@@ -422,6 +426,7 @@ rollback() {
 
     # Remove new networkd configs (but keep iwd profiles for future use)
     rm -f /etc/systemd/network/{10-ignore-virtual,20-wired,25-wireless,26-wireless-tencent}.network
+    rm -f /etc/systemd/networkd.conf.d/foreign-routing.conf
     rm -f /etc/systemd/system/wpa_supplicant@.service.d/override.conf
 
     # Reload

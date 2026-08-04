@@ -129,9 +129,12 @@ if [[ -n $GUI ]]; then
         echo 'tcpdump is required; network debug units were not installed' >&2
         exit 1
     }
-    sudo mkdir -p /etc/iwd /etc/systemd/network /etc/systemd/system/wpa_supplicant@.service.d
+    sudo mkdir -p /etc/iwd /etc/systemd/network /etc/systemd/networkd.conf.d \
+        /etc/systemd/system/wpa_supplicant@.service.d
     sudo cp "$DIR"/network/iwd/main.conf /etc/iwd/main.conf
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
+    sudo cp "$DIR"/network/systemd-networkd.conf.d/foreign-routing.conf \
+        /etc/systemd/networkd.conf.d/foreign-routing.conf
     sudo cp "$DIR"/network/systemd/wpa_supplicant@.service.d/override.conf \
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \

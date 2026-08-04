@@ -422,6 +422,26 @@ if ! smartdns_rollback_contract; then
     fail=1
 fi
 
+foreign_routing_config=network/systemd-networkd.conf.d/foreign-routing.conf
+if [ ! -f "$foreign_routing_config" ] ||
+   [ "$(grep -Fxc 'ManageForeignRoutingPolicyRules=no' "$foreign_routing_config")" -ne 1 ] ||
+   [ "$(grep -Fxc 'ManageForeignRoutes=no' "$foreign_routing_config")" -ne 1 ]; then
+    echo 'FAIL networkd does not preserve foreign routes and rules' >&2
+    fail=1
+else
+    echo 'OK   networkd preserves foreign routes and rules'
+fi
+if ! grep -Fq 'systemd-networkd.conf.d/foreign-routing.conf' restore.sh ||
+   ! grep -Fq 'systemd-networkd.conf.d/foreign-routing.conf' network/migrate.sh; then
+    echo 'FAIL foreign-routing drop-in is not installed by both deployment paths' >&2
+    fail=1
+fi
+if ! sed -n '/^rollback() {/,/^}/p' network/migrate.sh |
+        grep -Fq 'rm -f /etc/systemd/networkd.conf.d/foreign-routing.conf'; then
+    echo 'FAIL migration rollback does not remove the foreign-routing drop-in' >&2
+    fail=1
+fi
+
 if ! awk '
     /office\.conf/ && /sudo tee/ { office = NR }
     /dhcp-dns\.conf/ && /sudo cp/ { dhcp = NR }
