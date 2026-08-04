@@ -32,8 +32,8 @@ expect() {
     printf 'OK   %s\n' "$name"
 }
 
-expect 'tun default is isolated' \
-    'route add default via 192.168.255.1 dev tun0 table ioa metric 101 ' \
+expect 'tun default is isolated and has no gateway' \
+    'route add default dev tun0 table ioa metric 101 ' \
     route add default via 192.168.255.1 dev tun0
 expect 'SmartGateAgent mark rule passes through' \
     'rule add fwmark 2616 table 20 ' \

@@ -3,7 +3,7 @@
 IP_REAL=${IP_REAL:-/usr/bin/ip}
 
 if [ "$*" = "route add default via 192.168.255.1 dev tun0" ]; then
-    exec "$IP_REAL" route add default via 192.168.255.1 dev tun0 table ioa metric 101
+    exec "$IP_REAL" route add default dev tun0 table ioa metric 101
 fi
 
 exec "$IP_REAL" "$@"
