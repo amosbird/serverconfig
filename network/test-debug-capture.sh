@@ -232,7 +232,7 @@ static_script_contract() {
     # shellcheck disable=SC2016 # assert literal source, not this test's positional parameters
     assert_contains "$SCRIPT" 'exec sudo -n -- "$0" "$@"'
     # shellcheck disable=SC2016 # Assert literal shell source.
-    assert_contains "$SCRIPT" 'capture_main /var/log/network-debug/incidents network-debug-pcap.service 30 "$bugreport"'
+    assert_contains "$SCRIPT" 'capture_main /var/log/network-debug/incidents 30 "$bugreport"'
     # shellcheck disable=SC2016 # Assert literal shell source.
     assert_contains "$SCRIPT" '/usr/bin/journalctl -b -u "$entry" --since=-15min -n 5000 --no-pager'
     assert_contains "$SCRIPT" "'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443'"
@@ -240,20 +240,19 @@ static_script_contract() {
     assert_contains "$SCRIPT" 'MAX_TEXT_BYTES=1048576'
     assert_contains "$SCRIPT" 'monitor: RTM_(NEW|DEL)ROUTE'
     snapshot_command_contract "$SCRIPT"
+    assert_not_contains "$SCRIPT" 'network-debug-pcap.service|freeze_ring|RING_DIR|restore_recorder'
     assert_not_contains "$SCRIPT" '^[[:space:]]*(/usr/bin/)?tailscale (down|up|set)( |$)'
     assert_not_contains "$SCRIPT" 'systemctl (restart|stop|start) (tailscaled|systemd-networkd|network-reconfigure|smartdns|ngnclient)'
 
-    local check copy reload enable restart active
-    check=$(grep -nF '[ -x /usr/bin/tcpdump ] || {' "$ROOT/restore.sh" | cut -d: -f1)
-    copy=$(grep -nF 'network-debug-pcap.service /etc/systemd/system/' "$ROOT/restore.sh" | cut -d: -f1)
-    reload=$(awk '/network-debug-pcap.service \/etc\/systemd\/system\// { seen=1 } seen && /systemctl daemon-reload/ { print NR; exit }' "$ROOT/restore.sh")
-    enable=$(grep -nF 'sudo systemctl enable network-debug-pcap.service' "$ROOT/restore.sh" | cut -d: -f1)
-    restart=$(grep -nF 'sudo systemctl restart network-debug-pcap.service' "$ROOT/restore.sh" | cut -d: -f1)
-    active=$(grep -nF 'sudo systemctl is-active --quiet network-debug-pcap.service' "$ROOT/restore.sh" | cut -d: -f1)
-    [ -n "$check" ] && [ "$check" -lt "$copy" ] || fail 'restore checks tcpdump after unit copy'
-    [ "$copy" -lt "$reload" ] && [ "$reload" -lt "$enable" ] &&
-        [ "$enable" -lt "$restart" ] && [ "$restart" -lt "$active" ] ||
-        fail 'restore recorder deployment order is unsafe'
+    [ ! -e "$SERVICE" ] || fail 'constant recorder unit remains in the repository'
+    grep -Fq 'sudo systemctl disable --now network-debug-pcap.service' "$ROOT/restore.sh" ||
+        fail 'restore does not retire the legacy recorder'
+    grep -Fq 'sudo rm -rf /var/log/network-debug/ring' "$ROOT/restore.sh" ||
+        fail 'restore does not remove the legacy packet ring'
+    ! grep -E 'sudo systemctl (enable|restart) network-debug-pcap' "$ROOT/restore.sh" >/dev/null ||
+        fail 'restore still enables the constant recorder'
+    ! grep -Fq '/var/log/network-debug/incidents' "$ROOT/restore.sh" ||
+        fail 'restore deletes retained incidents'
 }
 
 make_fakes() {
@@ -441,14 +440,14 @@ runtime_contract() (
     )
 
     NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC=124; export NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC
-    capture_main "$base" network-debug-pcap.service 0 false "$lock" \
+    capture_main "$base" 0 false "$lock" \
         $'safe note\nwith\tcontrols\033[31m'
     unset NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC
 
     mapfile -t incidents < <(find "$base" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
     [ "${#incidents[@]}" -eq 1 ] || fail 'capture did not create exactly one incident'
     local incident="$base/${incidents[0]}"
-    [ -f "$incident/ring/trace.pcap0" ] || fail 'ring file was not copied'
+    [ ! -e "$incident/ring" ] || fail 'manual capture unexpectedly copied a packet ring'
     [ -f "$incident/wlan0.pcap0" ] || fail 'bounded wlan capture missing'
     [ -f "$incident/tailscale0.pcap0" ] || fail 'bounded tailscale capture missing'
     assert_capture_success "$incident/manifest.tsv"
@@ -484,7 +483,7 @@ runtime_contract() (
     before_count=$(find "$base" -mindepth 1 -maxdepth 1 -type d | wc -l)
     exec {held_fd}>"$lock"
     flock -n "$held_fd"
-    if capture_main "$base" network-debug-pcap.service 0 false "$lock" concurrent \
+    if capture_main "$base" 0 false "$lock" concurrent \
             >"$WORK/locked.out" 2>&1; then
         fail 'concurrent capture acquired a held lock'
     fi
@@ -492,20 +491,6 @@ runtime_contract() (
     [ "$(find "$base" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq "$before_count" ] ||
         fail 'lock failure created an incident'
     flock -u "$held_fd"
-
-    # Freeze failure preserves evidence, reports FAILED, exits nonzero, and never starts deep capture.
-    printf active >"$state"; NETWORK_DEBUG_STOP_FAIL=1; export NETWORK_DEBUG_STOP_FAIL
-    if capture_main "$base" network-debug-pcap.service 0 false "$lock" broken \
-            >"$WORK/failed.out" 2>&1; then
-        fail 'failed freeze returned success'
-    fi
-    assert_contains "$WORK/failed.out" 'FAILED:'
-    local failed_incident
-    failed_incident=$(find "$base" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' |
-        sort -nr | head -1 | cut -d' ' -f2-)
-    assert_contains "$failed_incident/manifest.tsv" $'1\trecorder stop\tfreeze'
-    [ ! -e "$failed_incident/wlan0.pcap0" ] || fail 'deep capture ran after freeze failure'
-    unset NETWORK_DEBUG_STOP_FAIL
 
     # Retention remains bounded and does not delete non-directories.
     touch "$base/keep-file"
@@ -553,9 +538,6 @@ EOF
     assert_contains "$log" "$cli_script note"
 )
 
-service_contract
-service_identity_mutation_contract
-service_directory_mutation_contract
 /usr/bin/tcpdump --version >/dev/null
 /usr/bin/tcpdump -d 'udp port 3478 or udp port 41641' >/dev/null
 /usr/bin/tcpdump -d 'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443' >/dev/null
@@ -566,7 +548,6 @@ record_route_events_contract
 snapshot_runtime_contract
 snapshot_command_mutation_contract
 capture_manifest_mutation_contract
-freeze_contract
 runtime_contract
 cli_contract
 printf 'OK   network debug recorder contract\n'

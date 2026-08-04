@@ -139,7 +139,6 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
-    sudo cp "$DIR"/network/systemd/network-debug-pcap.service /etc/systemd/system/
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
     # Retiring fallback only stops its policy-preference updates; it does not alter links.
@@ -150,6 +149,12 @@ if [[ -n $GUI ]]; then
     sudo rm -rf /var/lib/network-fallback
     sudo rm -f /var/lib/network-reconfigure/derp-ips \
         /var/lib/network-reconfigure/ioa-endpoints
+    # Retire the old constant recorder but preserve manually captured incidents.
+    if sudo test -e /etc/systemd/system/network-debug-pcap.service; then
+        sudo systemctl disable --now network-debug-pcap.service
+    fi
+    sudo rm -f /etc/systemd/system/network-debug-pcap.service
+    sudo rm -rf /var/log/network-debug/ring
     sudo systemctl daemon-reload
     # SmartDNS includes must exist before validating and atomically installing the base config.
     sudo mkdir -p /etc/smartdns
@@ -164,10 +169,6 @@ if [[ -n $GUI ]]; then
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
     sudo systemctl enable network-reconfigure.path
-    # An explicit deployment restarts the recorder, resetting its current packet ring.
-    sudo systemctl enable network-debug-pcap.service
-    sudo systemctl restart network-debug-pcap.service
-    sudo systemctl is-active --quiet network-debug-pcap.service
 
     # Setup kitty desktop-ui portal (replaces xdg-desktop-portal-termfilechooser)
     kitten desktop-ui enable-portal

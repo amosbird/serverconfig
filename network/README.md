@@ -178,33 +178,20 @@ exactly.
 This retains three important invariants across AP changes: public DHCP DNS remains reachable,
 `cn` routes use the current gateway, and tunnel-owned tables and marks remain untouched.
 
-## Packet recorder and incident capture
+## Manual incident capture
 
-`network-debug-pcap.service` has systemd create the root-only `/var/log/network-debug`
-directory before applying its filesystem sandbox, then keeps a packet ring under its `ring`
-subdirectory. It captures only outer `wlan0` UDP traffic on ports 3478 and 41641, stores 96-byte
-snapshots, and rotates eight 8 MB files (about 64 MB maximum). The service ring remains UDP-only.
-The incident command's 30-second deep captures additionally include TCP ports 80 and 443 on
-`wlan0` and `tailscale0`, with one 8 MB file per interface, to diagnose DERP/control traffic entering
-the tunnel. These deep captures record destination IP addresses and ports plus up to 96 bytes from
-each packet, including TCP and TLS handshake headers. They generally do not contain plaintext
-application payload, but remain highly sensitive. Incident directories also contain command output,
-journals, routes, process/socket details, and optional notes; treat every incident and the whole
-debug directory as highly sensitive.
-
-To preserve the ring, collect before/after state, and run parallel 30-second captures on `wlan0`
-and `tailscale0`:
+There is no constant packet recorder. Run the manual command when an incident is occurring to
+collect before/after state and parallel 30-second captures on `wlan0` and `tailscale0`:
 
 ```bash
 scripts/network-debug-capture "optional incident note"
 ```
 
 The command uses non-interactive `sudo -n`, writes a root-only incident under
-`/var/log/network-debug/incidents`, and retains the newest five incidents. It temporarily stops
-only the recorder service while copying the ring, then restores it if it was active. It never
-changes routes, firewall rules, tunnel preferences, or network services. `tailscale netcheck` does
-perform active connectivity probes while collecting diagnostics. Individual diagnostic failures and
-timeout return codes are recorded in `manifest.tsv` instead of aborting collection. Text command
+`/var/log/network-debug/incidents`, and retains the newest five incidents. It never changes routes,
+firewall rules, tunnel preferences, or network services. `tailscale netcheck` does perform active
+connectivity probes while collecting diagnostics. Individual diagnostic failures and timeout return
+codes are recorded in `manifest.tsv` instead of aborting collection. Text command
 output is capped at 1 MiB per command and marked `truncated=true`; each deep pcap is capped at 8 MB.
 The route-event summary is bounded separately: it keeps counts and first/last events, then retains the
 latest matching events in a 900 KB byte ring (at most 5,000, with each line capped at 512 bytes), so
