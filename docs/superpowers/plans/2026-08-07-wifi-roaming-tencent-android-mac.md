@@ -1,37 +1,189 @@
-# Wi-Fi Roaming and Tencent Android MAC Implementation Plan
+# Wi-Fi Roaming, Tencent Android MAC, and Legacy Cleanup Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Preserve DHCP state during short Wi-Fi roams and make only `Tencent-WiFi` use the registered Android MAC while retaining normal physical routing.
+**Goal:** Remove the retired netctl migration/rollback stack, preserve DHCP state during short Wi-Fi roams, and use the registered Android MAC only on `Tencent-WiFi` with normal physical routing.
 
-**Architecture:** iwd performs association-time MAC selection with global per-network randomization and a secret-profile `AddressOverride`; systemd-networkd retains DHCP configuration for a finite three-second carrier gap. The repository owns only global iwd/networkd policy and deployment validation, while `/var/lib/iwd/Tencent-WiFi.8021x` remains local secret material.
+**Architecture:** `restore.sh` becomes the sole repository deployment path. iwd owns association-time per-network MAC selection, systemd-networkd owns a finite carrier-loss grace and normal DHCP routing, and the credential-bearing Tencent iwd profile remains local secret material outside git.
 
-**Tech Stack:** Bash, iwd 3.12 configuration, systemd-networkd `.network` files, existing shell static tests.
+**Tech Stack:** Bash, iwd 3.12 configuration, systemd-networkd `.network` files, existing static and namespace shell tests.
 
 ---
 
 ## File structure
 
-- Modify `network/iwd/main.conf`: enable iwd's per-network MAC policy.
-- Modify `network/systemd-network/25-wireless.network`: add finite carrier-loss grace.
-- Delete `network/systemd-network/26-wireless-tencent.network`: remove ineffective no-gateway policy.
-- Modify `network/migrate.sh`: validate the local Tencent override, remove an obsolete installed networkd file, reload networkd configuration, and preserve the secret profile on rollback.
-- Modify `restore.sh`: perform the same non-destructive cleanup, validation, and networkd reload in the normal deployment path.
-- Modify `network/test-static-policy.sh`: leave runnable static and fixture-based checks for configuration, deployment, secrecy, and rollback contracts.
-- Modify `network/README.md`: document Wi-Fi roaming behavior, Tencent routing, and local secret-profile ownership.
-- Locally modify `/var/lib/iwd/Tencent-WiFi.8021x`: add the Android MAC override without exposing or committing credentials.
+- Delete `network/migrate.sh`: the completed migration and rollback CLI is no longer supported.
+- Delete `network/rollback/README.md`, `network/rollback/90-amos-dhcp`, and `network/rollback/90-wired-netctl.rules`: remove pre-iwd rollback artifacts.
+- Delete `scripts/ncswitch`: remove the netctl switch helper.
+- Delete `old_README.org`: remove obsolete setup guidance.
+- Modify `.config/fish/conf.d/completions.fish`: remove netctl/ncswitch completion code.
+- Modify `network/test-static-policy.sh`: remove migration-only tests and add a current-source legacy absence check plus Wi-Fi policy checks.
+- Modify `network/iwd/main.conf`: enable stable per-network MAC selection.
+- Modify `network/systemd-network/25-wireless.network`: add finite roaming carrier grace.
+- Delete `network/systemd-network/26-wireless-tencent.network`: remove ineffective no-gateway behavior.
+- Modify `restore.sh`: clean obsolete installed Tencent networkd policy, report the local MAC override without exposing secrets, and reload networkd configuration.
+- Modify `network/README.md`: replace migration/rollback guidance with current deployment, roaming, and secret ownership documentation.
+- Modify `docs/superpowers/specs/2026-08-07-wifi-roaming-carrier-grace-design.md`: already revised to record the approved cleanup scope.
+- Modify this plan to reflect the approved scope; older completed files in `docs/superpowers/plans/` remain unchanged historical records.
+- Modify locally only `/var/lib/iwd/Tencent-WiFi.8021x`: add the Android MAC override without exposing or committing credentials.
 
-### Task 1: Lock down the desired repository configuration
+## Task 1: Retire executable migration and netctl legacy
+
+**Files:**
+- Modify: `network/test-static-policy.sh`
+- Delete: `network/migrate.sh`
+- Delete: `network/rollback/README.md`
+- Delete: `network/rollback/90-amos-dhcp`
+- Delete: `network/rollback/90-wired-netctl.rules`
+- Delete: `scripts/ncswitch`
+- Delete: `old_README.org`
+- Delete: `network/systemd-network/26-wireless-tencent.network`
+- Modify: `network/README.md`
+- Modify: `.config/fish/conf.d/completions.fish`
+
+- [ ] **Step 1: Add a failing current-source legacy check**
+
+Add before `exit "$fail"` in `network/test-static-policy.sh`:
+
+```bash
+legacy_network_sources=(
+    restore.sh
+    network/README.md
+    network/iwd
+    network/smartdns
+    network/systemd
+    network/systemd-network
+    network/systemd-networkd.conf.d
+    network/udev
+    scripts
+    .config/fish/conf.d/completions.fish
+)
+legacy_network_pattern='netctl|dhcpcd|ncswitch|network/migrate\.sh|network/rollback'
+if grep -RInE "$legacy_network_pattern" "${legacy_network_sources[@]}" \
+        >/tmp/network-legacy.$$ 2>/dev/null; then
+    echo 'FAIL current network sources still reference the retired migration stack' >&2
+    cat /tmp/network-legacy.$$ >&2
+    fail=1
+else
+    echo 'OK   current network sources do not reference the retired migration stack'
+fi
+rm -f /tmp/network-legacy.$$
+for retired in network/migrate.sh network/rollback scripts/ncswitch old_README.org; do
+    if [ -e "$retired" ]; then
+        echo "FAIL retired network artifact still exists: $retired" >&2
+        fail=1
+    fi
+done
+```
+
+The explicit source list excludes `docs/superpowers/plans/`, preserving completed plans unchanged as historical records.
+
+- [ ] **Step 2: Run the test and verify RED**
+
+Run:
+
+```bash
+bash network/test-static-policy.sh
+```
+
+Expected: nonzero exit with `FAIL current network sources still reference the retired migration stack` and retired-artifact failures.
+
+- [ ] **Step 3: Remove migration-only tests before deleting their implementation**
+
+In `network/test-static-policy.sh`, delete these checks and their fixture functions because they exclusively test `network/migrate.sh`:
+
+- the activation check beginning with `# Activation must not create or seed the legacy fragment`;
+- the SmartDNS fragment-backup source assertions beginning with `# shellcheck disable=SC2016 # fragment variables are literal source text`;
+- the complete `smartdns_backup_restore_contract()` function and its invocation;
+- the second half of the foreign-routing deployment check that requires `network/migrate.sh` and rollback removal;
+- migration references from `reject 'no fallback deployment references'`;
+- all checks beginning with `reject 'install is non-destructive'` through the obsolete-underlay mapping assertion;
+- the complete `rollback_stage_registration_contract()` function and its invocation;
+- any remaining `source network/migrate.sh`, `network/migrate.sh`, `rollback()`, or migration-only assertion.
+
+Retain `smartdns_deployment_contract()`: it sources `network/smartdns-deploy.sh` and tests the current SmartDNS deployment path independently of migration.
+
+- [ ] **Step 4: Remove the retired files**
+
+Run:
+
+```bash
+git rm network/migrate.sh \
+    network/rollback/README.md \
+    network/rollback/90-amos-dhcp \
+    network/rollback/90-wired-netctl.rules \
+    scripts/ncswitch \
+    old_README.org
+```
+
+Expected: all six files are staged for deletion and `network/rollback/` becomes empty.
+
+- [ ] **Step 5: Remove fish completion and current README legacy**
+
+Delete this function and completion from `.config/fish/conf.d/completions.fish`:
+
+```fish
+function __fish_netctl_get_profiles
+    command netctl list | sed -e 's/^[ \t*]*//'
+end
+```
+
+```fish
+complete -f -c ncswitch -a '(__fish_netctl_get_profiles)'
+```
+
+Do not change unrelated completions.
+
+Delete `network/systemd-network/26-wireless-tencent.network`, whose no-gateway behavior is both
+ineffective and contrary to the approved normal physical routing:
+
+```bash
+git rm network/systemd-network/26-wireless-tencent.network
+```
+
+Replace the `## Migration and rollback` section in `network/README.md` with this minimal current
+statement; Task 4 will add the detailed Wi-Fi operator guidance:
+
+```markdown
+## Deployment
+
+`restore.sh` is the only repository deployment entry point. There is no supported rollback to the
+retired pre-iwd network stack. Installed pre-iwd files under `/etc` are left for a separate inventoried
+cleanup so wired 802.1X credentials are not removed accidentally.
+```
+
+- [ ] **Step 6: Run syntax and static checks**
+
+Run:
+
+```bash
+bash -n network/test-static-policy.sh
+fish -n .config/fish/conf.d/completions.fish
+bash network/test-static-policy.sh
+```
+
+Expected: all three commands exit 0. No deleted migration implementation is sourced or required,
+and current source/documentation contains no retired-stack reference.
+
+- [ ] **Step 7: Commit the legacy deletion**
+
+```bash
+git add network/test-static-policy.sh network/README.md \
+    network/systemd-network/26-wireless-tencent.network \
+    .config/fish/conf.d/completions.fish
+git commit -m "network: remove retired migration stack"
+```
+
+## Task 2: Lock down Wi-Fi roaming and routing policy
 
 **Files:**
 - Modify: `network/test-static-policy.sh`
 - Modify: `network/iwd/main.conf`
 - Modify: `network/systemd-network/25-wireless.network`
-- Delete: `network/systemd-network/26-wireless-tencent.network`
 
-- [ ] **Step 1: Write failing static assertions**
+- [ ] **Step 1: Add failing configuration assertions**
 
-Insert after the existing foreign-routing checks in `network/test-static-policy.sh`:
+Add near the foreign-routing configuration checks in `network/test-static-policy.sh`:
 
 ```bash
 iwd_config=network/iwd/main.conf
@@ -67,17 +219,12 @@ Run:
 bash network/test-static-policy.sh
 ```
 
-Expected: nonzero exit with these new failures:
+Expected: nonzero exit for the first two new configuration requirements. The obsolete Tencent file
+absence check already passes because Task 1 removed it.
 
-```text
-FAIL iwd does not use stable per-network MAC addresses
-FAIL wireless carrier grace is not exactly finite 3s
-FAIL obsolete Tencent no-gateway networkd config still exists
-```
+- [ ] **Step 3: Enable iwd per-network MAC selection**
 
-- [ ] **Step 3: Add the minimal iwd setting**
-
-Change the beginning of `network/iwd/main.conf` to:
+Change the start of `network/iwd/main.conf` to:
 
 ```ini
 [General]
@@ -101,17 +248,17 @@ DNS=127.0.0.1
 DNSDefaultRoute=false
 ```
 
-- [ ] **Step 5: Delete the obsolete Tencent networkd file**
+- [ ] **Step 5: Confirm special Tencent networkd policy is absent**
 
 Run:
 
 ```bash
-rm network/systemd-network/26-wireless-tencent.network
+test ! -e network/systemd-network/26-wireless-tencent.network
 ```
 
-Expected: only `25-wireless.network` remains responsible for WLAN DHCP and gateway behavior.
+Expected: exit 0; `Tencent-WiFi` uses the generic WLAN file and normal DHCP gateway/routes.
 
-- [ ] **Step 6: Run the focused check and verify GREEN**
+- [ ] **Step 6: Run the static check and verify GREEN for Wi-Fi policy**
 
 Run:
 
@@ -119,89 +266,44 @@ Run:
 bash network/test-static-policy.sh
 ```
 
-Expected: exit 0 and the three new checks print `OK`.
+Expected: the three Wi-Fi policy assertions print `OK`. Any remaining failure must be investigated before proceeding.
 
-- [ ] **Step 7: Commit the repository policy change**
+- [ ] **Step 7: Commit Wi-Fi repository policy**
 
 ```bash
 git add network/test-static-policy.sh network/iwd/main.conf \
-    network/systemd-network/25-wireless.network \
-    network/systemd-network/26-wireless-tencent.network
+    network/systemd-network/25-wireless.network
 git commit -m "network: preserve Wi-Fi state across short roams"
 ```
 
-### Task 2: Make deployment remove stale policy and validate the secret profile
+## Task 3: Make restore the sole safe deployment path
 
 **Files:**
 - Modify: `network/test-static-policy.sh`
-- Modify: `network/migrate.sh`
 - Modify: `restore.sh`
 
-- [ ] **Step 1: Add a failing fixture test for profile validation**
+- [ ] **Step 1: Add failing restore deployment assertions**
 
-Add before `exit "$fail"` in `network/test-static-policy.sh`:
-
-```bash
-tencent_iwd_profile_contract() (
-    local sandbox profile output secret='fixture-private-passphrase'
-    sandbox=$(mktemp -d)
-    profile="$sandbox/Tencent-WiFi.8021x"
-    trap 'rm -rf "$sandbox"' EXIT
-
-    # shellcheck source=network/migrate.sh
-    source network/migrate.sh
-
-    cat >"$profile" <<EOF
-[Security]
-EAP-Method=TLS
-EAP-TLS-ClientKeyPassphrase=$secret
-
-[Settings]
-AutoConnect=true
-AddressOverride=1e:dc:46:00:66:1b
-EOF
-    output=$(check_tencent_iwd_profile "$profile")
-    if [[ "$output" != *'[ok]'* ]] || [[ "$output" == *"$secret"* ]]; then
-        echo 'FAIL valid Tencent iwd profile was rejected or leaked credentials' >&2
-        return 1
-    fi
-
-    sed -i '/^AddressOverride=/d' "$profile"
-    output=$(check_tencent_iwd_profile "$profile")
-    if [[ "$output" != *'[WARN]'* ]] || [[ "$output" == *"$secret"* ]]; then
-        echo 'FAIL missing Tencent Android MAC override was not safely reported' >&2
-        return 1
-    fi
-
-    output=$(check_tencent_iwd_profile "$sandbox/missing.8021x")
-    if [[ "$output" != *'[WARN]'* ]]; then
-        echo 'FAIL missing Tencent profile was not reported as optional' >&2
-        return 1
-    fi
-    echo 'OK   Tencent iwd profile validation is optional and does not expose secrets'
-)
-if ! tencent_iwd_profile_contract; then
-    fail=1
-fi
-```
-
-Also add deployment-source assertions near the configuration checks:
+Add near the Wi-Fi assertions in `network/test-static-policy.sh`:
 
 ```bash
-for deployment in restore.sh network/migrate.sh; do
-    if ! grep -Fq '26-wireless-tencent.network' "$deployment" ||
-       ! grep -Fq 'networkctl reload' "$deployment"; then
-        echo "FAIL $deployment does not remove stale Tencent policy and reload networkd" >&2
-        fail=1
-    fi
-done
-if sed -n '/^rollback() {/,/^}/p' network/migrate.sh |
-   grep -Eq 'rm .*Tencent-WiFi\.8021x|sed .*Tencent-WiFi\.8021x'; then
-    echo 'FAIL rollback mutates the Tencent secret profile' >&2
+if ! grep -Fq 'sudo rm -f /etc/systemd/network/26-wireless-tencent.network' restore.sh ||
+   ! grep -Fq 'sudo networkctl reload' restore.sh; then
+    echo 'FAIL restore does not remove stale Tencent policy and reload networkd' >&2
     fail=1
 else
-    echo 'OK   rollback leaves the Tencent secret profile untouched'
+    echo 'OK   restore removes stale Tencent policy and reloads networkd'
 fi
+if ! grep -Fq "grep -Fqx 'AddressOverride=1e:dc:46:00:66:1b'" restore.sh; then
+    echo 'FAIL restore does not validate the Tencent Android MAC override' >&2
+    fail=1
+fi
+reject 'restore never prints Tencent credential profile contents' \
+    'cat .*Tencent-WiFi\.8021x|sed .*Tencent-WiFi\.8021x|grep -v .*Tencent-WiFi\.8021x' \
+    restore.sh
+reject 'restore does not restart network owners for Wi-Fi policy deployment' \
+    'systemctl (restart|try-restart) (systemd-networkd|iwd|tailscaled|smartdns|ngnclient)' \
+    restore.sh
 ```
 
 - [ ] **Step 2: Run the test and verify RED**
@@ -212,47 +314,11 @@ Run:
 bash network/test-static-policy.sh
 ```
 
-Expected: nonzero exit because `check_tencent_iwd_profile` is undefined and deployment paths do not yet both remove/reload.
+Expected: nonzero exit with `FAIL restore does not remove stale Tencent policy and reload networkd` and missing override validation.
 
-- [ ] **Step 3: Add the testable validation helper**
+- [ ] **Step 3: Add minimal restore behavior**
 
-Add before `install_configs()` in `network/migrate.sh`:
-
-```bash
-check_tencent_iwd_profile() {
-    local profile=${1:-/var/lib/iwd/Tencent-WiFi.8021x}
-    if [ ! -f "$profile" ]; then
-        echo "  [WARN] $profile missing — Tencent-WiFi won't work"
-    elif [ "$(grep -Fxc 'AddressOverride=1e:dc:46:00:66:1b' "$profile")" -eq 1 ]; then
-        echo "  [ok] $profile has the Android MAC override"
-    else
-        echo "  [WARN] $profile is missing the Android MAC override"
-    fi
-}
-```
-
-Replace the Tencent-profile branch at the start of `install_iwd_profiles()` with:
-
-```bash
-    check_tencent_iwd_profile
-```
-
-This helper prints no profile content and treats missing local secret material as a warning.
-
-- [ ] **Step 4: Remove stale networkd policy and reload safely in migration install**
-
-Immediately after copying repository `.network` files in `install_configs()`, add:
-
-```bash
-    rm -f /etc/systemd/network/26-wireless-tencent.network
-    networkctl reload
-```
-
-Keep this in `install_configs()` only. Do not add a networkd/iwd restart or link reconfiguration.
-
-- [ ] **Step 5: Add equivalent behavior to restore**
-
-Immediately after the `.network` copy in `restore.sh`, add:
+Immediately after copying repository `.network` files in `restore.sh`, add:
 
 ```bash
     sudo rm -f /etc/systemd/network/26-wireless-tencent.network
@@ -266,69 +332,51 @@ Immediately after the `.network` copy in `restore.sh`, add:
     sudo networkctl reload
 ```
 
-The `grep` result is the only secret-profile observation; never print the matching file or its other lines.
+This check reports only pass/fail and never emits profile contents. `networkctl reload` reloads `.network` definitions without restarting networkd or forcing a reconnect.
 
-- [ ] **Step 6: Keep rollback cleanup explicit**
-
-Leave `/var/lib/iwd/Tencent-WiFi.8021x` untouched. Keep the existing rollback list including
-`26-wireless-tencent` so rollback also removes stale installations created by older repository
-versions.
-
-- [ ] **Step 7: Run static tests and verify GREEN**
+- [ ] **Step 4: Run focused verification**
 
 Run:
 
 ```bash
+bash -n restore.sh network/test-static-policy.sh
 bash network/test-static-policy.sh
 ```
 
-Expected: exit 0, including:
+Expected: both commands exit 0, including `OK   restore removes stale Tencent policy and reloads networkd`.
 
-```text
-OK   Tencent iwd profile validation is optional and does not expose secrets
-OK   rollback leaves the Tencent secret profile untouched
-```
-
-- [ ] **Step 8: Run syntax checks**
-
-Run:
+- [ ] **Step 5: Commit the sole deployment path**
 
 ```bash
-bash -n restore.sh network/migrate.sh network/test-static-policy.sh
+git add restore.sh network/test-static-policy.sh
+git commit -m "network: deploy Wi-Fi policy through restore"
 ```
 
-Expected: exit 0 with no output.
-
-- [ ] **Step 9: Commit deployment behavior**
-
-```bash
-git add restore.sh network/migrate.sh network/test-static-policy.sh
-git commit -m "network: deploy Tencent per-network MAC policy"
-```
-
-### Task 3: Document operator behavior and verification
+## Task 4: Replace current migration documentation
 
 **Files:**
+- Modify: `network/test-static-policy.sh`
 - Modify: `network/README.md`
 
-- [ ] **Step 1: Add documentation contract checks first**
+- [ ] **Step 1: Add failing documentation assertions**
 
-Add near the other Wi-Fi static checks in `network/test-static-policy.sh`:
+Add near the current-source legacy check:
 
 ```bash
 for statement in \
     'IgnoreCarrierLoss=3s' \
     'AddressRandomization=network' \
-    'AddressOverride=1e:dc:46:00:66:1b'
+    'AddressOverride=1e:dc:46:00:66:1b' \
+    'restore.sh'
 do
     if ! grep -Fq "$statement" network/README.md; then
-        echo "FAIL network README omits Wi-Fi policy: $statement" >&2
+        echo "FAIL network README omits current deployment policy: $statement" >&2
         fail=1
     fi
 done
 ```
 
-- [ ] **Step 2: Verify the documentation test is RED**
+- [ ] **Step 2: Run the test and verify RED**
 
 Run:
 
@@ -336,11 +384,12 @@ Run:
 bash network/test-static-policy.sh
 ```
 
-Expected: nonzero exit with one or more `network README omits Wi-Fi policy` messages.
+Expected: nonzero exit for missing detailed Wi-Fi policy statements; the current-source legacy check
+remains green because Task 1 already replaced the retired deployment text.
 
-- [ ] **Step 3: Document the Wi-Fi policy**
+- [ ] **Step 3: Add Wi-Fi behavior documentation**
 
-Add this section before `## Reconciliation and AP changes` in `network/README.md`:
+Insert before `## Reconciliation and AP changes` in `network/README.md`:
 
 ```markdown
 ## Wi-Fi roaming and MAC identity
@@ -360,7 +409,28 @@ apply it during an active remote session. Validate the MAC and routing on the ne
 `Tencent-WiFi` connection, and validate carrier grace on the next natural room-to-room roam.
 ```
 
-- [ ] **Step 4: Run the static test and verify GREEN**
+- [ ] **Step 4: Replace the migration and rollback section**
+
+Replace `## Migration and rollback` and its contents with:
+
+```markdown
+## Deployment
+
+`restore.sh` is the only repository deployment entry point. With `GUI=1`, it installs the iwd,
+networkd, udev, and systemd configuration, removes obsolete installed repository files, validates
+SmartDNS before replacement, and reloads configuration without taking ownership of tunnel recovery.
+There is no supported rollback to the retired pre-iwd network stack.
+
+For a focused network-only update, copy the changed repository files to their matching `/etc` paths,
+remove obsolete installed files explicitly, and use `networkctl reload`. Do not restart iwd,
+systemd-networkd, Tailscale, SmartGateAgent, or SmartDNS merely to apply the Wi-Fi roaming policy.
+Installed pre-iwd files under `/etc` are intentionally left for a separate inventoried cleanup so the
+wired 802.1X credential path is not removed accidentally.
+```
+
+Ensure no current README text names the deleted migration, netctl, dhcpcd, or ncswitch paths. Historical files under `docs/superpowers/plans/` remain unchanged.
+
+- [ ] **Step 5: Run documentation and current-source checks**
 
 Run:
 
@@ -368,20 +438,20 @@ Run:
 bash network/test-static-policy.sh
 ```
 
-Expected: exit 0.
+Expected: exit 0, including the current-source legacy absence check.
 
-- [ ] **Step 5: Commit documentation and its check**
+- [ ] **Step 6: Commit current documentation**
 
 ```bash
 git add network/README.md network/test-static-policy.sh
-git commit -m "docs: explain Wi-Fi roaming and MAC ownership"
+git commit -m "docs: make restore the sole network deployment path"
 ```
 
-### Task 4: Apply the local secret-profile override without disconnecting Wi-Fi
+## Task 5: Apply the local Tencent MAC override without disconnecting Wi-Fi
 
 **Files:**
 - Modify locally only: `/var/lib/iwd/Tencent-WiFi.8021x`
-- Do not add any `/var/lib/iwd` file to git.
+- Do not create a repository copy.
 
 - [ ] **Step 1: Confirm the current network is not Tencent-WiFi**
 
@@ -391,7 +461,7 @@ Run:
 iwctl station wlan0 show | sed -n '/Connected network/p'
 ```
 
-Expected before proceeding: the connected network is not `Tencent-WiFi`. If it is, stop and wait for a safe maintenance window rather than changing association identity live.
+Expected before proceeding: the connected network is not `Tencent-WiFi`. If it is, stop and wait for a safe maintenance window.
 
 - [ ] **Step 2: Create a root-only backup**
 
@@ -403,9 +473,9 @@ sudo -n cp -a /var/lib/iwd/Tencent-WiFi.8021x \
 sudo -n chmod 600 /var/lib/iwd/Tencent-WiFi.8021x.before-android-mac
 ```
 
-Expected: both files remain owned by root and mode `600`.
+Expected: source and backup are root-owned and mode `600`.
 
-- [ ] **Step 3: Atomically add the override without displaying secrets**
+- [ ] **Step 3: Atomically add exactly one override without displaying secrets**
 
 Run:
 
@@ -447,9 +517,9 @@ finally:
 PY
 ```
 
-Expected: exit 0. This is a one-time administration command, not a repository script.
+Expected: exit 0. This remains a one-time local administration command, not a new script.
 
-- [ ] **Step 4: Verify only non-secret metadata and the exact override**
+- [ ] **Step 4: Verify only mode and the exact setting**
 
 Run:
 
@@ -461,7 +531,7 @@ sudo -n test "$(grep -Fxc 'AddressOverride=1e:dc:46:00:66:1b' \
 
 Expected: both commands exit 0 and print nothing.
 
-- [ ] **Step 5: Verify no tracked or untracked credential copy appeared**
+- [ ] **Step 5: Verify no credential copy appeared in git state**
 
 Run:
 
@@ -474,13 +544,13 @@ fi
 
 Expected: exit 0 with no output.
 
-### Task 5: Run the complete non-destructive verification and deploy repository files
+## Task 6: Run complete verification and deploy only changed network files
 
 **Files:**
 - No new source files.
-- Installed copies under `/etc/iwd` and `/etc/systemd/network` are deployment artifacts.
+- Installed files under `/etc/iwd` and `/etc/systemd/network` are deployment artifacts.
 
-- [ ] **Step 1: Run all repository network checks before deployment**
+- [ ] **Step 1: Run all repository network checks**
 
 ```bash
 bash network/test-ip-override.sh
@@ -489,20 +559,19 @@ bash network/test-static-policy.sh
 bash network/test-debug-capture.sh
 ```
 
-Expected: every command exits 0. `test-reconfigure.sh` performs destructive operations only inside its isolated network namespace; none of these commands may change the live network.
+Expected: every command exits 0. Namespace tests may mutate only their isolated namespace, never the live network.
 
-- [ ] **Step 2: Check shell syntax and whitespace**
+- [ ] **Step 2: Run syntax and whitespace checks**
 
 ```bash
-bash -n restore.sh network/migrate.sh network/test-static-policy.sh
+bash -n restore.sh network/test-static-policy.sh
+fish -n .config/fish/conf.d/completions.fish
 git diff --check
 ```
 
-Expected: both commands exit 0 with no output.
+Expected: all commands exit 0 with no output.
 
-- [ ] **Step 3: Install only the changed repository configuration**
-
-Avoid running the broad GUI restore path. Copy the two changed files, remove the obsolete installed file, then reload networkd:
+- [ ] **Step 3: Install only changed repository configuration**
 
 ```bash
 sudo -n cp network/iwd/main.conf /etc/iwd/main.conf
@@ -514,7 +583,7 @@ sudo -n networkctl reload
 
 Expected: exit 0. Do not restart networkd, iwd, tailscaled, SmartGateAgent, or SmartDNS.
 
-- [ ] **Step 4: Verify installed bytes and effective networkd file**
+- [ ] **Step 4: Verify installed bytes and active networkd file**
 
 ```bash
 sudo -n cmp -s network/iwd/main.conf /etc/iwd/main.conf
@@ -524,44 +593,24 @@ sudo -n test ! -e /etc/systemd/network/26-wireless-tencent.network
 networkctl status wlan0 --no-pager | grep -F '25-wireless.network'
 ```
 
-Expected: all commands exit 0. The active connection remains up; the iwd MAC policy waits for the next natural iwd start.
+Expected: all commands exit 0. The active connection remains up; iwd's global policy waits for its next natural start.
 
-- [ ] **Step 5: Verify prohibited services were not restarted by this deployment**
-
-Record current active state without mutating it:
-
-```bash
-systemctl is-active systemd-networkd iwd tailscaled smartdns
-systemctl is-active ngnclient 2>/dev/null || true
-```
-
-Expected: read-only status output only. Do not attempt to repair a service here.
-
-- [ ] **Step 6: Run fresh post-deployment static verification**
+- [ ] **Step 5: Run fresh post-deployment verification**
 
 ```bash
 bash network/test-static-policy.sh
-```
-
-Expected: exit 0.
-
-- [ ] **Step 7: Confirm repository state contains only intended commits plus pre-existing user edits**
-
-```bash
 git status --short
-git --no-pager log -4 --oneline
+git --no-pager log -6 --oneline
 ```
 
-Expected: no uncommitted network-task files; pre-existing unrelated user modifications remain untouched.
+Expected: tests exit 0; no network-task files are uncommitted; pre-existing unrelated user edits remain untouched.
 
-### Task 6: Natural-event validation checklist
+## Task 7: Validate on natural network events
 
 **Files:**
-- No changes during this task.
+- No changes.
 
 - [ ] **Step 1: Validate the next natural Tencent-WiFi connection**
-
-After naturally connecting to `Tencent-WiFi`, run read-only checks:
 
 ```bash
 iwctl station wlan0 show
@@ -570,16 +619,11 @@ ip -4 route show table main default dev wlan0
 networkctl status wlan0 --no-pager
 ```
 
-Expected:
-
-- connected SSID is `Tencent-WiFi`;
-- `wlan0` MAC is `1e:dc:46:00:66:1b`;
-- a DHCP physical default route exists on `wlan0`;
-- networkd reports `/etc/systemd/network/25-wireless.network`.
+Expected: SSID `Tencent-WiFi`, MAC `1e:dc:46:00:66:1b`, a physical DHCP default route, and `25-wireless.network`.
 
 - [ ] **Step 2: Validate leaving Tencent-WiFi**
 
-After naturally connecting to another SSID, run:
+After naturally connecting to another SSID:
 
 ```bash
 ip -brief link show wlan0
@@ -589,17 +633,8 @@ Expected: the MAC is no longer `1e:dc:46:00:66:1b`.
 
 - [ ] **Step 3: Validate the next natural meeting-room roam**
 
-After a natural BSSID roam shorter than three seconds, inspect without changing state:
-
 ```bash
 journalctl -b -u iwd -u systemd-networkd -u tailscaled --since '-10 minutes' --no-pager
 ```
 
-Expected around the roam:
-
-- iwd reports the BSSID transition;
-- networkd does not report `DHCP lease lost` for the short carrier gap;
-- tailscaled does not report `defaultRoute=""` for that roam;
-- exit-node traffic remains usable without `tailscale down`.
-
-If carrier loss exceeds three seconds, DHCP teardown is expected and does not invalidate the design.
+Expected for a carrier gap shorter than three seconds: iwd reports the BSSID transition, networkd does not report `DHCP lease lost`, tailscaled does not report `defaultRoute=""`, and exit-node traffic remains usable without `tailscale down`. A carrier loss longer than three seconds may correctly tear down DHCP state.
