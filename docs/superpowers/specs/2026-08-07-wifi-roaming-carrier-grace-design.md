@@ -96,11 +96,10 @@ Repository deployment:
    profile contents;
 4. runs `networkctl reload` for the networkd change.
 
-The one-time Tencent profile edit is a separate local administration step, not part of `restore.sh`
-or `migrate.sh`. It preserves the file's mode and ownership, creates a root-only backup in the same
-directory, and atomically adds or replaces exactly one `AddressOverride` in the existing `[Settings]`
-section. It must refuse to operate if the profile is missing, is not a regular file, or lacks that
-section.
+The one-time Tencent profile edit is a separate local administration step, not part of `restore.sh`.
+It preserves the file's mode and ownership, creates a root-only backup in the same directory, and
+atomically adds or replaces exactly one `AddressOverride` in the existing `[Settings]` section. It
+must refuse to operate if the profile is missing, is not a regular file, or lacks that section.
 
 Deployment must not restart networkd, iwd, tailscaled, SmartGateAgent, or SmartDNS, and must not
 force a disconnect. `AddressRandomization=network` takes effect when iwd next starts naturally. The
@@ -109,9 +108,15 @@ verified on the next natural connection to `Tencent-WiFi`. A missing or unmodifi
 profile produces a warning during general repository deployment rather than breaking unrelated
 network installation.
 
-Rollback removes repository-managed networkd files as before, including any obsolete Tencent file.
-It does not modify or delete `/var/lib/iwd/Tencent-WiFi.8021x` because rollback must not mutate
-pre-existing secret material.
+There is no rollback path: `restore.sh` is the only current repository deployment entry point. This
+change deletes `network/migrate.sh`, `network/rollback/`, `scripts/ncswitch`, `old_README.org`, and
+the matching fish completion. It also removes migration-only tests and rewrites current documentation
+to describe deployment rather than migration. Completed historical implementation plans remain
+unchanged as records and are excluded from the current-source legacy scan.
+
+Installed legacy files under `/etc/netctl`, old systemd units and hooks, and old wpa_supplicant Wi-Fi
+profiles are outside this change. They require a separate inventoried system cleanup so wired 802.1X
+credentials are not deleted accidentally.
 
 ## Error handling
 
@@ -129,8 +134,10 @@ Static tests verify:
 - `26-wireless-tencent.network` is absent and install logic removes a legacy live copy;
 - deployment validation recognizes a synthetic `.8021x` fixture with exactly one Android
   `AddressOverride`, warns when it is missing, and does not print synthetic credential values;
-- rollback and general deployment leave the `.8021x` profile contents untouched;
-- no Tencent credential profile exists under repository ownership.
+- general deployment leaves the `.8021x` profile contents untouched;
+- no Tencent credential profile exists under repository ownership;
+- current code and current documentation contain no migration, rollback, netctl, dhcpcd, or
+  `ncswitch` dependency; completed historical plans are excluded from this archival check.
 
 No artificial carrier loss, forced reconnect, or destructive roam test is performed on the live
 network.
@@ -157,3 +164,5 @@ On the next natural room-to-room roam, verify through journal evidence:
 - No changes to CN, IOA, or Tailscale policy routing.
 - No mutation of Tailscale exit-node preferences.
 - No repository ownership of Tencent certificates, keys, identity, or passphrase.
+- No cleanup of installed `/etc/netctl`, legacy system units/hooks, or old wpa_supplicant Wi-Fi
+  profiles in this change.
