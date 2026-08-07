@@ -27,10 +27,6 @@ function __fish_clickhouse_get_integration_tests
     find (__fish_clickhouse_src_root)/tests/integration \( -iname 'test_*' \) -type d -printf '%f\n' 2>/dev/null
 end
 
-function __fish_netctl_get_profiles
-    command netctl list | sed -e 's/^[ \t*]*//'
-end
-
 function __fish_complete_user_pids -d "Print a list of user process identifiers along with brief descriptions"
     # This may be a bit slower, but it's nice - having the tty displayed is really handy
     # 'tail -n +2' deletes the first line, which contains the headers
@@ -42,7 +38,6 @@ function __fish_complete_user_pids -d "Print a list of user process identifiers 
 end
 
 complete -c repoadd -w emerge
-complete -f -c ncswitch -a '(__fish_netctl_get_profiles)'
 
 complete -f -c topnet -a '(__fish_complete_pids)'
 complete -f -c topfiles -a '(__fish_complete_pids)'

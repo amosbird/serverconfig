@@ -233,33 +233,8 @@ It reports interfaces, connected routes, repository priority bands, `cn` and `io
 SmartGateAgent's owner mark, Tailscale table `52`, and exit-node health without repairing or
 mutating them.
 
-## Migration and rollback
+## Deployment
 
-`network/migrate.sh install` only stages configuration and is non-destructive. Its `activate`
-step runs reconciliation before retiring fallback state, then atomically installs the staged base
-config and restarts SmartDNS. The restart and active-state check validate the actual complete
-configuration, including its current fragments. If either fails, deployment atomically restores the
-previous base config and restarts it. `GUI=1 bash restore.sh` uses the same failure-safe deployment
-and directly disables and removes the obsolete fallback service and state rather than waiting for
-migration activation. Deploying the recorder unit explicitly restarts it, which resets the existing
-packet ring. The complete replace/restart/rollback transaction shares
-`/run/lock/network-reconfigure.lock` with the reconciler, so fragment updates and restarts cannot
-interleave. Neither path mutates tunnel preferences or owner-managed routes.
-
-Rollback/removal is ownership-based rather than priority-wide: it deletes only exact
-repository-owned rule shapes at priorities 500, 1000, 1500, 2500, and 3000, table `cn`, the
-`cn_stage` routes, `NETMODE_IOA`, `ioa_intranet`, generated SmartDNS fragments, and
-repository-owned legacy mark-`0x1` NAT state. After flushing `cn_stage` by its owned name,
-rollback atomically removes its dynamic `rt_tables` registration only when both the name and ID
-are unique. A duplicate name or conflicting ID is warned about and preserved to avoid deleting a
-foreign registration. Rollback treats the repository-managed `office.conf`, `dhcp-dns.conf`, and
-`ioa-dns.conf` files as one transaction with the base config. It restores backed-up fragments with
-their metadata and creates safe empty placeholders for referenced fragments that had no backup, so
-every restored `conf-file` target exists before SmartDNS restarts. A failed deployment restores each
-fragment's original content, metadata, or absence. The obsolete IOA fragment is removed only when
-the restored config does not reference it; office and DHCP fragments are retained conservatively.
-Unrelated rules sharing repository priorities survive. SmartGateAgent tables `20`,
-`230`, and `ioa` and Tailscale table `52` and exit-node preferences are never
-flushed or changed by rollback. Legacy tables `500` and `501` are also retained because they have
-no independent ownership record; leaving possible disk/kernel garbage is safer than deleting a
-foreign route table.
+`restore.sh` is the only repository deployment entry point. There is no supported return to the
+retired pre-iwd network stack. Installed pre-iwd files under `/etc` are left for a separate inventoried
+cleanup so wired 802.1X credentials are not removed accidentally.

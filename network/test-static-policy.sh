@@ -47,14 +47,6 @@ reject 'SmartDNS base config does not include a dynamic IOA fragment' \
     'conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf' network/smartdns/smartdns.conf
 reject 'production reconciler has no dynamic IOA DNS logic' \
     'IOA_RESOLVER|ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
-# Activation must not create or seed the legacy fragment.
-if sed -n '/^activate() {/,/^}/p' network/migrate.sh |
-   grep -Eq 'ioa-dns\.conf|IOA tunnel is down'; then
-    echo 'FAIL migration activation depends on a dynamic IOA DNS fragment' >&2
-    fail=1
-else
-    echo 'OK   migration activation does not depend on a dynamic IOA DNS fragment'
-fi
 
 smartdns_deployment_contract() (
     local sandbox smartdns_dir fake_systemctl calls output first_pid second_pid old_uid old_gid
@@ -271,157 +263,6 @@ if ! smartdns_deployment_contract; then
     fail=1
 fi
 
-# shellcheck disable=SC2016 # fragment variables are literal source text
-if ! grep -Fq 'local -a fragments=(office.conf dhcp-dns.conf ioa-dns.conf)' \
-        network/migrate.sh ||
-   [ "$(grep -Fxc '            cp -a "/etc/smartdns/$fragment" "$BACKUP_DIR/$fragment.bak"' \
-        network/migrate.sh)" -ne 1 ]; then
-    echo 'FAIL install does not back up every repository-managed SmartDNS fragment with metadata' >&2
-    fail=1
-else
-    echo 'OK   install backs up all repository-managed SmartDNS fragments with metadata'
-fi
-
-smartdns_rollback_contract() {
-    local sandbox smartdns_dir backup_dir fake_systemctl calls old_uid old_gid rc
-    sandbox=$(mktemp -d)
-    smartdns_dir="$sandbox/etc/smartdns"
-    backup_dir="$sandbox/backup"
-    mkdir -p "$smartdns_dir" "$backup_dir"
-    fake_systemctl="$sandbox/systemctl"
-    calls="$sandbox/calls"
-    cat >"$fake_systemctl" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >>"$SMARTDNS_TEST_CALLS"
-if [ "$1" = restart ]; then
-    count=$(grep -c '^restart smartdns.service$' "$SMARTDNS_TEST_CALLS")
-    if [ "$count" -eq 1 ] && [ "${SMARTDNS_FAIL_RESTART:-0}" = 1 ]; then
-        exit 1
-    fi
-fi
-exit 0
-EOF
-    chmod +x "$fake_systemctl"
-    : >"$calls"
-    export SMARTDNS_TEST_CALLS="$calls"
-    cat >"$backup_dir/smartdns.conf.bak" <<'EOF'
-bind 127.0.0.1:53
-conf-file /etc/smartdns/office.conf
-conf-file /etc/smartdns/dhcp-dns.conf
-conf-file /etc/smartdns/ioa-dns.conf
-EOF
-    printf '%s\n' 'nameserver /office.example/192.0.2.1' >"$backup_dir/office.conf.bak"
-    chmod 600 "$backup_dir/office.conf.bak"
-    printf '%s\n' 'server 192.168.255.10 -group ioa' >"$backup_dir/ioa-dns.conf.bak"
-    chmod 640 "$backup_dir/ioa-dns.conf.bak"
-
-    source network/migrate.sh
-    restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
-        "$fake_systemctl" "$sandbox/rollback.lock"
-    if ! cmp -s "$backup_dir/office.conf.bak" "$smartdns_dir/office.conf" ||
-       ! cmp -s "$backup_dir/ioa-dns.conf.bak" "$smartdns_dir/ioa-dns.conf" ||
-       [ "$(stat -c %a "$smartdns_dir/office.conf")" != 600 ] ||
-       [ "$(stat -c %a "$smartdns_dir/ioa-dns.conf")" != 640 ] ||
-       [ "$(stat -c %u:%g "$smartdns_dir/office.conf")" != \
-            "$(stat -c %u:%g "$backup_dir/office.conf.bak")" ] ||
-       [ "$(stat -c %u:%g "$smartdns_dir/ioa-dns.conf")" != \
-            "$(stat -c %u:%g "$backup_dir/ioa-dns.conf.bak")" ] ||
-       [ ! -f "$smartdns_dir/dhcp-dns.conf" ] ||
-       [ -s "$smartdns_dir/dhcp-dns.conf" ] ||
-       ! awk '
-           $1 == "conf-file" {
-               path = $2
-               sub("^/etc/smartdns/", dir "/", path)
-               if (system("test -f \"" path "\"") != 0) exit 1
-           }
-       ' dir="$smartdns_dir" "$smartdns_dir/smartdns.conf"; then
-        echo 'FAIL rollback did not restore or safely seed every referenced fragment' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback restores backed fragments and safely seeds missing ones'
-
-    printf '%s\n' 'old live base' >"$smartdns_dir/smartdns.conf"
-    chmod 640 "$smartdns_dir/smartdns.conf"
-    old_uid=$(stat -c %u "$smartdns_dir/smartdns.conf")
-    old_gid=$(stat -c %g "$smartdns_dir/smartdns.conf")
-    printf '%s\n' 'old live office' >"$smartdns_dir/office.conf"
-    chmod 601 "$smartdns_dir/office.conf"
-    printf '%s\n' 'old live DHCP' >"$smartdns_dir/dhcp-dns.conf"
-    chmod 602 "$smartdns_dir/dhcp-dns.conf"
-    rm -f "$smartdns_dir/ioa-dns.conf"
-    printf '%s\n' 'invalid backup base' >"$backup_dir/smartdns.conf.bak"
-    chmod 604 "$backup_dir/smartdns.conf.bak"
-    printf '%s\n' 'backup office' >"$backup_dir/office.conf.bak"
-    chmod 610 "$backup_dir/office.conf.bak"
-    printf '%s\n' 'backup DHCP' >"$backup_dir/dhcp-dns.conf.bak"
-    chmod 620 "$backup_dir/dhcp-dns.conf.bak"
-    printf '%s\n' 'backup IOA' >"$backup_dir/ioa-dns.conf.bak"
-    chmod 630 "$backup_dir/ioa-dns.conf.bak"
-    : >"$calls"
-    set +e
-    SMARTDNS_FAIL_RESTART=1 restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
-        "$fake_systemctl" "$sandbox/rollback.lock" >/dev/null 2>&1
-    rc=$?
-    set -e
-    if [ "$rc" -eq 0 ] ||
-       ! grep -Fqx 'old live base' "$smartdns_dir/smartdns.conf" ||
-       ! grep -Fqx 'old live office' "$smartdns_dir/office.conf" ||
-       ! grep -Fqx 'old live DHCP' "$smartdns_dir/dhcp-dns.conf" ||
-       [ -e "$smartdns_dir/ioa-dns.conf" ] ||
-       [ "$(stat -c %a "$smartdns_dir/smartdns.conf")" != 640 ] ||
-       [ "$(stat -c %a "$smartdns_dir/office.conf")" != 601 ] ||
-       [ "$(stat -c %a "$smartdns_dir/dhcp-dns.conf")" != 602 ] ||
-       [ "$(stat -c %u "$smartdns_dir/smartdns.conf")" != "$old_uid" ] ||
-       [ "$(stat -c %g "$smartdns_dir/smartdns.conf")" != "$old_gid" ] ||
-       [ "$(grep -Fxc 'restart smartdns.service' "$calls")" -ne 3 ] ||
-       [ "$(grep -Fxc 'is-active --quiet smartdns.service' "$calls")" -ne 2 ]; then
-        echo 'FAIL failed backup restore did not restore all live fragments and absence' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   failed backup restore atomically restores all live fragment states'
-
-    printf '%s\n' 'bind 127.0.0.1:53' >"$backup_dir/smartdns.conf.bak"
-    restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
-        "$fake_systemctl" "$sandbox/rollback.lock"
-    if [ -e "$smartdns_dir/ioa-dns.conf" ]; then
-        echo 'FAIL rollback retained an obsolete unreferenced IOA fragment' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    if [ ! -e "$smartdns_dir/office.conf" ] || [ ! -e "$smartdns_dir/dhcp-dns.conf" ]; then
-        echo 'FAIL rollback removed non-obsolete repository-managed fragments' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback removes only the obsolete unreferenced IOA fragment'
-
-    printf '%s\n' 'backup metadata base' >"$backup_dir/smartdns.conf.bak"
-    chmod 604 "$backup_dir/smartdns.conf.bak"
-    printf '%s\n' 'current target' >"$smartdns_dir/smartdns.conf"
-    chmod 640 "$smartdns_dir/smartdns.conf"
-    : >"$calls"
-    restore_smartdns_backup "$smartdns_dir" "$backup_dir" \
-        "$fake_systemctl" "$sandbox/rollback.lock"
-    if [ "$(stat -c %a "$smartdns_dir/smartdns.conf")" != 604 ] ||
-       [ "$(stat -c %u "$smartdns_dir/smartdns.conf")" != \
-            "$(stat -c %u "$backup_dir/smartdns.conf.bak")" ] ||
-       [ "$(stat -c %g "$smartdns_dir/smartdns.conf")" != \
-            "$(stat -c %g "$backup_dir/smartdns.conf.bak")" ]; then
-        echo 'FAIL rollback did not preserve backup base metadata' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback preserves backup base metadata instead of target metadata'
-    unset SMARTDNS_TEST_CALLS
-    rm -rf "$sandbox"
-}
-
-if ! smartdns_rollback_contract; then
-    fail=1
-fi
-
 foreign_routing_config=network/systemd-networkd.conf.d/foreign-routing.conf
 if [ ! -f "$foreign_routing_config" ] ||
    [ "$(grep -Fxc 'ManageForeignRoutingPolicyRules=no' "$foreign_routing_config")" -ne 1 ] ||
@@ -431,14 +272,8 @@ if [ ! -f "$foreign_routing_config" ] ||
 else
     echo 'OK   networkd preserves foreign routes and rules'
 fi
-if ! grep -Fq 'systemd-networkd.conf.d/foreign-routing.conf' restore.sh ||
-   ! grep -Fq 'systemd-networkd.conf.d/foreign-routing.conf' network/migrate.sh; then
-    echo 'FAIL foreign-routing drop-in is not installed by both deployment paths' >&2
-    fail=1
-fi
-if ! sed -n '/^rollback() {/,/^}/p' network/migrate.sh |
-        grep -Fq 'rm -f /etc/systemd/networkd.conf.d/foreign-routing.conf'; then
-    echo 'FAIL migration rollback does not remove the foreign-routing drop-in' >&2
+if ! grep -Fq 'systemd-networkd.conf.d/foreign-routing.conf' restore.sh; then
+    echo 'FAIL foreign-routing drop-in is not installed by restore' >&2
     fail=1
 fi
 
@@ -460,7 +295,7 @@ fi
 }
 reject 'no fallback deployment references' \
     'cp .*network-fallback|systemctl enable( --now)? .*network-fallback' \
-    restore.sh network/migrate.sh
+    restore.sh
 if ! awk '
     /sudo systemctl disable --now network-fallback\.service/ { disabled = NR }
     /sudo rm -f \/etc\/systemd\/system\/network-fallback\.service/ { unit_removed = NR }
@@ -762,234 +597,33 @@ reject 'no broad private bypass' \
     scripts/network-reconfigure
 reject 'no static 9/8 IOA rule' 'IOA_STATIC_CIDRS=.*9\.0\.0\.0/8' \
     scripts/network-reconfigure
-reject 'install is non-destructive' \
-    'cleanup_obsolete_policy|systemctl (disable|stop)|ip (rule del|route flush)|iptables .*-[DFX]' \
-    <(sed -n '/^install_configs()/,/^}/p' network/migrate.sh)
-reject 'table 501 is never flushed automatically' 'ip route flush table 501' network/migrate.sh
-reject 'rollback does not delete whole preference bands' \
-    'for p in 500 1000 1500 2500 3000|while ip rule del pref' network/migrate.sh
-reject 'migration does not mutate tunnel-owned policy' \
-    'ip route (flush|del|replace).*table (20|230|52|ioa)|tailscale (set|up|down)' \
-    network/migrate.sh
-reject 'rollback does not flush cn_stage outside the ownership lock' \
-    '^[[:space:]]*ip route flush table cn_stage' network/migrate.sh
-if ! grep -Fq 'cleanup_owned_rules' network/migrate.sh; then
-    echo 'FAIL rollback does not use owned rule shapes' >&2
+legacy_network_sources=(
+    restore.sh
+    network/README.md
+    network/iwd
+    network/smartdns
+    network/systemd
+    network/systemd-network
+    network/systemd-networkd.conf.d
+    network/udev
+    scripts
+    .config/fish/conf.d/completions.fish
+)
+legacy_network_pattern='netctl|dhcpcd|ncswitch|network/migrate\.sh|network/rollback'
+if grep -RInE "$legacy_network_pattern" "${legacy_network_sources[@]}" \
+        >/tmp/network-legacy.$$ 2>/dev/null; then
+    echo 'FAIL current network sources still reference the retired migration stack' >&2
+    cat /tmp/network-legacy.$$ >&2
     fail=1
-fi
-
-stage_registration_cleanup_contract() {
-    local sandbox rt_tables lock ip_log fake_ip ip_fail before output cleanup_pid holder_pid
-    sandbox=$(mktemp -d)
-    rt_tables="$sandbox/rt_tables"
-    lock="$sandbox/network-reconfigure.lock"
-    ip_log="$sandbox/ip.log"
-    fake_ip="$sandbox/ip"
-    ip_fail="$sandbox/ip.fail"
-    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >>%q\n[ ! -e %q ]\n' \
-        "$ip_log" "$ip_fail" >"$fake_ip"
-    chmod +x "$fake_ip"
-
-    # Source the helper and pass only disposable fixtures; never redirect the production CLI.
-    source network/migrate.sh
-
-    cat >"$rt_tables" <<'EOF'
-# reserved values
-255 local
-10042 cn_stage
-101 cn
-EOF
-    cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip"
-    if grep -Eq '^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$' "$rt_tables" ||
-       [ "$(cat "$ip_log")" != 'route flush table 10042' ]; then
-        echo 'FAIL rollback does not flush a unique owned cn_stage ID before unregistering it' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback removes a unique owned cn_stage registration'
-
-    cat >"$rt_tables" <<'EOF'
-10042 cn_stage
-101 cn
-EOF
-    : >"$ip_log"
-    touch "$ip_fail"
-    before=$(cat "$rt_tables")
-    if output=$(cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip" 2>&1); then
-        echo 'FAIL cleanup helper reports success after its route flush fails' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    rm -f "$ip_fail"
-    if [ "$(cat "$rt_tables")" != "$before" ] ||
-       [ "$(cat "$ip_log")" != 'route flush table 10042' ] ||
-       ! grep -Fq 'could not flush cn_stage table 10042' <<<"$output"; then
-        echo 'FAIL rollback unregisters cn_stage after its route flush fails' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback retains cn_stage registration when its route flush fails'
-
-    cat >"$rt_tables" <<'EOF'
-10042 cn_stage
-10043 cn_stage
-101 cn
-EOF
-    : >"$ip_log"
-    before=$(cat "$rt_tables")
-    output=$(cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip" 2>&1)
-    if [ "$(cat "$rt_tables")" != "$before" ] || [ -s "$ip_log" ] ||
-       ! grep -Fq 'cn_stage registration is ambiguous' <<<"$output"; then
-        echo 'FAIL rollback mutates duplicate cn_stage name registrations' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback preserves duplicate cn_stage name registrations'
-
-    cat >"$rt_tables" <<'EOF'
-10042 cn_stage
-10042 foreign
-101 cn
-EOF
-    : >"$ip_log"
-    before=$(cat "$rt_tables")
-    output=$(cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip" 2>&1)
-    if [ "$(cat "$rt_tables")" != "$before" ] || [ -s "$ip_log" ] ||
-       ! grep -Fq 'cn_stage registration is ambiguous' <<<"$output"; then
-        echo 'FAIL rollback mutates a cn_stage registration with an ID conflict' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback preserves cn_stage registrations with ID conflicts'
-
-    cat >"$rt_tables" <<'EOF'
-10042 cn_stage
-101 cn
-EOF
-    # shellcheck disable=SC2016 # positional arguments expand inside the helper shell
-    flock "$lock" bash -c '
-        touch "$1"
-        while [ ! -e "$2" ]; do sleep 0.01; done
-        printf "%s\n" "400 concurrent" >>"$3"
-    ' _ "$sandbox/locked" "$sandbox/release" "$rt_tables" &
-    holder_pid=$!
-    while [ ! -e "$sandbox/locked" ]; do sleep 0.01; done
-    cleanup_stage_registration "$rt_tables" "$lock" "$fake_ip" &
-    cleanup_pid=$!
-    sleep 0.1
-    if ! kill -0 "$cleanup_pid" 2>/dev/null; then
-        echo 'FAIL rollback cleanup does not wait for the reconfigure lock' >&2
-        touch "$sandbox/release"
-        wait "$holder_pid"
-        wait "$cleanup_pid" || true
-        rm -rf "$sandbox"
-        return 1
-    fi
-    touch "$sandbox/release"
-    wait "$holder_pid"
-    wait "$cleanup_pid"
-    if ! grep -Fqx '400 concurrent' "$rt_tables" ||
-       grep -Eq '^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$' "$rt_tables"; then
-        echo 'FAIL locked cleanup does not preserve the latest concurrent registration state' >&2
-        rm -rf "$sandbox"
-        return 1
-    fi
-    echo 'OK   rollback cleanup serializes and rewrites the latest registration state'
-    rm -rf "$sandbox"
-}
-
-if ! stage_registration_cleanup_contract; then
-    fail=1
-fi
-
-if ! grep -Fq "cleanup_stage_registration \\" network/migrate.sh ||
-   ! grep -Fq '/etc/iproute2/rt_tables /run/lock/network-reconfigure.lock /usr/bin/ip' \
-       network/migrate.sh; then
-    echo 'FAIL rollback does not use the fixed live rt_tables and shared lock paths' >&2
-    fail=1
-fi
-if grep -Eq 'RT_TABLES_(OVERRIDE|TEST)|MIGRATE_.*RT_TABLES' network/migrate.sh; then
-    echo 'FAIL migration CLI exposes an rt_tables environment override' >&2
-    fail=1
-fi
-if ! grep -Fq "sed -i '/^[[:space:]]*500[[:space:]]\\+underlay" network/migrate.sh; then
-    echo 'FAIL obsolete underlay mapping is not removed' >&2
-    fail=1
-fi
-
-# Exercise rollback against rules rendered by the installed kernel/iproute2. Run every
-# mutation in a verified network namespace so this test cannot touch live policy.
-host_netns_link=$(readlink /proc/self/ns/net) || exit 1
-host_netns_inode=$(stat -Lc %i /proc/self/ns/net) || exit 1
-exec 9</proc/self/ns/net
-# shellcheck disable=SC2016 # inner script expands only inside the namespace
-if unshare -rn bash -c '
-    set -euo pipefail
-    migrate=$1
-    expected_link=$2
-    expected_inode=$3
-    host_fd_link=$(readlink /proc/self/fd/9)
-    host_fd_inode=$(stat -Lc %i /proc/self/fd/9)
-    current_link=$(readlink /proc/self/ns/net)
-    current_inode=$(stat -Lc %i /proc/self/ns/net)
-    if [ "$host_fd_link" != "$expected_link" ] ||
-       [ "$host_fd_inode" != "$expected_inode" ] ||
-       [ "$current_link" = "$expected_link" ] ||
-       [ "$current_inode" = "$expected_inode" ]; then
-        echo "refusing to mutate rules without a verified network namespace" >&2
-        exit 1
-    fi
-
-    ip rule add pref 2500 fwmark 0x1/0xffffffff lookup ioa
-    ip rule add pref 2500 fwmark 0x1/0x1 lookup ioa
-    ip rule add pref 2500 from 203.0.113.8 lookup ioa
-    iptables -t nat -A POSTROUTING -m mark --mark 0x1/0xffffffff -o tun0 -j MASQUERADE
-    iptables -t nat -A POSTROUTING -m mark --mark 0x1/0xffffffff -o tun0 \
-        -j SNAT --to-source 192.0.2.10
-    iptables -t nat -A POSTROUTING -m mark --mark 0x1/0xffffffff -o tun1 -j MASQUERADE
-    source "$migrate"
-
-    sandbox=$(mktemp -d)
-    rt_tables="$sandbox/rt_tables"
-    lock="$sandbox/network-reconfigure.lock"
-    printf "%s\n" "10042 cn_stage" "101 cn" >"$rt_tables"
-    ip route add blackhole 203.0.113.0/24 table 10042
-    cleanup_stage_registration "$rt_tables" "$lock" /usr/bin/ip
-    ! ip route show table 10042 | grep -q .
-    ! grep -Eq "^[[:space:]]*10042[[:space:]]+cn_stage[[:space:]]*$" "$rt_tables"
-
-    printf "%s\n" "10042 cn_stage" "10043 cn_stage" "101 cn" >"$rt_tables"
-    ip route add blackhole 203.0.113.0/24 table 10042
-    cleanup_stage_registration "$rt_tables" "$lock" /usr/bin/ip 2>/dev/null
-    ip route show table 10042 | grep -Fq "blackhole 203.0.113.0/24"
-    grep -Fq "10042 cn_stage" "$rt_tables"
-
-    printf "%s\n" "10042 cn_stage" "10042 foreign" "101 cn" >"$rt_tables"
-    cleanup_stage_registration "$rt_tables" "$lock" /usr/bin/ip 2>/dev/null
-    ip route show table 10042 | grep -Fq "blackhole 203.0.113.0/24"
-    grep -Fq "10042 cn_stage" "$rt_tables"
-    rm -rf "$sandbox"
-
-    cleanup_owned_rules
-    cleanup_owned_nat
-
-    rules=$(ip -4 rule show pref 2500)
-    expected=$(printf "2500:\tfrom all fwmark 0x1/0x1 lookup ioa\n"\
-"2500:\tfrom 203.0.113.8 lookup ioa")
-    [ "$rules" = "$expected" ]
-    nat_rules=$(iptables -t nat -S POSTROUTING)
-    ! grep -Fq -- "-A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE" \
-        <<<"$nat_rules"
-    grep -Fq -- \
-        "-A POSTROUTING -o tun0 -m mark --mark 0x1 -j SNAT --to-source 192.0.2.10" \
-        <<<"$nat_rules"
-    grep -Fq -- "-A POSTROUTING -o tun1 -m mark --mark 0x1 -j MASQUERADE" \
-        <<<"$nat_rules"
-' bash "$ROOT/network/migrate.sh" "$host_netns_link" "$host_netns_inode"; then
-    echo 'OK   rollback safely flushes and unregisters staging state in a real namespace'
 else
-    echo 'FAIL rollback mishandles staging ownership or kernel-rendered state' >&2
-    fail=1
+    echo 'OK   current network sources do not reference the retired migration stack'
 fi
+rm -f /tmp/network-legacy.$$
+for retired in network/migrate.sh network/rollback scripts/ncswitch old_README.org; do
+    if [ -e "$retired" ]; then
+        echo "FAIL retired network artifact still exists: $retired" >&2
+        fail=1
+    fi
+done
 
 exit "$fail"
