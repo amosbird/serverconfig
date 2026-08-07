@@ -5,6 +5,8 @@ Type=wlan
 
 [Network]
 DHCP=yes
+# Preserve DHCP state across short BSSID roaming gaps, but expire it on a real disconnect.
+IgnoreCarrierLoss=3s
 # DNS handled by SmartDNS on 127.0.0.1
 DNS=127.0.0.1
 DNSDefaultRoute=false

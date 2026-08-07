@@ -264,6 +264,30 @@ if ! smartdns_deployment_contract; then
 fi
 
 foreign_routing_config=network/systemd-networkd.conf.d/foreign-routing.conf
+iwd_config=network/iwd/main.conf
+wireless_config=network/systemd-network/25-wireless.network
+obsolete_tencent_config=network/systemd-network/26-wireless-tencent.network
+
+if [ "$(grep -Fxc 'AddressRandomization=network' "$iwd_config")" -ne 1 ]; then
+    echo 'FAIL iwd does not use stable per-network MAC addresses' >&2
+    fail=1
+else
+    echo 'OK   iwd uses stable per-network MAC addresses'
+fi
+if [ "$(grep -Fxc 'IgnoreCarrierLoss=3s' "$wireless_config")" -ne 1 ] ||
+   grep -Eq '^IgnoreCarrierLoss=(yes|infinite)$' "$wireless_config"; then
+    echo 'FAIL wireless carrier grace is not exactly finite 3s' >&2
+    fail=1
+else
+    echo 'OK   wireless carrier grace is finite 3s'
+fi
+if [ -e "$obsolete_tencent_config" ]; then
+    echo 'FAIL obsolete Tencent no-gateway networkd config still exists' >&2
+    fail=1
+else
+    echo 'OK   Tencent-WiFi uses the generic physical Wi-Fi configuration'
+fi
+
 if [ ! -f "$foreign_routing_config" ] ||
    [ "$(grep -Fxc 'ManageForeignRoutingPolicyRules=no' "$foreign_routing_config")" -ne 1 ] ||
    [ "$(grep -Fxc 'ManageForeignRoutes=no' "$foreign_routing_config")" -ne 1 ]; then
