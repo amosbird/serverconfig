@@ -638,6 +638,17 @@ reject 'no broad private bypass' \
     scripts/network-reconfigure
 reject 'no static 9/8 IOA rule' 'IOA_STATIC_CIDRS=.*9\.0\.0\.0/8' \
     scripts/network-reconfigure
+for statement in \
+    'IgnoreCarrierLoss=3s' \
+    'AddressRandomization=network' \
+    'AddressOverride=1e:dc:46:00:66:1b' \
+    'restore.sh'
+do
+    if ! grep -Fq "$statement" network/README.md; then
+        echo "FAIL network README omits current deployment policy: $statement" >&2
+        fail=1
+    fi
+done
 legacy_network_sources=(
     restore.sh
     network/README.md

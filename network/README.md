@@ -134,6 +134,22 @@ Other failures stay within ownership boundaries:
 - a reconciliation failure must not change SmartGateAgent tables `20`, `230`, or `ioa`, or
   Tailscale table `52`, preferences, and recovery state.
 
+## Wi-Fi roaming and MAC identity
+
+The generic `25-wireless.network` applies `IgnoreCarrierLoss=3s` to every WLAN. A short iwd BSSID
+roam therefore retains the DHCP address, connected route, and physical default route. A longer
+carrier loss still expires the lease normally; infinite carrier retention is intentionally forbidden.
+
+`network/iwd/main.conf` sets `AddressRandomization=network`, so ordinary SSIDs receive a stable
+per-network MAC. The local secret profile `/var/lib/iwd/Tencent-WiFi.8021x` additionally contains
+`AddressOverride=1e:dc:46:00:66:1b`, the MAC registered for the Android identity. That profile and its
+EAP-TLS secrets are not repository-owned. `Tencent-WiFi` uses the normal wireless DHCP gateway and
+physical routing; there is no special no-gateway `.network` file.
+
+The iwd global setting takes effect after the next natural iwd start. Do not restart iwd merely to
+apply it during an active remote session. Validate the MAC and routing on the next natural
+`Tencent-WiFi` connection, and validate carrier grace on the next natural room-to-room roam.
+
 ## Reconciliation and AP changes
 
 `network-reconfigure.path` watches networkd link state. On a physical link or DHCP change,
@@ -235,6 +251,13 @@ mutating them.
 
 ## Deployment
 
-`restore.sh` is the only repository deployment entry point. There is no supported return to the
-retired pre-iwd network stack. Installed pre-iwd files under `/etc` are left for a separate inventoried
-cleanup so wired 802.1X credentials are not removed accidentally.
+`restore.sh` is the only repository deployment entry point. With `GUI=1`, it installs the iwd,
+networkd, udev, and systemd configuration, removes obsolete installed repository files, validates
+SmartDNS before replacement, and reloads configuration without taking ownership of tunnel recovery.
+There is no supported return to the retired pre-iwd network stack.
+
+For a focused network-only update, copy the changed repository files to their matching `/etc` paths,
+remove obsolete installed files explicitly, and use `networkctl reload`. Do not restart iwd,
+systemd-networkd, Tailscale, SmartGateAgent, or SmartDNS merely to apply the Wi-Fi roaming policy.
+Installed pre-iwd files under `/etc` are intentionally left for a separate inventoried cleanup so the
+wired 802.1X credential path is not removed accidentally.
