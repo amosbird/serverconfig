@@ -133,6 +133,15 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/wpa_supplicant@.service.d
     sudo cp "$DIR"/network/iwd/main.conf /etc/iwd/main.conf
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
+    sudo rm -f /etc/systemd/network/26-wireless-tencent.network
+    if sudo test -f /var/lib/iwd/Tencent-WiFi.8021x &&
+       sudo grep -Fqx 'AddressOverride=1e:dc:46:00:66:1b' \
+           /var/lib/iwd/Tencent-WiFi.8021x; then
+        echo '  [ok] Tencent-WiFi profile has the Android MAC override'
+    else
+        echo '  [WARN] Tencent-WiFi profile is missing or lacks the Android MAC override'
+    fi
+    sudo networkctl reload
     sudo cp "$DIR"/network/systemd-networkd.conf.d/foreign-routing.conf \
         /etc/systemd/networkd.conf.d/foreign-routing.conf
     sudo cp "$DIR"/network/systemd/wpa_supplicant@.service.d/override.conf \

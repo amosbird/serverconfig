@@ -300,6 +300,23 @@ if ! grep -Fq 'systemd-networkd.conf.d/foreign-routing.conf' restore.sh; then
     echo 'FAIL foreign-routing drop-in is not installed by restore' >&2
     fail=1
 fi
+if ! grep -Fq 'sudo rm -f /etc/systemd/network/26-wireless-tencent.network' restore.sh ||
+   ! grep -Fq 'sudo networkctl reload' restore.sh; then
+    echo 'FAIL restore does not remove stale Tencent policy and reload networkd' >&2
+    fail=1
+else
+    echo 'OK   restore removes stale Tencent policy and reloads networkd'
+fi
+if ! grep -Fq "grep -Fqx 'AddressOverride=1e:dc:46:00:66:1b'" restore.sh; then
+    echo 'FAIL restore does not validate the Tencent Android MAC override' >&2
+    fail=1
+fi
+reject 'restore never prints Tencent credential profile contents' \
+    'cat .*Tencent-WiFi\.8021x|sed .*Tencent-WiFi\.8021x|grep -v .*Tencent-WiFi\.8021x' \
+    restore.sh
+reject 'restore does not restart network owners for Wi-Fi policy deployment' \
+    'systemctl (restart|try-restart) (systemd-networkd|iwd|tailscaled|smartdns|ngnclient)' \
+    restore.sh
 
 if ! awk '
     /office\.conf/ && /sudo tee/ { office = NR }
