@@ -59,6 +59,17 @@ for pid in "${pids[@]}"; do
     wait "$pid"
 done
 
+# shortcut: only rebuild the explicitly managed VCS packages; add other local packages
+# to vcs_packages/vcs_remotes if they also need automatic ABI rebuilds
+while read -r repository pkg_name; do
+    [[ "$repository" == foreign ]] || continue
+    for i in "${!vcs_packages[@]}"; do
+        if [[ "$pkg_name" == "${vcs_packages[$i]}" ]]; then
+            printf '%s\n' "$pkg_name" > "$tmp_dir/$i"
+        fi
+    done
+done < <(checkrebuild)
+
 for i in "${!vcs_packages[@]}"; do
     marker="$tmp_dir/$i"
     if [ -f "$marker" ]; then
