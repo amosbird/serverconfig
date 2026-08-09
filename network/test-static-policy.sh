@@ -638,6 +638,9 @@ reject 'no broad private bypass' \
     scripts/network-reconfigure
 reject 'no static 9/8 IOA rule' 'IOA_STATIC_CIDRS=.*9\.0\.0\.0/8' \
     scripts/network-reconfigure
+reject 'CN promotion does not launch one ip process per route' \
+    'while read -r route; do|ip route replace \\$route table "\\$CN_TABLE"' \
+    scripts/network-reconfigure
 for statement in \
     'IgnoreCarrierLoss=3s' \
     'AddressRandomization=network' \

@@ -28,6 +28,7 @@ TAILNET_NETS=("100.64.0.0/10")
 CN_TABLE="cn"
 CN_STAGE_TABLE="cn_stage"
 RT_TABLES="${RT_TABLES_OVERRIDE:-/etc/iproute2/rt_tables}"
+TMPDIR="${TMPDIR_OVERRIDE:-/tmp}"
 IOA_TABLE="ioa"
 ROUTEFILE="/home/amos/.routefile"
 OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
@@ -336,8 +337,11 @@ if [ "${FORCE:-0}" != 1 ] &&
     exit 0
 fi
 
+TEMP_FILES=()
 finish_state() {
-    if [ "$1" -eq 0 ]; then
+    local rc=$1
+    [ "${#TEMP_FILES[@]}" -eq 0 ] || rm -f "${TEMP_FILES[@]}"
+    if [ "$rc" -eq 0 ]; then
         printf '%s' "$current_state" > "$STATE_FILE" 2>/dev/null ||
             warn "cannot record state in $STATE_FILE; the next run will rebuild"
     fi
@@ -422,17 +426,25 @@ elif $cn_rebuild; then
     staged_routes=$(count_routes "$CN_STAGE_TABLE")
     [ "$staged_routes" -eq "$cn_expected_routes" ]
 
-    stage_routes=$(ip route show table "$CN_STAGE_TABLE" | sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//')
-    while read -r route; do
-        # shellcheck disable=SC2086 # kernel-rendered route is an argument list
-        [ -n "$route" ] && ip route replace $route table "$CN_TABLE"
-    done <<<"$stage_routes"
-    while read -r route; do
-        [ -n "$route" ] || continue
-        # shellcheck disable=SC2086 # kernel-rendered route is an argument list
-        grep -Fqx "$route" <<<"$stage_routes" || ip route del $route table "$CN_TABLE"
-    done < <(ip route show table "$CN_TABLE")
-    [ "$(ip route show table "$CN_TABLE" | sed -E 's/[[:space:]]+$//' | sort)" = "$(sort <<<"$stage_routes")" ]
+    desired_routes=$(mktemp "$TMPDIR/cn-desired.XXXXXX")
+    current_routes=$(mktemp "$TMPDIR/cn-current.XXXXXX")
+    promotion_batch=$(mktemp "$TMPDIR/cn-promotion.XXXXXX")
+    TEMP_FILES+=("$desired_routes" "$current_routes" "$promotion_batch")
+    ip route show table "$CN_STAGE_TABLE" |
+        sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//' |
+        sort >"$desired_routes"
+    { ip route show table "$CN_TABLE" 2>/dev/null || true; } |
+        sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//' |
+        sort >"$current_routes"
+    sed -E "s|^|route replace |; s|$| table $CN_TABLE|" \
+        "$desired_routes" >"$promotion_batch"
+    comm -23 "$current_routes" "$desired_routes" |
+        sed -E "s|^|route del |; s|$| table $CN_TABLE|" >>"$promotion_batch"
+    ip -batch "$promotion_batch"
+    [ "$(ip route show table "$CN_TABLE" | sed -E 's/[[:space:]]+$//' | sort)" = \
+        "$(cat "$desired_routes")" ]
+    rm -f "$desired_routes" "$current_routes" "$promotion_batch"
+    TEMP_FILES=()
     write_cn_state "$cn_expected_state"
 fi
 

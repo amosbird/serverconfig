@@ -210,6 +210,7 @@ STATE_FILE_OVERRIDE=WORKDIR/last-applied
 CN_STATE_FILE_OVERRIDE=WORKDIR/cn-last-applied
 CACHE_DIR_OVERRIDE=WORKDIR/cache
 RT_TABLES_OVERRIDE=WORKDIR/rt_tables
+TMPDIR_OVERRIDE=WORKDIR/tmp
 """
 marker = 'IFACE="${1:-wlan0}"'
 if src.count(marker) != 1:
@@ -241,6 +242,7 @@ EOF
     # explicit. A build that fails silently is how this harness once reported
     # twelve passes for a script whose delete path had been removed.
     [ -s "$WORK/nr-under-test" ] || return 1
+    install -d -m 777 "$WORK/tmp"
     chmod 755 "$WORK/nr-under-test"
     write_rt_tables '102 kwai'
     # Same shape as the real ~/.routefile: `ip -batch` commands, not bare route
@@ -258,6 +260,7 @@ EOF
     printf '   6 domain name server 202.152.254.230\n                        202.152.254.65\n' \
         > "$WORK/lease"
     chmod 644 "$WORK"/*
+    chmod 777 "$WORK/tmp"
     chmod 755 "$WORK/nr-under-test"
 }
 
@@ -365,7 +368,27 @@ main() {
     else
         bad "FORCE_CN did not rebuild CN tables"
     fi
-    local cn_state_before
+    local cn_state_before batch_calls standalone_promotions
+    cn_state_before=$(cat "$WORK/cn-last-applied")
+    ip route replace blackhole 198.18.0.0/15 table cn
+    : > "$WORK/ip-calls"
+    FORCE_CN=1 run_script 0 >/dev/null
+    batch_calls=$(grep -c '^-batch ' "$WORK/ip-calls")
+    standalone_promotions=$(grep -Ec '^route replace .* table cn$' "$WORK/ip-calls" || true)
+    [ "$batch_calls" -eq 2 ] \
+        && ok "CN rebuild uses one staging and one promotion batch" \
+        || bad "CN rebuild used $batch_calls batch calls instead of two"
+    [ "$standalone_promotions" -eq 0 ] \
+        && ok "CN promotion launches no per-route ip process" \
+        || bad "CN promotion launched $standalone_promotions standalone route replacements"
+    if ip route show table cn | grep -Fq 'blackhole 198.18.0.0/15'; then
+        bad "CN promotion retained a stale route"
+    else
+        ok "CN promotion removes stale routes"
+    fi
+    [ "$(cat "$WORK/cn-last-applied")" = "$cn_state_before" ] ||
+        bad "forced convergent rebuild changed CN state content"
+
     cn_state_before=$(cat "$WORK/cn-last-applied")
     printf 'route add malformed via GATEWAY table cn\n' > "$WORK/routefile"
     run_status 0 >/dev/null
