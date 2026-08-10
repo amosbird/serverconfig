@@ -1,25 +1,34 @@
-# SmartGate Bootstrap DNS Deadlock Fix Design
+# SmartGate Office Bootstrap DNS Design
 
 ## Goal
 
-Keep the wired underlay advertisement while ensuring SmartGateAgent can reach public bootstrap
-endpoints before it has downloaded proxy policy.
+Use Tencent's internal SmartGate bootstrap endpoints only while authenticated office Ethernet is
+available, so SmartGateAgent selects the office scene instead of reporting `EXTRA` (external network).
+Keep public bootstrap behavior everywhere else.
 
-## Root cause
+## Corrected root cause
 
-The office fragment overrode SmartGate bootstrap names to the internal `ioa` DNS group. Those names
-then resolved to internal addresses such as `11.176.17.58`. SmartGateAgent must contact bootstrap and
-policy services before proxy policy is available, so it treated those addresses as Direct and tried to
-reach them over wired Ethernet. They were unreachable without the policy being downloaded, creating
-a bootstrap deadlock. Subsequent business destinations also fell back to Direct because no proxy
-scene was loaded.
+The previous design attributed the failed internal bootstrap to a policy-download deadlock. That
+conclusion was confounded by the wired adapter using an unregistered MAC address. With the wrong MAC,
+wired EAP and DHCP appeared partially functional, but connections from the wired address to internal
+bootstrap endpoints timed out.
 
-Historical logs show the working sequence: public bootstrap connectivity first, then `Use proxy:tls`
-for business `9.x` targets.
+After restoring the registered wired MAC `08:3a:88:5a:b5:37`, wired EAP-TLS and DHCP complete, and the
+internal endpoints returned by office DNS are directly reachable on TCP port 443:
+
+```text
+smartgate.oa.tencent.com    11.176.17.58    reachable
+ioa.tencent.com             10.88.202.158   reachable
+ioav5-policy.ioa.tencent.com 10.99.245.241  reachable
+```
+
+The current public resolution sends SmartGateAgent to `61.241.57.22`; the server then returns
+`sceneID:2, sceneName:EXTRA`. The UI's external-network status is therefore consistent with the public
+bootstrap path, not with an interface, table 19, or MAC-selection failure.
 
 ## Design
 
-Remove these mappings from the office fragment:
+Restore these mappings in `network/smartdns/office.conf`:
 
 ```text
 nameserver /smartgate.oa.tencent.com/ioa
@@ -27,19 +36,52 @@ nameserver /sgw.woa.com/ioa
 nameserver /ioa.tencent.com/ioa
 ```
 
-Retain the base mappings to the `china` group, the office internal DNS servers, and table 19. This
-restores:
+The existing network reconciler installs this fragment only when an addressed wired `enp*` interface
+and its DHCP router are present. When office Ethernet disappears, it empties the deployed office
+fragment. Consequently:
 
 ```text
-public bootstrap DNS -> wired Direct bootstrap -> policy download -> TLS proxy for business targets
+office wired present -> internal DNS bootstrap -> office scene
+otherwise            -> base china-group bootstrap -> public/external scene
 ```
 
-Static and namespace tests assert that office configuration never overrides bootstrap domains and
-that the base configuration maps each one exactly once to `china`.
+Do not hard-code endpoint IP addresses. Tencent's office DNS remains authoritative for their current
+addresses.
 
-## Deployment
+## Ownership boundaries
 
-Reconcile once to atomically replace `/etc/smartdns/office.conf` and restart SmartDNS through the
-existing path. Verify bootstrap names return public addresses. The repository does not restart
-SmartGateAgent; policy recovery is observed naturally. If the existing client does not retry within a
-bounded observation window, an explicit operator restart requires separate approval.
+This correction changes DNS selection only. It does not change routing ownership:
+
+- the repository continues to advertise the wired underlay through table 19;
+- no policy rule is added for table 19;
+- SmartGateAgent continues to own mark `0xa38`, tables 20/230, `tun0`, and IOA route lifecycle;
+- Tailscale continues to own mark `0x80000`, table 52, and exit-node recovery;
+- repository code does not restart or alter Tailscale.
+
+## Tests
+
+Update the static policy check first so it fails while the mappings are absent. It must assert:
+
+1. all three bootstrap mappings exist in the office fragment and target the `ioa` group;
+2. the base configuration still maps the same domains to `china`, preserving off-office fallback;
+3. the deployment contract still activates and clears the whole office fragment based on wired
+   presence rather than installing permanent internal mappings.
+
+Run the existing namespace, static-policy, IP-override, debug-capture, syntax, and whitespace checks to
+ensure the DNS-only correction does not cross routing ownership boundaries.
+
+## Deployment and live verification
+
+Run the existing network reconciliation path to atomically install `/etc/smartdns/office.conf` and
+restart SmartDNS. Verify local SmartDNS returns the same internal bootstrap answers as the office DNS.
+
+A fresh SmartGate scene query may require restarting `ngnclient`. Do that only as an explicit,
+bounded verification step after DNS is correct; do not detach interfaces or alter Tailscale. Confirm:
+
+1. SmartGateAgent uses the registered wired MAC and wired source address;
+2. bootstrap connects to an internal office-DNS answer;
+3. the selected scene is no longer `EXTRA`;
+4. a known proxied business endpoint still succeeds.
+
+If internal bootstrap remains reachable but the server still returns `EXTRA`, stop and investigate the
+scene protocol rather than changing table 19 or adding broader routes.
