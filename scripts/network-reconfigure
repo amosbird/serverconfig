@@ -401,6 +401,7 @@ valid_ipv4() {
 
 parse_routefile() {
     local line prefix address length
+    local prefixes=()
     local grammar='^[[:space:]]*route[[:space:]]+(add|replace)[[:space:]]+([^[:space:]]+)[[:space:]]+via[[:space:]]+GATEWAY[[:space:]]+table[[:space:]]+cn[[:space:]]*$'
     while IFS= read -r line || [ -n "$line" ]; do
         [[ "$line" =~ ^[[:space:]]*$ ]] && continue
@@ -413,8 +414,10 @@ parse_routefile() {
             [[ "$length" =~ ^(0|[1-9]|[12][0-9]|3[0-2])$ ]] || return 1
         fi
         valid_ipv4 "$address" || return 1
+        prefixes+=("$prefix")
         printf 'route replace %s via %s table %s\n' "$prefix" "$1" "$CN_STAGE_TABLE"
     done < "$ROUTEFILE"
+    [ "$(printf '%s\n' "${prefixes[@]}" | sort -u | wc -l)" -eq "${#prefixes[@]}" ]
 }
 
 write_cn_state() {
@@ -464,23 +467,26 @@ elif $cn_rebuild; then
     [ "$staged_routes" -eq "$cn_expected_routes" ]
 
     desired_routes=$(mktemp "$TMPDIR/cn-desired.XXXXXX")
+    desired_keys=$(mktemp "$TMPDIR/cn-desired-keys.XXXXXX")
     current_routes=$(mktemp "$TMPDIR/cn-current.XXXXXX")
     promotion_batch=$(mktemp "$TMPDIR/cn-promotion.XXXXXX")
-    TEMP_FILES+=("$desired_routes" "$current_routes" "$promotion_batch")
+    TEMP_FILES+=("$desired_routes" "$desired_keys" "$current_routes" "$promotion_batch")
     ip route show table "$CN_STAGE_TABLE" |
         sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//' |
         sort >"$desired_routes"
     { ip route show table "$CN_TABLE" 2>/dev/null || true; } |
         sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//' |
         sort >"$current_routes"
+    awk '{print $1}' "$desired_routes" | sort -u >"$desired_keys"
     sed -E "s|^|route replace |; s|$| table $CN_TABLE|" \
         "$desired_routes" >"$promotion_batch"
-    comm -23 "$current_routes" "$desired_routes" |
+    awk 'NR == FNR { desired[$1] = 1; next } !($1 in desired)' \
+        "$desired_keys" "$current_routes" |
         sed -E "s|^|route del |; s|$| table $CN_TABLE|" >>"$promotion_batch"
     ip -batch "$promotion_batch"
     [ "$(ip route show table "$CN_TABLE" | sed -E 's/[[:space:]]+$//' | sort)" = \
         "$(cat "$desired_routes")" ]
-    rm -f "$desired_routes" "$current_routes" "$promotion_batch"
+    rm -f "$desired_routes" "$desired_keys" "$current_routes" "$promotion_batch"
     TEMP_FILES=()
     write_cn_state "$cn_expected_state"
 fi

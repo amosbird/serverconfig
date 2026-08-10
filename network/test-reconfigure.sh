@@ -192,6 +192,9 @@ logger()     { return 0; }
 dig()        { return 9; }
 ip() {
     printf '%s\n' "$*" >> WORKDIR/ip-calls
+    if [ "${1:-}" = -batch ] && [ "${2:--}" != - ]; then
+        cat "$2" >> WORKDIR/ip-batch-commands
+    fi
     command ip "$@"
 }
 iptables() {
@@ -728,6 +731,13 @@ main() {
             || bad "routefile accepted: $invalid_route"
     done
 
+    printf '%s\n' \
+        'route add 1.0.1.0/24 via GATEWAY table cn' \
+        'route replace 1.0.1.0/24 via GATEWAY table cn' > "$WORK/routefile"
+    [ "$(run_status 1)" -ne 0 ] \
+        && ok "routefile rejects duplicate destination prefixes" \
+        || bad "routefile accepted duplicate destination prefixes"
+
     printf 'route add 1.0.1.0/24 via GATEWAY table cn\nroute add 1.0.2.0/23 via GATEWAY table cn\n' > "$WORK/routefile"
     run_script 1 >/dev/null
 
@@ -841,8 +851,21 @@ main() {
         ok "no rule from the previous AP survived"
     fi
 
-    # Tables carry the gateway; rules do not. A stale table is the failure mode
-    # that survives a rule-level comparison, so check the contents.
+    # Tables carry the gateway; rules do not. Put desired prefixes back on the old
+    # gateway and add one truly stale prefix, reproducing replace-then-delete failure.
+    ip route add 10.36.48.1/32 dev wlan0 scope link 2>/dev/null || true
+    ip route show table "$CN_TABLE" |
+        sed -E 's/ via [^ ]+ dev [^ ]+/ via 10.36.48.1 dev wlan0/; s/$/ table cn/; s/^/route replace /' |
+        ip -batch -
+    ip route replace blackhole 198.51.100.0/24 table "$CN_TABLE"
+    owner_before=$(snapshot_owner_state)
+    rm -f "$WORK/cn-last-applied"
+    : > "$WORK/ip-calls"
+    : > "$WORK/ip-batch-commands"
+    FORCE_CN=1 run_script 0 >/dev/null
+    rc=$?
+    [ "$rc" -eq 0 ] && ok "CN gateway-change promotion exits cleanly" \
+                    || bad "CN gateway-change promotion exited $rc"
     if ip route show table "$CN_TABLE" 2>/dev/null | grep -q '10.36.48.1'; then
         bad "cn table still points at the previous gateway"
     elif ip route show table "$CN_TABLE" 2>/dev/null | grep -q '10.36.40.1'; then
@@ -850,6 +873,21 @@ main() {
     else
         bad "cn table has no route via either gateway"
     fi
+    if ip route show table "$CN_TABLE" | grep -Fq '198.51.100.0/24'; then
+        bad "CN gateway-change promotion retained a stale-only prefix"
+    else
+        ok "CN gateway-change promotion removes stale-only prefixes"
+    fi
+    if grep -Eq '^route del (1\.0\.1\.0/24|1\.0\.2\.0/23|10\.20\.0\.0/16|100\.12\.34\.0/24)' \
+            "$WORK/ip-batch-commands"; then
+        bad "promotion deletes a desired prefix after replacing its gateway"
+    else
+        ok "promotion does not delete desired prefixes after gateway replacement"
+    fi
+    [ "$(snapshot_owner_state)" = "$owner_before" ] \
+        && ok "CN gateway change preserves tunnel-owned state" \
+        || bad "CN gateway change modified tunnel-owned state"
+
     head_ "cold boot: no owned rules, no cn table, no state"
     # Restore owner sentinels independently before the cold-boot run.
     while ip rule del pref 490 2>/dev/null; do :; done
