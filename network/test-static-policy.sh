@@ -289,6 +289,11 @@ if ! grep -Fq 'network/systemd-network/*.link' restore.sh; then
     echo 'FAIL restore does not deploy systemd link policy' >&2
     fail=1
 fi
+if ! grep -Fqx 'ExecStart=/usr/bin/wpa_supplicant -D wired -c /etc/wpa_supplicant/wpa_supplicant-wired.conf -i %I' \
+        network/systemd/wpa_supplicant@.service.d/override.conf; then
+    echo 'FAIL wired wpa_supplicant override does not select the wired driver' >&2
+    fail=1
+fi
 
 if [ "$(grep -Fxc 'AddressRandomization=network' "$iwd_config")" -ne 1 ]; then
     echo 'FAIL iwd does not use stable per-network MAC addresses' >&2
