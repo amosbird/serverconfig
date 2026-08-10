@@ -266,12 +266,7 @@ EOF
     printf 'route add 1.0.2.0/23 via GATEWAY table cn\n' >> "$WORK/routefile"
     printf 'route add 10.20.0.0/16 via GATEWAY table cn\n' >> "$WORK/routefile"
     printf 'route add 100.12.34.0/24 via GATEWAY table cn\n' >> "$WORK/routefile"
-    cat > "$WORK/office.conf" <<'EOF'
-# office
-nameserver /smartgate.oa.tencent.com/ioa
-nameserver /sgw.woa.com/ioa
-nameserver /ioa.tencent.com/ioa
-EOF
+    echo '# office' > "$WORK/office.conf"
     # The lease is a file so a test can hand out a different resolver, which is
     # what a roam onto another AP actually does. Two servers on a continuation
     # line, because that wrapping is what the awk state machine exists for.
@@ -346,9 +341,11 @@ main() {
         'nameserver /sgw.woa.com/ioa' \
         'nameserver /ioa.tencent.com/ioa'
     do
-        grep -Fqx "$mapping" "$WORK/office-dst.conf" \
-            && ok "office DNS includes $mapping" \
-            || bad "office DNS omits $mapping"
+        if grep -Fqx "$mapping" "$WORK/office-dst.conf"; then
+            bad "office DNS overrides bootstrap with $mapping"
+        else
+            ok "office DNS leaves bootstrap public: $mapping"
+        fi
     done
     local wired_owner_before
     wired_owner_before=$(snapshot_owner_state)

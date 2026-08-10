@@ -47,6 +47,16 @@ reject 'SmartDNS base config does not include a dynamic IOA fragment' \
     'conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf' network/smartdns/smartdns.conf
 reject 'production reconciler has no dynamic IOA DNS logic' \
     'IOA_RESOLVER|ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
+for domain in smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com; do
+    if [ "$(grep -Fxc "nameserver /$domain/china" network/smartdns/smartdns.conf)" -ne 1 ]; then
+        echo "FAIL base SmartDNS does not map $domain exactly once to china" >&2
+        fail=1
+    fi
+    if grep -Fq "nameserver /$domain/" network/smartdns/office.conf; then
+        echo "FAIL office SmartDNS overrides bootstrap domain $domain" >&2
+        fail=1
+    fi
+done
 
 smartdns_deployment_contract() (
     local sandbox smartdns_dir fake_systemctl calls output first_pid second_pid old_uid old_gid
