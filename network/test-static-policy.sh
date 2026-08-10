@@ -651,7 +651,8 @@ fi
 reject 'operator tools do not inspect DERP or IOA endpoint caches' \
     'DERP_CACHE|derp-ips|IOA_ENDPOINT_CACHE|ioa-endpoints|IOA_BOOTSTRAP_HOSTS' \
     scripts/netfix scripts/network-status
-reject 'no underlay tables' 'UNDERLAY_TABLE|UNDERLAY_STAGE|lookup underlay|table 50[01]' \
+reject 'no obsolete underlay staging tables' \
+    '(^|[^A-Z_])UNDERLAY_(TABLE|STAGE)|lookup underlay|table 50[01]' \
     scripts/network-reconfigure scripts/netfix scripts/network-status
 reject 'no broad private bypass' \
     'PRIVATE_NETS|192\.168\.0\.0/16.*lookup main|172\.16\.0\.0/12.*lookup main|169\.254\.0\.0/16.*lookup main' \
@@ -659,8 +660,12 @@ reject 'no broad private bypass' \
 reject 'no static 9/8 IOA rule' 'IOA_STATIC_CIDRS=.*9\.0\.0\.0/8' \
     scripts/network-reconfigure
 reject 'CN promotion does not launch one ip process per route' \
-    'while read -r route; do|ip route replace \\$route table "\\$CN_TABLE"' \
+    'ip route replace \\$route table "\\$CN_TABLE"|grep -Fqx "\\$route" <<<"\\$stage_routes"' \
     scripts/network-reconfigure
+reject 'table 19 is advertisement-only and has no policy rule' \
+    'ip rule (add|replace).*lookup (19|wired_underlay)' scripts/network-reconfigure
+reject 'wired advertisement does not mutate tunnel-owned tables' \
+    'ip route (flush|del|replace).*table (20|230|52|ioa)' scripts/network-reconfigure
 for statement in \
     'IgnoreCarrierLoss=3s' \
     'AddressRandomization=network' \

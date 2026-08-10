@@ -27,6 +27,7 @@ IOA_STATIC_CIDRS=("10.0.0.0/8" "100.12.0.0/16")
 TAILNET_NETS=("100.64.0.0/10")
 CN_TABLE="cn"
 CN_STAGE_TABLE="cn_stage"
+WIRED_UNDERLAY_TABLE="wired_underlay"
 RT_TABLES="${RT_TABLES_OVERRIDE:-/etc/iproute2/rt_tables}"
 TMPDIR="${TMPDIR_OVERRIDE:-/tmp}"
 IOA_TABLE="ioa"
@@ -103,17 +104,36 @@ dhcp_dns_servers() {
         ' | sort -u
 }
 
+dhcp_router() {
+    { networkctl dhcp-lease "$1" 2>/dev/null || true; } |
+        awk '$2 == "router" && $3 ~ /^[0-9.]+$/ { print $3; exit }'
+}
+
+wired_devices() {
+    ip -o link show up |
+        awk -F': ' '$2 ~ /^enp/ { sub(/@.*/, "", $2); print $2 }' |
+        sort -u
+}
+
+wired_candidate() {
+    local dev gateway
+    while read -r dev; do
+        [ -n "$(ip -4 -o addr show "$dev" scope global)" ] || continue
+        gateway=$(dhcp_router "$dev")
+        [ -n "$gateway" ] || continue
+        printf '%s %s\n' "$dev" "$gateway"
+        return
+    done < <(wired_devices)
+}
+
 count_routes() { { ip route show table "$1" 2>/dev/null || true; } | wc -l; }
 has_routes() { [ "$(count_routes "$1")" -gt 0 ]; }
 
 wired_up() {
     local dev
-    for dev in /sys/class/net/enp*; do
-        [ -e "$dev" ] || continue
-        dev=${dev##*/}
-        [ "$(cat "/sys/class/net/$dev/operstate" 2>/dev/null)" = up ] || continue
+    while read -r dev; do
         [ -n "$(ip -4 -o addr show "$dev" scope global)" ] && return 0
-    done
+    done < <(wired_devices)
     return 1
 }
 
@@ -182,8 +202,10 @@ register_stage_table() {
     mv "$tmp" "$RT_TABLES"
 }
 
+validate_fixed_table 19 "$WIRED_UNDERLAY_TABLE"
 validate_fixed_table 101 "$CN_TABLE"
 validate_fixed_table 400 "$IOA_TABLE"
+register_fixed_table 19 "$WIRED_UNDERLAY_TABLE"
 register_fixed_table 101 "$CN_TABLE"
 register_fixed_table 400 "$IOA_TABLE"
 register_stage_table
@@ -247,6 +269,21 @@ fi
 
 if [ "$SMARTDNS_CHANGED" -eq 1 ]; then
     systemctl restart smartdns 2>/dev/null || true
+fi
+
+wired_dev=''
+wired_gateway=''
+read -r wired_dev wired_gateway < <(wired_candidate || true)
+if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
+    ip route replace default via "$wired_gateway" dev "$wired_dev" \
+        table "$WIRED_UNDERLAY_TABLE"
+    while read -r route; do
+        [ -n "$route" ] || continue
+        [ "$route" = "default via $wired_gateway dev $wired_dev" ] ||
+            ip route del $route table "$WIRED_UNDERLAY_TABLE"
+    done < <(ip route show table "$WIRED_UNDERLAY_TABLE")
+else
+    ip route flush table "$WIRED_UNDERLAY_TABLE" 2>/dev/null || true
 fi
 
 CACHE_DIR="/var/lib/network-reconfigure"

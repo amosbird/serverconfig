@@ -43,6 +43,10 @@ setup() {
     # Model gateways exposed both as a host scope-link route and as the default gateway.
     ip route add 10.36.48.1/32 dev wlan0 scope link
     ip route add default via 10.36.48.1 dev wlan0
+    ip link add enp1s0 type veth peer name wired-peer
+    ip link set wired-peer up
+    ip link set enp1s0 up
+    ip addr add 10.76.76.210/26 dev enp1s0
     ip link add tun0 type dummy
     ip link set tun0 up
     ip addr add 192.168.255.10/24 dev tun0
@@ -175,7 +179,13 @@ def replace_once(old, new):
     return src.replace(old, new)
 
 stub = """
-networkctl() { cat WORKDIR/lease; }
+networkctl() {
+    if [ "${1:-}" = dhcp-lease ] && [[ "${2:-}" == enp* ]]; then
+        cat WORKDIR/wired-lease
+    else
+        cat WORKDIR/lease
+    fi
+}
 systemctl()  { printf '%s\n' "$*" >> WORKDIR/systemctl-calls; return 0; }
 tailscale()  { return 1; }
 logger()     { return 0; }
@@ -244,7 +254,7 @@ EOF
     [ -s "$WORK/nr-under-test" ] || return 1
     install -d -m 777 "$WORK/tmp"
     chmod 755 "$WORK/nr-under-test"
-    write_rt_tables '102 kwai'
+    write_rt_tables '19 wired_underlay' '102 kwai'
     # Same shape as the real ~/.routefile: `ip -batch` commands, not bare route
     # specs. The earlier fixture omitted the `route add` verb, so every batch
     # was rejected and the cn table was never created — and no test noticed,
@@ -253,12 +263,18 @@ EOF
     printf 'route add 1.0.2.0/23 via GATEWAY table cn\n' >> "$WORK/routefile"
     printf 'route add 10.20.0.0/16 via GATEWAY table cn\n' >> "$WORK/routefile"
     printf 'route add 100.12.34.0/24 via GATEWAY table cn\n' >> "$WORK/routefile"
-    echo '# office' > "$WORK/office.conf"
+    cat > "$WORK/office.conf" <<'EOF'
+# office
+nameserver /smartgate.oa.tencent.com/ioa
+nameserver /sgw.woa.com/ioa
+nameserver /ioa.tencent.com/ioa
+EOF
     # The lease is a file so a test can hand out a different resolver, which is
     # what a roam onto another AP actually does. Two servers on a continuation
     # line, because that wrapping is what the awk state machine exists for.
     printf '   6 domain name server 202.152.254.230\n                        202.152.254.65\n' \
         > "$WORK/lease"
+    printf '   3 router 10.76.76.193\n' > "$WORK/wired-lease"
     chmod 644 "$WORK"/*
     chmod 777 "$WORK/tmp"
     chmod 755 "$WORK/nr-under-test"
@@ -295,7 +311,7 @@ main() {
         '101 cn' '400 foreign' '102 kwai'
 
     local fixed_owner_before fixed_rc
-    write_rt_tables '102 kwai'
+    write_rt_tables '19 wired_underlay' '102 kwai'
     fixed_owner_before=$(snapshot_owner_state)
     fixed_rc=$(run_status 1)
     if [ "$fixed_rc" -eq 0 ] &&
@@ -308,6 +324,55 @@ main() {
     [ "$(snapshot_owner_state)" = "$fixed_owner_before" ] \
         && ok "fixed table registration preserves SmartGateAgent table 400 contents" \
         || bad "fixed table registration changed SmartGateAgent table 400 contents"
+
+    head_ "wired underlay advertisement"
+    run_script 1 >/dev/null
+    if ip route show table 19 | sed -E 's/[[:space:]]+$//' | grep -Fqx \
+            'default via 10.76.76.193 dev enp1s0'; then
+        ok "wired DHCP gateway is advertised in table 19"
+    else
+        bad "table 19 does not contain the wired DHCP gateway: $(ip route show table 19)"
+    fi
+    if ip -4 rule show | grep -Eq 'lookup (19|wired_underlay)'; then
+        bad "a policy rule incorrectly references table 19"
+    else
+        ok "no policy rule references table 19"
+    fi
+    for mapping in \
+        'nameserver /smartgate.oa.tencent.com/ioa' \
+        'nameserver /sgw.woa.com/ioa' \
+        'nameserver /ioa.tencent.com/ioa'
+    do
+        grep -Fqx "$mapping" "$WORK/office-dst.conf" \
+            && ok "office DNS includes $mapping" \
+            || bad "office DNS omits $mapping"
+    done
+    local wired_owner_before
+    wired_owner_before=$(snapshot_owner_state)
+    ip link set enp1s0 down
+    run_script 1 >/dev/null
+    [ -z "$(ip route show table 19)" ] \
+        && ok "wired loss removes table 19 advertisement" \
+        || bad "wired loss retained table 19: $(ip route show table 19)"
+    [ "$(snapshot_owner_state)" = "$wired_owner_before" ] \
+        && ok "wired loss preserves tunnel-owned state" \
+        || bad "wired loss changed tunnel-owned state"
+    if grep -Fq 'nameserver /ioa.tencent.com/ioa' "$WORK/office-dst.conf"; then
+        bad "wired loss retained office bootstrap DNS mappings"
+    else
+        ok "wired loss removes office bootstrap DNS mappings"
+    fi
+    ip link set enp1s0 up
+    printf '   3 router 10.76.76.194\n' > "$WORK/wired-lease"
+    run_script 1 >/dev/null
+    if ip route show table 19 | sed -E 's/[[:space:]]+$//' | grep -Fqx \
+            'default via 10.76.76.194 dev enp1s0'; then
+        ok "wired gateway change replaces table 19 advertisement"
+    else
+        bad "wired gateway change did not converge: $(ip route show table 19)"
+    fi
+    printf '   3 router 10.76.76.193\n' > "$WORK/wired-lease"
+    run_script 1 >/dev/null
 
     route_error=$(route_table invalid-destination 2>&1)
     route_rc=$?
