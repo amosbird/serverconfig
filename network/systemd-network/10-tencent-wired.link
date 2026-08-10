@@ -1,0 +1,7 @@
+# Apply the registered Tencent wired identity before networkd configures DHCP.
+[Match]
+Path=pci-0000:00:14.0-usb-0:1:1.0
+Type=ether
+
+[Link]
+MACAddress=08:3a:88:5a:b5:37

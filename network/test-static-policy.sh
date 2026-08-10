@@ -276,7 +276,19 @@ fi
 foreign_routing_config=network/systemd-networkd.conf.d/foreign-routing.conf
 iwd_config=network/iwd/main.conf
 wireless_config=network/systemd-network/25-wireless.network
+tencent_wired_link=network/systemd-network/10-tencent-wired.link
 obsolete_tencent_config=network/systemd-network/26-wireless-tencent.network
+
+if [ ! -f "$tencent_wired_link" ] ||
+   [ "$(grep -Fxc 'Path=pci-0000:00:14.0-usb-0:1:1.0' "$tencent_wired_link")" -ne 1 ] ||
+   [ "$(grep -Fxc 'MACAddress=08:3a:88:5a:b5:37' "$tencent_wired_link")" -ne 1 ]; then
+    echo 'FAIL Tencent wired registered MAC link policy is missing or incorrect' >&2
+    fail=1
+fi
+if ! grep -Fq 'network/systemd-network/*.link' restore.sh; then
+    echo 'FAIL restore does not deploy systemd link policy' >&2
+    fail=1
+fi
 
 if [ "$(grep -Fxc 'AddressRandomization=network' "$iwd_config")" -ne 1 ]; then
     echo 'FAIL iwd does not use stable per-network MAC addresses' >&2
