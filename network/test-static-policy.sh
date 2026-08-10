@@ -52,8 +52,8 @@ for domain in smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com; do
         echo "FAIL base SmartDNS does not map $domain exactly once to china" >&2
         fail=1
     fi
-    if grep -Fq "nameserver /$domain/" network/smartdns/office.conf; then
-        echo "FAIL office SmartDNS overrides bootstrap domain $domain" >&2
+    if [ "$(grep -Fxc "nameserver /$domain/ioa" network/smartdns/office.conf)" -ne 1 ]; then
+        echo "FAIL office SmartDNS does not map $domain exactly once to ioa" >&2
         fail=1
     fi
 done
