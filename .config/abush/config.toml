@@ -1,4 +1,4 @@
-model = "copilot/claude-opus-4.6"
+model = "copilot/gpt-5.6-sol"
 agent = "coder"
 
 [auto_summary]

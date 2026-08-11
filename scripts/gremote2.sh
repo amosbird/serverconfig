@@ -26,7 +26,7 @@ if [[ "$1" =~ $pattern ]]; then
 		read -r remote_home
 		read -r sock
 	} < <(
-		ssh $arg 'read sock < <($HOME/tmp/gentoo/prelogin); rm $sock; rm $HOME/tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}; echo $HOME; echo $sock'
+		ssh $arg 'read sock < <($HOME/scripts/prelogin); rm $sock; rm $HOME/tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}; echo $HOME; echo $sock'
 	)
 	# NOTE: make sure remote should not have gpg-agent, and gpg-connect-agent should show: connection to the agent is in restricted mode
 
@@ -38,6 +38,5 @@ if [[ "$1" =~ $pattern ]]; then
 	UUID=$(uuidgen)
 	SSH_MASTER_CTRL=/tmp/ssh-master.$UUID
 	KITTY_SOCK=/tmp/kitty.$UUID
-    export KITTY_SCROLL_LOG=/tmp/scroll.log
-	kitty $a -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T remote ssh -t $arg -M -S $SSH_MASTER_CTRL -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:57201:127.0.0.1:57201 -L 127.0.0.1:8040:127.0.0.1:8040 -L 127.0.0.1:8030:127.0.0.1:8030 -L 127.0.0.1:8080:127.0.0.1:8080 -L 127.0.0.1:8929:127.0.0.1:8929 -L 127.0.0.1:9200:127.0.0.1:9200 -L 127.0.0.1:9400:127.0.0.1:9400 -L 127.0.0.1:9411:127.0.0.1:9411 -L 127.0.0.1:1455:127.0.0.1:1455 -L 127.0.0.1:5601:127.0.0.1:5601 -R 127.0.0.1:8787:127.0.0.1:8787 -R 12639:localhost:8888 -R 5353:localhost:53 -R 9222:localhost:9222 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK -R $remote_home/tmp/kitty_sock:$KITTY_SOCK -R $remote_home/tmp/dbus_sock:/run/user/1000/bus "$remote_home/tmp/gentoo/login prefix $arg $remote_home/tmp/gentoo/login $SSH_MASTER_CTRL" --debug-input 2>/tmp/scroll_debug.log
+	kitty --hold $a -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T remote ssh -t $arg -M -S $SSH_MASTER_CTRL -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:57201:127.0.0.1:57201 -L 127.0.0.1:8040:127.0.0.1:8040 -L 127.0.0.1:8030:127.0.0.1:8030 -L 127.0.0.1:8080:127.0.0.1:8080 -L 127.0.0.1:8929:127.0.0.1:8929 -L 127.0.0.1:9200:127.0.0.1:9200 -L 127.0.0.1:9400:127.0.0.1:9400 -L 127.0.0.1:9411:127.0.0.1:9411 -L 127.0.0.1:1455:127.0.0.1:1455 -L 127.0.0.1:5601:127.0.0.1:5601 -R 127.0.0.1:8787:127.0.0.1:8787 -R 12639:localhost:8888 -R 5353:localhost:53 -R 9222:localhost:9222 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R $remote_home/tmp/clipservice.sock:/tmp/clipservice.sock -R $remote_home/tmp/ssh_auth_sock:$SSH_AUTH_SOCK -R $remote_home/tmp/kitty_sock:$KITTY_SOCK -R $remote_home/tmp/dbus_sock:/run/user/1000/bus "$remote_home/scripts/tstart.sh prefix $SSH_MASTER_CTRL"
 fi

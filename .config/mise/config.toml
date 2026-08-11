@@ -10,6 +10,7 @@ shfmt = "latest"
 "github:docker/docker-credential-helpers" = { version = "latest", exe = "docker-credential-pass" }
 atuin = "latest"
 "github:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
+"github:kovidgoyal/kitty" = { version = "latest", matching = "kitten-", bin = "kitten" }
 sqlc = "latest"
 "github:amosbird/clipserver" = "latest"
 zig = "latest"
