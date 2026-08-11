@@ -47,6 +47,19 @@ reject 'SmartDNS base config does not include a dynamic IOA fragment' \
     'conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf' network/smartdns/smartdns.conf
 reject 'production reconciler has no dynamic IOA DNS logic' \
     'IOA_RESOLVER|ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
+for domain in \
+    smartgate.oa.tencent.com \
+    sgw.woa.com \
+    ioa.tencent.com \
+    '*-smartgate.oa.tencent.com' \
+    cloud-smartvpn.oa.tencent.com \
+    http-cloud-smartvpn.oa.tencent.com
+do
+    if [ "$(grep -Fxc "ipset /$domain/-" network/smartdns/smartdns.conf)" -ne 1 ]; then
+        echo "FAIL base SmartDNS does not exclude $domain exactly once from ioa" >&2
+        fail=1
+    fi
+done
 for domain in smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com; do
     if [ "$(grep -Fxc "nameserver /$domain/china" network/smartdns/smartdns.conf)" -ne 1 ]; then
         echo "FAIL base SmartDNS does not map $domain exactly once to china" >&2
@@ -57,6 +70,10 @@ for domain in smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com; do
         fail=1
     fi
 done
+if [ "$(grep -Fxc 'ipset /woa.com/ioa' network/smartdns/smartdns.conf)" -ne 1 ]; then
+    echo 'FAIL SmartDNS broad woa.com business classification is missing or duplicated' >&2
+    fail=1
+fi
 
 smartdns_deployment_contract() (
     local sandbox smartdns_dir fake_systemctl calls output first_pid second_pid old_uid old_gid
@@ -686,6 +703,12 @@ reject 'no broad private bypass' \
     scripts/network-reconfigure
 reject 'no static 9/8 IOA rule' 'IOA_STATIC_CIDRS=.*9\.0\.0\.0/8' \
     scripts/network-reconfigure
+reject 'no static 21/8 IOA rule' \
+    'IOA_STATIC_CIDRS=.*21\.0\.0\.0/8|ip rule add to 21\.0\.0\.0/8.*lookup ioa' \
+    scripts/network-reconfigure
+reject 'active policy no longer intersects SmartDNS results with a static prefix set' \
+    'IOA_INTRANET|--match-set ioa_intranet|ipset (create|add|flush) ioa_intranet' \
+    scripts/network-reconfigure network/README.md
 reject 'CN promotion does not launch one ip process per route' \
     'ip route replace \\$route table "\\$CN_TABLE"|grep -Fqx "\\$route" <<<"\\$stage_routes"' \
     scripts/network-reconfigure

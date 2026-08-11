@@ -20,9 +20,9 @@ Ownership is deliberately narrow:
   `ManageForeignRoutes=no`, so networkd does not garbage-collect route/rule objects owned by
   Tailscale, SmartGateAgent, or `network-reconfigure`.
 - **`scripts/network-reconfigure`** owns the repository's rules at priorities 500, 1000,
-  1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage` table;
-  `ipset ioa_intranet`; the `NETMODE_IOA` chain and its OUTPUT hook; the exact IOA
-  MASQUERADE rule; and the generated DHCP and office SmartDNS fragments.
+  1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage` table; the
+  `NETMODE_IOA` chain and its OUTPUT hook; the exact IOA MASQUERADE rule; and the generated DHCP
+  and office SmartDNS fragments.
 - **SmartDNS** owns the domain-derived `ipset ioa` membership.
 - **SmartGateAgent** owns `tun0`, mark `0xa38`, tables `20` and `230`, and the contents and
   lifetime of table `ioa`. The `scripts/overrides/ip` wrapper only rewrites its unqualified
@@ -89,21 +89,31 @@ When IOA is unavailable, IOA-group names fail closed and may wait for the upstre
 not fall back to a public resolver. Ordinary default-group DNS remains independent and continues
 through its default and DHCP upstreams.
 
-SmartDNS adds addresses resolved for configured IOA domains to dynamic `ipset ioa`.
-`network-reconfigure` maintains a second set, `ioa_intranet`, containing:
+SmartDNS adds addresses resolved for configured IOA business domains to dynamic `ipset ioa`.
+That set is authoritative for domain-derived IOA classification regardless of the answer's prefix.
+`NETMODE_IOA` first returns every packet whose mark is non-zero. An unmarked packet whose
+destination is in `ioa` receives exact full-width mark `0x1`; the priority-2500 rule routes that mark
+through table `ioa`. Marks such as `0xa38`, `0x80000`, or another non-zero value remain untouched.
 
-- `9.0.0.0/8`;
-- `10.0.0.0/8`;
-- `100.12.0.0/16`.
+Broad business suffixes can contain SmartGate's own bootstrap or proxy transport names. SmartDNS
+therefore applies more-specific exclusions:
 
-`NETMODE_IOA` first returns every packet whose mark is non-zero. A packet with mark `0` is set
-to exact full-width mark `0x1` only when its destination belongs to **both** `ioa` and
-`ioa_intranet`. The priority-2500 rule also matches `0x1` exactly, so marks such as `0xa38`,
-`0x80000`, or another value whose low bit is set cannot be captured as IOA business traffic.
+```text
+ipset /sgw.woa.com/-
+ipset /smartgate.oa.tencent.com/-
+ipset /*-smartgate.oa.tencent.com/-
+ipset /cloud-smartvpn.oa.tencent.com/-
+ipset /http-cloud-smartvpn.oa.tencent.com/-
+ipset /ioa.tencent.com/-
+```
 
-`9.0.0.0/8` is never a static IOA route. It is only a safety boundary for dynamic,
-domain-derived SmartDNS classification. By contrast, `10.0.0.0/8` and `100.12.0.0/16` are
-static IOA business ranges, subject to the earlier actual-LAN and routefile rules.
+The `sgw.woa.com` exclusion includes its proxy subdomains. The wildcard and `cloud-smartvpn`
+exclusions cover the regional SmartGate discovery names and scene/policy control plane observed in
+SmartGateAgent logs. This keeps transport endpoints out of `ioa` without guessing their changing IP
+addresses. No static `9/8` or `21/8` IOA route exists:
+those prefixes use IOA only when a configured business-domain query adds the exact answer to `ioa`.
+By contrast, `10.0.0.0/8` and `100.12.0.0/16` remain static IOA business ranges, subject to the
+earlier actual-LAN and routefile rules.
 
 ## Tunnel independence and failure semantics
 

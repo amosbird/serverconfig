@@ -21,8 +21,6 @@ IOA_MARK="0x1/0xffffffff"
 TS_MARK="0x80000/0xff0000"
 CHAIN="NETMODE_IOA"
 NEXT_CHAIN="NETMODE_IOA_NEXT"
-IOA_INTRANET_SET="ioa_intranet"
-IOA_INTRANET_CIDRS=("9.0.0.0/8" "10.0.0.0/8" "100.12.0.0/16")
 IOA_STATIC_CIDRS=("10.0.0.0/8" "100.12.0.0/16")
 TAILNET_NETS=("100.64.0.0/10")
 CN_TABLE="cn"
@@ -352,12 +350,8 @@ firewall_fingerprint_ok() {
     local expected actual
     expected=$(printf '%s\n' \
         "-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN" \
-        "-A $CHAIN -m set --match-set ioa dst -m set \
---match-set $IOA_INTRANET_SET dst -j MARK --set-xmark 0x1/0xffffffff")
+        "-A $CHAIN -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff")
     actual=$(iptables -t mangle -S "$CHAIN" 2>/dev/null | grep "^-A $CHAIN " || true)
-    [ "$actual" = "$expected" ] || return 1
-    actual=$(ipset save "$IOA_INTRANET_SET" 2>/dev/null | awk '$1 == "add" {print $3}' | sort)
-    expected=$(printf '%s\n' "${IOA_INTRANET_CIDRS[@]}" | sort)
     [ "$actual" = "$expected" ] || return 1
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
         grep -Fxc -- '-A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE')" -eq 1 ]
@@ -505,14 +499,8 @@ iptables -t mangle -X "$NEXT_CHAIN" 2>/dev/null || true
 iptables -t mangle -N "$NEXT_CHAIN"
 iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
 ensure_ipset ioa
-ensure_ipset "$IOA_INTRANET_SET" hash:net
-ipset flush "$IOA_INTRANET_SET"
-for cidr in "${IOA_INTRANET_CIDRS[@]}"; do
-    ipset add "$IOA_INTRANET_SET" "$cidr"
-done
 iptables -t mangle -A "$NEXT_CHAIN" \
     -m set --match-set ioa dst \
-    -m set --match-set "$IOA_INTRANET_SET" dst \
     -j MARK --set-xmark 0x1/0xffffffff
 
 # iptables-restore applies one table at COMMIT. Rebuild the stable chain and
@@ -530,6 +518,10 @@ mark_transaction+=$'\n'"-F $NEXT_CHAIN"
 mark_transaction+=$'\n'"-X $NEXT_CHAIN"
 mark_transaction+=$'\nCOMMIT'
 iptables-restore --noflush <<<"$mark_transaction"
+
+# Remove the repository-owned set retired by the authoritative SmartDNS model.
+# It is unreferenced after the atomic chain switch, so destruction is safe and idempotent.
+ipset destroy ioa_intranet 2>/dev/null || true
 
 # Manage only the repository-owned exact NAT rule; similar rules belong to others.
 while iptables -t nat -D POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 \

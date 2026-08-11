@@ -53,6 +53,9 @@ and add exact suffix exclusions:
 ```text
 ipset /sgw.woa.com/-
 ipset /smartgate.oa.tencent.com/-
+ipset /*-smartgate.oa.tencent.com/-
+ipset /cloud-smartvpn.oa.tencent.com/-
+ipset /http-cloud-smartvpn.oa.tencent.com/-
 ipset /ioa.tencent.com/-
 ```
 
@@ -68,6 +71,8 @@ ioa.tencent.com                   -> not added to ioa
 ```
 
 The `/sgw.woa.com/-` rule deliberately covers both the base name and all SmartGate proxy subdomains.
+The wildcard `*-smartgate.oa.tencent.com` rule covers the regional discovery names observed in live
+SmartGateAgent logs. The two `cloud-smartvpn` exclusions protect the scene and policy control plane.
 `ioa.tencent.com` remains reachable directly through its office-internal answer while wired office
 DNS is active, and through the base public bootstrap path otherwise.
 
@@ -105,8 +110,8 @@ Follow TDD by first changing namespace and static tests so the current implement
 3. a nonzero owner mark remains unchanged even when the destination is in `ioa`;
 4. routefile priority still overrides a mark-derived IOA route;
 5. `ioa_intranet` is no longer created, referenced, or documented as active policy;
-6. SmartDNS contains exactly one `/-` exclusion for each of `sgw.woa.com`,
-   `smartgate.oa.tencent.com`, and `ioa.tencent.com`;
+6. SmartDNS contains exactly one `/-` exclusion for every documented SmartGate bootstrap,
+   discovery, proxy, scene, and policy transport suffix;
 7. the broad `/woa.com/ioa` rule remains, proving the fix does not special-case `token.woa.com`;
 8. no static `21/8` or `9/8` IOA route is introduced.
 

@@ -198,7 +198,7 @@ ip() {
     command ip "$@"
 }
 iptables() {
-    if [ "${FAIL_NEXT_MARK:-0}" = 1 ] && [ " $* " = " -t mangle -A NETMODE_IOA_NEXT -m set --match-set ioa dst -m set --match-set ioa_intranet dst -j MARK --set-xmark 0x1/0xffffffff " ]; then
+    if [ "${FAIL_NEXT_MARK:-0}" = 1 ] && [ " $* " = " -t mangle -A NETMODE_IOA_NEXT -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff " ]; then
         return 42
     fi
     command iptables "$@"
@@ -324,7 +324,14 @@ main() {
         || bad "fixed table registration changed SmartGateAgent table 400 contents"
 
     head_ "wired underlay advertisement"
+    ipset create ioa_intranet hash:net
+    ipset add ioa_intranet 9.0.0.0/8
     run_script 1 >/dev/null
+    if ipset list ioa_intranet >/dev/null 2>&1; then
+        bad "retired ioa_intranet set survives reconciliation"
+    else
+        ok "reconciliation removes the retired ioa_intranet set"
+    fi
     if ip route show table 19 | sed -E 's/[[:space:]]+$//' | grep -Fqx \
             'default via 10.76.76.193 dev enp1s0'; then
         ok "wired DHCP gateway is advertised in table 19"
@@ -569,14 +576,17 @@ main() {
     [ "$(route_table 10.36.48.1)" = main ] && ok "connected 10/8 LAN overrides IOA" \
                                             || bad "connected LAN routed into IOA"
 
-    head_ "NETMODE_IOA only classifies unmarked business packets"
-    ipset add ioa 9.1.2.3 -exist
+    head_ "NETMODE_IOA only classifies unmarked SmartDNS business packets"
+    ipset add ioa 21.34.11.74 -exist
     ipset add ioa 10.20.1.1 -exist
     chain=$(iptables -t mangle -S NETMODE_IOA)
     grep -Eq -- '! --mark 0x0(/0xffffffff)? -j RETURN' <<<"$chain" \
         && ok "all non-zero marks are preserved" || bad "non-zero mark guard missing"
     grep -q -- '--set-xmark 0x1/0xffffffff' <<<"$chain" \
         && ok "IOA business mark is written exactly" || bad "IOA mark write is not exact"
+    ! grep -q -- '--match-set ioa dst -m set' <<<"$chain" \
+        && ok "IOA classification has no static prefix intersection" \
+        || bad "IOA classification still depends on a static prefix set"
     full_width_fwmark_rule 2500 0x1 ioa \
         && ok "IOA rule matches the exact full-width mark" \
         || bad "IOA rule does not match exactly 0x1/0xffffffff"
@@ -598,13 +608,20 @@ main() {
         && ok "low-bit collision does not match IOA" \
         || bad "0xa39 incorrectly matched IOA business mark"
     iptables -t mangle -Z NETMODE_IOA
-    ping -q -c 1 -W 1 9.1.2.3 >/dev/null 2>&1 || true
+    ping -q -c 1 -W 1 21.34.11.74 >/dev/null 2>&1 || true
     [ "$(iptables -t mangle -L NETMODE_IOA -nvx | awk '$3 == "MARK" {print $1}')" -eq 1 ] \
-        && ok "real unmarked packet in both sets reaches the exact mark rule" \
-        || bad "real dual-set packet did not reach the mark rule"
+        && ok "real unmarked SmartDNS-classified 21.x packet reaches the mark rule" \
+        || bad "SmartDNS-classified 21.x packet did not reach the mark rule"
+    ipset del ioa 21.34.11.74
+    iptables -t mangle -Z NETMODE_IOA
+    ping -q -c 1 -W 1 21.34.11.74 >/dev/null 2>&1 || true
+    [ "$(iptables -t mangle -L NETMODE_IOA -nvx | awk '$3 == "MARK" {print $1}')" -eq 0 ] \
+        && ok "unclassified 21.x packet remains unmarked" \
+        || bad "unclassified 21.x packet reached the mark rule"
+    ipset add ioa 21.34.11.74 -exist
     iptables -t mangle -Z NETMODE_IOA
     for mark in 2616 524288 2; do
-        ping -q -c 1 -W 1 -m "$mark" 9.1.2.3 >/dev/null 2>&1 || true
+        ping -q -c 1 -W 1 -m "$mark" 21.34.11.74 >/dev/null 2>&1 || true
     done
     nonzero_return=$(iptables -t mangle -L NETMODE_IOA -nvx | awk '$3 == "RETURN" {print $1}')
     nonzero_mark=$(iptables -t mangle -L NETMODE_IOA -nvx | awk '$3 == "MARK" {print $1}')
@@ -636,16 +653,11 @@ main() {
     [ "$(grep -Fc -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "owned NAT rule exists exactly once" || bad "owned NAT rule is missing or duplicated"
 
-    head_ "early-exit fingerprint repairs firewall and set drift"
+    head_ "early-exit fingerprint repairs owned firewall drift"
     iptables -t mangle -A NETMODE_IOA -j ACCEPT
     run_script 0 >/dev/null
     ! iptables -t mangle -S NETMODE_IOA | grep -q -- '-j ACCEPT' \
         && ok "chain content drift triggers reconciliation" || bad "chain drift survived early exit"
-    ipset del ioa_intranet 9.0.0.0/8
-    run_script 0 >/dev/null
-    ipset test ioa_intranet 9.1.2.3 >/dev/null 2>&1 \
-        && ok "ioa_intranet drift triggers reconciliation" \
-        || bad "ioa_intranet drift survived early exit"
     while iptables -t nat -D POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE 2>/dev/null; do :; done
     run_script 0 >/dev/null
     [ "$(iptables -t nat -S POSTROUTING |

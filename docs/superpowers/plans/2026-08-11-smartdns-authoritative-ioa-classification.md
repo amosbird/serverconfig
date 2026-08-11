@@ -22,11 +22,14 @@ Use `21.34.11.74` as an arbitrary address outside the old whitelist, assert a re
 
 - [ ] **Step 2: Add static transport-exclusion and removal checks**
 
-Require exactly one of each:
+Require exactly one exclusion for every known transport suffix:
 
 ```text
 ipset /sgw.woa.com/-
 ipset /smartgate.oa.tencent.com/-
+ipset /*-smartgate.oa.tencent.com/-
+ipset /cloud-smartvpn.oa.tencent.com/-
+ipset /http-cloud-smartvpn.oa.tencent.com/-
 ipset /ioa.tencent.com/-
 ```
 
