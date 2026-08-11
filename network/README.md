@@ -254,6 +254,9 @@ mutating them.
 `restore.sh` is the only repository deployment entry point. With `GUI=1`, it installs the iwd,
 networkd, udev, and systemd configuration, removes obsolete installed repository files, validates
 SmartDNS before replacement, and reloads configuration without taking ownership of tunnel recovery.
+`restore.sh` also disables any stale `netctl@*.service` boot links without stopping the active
+connection, so an old interface-specific profile cannot race iwd after the next reboot. It does
+not copy ordinary Wi-Fi credentials: iwd profiles under `/var/lib/iwd` remain local secret state.
 There is no supported return to the retired pre-iwd network stack.
 
 For a focused network-only update, copy the changed repository files to their matching `/etc` paths,

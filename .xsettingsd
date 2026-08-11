@@ -1,4 +1,7 @@
 Net/ThemeName "Adwaita"
+Gtk/CursorThemeName "capitaine-cursors"
+Gtk/CursorThemeSize 48
+Xft/DPI 196608
 Xft/Hinting 1
 Xft/HintStyle "hintslight"
 Xft/Antialias 1

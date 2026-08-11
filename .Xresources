@@ -1,4 +1,5 @@
 ! #if !(SRVR_abt480)
+Xcursor.theme: capitaine-cursors
 Xcursor.size: 48
 Xft.dpi: 192
 ! #endif

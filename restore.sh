@@ -115,6 +115,31 @@ fi
     done
 done
 
+MAMBA_PREFIX="$HOME/.mambatools"
+MAMBA_CHANNELS=(
+    -c https://github.com/amosbird/conda-channel/releases/download
+    -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+)
+MAMBA_PACKAGES=(
+    emacs tmux htop-vim
+    gcc gxx gdb cmake make ninja lld lldb
+    rust cargo-zigbuild
+    rust-std-aarch64-apple-darwin
+    rust-std-x86_64-apple-darwin
+    rust-std-x86_64-pc-windows-gnu
+    zig
+    clang_osx-64 cctools_osx-64 ld64_osx-64
+    'sdkroot_env_osx-64=15.5'
+)
+
+if [[ -f "$MAMBA_PREFIX/conda-meta/history" ]]; then
+    "$HOME/.local/bin/micromamba" install -y -p "$MAMBA_PREFIX" \
+        "${MAMBA_CHANNELS[@]}" "${MAMBA_PACKAGES[@]}"
+else
+    "$HOME/.local/bin/micromamba" create -y -p "$MAMBA_PREFIX" \
+        "${MAMBA_CHANNELS[@]}" "${MAMBA_PACKAGES[@]}"
+fi
+
 if [[ -n $GUI ]]; then
     update-desktop-database "$HOME/.local/share/applications"
     sudo cp "$DIR"/xkb/symbols/{us,pc,inet} /usr/share/X11/xkb/symbols/
@@ -123,12 +148,7 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/xkb-restore.hook /etc/pacman.d/hooks/xkb-restore.hook
 
     # Network stack: iwd + systemd-networkd (see network/README.md).
-    # Config only, except retiring the obsolete fallback preference updater below.
-    # No link-managing service or tunnel is stopped, so restore.sh does not drop the connection.
-    [ -x /usr/bin/tcpdump ] || {
-        echo 'tcpdump is required; network debug units were not installed' >&2
-        exit 1
-    }
+    # Install config now and enable link owners for the next boot without dropping this connection.
     sudo mkdir -p /etc/iwd /etc/systemd/network /etc/systemd/networkd.conf.d \
         /etc/systemd/system/wpa_supplicant@.service.d
     sudo cp "$DIR"/network/iwd/main.conf /etc/iwd/main.conf
@@ -141,7 +161,9 @@ if [[ -n $GUI ]]; then
     else
         echo '  [WARN] Tencent-WiFi profile is missing or lacks the Android MAC override'
     fi
-    sudo networkctl reload
+    if sudo systemctl is-active --quiet systemd-networkd.service; then
+        sudo networkctl reload
+    fi
     sudo cp "$DIR"/network/systemd-networkd.conf.d/foreign-routing.conf \
         /etc/systemd/networkd.conf.d/foreign-routing.conf
     sudo cp "$DIR"/network/systemd/wpa_supplicant@.service.d/override.conf \
@@ -165,6 +187,11 @@ if [[ -n $GUI ]]; then
     sudo rm -f /etc/systemd/system/network-debug-pcap.service
     sudo rm -rf /var/log/network-debug/ring
     sudo systemctl daemon-reload
+    # Disable stale netctl boot links, but do not stop the connection carrying this restore.
+    for unit in /etc/systemd/system/multi-user.target.wants/netctl@*.service; do
+        [[ -e "$unit" ]] && sudo systemctl disable "$(basename "$unit")"
+    done
+    sudo systemctl disable netctl.service
     # SmartDNS includes must exist before validating and atomically installing the base config.
     sudo mkdir -p /etc/smartdns
     [[ -e /etc/smartdns/office.conf ]] ||
@@ -177,6 +204,7 @@ if [[ -n $GUI ]]; then
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
+    sudo systemctl enable systemd-networkd.service iwd.service
     sudo systemctl enable network-reconfigure.path
 
     # Setup kitty desktop-ui portal (replaces xdg-desktop-portal-termfilechooser)
