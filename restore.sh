@@ -118,11 +118,13 @@ done
 
 MAMBA_PREFIX="$HOME/.mambatools"
 MAMBA_CHANNELS=(
+    --strict-channel-priority
     -c https://github.com/amosbird/conda-channel/releases/download
-    -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+#    -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
+    -c https://conda.anaconda.org/conda-forge
 )
 MAMBA_PACKAGES=(
-    emacs tmux htop-vim
+    emacs tmux htop-vim dtach
     gcc gxx gdb cmake make ninja lld lldb
     rust cargo-zigbuild
     rust-std-aarch64-apple-darwin

@@ -17,9 +17,10 @@ https://github.com/amosbird/conda-channel/releases/download
 
 ```bash
 micromamba create -p ~/.mambatools \
+  --strict-channel-priority \
   -c https://github.com/amosbird/conda-channel/releases/download \
   -c conda-forge \
-  emacs tmux htop-vim \
+  emacs tmux htop-vim dtach \
   gcc gxx gdb cmake make ninja lld lldb \
   rust cargo-zigbuild \
   rust-std-aarch64-apple-darwin rust-std-x86_64-apple-darwin rust-std-x86_64-pc-windows-gnu \
@@ -46,8 +47,9 @@ cd ~/git/conda-channel
 # Download current repodata
 gh release download linux-64 --pattern repodata.json --dir . --repo amosbird/conda-channel --clobber
 
-# Add new package entry
+# Add new package entry and regenerate the compressed index
 python3 update_repodata.py /path/to/<name>-<ver>-<hash>.conda
+zstd -f linux-64/repodata.json -o linux-64/repodata.json.zst
 
 # If replacing an old version, the script removes the old entry automatically
 ```
@@ -58,9 +60,11 @@ python3 update_repodata.py /path/to/<name>-<ver>-<hash>.conda
 # Upload new package
 gh release upload linux-64 /path/to/<name>-<ver>-<hash>.conda --repo amosbird/conda-channel
 
-# Delete old repodata.json and re-upload
+# Delete old indexes and re-upload both forms
 gh release delete-asset linux-64 repodata.json --yes --repo amosbird/conda-channel
-gh release upload linux-64 repodata.json --repo amosbird/conda-channel
+gh release delete-asset linux-64 repodata.json.zst --yes --repo amosbird/conda-channel
+gh release upload linux-64 linux-64/repodata.json linux-64/repodata.json.zst \
+  --repo amosbird/conda-channel
 
 # Optionally delete old package version
 gh release delete-asset linux-64 <old-pkg>.conda --yes --repo amosbird/conda-channel
@@ -70,6 +74,8 @@ gh release delete-asset linux-64 <old-pkg>.conda --yes --repo amosbird/conda-cha
 
 ```bash
 micromamba install -p ~/.mambatools \
+  --strict-channel-priority \
+  --repodata-ttl 0 \
   -c https://github.com/amosbird/conda-channel/releases/download \
   -c conda-forge \
   <package-name>
@@ -82,3 +88,4 @@ micromamba install -p ~/.mambatools \
 | emacs | `~/git/emacs-feedstock` | `amosbird/emacs` |
 | tmux | `~/git/tmux-feedstock` | `amosbird/tmux` |
 | htop-vim | `~/git/htop-feedstock` | `amosbird/htop-vim` |
+| dtach | `~/git/dtach-feedstock` | `amosbird/dtach` |
