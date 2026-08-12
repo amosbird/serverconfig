@@ -78,12 +78,11 @@ normal unmatched policy. The physical gateway and DHCP resolvers are explicit pr
 exceptions because a LAN can overlap `10/8` and a DHCP resolver can be a public address.
 
 The registered Tencent USB Ethernet adapter is path-matched by
-`network/systemd-network/10-tencent-wired.link`. Its concrete
-`wpa_supplicant@enp9s0u2u1u2.service` instance is enabled only through the corresponding systemd
-network-device unit. Insertion starts wired EAP-TLS; `BindsTo=` stops the supplicant when the USB
-adapter is removed; reinsertion starts a fresh authentication session. The udev rule remains a
-hot-plug fallback. `restore.sh` enables the instance without `--now`, so deployment does not cycle a
-live link.
+`network/systemd-network/10-tencent-wired.link`. A hardware-restricted udev rule matches its
+post-`.link` registered MAC and requests `wpa_supplicant@enp9s0u2u1u2.service`; other computers and
+Ethernet adapters do not start Tencent EAP-TLS. `BindsTo=` stops the supplicant when the USB adapter
+is removed, and reinsertion triggers a fresh authentication session. `restore.sh` installs this
+policy but never enables or starts a machine-specific instance.
 
 ## SmartDNS IOA classification
 

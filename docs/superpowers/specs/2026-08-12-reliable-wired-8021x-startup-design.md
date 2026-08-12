@@ -34,10 +34,11 @@ concrete instance then creates only a device-unit wants link. `BindsTo=` plus `A
 service when the USB NIC disappears; reinsertion activates the device unit and starts a fresh EAP
 session. This avoids a failed boot-time service when the removable NIC is absent.
 
-`restore.sh` installs the drop-in, reloads systemd, and enables the instance without `--now`, preserving
-the current network during ordinary deployment. Live repair explicitly starts the instance, waits for
-EAP success, then cycles only the networkd configuration for that interface to discard the
-pre-authentication lease. SmartGateAgent remains owner of its scene, tables, and proxy policy.
+`restore.sh` installs the generic drop-in and hardware-restricted udev rule, but never enables a
+concrete instance: this repository is restored on computers that do not have this adapter. The udev
+rule matches the registered post-`.link` MAC `08:3a:88:5a:b5:37` and requests only
+`wpa_supplicant@enp9s0u2u1u2.service`, so unrelated Ethernet adapters remain untouched. The template's
+`BindsTo=` handles removal after udev starts the service.
 
 ## Verification
 

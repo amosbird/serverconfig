@@ -188,7 +188,6 @@ if [[ -n $GUI ]]; then
     sudo rm -f /etc/systemd/system/network-debug-pcap.service
     sudo rm -rf /var/log/network-debug/ring
     sudo systemctl daemon-reload
-    sudo systemctl enable wpa_supplicant@enp9s0u2u1u2.service
     # Disable stale netctl boot links, but do not stop the connection carrying this restore.
     for unit in /etc/systemd/system/multi-user.target.wants/netctl@*.service; do
         [[ -e "$unit" ]] && sudo systemctl disable "$(basename "$unit")"
