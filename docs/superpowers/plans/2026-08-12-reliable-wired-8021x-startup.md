@@ -17,7 +17,8 @@
 
 - [ ] Assert the template drop-in contains exactly `[Install]` and `WantedBy=sys-subsystem-net-devices-%i.device`.
 - [ ] Assert `restore.sh` never enables or starts a concrete wpa_supplicant instance.
-- [ ] Assert the udev rule matches exactly registered MAC `08:3a:88:5a:b5:37` and requests only
+- [ ] Assert the udev rule matches exact USB identity `0b95:1790:00000EC65DE788`, handles every
+      non-remove event so rename/move cannot clear `SYSTEMD_WANTS`, and requests only
       `wpa_supplicant@enp9s0u2u1u2.service`.
 - [ ] Reject `enable --now` and any Tailscale mutation.
 - [ ] Run `bash network/test-static-policy.sh`; expect failure for missing startup contract.
@@ -42,7 +43,8 @@ WantedBy=sys-subsystem-net-devices-%i.device
 ```
 
 - [ ] Remove any concrete wpa_supplicant enable operation from `restore.sh`.
-- [ ] Restrict the udev hot-plug rule to the registered adapter MAC and concrete interface instance.
+- [ ] Restrict the udev hot-plug rule to the adapter's vendor/product/serial identity and apply it on
+      add and rename/move events.
 - [ ] Document that generic restore installs policy but does not assume the USB adapter exists.
 - [ ] Run static and shell syntax checks; expect green.
 

@@ -1,3 +1,4 @@
-# Start wired EAP-TLS only for the registered Tencent USB adapter.
-# Match the post-.link MAC so other computers and Ethernet adapters remain untouched.
-ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="08:3a:88:5a:b5:37", TAG+="systemd", ENV{SYSTEMD_WANTS}="wpa_supplicant@enp9s0u2u1u2.service"
+# Start wired EAP-TLS only for this registered Tencent USB adapter.
+# ACTION!="remove" reapplies SYSTEMD_WANTS on the rename/move event; matching the physical USB
+# identity works before and after the .link MAC change and leaves other computers untouched.
+SUBSYSTEM=="net", ACTION!="remove", ATTRS{idVendor}=="0b95", ATTRS{idProduct}=="1790", ATTRS{serial}=="00000EC65DE788", TAG+="systemd", ENV{SYSTEMD_WANTS}="wpa_supplicant@enp9s0u2u1u2.service"

@@ -326,11 +326,14 @@ if grep -Eq 'systemctl enable( --now)? wpa_supplicant@' restore.sh; then
     echo 'FAIL generic restore enables a machine-specific wired 802.1X instance' >&2
     fail=1
 fi
-if [ "$(grep -Fxc 'ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="08:3a:88:5a:b5:37", TAG+="systemd", ENV{SYSTEMD_WANTS}="wpa_supplicant@enp9s0u2u1u2.service"' \
+if [ "$(grep -Fxc 'SUBSYSTEM=="net", ACTION!="remove", ATTRS{idVendor}=="0b95", ATTRS{idProduct}=="1790", ATTRS{serial}=="00000EC65DE788", TAG+="systemd", ENV{SYSTEMD_WANTS}="wpa_supplicant@enp9s0u2u1u2.service"' \
         network/udev/90-wired-8021x.rules)" -ne 1 ]; then
-    echo 'FAIL wired 802.1X hot-plug rule is not restricted to the registered adapter' >&2
+    echo 'FAIL wired 802.1X hot-plug rule does not survive the registered USB adapter rename' >&2
     fail=1
 fi
+reject 'wired 802.1X hot-plug is not limited to add or the post-link MAC' \
+    'ACTION=="add"|ATTR\{address\}=="08:3a:88:5a:b5:37"' \
+    network/udev/90-wired-8021x.rules
 reject 'restore does not start or restart wired 802.1X' \
     'systemctl (start|restart|try-restart) wpa_supplicant@' restore.sh
 

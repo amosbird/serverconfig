@@ -36,9 +36,11 @@ session. This avoids a failed boot-time service when the removable NIC is absent
 
 `restore.sh` installs the generic drop-in and hardware-restricted udev rule, but never enables a
 concrete instance: this repository is restored on computers that do not have this adapter. The udev
-rule matches the registered post-`.link` MAC `08:3a:88:5a:b5:37` and requests only
-`wpa_supplicant@enp9s0u2u1u2.service`, so unrelated Ethernet adapters remain untouched. The template's
-`BindsTo=` handles removal after udev starts the service.
+rule matches USB vendor/product/serial `0b95:1790:00000EC65DE788` and requests only
+`wpa_supplicant@enp9s0u2u1u2.service`, so unrelated Ethernet adapters remain untouched. It applies to
+all non-remove net events because the initial `add` is followed by a rename `move` event that otherwise
+clears `SYSTEMD_WANTS`; the physical USB identity is stable before and after the `.link` MAC change.
+The template's `BindsTo=` handles removal after udev starts the service.
 
 ## Verification
 
