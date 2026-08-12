@@ -16,7 +16,6 @@ export NO_PROXY=1
 # user=Administrator
 # password=$(pass show windows)
 ip=$(pass show windows_qtw)
-ip=100.66.107.106
 user=Tencent_Go
 password=$(pass show gpg)
 
