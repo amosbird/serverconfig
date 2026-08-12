@@ -64,8 +64,6 @@ fi
 
 mkdir -p $HOME/.local/share/
 
-ln -sf /tmp/gentoo/usr/share/grc $HOME/.local/share/
-
 for share in "$DIR/.local/share/"*; do
     rm -rf "$HOME/.local/share/$(basename "$share")"
     ln -sf "../../$share" $HOME/.local/share/
@@ -76,8 +74,12 @@ rm -rf $HOME/.tmux.conf
 ln -sf "$DIR/.tmux" $HOME/
 ln -sf "$DIR/.tmux/.tmux.conf" $HOME/
 
-ln -sf "/tmp/gentoo/emacs" $HOME/.emacs.d
 ln -sf "$DIR/.abemacs" $HOME/
+
+# Retire the old Gentoo Prefix Emacs checkout without touching a real directory.
+if [[ -L "$HOME/.emacs.d" && ! -e "$HOME/.emacs.d" ]]; then
+    rm "$HOME/.emacs.d"
+fi
 
 lesskey "$DIR/lesskey"
 
@@ -109,12 +111,25 @@ fi
 "$MISE_BIN" upgrade -y
 "$MISE_BIN" prune -y
 
+# Remove links left behind by pruned mise versions or an old home prefix.
+for f in "$HOME/.local/bin"/*; do
+    if [[ -L "$f" && ! -e "$f" ]]; then
+        target=$(readlink "$f")
+        if [[ "$target" == */.local/share/mise/installs/* ]]; then
+            rm -f "$f"
+        fi
+    fi
+done
+
 # Link mise-installed binaries directly to ~/.local/bin (bypass shims)
 "$MISE_BIN" bin-paths | while read -r bin; do
     for f in "$bin"/*; do
-        [[ -f "$f" && -x "$f" ]] && ln -sf "$f" "$HOME/.local/bin/"
+        if [[ -f "$f" && -x "$f" ]]; then
+            ln -sf "$f" "$HOME/.local/bin/"
+        fi
     done
 done
+ln -sf gopass "$HOME/.local/bin/pass"
 
 MAMBA_PREFIX="$HOME/.mambatools"
 MAMBA_CHANNELS=(
@@ -124,8 +139,8 @@ MAMBA_CHANNELS=(
     -c https://conda.anaconda.org/conda-forge
 )
 MAMBA_PACKAGES=(
-    emacs tmux htop-vim dtach
-    gcc gxx gdb cmake make ninja lld lldb
+    emacs tmux htop-vim dtach gnupg
+    gcc gxx gdb cmake make ninja lld lldb go nodejs
     rust cargo-zigbuild
     rust-std-aarch64-apple-darwin
     rust-std-x86_64-apple-darwin

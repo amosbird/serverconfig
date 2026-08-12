@@ -13,7 +13,10 @@
 (push '(internal-border-width . 0) default-frame-alist)
 (push '(undecorated . nil) default-frame-alist)
 
-;;; Redirect state files to var/ to keep ~/.emacs.d clean
+;;; Packages — keep package.el state inside this init directory
+(setq package-user-dir (expand-file-name "elpa" user-emacs-directory))
+
+;;; Redirect state files to var/ to keep ~/.abemacs clean
 (defvar minimal-emacs-var-dir
   (expand-file-name "var/" minimal-emacs-user-directory))
 (unless (file-directory-p minimal-emacs-var-dir)
