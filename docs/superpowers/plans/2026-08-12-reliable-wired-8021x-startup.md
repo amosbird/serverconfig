@@ -30,7 +30,12 @@
 - [ ] Add:
 
 ```ini
+[Unit]
+BindsTo=sys-subsystem-net-devices-%i.device
+After=sys-subsystem-net-devices-%i.device
+
 [Install]
+WantedBy=
 WantedBy=sys-subsystem-net-devices-%i.device
 ```
 
@@ -40,7 +45,8 @@ WantedBy=sys-subsystem-net-devices-%i.device
 sudo systemctl enable wpa_supplicant@enp9s0u2u1u2.service
 ```
 
-- [ ] Document the device-bound cold-boot dependency and retained udev hot-plug fallback.
+- [ ] Document the device-bound cold-boot and USB insert/remove lifecycle, plus the retained udev
+      hot-plug fallback.
 - [ ] Run static and shell syntax checks; expect green.
 
 ### Task 3: Verify and deploy

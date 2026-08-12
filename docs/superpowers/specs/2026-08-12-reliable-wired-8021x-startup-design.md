@@ -17,16 +17,22 @@ SmartGate's `11.176.17.58` scene endpoint and `9.134.215.72:36000` were unreacha
 
 ## Design
 
-Add an `[Install]` drop-in for the existing `wpa_supplicant@.service` template:
+Add a `[Unit]` and `[Install]` drop-in for the existing `wpa_supplicant@.service` template:
 
 ```ini
+[Unit]
+BindsTo=sys-subsystem-net-devices-%i.device
+After=sys-subsystem-net-devices-%i.device
+
 [Install]
+WantedBy=
 WantedBy=sys-subsystem-net-devices-%i.device
 ```
 
-Enable only `wpa_supplicant@enp9s0u2u1u2.service`. Enabling creates a device-unit wants link; systemd
-therefore starts authentication when that exact interface device becomes available, independent of a
-one-shot udev property surviving rename processing. Keep the udev rule as a hot-plug fallback.
+The empty `WantedBy=` resets the vendor template's `multi-user.target` install target. Enabling the
+concrete instance then creates only a device-unit wants link. `BindsTo=` plus `After=` stops the
+service when the USB NIC disappears; reinsertion activates the device unit and starts a fresh EAP
+session. This avoids a failed boot-time service when the removable NIC is absent.
 
 `restore.sh` installs the drop-in, reloads systemd, and enables the instance without `--now`, preserving
 the current network during ordinary deployment. Live repair explicitly starts the instance, waits for

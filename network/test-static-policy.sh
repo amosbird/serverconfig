@@ -311,6 +311,24 @@ if ! grep -Fqx 'ExecStart=/usr/bin/wpa_supplicant -D wired -c /etc/wpa_supplican
     echo 'FAIL wired wpa_supplicant override does not select the wired driver' >&2
     fail=1
 fi
+if [ "$(grep -Fxc '[Install]' network/systemd/wpa_supplicant@.service.d/override.conf)" -ne 1 ] ||
+   [ "$(grep -Fxc 'WantedBy=' network/systemd/wpa_supplicant@.service.d/override.conf)" -ne 1 ] ||
+   [ "$(grep -Fxc 'WantedBy=sys-subsystem-net-devices-%i.device' \
+        network/systemd/wpa_supplicant@.service.d/override.conf)" -ne 1 ] ||
+   [ "$(grep -Fxc 'BindsTo=sys-subsystem-net-devices-%i.device' \
+        network/systemd/wpa_supplicant@.service.d/override.conf)" -ne 1 ] ||
+   [ "$(grep -Fxc 'After=sys-subsystem-net-devices-%i.device' \
+        network/systemd/wpa_supplicant@.service.d/override.conf)" -ne 1 ]; then
+    echo 'FAIL wired wpa_supplicant lacks the USB device-bound hot-plug contract' >&2
+    fail=1
+fi
+if [ "$(grep -Fxc '    sudo systemctl enable wpa_supplicant@enp9s0u2u1u2.service' restore.sh)" -ne 1 ]; then
+    echo 'FAIL restore does not enable the registered Tencent wired 802.1X instance' >&2
+    fail=1
+fi
+reject 'restore enables wired 802.1X without changing the live link' \
+    'systemctl enable --now wpa_supplicant@|systemctl (start|restart|try-restart) wpa_supplicant@' \
+    restore.sh
 
 if [ "$(grep -Fxc 'AddressRandomization=network' "$iwd_config")" -ne 1 ]; then
     echo 'FAIL iwd does not use stable per-network MAC addresses' >&2

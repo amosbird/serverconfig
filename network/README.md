@@ -77,6 +77,14 @@ RFC1918 assumptions are intentionally absent: an unrelated private destination f
 normal unmatched policy. The physical gateway and DHCP resolvers are explicit priority-1000
 exceptions because a LAN can overlap `10/8` and a DHCP resolver can be a public address.
 
+The registered Tencent USB Ethernet adapter is path-matched by
+`network/systemd-network/10-tencent-wired.link`. Its concrete
+`wpa_supplicant@enp9s0u2u1u2.service` instance is enabled only through the corresponding systemd
+network-device unit. Insertion starts wired EAP-TLS; `BindsTo=` stops the supplicant when the USB
+adapter is removed; reinsertion starts a fresh authentication session. The udev rule remains a
+hot-plug fallback. `restore.sh` enables the instance without `--now`, so deployment does not cycle a
+live link.
+
 ## SmartDNS IOA classification
 
 The IOA upstream is permanently declared in the base SmartDNS configuration as
