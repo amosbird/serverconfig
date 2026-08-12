@@ -2539,11 +2539,23 @@ Ensures one ● per line with proper padding and face, then merge with git-gutte
 ;; §7 Language Support
 ;; ============================================================================
 
-;;;; Tree-sitter — built-in auto-mode support (Emacs 31+)
-;; Emacs 31 natively remaps traditional modes to tree-sitter variants
-;; when grammars are available.  No third-party package needed.
-(setq treesit-enabled-modes t)           ; Auto-use ts-modes when grammar available
+;;;; Tree-sitter — grammars are provided by the mambatools conda bundle
+(setq treesit-extra-load-path
+      (list (expand-file-name "lib/tree-sitter"
+                              (file-name-directory
+                               (directory-file-name invocation-directory)))))
 (setq treesit-font-lock-level 4)         ; Maximum highlighting detail
+(setq major-mode-remap-alist
+      '((bash-mode . bash-ts-mode)
+        (c-mode . c-ts-mode)
+        (c++-mode . c++-ts-mode)
+        (css-mode . css-ts-mode)
+        (java-mode . java-ts-mode)
+        (js-mode . js-ts-mode)
+        (json-mode . json-ts-mode)
+        (python-mode . python-ts-mode)
+        (ruby-mode . ruby-ts-mode)))
+(global-font-lock-mode 1)
 
 ;; Language major modes — just install the package; LSP is managed by Eglot in §6
 (use-package rust-mode       :mode "\\.rs\\'")
@@ -3626,7 +3638,7 @@ Falls back to call-process if magit is not yet loaded."
 
 ;;;; Miscellaneous
 (setq initial-major-mode 'text-mode)    ; *scratch* defaults to text-mode
-(setq ispell-alternate-dictionary "/tmp/gentoo/usr/share/dict/words")
+(setq ispell-alternate-dictionary (expand-file-name "tmp/gentoo/usr/share/dict/words" "~"))
 (setq text-mode-ispell-word-completion nil)
 (setq explicit-shell-file-name "/bin/bash")
 (setq shell-file-name "/bin/bash")

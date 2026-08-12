@@ -139,7 +139,7 @@ MAMBA_CHANNELS=(
     -c https://conda.anaconda.org/conda-forge
 )
 MAMBA_PACKAGES=(
-    emacs tmux htop-vim dtach gnupg
+    emacs tmux htop-vim dtach emacs-tree-sitter-grammars gnupg
     gcc gxx gdb cmake make ninja lld lldb go nodejs
     rust cargo-zigbuild
     rust-std-aarch64-apple-darwin
