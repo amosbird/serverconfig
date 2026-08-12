@@ -1,28 +1,9 @@
 #!/bin/bash
 
 export LANG=en_US.UTF-8
-export LC_CTYPE=en_US.UTF-8
-
-old_path=$PATH
-old_man_path=$MANPATH
-mkdir -p /tmp/gentoo
-sudo mount --bind ~/tmp/gentoo /tmp/gentoo
-source /tmp/gentoo/etc/profile
-export PATH=/home/amos/scripts:$old_path:$PATH
-export MANPATH=$old_man_path:$MANPATH
-export XDG_DATA_DIRS=/usr/share
-
-# caps-indicator
-# xset s off -dpms
-# xset b off
-# picom -b
-# unclutter --timeout 1 --jitter 10 -b --ignore-scrolling
-
-# sudo xkeysnail --watch /home/amos/git/serverconfig/xkeysnail.py &> /tmp/xkeysnail.log &
 
 export GUI=t
 export XAPIAN_CJK_NGRAM=1
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export XIM=fcitx
 export XIM_PROGRAM=fcitx
 export XMODIFIERS=@im=fcitx
@@ -30,35 +11,27 @@ export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
 export SDL_IM_MODULE=fcitx
 export INPUT_METHOD=fcitx
-export GLFW_IM_MODULE=fcitx
+export GLFW_IM_MODULE=fcitx5
 export QT_QPA_PLATFORMTHEME=xdgdesktopportal
 export GTK_USE_PORTAL=1
 export AWT_TOOLKIT=XToolkit
 export _JAVA_AWT_WM_NONREPARENTING=1
-# export _JAVA_OPTIONS="$_JAVA_OPTIONS -Dawt.useSystemAAFontSettings=on -Dswing.aatext=true -Dswing.defaultlaf=com.sun.java.swing.plaf.gtk.GTKLookAndFeel"
 export AMPLXE_RUNTOOL_OPTIONS=--no-altstack
 export QT_AUTO_SCREEN_SCALE_FACTOR=1
 export XCURSOR_THEME=capitaine-cursors
 export XCURSOR_SIZE=48
-export XDG_CURRENT_DESKTOP=i3
+export XDG_CURRENT_DESKTOP=qtile
 
 if grep -qw 'gpu=nvidia' /proc/cmdline; then
   export LIBVA_DRIVER_NAME=nvidia
   export GST_VAAPI_ALL_DRIVERS=1
 fi
 
-export WINEARCH=win32
-
 _envs=(
   GDK_SCALE GDK_DPI_SCALE
   XCURSOR_THEME XCURSOR_SIZE
-  XMODIFIERS QT_IM_MODULE GTK_IM_MODULE
+  XMODIFIERS QT_IM_MODULE GTK_IM_MODULE SDL_IM_MODULE GLFW_IM_MODULE
   LIBVA_DRIVER_NAME GST_VAAPI_ALL_DRIVERS
-  QT_QPA_PLATFORMTHEME GTK_USE_PORTAL
+  QT_QPA_PLATFORMTHEME GTK_USE_PORTAL XDG_CURRENT_DESKTOP
 )
-dbus-update-activation-environment "${_envs[@]}"
-systemctl --user import-environment "${_envs[@]}"
-
-
-# export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/lib64/pkgconfig
-eval "$(ssh-agent)"
+dbus-update-activation-environment --systemd "${_envs[@]}"
