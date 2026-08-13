@@ -26,7 +26,7 @@ if [[ "$1" =~ $pattern ]]; then
 		read -r remote_home
 		read -r sock
 	} < <(
-		ssh $arg 'read sock < <($HOME/scripts/prelogin); rm $sock; rm $HOME/tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}; echo $HOME; echo $sock'
+		ssh $arg 'read sock < <($HOME/scripts/prelogin); rm $sock; rm /tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}; echo $HOME; echo $sock'
 	)
 	# NOTE: make sure remote should not have gpg-agent, and gpg-connect-agent should show: connection to the agent is in restricted mode
 
