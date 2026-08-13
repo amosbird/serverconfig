@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-export TMUX=$TMPDIR/tmux-htop
+export TMUX=/tmp/tmux-htop
 
 tmux -f ~/.tmux/.tmux.conf.htop -u new-session -A -s htop htop
