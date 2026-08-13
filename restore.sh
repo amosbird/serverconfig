@@ -214,9 +214,6 @@ if [[ -n $GUI ]]; then
     sudo systemctl enable gpu-switch.service
     sudo systemctl enable systemd-networkd.service iwd.service
     sudo systemctl enable network-reconfigure.path
-
-    # Setup kitty desktop-ui portal (replaces xdg-desktop-portal-termfilechooser)
-    kitten desktop-ui enable-portal
 fi
 
 echo 'Restored!'

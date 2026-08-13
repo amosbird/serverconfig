@@ -1,4 +1,3 @@
-stty -ixon 2>/dev/null
 set fish_greeting
 set FISH_CLIPBOARD_CMD cat
 
@@ -31,16 +30,11 @@ set fish_pager_color_prefix white --bold --underline
 set fish_pager_color_progress brwhite --background=cyan
 set fish_pager_color_selected_background -r
 
-set -x CORES (getconf _NPROCESSORS_ONLN)
-set -x MAKEFLAGS -j$CORES
-set -x FZF_DEFAULT_OPTS "--ansi --multi --bind=ctrl-v:half-page-down,alt-v:half-page-up,ctrl-l:accept"
-set -x SHELL /bin/bash
-set -x EDITOR eee
-set -x VISUAL eee
-set -x DIRENV_LOG_FORMAT ""
-set -x GPG_TTY (tty)
+if set -l tty_path (tty 2>/dev/null)
+    stty -ixon 2>/dev/null
+    set -gx GPG_TTY $tty_path
+end
 
-set -e LS_COLORS
 alias l eza
 alias declare set
 alias vim nvim

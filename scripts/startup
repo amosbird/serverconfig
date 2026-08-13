@@ -44,7 +44,6 @@ echo "[$(date '+%H:%M:%S')]    OK xkeysnail (pid=$!)" >> "$LOG"
 
 run "xsetroot" xsetroot -cursor_name left_ptr
 
-run_bg "kitty-portal" kitten desktop-ui run-server
 run_bg "xsettingsd" xsettingsd
 
 # xdg-desktop-portal is socket/dbus-activated after .xprofile imports the X environment.

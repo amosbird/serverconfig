@@ -1,85 +1,54 @@
 #!/usr/bin/env bash
 
-export LANG=en_US.UTF-8
-export SHELL=$HOME/.local/bin/fish # for tmux command
-export TERM=xterm-kitty
-# export TMPDIR=/tmp/gentoo/tmp
-export TMPDIR=${TMPDIR:-/tmp}
-export SSH_AUTH_SOCK=${SSH_AUTH_SOCK:-"$TMPDIR/ssh_auth_sock"}
-export KITTY_LISTEN_ON=unix:$TMPDIR/kitty_sock
-export NPROC=$(nproc)
-export MANPATH= # Rely on man_db.conf instead
-export LSP_USE_PLISTS=true
-
-if test -s /tmp/gentoo/etc/hostname; then
-    export HOSTNAME=$(cat /tmp/gentoo/etc/hostname)
+if [[ ${GUI:-} != t ]]; then
+    # shellcheck source=/dev/null
+    source "$HOME/.config/environment.sh"
 fi
 
-case $1 in
+mode=${1:-}
+SSH_SERVER=${2:-${SSH_SERVER:-}}
+SSH_MASTER_CTRL=${3:-${SSH_MASTER_CTRL:-}}
+apps=(emacs htop crush abush)
+
+case "$mode" in
 android)
-    export PATH=$PATH:/system/bin:/system/xbin:/system/sbin:/data/adb/modules/ssh/usr/bin
+    export PATH="$PATH:/system/bin:/system/xbin:/system/sbin:/data/adb/modules/ssh/usr/bin"
+    exec tmux -u new-session -A -s amos
     ;;
 local)
-    # export PATH=$HOME/gentoo/usr/local/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh emacs"
-    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh htop"
-    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh crush"
-    kitten @ launch --allow-remote-control --keep-focus fish -c "tstart.sh abush"
+    for app in "${apps[@]}"; do
+        kitten @ launch --allow-remote-control --keep-focus "$0" "$app"
+    done
     ;;
-prefix)
-    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH emacs
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH htop
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH crush
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH abush
-    # kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER $LOGIN_PATH lvim
-    ;;
-remote_local)
-    source /tmp/gentoo/etc/profile
-    export PATH=$HOME/scripts:$PATH
-    export DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock
-    export CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh emacs"
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh htop"
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh crush"
-    kitten @ launch --allow-remote-control --keep-focus ssh -S $SSH_MASTER_CTRL -tt $SSH_SERVER "source /tmp/gentoo/etc/profile; PATH=$HOME/scripts:\$PATH DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus_sock CLIPSERVICE_SOCK=/tmp/remote-clipservice.sock tstart.sh abush"
+remote)
+    if [[ -z $SSH_SERVER || -z $SSH_MASTER_CTRL ]]; then
+        echo "tstart.sh remote requires SSH_SERVER and SSH_MASTER_CTRL" >&2
+        exit 1
+    fi
+    for app in "${apps[@]}"; do
+        kitten @ launch --allow-remote-control --keep-focus ssh -S "$SSH_MASTER_CTRL" -tt "$SSH_SERVER" "$0" "$app"
+    done
     ;;
 emacs)
-    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    fish -c startemacs
-    exit 0
+    exec startemacs
     ;;
 htop)
-    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    fish -c starthtop
-    exit 0
+    exec starthtop
     ;;
 lvim)
-    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    fish -c startlvim
-    exit 0
+    exec startlvim
     ;;
 crush)
-    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    fish -c startcrush-tmux
-    exit 0
+    exec startcrush-tmux
     ;;
 abush)
-    export PATH=$PATH:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
-    fish -c startabush
-    exit 0
+    exec startabush
     ;;
 *)
-    echo "tstart.sh android|local|prefix|crush|abush [project_path]"
+    echo "usage: tstart.sh android|local|remote|emacs|htop|lvim|crush|abush [ssh_server ssh_master_ctrl]" >&2
     exit 1
     ;;
 esac
 
-export TMUX=$TMPDIR/tmux-amos
-
-# tmux -u new -d -s htop "exec starthtop"
-# if ! tmux list-sessions | grep -q -F emacs; then
-#     pkill -9 -F "$TMPDIR/emacs-server"
-# fi
-# tmux -u new -d -s emacs "exec startemacs"
+export TMUX=/tmp/tmux-amos
 tmux -u new-session -A -s amos
