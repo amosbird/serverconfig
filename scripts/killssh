@@ -4,7 +4,7 @@ pkill -9 -f "dtach -a /tmp/emacs.dtach"
 pkill -9 -f "dtach -a /tmp/htop.dtach"
 
 # Kill each sshd session that owns a remote tstart process.
-pgrep -u "$(id -u)" -f "$HOME/scripts/tstart.sh prefix" | while read -r pid; do
+pgrep -u "$(id -u)" -f "$HOME/scripts/tstart.sh " | while read -r pid; do
     while parent_pid=$(ps -o ppid= -p "$pid") && [ -n "$parent_pid" ]; do
         parent_pid=${parent_pid//[[:space:]]/}
         [ "$(ps -o uid= -p "$parent_pid" | tr -d '[:space:]')" = "$(id -u)" ] || break
