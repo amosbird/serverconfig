@@ -1,8 +1,28 @@
 #!/usr/bin/env bash
 
+has_active_x11_session() {
+    local session type active
+
+    command -v loginctl >/dev/null 2>&1 || return 1
+    while read -r session _ user _; do
+        [[ $user == "${USER:-$(id -un)}" ]] || continue
+        type=$(loginctl show-session "$session" --property=Type --value 2>/dev/null)
+        active=$(loginctl show-session "$session" --property=Active --value 2>/dev/null)
+        [[ $type == x11 && $active == yes ]] && return 0
+    done < <(loginctl list-sessions --no-legend --no-pager 2>/dev/null)
+    return 1
+}
+
 if [[ ${GUI:-} != t ]]; then
     # shellcheck source=/dev/null
     source "$HOME/.config/environment.sh"
+    if has_active_x11_session; then
+        # shellcheck source=/dev/null
+        source "$HOME/.config/path.sh" gui
+    else
+        # shellcheck source=/dev/null
+        source "$HOME/.config/path.sh" remote
+    fi
 fi
 
 mode=${1:-}
@@ -12,7 +32,8 @@ apps=(emacs htop crush abush)
 
 case "$mode" in
 android)
-    export PATH="$PATH:/system/bin:/system/xbin:/system/sbin:/data/adb/modules/ssh/usr/bin"
+    # shellcheck source=/dev/null
+    source "$HOME/.config/path.sh" android
     exec tmux -u new-session -A -s amos
     ;;
 local)

@@ -2,6 +2,8 @@
 
 # shellcheck source=/dev/null
 source "$HOME/.config/environment.sh"
+# shellcheck source=/dev/null
+source "$HOME/.config/path.sh" gui
 # override for GUI env
 export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/gcr/ssh"
 
