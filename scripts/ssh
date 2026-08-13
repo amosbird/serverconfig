@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-
-export TERM=xterm-256color
-
-if [[ -z $GUI ]]; then
-    exec /tmp/gentoo/usr/bin/ssh "$@"
-else
-    exec /usr/bin/ssh "$@"
-fi

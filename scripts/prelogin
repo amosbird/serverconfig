@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+# kill previous session
+$HOME/scripts/killssh &> /dev/null || :
+
+# make sure remote should not have gpg-agent
+pkill gpg-agent || :
+
+gpgconf --list-dir agent-socket

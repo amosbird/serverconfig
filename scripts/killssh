@@ -3,31 +3,12 @@
 pkill -9 -f "dtach -a /tmp/emacs.dtach"
 pkill -9 -f "dtach -a /tmp/htop.dtach"
 
-# Get the initial PID
-pid=$(pgrep -f "bash $HOME/tmp/gentoo/login" || :)
-
-if [ -z "$pid" ]; then
-    echo "Failed to get original PID"
-    exit 1
-fi
-
-# Loop until the process owner is root
-while [ "$(ps -o uid= -p $pid | tr -d '[:space:]')" != "0" ]; do
-    # Print the current PID
-    echo "Current PID: $pid"
-
-    # Get the parent PID
-    parent_pid=$(ps -o ppid= -p $pid)
-
-    # Break out of the loop if the parent PID is empty
-    if [ -z "$parent_pid" ]; then
-        echo "Failed to get parent PID"
-        exit 1
-    fi
-
-    # Update the PID for the next iteration
-    top_pid=$pid
-    pid=$parent_pid
+# Kill each sshd session that owns a remote tstart process.
+pgrep -u "$(id -u)" -f "$HOME/scripts/tstart.sh prefix" | while read -r pid; do
+    while parent_pid=$(ps -o ppid= -p "$pid") && [ -n "$parent_pid" ]; do
+        parent_pid=${parent_pid//[[:space:]]/}
+        [ "$(ps -o uid= -p "$parent_pid" | tr -d '[:space:]')" = "$(id -u)" ] || break
+        pid=$parent_pid
+    done
+    kill "$pid"
 done
-
-kill $top_pid

@@ -48,7 +48,7 @@ default/fallback account."
 ;;
 
 (use-package! mu4e
-  :load-path "/tmp/gentoo/usr/share/emacs/site-lisp/mu4e/"
+  :load-path (expand-file-name "tmp/gentoo/usr/share/emacs/site-lisp/mu4e/" "~")
   :commands (mu4e mu4e-compose-new browse-url-mail)
   :config
   (setq

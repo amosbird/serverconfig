@@ -7,7 +7,7 @@ fzf = "latest"
 k6 = "latest"
 shfmt = "latest"
 "github:gsamokovarov/jump" = "latest"
-"github:docker/docker-credential-helpers" = { version = "latest", exe = "docker-credential-pass" }
+"github:docker/docker-credential-helpers" = { version = "latest", matching = "docker-credential-pass", bin = "docker-credential-pass" }
 atuin = "latest"
 "github:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
 "github:kovidgoyal/kitty" = { version = "latest", matching = "kitten-", bin = "kitten" }
@@ -15,6 +15,8 @@ sqlc = "latest"
 "github:amosbird/clipserver" = "latest"
 zig = "latest"
 micromamba = "latest"
+gopass = "latest"
+gh = "latest"
 
 [settings]
 experimental = true
