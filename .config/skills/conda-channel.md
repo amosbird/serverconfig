@@ -20,7 +20,7 @@ micromamba create -p ~/.mambatools \
   --strict-channel-priority \
   -c https://github.com/amosbird/conda-channel/releases/download \
   -c conda-forge \
-  emacs tmux htop-vim dtach \
+  ab-emacs ab-tmux ab-htop-vim ab-dtach \
   gcc gxx gdb cmake make ninja lld lldb \
   rust cargo-zigbuild \
   rust-std-aarch64-apple-darwin rust-std-x86_64-apple-darwin rust-std-x86_64-pc-windows-gnu \
@@ -85,7 +85,7 @@ micromamba install -p ~/.mambatools \
 
 | Package | Feedstock | Source repo |
 |---------|-----------|-------------|
-| emacs | `~/git/emacs-feedstock` | `amosbird/emacs` |
-| tmux | `~/git/tmux-feedstock` | `amosbird/tmux` |
-| htop-vim | `~/git/htop-feedstock` | `amosbird/htop-vim` |
-| dtach | `~/git/dtach-feedstock` | `amosbird/dtach` |
+| ab-emacs | `~/git/emacs-feedstock` | `amosbird/emacs` |
+| ab-tmux | `~/git/tmux-feedstock` | `amosbird/tmux` |
+| ab-htop-vim | `~/git/htop-feedstock` | `amosbird/htop-vim` |
+| ab-dtach | `~/git/dtach-feedstock` | `amosbird/dtach` |
