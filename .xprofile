@@ -2,7 +2,10 @@
 
 export LANG=en_US.UTF-8
 export XDG_SESSION_TYPE=x11
-PATH="$HOME/scripts:$HOME/.emacs.d/bin:$HOME/.npm-packages/bin:$HOME/.cargo/bin:$PATH"
+
+PATH="$HOME/scripts:$HOME/.npm-packages/bin:$PATH"
+
+# mise and conda tools
 export PATH="$PATH:$HOME/.local/bin:$HOME/.mambatools/bin"
 
 export GUI=t
