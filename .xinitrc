@@ -9,5 +9,6 @@
 [ -r "/etc/xprofile" ] && . "/etc/xprofile"
 # shellcheck source=/dev/null
 [ -r "$HOME/.xprofile" ] && . "$HOME/.xprofile"
+[ -r "$HOME/.Xresources" ] && xrdb -merge "$HOME/.Xresources"
 
-exec $HOME/scripts/wm
+exec /usr/bin/qtile start -b x11

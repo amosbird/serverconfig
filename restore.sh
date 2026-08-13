@@ -28,6 +28,7 @@ configs=(
     .Xresources
     .xprofile
     .xinitrc
+    .xserverrc
     .gtkrc-2.0
     .stalonetrayrc
     .bashrc
@@ -200,6 +201,12 @@ if [[ -n $GUI ]]; then
     [[ -e /etc/smartdns/dhcp-dns.conf ]] ||
         sudo cp "$DIR"/network/smartdns/dhcp-dns.conf /etc/smartdns/dhcp-dns.conf
     sudo "$DIR"/network/smartdns-deploy.sh "$DIR"/network/smartdns/smartdns.conf
+
+    sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
+    sudo cp "$DIR"/systemd/getty-autologin.conf \
+        /etc/systemd/system/getty@tty1.service.d/autologin.conf
+    sudo systemctl disable sddm.service
+    sudo systemctl enable getty@tty1.service
 
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
     sudo udevadm control --reload-rules
