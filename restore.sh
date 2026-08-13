@@ -133,6 +133,7 @@ ln -sf gopass "$HOME/.local/bin/pass"
 
 MAMBA_PREFIX="$HOME/.mambatools"
 MAMBA_CHANNELS=(
+    --repodata-ttl 0
     --strict-channel-priority
     -c https://github.com/amosbird/conda-channel/releases/download
 #    -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
@@ -151,7 +152,7 @@ MAMBA_PACKAGES=(
 )
 
 if [[ -f "$MAMBA_PREFIX/conda-meta/history" ]]; then
-    "$HOME/.local/bin/micromamba" install -y -p "$MAMBA_PREFIX" \
+    "$HOME/.local/bin/micromamba" update -y -p "$MAMBA_PREFIX" \
         "${MAMBA_CHANNELS[@]}" "${MAMBA_PACKAGES[@]}"
 else
     "$HOME/.local/bin/micromamba" create -y -p "$MAMBA_PREFIX" \
