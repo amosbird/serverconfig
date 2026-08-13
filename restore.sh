@@ -152,6 +152,8 @@ MAMBA_PACKAGES=(
 )
 
 if [[ -f "$MAMBA_PREFIX/conda-meta/history" ]]; then
+    "$HOME/.local/bin/micromamba" install -y -p "$MAMBA_PREFIX" \
+        "${MAMBA_CHANNELS[@]}" "${MAMBA_PACKAGES[@]}"
     "$HOME/.local/bin/micromamba" update -y -p "$MAMBA_PREFIX" \
         "${MAMBA_CHANNELS[@]}" "${MAMBA_PACKAGES[@]}"
 else
