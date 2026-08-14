@@ -6,15 +6,8 @@
 ;;; Startup optimization — suppress redisplay to prevent unconfigured UI flicker
 (setq minimal-emacs-inhibit-redisplay-during-startup t)
 
-;;; Terminal input — restore Kitty keyboard flags after dtach sends SIGWINCH on reattach
-(defun amos/restore-kitty-keyboard-mode (frame)
-  "Restore Emacs's Kitty keyboard flags on the reattached TTY for FRAME."
-  (when (and (not (display-graphic-p frame))
-             (fboundp 'kitty-keyboard-mode-active-p))
-    (when-let* ((flags (kitty-keyboard-mode-active-p (frame-terminal frame))))
-      ;; Set flags in place: unlike CSI > u, this does not grow Kitty's mode stack.
-      (send-string-to-terminal (format "\e[=%d;1u" flags) (frame-terminal frame)))))
-(add-hook 'window-size-change-functions #'amos/restore-kitty-keyboard-mode)
+;;; Terminal input — dtach reattach cannot replay Kitty keyboard mode negotiation
+(setq xterm-extra-capabilities nil)
 
 ;;; Font
 (push '(font . "Ubuntu Mono-17") default-frame-alist)
