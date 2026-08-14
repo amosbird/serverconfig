@@ -17,7 +17,7 @@ These are the tools I interact with all day, so they need to feel consistent. I 
 - Editor: Emacs with Doom. Keyboard-first, modal editing, programmable
 - Window Manager: Qtile. Tiling, dynamic, Python-configurable
 - Terminal: Kitty. Feature-rich, extendable, remote-friendly
-- Browser: Vivaldi. Rich, extendable, mail support
+- Browser: Chromium. Open-source, fast, and broadly compatible
 
 ---
 

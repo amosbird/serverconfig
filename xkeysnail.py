@@ -105,16 +105,16 @@ define_keymap(
 
 # Emacs-like keybindings in non-Emacs applications
 define_keymap(
-    re.compile("Vivaldi-stable"),
+    re.compile("Chromium"),
     {
         # Cursor
         K("C-k"): with_mark(K("up")),
         K("C-j"): with_mark(K("down")),
         K("C-LM-a"): K("LM-d"),
-        K("C-key_0"): K("LM-F12"),
-        K("C-key_9"): K("LM-F11"),
+        K("C-key_0"): K("C-tab"),
+        K("C-key_9"): K("C-Shift-tab"),
     },
-    "Vivaldi Emacs-like keys",
+    "Chromium Emacs-like keys",
 )
 
 # Emacs-like keybindings in non-Emacs applications

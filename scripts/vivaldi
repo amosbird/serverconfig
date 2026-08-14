@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-exec /usr/bin/vivaldi-stable --remote-debugging-port=9222 "$@"

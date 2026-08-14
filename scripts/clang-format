@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-
-export TMPDIR=$TMPDIR/clang-format
-exec $HOME/toolchain-sysroot/bin/clang-format "$@"

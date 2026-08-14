@@ -46,6 +46,6 @@
     timeout = 0
 
 [download_complete]
-   appname = Vivaldi
+   appname = Chromium
    summary = "Download Complete"
    script = /home/amos/scripts/dunst_download_complete.sh

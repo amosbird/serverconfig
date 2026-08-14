@@ -136,12 +136,11 @@ MAMBA_CHANNELS=(
     --repodata-ttl 0
     --strict-channel-priority
     -c https://github.com/amosbird/conda-channel/releases/download
-#    -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
     -c https://conda.anaconda.org/conda-forge
 )
 MAMBA_PACKAGES=(
     ab-emacs ab-tmux ab-htop-vim ab-dtach emacs-tree-sitter-grammars gnupg
-    gcc gxx gdb cmake make ninja lld lldb go nodejs
+    gcc gxx gdb cmake make ninja lld lldb go nodejs clang clang-format
     rust cargo-zigbuild
     rust-std-aarch64-apple-darwin
     rust-std-x86_64-apple-darwin
@@ -162,6 +161,13 @@ else
 fi
 
 if [[ -n $GUI ]]; then
+    paru -S --needed --noconfirm chromium hister-bin rofi rofi-blocks-git
+    sudo install -Dm644 "$DIR/chromium/extensions-policy.json" \
+        /etc/chromium/policies/managed/extensions.json
+    install -Dm755 "$DIR/rofi-chrome/host/main.py" \
+        "$HOME/.local/share/rofi-chrome/host/main.py"
+    install -Dm644 "$DIR/rofi-chrome/io.github.amosbird.rofi.chrome.json" \
+        "$HOME/.config/chromium/NativeMessagingHosts/io.github.amosbird.rofi.chrome.json"
     update-desktop-database "$HOME/.local/share/applications"
     sudo cp "$DIR"/xkb/symbols/{us,pc,inet} /usr/share/X11/xkb/symbols/
     setxkbmap us

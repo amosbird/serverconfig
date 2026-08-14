@@ -253,7 +253,7 @@ keys = [
         [ctrl, alt],
         "a",
         lazy.spawn(
-            "luakit /home/amos/git/rofi-chrome/extension/download.html 1", shell=True
+            "chromium chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html", shell=True
         ),
     ),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),
@@ -387,10 +387,7 @@ dgroups_app_rules = [
     Rule(Match(wm_class="kitty", title="weechat"), group="c"),
     Rule(Match(wm_class="wemeetapp"), group="2"),
     Rule(Match(wm_class="xfreerdp"), group="w"),
-    Rule(
-        Match(wm_class=re.compile("^[Vv]ivaldi.*")),
-        group="f",
-    ),
+    Rule(Match(wm_class="Chromium"), group="f"),
 ]
 
 border = dict(border_width=0)

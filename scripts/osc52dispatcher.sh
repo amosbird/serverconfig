@@ -5,7 +5,7 @@ x)
     luakit "$2"
     ;;
 y)
-    vivaldi "$2"
+    chromium "$2"
     ;;
 z)
     i3-msg focus "$2"

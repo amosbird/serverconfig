@@ -44,4 +44,4 @@ done
 
 idx=$(printf '%s\n' "${items[@]}" | rofi -dmenu -i -format 'd' -p "$* > ")
 
-vivaldi file://${paths[$idx]}
+chromium file://${paths[$idx]}

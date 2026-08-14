@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast, live Vivaldi tab and Hister history search for rofi-blocks."""
+"""Fast, live Chromium tab and Hister history search for rofi-blocks."""
 
 import html
 import http.client
@@ -11,7 +11,7 @@ import threading
 import urllib.parse
 
 
-VIVALDI_CDP_PORT = 9222
+BROWSER_CDP_PORT = 9222
 BLOCKLIST_SCRIPT = "/home/amos/scripts/rofi-browser-blocklist.sh"
 HISTER_BIN = "hister"
 HISTORY_LIMIT = 50
@@ -47,7 +47,7 @@ def is_blocked(url, patterns):
 
 def cdp_request(path, conn=None):
     conn = conn or http.client.HTTPConnection(
-        "127.0.0.1", VIVALDI_CDP_PORT, timeout=1
+        "127.0.0.1", BROWSER_CDP_PORT, timeout=1
     )
     try:
         conn.request("GET", path)
@@ -65,7 +65,7 @@ def cdp_request(path, conn=None):
         conn.close()
 
 
-def get_vivaldi_tabs():
+def get_chromium_tabs():
     try:
         pages = cdp_request("/json") or []
     except (OSError, json.JSONDecodeError):
@@ -189,7 +189,7 @@ def send(obj):
         sys.stdout.flush()
 
 
-def activate_vivaldi_tab(target_id):
+def activate_chromium_tab(target_id):
     if not target_id:
         return False
     try:
@@ -204,7 +204,7 @@ def focus_browser_group():
 
 def launch_url(url):
     subprocess.Popen(
-        ["/home/amos/scripts/vivaldi", url],
+        ["/home/amos/scripts/chromium", url],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -234,7 +234,7 @@ def open_entry(data):
     target_id = data.get("target_id", "")
     if not url:
         return
-    if kind == "tab" and activate_vivaldi_tab(target_id):
+    if kind == "tab" and activate_chromium_tab(target_id):
         focus_browser_group()
     else:
         focus_browser_group()
@@ -261,7 +261,7 @@ def main():
     global blocklist, tabs
     blocklist = load_blocklist()
     # Tabs cannot change while rofi owns the keyboard, so one CDP fetch per invocation is enough.
-    tabs = get_vivaldi_tabs()
+    tabs = get_chromium_tabs()
     initial = build_tab_entries("")
     with state_lock:
         entries[:] = initial

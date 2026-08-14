@@ -1,0 +1,12 @@
+{
+    "RestoreOnStartup": 1,
+    "ExtensionInstallForcelist": [
+        "cciilamhchpmbdnniabclekddabkifhb;https://clients2.google.com/service/update2/crx"
+    ],
+    "ExtensionSettings": {
+        "jpgfhlaplofoaempbhliigmjbpofeghk": {
+            "installation_mode": "normal_installed",
+            "update_url": "https://clients2.google.com/service/update2/crx"
+        }
+    }
+}

@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 
-import json
 import os
 import socket
-import struct
 import subprocess
 import sys
-import http.client
-import base64
 
 
 XSETTINGSD_CONF = os.path.expanduser("~/.xsettingsd")
-VIVALDI_DEBUG_PORT = 9222
 
 
 def get_theme():
@@ -50,102 +45,6 @@ def set_xsettingsd(mode):
         pass
 
 
-def cdp_ws_call(ws_url, msg_id, method, params):
-    host_port = ws_url.split("//")[1].split("/")[0]
-    path = "/" + "/".join(ws_url.split("/")[3:])
-    host, sport = host_port.rsplit(":", 1)
-
-    sock = socket.create_connection((host, int(sport)), timeout=5)
-
-    key = base64.b64encode(os.urandom(16)).decode()
-    handshake = (
-        f"GET {path} HTTP/1.1\r\n"
-        f"Host: {host}:{sport}\r\n"
-        f"Upgrade: websocket\r\n"
-        f"Connection: Upgrade\r\n"
-        f"Sec-WebSocket-Key: {key}\r\n"
-        f"Sec-WebSocket-Version: 13\r\n"
-        f"\r\n"
-    )
-    sock.sendall(handshake.encode())
-
-    buf = b""
-    while b"\r\n\r\n" not in buf:
-        buf += sock.recv(4096)
-
-    msg = json.dumps({"id": msg_id, "method": method, "params": params})
-    ws_send(sock, msg.encode())
-    raw = ws_recv(sock)
-    sock.close()
-    try:
-        return json.loads(raw).get("result")
-    except Exception:
-        return None
-
-
-def set_vivaldi_pref(mode):
-    try:
-        conn = http.client.HTTPConnection("127.0.0.1", VIVALDI_DEBUG_PORT, timeout=2)
-        conn.request("GET", "/json")
-        pages = json.loads(conn.getresponse().read())
-        conn.close()
-    except Exception:
-        return
-
-    candidates = [p for p in pages if p.get("type") in ("app", "background_page")]
-    candidates += [p for p in pages if p not in candidates]
-
-    expr = (
-        f"typeof vivaldi !== 'undefined' && typeof vivaldi.prefs !== 'undefined' "
-        f"&& vivaldi.prefs.set({{path: 'vivaldi.system.desktop_theme_color', value: '{mode}'}})"
-    )
-    for page in candidates:
-        ws_url = page.get("webSocketDebuggerUrl")
-        if not ws_url:
-            continue
-        try:
-            resp = cdp_ws_call(ws_url, 1, "Runtime.evaluate", {
-                "expression": expr,
-                "returnByValue": True,
-            })
-            if resp and resp.get("result", {}).get("value") is not False:
-                break
-        except Exception:
-            continue
-
-
-def ws_send(sock, data):
-    mask = os.urandom(4)
-    length = len(data)
-    header = bytearray([0x81])
-    if length < 126:
-        header.append(0x80 | length)
-    elif length < 65536:
-        header.append(0x80 | 126)
-        header.extend(struct.pack(">H", length))
-    else:
-        header.append(0x80 | 127)
-        header.extend(struct.pack(">Q", length))
-    header.extend(mask)
-    masked = bytearray(b ^ mask[i % 4] for i, b in enumerate(data))
-    sock.sendall(header + masked)
-
-
-def ws_recv(sock):
-    header = sock.recv(2)
-    if len(header) < 2:
-        return b""
-    length = header[1] & 0x7F
-    if length == 126:
-        length = struct.unpack(">H", sock.recv(2))[0]
-    elif length == 127:
-        length = struct.unpack(">Q", sock.recv(8))[0]
-    data = b""
-    while len(data) < length:
-        data += sock.recv(length - len(data))
-    return data
-
-
 def set_windows_theme(mode):
     try:
         subprocess.run(["pgrep", "-x", "xfreerdp"], check=True,
@@ -179,7 +78,6 @@ def set_windows_theme(mode):
 def set_theme(mode):
     set_gsettings(mode)
     set_xsettingsd(mode)
-    set_vivaldi_pref(mode)
     set_windows_theme(mode)
 
 

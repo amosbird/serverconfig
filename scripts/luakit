@@ -18,7 +18,7 @@ fi
 
 N=$(realpath "$1" &>/dev/null)
 if [ -e "$N" ]; then
-    "$HOME"/scripts/vivaldi file://"$N"
+    "$HOME"/scripts/chromium file://"$N"
 else
-    "$HOME"/scripts/vivaldi "$1"
+    "$HOME"/scripts/chromium "$1"
 fi

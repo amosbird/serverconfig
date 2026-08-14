@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+qtile cmd-obj -o group f -f toscreen
+
+exec /usr/bin/chromium \
+    --remote-debugging-port=9222 \
+    "$@"
