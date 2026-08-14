@@ -5,7 +5,7 @@ export COLORTERM=truecolor
 EMACS_DIR="$HOME/.abemacs"
 DTACH_SOCK=/tmp/abemacs.dtach
 
-if echo 1 | socat - UNIX-CONNECT:$DTACH_SOCK &> /dev/null; then
+if [[ -S $DTACH_SOCK ]]; then
     printf "\e[?1006l\e[?1000l\e[?1002l\e[?1003l\e[?1000h\e[?1002h\e[?1003h" # enable mouse
     printf "\e[?2004h" # enable bracketed paste
     exec dtach -a $DTACH_SOCK -E -z
