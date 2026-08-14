@@ -8,10 +8,6 @@
 
 # echo "$@" > /tmp/log
 
-if [ -z "$2" ]; then
-    qtile cmd-obj -o group f -f toscreen
-fi
-
 if [ "$DISPLAY" != "" ]; then
     xhost +
 fi

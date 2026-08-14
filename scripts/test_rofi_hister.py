@@ -2,6 +2,8 @@
 import importlib.machinery
 import importlib.util
 import pathlib
+import socket
+import tempfile
 import unittest
 from unittest import mock
 
@@ -11,6 +13,42 @@ loader = importlib.machinery.SourceFileLoader("rofi_hister_blocks", str(SCRIPT))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 module = importlib.util.module_from_spec(spec)
 loader.exec_module(module)
+
+REMOTE = pathlib.Path(__file__).with_name("chromium-remote")
+remote_loader = importlib.machinery.SourceFileLoader("chromium_remote", str(REMOTE))
+remote_spec = importlib.util.spec_from_loader(remote_loader.name, remote_loader)
+remote = importlib.util.module_from_spec(remote_spec)
+remote_loader.exec_module(remote)
+
+
+class FakeSocket:
+    def __init__(self, ack=b"ACK"):
+        self.ack = ack
+        self.connected = None
+        self.sent = None
+        self.shutdown_mode = None
+        self.timeout = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def connect(self, path):
+        self.connected = path
+
+    def sendall(self, data):
+        self.sent = data
+
+    def shutdown(self, mode):
+        self.shutdown_mode = mode
+
+    def recv(self, size):
+        return self.ack
 
 
 class RofiHisterTest(unittest.TestCase):
@@ -86,21 +124,129 @@ class RofiHisterTest(unittest.TestCase):
         self.assertNotIn("SHA256SUMS", gui_restore)
         self.assertNotIn("unzip", gui_restore)
 
+    def test_luakit_delegates_desktop_switching_to_chromium_wrapper(self):
+        launcher = SCRIPT.with_name("luakit").read_text()
+        self.assertNotIn("qtile cmd-obj", launcher)
+        self.assertIn('"$HOME"/scripts/chromium', launcher)
+
+    def test_chromium_xkeysnail_tab_shortcuts(self):
+        config = SCRIPT.parent.parent.joinpath("xkeysnail.py").read_text()
+        chromium = config.split('re.compile("Chromium")', 1)[1].split(
+            '"Chromium Emacs-like keys"', 1
+        )[0]
+        self.assertIn('K("C-r"): K("C-Shift-t")', chromium)
+        self.assertIn('K("LM-w"): K("C-w")', chromium)
+        self.assertIn('K("C-t"): K("C-Shift-t")', chromium)
+
+    def test_chromium_remote_sends_native_singleton_message(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = pathlib.Path(directory) / "profile"
+            socket_dir = pathlib.Path(directory) / "socket"
+            profile.mkdir()
+            socket_dir.mkdir()
+            socket_path = socket_dir / "SingletonSocket"
+            socket_path.touch()
+            (profile / "SingletonSocket").symlink_to(socket_path)
+            (profile / "SingletonCookie").symlink_to("cookie")
+            (socket_dir / "SingletonCookie").symlink_to("cookie")
+            fake_socket = FakeSocket()
+            with mock.patch.object(remote.socket, "socket", return_value=fake_socket):
+                self.assertTrue(remote.forward(profile, ["baidu.com"], cwd="/tmp/work"))
+        self.assertEqual(fake_socket.connected, str(socket_path))
+        self.assertEqual(
+            fake_socket.sent,
+            b"START\0/tmp/work\0/usr/bin/chromium\0baidu.com",
+        )
+        self.assertEqual(fake_socket.shutdown_mode, socket.SHUT_WR)
+        self.assertEqual(fake_socket.timeout, 1)
+
+    def test_chromium_remote_rejects_cookie_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = pathlib.Path(directory) / "profile"
+            socket_dir = pathlib.Path(directory) / "socket"
+            profile.mkdir()
+            socket_dir.mkdir()
+            socket_path = socket_dir / "SingletonSocket"
+            socket_path.touch()
+            (profile / "SingletonSocket").symlink_to(socket_path)
+            (profile / "SingletonCookie").symlink_to("profile-cookie")
+            (socket_dir / "SingletonCookie").symlink_to("socket-cookie")
+            with mock.patch.object(remote.socket, "socket") as socket_factory:
+                self.assertFalse(remote.forward(profile, ["baidu.com"]))
+        socket_factory.assert_not_called()
+
+    def test_chromium_remote_rechecks_cookie_after_connecting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile = pathlib.Path(directory) / "profile"
+            socket_dir = pathlib.Path(directory) / "socket"
+            profile.mkdir()
+            socket_dir.mkdir()
+            socket_path = socket_dir / "SingletonSocket"
+            socket_path.touch()
+            (profile / "SingletonSocket").symlink_to(socket_path)
+            (profile / "SingletonCookie").symlink_to("cookie")
+            (socket_dir / "SingletonCookie").symlink_to("cookie")
+            fake_socket = FakeSocket()
+            original_readlink = remote.os.readlink
+            reads = 0
+
+            def replace_cookie_after_connect(path):
+                nonlocal reads
+                result = original_readlink(path)
+                if pathlib.Path(path) == profile / "SingletonCookie":
+                    reads += 1
+                    if reads == 2:
+                        return "replaced-cookie"
+                return result
+
+            with (
+                mock.patch.object(remote.socket, "socket", return_value=fake_socket),
+                mock.patch.object(remote.os, "readlink", side_effect=replace_cookie_after_connect),
+            ):
+                self.assertFalse(remote.forward(profile, ["baidu.com"]))
+        self.assertIsNone(fake_socket.sent)
+
+    def test_chromium_remote_falls_back_when_forwarding_fails(self):
+        with mock.patch.object(remote, "forward", return_value=False):
+            self.assertEqual(remote.main(["baidu.com"]), 1)
+
     def test_chromium_uses_store_extension_without_loading_unpackaged_copy(self):
         launcher = SCRIPT.with_name("chromium").read_text()
+        self.assertIn('if chromium-remote "$@"', launcher)
+        self.assertIn("exec /usr/bin/chromium", launcher)
         self.assertNotIn("--load-extension", launcher)
 
     def test_chromium_reuses_default_profile_and_switches_to_browser_group(self):
         root = SCRIPT.parent.parent
         launcher = SCRIPT.with_name("chromium").read_text()
         qtile_config = (root / ".config/qtile/config.py").read_text()
-        self.assertIn('qtile cmd-obj -o group f -f toscreen', launcher)
+        self.assertIn('[[["group","f"]],"toscreen",[],{},true]', launcher)
+        self.assertIn('nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY"', launcher)
+        self.assertNotIn("qtile cmd-obj", launcher)
+        self.assertIn("--restore-last-session", launcher)
+        self.assertIn("--hide-crash-restore-bubble", launcher)
+        self.assertIn(
+            "--disable-features=OverscrollHistoryNavigation,"
+            "TouchpadOverscrollHistoryNavigation,SmoothScrolling",
+            launcher,
+        )
         self.assertNotIn("--user-data-dir", launcher)
         self.assertIn(
             "chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html",
             qtile_config,
         )
         self.assertNotIn("aocepclkpgckjeikiphffdlileoaceec", qtile_config)
+
+    def test_chromium_popups_float_and_match_telegram_geometry(self):
+        root = SCRIPT.parent.parent
+        qtile_config = (root / ".config/qtile/config.py").read_text()
+        managed_hook = qtile_config.split("def after_window_created(client):", 1)[1]
+        self.assertIn('Match(wm_class="Chromium", role="pop-up")', qtile_config)
+        self.assertIn('client.get_wm_role() == "pop-up"', managed_hook)
+        self.assertIn("int(screen.width * 0.7)", managed_hook)
+        self.assertIn("int(screen.height * 0.8)", managed_hook)
+        self.assertIn("int(screen.x + screen.width * 0.15)", managed_hook)
+        self.assertIn("int(screen.y + screen.height * 0.1)", managed_hook)
 
     def test_chromium_integration_names_and_launcher(self):
         self.assertEqual(module.BROWSER_CDP_PORT, 9222)

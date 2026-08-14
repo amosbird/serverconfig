@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 
-qtile cmd-obj -o group f -f toscreen
+printf '%s' '[[["group","f"]],"toscreen",[],{},true]' \
+    | nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY" >/dev/null
+
+if chromium-remote "$@"; then
+    exit
+fi
 
 exec /usr/bin/chromium \
     --remote-debugging-port=9222 \
+    --restore-last-session \
+    --hide-crash-restore-bubble \
+    --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation,SmoothScrolling \
     "$@"

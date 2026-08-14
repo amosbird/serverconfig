@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+
+import os
+import socket
+import sys
+from pathlib import Path
+
+MAX_MESSAGE_SIZE = 32 * 1024
+PROFILE = Path.home() / ".config/chromium"
+
+
+def forward(profile, args, cwd=None):
+    socket_link = profile / "SingletonSocket"
+    cookie_link = profile / "SingletonCookie"
+    try:
+        socket_path = socket_link.resolve(strict=True)
+        if os.readlink(cookie_link) != os.readlink(socket_path.parent / "SingletonCookie"):
+            return False
+        fields = ["START", cwd or os.getcwd(), "/usr/bin/chromium", *args]
+        message = "\0".join(fields).encode()
+        if len(message) > MAX_MESSAGE_SIZE:
+            return False
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(1)
+            client.connect(str(socket_path))
+            if os.readlink(cookie_link) != os.readlink(socket_path.parent / "SingletonCookie"):
+                return False
+            client.sendall(message)
+            client.shutdown(socket.SHUT_WR)
+            return client.recv(16) == b"ACK"
+    except (OSError, UnicodeError):
+        return False
+
+
+def main(args=None):
+    return 0 if forward(PROFILE, sys.argv[1:] if args is None else args) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

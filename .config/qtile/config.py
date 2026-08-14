@@ -440,7 +440,14 @@ def before_window_created(client):
 
 @hook.subscribe.client_managed
 def after_window_created(client):
-    if "chatgpt" in client.get_wm_class():
+    if "Chromium" in client.get_wm_class() and client.get_wm_role() == "pop-up":
+        screen = client.qtile.current_screen
+        client.set_size_floating(int(screen.width * 0.7), int(screen.height * 0.8))
+        client.set_position_floating(
+            int(screen.x + screen.width * 0.15),
+            int(screen.y + screen.height * 0.1),
+        )
+    elif "chatgpt" in client.get_wm_class():
         client.keep_above()
 
 
@@ -623,6 +630,7 @@ floating_layout = layout.Floating(
         MatchAny(*layout.Floating.default_float_rules)
         & ~Match(wm_class="xfreerdp")
         & ~Match(wm_class="mpv"),
+        Match(wm_class="Chromium", role="pop-up"),
         Match(wm_class="copyq"),
         Match(wm_class="discord"),
         Match(wm_class="TelegramDesktop"),
