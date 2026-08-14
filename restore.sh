@@ -161,7 +161,6 @@ else
 fi
 
 if [[ -n $GUI ]]; then
-    paru -S --needed --noconfirm chromium hister-bin rofi rofi-blocks-git
     sudo install -Dm644 "$DIR/chromium/extensions-policy.json" \
         /etc/chromium/policies/managed/extensions.json
     install -Dm755 "$DIR/rofi-chrome/host/main.py" \
@@ -181,14 +180,6 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/network/iwd/main.conf /etc/iwd/main.conf
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
     sudo cp "$DIR"/network/systemd-network/*.link /etc/systemd/network/
-    sudo rm -f /etc/systemd/network/26-wireless-tencent.network
-    if sudo test -f /var/lib/iwd/Tencent-WiFi.8021x &&
-       sudo grep -Fqx 'AddressOverride=1e:dc:46:00:66:1b' \
-           /var/lib/iwd/Tencent-WiFi.8021x; then
-        echo '  [ok] Tencent-WiFi profile has the Android MAC override'
-    else
-        echo '  [WARN] Tencent-WiFi profile is missing or lacks the Android MAC override'
-    fi
     if sudo systemctl is-active --quiet systemd-networkd.service; then
         sudo networkctl reload
     fi
@@ -200,26 +191,7 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
-    # Retiring fallback only stops its policy-preference updates; it does not alter links.
-    if sudo test -e /etc/systemd/system/network-fallback.service; then
-        sudo systemctl disable --now network-fallback.service
-    fi
-    sudo rm -f /etc/systemd/system/network-fallback.service
-    sudo rm -rf /var/lib/network-fallback
-    sudo rm -f /var/lib/network-reconfigure/derp-ips \
-        /var/lib/network-reconfigure/ioa-endpoints
-    # Retire the old constant recorder but preserve manually captured incidents.
-    if sudo test -e /etc/systemd/system/network-debug-pcap.service; then
-        sudo systemctl disable --now network-debug-pcap.service
-    fi
-    sudo rm -f /etc/systemd/system/network-debug-pcap.service
-    sudo rm -rf /var/log/network-debug/ring
     sudo systemctl daemon-reload
-    # Disable stale netctl boot links, but do not stop the connection carrying this restore.
-    for unit in /etc/systemd/system/multi-user.target.wants/netctl@*.service; do
-        [[ -e "$unit" ]] && sudo systemctl disable "$(basename "$unit")"
-    done
-    sudo systemctl disable netctl.service
     # SmartDNS includes must exist before validating and atomically installing the base config.
     sudo mkdir -p /etc/smartdns
     [[ -e /etc/smartdns/office.conf ]] ||
@@ -231,7 +203,6 @@ if [[ -n $GUI ]]; then
     sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
     sudo cp "$DIR"/systemd/getty-autologin.conf \
         /etc/systemd/system/getty@tty1.service.d/autologin.conf
-    sudo systemctl disable sddm.service
     sudo systemctl enable getty@tty1.service
 
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
