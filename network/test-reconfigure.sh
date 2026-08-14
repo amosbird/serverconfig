@@ -952,6 +952,27 @@ if [ -n "${IN_NETNS:-}" ]; then
     fi
 fi
 
+host_test_state() {
+    local table prefix
+    for table in main cn cn_stage ioa 19 20 52 230 400; do
+        for prefix in \
+            10.20.0.0/16 100.12.34.0/24 192.0.2.0/24 \
+            198.51.100.0/24 203.0.113.0/24
+        do
+            ip -4 route show table "$table" "$prefix" 2>/dev/null |
+                sed "s|^|route $table |"
+        done
+    done
+    ip -4 rule show 2>/dev/null |
+        grep -E '10\.20|100\.12\.34|192\.0\.2|198\.51\.100|203\.0\.113' || true
+    ip -br link show 2>/dev/null |
+        grep -E '^(owner0|wired-peer|enp1s0|wlan0)[[:space:]]' || true
+    ip netns list 2>/dev/null | sed 's/^/netns /'
+    ipset list ioa_intranet 2>/dev/null | sed 's/^/ipset /' || true
+    iptables -t mangle -S NETMODE_IOA 2>/dev/null | sed 's/^/iptables /' || true
+    iptables -t mangle -S NETMODE_IOA_NEXT 2>/dev/null | sed 's/^/iptables /' || true
+}
+
 # A fresh directory per run, owned by the invoking user and readable inside the
 # namespace. Reusing a fixed path meant root-owned leftovers from an earlier run
 # made the rebuild fail — and it failed *silently*, so the next run tested a
@@ -970,8 +991,19 @@ if [ -z "${IN_NETNS:-}" ]; then
     export HOST_NETNS_FD=9
     export HOST_NETNS_LINK=$current_netns_link
     export HOST_NETNS_INODE=$current_netns_inode
-    exec unshare -rn --mount bash -c \
+    host_before=$(host_test_state)
+    set +e
+    unshare -rn --mount bash -c \
         "mount -t tmpfs none /run 2>/dev/null || true; IN_NETNS=1 WORK='$WORK' bash '$0'"
+    child_rc=$?
+    set -e
+    host_after=$(host_test_state)
+    if [ "$host_after" != "$host_before" ]; then
+        echo 'network namespace test changed host networking state' >&2
+        diff -u <(printf '%s\n' "$host_before") <(printf '%s\n' "$host_after") >&2 || true
+        exit 2
+    fi
+    exit "$child_rc"
 fi
 
 SCRIPT="$WORK/nr-under-test"

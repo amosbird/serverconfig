@@ -734,6 +734,19 @@ reject 'no static 21/8 IOA rule' \
 reject 'active policy no longer intersects SmartDNS results with a static prefix set' \
     'IOA_INTRANET|--match-set ioa_intranet|ipset (create|add|flush) ioa_intranet' \
     scripts/network-reconfigure network/README.md
+reject 'namespace harness retains an outer process for host verification' \
+    'exec unshare -rn' network/test-reconfigure.sh
+for contract in \
+    'host_test_state()' \
+    'host_before=$(host_test_state)' \
+    'host_after=$(host_test_state)' \
+    'network namespace test changed host networking state'
+do
+    if ! grep -Fq "$contract" network/test-reconfigure.sh; then
+        echo "FAIL namespace harness lacks host-zero-impact contract: $contract" >&2
+        fail=1
+    fi
+done
 reject 'CN promotion does not launch one ip process per route' \
     'ip route replace \\$route table "\\$CN_TABLE"|grep -Fqx "\\$route" <<<"\\$stage_routes"' \
     scripts/network-reconfigure
