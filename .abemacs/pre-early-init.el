@@ -6,6 +6,9 @@
 ;;; Startup optimization — suppress redisplay to prevent unconfigured UI flicker
 (setq minimal-emacs-inhibit-redisplay-during-startup t)
 
+;;; Terminal input — dtach reattach cannot replay Kitty keyboard mode negotiation
+(setq xterm-extra-capabilities nil)
+
 ;;; Font
 (push '(font . "Ubuntu Mono-17") default-frame-alist)
 
