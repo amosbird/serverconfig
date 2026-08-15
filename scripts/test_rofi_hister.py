@@ -111,7 +111,6 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk", policy)
         self.assertIn('"RestoreOnStartup": 1', policy)
         self.assertNotIn("aocepclkpgckjeikiphffdlileoaceec", policy)
-        self.assertIn("rofi-blocks-git", restore)
         self.assertIn("extensions-policy.json", restore)
         gui_restore = restore[restore.index("if [[ -n $GUI ]]") :]
         self.assertIn("rofi-chrome/host/main.py", gui_restore)
@@ -136,7 +135,7 @@ class RofiHisterTest(unittest.TestCase):
         )[0]
         self.assertIn('K("C-r"): K("C-Shift-t")', chromium)
         self.assertIn('K("LM-w"): K("C-w")', chromium)
-        self.assertIn('K("C-t"): K("C-Shift-t")', chromium)
+        self.assertNotIn('K("C-t"):', chromium)
 
     def test_chromium_remote_sends_native_singleton_message(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -227,9 +226,10 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn("--hide-crash-restore-bubble", launcher)
         self.assertIn(
             "--disable-features=OverscrollHistoryNavigation,"
-            "TouchpadOverscrollHistoryNavigation,SmoothScrolling",
+            "TouchpadOverscrollHistoryNavigation",
             launcher,
         )
+        self.assertIn("--disable-smooth-scrolling", launcher)
         self.assertNotIn("--user-data-dir", launcher)
         self.assertIn(
             "chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html",

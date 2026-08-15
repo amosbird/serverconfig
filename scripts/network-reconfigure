@@ -34,6 +34,7 @@ OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
 OFFICE_DST="/etc/smartdns/office.conf"
 P_TS=500
 P_LOCAL=1000
+P_IOA_MARK=1400
 P_CN=1500
 P_IOA=2500
 P_TAILNET=3000
@@ -271,7 +272,7 @@ fi
 
 wired_dev=''
 wired_gateway=''
-read -r wired_dev wired_gateway < <(wired_candidate || true)
+read -r wired_dev wired_gateway < <(wired_candidate || true) || true
 if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
     ip route replace default via "$wired_gateway" dev "$wired_dev" \
         table "$WIRED_UNDERLAY_TABLE"
@@ -311,7 +312,9 @@ else
     DESIRED_BANDS[$P_CN]=""
 fi
 
-ioa_band=("from all fwmark 0x1 lookup $IOA_TABLE")
+DESIRED_BANDS[$P_IOA_MARK]="from all fwmark 0x1 lookup $IOA_TABLE"
+
+ioa_band=()
 for cidr in "${IOA_STATIC_CIDRS[@]}"; do
     ioa_band+=("from all to $cidr lookup $IOA_TABLE")
 done

@@ -113,7 +113,6 @@ define_keymap(
         K("C-LM-a"): K("LM-d"),
         K("C-r"): K("C-Shift-t"),
         K("LM-w"): K("C-w"),
-        K("C-t"): K("C-Shift-t"),
         K("C-key_0"): K("C-tab"),
         K("C-key_9"): K("C-Shift-tab"),
     },

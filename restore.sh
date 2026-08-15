@@ -205,6 +205,8 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/getty@tty1.service.d/autologin.conf
     sudo systemctl enable getty@tty1.service
 
+    systemctl --user enable --now gcr-ssh-agent.socket
+
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload

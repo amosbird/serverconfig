@@ -11,5 +11,6 @@ exec /usr/bin/chromium \
     --remote-debugging-port=9222 \
     --restore-last-session \
     --hide-crash-restore-bubble \
-    --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation,SmoothScrolling \
+    --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation \
+    --disable-smooth-scrolling \
     "$@"

@@ -2,6 +2,7 @@ import re
 import subprocess
 from threading import Lock
 
+import xcffib.xproto
 from libqtile import hook, layout, qtile
 from libqtile.config import (
     Click,
@@ -17,6 +18,8 @@ from libqtile.config import (
 )
 from libqtile.core.manager import Qtile
 from libqtile.backend.base import FloatStates
+from libqtile.backend.x11 import core as x11_core
+from libqtile.backend.x11 import xcbq
 from libqtile.lazy import lazy
 from libqtile.utils import send_notification
 from libqtile.configurable import Configurable
@@ -182,6 +185,61 @@ def show_shell(qtile: Qtile):
     shell.show_shell()
 
 
+pending_inputstr: tuple[list[int], str | list[str], bool] | None = None
+super_r_keycodes: list[int] = []
+
+
+def key_is_down(keymap, keycode):
+    return bool(keymap[keycode // 8] & (1 << (keycode % 8)))
+
+
+def flush_pending_inputstr(qtile: Qtile):
+    global pending_inputstr
+    if pending_inputstr is None:
+        return
+
+    keymap = qtile.core.conn.conn.core.QueryKeymap().reply().keys
+    if any(key_is_down(keymap, keycode) for keycode in super_r_keycodes):
+        qtile.call_later(0.01, flush_pending_inputstr, qtile)
+        return
+
+    _, command, shell = pending_inputstr
+    pending_inputstr = None
+    qtile.spawn(command, shell=shell)
+
+
+def handle_key_release(self, event):
+    if pending_inputstr is not None and event.detail in pending_inputstr[0]:
+        self.qtile.call_later(0.01, flush_pending_inputstr, self.qtile)
+
+
+def defer_inputstr(key, value, shell=False):
+    command = f'inputstr "{value}"' if shell else ["inputstr", value]
+
+    @lazy.function
+    def defer(qtile: Qtile):
+        global pending_inputstr, super_r_keycodes
+        super_r_keycodes = qtile.core.conn.keysym_to_keycode(xcbq.keysyms["super_r"])
+        trigger_keycodes = qtile.core.conn.keysym_to_keycode(xcbq.keysyms[key])
+        pending_inputstr = (trigger_keycodes, command, shell)
+
+    return defer()
+
+
+# shortcut: Qtile has no public release binding; its X11 grab already receives the release event.
+x11_core._IGNORED_EVENTS.discard(xcffib.xproto.KeyReleaseEvent)
+x11_core.EVENT_TO_HANDLER[xcffib.xproto.KeyReleaseEvent] = "handle_KeyRelease"
+x11_core.Core.handle_KeyRelease = handle_key_release
+
+
+@hook.subscribe.startup
+@hook.subscribe.startup_complete
+def enable_key_release_events():
+    if hasattr(qtile.core, "eventmask"):
+        qtile.core.eventmask |= xcffib.xproto.EventMask.KeyRelease
+        qtile.core._root.set_attribute(eventmask=qtile.core.eventmask)
+
+
 keys = [
     Key([super_r], "e", lazy.spawn("rofi -show emoji -modi emoji")),
     Key(
@@ -193,15 +251,15 @@ keys = [
     Key([super_r, shift], "c", lazy.spawn("colorinsert")),
     Key([super_r], "w", lazy.spawn("rofiurl")),
     Key([super_r], "f", lazy.spawn("copyq toggle")),
-    Key([super_r], "0", lazy.spawn("sleep 0.1 && inputstr 0.0.0.0", shell=True)),
-    Key([super_r], "1", lazy.spawn("sleep 0.1 && inputstr 127.0.0.1", shell=True)),
+    Key([super_r], "0", defer_inputstr("0", "0.0.0.0")),
+    Key([super_r], "1", defer_inputstr("1", "127.0.0.1")),
     Key(
         [super_r],
         "2",
         lazy.spawn('joinwemeet "$(xclip -selection clipboard -out)"', shell=True),
     ),
     Key([super_r], "3", lazy.spawn("rofipass")),
-    Key([super_r], "4", lazy.spawn("inputstr amosbird@gmail.com")),
+    Key([super_r], "4", defer_inputstr("4", "amosbird@gmail.com")),
     Key([super_r], "r", lazy.spawn("rofidbtbl")),
     Key([super_r], "h", lazy.spawn("rofihosts")),
     Key([super_r], "d", lazy.spawn("dshot | copyq copyImage -", shell=True)),
@@ -231,7 +289,7 @@ keys = [
     Key(
         [super_r],
         "k",
-        lazy.spawn('inputstr "$(pass show scripts/otp | bash)"', shell=True),
+        defer_inputstr("k", "$(pass show scripts/otp | bash)", shell=True),
     ),
     Key([super_r], "s", lazy.spawn("/home/amos/git/work/scripts/rofitsearch")),
     Key([super_r], "v", lazy.spawn("rofisound")),

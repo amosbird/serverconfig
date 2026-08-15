@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
-# -- is important or else copyq will interprete backslash as part of an escape sequence
+# -- prevents CopyQ from interpreting backslashes as escape sequences.
 coproc _ (copyq fillText -- "$@" &>/dev/null)

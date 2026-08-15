@@ -357,7 +357,11 @@ main() {
     local wired_owner_before
     wired_owner_before=$(snapshot_owner_state)
     ip link set enp1s0 down
-    run_script 1 >/dev/null
+    local wired_loss_rc
+    wired_loss_rc=$(run_status 1)
+    [ "$wired_loss_rc" -eq 0 ] \
+        && ok "wired loss reconciliation completes" \
+        || bad "wired loss reconciliation exited $wired_loss_rc"
     [ -z "$(ip route show table 19)" ] \
         && ok "wired loss removes table 19 advertisement" \
         || bad "wired loss retained table 19: $(ip route show table 19)"
@@ -474,24 +478,24 @@ main() {
         'route add 100.12.34.0/24 via GATEWAY table cn' > "$WORK/routefile"
     FORCE_CN=1 run_script 0 >/dev/null
 
-    local base500 base1000 base2500 chain duplicate_rc
-    base500=$(band 500); base1000=$(band 1000); base2500=$(band 2500)
+    local base500 base1000 base1400 base2500 chain duplicate_rc
+    base500=$(band 500); base1000=$(band 1000); base1400=$(band 1400); base2500=$(band 2500)
     [ "$(count 2500)" -gt 0 ] && ok "2500 installed ($(count 2500) rules)" \
                               || bad "2500 empty"
     [ "$(count 1000)" -gt 0 ] && ok "1000 installed ($(count 1000) rules)" \
                               || bad "1000 empty"
 
     head_ "duplicate installed policy rule"
-    if ip rule add fwmark 0x1/0xffffffff lookup ioa pref 2500 2>/dev/null; then
-        [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 2 ] \
+    if ip rule add fwmark 0x1/0xffffffff lookup ioa pref 1400 2>/dev/null; then
+        [ "$(band 1400 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 2 ] \
             || bad "kernel accepted but did not expose the duplicate owned rule"
         run_script 0 >/dev/null
         duplicate_rc=$?
         if [ "$duplicate_rc" -eq 0 ] &&
-           [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ]; then
+           [ "$(band 1400 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ]; then
             ok "duplicate owned rule triggers non-FORCE reconciliation"
         else
-            bad "duplicate owned rule survived non-FORCE run (rc=$duplicate_rc): $(band 2500)"
+            bad "duplicate owned rule survived non-FORCE run (rc=$duplicate_rc): $(band 1400)"
         fi
     else
         ok "kernel rejects duplicate owned rules"
@@ -502,9 +506,9 @@ main() {
                                || bad "Tailscale mark escape is missing or duplicated"
     [ "$(count 1500)" -eq 1 ] && ok "routefile has one direct lookup rule" \
                                 || bad "routefile direct rule missing"
-    [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ] \
-        && ok "IOA has exactly one full-width mark rule" \
-        || bad "IOA exact mark rule is missing or duplicated"
+    [ "$(band 1400 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ] \
+        && ok "IOA has exactly one early full-width mark rule" \
+        || bad "IOA early exact mark rule is missing or duplicated"
     [ "$(band 2500 | grep -Fxc 'from all to 10.0.0.0/8 lookup ioa')" -eq 1 ] \
         && ok "IOA has exactly one 10/8 rule" \
         || bad "IOA 10/8 rule is missing or duplicated"
@@ -570,9 +574,6 @@ main() {
     [ "$(route_table 100.12.34.5)" = cn ] \
         && ok "routefile overrides static 100.12/16 IOA" \
         || bad "routefile lost to static 100.12/16"
-    [ "$(route_table 10.20.1.1 'mark 0x1')" = cn ] \
-        && ok "routefile overrides SmartDNS business mark" \
-        || bad "routefile lost to SmartDNS mark"
     [ "$(route_table 10.36.48.1)" = main ] && ok "connected 10/8 LAN overrides IOA" \
                                             || bad "connected LAN routed into IOA"
 
@@ -587,9 +588,9 @@ main() {
     ! grep -q -- '--match-set ioa dst -m set' <<<"$chain" \
         && ok "IOA classification has no static prefix intersection" \
         || bad "IOA classification still depends on a static prefix set"
-    full_width_fwmark_rule 2500 0x1 ioa \
-        && ok "IOA rule matches the exact full-width mark" \
-        || bad "IOA rule does not match exactly 0x1/0xffffffff"
+    full_width_fwmark_rule 1400 0x1 ioa \
+        && ok "IOA rule matches the exact full-width mark before CN" \
+        || bad "IOA rule is not exact 0x1/0xffffffff before CN"
     [ "$(band 500 | grep -Fxc 'from all fwmark 0x80000/0xff0000 lookup main')" -eq 1 ] \
         && ok "pref 500 contains the complete Tailscale mark rule exactly once" \
         || bad "pref 500 lacks the complete Tailscale mark rule: $(band 500)"
