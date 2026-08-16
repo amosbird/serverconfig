@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 extension=/home/amos/git/serverconfig/chromium/external-links/extension
-profile=/home/amos/.config/chrome-chatgpt
+profile=/home/amos/.config/chrome-chat
 remote=/home/amos/scripts/chromium-profile-remote
 host="$profile/NativeMessagingHosts/io.github.amosbird.browser_router.json"
 mkdir -p "$(dirname "$host")"
@@ -23,15 +23,19 @@ PY
 else
     if [[ $# -gt 0 ]]; then
         "$remote" "$profile" "$@"
-        qtile cmd-obj -o root -f eval -a 'self.show_scratchpad("chatgpt")' >/dev/null 2>&1 || true
+        qtile cmd-obj -o root -f eval -a 'self.show_scratchpad("webchat")' >/dev/null 2>&1 || true
     fi
     exit
 fi
 
-urls=(https://chatgpt.com/ https://claude.ai/ https://gemini.google.com/)
+urls=(
+    https://web.whatsapp.com/
+    https://app.slack.com/client/TUEGQCHJT/CUC7EE9N0
+    https://discord.com/app
+)
 if [[ $# -gt 0 ]]; then
     urls=("$@")
-    qtile cmd-obj -o root -f eval -a 'self.show_scratchpad("chatgpt")' >/dev/null 2>&1 || true
+    qtile cmd-obj -o root -f eval -a 'self.show_scratchpad("webchat")' >/dev/null 2>&1 || true
 fi
 
 exec /usr/bin/chromium \
@@ -39,7 +43,6 @@ exec /usr/bin/chromium \
     --no-default-browser-check \
     --disable-extensions-except="$extension" \
     --load-extension="$extension" \
-    --remote-debugging-port=9223 \
-    --class=chatgpt \
-    --kiosk \
+    --remote-debugging-port=9224 \
+    --class=webchat \
     "${urls[@]}"

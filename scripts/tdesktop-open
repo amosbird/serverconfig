@@ -1,5 +1,3 @@
 #!/usr/bin/env bash
 
-qtile cmd-obj -o root -f eval -a "self.show_telegram(\"$1\")"
-
-# telegram-desktop -- "$@"
+exec /opt/telegram/Telegram -- "$@"

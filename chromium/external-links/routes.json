@@ -1,0 +1,29 @@
+{
+    "groups": {
+        "ai": {
+            "sites": ["chatgpt.com", "claude.ai", "gemini.google.com"],
+            "suffixes": [],
+            "launcher": "runai",
+            "debug_port": 9223,
+            "scratchpad": "chatgpt"
+        },
+        "chat": {
+            "sites": [
+                "discord.com",
+                "web.whatsapp.com",
+                "app.slack.com",
+                "slack.com"
+            ],
+            "suffixes": [".slack.com"],
+            "launcher": "runchat",
+            "debug_port": 9224,
+            "scratchpad": "webchat"
+        }
+    },
+    "auth_sites": [
+        "accounts.google.com",
+        "appleid.apple.com",
+        "github.com",
+        "login.microsoftonline.com"
+    ]
+}

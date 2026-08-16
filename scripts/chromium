@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 
+extension=/home/amos/git/serverconfig/chromium/external-links/extension
+profile="$HOME/.config/chromium"
+rofi_chrome_extension=/home/amos/git/rofi-chrome/extension
+host="$HOME/.config/chromium/NativeMessagingHosts/io.github.amosbird.browser_router.json"
+mkdir -p "$(dirname "$host")"
+ln -sf /home/amos/git/serverconfig/chromium/external-links/native-host.json "$host"
+
 printf '%s' '[[["group","f"]],"toscreen",[],{},true]' \
     | nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY" >/dev/null
 
@@ -8,6 +15,9 @@ if chromium-remote "$@"; then
 fi
 
 exec /usr/bin/chromium \
+    --no-default-browser-check \
+    --disable-extensions-except="$extension,$rofi_chrome_extension" \
+    --load-extension="$extension,$rofi_chrome_extension" \
     --remote-debugging-port=9222 \
     --restore-last-session \
     --hide-crash-restore-bubble \

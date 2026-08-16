@@ -21,6 +21,7 @@ from libqtile.backend.base import FloatStates
 from libqtile.backend.x11 import core as x11_core
 from libqtile.backend.x11 import xcbq
 from libqtile.lazy import lazy
+from libqtile.scratchpad import DropDownToggler
 from libqtile.utils import send_notification
 from libqtile.configurable import Configurable
 
@@ -185,6 +186,24 @@ def show_shell(qtile: Qtile):
     shell.show_shell()
 
 
+def toggle_scratchpad(name):
+    @lazy.function
+    def toggle(qtile: Qtile):
+        scratchpad = qtile.groups_map["scratchpad"]
+        if name not in scratchpad.dropdowns:
+            scratchpad.dropdown_toggle(name)
+            return
+        dropdown = scratchpad.dropdowns[name]
+        if dropdown.window.has_focus:
+            dropdown.hide()
+            return
+        dropdown.show()
+        dropdown.window.bring_to_front()
+        dropdown.window.focus(warp=True)
+
+    return toggle()
+
+
 pending_inputstr: tuple[list[int], str | list[str], bool] | None = None
 super_r_keycodes: list[int] = []
 
@@ -298,14 +317,14 @@ keys = [
     Key([super_l], "f", lazy.window.toggle_floating()),
     Key([super_l], "z", lazy.spawn("lockscreen")),
     Key([ctrl, alt], "Eisu_toggle", lazy.spawn("toggleaudio")),
-    Key([ctrl, alt], "1", lazy.group["scratchpad"].dropdown_toggle("ioa")),
+    Key([ctrl, alt], "1", toggle_scratchpad("ioa")),
     Key([ctrl, alt], "2", lazy.spawn("togglewemeet")),
     Key([ctrl, alt], "3", lazy.spawn("echo p | nc -U /tmp/scrcpy.socket", shell=True)),
-    Key([ctrl, alt], "4", lazy.group["scratchpad"].dropdown_toggle("stalonetray")),
-    Key([ctrl, alt], "8", lazy.group["scratchpad"].dropdown_toggle("chatgpt")),
-    Key([ctrl, alt], "9", lazy.group["scratchpad"].dropdown_toggle("stardict")),
-    Key([ctrl, alt], "0", lazy.group["scratchpad"].dropdown_toggle("tdesktop")),
-    Key([ctrl, alt], "minus", lazy.group["scratchpad"].dropdown_toggle("discord")),
+    Key([ctrl, alt], "4", toggle_scratchpad("stalonetray")),
+    Key([ctrl, alt], "8", toggle_scratchpad("chatgpt")),
+    Key([ctrl, alt], "9", toggle_scratchpad("stardict")),
+    Key([ctrl, alt], "0", toggle_scratchpad("tdesktop")),
+    Key([ctrl, alt], "minus", toggle_scratchpad("webchat")),
     Key([ctrl, alt], "t", lazy.spawn("rofi-hister")),
     Key(
         [ctrl, alt],
@@ -359,6 +378,16 @@ mouse = [
     Click([lock], "Button2", lazy.spawn("ungrab-keyboard")),
 ]
 
+scratchpad_matches = {
+    "ioa": Match(title="iOA"),
+    "tdesktop": Match(wm_class="TelegramDesktop"),
+    "webchat": Match(wm_class="webchat"),
+    "chatgpt": Match(wm_class="chatgpt"),
+    "stardict": Match(title="stardict"),
+    "stalonetray": Match(title="stalonetray"),
+}
+
+
 groups = [
     ScratchPad(
         "scratchpad",
@@ -366,6 +395,7 @@ groups = [
             DropDown(
                 "ioa",
                 "/opt/ioa/bin/iOALinux",
+                match=scratchpad_matches["ioa"],
                 x=0.26,
                 y=0.224,
                 opacity=1,
@@ -374,7 +404,7 @@ groups = [
             DropDown(
                 "tdesktop",
                 "/opt/telegram/Telegram",
-                match=Match(wm_class="TelegramDesktop"),
+                match=scratchpad_matches["tdesktop"],
                 x=0.15,
                 y=0.1,
                 width=0.7,
@@ -383,20 +413,20 @@ groups = [
                 on_focus_lost_hide=False,
             ),
             DropDown(
-                "discord",
-                "discord",
-                match=Match(title=re.compile(r".*Discord$")),
-                x=0.15,
+                "webchat",
+                "runchat",
+                match=scratchpad_matches["webchat"],
+                x=0.1,
                 y=0.1,
-                width=0.7,
-                height=0.8,
+                width=0.8,
+                height=0.85,
                 opacity=1,
                 on_focus_lost_hide=False,
             ),
             DropDown(
                 "chatgpt",
                 "runai",
-                match=Match(wm_class="chatgpt"),
+                match=scratchpad_matches["chatgpt"],
                 x=0.1,
                 y=0.1,
                 width=0.8,
@@ -407,6 +437,7 @@ groups = [
             DropDown(
                 "stardict",
                 "kitty -T stardict -e dict.sh",
+                match=scratchpad_matches["stardict"],
                 x=0.25,
                 y=0.1,
                 width=0.5,
@@ -417,7 +448,7 @@ groups = [
             DropDown(
                 "stalonetray",
                 "stalonetray --icon-size=96 --kludges=force_icons_size",
-                match=Match(title="stalonetray"),
+                match=scratchpad_matches["stalonetray"],
                 x=0.45,
                 y=0.45,
                 # width=0.1,
@@ -467,6 +498,37 @@ layouts = [
 screens = [Screen()]
 
 
+@hook.subscribe.startup
+def recover_scratchpad_dropdowns():
+    for window in qtile.windows_map.values():
+        register_scratchpad_window(window)
+
+
+def register_scratchpad_window(window):
+    scratchpad = qtile.groups_map["scratchpad"]
+    if any(dropdown.window is window for dropdown in scratchpad.dropdowns.values()):
+        return
+    for name, match in scratchpad_matches.items():
+        if name in scratchpad.dropdowns or not match.compare(window):
+            continue
+        config = next(config for config in groups[0].dropdowns if config.name == name)
+        scratchpad.dropdowns[name] = DropDownToggler(window, scratchpad.name, config)
+        scratchpad.dropdowns[name].hide()
+        return
+
+
+def show_scratchpad(name):
+    scratchpad = qtile.groups_map["scratchpad"]
+    if name in scratchpad.dropdowns:
+        dropdown = scratchpad.dropdowns[name]
+        dropdown.show()
+        dropdown.window.bring_to_front()
+        dropdown.window.focus(warp=True)
+
+
+qtile.show_scratchpad = show_scratchpad
+
+
 @hook.subscribe.client_new
 def before_window_created(client):
     if "copyq" in client.get_wm_class():
@@ -498,6 +560,7 @@ def before_window_created(client):
 
 @hook.subscribe.client_managed
 def after_window_created(client):
+    register_scratchpad_window(client)
     if "Chromium" in client.get_wm_class() and client.get_wm_role() == "pop-up":
         screen = client.qtile.current_screen
         client.set_size_floating(int(screen.width * 0.7), int(screen.height * 0.8))
@@ -613,14 +676,17 @@ def new_place(
     )
 
 
-@hook.subscribe.startup_once
-def startup():
+@hook.subscribe.startup
+def patch_window_place():
     from libqtile.backend.x11.window import _Window
 
-    _Window._place = _Window.place
+    if not hasattr(_Window, "_place"):
+        _Window._place = _Window.place
     _Window.place = new_place
 
-    # qtile.debug()
+
+@hook.subscribe.startup_once
+def startup():
     subprocess.Popen("startup")
 
 
@@ -690,7 +756,6 @@ floating_layout = layout.Floating(
         & ~Match(wm_class="mpv"),
         Match(wm_class="Chromium", role="pop-up"),
         Match(wm_class="copyq"),
-        Match(wm_class="discord"),
         Match(wm_class="TelegramDesktop"),
         Match(wm_class="kitty", title="dtpick"),
         # Match(wm_class="wemeetapp"),
@@ -698,17 +763,6 @@ floating_layout = layout.Floating(
 )
 auto_fullscreen = False
 focus_on_window_activation = "urgent"
-
-
-# @hook.subscribe.client_urgent_hint_changed
-# def client_urgency_change(client):
-#     if "discord" in client.get_wm_class():
-#         discord = qtile.groups_map["scratchpad"].dropdowns["discord"]
-#         win = discord.window
-#         win._float_state = FloatStates.TOP
-#         win.togroup()
-#         win.bring_to_front()
-#         discord.shown = True
 
 
 reconfigure_screens = True
@@ -726,20 +780,3 @@ auto_minimize = False
 # We choose LG3D to maximize irony: it is a 3D non-reparenting WM written in
 # java that happens to be on java's whitelist.
 wmname = "LG3D"
-
-
-def show_telegram(uri):
-    scratchpad = qtile.groups_map["scratchpad"]
-    name = "tdesktop"
-    if name in scratchpad.dropdowns:
-        scratchpad.dropdowns[name].show()
-        qtile.spawn(f"/opt/telegram/Telegram -- {uri}")
-    else:
-        if name in scratchpad._dropdownconfig:
-            old_command = scratchpad._dropdownconfig[name].command
-            scratchpad._dropdownconfig[name].command = f"{old_command} -- {uri}"
-            scratchpad._spawn(scratchpad._dropdownconfig[name])
-            scratchpad._dropdownconfig[name].command = old_command
-
-
-qtile.show_telegram = show_telegram
