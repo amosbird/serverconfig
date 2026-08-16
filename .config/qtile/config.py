@@ -326,6 +326,7 @@ keys = [
     Key([ctrl, alt], "0", toggle_scratchpad("tdesktop")),
     Key([ctrl, alt], "minus", toggle_scratchpad("webchat")),
     Key([ctrl, alt], "t", lazy.spawn("rofi-hister")),
+    Key([ctrl, alt], "b", toggle_scratchpad("bookmarks")),
     Key(
         [ctrl, alt],
         "a",
@@ -334,7 +335,6 @@ keys = [
         ),
     ),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),
-    Key([ctrl, alt], "b", lazy.spawn("scanqrcode")),
     Key([ctrl, alt], "s", toggle_shell_left()),
     Key([ctrl, alt], "l", toggle_shell_right()),
     Key([ctrl, alt], "h", show_shell()),
@@ -385,6 +385,7 @@ scratchpad_matches = {
     "chatgpt": Match(wm_class="chatgpt"),
     "stardict": Match(title="stardict"),
     "stalonetray": Match(title="stalonetray"),
+    "bookmarks": Match(wm_class="aocepclkpgckjeikiphffdlileoaceec__bookmarks.html"),
 }
 
 
@@ -431,6 +432,17 @@ groups = [
                 y=0.1,
                 width=0.8,
                 height=0.85,
+                opacity=1,
+                on_focus_lost_hide=False,
+            ),
+            DropDown(
+                "bookmarks",
+                "bookmark-manager",
+                match=scratchpad_matches["bookmarks"],
+                x=0.1,
+                y=0.05,
+                width=0.8,
+                height=0.9,
                 opacity=1,
                 on_focus_lost_hide=False,
             ),
@@ -504,7 +516,7 @@ def recover_scratchpad_dropdowns():
         register_scratchpad_window(window)
 
 
-def register_scratchpad_window(window):
+def register_scratchpad_window(window, hide=True):
     scratchpad = qtile.groups_map["scratchpad"]
     if any(dropdown.window is window for dropdown in scratchpad.dropdowns.values()):
         return
@@ -513,7 +525,10 @@ def register_scratchpad_window(window):
             continue
         config = next(config for config in groups[0].dropdowns if config.name == name)
         scratchpad.dropdowns[name] = DropDownToggler(window, scratchpad.name, config)
-        scratchpad.dropdowns[name].hide()
+        if hide:
+            scratchpad.dropdowns[name].hide()
+        else:
+            scratchpad.dropdowns[name].show()
         return
 
 
@@ -560,7 +575,12 @@ def before_window_created(client):
 
 @hook.subscribe.client_managed
 def after_window_created(client):
-    register_scratchpad_window(client)
+    if scratchpad_matches["bookmarks"].compare(client):
+        register_scratchpad_window(client, hide=False)
+    else:
+        register_scratchpad_window(client)
+    if scratchpad_matches["bookmarks"].compare(client):
+        return
     if "Chromium" in client.get_wm_class() and client.get_wm_role() == "pop-up":
         screen = client.qtile.current_screen
         client.set_size_floating(int(screen.width * 0.7), int(screen.height * 0.8))
@@ -577,51 +597,12 @@ def after_window_created(client):
 #     send_notification("qtile", f"{layout.name} is now on group {group.name}")
 
 
-class ConditionalBorderWidth(Configurable):
-    """
-    A class that allows finer control as to which border width is applied to which window.
-
-    To configure the border width, you need to provide two parameters:
-
-      * ``matches``: a list of tuples of (Match rules, border width)
-      * ``default``: border width to apply if no matches
-
-    Matches are applied in order and will return a border width as soon as a rule matches.
-
-    It can be used in place of the integer border width layout when defining layouts in your
-    config. For example:
-
-    .. code:: python
-
-        from qtile_extras.layout.decorations import ConditionalBorderWidth
-
-        layouts = [
-            layout.Columns(
-                border_focus_stack=["#d75f5f", "#8f3d3d"],
-                border_width=ConditionalBorderWidth(
-                    default=2,
-                    matches=[(Match(wm_class="vlc"), 0)])
-            ),
-            ...
-        ]
-
-    The above code will default to a border width of 2 but will apply a border width of zero
-    for VLC windows.
-
-    """
-
-    defaults = [
-        ("default", 0, "Default border width value if no rule is matched"),
-        (
-            "matches",
-            [],
-            "List of rules to apply border widths. See docs for more details.",
-        ),
-    ]
-
-    def __init__(self, **config):
-        Configurable.__init__(self, **config)
-        self.add_defaults(ConditionalBorderWidth.defaults)
+class ConditionalBorderColor(str):
+    def __new__(cls, default, matches):
+        color = super().__new__(cls, default)
+        color.default = default
+        color.matches = matches
+        return color
 
     def get_border_for_window(self, win):
         for rule, value in self.matches:
@@ -629,13 +610,19 @@ class ConditionalBorderWidth(Configurable):
                 return value
         return self.default
 
-    # Layouts size windows by subtracting the border width so we
-    # need to allow the multiplication to work on the custom class
-    # The size will be fixed with the injected window.place code.
-    def __mul__(self, other):
-        return other * self.default
 
-    __rmul__ = __mul__
+class ConditionalBorderWidth(int):
+    def __new__(cls, default, matches):
+        border_width = super().__new__(cls, default)
+        border_width.default = default
+        border_width.matches = matches
+        return border_width
+
+    def get_border_for_window(self, win):
+        for rule, value in self.matches:
+            if rule.compare(win):
+                return value
+        return self.default
 
 
 def new_place(
@@ -650,8 +637,10 @@ def new_place(
     margin=None,
     respect_hints=False,
 ):
-    if isinstance(borderwidth, ConditionalBorderWidth):
+    if hasattr(borderwidth, "get_border_for_window"):
         old = getattr(self, "_old_bw", borderwidth.default)
+        if not isinstance(old, int):
+            old = borderwidth.default
         newborder = borderwidth.get_border_for_window(self)
         if newborder != old:
             width += old * 2
@@ -662,6 +651,8 @@ def new_place(
         newborder = borderwidth
 
     self._old_bw = newborder
+    if hasattr(bordercolor, "get_border_for_window"):
+        bordercolor = bordercolor.get_border_for_window(self)
 
     self._place(
         x,
@@ -737,19 +728,33 @@ follow_mouse_focus = False
 bring_front_click = "floating_only"
 floats_kept_above = True
 cursor_warp = False
+floating_border_colors = ConditionalBorderColor(
+    default="#FFB300",
+    matches=[
+        (scratchpad_matches["ioa"], "#F94144"),
+        (scratchpad_matches["tdesktop"], "#70A288"),
+        (scratchpad_matches["webchat"], "#2A9D8F"),
+        (scratchpad_matches["chatgpt"], "#84A98C"),
+        (scratchpad_matches["bookmarks"], "#C44536"),
+        (scratchpad_matches["stardict"], "#E83E8C"),
+        (scratchpad_matches["stalonetray"], "#F2CC8F"),
+        (Match(wm_class="Chromium", role="pop-up"), "#6A994E"),
+        (Match(wm_class="copyq"), "#E9C46A"),
+    ],
+)
+
 floating_layout = layout.Floating(
-    # border_width=0,
     border_width=ConditionalBorderWidth(
         default=8,
         matches=[
             (Match(title="urxvt_scratchpad"), 0),
             (Match(wm_class="flameshot"), 0),
+            (Match(wm_class="kitty", title="float"), 0),
+            (Match(wm_class="kitty", title="dtpick"), 0),
         ],
     ),
-    # border_focus="#1D1F21",
-    # border_normal="#1D1F21",
-    border_focus="#FFB300",
-    border_normal="#FFB300",
+    border_focus=floating_border_colors,
+    border_normal=floating_border_colors,
     float_rules=[
         MatchAny(*layout.Floating.default_float_rules)
         & ~Match(wm_class="xfreerdp")
