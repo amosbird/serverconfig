@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.machinery
 import importlib.util
+import json
 import pathlib
 import socket
 import tempfile
@@ -61,6 +62,95 @@ class RofiHisterTest(unittest.TestCase):
             [{"title": "T", "url": "https://example.com"}],
         )
 
+    def test_load_chromium_bookmarks_flattens_folders(self):
+        tree = {
+            "roots": {
+                "bookmark_bar": {
+                    "type": "folder",
+                    "name": "Bookmarks bar",
+                    "children": [
+                        {
+                            "type": "folder",
+                            "name": "Docs",
+                            "children": [
+                                {
+                                    "type": "url",
+                                    "name": "Chromium API",
+                                    "url": "https://developer.chrome.com/",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "Bookmarks"
+            path.write_text(json.dumps(tree))
+            self.assertEqual(
+                module.load_chromium_bookmarks(path),
+                [("Chromium API", "https://developer.chrome.com/", "Bookmarks bar/Docs")],
+            )
+
+    def test_missing_or_malformed_bookmarks_are_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "Bookmarks"
+            self.assertEqual(module.load_chromium_bookmarks(path), [])
+            path.write_text("{")
+            self.assertEqual(module.load_chromium_bookmarks(path), [])
+
+    def test_bookmark_search_matches_folder_and_precedes_history(self):
+        bookmarks = [
+            ("Chromium API", "https://developer.chrome.com/", "Bookmarks bar/Docs")
+        ]
+        history = [
+            ("Chromium History", "https://example.com/chromium"),
+            ("Saved page in history", "https://developer.chrome.com/"),
+        ]
+        self.assertEqual(
+            module.merge_results(
+                [],
+                history,
+                [],
+                bookmark_entries=module.build_bookmark_entries("docs", bookmarks),
+            ),
+            [
+                (
+                    "bm",
+                    "Chromium API",
+                    "https://developer.chrome.com/",
+                    "Bookmarks bar/Docs",
+                ),
+                ("hist", "Chromium History", "https://example.com/chromium", ""),
+            ],
+        )
+
+    def test_empty_query_does_not_show_bookmarks(self):
+        bookmarks = [("Chromium API", "https://developer.chrome.com/", "Docs")]
+        self.assertEqual(module.build_bookmark_entries("", bookmarks), [])
+
+    def test_bookmark_mode_shows_all_bookmarks_for_empty_query(self):
+        bookmarks = [
+            ("Chromium API", "https://developer.chrome.com/", "Docs"),
+            ("Python", "https://python.org/", "Languages"),
+        ]
+        self.assertEqual(
+            module.build_bookmark_entries("", bookmarks, show_all=True),
+            [
+                ("bm", "Chromium API", "https://developer.chrome.com/", "Docs"),
+                ("bm", "Python", "https://python.org/", "Languages"),
+            ],
+        )
+
+    def test_format_lines_shows_bookmark_folder(self):
+        line = module.format_lines(
+            [("bm", "Chromium API", "https://developer.chrome.com/", "Docs/Chrome")]
+        )[0]
+        self.assertEqual(
+            line["text"],
+            "[bm] Chromium API  <i>developer.chrome.com/ · Docs/Chrome</i>",
+        )
+
     def test_format_lines_escapes_pango_markup(self):
         line = module.format_lines(
             [("hist", "A < B & C", "https://example.com/?a=1&b=2", "")]
@@ -79,8 +169,21 @@ class RofiHisterTest(unittest.TestCase):
 
     def test_launcher_sets_blocks_native_prompt(self):
         launcher = SCRIPT.with_name("rofi-hister").read_text()
-        self.assertIn("-blocks-prompt 'Web❯'", launcher)
+        self.assertIn("prompt=Web❯", launcher)
+        self.assertIn('-blocks-prompt "$prompt"', launcher)
         self.assertNotIn("-display-blocks", launcher)
+
+    def test_launcher_binds_ctrl_tab_to_bookmark_mode_toggle(self):
+        launcher = SCRIPT.with_name("rofi-hister").read_text()
+        qtile = SCRIPT.parent.parent.joinpath(".config/qtile/config.py").read_text()
+        self.assertIn("-kb-mode-next 'Shift+Right'", launcher)
+        self.assertIn("-kb-custom-1 'Control+Tab'", launcher)
+        self.assertNotIn("rofi-hister --bookmarks", qtile)
+
+    def test_backend_handles_custom_key_as_mode_toggle(self):
+        backend = SCRIPT.read_text()
+        self.assertIn('elif name == "custom key" and value == "1":', backend)
+        self.assertIn('"prompt": "Bookmarks❯" if bookmark_mode else "Web❯"', backend)
 
     def test_launcher_preloads_backend_before_starting_rofi(self):
         launcher = SCRIPT.with_name("rofi-hister").read_text()
@@ -130,10 +233,11 @@ class RofiHisterTest(unittest.TestCase):
 
     def test_chromium_xkeysnail_tab_shortcuts(self):
         config = SCRIPT.parent.parent.joinpath("xkeysnail.py").read_text()
-        chromium = config.split('re.compile("Chromium")', 1)[1].split(
+        chromium = config.split('re.compile(r"^(Chromium|chatgpt|webchat)$")', 1)[1].split(
             '"Chromium Emacs-like keys"', 1
         )[0]
         self.assertIn('K("C-r"): K("C-Shift-t")', chromium)
+        self.assertIn('re.compile(r"^(Chromium|chatgpt|webchat)$")', config)
         self.assertIn('K("LM-w"): K("C-w")', chromium)
         self.assertNotIn('K("C-t"):', chromium)
 
@@ -208,6 +312,12 @@ class RofiHisterTest(unittest.TestCase):
     def test_chromium_remote_falls_back_when_forwarding_fails(self):
         with mock.patch.object(remote, "forward", return_value=False):
             self.assertEqual(remote.main(["baidu.com"]), 1)
+
+    def test_runai_bypasses_chromium_wrapper(self):
+        launcher = SCRIPT.with_name("runai").read_text()
+        self.assertIn("/usr/bin/chromium --user-data-dir=", launcher)
+        self.assertNotIn("\nchromium ", launcher)
+        self.assertNotIn("\n# chromium ", launcher)
 
     def test_chromium_uses_store_extension_without_loading_unpackaged_copy(self):
         launcher = SCRIPT.with_name("chromium").read_text()
@@ -292,7 +402,9 @@ class RofiHisterTest(unittest.TestCase):
         calls = []
         with (
             mock.patch.object(
-                module, "activate_chromium_tab", side_effect=lambda target: calls.append("tab") or True
+                module,
+                "activate_chromium_tab",
+                side_effect=lambda target: calls.append("tab") or True,
             ),
             mock.patch.object(
                 module, "focus_browser_group", side_effect=lambda: calls.append("desktop")
@@ -302,6 +414,27 @@ class RofiHisterTest(unittest.TestCase):
                 {"kind": "tab", "url": "https://example.com", "target_id": "target"}
             )
         self.assertEqual(calls, ["tab", "desktop"])
+
+    def test_open_bookmark_activates_matching_tab(self):
+        open_tabs = [("Open", "https://example.com", "target")]
+        calls = []
+        with (
+            mock.patch.object(module, "tabs", open_tabs),
+            mock.patch.object(
+                module,
+                "activate_chromium_tab",
+                side_effect=lambda target: calls.append(target) or True,
+            ),
+            mock.patch.object(
+                module,
+                "focus_browser_group",
+                side_effect=lambda: calls.append("focus"),
+            ),
+            mock.patch.object(module, "launch_url") as launch,
+        ):
+            module.open_entry({"kind": "bm", "url": "https://example.com"})
+        self.assertEqual(calls, ["target", "focus"])
+        launch.assert_not_called()
 
     def test_backend_requests_launcher_to_focus_qtile_group(self):
         with mock.patch.object(module, "send") as send:

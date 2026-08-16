@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-# Start Qtile's Python client while the menu opens, so its ~300ms imports are off the selection path.
+prompt=Web❯
+
+# Warm Qtile's Python client while the menu opens, keeping its ~300ms imports off selection.
 coproc QTILE { exec rofi-hister-qtile; }
 qtile_pid=$QTILE_PID
 exec {qtile_out}<&"${QTILE[0]}" {qtile_in}>&"${QTILE[1]}"
@@ -27,9 +29,11 @@ rm -f "$focus_done"
         fi
     done
 } | rofi -modi blocks -show blocks \
-    -blocks-prompt 'Web❯' \
+    -blocks-prompt "$prompt" \
     -kb-remove-char-forward 'Delete' \
     -kb-delete-entry 'Shift+Delete,Control+d' \
+    -kb-mode-next 'Shift+Right' \
+    -kb-custom-1 'Control+Tab' \
     >&$backend_in &
 rofi_pid=$!
 

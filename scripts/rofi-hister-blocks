@@ -4,6 +4,7 @@
 import html
 import http.client
 import json
+import pathlib
 import re
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import urllib.parse
 
 
 BROWSER_CDP_PORT = 9222
+BOOKMARKS_PATH = pathlib.Path.home() / ".config/chromium/Default/Bookmarks"
 BLOCKLIST_SCRIPT = "/home/amos/scripts/rofi-browser-blocklist.sh"
 HISTER_BIN = "hister"
 HISTORY_LIMIT = 50
@@ -21,6 +23,7 @@ DOMAIN_RE = re.compile(r"^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/\S*)?$")
 
 entries = []
 blocklist = []
+bookmarks = []
 tabs = []
 state_lock = threading.Lock()
 send_lock = threading.Lock()
@@ -79,6 +82,31 @@ def get_chromium_tabs():
         title = page.get("title", "")
         if url and title and url.startswith(("http://", "https://", "file://")):
             result.append((title, url, page.get("id", "")))
+    return result
+
+
+def load_chromium_bookmarks(path=BOOKMARKS_PATH):
+    try:
+        roots = json.loads(path.read_text())["roots"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+        return []
+
+    result = []
+
+    def walk(node, folders):
+        if node.get("type") == "url":
+            url = node.get("url", "")
+            if url:
+                result.append((node.get("name", "") or url, url, "/".join(folders)))
+            return
+        name = node.get("name", "")
+        child_folders = folders + ((name,) if name else ())
+        for child in node.get("children", []):
+            walk(child, child_folders)
+
+    for root in roots.values():
+        if isinstance(root, dict):
+            walk(root, ())
     return result
 
 
@@ -151,13 +179,29 @@ def build_tab_entries(query, current_tabs=None):
     return result
 
 
-def merge_results(tab_entries, history, patterns=None, open_tabs=None):
+def build_bookmark_entries(query, current_bookmarks=None, show_all=False):
+    current_bookmarks = bookmarks if current_bookmarks is None else current_bookmarks
+    if not query.strip() and not show_all:
+        return []
+    return [
+        ("bm", title, url, folder)
+        for title, url, folder in current_bookmarks
+        if not is_blocked(url, blocklist)
+        and (not query.strip() or match_query(query, title, f"{url} {folder}"))
+    ]
+
+
+def merge_results(
+    tab_entries, history, patterns=None, open_tabs=None, bookmark_entries=None
+):
     patterns = blocklist if patterns is None else patterns
     open_tabs = tabs if open_tabs is None else open_tabs
+    bookmark_entries = [] if bookmark_entries is None else bookmark_entries
     open_by_url = {}
     for title, url, target_id in open_tabs:
         open_by_url.setdefault(url, []).append((title, target_id))
     result = list(tab_entries)
+    result.extend(bookmark_entries)
     seen_history = {url for _, _, url, _ in result}
     for title, url in history:
         if url in seen_history or is_blocked(url, patterns):
@@ -176,8 +220,10 @@ def merge_results(tab_entries, history, patterns=None, open_tabs=None):
 
 def format_lines(entry_list):
     lines = []
-    for index, (kind, title, url, _) in enumerate(entry_list):
+    for index, (kind, title, url, metadata) in enumerate(entry_list):
         short_url = url.split("://", 1)[-1]
+        if kind == "bm" and metadata:
+            short_url += f" · {metadata}"
         display = f"[{kind}] {html.escape(title)}  <i>{html.escape(short_url)}</i>"
         lines.append({"text": display, "markup": True, "data": str(index)})
     return lines
@@ -229,12 +275,13 @@ def open_or_search(text):
 
 
 def open_entry(data):
-    kind = data.get("kind", "")
     url = data.get("url", "")
     target_id = data.get("target_id", "")
     if not url:
         return
-    if kind == "tab" and activate_chromium_tab(target_id):
+    if not target_id:
+        target_id = next((tab_id for _, tab_url, tab_id in tabs if tab_url == url), "")
+    if target_id and activate_chromium_tab(target_id):
         focus_browser_group()
     else:
         focus_browser_group()
@@ -251,15 +298,21 @@ def delete_entry(data, current_query):
         stderr=subprocess.DEVNULL,
         check=False,
     )
-    result = merge_results(build_tab_entries(current_query), hister_search(current_query))
+    result = merge_results(
+        build_tab_entries(current_query),
+        hister_search(current_query),
+        bookmark_entries=build_bookmark_entries(current_query),
+    )
     with state_lock:
         entries[:] = result
     send({"lines": format_lines(result)})
 
 
 def main():
-    global blocklist, tabs
+    global blocklist, bookmarks, tabs
+    bookmark_mode = False
     blocklist = load_blocklist()
+    bookmarks = load_chromium_bookmarks()
     # Tabs cannot change while rofi owns the keyboard, so one CDP fetch per invocation is enough.
     tabs = get_chromium_tabs()
     initial = build_tab_entries("")
@@ -280,8 +333,15 @@ def main():
     generation = 0
 
     def search_history(query, search_generation):
-        tab_entries = build_tab_entries(query)
-        result = merge_results(tab_entries, hister_search(query))
+        if bookmark_mode:
+            result = build_bookmark_entries(query, show_all=True)
+        else:
+            tab_entries = build_tab_entries(query)
+            result = merge_results(
+                tab_entries,
+                hister_search(query),
+                bookmark_entries=build_bookmark_entries(query),
+            )
         with state_lock:
             if search_generation != generation:
                 return
@@ -314,18 +374,49 @@ def main():
                 debounce_timer.daemon = True
                 debounce_timer.start()
             else:
-                tab_entries = build_tab_entries("")
+                initial_entries = (
+                    build_bookmark_entries("", show_all=True)
+                    if bookmark_mode
+                    else build_tab_entries("")
+                )
                 with state_lock:
-                    entries[:] = tab_entries
-                send({"lines": format_lines(tab_entries)})
+                    entries[:] = initial_entries
+                send({"lines": format_lines(initial_entries)})
+
+        elif name == "custom key" and value == "1":
+            bookmark_mode = not bookmark_mode
+            generation += 1
+            if debounce_timer is not None:
+                debounce_timer.cancel()
+            result = (
+                build_bookmark_entries(current_query, show_all=True)
+                if bookmark_mode
+                else merge_results(
+                    build_tab_entries(current_query),
+                    hister_search(current_query),
+                    bookmark_entries=build_bookmark_entries(current_query),
+                )
+            )
+            with state_lock:
+                entries[:] = result
+            send(
+                {
+                    "prompt": "Bookmarks❯" if bookmark_mode else "Web❯",
+                    "lines": format_lines(result),
+                }
+            )
 
         elif name in ("select entry", "delete entry"):
             with state_lock:
                 entry = get_event_entry(raw_data)
             if entry is None:
                 continue
-            kind, _, url, target_id = entry
-            data = {"kind": kind, "url": url, "target_id": target_id}
+            kind, _, url, metadata = entry
+            data = {
+                "kind": kind,
+                "url": url,
+                "target_id": metadata if kind == "tab" else "",
+            }
             if name == "select entry":
                 open_entry(data)
                 return
