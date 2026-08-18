@@ -21,9 +21,9 @@ class PipeWireMigrationTest(unittest.TestCase):
             "pipewire.service pipewire-pulse.service wireplumber.service", restore
         )
 
-    def test_wireplumber_owns_bluetooth_profiles_and_autoswitch(self):
+    def test_wireplumber_owns_bluetooth_profiles_without_autoswitch(self):
         config = WIREPLUMBER.read_text()
-        self.assertIn("bluetooth.autoswitch-to-headset-profile = true", config)
+        self.assertIn("bluetooth.autoswitch-to-headset-profile = false", config)
         self.assertIn("device.restore-profile = false", config)
         self.assertIn("bluez5.roles", config)
         self.assertIn("hfp_ag", config)
