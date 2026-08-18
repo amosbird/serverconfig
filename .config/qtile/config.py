@@ -17,7 +17,6 @@ from libqtile.config import (
     Screen,
 )
 from libqtile.core.manager import Qtile
-from libqtile.backend.base import FloatStates
 from libqtile.backend.x11 import core as x11_core
 from libqtile.backend.x11 import xcbq
 from libqtile.lazy import lazy
@@ -70,12 +69,18 @@ class Shell:
         screen = win.qtile.current_screen
         if screen is None or not win.qtile.screens:
             return
-        win.togroup()
+        win.togroup(win.qtile.current_group.name)
         win.opacity = 0.95
-        win._float_state = FloatStates.TOP
-        win.set_size_floating(int(screen.width / 2), int(screen.height))
-        win.toscreen()
-        win.set_position_floating(int(x), int(y))
+        win.enable_floating()
+        win.place(
+            int(screen.x + x),
+            int(screen.y + y),
+            int(screen.width / 2),
+            int(screen.height),
+            win.qtile.current_group.floating_layout.border_width,
+            win.qtile.current_group.floating_layout.border_focus,
+            above=True,
+        )
         win.bring_to_front()
         win.focus()
 
@@ -97,12 +102,18 @@ class ShellHolder:
         self._spawned: tuple[Match, int] | None = None
         self.spawn_lock = Lock()
 
-    def _spawn(self, x: int):
-        with self.spawn_lock:
-            if self._spawned:
-                return
+    def _show(self, mode):
+        if mode == 2:
+            self.shell.toggle_left()
+        elif mode == 1:
+            self.shell.toggle_right()
+        else:
+            self.shell.show_tiled()
 
-            hook.subscribe.client_new(self.on_client_new)
+    def _spawn(self, mode: int):
+        with self.spawn_lock:
+            if self.shell is not None or self._spawned is not None:
+                return
             pid = qtile.spawn(
                 [
                     "kitty",
@@ -115,36 +126,33 @@ class ShellHolder:
                 ],
                 shell=True,
             )
-            self._spawned = (Match(net_wm_pid=pid), x)
+            self._spawned = (Match(net_wm_pid=pid), mode)
 
-    def on_client_new(self, client, *args, **kwargs):
-        if self._spawned is None:
+    def register(self, window):
+        if self.shell is not None or window.name != "urxvt_scratchpad":
+            return False
+        if self._spawned is not None and not self._spawned[0].compare(window):
+            return False
+        mode = self._spawned[1] if self._spawned is not None else None
+        self.shell = Shell(window)
+        self._spawned = None
+        if mode is not None:
+            self._show(mode)
+        return True
+
+    def recover(self, windows):
+        found = [window for window in windows if window.name == "urxvt_scratchpad"]
+        if not found:
             return
-
-        if not self._spawned[0].compare(client):
-            return
-
-        hook.unsubscribe.client_new(self.on_client_new)
-        self.shell = Shell(client)
-        try:
-            if self._spawned[1] == 2:
-                self.shell.toggle_left()
-            elif self._spawned[1] == 1:
-                self.shell.toggle_right()
-            elif self._spawned[1] == 0:
-                self.shell.show_tiled()
-        except (IndexError, AttributeError):
-            pass
-        hook.subscribe.client_killed(self.on_client_killed)
-        self.spawning = False
+        self.register(next((window for window in found if window.has_focus), found[0]))
+        for window in found:
+            if window is not self.shell.window:
+                window.kill()
 
     def on_client_killed(self, client, *args, **kwargs):
         if self.shell is not None and self.shell.window is client:
-            del self.shell
             self.shell = None
-            del self._spawned
             self._spawned = None
-            hook.unsubscribe.client_killed(self.on_client_killed)
 
     def toggle_left(self):
         if self.shell:
@@ -166,6 +174,11 @@ class ShellHolder:
 
 
 shell = ShellHolder()
+
+
+@hook.subscribe.startup
+def recover_shell():
+    shell.recover(qtile.windows_map.values())
 
 
 @lazy.function
@@ -313,6 +326,7 @@ keys = [
     Key([super_r], "s", lazy.spawn("/home/amos/git/work/scripts/rofitsearch")),
     Key([super_r], "v", lazy.spawn("rofisound")),
     Key([ctrl], "F8", lazy.spawn("iwmenu --launcher rofi")),
+    Key([ctrl], "F10", lazy.spawn("rofibluetooth")),
     Key([super_l, shift], "f", lazy.window.toggle_fullscreen()),
     Key([super_l], "f", lazy.window.toggle_floating()),
     Key([super_l], "z", lazy.spawn("lockscreen")),
@@ -347,14 +361,13 @@ keys = [
     Key([super_l], "0", lazy.reload_config()),
     Key([ctrl], "Escape", lazy.spawn("dunstctl close-all")),
     Key([ctrl], "Eisu_Toggle", lazy.spawn("dunstctl history-pop")),
-    Key([ctrl], "F1", lazy.spawn("pamixer --toggle-mute")),
-    Key([ctrl], "F2", lazy.spawn("pamixer --decrease 3")),
-    Key([ctrl], "F3", lazy.spawn("pamixer --increase 3")),
+    Key([ctrl], "F1", lazy.spawn("volume mute")),
+    Key([ctrl], "F2", lazy.spawn("volume down")),
+    Key([ctrl], "F3", lazy.spawn("volume up")),
     Key([ctrl], "F4", lazy.spawn("pavucontrol")),
-    Key([ctrl], "F10", lazy.spawn("blueman-manager")),
-    Key([], "XF86AudioLowerVolume", lazy.spawn("pamixer --decrease 3")),
-    Key([], "XF86AudioRaiseVolume", lazy.spawn("pamixer --increase 3")),
-    Key([], "XF86AudioMute", lazy.spawn("pamixer --toggle-mute")),
+    Key([], "XF86AudioLowerVolume", lazy.spawn("volume down")),
+    Key([], "XF86AudioRaiseVolume", lazy.spawn("volume up")),
+    Key([], "XF86AudioMute", lazy.spawn("volume mute")),
     Key([], "XF86MonBrightnessDown", lazy.spawn("xbacklight -5")),
     Key([], "XF86MonBrightnessUp", lazy.spawn("xbacklight +5")),
     Key([ctrl, alt], "q", lazy.window.kill()),
@@ -471,7 +484,7 @@ groups = [
         ],
     ),
     Group("h"),
-    Group("2"),
+    Group("2", layout="max"),
 ]
 
 keys.append(Key([ctrl, alt, shift], "2", lazy.window.togroup("2")))
@@ -547,12 +560,15 @@ qtile.show_scratchpad = show_scratchpad
 @hook.subscribe.client_new
 def before_window_created(client):
     if "copyq" in client.get_wm_class():
+        client.enable_floating()
         client.set_size_floating(2000, 1200)
         client.center()
     elif "kitty" in client.get_wm_class() and client.window.get_name() == "float":
+        client.enable_floating()
         client.set_size_floating(2000, 1200)
         client.center()
     elif "kitty" in client.get_wm_class() and client.window.get_name() == "dtpick":
+        client.enable_floating()
         client.set_size_floating(400, 120)
         client.center()
     elif "xfreerdp" in client.get_wm_class():
@@ -573,8 +589,15 @@ def before_window_created(client):
     # doesn't work
 
 
+@hook.subscribe.client_killed
+def window_killed(client):
+    shell.on_client_killed(client)
+
+
 @hook.subscribe.client_managed
 def after_window_created(client):
+    if shell.register(client):
+        return
     if scratchpad_matches["bookmarks"].compare(client):
         register_scratchpad_window(client, hide=False)
     else:
@@ -583,6 +606,7 @@ def after_window_created(client):
         return
     if "Chromium" in client.get_wm_class() and client.get_wm_role() == "pop-up":
         screen = client.qtile.current_screen
+        client.enable_floating()
         client.set_size_floating(int(screen.width * 0.7), int(screen.height * 0.8))
         client.set_position_floating(
             int(screen.x + screen.width * 0.15),

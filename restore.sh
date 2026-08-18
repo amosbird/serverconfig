@@ -189,6 +189,7 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
+    sudo cp "$DIR"/network/SmartGateAgent /usr/lib/iOA/bin/SmartGateAgent
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
     sudo systemctl daemon-reload
@@ -211,6 +212,11 @@ if [[ -n $GUI ]]; then
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
+    sudo pacman -S --needed --noconfirm \
+        pipewire-audio pipewire-alsa pipewire-pulse wireplumber
+    systemctl --user enable --now \
+        pipewire.service pipewire-pulse.service wireplumber.service
+    sudo systemctl enable --now bluetooth.service
     sudo systemctl enable systemd-networkd.service iwd.service
     sudo systemctl enable network-reconfigure.path
 fi

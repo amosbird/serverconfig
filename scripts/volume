@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+target=@DEFAULT_AUDIO_SINK@
+case ${1:-} in
+up)
+    wpctl set-volume -l 1.0 "$target" 3%+
+    ;;
+down)
+    wpctl set-volume -l 1.0 "$target" 3%-
+    ;;
+mute)
+    wpctl set-mute "$target" toggle
+    ;;
+*)
+    printf 'usage: volume {up|down|mute}\n' >&2
+    exit 2
+    ;;
+esac
+
+status=$(wpctl get-volume "$target")
+volume=$(awk '{printf "%d", $2 * 100 + 0.5}' <<<"$status")
+if [[ $status == *MUTED* ]]; then
+    summary=Muted
+    muted=true
+else
+    summary="${1/mute/Unmuted}"
+    [[ $summary == up ]] && summary='Volume up'
+    [[ $summary == down ]] && summary='Volume down'
+    muted=false
+fi
+
+# Keep the audible level reliable on Bluetooth devices whose absolute-volume control is broken.
+while read -r input _; do
+    [[ $input =~ ^[0-9]+$ ]] || continue
+    pactl set-sink-input-volume "$input" "$volume%"
+    pactl set-sink-input-mute "$input" "$muted"
+done < <(pactl list sink-inputs short)
+
+profile=Local
+node=$(pactl info | sed -n 's/^Default Sink: //p')
+if [[ $node == bluez_output.* ]]; then
+    inspect=$(wpctl inspect "$target")
+    bt_profile=$(sed -n 's/^[[:space:]]*api\.bluez5\.profile = "\([^"]*\)"/\1/p' <<<"$inspect")
+    codec=$(sed -n 's/^[[:space:]]*api\.bluez5\.codec = "\([^"]*\)"/\1/p' <<<"$inspect")
+    case $bt_profile in
+    a2dp-sink) profile="A2DP/${codec^^}" ;;
+    headset-head-unit) profile="HFP/${codec^^}" ;;
+    *) profile="Bluetooth/${codec^^}" ;;
+    esac
+fi
+
+dunstify --app-name Volume --stack-tag volume --timeout 1200 \
+    --hints "int:value:$volume" --hints "string:state:$muted" \
+    "$summary · $profile" "Volume $volume%"

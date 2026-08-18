@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+set -u
+
+if ! bluetoothctl show 2>/dev/null | grep -q 'Powered: yes'; then
+    notify-send -a Bluetooth "Bluetooth unavailable" "Check the dongle and bluetooth.service"
+    exit 1
+fi
+
+coproc BACKEND { exec rofibluetooth-blocks; }
+backend_pid=$BACKEND_PID
+exec {backend_out}<&"${BACKEND[0]}" {backend_in}>&"${BACKEND[1]}"
+read -r initial <&$backend_out || exit 1
+coproc ROFI { rofi -modi blocks -show blocks -blocks-prompt 'bluetooth > ' >&$backend_in; }
+rofi_pid=$ROFI_PID
+exec {rofi_in}>&"${ROFI[1]}"
+{
+    printf '%s\n' "$initial"
+    cat <&$backend_out
+} >&$rofi_in &
+forward_pid=$!
+wait -n -p finished "$rofi_pid" "$backend_pid"
+status=$?
+kill "$rofi_pid" "$backend_pid" "$forward_pid" 2>/dev/null || true
+wait "$rofi_pid" "$backend_pid" "$forward_pid" 2>/dev/null || true
+exit "$status"

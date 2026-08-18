@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+
+import json
+import signal
+import subprocess
+import sys
+import threading
+import time
+
+known_devices = {}
+send_lock = threading.Lock()
+
+
+def bt(*args, timeout=None, agent=False):
+    command = ["bluetoothctl"]
+    if agent:
+        command += ["--agent", "NoInputNoOutput"]
+    if timeout is not None:
+        command += ["--timeout", str(timeout)]
+    command += list(args)
+    process_timeout = timeout + 2 if timeout is not None else 3
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=process_timeout)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return subprocess.CompletedProcess(command, 1, "", str(error))
+
+
+def properties(mac):
+    result = bt("info", mac)
+    values = {}
+    for line in result.stdout.splitlines():
+        key, separator, value = line.strip().partition(": ")
+        if separator:
+            values[key] = value
+    return values
+
+
+def all_devices():
+    result = bt("devices")
+    found = []
+    for line in result.stdout.splitlines():
+        if not line.startswith("Device "):
+            continue
+        mac, _, fallback_name = line[7:].partition(" ")
+        info = properties(mac)
+        name = info.get("Name") or info.get("Alias") or fallback_name or mac
+        known_devices[mac] = (name, info)
+        found.append((mac, name, info))
+    return found
+
+
+def device_line(mac, name, info):
+    state = "[+]" if info.get("Connected") == "yes" else "[=]" if info.get("Paired") == "yes" else "[ ]"
+    return {"text": f"{state}  {name}", "data": f"device:{mac}"}
+
+
+def main_lines():
+    rows = [
+        device_line(mac, name, info)
+        for mac, name, info in all_devices()
+        if info.get("Paired") == "yes"
+    ]
+    rows.sort(key=lambda row: (not row["text"].startswith("[+]"), row["text"].casefold()))
+    return [{"text": "↻  Scan for devices", "data": "scan"}, *rows]
+
+
+def scan_lines():
+    rows = [device_line(mac, name, info) for mac, name, info in all_devices()]
+    rows.sort(key=lambda row: row["text"].casefold())
+    return [{"text": "←  Back", "data": "back"}, *rows]
+
+
+def menu_update(mode, lines, message=None, clear_input=True):
+    update = {
+        "input action": "filter",
+        "active entry": 1 if mode == "scan" and len(lines) > 1 else 0,
+        "prompt": "Bluetooth scan > " if mode == "scan" else "Bluetooth > ",
+        "lines": lines,
+    }
+    if clear_input:
+        update["input"] = ""
+    if message is not None:
+        update["overlay"] = message
+    return update
+
+
+def send(message):
+    with send_lock:
+        sys.stdout.write(json.dumps(message, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+
+
+def result_text(result):
+    return "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+
+
+class BluetoothSession:
+    def __init__(self):
+        self.process = subprocess.Popen(
+            ["bluetoothctl", "--agent", "NoInputNoOutput"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+
+    def command(self, command):
+        self.process.stdin.write(command + "\n")
+        self.process.stdin.flush()
+
+    def close(self):
+        try:
+            self.process.stdin.write("quit\n")
+            self.process.stdin.flush()
+            self.process.wait(timeout=2)
+        except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
+            self.process.terminate()
+            self.process.wait(timeout=2)
+
+
+def wait_for(mac, key, value, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if properties(mac).get(key) == value:
+            return True
+        time.sleep(0.25)
+    return False
+
+
+def notify(message):
+    subprocess.Popen(
+        ["notify-send", "-a", "Bluetooth", message],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def start_device_action(mac, name, lines, stop_scan):
+    send(menu_update("scan", lines(), f"Pairing {name}…", clear_input=False))
+
+    def run():
+        _, message = pair_and_connect(mac)
+        stop_scan()
+        notify(message)
+        send(menu_update("scan", lines(), message, clear_input=False))
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    return worker
+
+
+class Scanner:
+    def __init__(self):
+        self.process = None
+
+    def start(self):
+        if self.process is not None:
+            return
+        self.process = subprocess.Popen(
+            ["bluetoothctl"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        self.process.stdin.write("scan on\n")
+        self.process.stdin.flush()
+
+    def stop(self):
+        if self.process is None:
+            return
+        try:
+            self.process.stdin.write("scan off\n")
+            self.process.stdin.flush()
+        except (BrokenPipeError, OSError):
+            bt("scan", "off")
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+        self.process = None
+        bt("scan", "off")
+
+
+def pair_and_connect(mac, session_factory=BluetoothSession):
+    info = properties(mac)
+    name = info.get("Name") or info.get("Alias") or mac
+    if info.get("Connected") == "yes":
+        result = bt("disconnect", mac, timeout=15)
+        return result.returncode == 0, f"Disconnected {name}" if result.returncode == 0 else result_text(result)
+
+    session = session_factory()
+    try:
+        if info.get("Paired") != "yes":
+            session.command(f"pair {mac}")
+            if not wait_for(mac, "Paired", "yes", 30):
+                return False, f"Pairing was not confirmed for {name}"
+        session.command(f"trust {mac}")
+        if not wait_for(mac, "Trusted", "yes", 5):
+            return False, f"Trust was not confirmed for {name}"
+        session.command(f"connect {mac}")
+        if not wait_for(mac, "Connected", "yes", 15):
+            return False, f"Connection was not confirmed for {name}"
+        return True, f"Connected {name}"
+    finally:
+        session.close()
+
+
+def main():
+    scanner = Scanner()
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+    stop_updates = threading.Event()
+    mode = "main"
+
+    def update_scan_menu():
+        while not stop_updates.wait(1):
+            if mode == "scan":
+                send(menu_update("scan", scan_lines(), clear_input=False))
+
+    send(
+        {
+            **menu_update("main", main_lines()),
+            "event format": '{"name":"{{name_escaped}}", "data":"{{data_escaped}}"}',
+        }
+    )
+    updater = threading.Thread(target=update_scan_menu, daemon=True)
+    updater.start()
+
+    try:
+        for line in sys.stdin:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("name") != "select entry":
+                continue
+            data = event.get("data", "")
+            if data == "scan":
+                mode = "scan"
+                scanner.start()
+                send(menu_update("scan", scan_lines()))
+            elif data == "back":
+                scanner.stop()
+                mode = "main"
+                send(menu_update("main", main_lines()))
+            elif data.startswith("device:"):
+                mac = data.removeprefix("device:")
+                name = known_devices.get(mac, (mac, {}))[0]
+                worker = start_device_action(
+                    mac,
+                    name,
+                    scan_lines if mode == "scan" else main_lines,
+                    scanner.stop,
+                )
+    finally:
+        stop_updates.set()
+        scanner.stop()
+        bt("scan", "off")
+
+
+if __name__ == "__main__":
+    main()
