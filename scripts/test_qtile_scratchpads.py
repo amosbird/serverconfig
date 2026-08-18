@@ -52,15 +52,11 @@ class QtileScratchpadTest(unittest.TestCase):
         launcher = ROOT / "scripts/bookmark-manager"
         self.assertTrue(launcher.exists())
         source = launcher.read_text()
-        self.assertIn("--no-startup-window", source)
-        self.assertIn("/json/version", source)
-        self.assertIn("for _ in {1..100}", source)
-        self.assertIn("url=chrome-extension://aocepclkpgckjeikiphffdlileoaceec/bookmarks.html", source)
         self.assertIn('--app="$url"', source)
-        self.assertIn("--remote-debugging-port=9222", source)
-        self.assertIn("--load-extension=", source)
+        self.assertNotIn("--no-startup-window", source)
+        self.assertNotIn("/json/version", source)
         self.assertNotIn("--class", source)
-        self.assertNotIn("scripts/chromium", source)
+        self.assertIn("/home/amos/scripts/chromium", source)
         self.assertIn(
             'Key([ctrl, alt], "b", toggle_scratchpad("bookmarks"))',
             self.config,
@@ -78,6 +74,63 @@ class QtileScratchpadTest(unittest.TestCase):
             managed.index('if scratchpad_matches["bookmarks"].compare(client):'),
             managed.index('client.get_wm_role() == "pop-up"'),
         )
+
+    def test_shell_is_recovered_after_reload_without_spawning_duplicates(self):
+        self.assertIn("def recover_shell():", self.config)
+        self.assertIn("def recover(self, windows):", self.config)
+        self.assertIn('window.name == "urxvt_scratchpad"', self.config)
+        self.assertIn("window.kill()", self.config)
+        self.assertIn("shell.recover(qtile.windows_map.values())", self.config)
+        self.assertIn("def register(self, window):", self.config)
+        self.assertIn("shell.register(client)", self.config)
+        self.assertIn("if self.shell is not None or self._spawned is not None:", self.config)
+        self.assertNotIn("hook.subscribe.client_new(self.on_client_new)", self.config)
+
+    def test_shell_spawn_action_runs_only_after_window_is_managed(self):
+        register = self.config.split("def register(self, window):", 1)[1].split(
+            "def recover(self, windows):", 1
+        )[0]
+        self.assertIn("self.shell = Shell(window)", register)
+        self.assertIn("self._show(mode)", register)
+        managed = self.config.split("def after_window_created(client):", 1)[1]
+        self.assertIn("shell.register(client)", managed)
+
+    def test_shell_moves_to_current_group_and_marks_it_floating_before_resizing(self):
+        show_float = self.config.split("def show_float(self, x, y):", 1)[1].split(
+            "def show_tiled(self):", 1
+        )[0]
+        self.assertIn("win.togroup(win.qtile.current_group.name)", show_float)
+        self.assertIn("win.enable_floating()", show_float)
+        self.assertIn("win.place(", show_float)
+        self.assertNotIn("win._float_state", show_float)
+        self.assertNotIn("FloatStates", self.config)
+        self.assertNotIn("mark_floating(", self.config)
+        self.assertNotIn("win.set_size_floating", show_float)
+        self.assertLess(
+            show_float.index("win.togroup(win.qtile.current_group.name)"),
+            show_float.index("win.enable_floating()"),
+        )
+        self.assertLess(
+            show_float.index("win.enable_floating()"),
+            show_float.index("win.place("),
+        )
+
+    def test_floating_shell_is_not_left_in_tiled_window_list(self):
+        self.assertIn("win.disable_floating()", self.config)
+        self.assertIn("win.enable_floating()", self.config)
+
+    def test_floating_geometry_hooks_use_public_floating_api(self):
+        hooks = self.config.split("def before_window_created(client):", 1)[1].split(
+            "class ConditionalBorderColor", 1
+        )[0]
+        for marker in (
+            'if "copyq" in client.get_wm_class():',
+            'client.window.get_name() == "float"',
+            'client.window.get_name() == "dtpick"',
+            'client.get_wm_role() == "pop-up"',
+        ):
+            section = hooks.split(marker, 1)[1].split("elif ", 1)[0]
+            self.assertIn("enable_floating()", section)
 
     def test_telegram_uri_handler_does_not_use_eval_or_private_qtile_api(self):
         launcher = TELEGRAM.read_text()

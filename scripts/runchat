@@ -41,6 +41,7 @@ fi
 exec /usr/bin/chromium \
     --user-data-dir="$profile" \
     --no-default-browser-check \
+    --disable-smooth-scrolling \
     --disable-extensions-except="$extension" \
     --load-extension="$extension" \
     --remote-debugging-port=9224 \

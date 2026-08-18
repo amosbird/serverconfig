@@ -60,6 +60,17 @@ for (const [url, expected] of cases) {{
         for launcher in (CHROMIUM, RUNCHAT, ROOT / "scripts/runai"):
             self.assertIn("--no-default-browser-check", launcher.read_text())
 
+    def test_bookmark_manager_never_bootstraps_a_hidden_browser(self):
+        launcher = (ROOT / "scripts/bookmark-manager").read_text()
+        self.assertNotIn("--no-startup-window", launcher)
+        self.assertNotIn("/json/version", launcher)
+        self.assertIn('exec /home/amos/scripts/chromium --app="$url"', launcher)
+
+    def test_all_browser_profiles_disable_smooth_scrolling(self):
+        launchers = (CHROMIUM, RUNCHAT, ROOT / "scripts/runai")
+        for launcher in launchers:
+            self.assertIn("--disable-smooth-scrolling", launcher.read_text())
+
     def test_one_time_service_worker_migration_has_been_removed(self):
         for launcher in (CHROMIUM, RUNCHAT, ROOT / "scripts/runai"):
             script = launcher.read_text()
