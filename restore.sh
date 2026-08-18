@@ -214,6 +214,11 @@ if [[ -n $GUI ]]; then
     sudo systemctl enable gpu-switch.service
     sudo pacman -S --needed --noconfirm \
         pipewire-audio pipewire-alsa pipewire-pulse wireplumber
+    paru -S --needed --noconfirm bzmenu-bin
+    install -Dm644 "$DIR/systemd/bluetooth-profile-led.service" \
+        "$HOME/.config/systemd/user/bluetooth-profile-led.service"
+    systemctl --user daemon-reload
+    systemctl --user enable --now bluetooth-profile-led.service
     systemctl --user enable --now \
         pipewire.service pipewire-pulse.service wireplumber.service
     sudo systemctl enable --now bluetooth.service

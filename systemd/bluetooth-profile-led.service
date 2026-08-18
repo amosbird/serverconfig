@@ -1,0 +1,12 @@
+[Unit]
+Description=Synchronize Bluetooth microphone availability LEDs
+After=pipewire-pulse.service wireplumber.service
+PartOf=pipewire-pulse.service
+
+[Service]
+ExecStart=/home/amos/scripts/bluetooth-profile-led
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=pipewire-pulse.service

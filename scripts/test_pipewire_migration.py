@@ -6,7 +6,7 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
-BLUETOOTH = ROOT / "scripts/rofibluetooth-blocks"
+QTILE = ROOT / ".config/qtile/config.py"
 
 
 class PipeWireMigrationTest(unittest.TestCase):
@@ -34,12 +34,14 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertIn('node.name = "~bluez_output.*"', config)
         self.assertIn("priority.session = 1200", config)
 
-    def test_rofi_does_not_implement_audio_profile_or_stream_routing(self):
-        script = BLUETOOTH.read_text()
-        self.assertNotIn("route_audio", script)
-        self.assertNotIn("pactl", script)
-        self.assertNotIn("wpctl", script)
-        self.assertNotIn("a2dp_sink", script)
+    def test_restore_installs_native_bluetooth_menu(self):
+        restore = RESTORE.read_text()
+        self.assertIn("bzmenu-bin", restore)
+
+    def test_qtile_launches_native_bluetooth_menu(self):
+        self.assertIn(
+            'lazy.spawn("bzmenu --launcher rofi --interactive")', QTILE.read_text()
+        )
 
 
 if __name__ == "__main__":

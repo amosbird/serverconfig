@@ -2,52 +2,74 @@
 
 set -u
 
-# shortcut: one active BlueZ card is expected; use the first when several are connected.
-card=$(pactl list cards short 2>/dev/null |
-    awk '$2 ~ /^bluez_card\./ { print $2; exit }') || exit 0
-[[ -n $card ]] || exit 0
+notify() {
+    command -v dunstify >/dev/null 2>&1 || return
+    dunstify --app-name Bluetooth --stack-tag bluetooth-profile --timeout 2000 \
+        "$1" "${2:-}" >/dev/null 2>&1 || true
+}
 
-card_info=$(pactl list cards 2>/dev/null) || exit 0
-active=$(awk -v card="$card" '
-    $1 == "Name:" { in_card = ($2 == card) }
-    in_card && $1 == "Active" && $2 == "Profile:" { print $3; exit }
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/bluetooth-profile.lock"
+flock -n 9 || exit 0
+
+card_info=$(pactl list cards 2>/dev/null) || {
+    notify "Bluetooth profile unavailable" "PipeWire is not running"
+    exit 0
+}
+read -r card active < <(awk '
+    $1 == "Name:" {
+        card = $2
+        in_card = (card ~ /^bluez_card\./)
+    }
+    in_card && $1 == "Active" && $2 == "Profile:" && $3 != "off" {
+        print card, $3
+        exit
+    }
 ' <<<"$card_info")
+if [[ -z ${card:-} ]]; then
+    notify "Bluetooth profile unavailable" "No connected Bluetooth audio device"
+    exit 0
+fi
 
 case $active in
 headset-head-unit*)
     target=a2dp-sink
     label=A2DP
-    led_value=0
+    led_value=1
     ;;
 a2dp-sink*)
     target=headset-head-unit
     label=HFP/mSBC
-    led_value=1
+    led_value=0
     ;;
 *)
+    notify "Bluetooth profile unavailable" "Unsupported active profile: $active"
     exit 0
     ;;
 esac
 
-pactl set-card-profile "$card" "$target" >/dev/null 2>&1 || exit 0
+if ! pactl set-card-profile "$card" "$target" >/dev/null 2>&1; then
+    notify "Bluetooth profile switch failed" "$label is unavailable"
+    exit 0
+fi
 
 # Wait briefly because PipeWire publishes the new profile asynchronously.
 for _ in {1..10}; do
     active=$(pactl list cards 2>/dev/null | awk -v card="$card" '
         $1 == "Name:" { in_card = ($2 == card) }
         in_card && $1 == "Active" && $2 == "Profile:" { print $3; exit }
-    ') || exit 0
+    ') || break
     [[ $active == "$target" ]] && break
     sleep 0.05
 done
-[[ $active == "$target" ]] || exit 0
+if [[ $active != "$target" ]]; then
+    notify "Bluetooth profile switch failed" "Timed out waiting for $label"
+    exit 0
+fi
 
-led_glob=${MICMUTE_LED_GLOB:-/sys/class/leds/*17EF:60B5*:micmute/brightness}
+led_glob=${MICMUTE_LED_GLOB:-/sys/class/leds/*micmute*/brightness}
 # Intentional word splitting expands the configurable LED glob.
 for led in $led_glob; do
     [[ -w $led ]] && printf '%s' "$led_value" >"$led" 2>/dev/null || true
 done
 
-command -v dunstify >/dev/null 2>&1 &&
-    dunstify --app-name Bluetooth --stack-tag bluetooth-profile --timeout 1200 \
-        "Bluetooth profile" "$label" >/dev/null 2>&1 || true
+notify "Bluetooth profile" "$label"
