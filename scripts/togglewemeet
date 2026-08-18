@@ -1,6 +1,11 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 
-qtile cmd-obj -o group 2 -f toscreen
-if ! pgrep wemeetapp &>/dev/null; then
-    bash -c "wemeet &> /dev/null"
-fi
+import subprocess
+
+from libqtile.command.client import InteractiveCommandClient
+
+client = InteractiveCommandClient()
+# Qtile must make the group visible before Wemeet creates or remaps its Qt surfaces.
+client.group["2"].toscreen()
+if subprocess.run(["pgrep", "-x", "wemeetapp"], stdout=subprocess.DEVNULL).returncode:
+    subprocess.Popen(["wemeet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

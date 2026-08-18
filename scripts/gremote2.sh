@@ -4,39 +4,47 @@
 # set -x
 a=
 if [ "$1" = "-h" ]; then
-	a="--hold"
-	shift
+    a="--hold"
+    shift
 fi
 pattern='^(([[:alnum:]]+)@)?([^:^@]+)(:([[:digit:]]+))?$'
 if [[ "$1" =~ $pattern ]]; then
-	user=${BASH_REMATCH[2]}
-	host=${BASH_REMATCH[3]}
-	port=${BASH_REMATCH[5]}
-	if [ -n "$user" ]; then
-		arg="$user@$host"
-	else
-		arg="$host"
-	fi
+    user=${BASH_REMATCH[2]}
+    host=${BASH_REMATCH[3]}
+    port=${BASH_REMATCH[5]}
+    if [ -n "$user" ]; then
+        arg="$user@$host"
+    else
+        arg="$host"
+    fi
 
-	if [ -n "$port" ]; then
-		arg="$arg -p $port"
-	fi
+    if [ -n "$port" ]; then
+        arg="$arg -p $port"
+    fi
 
-	{
-		read -r remote_home
-		read -r sock
-	} < <(
-		ssh $arg 'read sock < <($HOME/scripts/prelogin); rm $sock; rm /tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}; echo $HOME; echo $sock'
-	)
-	# NOTE: make sure remote should not have gpg-agent, and gpg-connect-agent should show: connection to the agent is in restricted mode
+    {
+        read -r remote_home
+        read -r sock
+    } < <(
+        ssh $arg 'read sock < <($HOME/scripts/prelogin); rm $sock; rm /tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}; echo $HOME; echo $sock'
+    )
+    # NOTE: make sure remote should not have gpg-agent, and gpg-connect-agent should show: connection to the agent is in restricted mode
 
-	# kitty $a bash -c "echo $remote_home; echo amosbird; echo $sock"
+    # kitty $a bash -c "echo $remote_home; echo amosbird; echo $sock"
 
-	# TODO: dbus requires same UID
-	# DBUS_SESSION_BUS_ADDRESS
+    # TODO: dbus requires same UID
+    # DBUS_SESSION_BUS_ADDRESS
 
-	UUID=$(uuidgen)
-	SSH_MASTER_CTRL=/tmp/ssh-master.$UUID
-	KITTY_SOCK=/tmp/kitty.$UUID
-	kitty $a -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T remote ssh -t $arg -M -S $SSH_MASTER_CTRL -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:57201:127.0.0.1:57201 -L 127.0.0.1:8040:127.0.0.1:8040 -L 127.0.0.1:8030:127.0.0.1:8030 -L 127.0.0.1:8080:127.0.0.1:8080 -L 127.0.0.1:8929:127.0.0.1:8929 -L 127.0.0.1:9200:127.0.0.1:9200 -L 127.0.0.1:9400:127.0.0.1:9400 -L 127.0.0.1:9411:127.0.0.1:9411 -L 127.0.0.1:1455:127.0.0.1:1455 -L 127.0.0.1:5601:127.0.0.1:5601 -R 127.0.0.1:8787:127.0.0.1:8787 -R 12639:localhost:8888 -R 5353:localhost:53 -R 9222:localhost:9222 -R $sock:$(gpgconf --list-dir agent-extra-socket) -R /tmp/clipservice.sock:/tmp/clipservice.sock -R /tmp/ssh_auth_sock:$SSH_AUTH_SOCK -R /tmp/kitty_sock:$KITTY_SOCK -R /tmp/dbus_sock:/run/user/1000/bus "$remote_home/scripts/tstart.sh remote $arg $SSH_MASTER_CTRL"
+    UUID=$(uuidgen)
+    SSH_MASTER_CTRL=/tmp/ssh-master.$UUID
+    KITTY_SOCK=/tmp/kitty.$UUID
+    kitty $a -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T remote ssh -t $arg -M -S $SSH_MASTER_CTRL \
+        -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:57201:127.0.0.1:57201 -L 127.0.0.1:8040:127.0.0.1:8040 \
+        -L 127.0.0.1:8030:127.0.0.1:8030 -L 127.0.0.1:8929:127.0.0.1:8929 -L 127.0.0.1:9200:127.0.0.1:9200 \
+        -L 127.0.0.1:9400:127.0.0.1:9400 -L 127.0.0.1:9411:127.0.0.1:9411 -L 127.0.0.1:1455:127.0.0.1:1455 \
+        -L 127.0.0.1:5601:127.0.0.1:5601 -R 127.0.0.1:8787:127.0.0.1:8787 -R 12639:localhost:8888 \
+        -R 5353:localhost:53 -R 9222:localhost:9222 -R $sock:$(gpgconf --list-dir agent-extra-socket) \
+        -R /tmp/clipservice.sock:/tmp/clipservice.sock -R /tmp/ssh_auth_sock:$SSH_AUTH_SOCK \
+        -R /tmp/kitty_sock:$KITTY_SOCK -R /tmp/dbus_sock:/run/user/1000/bus \
+        "$remote_home/scripts/tstart.sh remote $arg $SSH_MASTER_CTRL"
 fi
