@@ -759,7 +759,7 @@ floating_border_colors = ConditionalBorderColor(
         (scratchpad_matches["tdesktop"], "#70A288"),
         (scratchpad_matches["webchat"], "#2A9D8F"),
         (scratchpad_matches["chatgpt"], "#84A98C"),
-        (scratchpad_matches["bookmarks"], "#C44536"),
+        (scratchpad_matches["bookmarks"], "#4F6D7A"),
         (scratchpad_matches["stardict"], "#E83E8C"),
         (scratchpad_matches["stalonetray"], "#F2CC8F"),
         (Match(wm_class="Chromium", role="pop-up"), "#6A994E"),

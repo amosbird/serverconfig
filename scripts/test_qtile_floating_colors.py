@@ -14,7 +14,7 @@ class FloatingBorderColorsTest(unittest.TestCase):
             "tdesktop": "#70A288",
             "webchat": "#2A9D8F",
             "chatgpt": "#84A98C",
-            "bookmarks": "#C44536",
+            "bookmarks": "#4F6D7A",
             "stardict": "#E83E8C",
             "stalonetray": "#F2CC8F",
         }
