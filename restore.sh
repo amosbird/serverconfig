@@ -212,7 +212,6 @@ if [[ -n $GUI ]]; then
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
-    sudo pacman -S --needed --noconfirm \
         pipewire-audio pipewire-alsa pipewire-pulse wireplumber
     paru -S --needed --noconfirm bzmenu-bin
     install -Dm644 "$DIR/systemd/bluetooth-profile-led.service" \
