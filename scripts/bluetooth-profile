@@ -34,12 +34,10 @@ case $active in
 headset-head-unit*)
     target=a2dp-sink
     label=A2DP
-    led_value=1
     ;;
 a2dp-sink*)
     target=headset-head-unit
     label=HFP/mSBC
-    led_value=0
     ;;
 *)
     notify "Bluetooth profile unavailable" "Unsupported active profile: $active"
@@ -65,11 +63,5 @@ if [[ $active != "$target" ]]; then
     notify "Bluetooth profile switch failed" "Timed out waiting for $label"
     exit 0
 fi
-
-led_glob=${MICMUTE_LED_GLOB:-/sys/class/leds/*micmute*/brightness}
-# Intentional word splitting expands the configurable LED glob.
-for led in $led_glob; do
-    [[ -w $led ]] && printf '%s' "$led_value" >"$led" 2>/dev/null || true
-done
 
 notify "Bluetooth profile" "$label"

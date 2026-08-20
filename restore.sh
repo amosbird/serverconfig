@@ -221,6 +221,13 @@ if [[ -n $GUI ]]; then
     systemctl --user enable --now bluetooth-profile-led.service
     systemctl --user enable --now \
         pipewire.service pipewire-pulse.service wireplumber.service
+    wpctl settings -d bluetooth.autoswitch-to-headset-profile
+    wpctl settings -d bluetooth.use-persistent-storage
+    wpctl settings -d bluetooth.profile-preference
+    wpctl settings -d device.restore-profile
+    wpctl settings -d linking.follow-default-target
+    wpctl settings -d node.restore-default-targets
+    systemctl --user restart wireplumber.service
     sudo systemctl enable --now bluetooth.service
     sudo systemctl enable systemd-networkd.service iwd.service
     sudo systemctl enable network-reconfigure.path

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
-HOST=100.88.203.53
+if [[ "$(hostname)" == "abx1gen3" ]]; then
+    HOST=100.91.94.87
+else
+    HOST=100.88.203.53
+fi
 
 ssh $HOST '$HOME/scripts/killwork; rm -f /tmp/{kitty_sock,dbus_sock,remote-clipservice.sock}'
 

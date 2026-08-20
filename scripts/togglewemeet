@@ -1,11 +1,40 @@
 #!/usr/bin/env python3
 
+import os
+import signal
 import subprocess
+import time
 
 from libqtile.command.client import InteractiveCommandClient
+
+
+def wait_for_exit(pids, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not any(os.path.exists(f"/proc/{pid}") for pid in pids):
+            return True
+        time.sleep(0.05)
+    return False
+
 
 client = InteractiveCommandClient()
 # Qtile must make the group visible before Wemeet creates or remaps its Qt surfaces.
 client.group["2"].toscreen()
-if subprocess.run(["pgrep", "-x", "wemeetapp"], stdout=subprocess.DEVNULL).returncode:
+
+windows = client.windows()
+has_window = any("wemeetapp" in (window.get("wm_class") or []) for window in windows)
+process = subprocess.run(
+    ["pgrep", "-x", "wemeetapp"], capture_output=True, text=True
+)
+if not has_window and process.returncode == 0:
+    pids = list(map(int, process.stdout.split()))
+    for pid in pids:
+        os.kill(pid, signal.SIGTERM)
+    if not wait_for_exit(pids, timeout=3):
+        for pid in pids:
+            if os.path.exists(f"/proc/{pid}"):
+                os.kill(pid, signal.SIGKILL)
+    time.sleep(0.2)
+
+if not has_window:
     subprocess.Popen(["wemeet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

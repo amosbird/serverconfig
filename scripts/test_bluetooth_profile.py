@@ -19,6 +19,13 @@ class BluetoothProfileTest(unittest.TestCase):
         self.assertIn("systemd/bluetooth-profile-led.service", restore)
         self.assertIn("enable --now bluetooth-profile-led.service", restore)
 
+    def test_led_sync_retries_failed_autoswitch_once_per_capture_session(self):
+        sync = LED_SYNC.read_text()
+        self.assertIn('event == *"on source-output"*', sync)
+        self.assertIn("recovery_attempted=1", sync)
+        self.assertIn("recovery_attempted=0", sync)
+        self.assertIn("bluetooth-profile", sync)
+
     def test_led_sync_service_tracks_pipewire_events(self):
         service = LED_SERVICE.read_text()
         sync = LED_SYNC.read_text()
@@ -49,9 +56,9 @@ class BluetoothProfileTest(unittest.TestCase):
         config = CONFIG.read_text()
         self.assertIn('Key([ctrl], "F4", lazy.spawn("bluetooth-profile"))', config)
 
-    def test_autoswitch_is_disabled(self):
+    def test_autoswitch_is_enabled(self):
         self.assertIn(
-            "bluetooth.autoswitch-to-headset-profile = false",
+            "bluetooth.autoswitch-to-headset-profile = true",
             WIREPLUMBER.read_text(),
         )
 
@@ -83,11 +90,14 @@ fi
         self.assertIn("Bluetooth profile unavailable", output)
         self.assertEqual(brightness, "0")
 
+    def test_profile_toggle_does_not_write_led_state(self):
+        self.assertNotIn("MICMUTE_LED_GLOB", SCRIPT.read_text())
+
     def test_default_led_glob_covers_current_keyboard_and_platform_leds(self):
-        self.assertIn("/sys/class/leds/*micmute*/brightness", SCRIPT.read_text())
+        self.assertIn("/sys/class/leds/*micmute*/brightness", LED_SYNC.read_text())
 
     def test_prefers_the_active_bluetooth_card(self):
-        result, output, brightness = self._toggle(
+        result, output, _ = self._toggle(
             "a2dp-sink", "headset-head-unit", two_cards=True
         )
         self.assertEqual(result.returncode, 0)
@@ -95,9 +105,8 @@ fi
             "set-card-profile bluez_card.CONNECTED headset-head-unit", output
         )
         self.assertNotIn("set-card-profile bluez_card.OFF", output)
-        self.assertEqual(brightness, "0")
 
-    def test_failed_profile_switch_reports_error_and_leaves_led_unchanged(self):
+    def test_failed_profile_switch_reports_error(self):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory)
             log = path / "log"
@@ -119,28 +128,24 @@ esac
             )
             result = self._run(path, led)
             output = log.read_text()
-            brightness = led.read_text()
         self.assertEqual(result.returncode, 0)
         self.assertIn("Bluetooth profile switch failed", output)
-        self.assertEqual(brightness, "9")
 
-    def test_a2dp_switches_to_msbc_hfp_and_turns_led_off(self):
-        result, output, brightness = self._toggle("a2dp-sink", "headset-head-unit")
+    def test_a2dp_switches_to_msbc_hfp(self):
+        result, output, _ = self._toggle("a2dp-sink", "headset-head-unit")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
         self.assertIn(
             "set-card-profile bluez_card.AA_BB headset-head-unit", output
         )
         self.assertIn("HFP/mSBC", output)
-        self.assertEqual(brightness, "0")
 
-    def test_hfp_switches_to_a2dp_and_lights_led(self):
-        result, output, brightness = self._toggle("headset-head-unit", "a2dp-sink")
+    def test_hfp_switches_to_a2dp(self):
+        result, output, _ = self._toggle("headset-head-unit", "a2dp-sink")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
         self.assertIn("set-card-profile bluez_card.AA_BB a2dp-sink", output)
         self.assertIn("A2DP", output)
-        self.assertEqual(brightness, "1")
 
     def _toggle(self, active, target, two_cards=False):
         with tempfile.TemporaryDirectory() as directory:

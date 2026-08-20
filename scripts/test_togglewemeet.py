@@ -17,6 +17,12 @@ class ToggleWemeetTest(unittest.TestCase):
         self.assertLess(show_group, process_check)
         self.assertLess(show_group, launch)
 
+    def test_restarts_wemeet_when_process_has_no_window(self):
+        script = SCRIPT.read_text()
+        self.assertIn("client.windows()", script)
+        self.assertIn("os.kill(pid, signal.SIGTERM)", script)
+        self.assertIn("wait_for_exit(pids, timeout=3)", script)
+
     def test_does_not_force_map_wemeet_internal_windows(self):
         script = SCRIPT.read_text()
         self.assertNotIn("xdotool", script)
