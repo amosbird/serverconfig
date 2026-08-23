@@ -3,39 +3,15 @@
 set -u
 
 led_glob=${MICMUTE_LED_GLOB:-/sys/class/leds/*micmute*/brightness}
-recovery_attempted=0
-
-active_profile() {
-    pactl list cards 2>/dev/null | awk '
-        $1 == "Name:" { bluetooth = ($2 ~ /^bluez_card\./) }
-        bluetooth && $1 == "Active" && $2 == "Profile:" && $3 != "off" {
-            print $3
-            exit
-        }
-    '
-}
-
-has_capture_stream() {
-    [[ -n $(pactl list source-outputs short 2>/dev/null) ]]
-}
-
-recover_autoswitch() {
-    local profile
-    profile=$(active_profile)
-    if has_capture_stream; then
-        if [[ $profile == a2dp-sink* && $recovery_attempted == 0 ]]; then
-            recovery_attempted=1
-            bluetooth-profile
-        fi
-    else
-        recovery_attempted=0
-    fi
-}
 
 sync_led() {
-    local cards led value=1
+    local cards led muted value=1
     cards=$(pactl list cards 2>/dev/null) || cards=
-    if awk '
+    muted=$(pactl list sources 2>/dev/null | awk '
+        $1 == "Name:" { bluetooth = ($2 ~ /^bluez_input\./) }
+        bluetooth && $1 == "Mute:" { print $2; exit }
+    ')
+    if [[ $muted != yes ]] && awk '
         $1 == "Name:" { bluetooth = ($2 ~ /^bluez_card\./) }
         bluetooth && $1 == "Active" && $2 == "Profile:" && $3 ~ /^headset-head-unit/ {
             found = 1
@@ -56,11 +32,8 @@ sync_led
 
 while true; do
     pactl subscribe 2>/dev/null | while IFS= read -r event; do
-        if [[ $event == *"on card"* || $event == *"on server"* ]]; then
+        if [[ $event == *"on card"* || $event == *"on server"* || $event == *"on source"* ]]; then
             sync_led
-        fi
-        if [[ $event == *"on source-output"* || $event == *"on card"* ]]; then
-            recover_autoswitch
         fi
     done
     sync_led

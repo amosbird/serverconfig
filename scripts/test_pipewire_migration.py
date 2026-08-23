@@ -21,20 +21,21 @@ class PipeWireMigrationTest(unittest.TestCase):
             "pipewire.service pipewire-pulse.service wireplumber.service", restore
         )
 
-    def test_wireplumber_is_the_only_automatic_bluetooth_profile_owner(self):
+    def test_wireplumber_keeps_bluetooth_in_hfp_msbc(self):
         config = WIREPLUMBER.read_text()
-        self.assertIn("bluetooth.autoswitch-to-headset-profile = true", config)
-        self.assertIn("bluetooth.use-persistent-storage = true", config)
-        self.assertIn('bluetooth.profile-preference = "quality"', config)
+        self.assertIn("bluetooth.autoswitch-to-headset-profile = false", config)
+        self.assertIn("bluetooth.use-persistent-storage = false", config)
         self.assertIn("device.restore-profile = false", config)
-        self.assertIn("node.restore-default-targets = true", config)
-        self.assertIn("bluez5.roles", config)
-        self.assertIn("bluez5.auto-connect = [ a2dp_sink hfp_hf hfp_ag ]", config)
-        self.assertIn("a2dp_sink", config)
-        self.assertIn("hfp_hf", config)
-        self.assertIn('device.profile = "a2dp-sink"', config)
+        self.assertIn("node.restore-default-targets = false", config)
+        self.assertIn("bluez5.roles = [ hfp_hf hfp_ag ]", config)
+        self.assertNotIn("bluez5.codecs", config)
+        self.assertIn("bluez5.enable-msbc = true", config)
+        self.assertIn("bluez5.auto-connect = [ hfp_hf hfp_ag ]", config)
+        self.assertNotIn("a2dp_sink", config)
+        self.assertNotIn("a2dp-sink", config)
         self.assertIn('node.name = "~bluez_output.*"', config)
-        self.assertIn("priority.session = 1200", config)
+        self.assertIn('node.name = "~bluez_input.*"', config)
+        self.assertIn("priority.session = 2500", config)
 
     def test_restore_clears_runtime_setting_overrides(self):
         restore = RESTORE.read_text()

@@ -8,60 +8,19 @@ notify() {
         "$1" "${2:-}" >/dev/null 2>&1 || true
 }
 
-exec 9>"${XDG_RUNTIME_DIR:-/tmp}/bluetooth-profile.lock"
-flock -n 9 || exit 0
-
-card_info=$(pactl list cards 2>/dev/null) || {
-    notify "Bluetooth profile unavailable" "PipeWire is not running"
-    exit 0
-}
-read -r card active < <(awk '
-    $1 == "Name:" {
-        card = $2
-        in_card = (card ~ /^bluez_card\./)
-    }
-    in_card && $1 == "Active" && $2 == "Profile:" && $3 != "off" {
-        print card, $3
-        exit
-    }
-' <<<"$card_info")
-if [[ -z ${card:-} ]]; then
-    notify "Bluetooth profile unavailable" "No connected Bluetooth audio device"
-    exit 0
+source=$(pactl list sources 2>/dev/null | awk '
+    $1 == "Name:" && $2 ~ /^bluez_input\./ { print $2; exit }
+')
+if [[ -z $source ]]; then
+    notify "Bluetooth microphone unavailable" "No connected HFP microphone"
+    exit
 fi
 
-case $active in
-headset-head-unit*)
-    target=a2dp-sink
-    label=A2DP
-    ;;
-a2dp-sink*)
-    target=headset-head-unit
-    label=HFP/mSBC
-    ;;
-*)
-    notify "Bluetooth profile unavailable" "Unsupported active profile: $active"
-    exit 0
-    ;;
-esac
-
-if ! pactl set-card-profile "$card" "$target" >/dev/null 2>&1; then
-    notify "Bluetooth profile switch failed" "$label is unavailable"
-    exit 0
+pactl set-source-mute "$source" toggle
+muted=$(pactl get-source-mute "$source" | awk '{ print $2 }')
+bluetooth-profile-led --once
+if [[ $muted == yes ]]; then
+    notify "Bluetooth microphone" "Microphone muted"
+else
+    notify "Bluetooth microphone" "Microphone active"
 fi
-
-# Wait briefly because PipeWire publishes the new profile asynchronously.
-for _ in {1..10}; do
-    active=$(pactl list cards 2>/dev/null | awk -v card="$card" '
-        $1 == "Name:" { in_card = ($2 == card) }
-        in_card && $1 == "Active" && $2 == "Profile:" { print $3; exit }
-    ') || break
-    [[ $active == "$target" ]] && break
-    sleep 0.05
-done
-if [[ $active != "$target" ]]; then
-    notify "Bluetooth profile switch failed" "Timed out waiting for $label"
-    exit 0
-fi
-
-notify "Bluetooth profile" "$label"
