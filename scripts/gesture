@@ -51,7 +51,7 @@ swipe3up() {
         xdotool key --window $id alt+F8
         ;;
     Google-chrome|Chromium)
-        xdotool key --window $id Home
+        xdotool key --window $id alt+shift+Home
         ;;
     llpp)
         # xdotool key --window $id alt+F6
@@ -70,7 +70,7 @@ swipe3down() {
         # xdotool key --window $id G
         ;;
     Google-chrome|Chromium)
-        xdotool key --window $id End
+        xdotool key --window $id alt+shift+End
         ;;
     llpp)
         # xdotool key --window $id alt+F6
