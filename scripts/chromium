@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 extension=/home/amos/git/serverconfig/chromium/external-links/extension
-profile="$HOME/.config/chromium"
+profile="$HOME/.config/google-chrome-main"
 rofi_chrome_extension=/home/amos/git/rofi-chrome/extension
-host="$HOME/.config/chromium/NativeMessagingHosts/io.github.amosbird.browser_router.json"
+host="$profile/NativeMessagingHosts/io.github.amosbird.browser_router.json"
 mkdir -p "$(dirname "$host")"
 ln -sf /home/amos/git/serverconfig/chromium/external-links/native-host.json "$host"
 
@@ -14,7 +14,8 @@ if chromium-remote "$@"; then
     exit
 fi
 
-exec /usr/bin/chromium \
+exec /usr/bin/google-chrome-stable \
+    --user-data-dir="$profile" \
     --no-default-browser-check \
     --disable-extensions-except="$extension,$rofi_chrome_extension" \
     --load-extension="$extension,$rofi_chrome_extension" \

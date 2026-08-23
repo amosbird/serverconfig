@@ -13,7 +13,7 @@ import urllib.parse
 
 
 BROWSER_CDP_PORT = 9222
-BOOKMARKS_PATH = pathlib.Path.home() / ".config/chromium/Default/Bookmarks"
+BOOKMARKS_PATH = pathlib.Path.home() / ".config/google-chrome-main/Default/Bookmarks"
 BLOCKLIST_SCRIPT = "/home/amos/scripts/rofi-browser-blocklist.sh"
 HISTER_BIN = "hister"
 HISTORY_LIMIT = 50

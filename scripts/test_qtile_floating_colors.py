@@ -21,7 +21,7 @@ class FloatingBorderColorsTest(unittest.TestCase):
         for name, color in expected.items():
             self.assertIn(f'(scratchpad_matches["{name}"], "{color}")', config)
 
-        self.assertIn('(Match(wm_class="Chromium", role="pop-up"), "#6A994E")', config)
+        self.assertIn('(Match(wm_class="Google-chrome", role="pop-up"), "#6A994E")', config)
         self.assertIn('(Match(wm_class="copyq"), "#E9C46A")', config)
         self.assertNotIn('(Match(wm_class="kitty", title="dtpick"), "#C34A36")', config)
 

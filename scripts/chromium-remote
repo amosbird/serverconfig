@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 MAX_MESSAGE_SIZE = 32 * 1024
-PROFILE = Path.home() / ".config/chromium"
+PROFILE = Path.home() / ".config/google-chrome-main"
 
 
 def forward(profile, args, cwd=None):
@@ -16,7 +16,7 @@ def forward(profile, args, cwd=None):
         socket_path = socket_link.resolve(strict=True)
         if os.readlink(cookie_link) != os.readlink(socket_path.parent / "SingletonCookie"):
             return False
-        fields = ["START", cwd or os.getcwd(), "/usr/bin/chromium", *args]
+        fields = ["START", cwd or os.getcwd(), "/usr/bin/google-chrome-stable", *args]
         message = "\0".join(fields).encode()
         if len(message) > MAX_MESSAGE_SIZE:
             return False

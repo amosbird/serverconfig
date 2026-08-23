@@ -4,6 +4,7 @@
     "path": "/home/amos/.local/share/rofi-chrome/host/main.py",
     "type": "stdio",
     "allowed_origins": [
-        "chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/"
+        "chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/",
+        "chrome-extension://aocepclkpgckjeikiphffdlileoaceec/"
     ]
 }

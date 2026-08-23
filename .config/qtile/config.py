@@ -501,7 +501,7 @@ dgroups_app_rules = [
     Rule(Match(wm_class="kitty", title="weechat"), group="c"),
     Rule(Match(wm_class="wemeetapp"), group="2"),
     Rule(Match(wm_class="xfreerdp"), group="w"),
-    Rule(Match(wm_class="Chromium"), group="f"),
+    Rule(Match(wm_class="Google-chrome"), group="f"),
 ]
 
 border = dict(border_width=0)
@@ -604,7 +604,7 @@ def after_window_created(client):
         register_scratchpad_window(client)
     if scratchpad_matches["bookmarks"].compare(client):
         return
-    if "Chromium" in client.get_wm_class() and client.get_wm_role() == "pop-up":
+    if "Google-chrome" in client.get_wm_class() and client.get_wm_role() == "pop-up":
         screen = client.qtile.current_screen
         client.enable_floating()
         client.set_size_floating(int(screen.width * 0.7), int(screen.height * 0.8))
@@ -762,7 +762,7 @@ floating_border_colors = ConditionalBorderColor(
         (scratchpad_matches["bookmarks"], "#4F6D7A"),
         (scratchpad_matches["stardict"], "#E83E8C"),
         (scratchpad_matches["stalonetray"], "#F2CC8F"),
-        (Match(wm_class="Chromium", role="pop-up"), "#6A994E"),
+        (Match(wm_class="Google-chrome", role="pop-up"), "#6A994E"),
         (Match(wm_class="copyq"), "#E9C46A"),
     ],
 )
@@ -783,7 +783,7 @@ floating_layout = layout.Floating(
         MatchAny(*layout.Floating.default_float_rules)
         & ~Match(wm_class="xfreerdp")
         & ~Match(wm_class="mpv"),
-        Match(wm_class="Chromium", role="pop-up"),
+        Match(wm_class="Google-chrome", role="pop-up"),
         Match(wm_class="copyq"),
         Match(wm_class="TelegramDesktop"),
         Match(wm_class="kitty", title="dtpick"),

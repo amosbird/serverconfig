@@ -162,11 +162,11 @@ fi
 
 if [[ -n $GUI ]]; then
     sudo install -Dm644 "$DIR/chromium/extensions-policy.json" \
-        /etc/chromium/policies/managed/extensions.json
+        /etc/opt/chrome/policies/managed/extensions.json
     install -Dm755 "$DIR/rofi-chrome/host/main.py" \
         "$HOME/.local/share/rofi-chrome/host/main.py"
     install -Dm644 "$DIR/rofi-chrome/io.github.amosbird.rofi.chrome.json" \
-        "$HOME/.config/chromium/NativeMessagingHosts/io.github.amosbird.rofi.chrome.json"
+        "$HOME/.config/google-chrome-main/NativeMessagingHosts/io.github.amosbird.rofi.chrome.json"
     update-desktop-database "$HOME/.local/share/applications"
     sudo cp "$DIR"/xkb/symbols/{us,pc,inet} /usr/share/X11/xkb/symbols/
     setxkbmap us

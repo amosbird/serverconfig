@@ -18,6 +18,8 @@ class ChatChromiumTest(unittest.TestCase):
         launcher = RUNCHAT.read_text()
         self.assertIn('--disable-extensions-except="$extension"', launcher)
         self.assertIn("profile=/home/amos/.config/chrome-chat", launcher)
+        self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
+        self.assertNotIn("exec /usr/bin/chromium", launcher)
         self.assertIn('--user-data-dir="$profile"', launcher)
         self.assertIn("--class=webchat", launcher)
         self.assertIn("--remote-debugging-port=9224", launcher)
@@ -55,6 +57,12 @@ for (const [url, expected] of cases) {{
 }}
 """
         subprocess.run(["node", "-e", script], check=True)
+
+    def test_all_browser_profiles_use_google_chrome(self):
+        for launcher in (CHROMIUM, RUNCHAT, ROOT / "scripts/runai"):
+            source = launcher.read_text()
+            self.assertIn("/usr/bin/google-chrome-stable", source)
+            self.assertNotIn("/usr/bin/chromium", source)
 
     def test_all_browser_profiles_disable_default_browser_prompt(self):
         for launcher in (CHROMIUM, RUNCHAT, ROOT / "scripts/runai"):

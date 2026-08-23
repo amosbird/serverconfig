@@ -105,7 +105,7 @@ define_keymap(
 
 # Emacs-like keybindings in non-Emacs applications
 define_keymap(
-    re.compile(r"^(Chromium|chatgpt|webchat)$"),
+    re.compile(r"^(Chromium|Google-chrome|chatgpt|webchat)$"),
     {
         # Cursor
         K("C-k"): with_mark(K("up")),

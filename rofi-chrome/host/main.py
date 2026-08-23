@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
 import json
+import os
+import pathlib
 import re
+import socket
 import struct
 import subprocess
 import sys
@@ -110,6 +113,27 @@ def select_option(param):
     return selected if returncode == 0 else ""
 
 
+def open_in_browser(param):
+    url = param.get("url", "")
+    if not re.match(r"^https?://", url):
+        return ""
+    display = os.environ.get("DISPLAY", ":0")
+    qtile_socket = pathlib.Path.home() / f".cache/qtile/qtilesocket.{display}"
+    message = b'[[["group","scratchpad"]],"dropdown_toggle",["bookmarks"],{},true]'
+    try:
+        with socket.socket(socket.AF_UNIX) as client:
+            client.connect(str(qtile_socket))
+            client.sendall(message)
+    except OSError:
+        pass
+    subprocess.Popen(
+        ["/home/amos/scripts/chromium", url],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return ""
+
+
 def handle_message(message):
     info = message.get("info", "")
     param = message.get("param", {})
@@ -119,6 +143,7 @@ def handle_message(message):
         "copyDownload": copy_download,
         "openHistory": select_option,
         "changeToPage": select_option,
+        "openInBrowser": open_in_browser,
     }
     handler = handlers.get(info)
     if handler is None:

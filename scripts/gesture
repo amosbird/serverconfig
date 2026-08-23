@@ -13,7 +13,7 @@ swipe3left() {
     qutebrowser)
         xdotool key --window $id alt+F9
         ;;
-    Chromium)
+    Google-chrome|Chromium)
         xdotool key --window $id alt+Left
         ;;
     llpp)
@@ -31,7 +31,7 @@ swipe3right() {
     qutebrowser)
         xdotool key --window $id alt+F10
         ;;
-    Chromium)
+    Google-chrome|Chromium)
         xdotool key --window $id alt+Right
         ;;
     llpp)
@@ -50,7 +50,7 @@ swipe3up() {
         # xdotool key --window $id alt+F6
         xdotool key --window $id alt+F8
         ;;
-    Chromium)
+    Google-chrome|Chromium)
         xdotool key --window $id Home
         ;;
     llpp)
@@ -69,7 +69,7 @@ swipe3down() {
         xdotool key --window $id alt+F7
         # xdotool key --window $id G
         ;;
-    Chromium)
+    Google-chrome|Chromium)
         xdotool key --window $id End
         ;;
     llpp)
@@ -87,7 +87,7 @@ swipe4left() {
     qutebrowser|jupyterlab|discord)
         xdotool key --window $id ctrl+comma
         ;;
-    Chromium)
+    Google-chrome|Chromium)
         xdotool key --window $id ctrl+shift+Tab
         ;;
     esac
@@ -101,7 +101,7 @@ swipe4right() {
     qutebrowser|jupyterlab|discord)
         xdotool key --window $id ctrl+period
         ;;
-    Chromium)
+    Google-chrome|Chromium)
         xdotool key --window $id ctrl+Tab
         ;;
     esac
@@ -115,7 +115,7 @@ swipe4up() {
     qutebrowser)
         xdotool key --window $id alt+F5
         ;;
-    Chromium)
+    Google-chrome|Chromium)
         xdotool key --window $id ctrl+shift+t
         ;;
     esac
@@ -129,7 +129,7 @@ swipe4down() {
     qutebrowser)
         xdotool key --window $id alt+F4
         ;;
-    Chromium)
+    Google-chrome|Chromium)
         xdotool key --window $id ctrl+w
         ;;
     esac

@@ -38,7 +38,7 @@ if [[ $# -gt 0 ]]; then
     qtile cmd-obj -o root -f eval -a 'self.show_scratchpad("webchat")' >/dev/null 2>&1 || true
 fi
 
-exec /usr/bin/chromium \
+exec /usr/bin/google-chrome-stable \
     --user-data-dir="$profile" \
     --no-default-browser-check \
     --disable-smooth-scrolling \

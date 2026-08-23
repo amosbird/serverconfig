@@ -212,7 +212,12 @@ class RofiHisterTest(unittest.TestCase):
         policy = (root / "chromium" / "extensions-policy.json").read_text()
         restore = (root / "restore.sh").read_text()
         self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk", policy)
+        native_manifest = (root / "rofi-chrome" / "io.github.amosbird.rofi.chrome.json").read_text()
+        self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk", native_manifest)
+        self.assertIn("aocepclkpgckjeikiphffdlileoaceec", native_manifest)
+        self.assertIn("openInBrowser", (root / "rofi-chrome" / "host" / "main.py").read_text())
         self.assertIn('"RestoreOnStartup": 1', policy)
+        self.assertNotIn('"BookmarkBarEnabled"', policy)
         self.assertNotIn("aocepclkpgckjeikiphffdlileoaceec", policy)
         self.assertIn("extensions-policy.json", restore)
         gui_restore = restore[restore.index("if [[ -n $GUI ]]") :]
@@ -233,11 +238,13 @@ class RofiHisterTest(unittest.TestCase):
 
     def test_chromium_xkeysnail_tab_shortcuts(self):
         config = SCRIPT.parent.parent.joinpath("xkeysnail.py").read_text()
-        chromium = config.split('re.compile(r"^(Chromium|chatgpt|webchat)$")', 1)[1].split(
+        chromium = config.split(
+            're.compile(r"^(Chromium|Google-chrome|chatgpt|webchat)$")', 1
+        )[1].split(
             '"Chromium Emacs-like keys"', 1
         )[0]
         self.assertIn('K("C-r"): K("C-Shift-t")', chromium)
-        self.assertIn('re.compile(r"^(Chromium|chatgpt|webchat)$")', config)
+        self.assertIn('re.compile(r"^(Chromium|Google-chrome|chatgpt|webchat)$")', config)
         self.assertIn('K("LM-w"): K("C-w")', chromium)
         self.assertNotIn('K("C-t"):', chromium)
 
@@ -258,7 +265,7 @@ class RofiHisterTest(unittest.TestCase):
         self.assertEqual(fake_socket.connected, str(socket_path))
         self.assertEqual(
             fake_socket.sent,
-            b"START\0/tmp/work\0/usr/bin/chromium\0baidu.com",
+            b"START\0/tmp/work\0/usr/bin/google-chrome-stable\0baidu.com",
         )
         self.assertEqual(fake_socket.shutdown_mode, socket.SHUT_WR)
         self.assertEqual(fake_socket.timeout, 1)
@@ -315,17 +322,18 @@ class RofiHisterTest(unittest.TestCase):
 
     def test_runai_bypasses_chromium_wrapper(self):
         launcher = SCRIPT.with_name("runai").read_text()
-        self.assertIn("/usr/bin/chromium --user-data-dir=", launcher)
+        self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
+        self.assertNotIn("exec /usr/bin/chromium", launcher)
         self.assertNotIn("\nchromium ", launcher)
         self.assertNotIn("\n# chromium ", launcher)
 
-    def test_chromium_uses_store_extension_without_loading_unpackaged_copy(self):
+    def test_chromium_loads_local_extensions(self):
         launcher = SCRIPT.with_name("chromium").read_text()
         self.assertIn('if chromium-remote "$@"', launcher)
-        self.assertIn("exec /usr/bin/chromium", launcher)
-        self.assertNotIn("--load-extension", launcher)
+        self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
+        self.assertIn('--load-extension="$extension,$rofi_chrome_extension"', launcher)
 
-    def test_chromium_reuses_default_profile_and_switches_to_browser_group(self):
+    def test_chromium_reuses_main_profile_and_switches_to_browser_group(self):
         root = SCRIPT.parent.parent
         launcher = SCRIPT.with_name("chromium").read_text()
         qtile_config = (root / ".config/qtile/config.py").read_text()
@@ -340,23 +348,38 @@ class RofiHisterTest(unittest.TestCase):
             launcher,
         )
         self.assertIn("--disable-smooth-scrolling", launcher)
-        self.assertNotIn("--user-data-dir", launcher)
+        self.assertIn('--user-data-dir="$profile"', launcher)
         self.assertIn(
             "chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html",
             qtile_config,
         )
-        self.assertNotIn("aocepclkpgckjeikiphffdlileoaceec", qtile_config)
+        self.assertIn("aocepclkpgckjeikiphffdlileoaceec__bookmarks.html", qtile_config)
 
     def test_chromium_popups_float_and_match_telegram_geometry(self):
         root = SCRIPT.parent.parent
         qtile_config = (root / ".config/qtile/config.py").read_text()
         managed_hook = qtile_config.split("def after_window_created(client):", 1)[1]
-        self.assertIn('Match(wm_class="Chromium", role="pop-up")', qtile_config)
+        self.assertIn('Match(wm_class="Google-chrome", role="pop-up")', qtile_config)
         self.assertIn('client.get_wm_role() == "pop-up"', managed_hook)
         self.assertIn("int(screen.width * 0.7)", managed_hook)
         self.assertIn("int(screen.height * 0.8)", managed_hook)
         self.assertIn("int(screen.x + screen.width * 0.15)", managed_hook)
         self.assertIn("int(screen.y + screen.height * 0.1)", managed_hook)
+
+    def test_google_chrome_is_main_browser(self):
+        root = SCRIPT.parent.parent
+        launcher = SCRIPT.with_name("chromium").read_text()
+        remote = SCRIPT.with_name("chromium-remote").read_text()
+        qtile_config = (root / ".config/qtile/config.py").read_text()
+        restore = (root / "restore.sh").read_text()
+        self.assertIn('profile="$HOME/.config/google-chrome-main"', launcher)
+        self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
+        self.assertIn('PROFILE = Path.home() / ".config/google-chrome-main"', remote)
+        self.assertIn("--user-data-dir=\"$profile\"", launcher)
+        self.assertIn('"/usr/bin/google-chrome-stable"', remote)
+        self.assertIn('Match(wm_class="Google-chrome")', qtile_config)
+        self.assertIn(".config/google-chrome-main/NativeMessagingHosts", restore)
+        self.assertIn("/etc/opt/chrome/policies/managed", restore)
 
     def test_chromium_integration_names_and_launcher(self):
         self.assertEqual(module.BROWSER_CDP_PORT, 9222)
