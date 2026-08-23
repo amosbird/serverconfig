@@ -69,6 +69,18 @@ class QtileScratchpadTest(unittest.TestCase):
         self.assertEqual(self.config.count('Key([ctrl, alt], "b",'), 1)
         self.assertNotIn('Key([ctrl, alt], "b", lazy.spawn("scanqrcode"))', self.config)
 
+    def test_bookmark_toggle_moves_hidden_window_to_current_group_before_showing(self):
+        toggle = self.config.split("def toggle_scratchpad(name):", 1)[1].split(
+            "pending_inputstr", 1
+        )[0]
+        self.assertIn("current_group = qtile.current_group", toggle)
+        self.assertIn("dropdown.window.togroup(current_group.name)", toggle)
+        self.assertIn("current_group.toscreen()", toggle)
+        self.assertLess(
+            toggle.index("dropdown.window.togroup(current_group.name)"),
+            toggle.index("dropdown.show()"),
+        )
+
     def test_matching_bookmark_window_is_registered_before_generic_popup_geometry(self):
         managed = self.config.split("def after_window_created(client):", 1)[1]
         self.assertIn('if scratchpad_matches["bookmarks"].compare(client):', managed)

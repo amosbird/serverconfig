@@ -210,7 +210,11 @@ def toggle_scratchpad(name):
         if dropdown.window.has_focus:
             dropdown.hide()
             return
+        current_group = qtile.current_group
+        dropdown.window.togroup(current_group.name)
         dropdown.show()
+        if qtile.current_group is not current_group:
+            current_group.toscreen()
         dropdown.window.bring_to_front()
         dropdown.window.focus(warp=True)
 
