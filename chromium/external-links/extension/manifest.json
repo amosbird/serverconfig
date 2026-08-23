@@ -5,11 +5,8 @@
     "description": "Open external links from isolated web apps in the main Chromium profile.",
     "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn0HPFOWR2Q4meYlgofTTU2rJYPOOfkIml1xSPdd3V2tKOI5uPEYVZw+v3wf37CNSQze4v913r6cUQuV5DfiDLuRnFSj3+4EO7iGP4YVOQtkb/EMwkLiyL6wdL8IF+S2jMyCWJq+vcssFTAz+OSfrHLP8eT0lKa0SLCzODua0/JaSiHX40PNzxe6pBvUxapioPuapatcGrmOJIa/TygDtSWcky+JCJC6g/jdKJDynTbcgi2L9NKR/6F/HaM5oRGnP/3+7BY0EAqggqf6BY2mgikGsTvb2CkA2IrxpdqLFN/HlC0NUlNKA8+lhwTuRqKh5cFBGUcVZq8pjQLTjMbUcQQIDAQAB",
     "permissions": [
-        "clipboardWrite",
-        "downloads",
         "nativeMessaging",
         "notifications",
-        "offscreen",
         "tabs"
     ],
     "background": {

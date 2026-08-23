@@ -83,49 +83,14 @@ for (const [page, link, expected] of cases) {{
         self.assertIn("chrome.runtime.onMessage.addListener", background)
         self.assertIn("chrome.notifications.create", background)
 
-    def test_completed_download_is_copied_inside_the_extension(self):
-        background = CONTENT.with_name("background.js")
-        script = f"""
-const nativeCalls = [];
-const messages = [];
-let onChanged;
-global.chrome = {{
-    downloads: {{
-        onChanged: {{addListener: listener => onChanged = listener}},
-        search: async query => [{{filename: '/tmp/download name.txt'}}],
-    }},
-    offscreen: {{
-        Reason: {{CLIPBOARD: 'CLIPBOARD'}},
-        hasDocument: async () => false,
-        createDocument: async () => {{}},
-    }},
-    runtime: {{
-        lastError: undefined,
-        onMessage: {{addListener: () => {{}}}},
-        sendMessage: async message => messages.push(message),
-        sendNativeMessage: (...args) => nativeCalls.push(args),
-    }},
-    notifications: {{create: () => {{}}}},
-}};
-require({json.dumps(str(background))});
-(async () => {{
-    onChanged({{id: 7, state: {{current: 'in_progress'}}}});
-    onChanged({{id: 7, state: {{current: 'complete'}}}});
-    await new Promise(resolve => setImmediate(resolve));
-    if (nativeCalls.length !== 0) process.exit(1);
-    if (JSON.stringify(messages) !== JSON.stringify([
-        {{action: 'copyDownloadPath', text: '/tmp/download name.txt'}},
-    ])) process.exit(1);
-}})();
-"""
-        subprocess.run(["node", "-e", script], check=True)
-
-    def test_manifest_contains_internal_clipboard_support(self):
+    def test_external_links_extension_only_routes_links(self):
+        background = CONTENT.with_name("background.js").read_text()
         manifest = json.loads(MANIFEST.read_text())
-        self.assertIn("clipboardWrite", manifest["permissions"])
-        self.assertIn("offscreen", manifest["permissions"])
-        self.assertTrue(CONTENT.with_name("offscreen.html").exists())
-        self.assertTrue(CONTENT.with_name("offscreen.js").exists())
+        self.assertNotIn("chrome.downloads", background)
+        self.assertNotIn("chrome.offscreen", background)
+        self.assertNotIn("clipboardWrite", manifest["permissions"])
+        self.assertNotIn("downloads", manifest["permissions"])
+        self.assertNotIn("offscreen", manifest["permissions"])
 
 
 class NativeHostTest(unittest.TestCase):

@@ -85,10 +85,10 @@ for (const [url, expected] of cases) {{
             self.assertNotIn("router_state=", script)
             self.assertNotIn("Service Worker.stale", script)
 
-    def test_main_chromium_loads_router_and_registers_native_host(self):
+    def test_main_chromium_uses_installed_extensions_and_registers_native_host(self):
         launcher = CHROMIUM.read_text()
-        self.assertIn('--disable-extensions-except="$extension,', launcher)
-        self.assertIn('--load-extension="$extension,', launcher)
+        self.assertNotIn("--disable-extensions-except", launcher)
+        self.assertNotIn("--load-extension", launcher)
         self.assertIn("io.github.amosbird.browser_router.json", launcher)
 
     def test_main_browser_only_routes_links_into_managed_groups(self):

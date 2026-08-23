@@ -215,7 +215,12 @@ class RofiHisterTest(unittest.TestCase):
         native_manifest = (root / "rofi-chrome" / "io.github.amosbird.rofi.chrome.json").read_text()
         self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk", native_manifest)
         self.assertIn("aocepclkpgckjeikiphffdlileoaceec", native_manifest)
-        self.assertIn("openInBrowser", (root / "rofi-chrome" / "host" / "main.py").read_text())
+        host = (root / "rofi-chrome" / "host" / "main.py").read_text()
+        self.assertIn("openInBrowser", host)
+        self.assertIn('["xdg-open", url]', host)
+        self.assertNotIn("rofi-browser-blocklist", host)
+        self.assertNotIn('"copyDownload"', host)
+        self.assertNotIn('["fcp"', host)
         self.assertIn('"RestoreOnStartup": 1', policy)
         self.assertNotIn('"BookmarkBarEnabled"', policy)
         self.assertNotIn("aocepclkpgckjeikiphffdlileoaceec", policy)
@@ -327,11 +332,12 @@ class RofiHisterTest(unittest.TestCase):
         self.assertNotIn("\nchromium ", launcher)
         self.assertNotIn("\n# chromium ", launcher)
 
-    def test_chromium_loads_local_extensions(self):
+    def test_chromium_uses_installed_extensions(self):
         launcher = SCRIPT.with_name("chromium").read_text()
         self.assertIn('if chromium-remote "$@"', launcher)
         self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
-        self.assertIn('--load-extension="$extension,$rofi_chrome_extension"', launcher)
+        self.assertNotIn("--load-extension", launcher)
+        self.assertNotIn("--disable-extensions-except", launcher)
 
     def test_chromium_reuses_main_profile_and_switches_to_browser_group(self):
         root = SCRIPT.parent.parent
@@ -353,7 +359,7 @@ class RofiHisterTest(unittest.TestCase):
             "chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html",
             qtile_config,
         )
-        self.assertIn("aocepclkpgckjeikiphffdlileoaceec__bookmarks.html", qtile_config)
+        self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html", qtile_config)
 
     def test_chromium_popups_float_and_match_telegram_geometry(self):
         root = SCRIPT.parent.parent

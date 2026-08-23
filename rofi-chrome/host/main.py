@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 
 import json
-import os
-import pathlib
 import re
-import socket
 import struct
 import subprocess
 import sys
@@ -53,59 +50,32 @@ def rofi_select(param):
     return result.returncode, result.stdout.rstrip("\n")
 
 
-def blocklist_patterns():
-    try:
-        output = subprocess.run(
-            ["rofi-browser-blocklist.sh"],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        ).stdout
-        # The shared blocklist prints "label ::: regex"; only the regex is relevant here.
-        return [re.compile(line.rsplit(" ::: ", 1)[-1]) for line in output.splitlines() if line]
-    except (OSError, subprocess.SubprocessError, re.error):
-        return []
-
-
 def switch_tab(param):
-    patterns = blocklist_patterns()
-    visible = [
-        (index, option)
-        for index, option in enumerate(param["opts"])
-        if not any(pattern.search(option) for pattern in patterns)
-    ]
-    selected_options = [option for _, option in visible]
-    returncode, selected = rofi_select({**param, "opts": selected_options})
+    returncode, selected = rofi_select(param)
     if returncode != 0 or not selected:
         return ""
 
     try:
-        visible_index = selected_options.index(selected)
+        index = param["opts"].index(selected)
     except ValueError:
         return "g " + selected
 
-    original_index = visible[visible_index][0]
     tab_ids = param.get("tabIds", [])
-    if original_index < len(tab_ids):
-        return tab_ids[original_index]
+    if index < len(tab_ids):
+        return tab_ids[index]
     return selected.rsplit(" ::: ", 1)[-1]
 
 
 def list_downloads(param):
     returncode, selected = rofi_select(param)
-    if not selected:
+    if not selected or returncode not in (0, 10):
         return ""
-    if returncode == 0:
-        subprocess.Popen(["fcp", selected])
-    elif returncode == 10:
-        subprocess.Popen(["xdg-open", selected])
-    return ""
-
-
-def copy_download(path):
-    subprocess.Popen(["fcp", path])
-    return ""
+    try:
+        index = param["opts"].index(selected)
+        download_id = param["downloadIds"][index]
+    except (ValueError, IndexError, KeyError):
+        return ""
+    return {"action": "copy" if returncode == 0 else "open", "id": download_id}
 
 
 def select_option(param):
@@ -117,17 +87,8 @@ def open_in_browser(param):
     url = param.get("url", "")
     if not re.match(r"^https?://", url):
         return ""
-    display = os.environ.get("DISPLAY", ":0")
-    qtile_socket = pathlib.Path.home() / f".cache/qtile/qtilesocket.{display}"
-    message = b'[[["group","scratchpad"]],"dropdown_toggle",["bookmarks"],{},true]'
-    try:
-        with socket.socket(socket.AF_UNIX) as client:
-            client.connect(str(qtile_socket))
-            client.sendall(message)
-    except OSError:
-        pass
     subprocess.Popen(
-        ["/home/amos/scripts/chromium", url],
+        ["xdg-open", url],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -140,7 +101,6 @@ def handle_message(message):
     handlers = {
         "switchTab": switch_tab,
         "listDownloads": list_downloads,
-        "copyDownload": copy_download,
         "openHistory": select_option,
         "changeToPage": select_option,
         "openInBrowser": open_in_browser,

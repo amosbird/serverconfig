@@ -26,23 +26,3 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     openInTargetBrowser(message.url, message.sourceUrl || sender.tab?.url || "", sendResponse);
     return true;
 });
-
-async function copyDownloadPath(id) {
-    const [download] = await chrome.downloads.search({id});
-    if (!download?.filename) return;
-    if (!(await chrome.offscreen.hasDocument())) {
-        await chrome.offscreen.createDocument({
-            url: "offscreen.html",
-            reasons: [chrome.offscreen.Reason.CLIPBOARD],
-            justification: "Copy completed download paths",
-        });
-    }
-    await chrome.runtime.sendMessage({
-        action: "copyDownloadPath",
-        text: download.filename,
-    });
-}
-
-chrome.downloads.onChanged.addListener(delta => {
-    if (delta.state?.current === "complete") copyDownloadPath(delta.id);
-});

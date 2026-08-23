@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 
-url=chrome-extension://aocepclkpgckjeikiphffdlileoaceec/bookmarks.html
+url=chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/bookmarks.html
 exec /home/amos/scripts/chromium --app="$url"

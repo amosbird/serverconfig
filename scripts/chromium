@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 
-extension=/home/amos/git/serverconfig/chromium/external-links/extension
 profile="$HOME/.config/google-chrome-main"
-rofi_chrome_extension=/home/amos/git/rofi-chrome/extension
 host="$profile/NativeMessagingHosts/io.github.amosbird.browser_router.json"
 mkdir -p "$(dirname "$host")"
 ln -sf /home/amos/git/serverconfig/chromium/external-links/native-host.json "$host"
@@ -17,8 +15,6 @@ fi
 exec /usr/bin/google-chrome-stable \
     --user-data-dir="$profile" \
     --no-default-browser-check \
-    --disable-extensions-except="$extension,$rofi_chrome_extension" \
-    --load-extension="$extension,$rofi_chrome_extension" \
     --remote-debugging-port=9222 \
     --restore-last-session \
     --hide-crash-restore-bubble \
