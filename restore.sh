@@ -189,7 +189,7 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
-    sudo cp "$DIR"/network/SmartGateAgent /usr/lib/iOA/bin/SmartGateAgent
+    sudo cp "$DIR"/network/iOA /usr/lib/iOA/bin/iOA
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
     sudo systemctl daemon-reload

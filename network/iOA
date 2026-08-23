@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+ip_bin=${IOA_IP_BIN:-ip}
+reconfigure=${IOA_RECONFIGURE:-/home/amos/scripts/network-reconfigure}
+client=${IOA_CLIENT_BIN:-/usr/lib/iOA/bin/iOA.bin}
+retry=${IOA_RETRY_SECONDS:-1}
+
+until "$ip_bin" -4 route show table main default |
+    grep -qE ' dev (en|eth|wl)'; do
+    sleep "$retry"
+done
+
+"$reconfigure" || exit
+
+exec -a firefox "$client" "$@"
