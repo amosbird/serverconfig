@@ -1,0 +1,12 @@
+[Unit]
+Description=Prefer Bluetooth for default audio and existing application streams
+After=pipewire-pulse.service wireplumber.service bluetooth.target
+PartOf=pipewire-pulse.service
+
+[Service]
+ExecStart=/home/amos/scripts/bluetooth-audio-default
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=pipewire-pulse.service

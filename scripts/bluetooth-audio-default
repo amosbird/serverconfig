@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -u
+
+route_bluetooth() {
+    local id name stream current default
+
+    read -r id name _ < <(pactl list sinks short 2>/dev/null | awk '$2 ~ /^bluez_output\./ { print; exit }')
+    if [[ -n ${name:-} ]]; then
+        default=$(pactl get-default-sink 2>/dev/null) || default=
+        [[ $default == "$name" ]] || pactl set-default-sink "$name"
+        while read -r stream current _; do
+            [[ $current == "$id" ]] || pactl move-sink-input "$stream" "$name" || true
+        done < <(pactl list sink-inputs short 2>/dev/null)
+    fi
+
+    id=
+    name=
+    read -r id name _ < <(pactl list sources short 2>/dev/null | awk '$2 ~ /^bluez_input\./ { print; exit }')
+    if [[ -n ${name:-} ]]; then
+        default=$(pactl get-default-source 2>/dev/null) || default=
+        [[ $default == "$name" ]] || pactl set-default-source "$name"
+        while read -r stream current _; do
+            [[ $current == "$id" ]] || pactl move-source-output "$stream" "$name" || true
+        done < <(pactl list source-outputs short 2>/dev/null)
+    fi
+}
+
+route_bluetooth
+[[ ${1:-} == --once ]] && exit
+while true; do
+    pactl subscribe 2>/dev/null | while IFS= read -r event; do
+        case $event in
+        *"on card"*|*"on server"*|*"on sink"*|*"on source"*|*"on sink-input"*|*"on source-output"*)
+            # shortcut: one preferred Bluetooth headset; use an address allowlist for multiple headsets.
+            route_bluetooth
+            ;;
+        esac
+    done
+    sleep 1
+done

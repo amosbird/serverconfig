@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+set -u
+
+mute_led_glob=${MUTE_LED_GLOB:-/sys/class/leds/*:mute/brightness}
+micmute_led_glob=${MICMUTE_LED_GLOB:-/sys/class/leds/*:micmute/brightness}
+
+write_leds() {
+    local glob=$1 value=$2 led
+    # shortcut: Lenovo exposes writable mute LEDs with stable suffixes; use udev if names diverge.
+    for led in $glob; do
+        [[ -w $led ]] && printf '%s' "$value" >"$led" 2>/dev/null || true
+    done
+}
+
+sync_leds() {
+    local muted
+    muted=$(pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null | awk '{ print $2 }')
+    [[ $muted == yes ]] && write_leds "$mute_led_glob" 1 || write_leds "$mute_led_glob" 0
+
+    muted=$(pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null | awk '{ print $2 }')
+    [[ $muted == yes ]] && write_leds "$micmute_led_glob" 1 || write_leds "$micmute_led_glob" 0
+}
+
+sync_leds
+[[ ${1:-} == --once ]] && exit
+
+while true; do
+    pactl subscribe 2>/dev/null | while IFS= read -r event; do
+        case $event in
+        *"on server"*|*"on sink"*|*"on source"*) sync_leds ;;
+        esac
+    done
+    sync_leds
+    sleep 1
+done

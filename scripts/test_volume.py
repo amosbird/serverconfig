@@ -69,6 +69,7 @@ if [[ $* == info ]]; then printf 'Default Sink: bluez_output.C0_DA_5E_EC_FB_7F.1
 
     def test_mute_notification_distinguishes_mute_and_unmute(self):
         script = SCRIPT.read_text()
+        self.assertIn("audio-mute-led --once", script)
         self.assertIn("set-sink-input-mute", script)
         self.assertIn("Muted", script)
         self.assertIn("Unmuted", script)

@@ -1,10 +1,10 @@
 [Unit]
-Description=Synchronize Bluetooth microphone availability LEDs
+Description=Synchronize speaker and microphone mute LEDs
 After=pipewire-pulse.service wireplumber.service
 PartOf=pipewire-pulse.service
 
 [Service]
-ExecStart=/home/amos/scripts/bluetooth-profile-led
+ExecStart=/home/amos/scripts/audio-mute-led
 Restart=always
 RestartSec=1
 

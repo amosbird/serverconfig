@@ -6,6 +6,8 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
+BLUETOOTH_AUDIO = ROOT / "scripts/bluetooth-audio-default"
+BLUETOOTH_AUDIO_SERVICE = ROOT / "systemd/bluetooth-audio-default.service"
 QTILE = ROOT / ".config/qtile/config.py"
 
 
@@ -21,6 +23,30 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertIn(
             "pipewire.service pipewire-pulse.service wireplumber.service", restore
         )
+
+    def test_wireplumber_prefers_bluetooth_microphones(self):
+        config = WIREPLUMBER.read_text()
+        self.assertIn('node.name = "~alsa_input.*"', config)
+        self.assertIn("priority.session = 2000", config)
+
+    def test_wireplumber_moves_streams_when_default_changes(self):
+        config = WIREPLUMBER.read_text()
+        self.assertIn("linking.follow-default-target = true", config)
+        self.assertIn("node.stream.restore-target = false", config)
+
+    def test_bluetooth_default_service_routes_existing_app_streams(self):
+        script = BLUETOOTH_AUDIO.read_text()
+        service = BLUETOOTH_AUDIO_SERVICE.read_text()
+        restore = RESTORE.read_text()
+        self.assertIn("pactl set-default-sink", script)
+        self.assertIn("pactl set-default-source", script)
+        self.assertNotIn("set-sink-mute", script)
+        self.assertIn("pactl move-sink-input", script)
+        self.assertIn("pactl move-source-output", script)
+        self.assertIn("pactl subscribe", script)
+        self.assertIn("ExecStart=/home/amos/scripts/bluetooth-audio-default", service)
+        self.assertIn("enable --now bluetooth-audio-default.service", restore)
+        self.assertIn("wpctl settings -d node.stream.restore-target", restore)
 
     def test_wireplumber_keeps_bluetooth_in_hfp_msbc(self):
         config = WIREPLUMBER.read_text()
