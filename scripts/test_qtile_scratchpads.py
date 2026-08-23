@@ -53,7 +53,8 @@ class QtileScratchpadTest(unittest.TestCase):
         self.assertTrue(launcher.exists())
         source = launcher.read_text()
         self.assertIn('--app="$url"', source)
-        self.assertIn("chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/bookmarks.html", source)
+        self.assertIn("rofi-chrome-mode id", source)
+        self.assertIn('chrome-extension://$extension_id/bookmarks.html', source)
         self.assertNotIn("--no-startup-window", source)
         self.assertNotIn("/json/version", source)
         self.assertNotIn("--class", source)
@@ -62,7 +63,8 @@ class QtileScratchpadTest(unittest.TestCase):
             'Key([ctrl, alt], "b", toggle_scratchpad("bookmarks"))',
             self.config,
         )
-        self.assertIn('"bookmarks": Match(wm_class="jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html")', self.config)
+        self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html", self.config)
+        self.assertIn("aocepclkpgckjeikiphffdlileoaceec__bookmarks.html", self.config)
         self.assertIn('"bookmark-manager",', self.config)
         self.assertEqual(self.config.count('Key([ctrl, alt], "b",'), 1)
         self.assertNotIn('Key([ctrl, alt], "b", lazy.spawn("scanqrcode"))', self.config)

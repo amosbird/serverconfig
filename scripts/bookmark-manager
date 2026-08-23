@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 
-url=chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/bookmarks.html
+extension_id=$(rofi-chrome-mode id)
+url="chrome-extension://$extension_id/bookmarks.html"
 exec /home/amos/scripts/chromium --app="$url"

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT=$(realpath "${BASH_SOURCE[0]}")
+ROOT=$(cd "$(dirname "$SCRIPT")/.." && pwd)
+STORE_ID=jpgfhlaplofoaempbhliigmjbpofeghk
+DEV_ID=aocepclkpgckjeikiphffdlileoaceec
+STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/rofi-chrome
+MODE_FILE=$STATE_DIR/mode
+POLICY_SOURCE="$ROOT/chromium/extensions-policy.json"
+POLICY_TARGET=/etc/opt/chrome/policies/managed/extensions.json
+
+mode() {
+    if [[ -f $MODE_FILE ]]; then
+        read -r selected < "$MODE_FILE"
+        [[ $selected == dev || $selected == store ]] && printf '%s\n' "$selected" && return
+    fi
+    printf 'dev\n'
+}
+
+extension_id() {
+    if [[ $(mode) == dev ]]; then
+        printf '%s\n' "$DEV_ID"
+    else
+        printf '%s\n' "$STORE_ID"
+    fi
+}
+
+policy() {
+    python3 - "$POLICY_SOURCE" "$(mode)" "$STORE_ID" "$DEV_ID" <<'PY'
+import json
+import pathlib
+import sys
+
+path, mode, store_id, dev_id = sys.argv[1:]
+policy = json.loads(pathlib.Path(path).read_text())
+settings = policy.setdefault("ExtensionSettings", {})
+if mode == "dev":
+    settings[store_id] = {"installation_mode": "blocked"}
+    settings[dev_id] = {"installation_mode": "allowed"}
+else:
+    settings[store_id] = {
+        "installation_mode": "normal_installed",
+        "update_url": "https://clients2.google.com/service/update2/crx",
+    }
+    settings[dev_id] = {"installation_mode": "blocked"}
+print(json.dumps(policy, indent=4))
+PY
+}
+
+install_policy() {
+    policy | sudo install -Dm644 /dev/stdin "$POLICY_TARGET"
+}
+
+case ${1:-status} in
+    dev|store)
+        mkdir -p "$STATE_DIR"
+        printf '%s\n' "$1" > "$MODE_FILE"
+        install_policy
+        printf 'Rofi Chrome mode: %s (%s)\n' "$1" "$(extension_id)"
+        printf 'Reload chrome://policy; Chrome applies the selected extension policy.\n'
+        ;;
+    status)
+        printf '%s\n' "$(mode)"
+        ;;
+    id)
+        extension_id
+        ;;
+    policy)
+        policy
+        ;;
+    install-policy)
+        mkdir -p "$STATE_DIR"
+        [[ -f $MODE_FILE ]] || printf 'dev\n' > "$MODE_FILE"
+        install_policy
+        ;;
+    *)
+        printf 'usage: %s {dev|store|status|id|policy|install-policy}\n' "$0" >&2
+        exit 2
+        ;;
+esac

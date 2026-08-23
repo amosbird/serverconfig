@@ -161,8 +161,7 @@ else
 fi
 
 if [[ -n $GUI ]]; then
-    sudo install -Dm644 "$DIR/chromium/extensions-policy.json" \
-        /etc/opt/chrome/policies/managed/extensions.json
+    "$DIR/scripts/rofi-chrome-mode" install-policy
     install -Dm755 "$DIR/rofi-chrome/host/main.py" \
         "$HOME/.local/share/rofi-chrome/host/main.py"
     install -Dm644 "$DIR/rofi-chrome/io.github.amosbird.rofi.chrome.json" \

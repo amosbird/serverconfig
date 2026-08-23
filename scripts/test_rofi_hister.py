@@ -4,6 +4,7 @@ import importlib.util
 import json
 import pathlib
 import socket
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -224,7 +225,7 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn('"RestoreOnStartup": 1', policy)
         self.assertNotIn('"BookmarkBarEnabled"', policy)
         self.assertNotIn("aocepclkpgckjeikiphffdlileoaceec", policy)
-        self.assertIn("extensions-policy.json", restore)
+        self.assertIn("rofi-chrome-mode", restore)
         gui_restore = restore[restore.index("if [[ -n $GUI ]]") :]
         self.assertIn("rofi-chrome/host/main.py", gui_restore)
         self.assertIn("io.github.amosbird.rofi.chrome.json", gui_restore)
@@ -339,6 +340,56 @@ class RofiHisterTest(unittest.TestCase):
         self.assertNotIn("--load-extension", launcher)
         self.assertNotIn("--disable-extensions-except", launcher)
 
+    def test_rofi_chrome_mode_switches_policy_without_loading_extensions(self):
+        root = SCRIPT.parent.parent
+        switcher = root / "scripts/rofi-chrome-mode"
+        source = switcher.read_text()
+        restore = (root / "restore.sh").read_text()
+        self.assertIn("dev|store|status|id", source)
+        self.assertIn("MODE_FILE", source)
+        self.assertNotIn("--load-extension", source)
+        self.assertIn('"$DIR/scripts/rofi-chrome-mode" install-policy', restore)
+
+        with tempfile.TemporaryDirectory() as temp:
+            env = {"HOME": temp, "XDG_STATE_HOME": f"{temp}/state"}
+            dev_policy = json.loads(
+                subprocess.run(
+                    [switcher, "policy"], env=env, text=True, capture_output=True, check=True
+                ).stdout
+            )
+            self.assertEqual(
+                dev_policy["ExtensionSettings"]["jpgfhlaplofoaempbhliigmjbpofeghk"][
+                    "installation_mode"
+                ],
+                "blocked",
+            )
+            self.assertEqual(
+                dev_policy["ExtensionSettings"]["aocepclkpgckjeikiphffdlileoaceec"][
+                    "installation_mode"
+                ],
+                "allowed",
+            )
+            mode_dir = pathlib.Path(env["XDG_STATE_HOME"]) / "rofi-chrome"
+            mode_dir.mkdir(parents=True)
+            (mode_dir / "mode").write_text("store\n")
+            store_policy = json.loads(
+                subprocess.run(
+                    [switcher, "policy"], env=env, text=True, capture_output=True, check=True
+                ).stdout
+            )
+            self.assertEqual(
+                store_policy["ExtensionSettings"]["jpgfhlaplofoaempbhliigmjbpofeghk"][
+                    "installation_mode"
+                ],
+                "normal_installed",
+            )
+            self.assertEqual(
+                store_policy["ExtensionSettings"]["aocepclkpgckjeikiphffdlileoaceec"][
+                    "installation_mode"
+                ],
+                "blocked",
+            )
+
     def test_chromium_reuses_main_profile_and_switches_to_browser_group(self):
         root = SCRIPT.parent.parent
         launcher = SCRIPT.with_name("chromium").read_text()
@@ -385,7 +436,7 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn('"/usr/bin/google-chrome-stable"', remote)
         self.assertIn('Match(wm_class="Google-chrome")', qtile_config)
         self.assertIn(".config/google-chrome-main/NativeMessagingHosts", restore)
-        self.assertIn("/etc/opt/chrome/policies/managed", restore)
+        self.assertIn("rofi-chrome-mode", restore)
 
     def test_chromium_integration_names_and_launcher(self):
         self.assertEqual(module.BROWSER_CDP_PORT, 9222)
