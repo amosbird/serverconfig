@@ -1,7 +1,22 @@
 #!/usr/bin/env fish
 
-set files $argv
-for i in (seq (count $files))
-    set files[$i] (realpath $files[$i])
+if test (count $argv) -eq 0
+    printf 'usage: fcp FILE...\n' >&2
+    exit 2
 end
+
+set files
+for file in $argv
+    if not test -e "$file"
+        printf 'fcp: file does not exist: %s\n' "$file" >&2
+        exit 1
+    end
+    # shortcut: copyUriList uses newline-delimited paths, so reject the rare unrepresentable name.
+    if string match -rq '\n' -- "$file"
+        printf 'fcp: filenames containing newlines are unsupported\n' >&2
+        exit 1
+    end
+    set -a files (realpath -- "$file")
+end
+
 copyq copyUriList (string join \n $files | string collect)
