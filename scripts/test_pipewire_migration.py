@@ -10,10 +10,11 @@ QTILE = ROOT / ".config/qtile/config.py"
 
 
 class PipeWireMigrationTest(unittest.TestCase):
-    def test_restore_installs_pipewire_stack_not_pulseaudio(self):
+    def test_restore_enables_pipewire_stack_not_pulseaudio(self):
         restore = RESTORE.read_text()
-        self.assertIn(
-            "pipewire-audio pipewire-alsa pipewire-pulse wireplumber", restore
+        self.assertNotRegex(
+            restore,
+            r"(?m)^\s+pipewire-audio pipewire-alsa pipewire-pulse wireplumber$",
         )
         self.assertNotIn("pacman -S --needed --noconfirm pulseaudio-bluetooth", restore)
         self.assertIn("systemctl --user enable --now", restore)
