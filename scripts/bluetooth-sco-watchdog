@@ -10,7 +10,6 @@ ADDRESS = os.environ.get("BLUETOOTH_SCO_ADDRESS", "C0:DA:5E:EC:FB:7F")
 SOURCE = f"bluez_input.{ADDRESS}"
 CARD = f"bluez_card.{ADDRESS.replace(':', '_')}"
 PROBE_NAME = "bluetooth-sco-watchdog"
-CONFERENCE_NAMES = {"Wemeet VoiceEngine"}
 CHECK_INTERVAL = 5
 CONFIRM_DELAY = 2
 COOLDOWN = 60
@@ -23,13 +22,13 @@ def run(*args, timeout=5):
     )
 
 
-def has_conference_capture(outputs):
+def has_active_capture(outputs, source_index):
     for output in outputs:
         properties = output.get("properties", {})
         name = properties.get("application.name", "")
         if (
-            name != PROBE_NAME
-            and name in CONFERENCE_NAMES
+            output.get("source") == source_index
+            and name != PROBE_NAME
             and not output.get("corked", False)
         ):
             return True
@@ -41,13 +40,19 @@ def samples_are_zero(data):
 
 
 class SystemOps:
-    def conference_active(self):
-        result = run("pactl", "--format=json", "list", "source-outputs")
-        if result.returncode:
+    def capture_active(self):
+        sources = run("pactl", "--format=json", "list", "sources")
+        outputs = run("pactl", "--format=json", "list", "source-outputs")
+        if sources.returncode or outputs.returncode:
             return False
         try:
-            return has_conference_capture(json.loads(result.stdout))
-        except json.JSONDecodeError:
+            source_index = next(
+                source["index"]
+                for source in json.loads(sources.stdout)
+                if source.get("name") == SOURCE
+            )
+            return has_active_capture(json.loads(outputs.stdout), source_index)
+        except (json.JSONDecodeError, KeyError, StopIteration):
             return False
 
     def source_muted(self):
@@ -102,7 +107,7 @@ class Watchdog:
     def check_once(self):
         if self.ops.monotonic() - self.last_recovery < COOLDOWN:
             return
-        if not self.ops.conference_active():
+        if not self.ops.capture_active():
             return
         if not self.ops.device_connected() or not self.ops.hfp_active():
             return
@@ -110,7 +115,7 @@ class Watchdog:
             return
 
         self.ops.sleep(CONFIRM_DELAY)
-        if not self.ops.conference_active() or self.ops.source_muted():
+        if not self.ops.capture_active() or self.ops.source_muted():
             return
         if not self.ops.device_connected() or not self.ops.hfp_active():
             return

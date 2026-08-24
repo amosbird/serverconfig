@@ -75,7 +75,8 @@ class PipeWireMigrationTest(unittest.TestCase):
         script = SCO_WATCHDOG.read_text()
         service = SCO_WATCHDOG_SERVICE.read_text()
         restore = RESTORE.read_text()
-        self.assertIn('CONFERENCE_NAMES = {"Wemeet VoiceEngine"}', script)
+        self.assertNotIn("CONFERENCE_NAMES", script)
+        self.assertIn("def has_active_capture(outputs, source_index):", script)
         self.assertIn("ExecStart=/home/amos/scripts/bluetooth-sco-watchdog", service)
         self.assertIn("enable --now bluetooth-sco-watchdog.service", restore)
 

@@ -21,7 +21,7 @@ class FakeOps:
     def __init__(self, probes=(True, True)):
         self.probes = iter(probes)
         self.muted = False
-        self.conference = True
+        self.capture = True
         self.profile = True
         self.connected = True
         self.connect_results = [True]
@@ -30,8 +30,8 @@ class FakeOps:
         self.sleeps = []
         self.now = 100.0
 
-    def conference_active(self):
-        return self.conference
+    def capture_active(self):
+        return self.capture
 
     def source_muted(self):
         return self.muted
@@ -64,9 +64,9 @@ class BluetoothScoWatchdogTest(unittest.TestCase):
     def setUpClass(cls):
         cls.module = load_watchdog()
 
-    def test_skips_without_real_conference_capture(self):
+    def test_skips_without_real_microphone_capture(self):
         ops = FakeOps()
-        ops.conference = False
+        ops.capture = False
         self.module.Watchdog(ops).check_once()
         self.assertEqual(ops.disconnects, 0)
 
@@ -100,28 +100,45 @@ class BluetoothScoWatchdogTest(unittest.TestCase):
         self.assertTrue(self.module.samples_are_zero(b"\0\0\0\0"))
         self.assertFalse(self.module.samples_are_zero(b"\1\0\0\0"))
 
-    def test_probe_stream_is_not_a_real_capture(self):
+    def test_any_active_application_on_freeclip_is_a_real_capture(self):
         outputs = [
             {
+                "source": 42,
+                "properties": {"application.name": "Google Chrome"},
+                "corked": False,
+            },
+            {
+                "source": 42,
+                "properties": {"application.name": "Microsoft Teams"},
+                "corked": False,
+            },
+        ]
+        self.assertTrue(self.module.has_active_capture(outputs, 42))
+
+    def test_probe_and_other_sources_are_not_real_capture(self):
+        outputs = [
+            {
+                "source": 42,
                 "properties": {"application.name": "bluetooth-sco-watchdog"},
                 "corked": False,
             },
             {
-                "properties": {"application.name": "Wemeet VoiceEngine"},
+                "source": 7,
+                "properties": {"application.name": "Google Chrome"},
                 "corked": False,
             },
         ]
-        self.assertTrue(self.module.has_conference_capture(outputs))
-        self.assertFalse(self.module.has_conference_capture(outputs[:1]))
+        self.assertFalse(self.module.has_active_capture(outputs, 42))
 
     def test_corked_conference_capture_is_inactive(self):
         outputs = [
             {
-                "properties": {"application.name": "Wemeet VoiceEngine"},
+                "source": 42,
+                "properties": {"application.name": "Firefox"},
                 "corked": True,
             }
         ]
-        self.assertFalse(self.module.has_conference_capture(outputs))
+        self.assertFalse(self.module.has_active_capture(outputs, 42))
 
 
 if __name__ == "__main__":
