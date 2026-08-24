@@ -722,32 +722,7 @@
   (define-key evil-insert-state-map (kbd "C-w") #'amos/delete-backward-word)
   (define-key evil-insert-state-map (kbd "DEL") #'amos/delete-backward-char)
   (define-key evil-insert-state-map (kbd "C-d") #'amos/delete-char)
-  (define-key evil-insert-state-map (kbd "C-k") #'amos/kill-line)
-
-  ;; Clipboard — GUI uses xclip, terminal uses OSC 52 escape sequences
-  (defun amos/osc52-select-text (text &rest _)
-    "Send TEXT to terminal clipboard via OSC 52 escape sequence."
-    (let ((b64-length (+ (* (length text) 3) 2)))
-      (if (<= b64-length 100000)
-          (let* ((b64 (base64-encode-string
-                       (encode-coding-string text 'utf-8) t))
-                 (osc (concat "\e]52;c;" b64 "\07"))
-                 (escaped (if (getenv "TMUX")
-                              (concat "\033Ptmux;\033" osc "\033\\")
-                            osc)))
-            (send-string-to-terminal escaped))
-        (message "Selection too long for OSC 52 (%d bytes)" b64-length))))
-
-  (defun amos/x-select-text (text &rest _)
-    "Copy TEXT to X11 clipboard via xclip."
-    (with-temp-buffer
-      (insert text)
-      (call-process-region (point-min) (point-max)
-                           "xclip" nil nil nil "-selection" "clipboard")))
-
-  (if (display-graphic-p)
-      (setq interprogram-cut-function #'amos/x-select-text)
-    (setq interprogram-cut-function #'amos/osc52-select-text)))
+  (define-key evil-insert-state-map (kbd "C-k") #'amos/kill-line))
 
 ;; Terminal cursor shape+color follows Evil state
 ;; Uses amosbird/evil-terminal-cursor-changer fork (supports OSC 12 color)
