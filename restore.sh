@@ -161,6 +161,7 @@ else
 fi
 
 if [[ -n $GUI ]]; then
+    sudo install -d -m 755 /etc/opt /etc/opt/chrome
     "$DIR/scripts/rofi-chrome-mode" install-policy
     install -Dm755 "$DIR/rofi-chrome/host/main.py" \
         "$HOME/.local/share/rofi-chrome/host/main.py"

@@ -1,3 +1,31 @@
+async function configureSiteLanguages() {
+    const response = await fetch(chrome.runtime.getURL("site-languages.json"));
+    const config = await response.json();
+    const oldRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const addRules = Object.entries(config).map(([language, domains], index) => ({
+        id: index + 1,
+        priority: 1,
+        action: {
+            type: "modifyHeaders",
+            requestHeaders: [{
+                header: "accept-language",
+                operation: "set",
+                value: language,
+            }],
+        },
+        condition: {
+            requestDomains: domains,
+            resourceTypes: ["main_frame", "sub_frame", "xmlhttprequest"],
+        },
+    }));
+    await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: oldRules.map(rule => rule.id),
+        addRules,
+    });
+}
+
+configureSiteLanguages();
+
 function sendNativeMessage(message, callback = () => {}) {
     chrome.runtime.sendNativeMessage(
         "io.github.amosbird.browser_router",

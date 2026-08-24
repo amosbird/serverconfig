@@ -83,6 +83,17 @@ for (const [page, link, expected] of cases) {{
         self.assertIn("chrome.runtime.onMessage.addListener", background)
         self.assertIn("chrome.notifications.create", background)
 
+    def test_site_languages_are_managed_by_independent_config(self):
+        manifest = json.loads(MANIFEST.read_text())
+        config = json.loads(MANIFEST.with_name("site-languages.json").read_text())
+        background = CONTENT.with_name("background.js").read_text()
+        self.assertIn("declarativeNetRequest", manifest["permissions"])
+        self.assertNotIn("declarative_net_request", manifest)
+        self.assertEqual(config, {"zh-CN,zh;q=0.9": ["woa.com"]})
+        self.assertIn('fetch(chrome.runtime.getURL("site-languages.json"))', background)
+        self.assertIn("chrome.declarativeNetRequest.updateDynamicRules", background)
+        self.assertIn("requestDomains: domains", background)
+
     def test_external_links_extension_only_routes_links(self):
         background = CONTENT.with_name("background.js").read_text()
         manifest = json.loads(MANIFEST.read_text())

@@ -349,6 +349,7 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn("MODE_FILE", source)
         self.assertNotIn("--load-extension", source)
         self.assertIn('"$DIR/scripts/rofi-chrome-mode" install-policy', restore)
+        self.assertIn("sudo install -d -m 755 /etc/opt /etc/opt/chrome", restore)
 
         with tempfile.TemporaryDirectory() as temp:
             env = {"HOME": temp, "XDG_STATE_HOME": f"{temp}/state"}
@@ -437,6 +438,15 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn('Match(wm_class="Google-chrome")', qtile_config)
         self.assertIn(".config/google-chrome-main/NativeMessagingHosts", restore)
         self.assertIn("rofi-chrome-mode", restore)
+
+    def test_default_browser_uses_chromium_wrapper(self):
+        root = SCRIPT.parent.parent
+        mimeapps = (root / ".config/mimeapps.list").read_text()
+        desktop = (root / ".local/share/applications/chromium-amos.desktop").read_text()
+        self.assertIn("x-scheme-handler/http=chromium-amos.desktop;", mimeapps)
+        self.assertIn("x-scheme-handler/https=chromium-amos.desktop;", mimeapps)
+        self.assertIn("text/html=chromium-amos.desktop;", mimeapps)
+        self.assertIn("Exec=/home/amos/scripts/chromium %U", desktop)
 
     def test_chromium_integration_names_and_launcher(self):
         self.assertEqual(module.BROWSER_CDP_PORT, 9222)
