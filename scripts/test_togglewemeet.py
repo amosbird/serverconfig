@@ -17,6 +17,11 @@ class ToggleWemeetTest(unittest.TestCase):
         self.assertLess(show_group, process_check)
         self.assertLess(show_group, launch)
 
+    def test_does_not_restart_wemeet_for_duplicate_main_windows(self):
+        script = SCRIPT.read_text()
+        self.assertNotIn("len(wemeet_windows) > 1", script)
+        self.assertNotIn("next_window()", script)
+
     def test_restarts_wemeet_when_process_has_no_window(self):
         script = SCRIPT.read_text()
         self.assertIn("client.windows()", script)
