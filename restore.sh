@@ -131,34 +131,7 @@ done
 done
 ln -sf gopass "$HOME/.local/bin/pass"
 
-MAMBA_PREFIX="$HOME/.mambatools"
-MAMBA_CHANNELS=(
-    --repodata-ttl 0
-    --strict-channel-priority
-    -c https://github.com/amosbird/conda-channel/releases/download
-    -c https://conda.anaconda.org/conda-forge
-)
-MAMBA_PACKAGES=(
-    ab-emacs ab-tmux ab-htop-vim ab-dtach emacs-tree-sitter-grammars gnupg ncdu
-    gcc gxx gdb cmake make ninja lld lldb go nodejs clang clang-format
-    rust cargo-zigbuild
-    rust-std-aarch64-apple-darwin
-    rust-std-x86_64-apple-darwin
-    rust-std-x86_64-pc-windows-gnu
-    zig
-    clang_osx-64 cctools_osx-64 ld64_osx-64
-    'sdkroot_env_osx-64=15.5'
-)
-
-if [[ -f "$MAMBA_PREFIX/conda-meta/history" ]]; then
-    "$HOME/.local/bin/micromamba" install -y -p "$MAMBA_PREFIX" \
-        "${MAMBA_CHANNELS[@]}" "${MAMBA_PACKAGES[@]}"
-    "$HOME/.local/bin/micromamba" update -y -p "$MAMBA_PREFIX" \
-        "${MAMBA_CHANNELS[@]}" "${MAMBA_PACKAGES[@]}"
-else
-    "$HOME/.local/bin/micromamba" create -y -p "$MAMBA_PREFIX" \
-        "${MAMBA_CHANNELS[@]}" "${MAMBA_PACKAGES[@]}"
-fi
+"$HOME/scripts/update-mambatools"
 
 if [[ -n $GUI ]]; then
     sudo install -d -m 755 /etc/opt /etc/opt/chrome
