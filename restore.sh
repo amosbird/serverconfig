@@ -218,9 +218,6 @@ if [[ -n $GUI ]]; then
         "$HOME/.config/systemd/user/bluetooth-audio-default.service"
     install -Dm644 "$DIR/systemd/bluetooth-sco-watchdog.service" \
         "$HOME/.config/systemd/user/bluetooth-sco-watchdog.service"
-    systemctl --user disable --now bluetooth-profile-led.service 2>/dev/null || true
-    systemctl --user disable --now microphone-mute-led.service 2>/dev/null || true
-    rm -f "$HOME/.config/systemd/user/"{bluetooth-profile-led,microphone-mute-led}.service
     systemctl --user daemon-reload
     systemctl --user enable --now audio-mute-led.service
     systemctl --user enable --now bluetooth-audio-default.service

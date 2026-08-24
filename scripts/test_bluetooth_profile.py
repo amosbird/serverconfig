@@ -44,13 +44,13 @@ class MicrophoneMuteTest(unittest.TestCase):
         self.assertNotIn("bluez", script)
         self.assertNotIn("list cards", script)
 
-    def test_restore_replaces_old_led_service(self):
+    def test_restore_uses_current_led_service(self):
         restore = (ROOT / "restore.sh").read_text()
         self.assertIn("systemd/audio-mute-led.service", restore)
         self.assertTrue((ROOT / "scripts/audio-mute-state").exists())
         self.assertIn("enable --now audio-mute-led.service", restore)
-        self.assertIn("disable --now bluetooth-profile-led.service", restore)
-        self.assertIn("disable --now microphone-mute-led.service", restore)
+        self.assertNotIn("bluetooth-profile-led.service", restore)
+        self.assertNotIn("microphone-mute-led.service", restore)
 
     def test_led_service_tracks_pipewire_events(self):
         service = LED_SERVICE.read_text()
