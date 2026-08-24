@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+
+import json
+import logging
+import os
+import subprocess
+import time
+
+ADDRESS = os.environ.get("BLUETOOTH_SCO_ADDRESS", "C0:DA:5E:EC:FB:7F")
+SOURCE = f"bluez_input.{ADDRESS}"
+CARD = f"bluez_card.{ADDRESS.replace(':', '_')}"
+PROBE_NAME = "bluetooth-sco-watchdog"
+CONFERENCE_NAMES = {"Wemeet VoiceEngine"}
+CHECK_INTERVAL = 5
+CONFIRM_DELAY = 2
+COOLDOWN = 60
+RECONNECT_DELAYS = (0.5, 1.5, 3.5)
+
+
+def run(*args, timeout=5):
+    return subprocess.run(
+        args, capture_output=True, check=False, timeout=timeout, text=True
+    )
+
+
+def has_conference_capture(outputs):
+    for output in outputs:
+        properties = output.get("properties", {})
+        name = properties.get("application.name", "")
+        if (
+            name != PROBE_NAME
+            and name in CONFERENCE_NAMES
+            and not output.get("corked", False)
+        ):
+            return True
+    return False
+
+
+def samples_are_zero(data):
+    return bool(data) and not any(data)
+
+
+class SystemOps:
+    def conference_active(self):
+        result = run("pactl", "--format=json", "list", "source-outputs")
+        if result.returncode:
+            return False
+        try:
+            return has_conference_capture(json.loads(result.stdout))
+        except json.JSONDecodeError:
+            return False
+
+    def source_muted(self):
+        result = run("pactl", "get-source-mute", SOURCE)
+        return result.returncode != 0 or "yes" in result.stdout.lower()
+
+    def hfp_active(self):
+        result = run("pactl", "list", "cards")
+        card = result.stdout.partition(f"Name: {CARD}")[2]
+        card = card.partition("\n\n")[0]
+        return "Active Profile: headset-head-unit" in card
+
+    def device_connected(self):
+        result = run("bluetoothctl", "info", ADDRESS)
+        return result.returncode == 0 and "Connected: yes" in result.stdout
+
+    def probe_is_zero(self):
+        command = [
+            "timeout",
+            "1s",
+            "parecord",
+            f"--device={SOURCE}",
+            "--raw",
+            "--format=s16le",
+            "--rate=16000",
+            "--channels=1",
+            f"--property=application.name={PROBE_NAME}",
+        ]
+        result = subprocess.run(command, capture_output=True, check=False, timeout=3)
+        logging.info("probe bytes=%d", len(result.stdout))
+        return samples_are_zero(result.stdout)
+
+    def disconnect(self):
+        run("bluetoothctl", "disconnect", ADDRESS, timeout=10)
+
+    def connect(self):
+        result = run("bluetoothctl", "connect", ADDRESS, timeout=15)
+        return result.returncode == 0 and self.device_connected()
+
+    def sleep(self, seconds):
+        time.sleep(seconds)
+
+    def monotonic(self):
+        return time.monotonic()
+
+
+class Watchdog:
+    def __init__(self, ops):
+        self.ops = ops
+        self.last_recovery = float("-inf")
+
+    def check_once(self):
+        if self.ops.monotonic() - self.last_recovery < COOLDOWN:
+            return
+        if not self.ops.conference_active():
+            return
+        if not self.ops.device_connected() or not self.ops.hfp_active():
+            return
+        if self.ops.source_muted() or not self.ops.probe_is_zero():
+            return
+
+        self.ops.sleep(CONFIRM_DELAY)
+        if not self.ops.conference_active() or self.ops.source_muted():
+            return
+        if not self.ops.device_connected() or not self.ops.hfp_active():
+            return
+        if not self.ops.probe_is_zero():
+            return
+
+        logging.warning("confirmed stuck SCO for %s; reconnecting", ADDRESS)
+        self.last_recovery = self.ops.monotonic()
+        self.ops.disconnect()
+        for delay in RECONNECT_DELAYS:
+            self.ops.sleep(delay)
+            if self.ops.connect():
+                logging.info("reconnected %s", ADDRESS)
+                return
+        logging.error("failed to reconnect %s", ADDRESS)
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    watchdog = Watchdog(SystemOps())
+    while True:
+        try:
+            watchdog.check_once()
+        except (OSError, subprocess.SubprocessError) as error:
+            logging.warning("check failed: %s", error)
+        time.sleep(CHECK_INTERVAL)
+
+
+if __name__ == "__main__":
+    main()

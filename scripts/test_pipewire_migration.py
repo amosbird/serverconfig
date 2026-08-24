@@ -8,6 +8,8 @@ RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
 BLUETOOTH_AUDIO = ROOT / "scripts/bluetooth-audio-default"
 BLUETOOTH_AUDIO_SERVICE = ROOT / "systemd/bluetooth-audio-default.service"
+SCO_WATCHDOG = ROOT / "scripts/bluetooth-sco-watchdog"
+SCO_WATCHDOG_SERVICE = ROOT / "systemd/bluetooth-sco-watchdog.service"
 QTILE = ROOT / ".config/qtile/config.py"
 
 
@@ -68,6 +70,14 @@ class PipeWireMigrationTest(unittest.TestCase):
         restore = RESTORE.read_text()
         self.assertIn("wpctl settings -d bluetooth.autoswitch-to-headset-profile", restore)
         self.assertIn("wpctl settings -d device.restore-profile", restore)
+
+    def test_sco_watchdog_is_installed_as_a_user_service(self):
+        script = SCO_WATCHDOG.read_text()
+        service = SCO_WATCHDOG_SERVICE.read_text()
+        restore = RESTORE.read_text()
+        self.assertIn('CONFERENCE_NAMES = {"Wemeet VoiceEngine"}', script)
+        self.assertIn("ExecStart=/home/amos/scripts/bluetooth-sco-watchdog", service)
+        self.assertIn("enable --now bluetooth-sco-watchdog.service", restore)
 
     def test_restore_installs_native_bluetooth_menu(self):
         restore = RESTORE.read_text()
