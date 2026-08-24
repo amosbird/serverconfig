@@ -23,6 +23,7 @@ class MicrophoneMuteTest(unittest.TestCase):
         self.assertIn("pactl set-source-mute @DEFAULT_SOURCE@ toggle", script)
         self.assertIn("pactl get-source-mute @DEFAULT_SOURCE@", script)
         self.assertIn("audio-mute-led --once", script)
+        self.assertIn("audio-mute-state microphone", script)
         self.assertNotIn("bluez", script)
 
     def test_led_follows_default_output_and_microphone_mute(self):
@@ -46,6 +47,7 @@ class MicrophoneMuteTest(unittest.TestCase):
     def test_restore_replaces_old_led_service(self):
         restore = (ROOT / "restore.sh").read_text()
         self.assertIn("systemd/audio-mute-led.service", restore)
+        self.assertTrue((ROOT / "scripts/audio-mute-state").exists())
         self.assertIn("enable --now audio-mute-led.service", restore)
         self.assertIn("disable --now bluetooth-profile-led.service", restore)
         self.assertIn("disable --now microphone-mute-led.service", restore)

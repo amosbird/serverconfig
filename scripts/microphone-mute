@@ -14,6 +14,7 @@ if ! pactl set-source-mute @DEFAULT_SOURCE@ toggle; then
 fi
 
 muted=$(pactl get-source-mute @DEFAULT_SOURCE@ | awk '{ print $2 }')
+audio-mute-state microphone
 audio-mute-led --once
 if [[ $muted == yes ]]; then
     notify "Microphone muted"

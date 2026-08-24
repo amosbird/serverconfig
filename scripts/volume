@@ -20,6 +20,7 @@ mute)
 esac
 
 status=$(wpctl get-volume "$target")
+[[ ${1:-} == mute ]] && audio-mute-state speaker
 command -v audio-mute-led >/dev/null 2>&1 && audio-mute-led --once
 volume=$(awk '{printf "%d", $2 * 100 + 0.5}' <<<"$status")
 if [[ $status == *MUTED* ]]; then

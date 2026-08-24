@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+case ${1:-} in
+speaker)
+    muted=$(pactl get-sink-mute @DEFAULT_SINK@ | awk '{ print $2 }')
+    ;;
+microphone)
+    muted=$(pactl get-source-mute @DEFAULT_SOURCE@ | awk '{ print $2 }')
+    ;;
+*)
+    printf 'usage: audio-mute-state {speaker|microphone}\n' >&2
+    exit 2
+    ;;
+esac
+
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/audio-mute
+mkdir -p "$state_dir"
+[[ $muted == yes ]] && value=1 || value=0
+printf '%s\n' "$value" >"$state_dir/$1"

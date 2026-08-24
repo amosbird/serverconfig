@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 
 import json
+import os
+import pathlib
 import subprocess
 import time
 
 PROBE_NAME = "bluetooth-sco-watchdog"
+STATE_DIR = pathlib.Path(
+    os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local/state")
+) / "audio-mute"
 DEBOUNCE_SECONDS = 0.2
 
 
@@ -42,6 +47,17 @@ class SystemOps:
         return sink.stdout.strip(), source.stdout.strip()
 
     @staticmethod
+    def _read_mute_intent(name):
+        try:
+            value = (STATE_DIR / name).read_text().strip()
+        except OSError:
+            return None
+        return value == "1" if value in {"0", "1"} else None
+
+    def desired_mutes(self):
+        return self._read_mute_intent("speaker"), self._read_mute_intent("microphone")
+
+    @staticmethod
     def call(*args):
         subprocess.run(["pactl", *args], check=False)
 
@@ -51,12 +67,11 @@ class Router:
         self.ops = ops
         self.sink = None
         self.source = None
-        self.sink_inputs = set()
-        self.source_outputs = set()
 
     def route(self):
         sinks, sources, sink_inputs, source_outputs = self.ops.snapshot()
         default_sink, default_source = self.ops.defaults()
+        sink_mute, source_mute = self.ops.desired_mutes()
         sink = next((item for item in sinks if item["name"].startswith("bluez_output.")), None)
         source = next(
             (item for item in sources if item["name"].startswith("bluez_input.")), None
@@ -65,34 +80,26 @@ class Router:
         if sink:
             name = sink["name"]
             identity = sink["index"], name
-            active_inputs = {str(stream["index"]) for stream in sink_inputs}
-            self.sink_inputs.intersection_update(active_inputs)
             if default_sink != name:
                 self.ops.call("set-default-sink", name)
-            if identity != self.sink:
-                self.ops.call("set-sink-mute", name, "0")
-                self.sink = identity
+            if identity != self.sink and sink_mute is not None:
+                self.ops.call("set-sink-mute", name, str(int(sink_mute)))
+            self.sink = identity
             for stream in sink_inputs:
                 index = str(stream["index"])
                 if stream.get("sink") != sink["index"]:
                     self.ops.call("move-sink-input", index, name)
-                if index not in self.sink_inputs:
-                    self.ops.call("set-sink-input-mute", index, "0")
-                    self.sink_inputs.add(index)
         else:
             self.sink = None
-            self.sink_inputs.clear()
 
         if source:
             name = source["name"]
             identity = source["index"], name
-            active_outputs = {str(stream["index"]) for stream in source_outputs}
-            self.source_outputs.intersection_update(active_outputs)
             if default_source != name:
                 self.ops.call("set-default-source", name)
-            if identity != self.source:
-                self.ops.call("set-source-mute", name, "0")
-                self.source = identity
+            if identity != self.source and source_mute is not None:
+                self.ops.call("set-source-mute", name, str(int(source_mute)))
+            self.source = identity
             for stream in source_outputs:
                 properties = stream.get("properties", {})
                 if properties.get("application.name") == PROBE_NAME:
@@ -100,12 +107,8 @@ class Router:
                 index = str(stream["index"])
                 if stream.get("source") != source["index"]:
                     self.ops.call("move-source-output", index, name)
-                if index not in self.source_outputs:
-                    self.ops.call("set-source-output-mute", index, "0")
-                    self.source_outputs.add(index)
         else:
             self.source = None
-            self.source_outputs.clear()
 
 
 def main():
