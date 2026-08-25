@@ -21,10 +21,10 @@
 
 (setq delete-by-moving-to-trash nil)
 
-;; Kitty's touchpad axis is opposite to Emacs's mouse-6/mouse-7 convention.
-(setq mouse-wheel-tilt-scroll t
-      mouse-wheel-left-event 'mouse-7
-      mouse-wheel-right-event 'mouse-6)
+;; Kitty's touchpad axis is opposite to Emacs's button 6/7 convention.
+(setq mouse-wheel-tilt-scroll t)
+(setf (alist-get 6 mouse-wheel-buttons) 'wheel-right
+      (alist-get 7 mouse-wheel-buttons) 'wheel-left)
 
 ;; ============================================================================
 ;; §1 UI & Theme
