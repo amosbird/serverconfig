@@ -21,8 +21,10 @@
 
 (setq delete-by-moving-to-trash nil)
 
-;; Kitty reports touchpad horizontal scrolling as mouse-6/mouse-7.
-(setq mouse-wheel-tilt-scroll t)
+;; Kitty's touchpad axis is opposite to Emacs's mouse-6/mouse-7 convention.
+(setq mouse-wheel-tilt-scroll t
+      mouse-wheel-left-event 'mouse-7
+      mouse-wheel-right-event 'mouse-6)
 
 ;; ============================================================================
 ;; §1 UI & Theme
