@@ -21,6 +21,9 @@
 
 (setq delete-by-moving-to-trash nil)
 
+;; Kitty reports touchpad horizontal scrolling as mouse-6/mouse-7.
+(setq mouse-wheel-tilt-scroll t)
+
 ;; ============================================================================
 ;; §1 UI & Theme
 ;; ============================================================================
