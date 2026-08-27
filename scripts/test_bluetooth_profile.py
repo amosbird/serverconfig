@@ -20,32 +20,27 @@ class MicrophoneMuteTest(unittest.TestCase):
 
     def test_toggle_uses_default_source_and_syncs_led(self):
         script = MUTE.read_text()
-        self.assertIn("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle", script)
-        self.assertIn("wpctl get-volume @DEFAULT_AUDIO_SOURCE@", script)
-        self.assertIn('audio-mute-intent "$intent"', script)
+        self.assertIn("target=@DEFAULT_AUDIO_SOURCE@", script)
+        self.assertIn('wpctl set-mute "$target" toggle', script)
+        self.assertIn('wpctl get-volume "$target"', script)
+        self.assertNotIn('audio-mute-intent "$intent"', script)
         self.assertIn("audio-mute-led --once", script)
         self.assertNotIn("audio-mute-state microphone", script)
         self.assertNotIn("bluez", script)
 
     def test_ctrl_f4_is_system_level_not_freeclip_specific(self):
         script = MUTE.read_text()
-        hook = (
-            ROOT / ".local/share/wireplumber/scripts/90-system-microphone-mute.lua"
-        ).read_text()
         self.assertIn("@DEFAULT_AUDIO_SOURCE@", script)
         self.assertNotIn("bluez", script)
-        self.assertNotIn("freeclip", hook.lower())
-        self.assertNotIn("C0:DA:5E:EC:FB:7F", hook)
 
-    def test_failed_persistence_rolls_back_live_toggle(self):
-        script = MUTE.read_text()
-        first_toggle = script.index("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle")
-        persistence = script.index('if ! audio-mute-intent "$intent"')
-        rollback = script.index(
-            "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle || true", persistence
-        )
-        self.assertLess(first_toggle, persistence)
-        self.assertLess(persistence, rollback)
+    def test_ctrl_f4_matches_ctrl_f1_native_wpctl_pattern(self):
+        output = (ROOT / "scripts/volume").read_text()
+        microphone = MUTE.read_text()
+        self.assertIn('wpctl set-mute "$target" toggle', output)
+        self.assertIn('target=@DEFAULT_AUDIO_SOURCE@', microphone)
+        self.assertIn('wpctl set-mute "$target" toggle', microphone)
+        self.assertNotIn("audio-mute-intent", microphone)
+        self.assertNotIn("rollback", microphone)
 
     def test_led_follows_default_output_and_microphone_mute(self):
         result, speaker, microphone = self._sync_led("yes", "no")
@@ -69,7 +64,7 @@ class MicrophoneMuteTest(unittest.TestCase):
         restore = (ROOT / "restore.sh").read_text()
         self.assertIn("systemd/audio-mute-led.service", restore)
         self.assertTrue((ROOT / "scripts/audio-mute-state").exists())
-        self.assertTrue((ROOT / "scripts/audio-mute-intent").exists())
+        self.assertFalse((ROOT / "scripts/audio-mute-intent").exists())
         self.assertIn("enable --now audio-mute-led.service", restore)
         self.assertNotIn("bluetooth-profile-led.service", restore)
         self.assertNotIn("microphone-mute-led.service", restore)

@@ -7,10 +7,8 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
-MUTE_HOOK = ROOT / ".local/share/wireplumber/scripts/90-system-microphone-mute.lua"
-MUTE_INTENT = ROOT / "scripts/audio-mute-intent"
-MANUAL_RELEASE = ROOT / "scripts/release-wemeet-audio"
 QTILE = ROOT / ".config/qtile/config.py"
+MANUAL_RELEASE = ROOT / "scripts/release-wemeet-audio"
 OBSOLETE = (
     ROOT / "scripts/bluetooth-audio-default",
     ROOT / "systemd/bluetooth-audio-default.service",
@@ -128,40 +126,17 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertIn("Never automate", config)
         self.assertNotIn("target.object =", config)
 
-    def test_mute_intent_hook_applies_to_every_physical_microphone(self):
+    def test_ctrl_f4_uses_wireplumber_native_mute(self):
+        script = (ROOT / "scripts/microphone-mute").read_text()
         config = WIREPLUMBER.read_text()
-        hook = MUTE_HOOK.read_text()
-        self.assertIn("90-system-microphone-mute.lua", config)
-        self.assertIn("requires = [ api.mixer ]", config)
-        self.assertIn('StateMetadata ("audio-mute-intent")', hook)
-        self.assertIn('state:get ("microphone")', hook)
-        self.assertIn('intent ~= "0" and intent ~= "1"', hook)
-        self.assertIn('"set-volume", id, { mute = intent == "1" }', hook)
-        self.assertIn('"media.class", "=", "Audio/Source"', hook)
-        self.assertIn('"device.id", "+"', hook)
-        self.assertNotIn("bluez_input", hook)
-
-    def test_ctrl_f4_and_mute_helper_are_the_only_durable_mute_writers(self):
-        intent = MUTE_INTENT.read_text()
-        self.assertIn("pw-metadata -n audio-mute-intent 0 microphone \"$state\"", intent)
-        self.assertNotIn("Spa:String", intent)
-        self.assertIn('Key([ctrl], "F4", lazy.spawn("microphone-mute"))', QTILE.read_text())
-        callers = []
-        for path in ROOT.glob("scripts/*"):
-            if not path.is_file() or path == MUTE_INTENT or path.name.startswith("test_"):
-                continue
-            if re.search(r"(^|[ /])audio-mute-intent([ \"']|$)", path.read_text(errors="replace")):
-                callers.append(path.name)
-        self.assertEqual(callers, ["microphone-mute"])
-
-    def test_manual_release_requires_confirmation_and_never_forces_cleanup(self):
-        script = MANUAL_RELEASE.read_text()
-        self.assertIn("[[ ! -t 0 || ! -t 1 ]]", script)
-        self.assertIn("Restart Wemeet and release its audio?", script)
-        self.assertIn('kill -TERM "${pids[@]}"', script)
-        self.assertIn("no forced cleanup was attempted", script)
-        self.assertNotIn("SIGKILL", script)
-        self.assertNotIn("kill-sink-input", script)
+        self.assertIn("target=@DEFAULT_AUDIO_SOURCE@", script)
+        self.assertIn('wpctl set-mute "$target" toggle', script)
+        self.assertNotIn("audio-mute-intent", script)
+        self.assertFalse((ROOT / "scripts/audio-mute-intent").exists())
+        self.assertFalse(
+            (ROOT / ".local/share/wireplumber/scripts/90-system-microphone-mute.lua").exists()
+        )
+        self.assertNotIn("system-microphone-mute", config)
 
     def test_restore_clears_runtime_setting_overrides(self):
         restore = RESTORE.read_text()

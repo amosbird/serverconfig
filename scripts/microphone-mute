@@ -1,36 +1,22 @@
 #!/usr/bin/env bash
 
-set -u
+set -euo pipefail
 
+target=@DEFAULT_AUDIO_SOURCE@
 notify() {
     command -v dunstify >/dev/null 2>&1 || return
     dunstify --app-name Microphone --stack-tag microphone-mute --timeout 2000 \
         "$1" >/dev/null 2>&1 || true
 }
 
-if ! wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle; then
+if ! wpctl set-mute "$target" toggle; then
     notify "Microphone unavailable"
     exit 1
 fi
 
-status=$(wpctl get-volume @DEFAULT_AUDIO_SOURCE@)
+status=$(wpctl get-volume "$target")
+command -v audio-mute-led >/dev/null 2>&1 && audio-mute-led --once
 if [[ $status == *MUTED* ]]; then
-    muted=yes
-    intent=1
-else
-    muted=no
-    intent=0
-fi
-
-if ! audio-mute-intent "$intent"; then
-    # Persistence is part of the Ctrl-F4 contract. Undo the live toggle if it cannot be saved.
-    wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle || true
-    notify "Microphone state not saved"
-    exit 1
-fi
-
-audio-mute-led --once
-if [[ $muted == yes ]]; then
     notify "Microphone muted"
 else
     notify "Microphone active"
