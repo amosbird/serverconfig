@@ -27,6 +27,16 @@ class MicrophoneMuteTest(unittest.TestCase):
         self.assertNotIn("audio-mute-state microphone", script)
         self.assertNotIn("bluez", script)
 
+    def test_ctrl_f4_is_system_level_not_freeclip_specific(self):
+        script = MUTE.read_text()
+        hook = (
+            ROOT / ".local/share/wireplumber/scripts/90-system-microphone-mute.lua"
+        ).read_text()
+        self.assertIn("@DEFAULT_AUDIO_SOURCE@", script)
+        self.assertNotIn("bluez", script)
+        self.assertNotIn("freeclip", hook.lower())
+        self.assertNotIn("C0:DA:5E:EC:FB:7F", hook)
+
     def test_failed_persistence_rolls_back_live_toggle(self):
         script = MUTE.read_text()
         first_toggle = script.index("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle")

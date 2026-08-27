@@ -1,4 +1,4 @@
-log = Log.open_topic ("s-freeclip-mute-intent")
+log = Log.open_topic ("s-system-microphone-mute")
 
 local state = StateMetadata ("audio-mute-intent")
 local mixer = nil
@@ -6,13 +6,13 @@ local mixer = nil
 local function reconcile (node)
   local intent = state:get ("microphone")
   if intent ~= "0" and intent ~= "1" then
-    log:notice (node, "mute intent is missing or invalid; leaving FreeClip unchanged")
+    log:notice (node, "system microphone mute intent is missing or invalid")
     return
   end
 
   local id = node["bound-id"]
   if not id or not mixer:call ("set-volume", id, { mute = intent == "1" }) then
-    log:warning (node, "failed to apply persisted microphone mute intent")
+    log:warning (node, "failed to apply system microphone mute intent")
   end
 end
 
@@ -24,20 +24,18 @@ state:activate (Features.ALL, function (_, error)
 
   mixer = Plugin.find ("mixer-api")
   if not mixer then
-    log:warning ("mixer API is unavailable; leaving FreeClip unchanged")
+    log:warning ("mixer API is unavailable; microphone intent cannot be restored")
     return
   end
 
   SimpleEventHook {
-    name = "audio/reconcile-freeclip-mute-intent",
+    name = "audio/reconcile-system-microphone-mute",
     after = "node/create-item",
     interests = {
       EventInterest {
         Constraint { "event.type", "=", "node-added" },
-        Constraint {
-          "node.name", "=", "bluez_input.C0:DA:5E:EC:FB:7F", type = "pw-global"
-        },
         Constraint { "media.class", "=", "Audio/Source", type = "pw-global" },
+        Constraint { "device.id", "+", type = "pw-global" },
       },
     },
     execute = function (event)

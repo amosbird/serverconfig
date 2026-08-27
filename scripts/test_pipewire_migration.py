@@ -7,7 +7,7 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
-MUTE_HOOK = ROOT / ".local/share/wireplumber/scripts/90-freeclip-mute-intent.lua"
+MUTE_HOOK = ROOT / ".local/share/wireplumber/scripts/90-system-microphone-mute.lua"
 MUTE_INTENT = ROOT / "scripts/audio-mute-intent"
 MANUAL_RELEASE = ROOT / "scripts/release-wemeet-audio"
 QTILE = ROOT / ".config/qtile/config.py"
@@ -128,20 +128,18 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertIn("Never automate", config)
         self.assertNotIn("target.object =", config)
 
-    def test_mute_intent_hook_is_exact_one_shot_and_fail_safe(self):
+    def test_mute_intent_hook_applies_to_every_physical_microphone(self):
         config = WIREPLUMBER.read_text()
         hook = MUTE_HOOK.read_text()
-        self.assertIn("90-freeclip-mute-intent.lua", config)
+        self.assertIn("90-system-microphone-mute.lua", config)
         self.assertIn("requires = [ api.mixer ]", config)
         self.assertIn('StateMetadata ("audio-mute-intent")', hook)
         self.assertIn('state:get ("microphone")', hook)
         self.assertIn('intent ~= "0" and intent ~= "1"', hook)
         self.assertIn('"set-volume", id, { mute = intent == "1" }', hook)
-        self.assertIn('"node.name", "=", "bluez_input.C0:DA:5E:EC:FB:7F"', hook)
         self.assertIn('"media.class", "=", "Audio/Source"', hook)
-        self.assertNotIn("ObjectManager", hook)
-        self.assertNotIn("set-default", hook)
-        self.assertNotIn("target.object", hook)
+        self.assertIn('"device.id", "+"', hook)
+        self.assertNotIn("bluez_input", hook)
 
     def test_ctrl_f4_and_mute_helper_are_the_only_durable_mute_writers(self):
         intent = MUTE_INTENT.read_text()
