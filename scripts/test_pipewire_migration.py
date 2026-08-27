@@ -91,7 +91,18 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertIn('bluez5.hfphsp-backend = "native"', config)
         self.assertNotRegex(config, r"a2dp[_-]")
 
-    def test_priorities_are_freeclip_specific_and_directional(self):
+    def test_freeclip_output_does_not_outrank_local_speaker(self):
+        config = WIREPLUMBER.read_text()
+        output_rule = re.search(
+            r'node\.name = "~bluez_output[^\n]+"(.*?)(?:\n  \}|\Z)',
+            config,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(output_rule)
+        self.assertNotIn("priority.session", output_rule.group(1))
+        self.assertIn("session.suspend-timeout-seconds = 3", output_rule.group(1))
+
+    def test_freeclip_specific_rules_only_cover_special_behavior(self):
         config = WIREPLUMBER.read_text()
         self.assertIn('device.name = "bluez_card.C0_DA_5E_EC_FB_7F"', config)
         self.assertIn('node.name = "~bluez_output.C0_DA_5E_EC_FB_7F.*"', config)
@@ -100,21 +111,13 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertNotIn('node.name = "~bluez_output.*"', config)
         self.assertNotIn('node.name = "~bluez_input.*"', config)
         self.assertNotIn('node.name = "~alsa_input.*"', config)
-
-        sink_priority = re.search(
-            r'node\.name = "~bluez_output[^\n]+".*?priority\.session = (\d+)',
-            config,
-            re.DOTALL,
-        )
+        self.assertNotIn("priority.session", config)
         source_rule = re.search(
             r'node\.name = "bluez_input[^\n]+".*?session\.suspend-timeout-seconds = 3',
             config,
             re.DOTALL,
         )
-        self.assertIsNotNone(sink_priority)
         self.assertIsNotNone(source_rule)
-        self.assertLess(int(sink_priority.group(1)), 1500)
-        self.assertNotIn("priority.session = 2200", config)
         self.assertIn("session.suspend-timeout-seconds = 3", config)
 
     def test_wemeet_rule_only_suppresses_stored_target(self):
