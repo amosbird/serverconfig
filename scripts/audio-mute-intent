@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+state=${1:-}
+case $state in
+0|1) ;;
+*)
+    printf 'usage: audio-mute-intent {0|1}\n' >&2
+    exit 2
+    ;;
+esac
+
+# WirePlumber owns this durable state and applies it to each new FreeClip source generation.
+# Missing metadata is fail-safe: do not claim persistence if WirePlumber is unavailable.
+pw-metadata -n audio-mute-intent 0 microphone "$state" >/dev/null

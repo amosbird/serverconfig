@@ -8,13 +8,27 @@ notify() {
         "$1" >/dev/null 2>&1 || true
 }
 
-if ! pactl set-source-mute @DEFAULT_SOURCE@ toggle; then
+if ! wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle; then
     notify "Microphone unavailable"
     exit 1
 fi
 
-muted=$(pactl get-source-mute @DEFAULT_SOURCE@ | awk '{ print $2 }')
-audio-mute-state microphone
+status=$(wpctl get-volume @DEFAULT_AUDIO_SOURCE@)
+if [[ $status == *MUTED* ]]; then
+    muted=yes
+    intent=1
+else
+    muted=no
+    intent=0
+fi
+
+if ! audio-mute-intent "$intent"; then
+    # Persistence is part of the Ctrl-F4 contract. Undo the live toggle if it cannot be saved.
+    wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle || true
+    notify "Microphone state not saved"
+    exit 1
+fi
+
 audio-mute-led --once
 if [[ $muted == yes ]]; then
     notify "Microphone muted"

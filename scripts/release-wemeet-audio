@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# PipeWire cannot distinguish Wemeet's stale silent playout from a quiet/listen-only meeting.
+# Requiring an interactive terminal makes this operator confirmation, never lifecycle inference.
+if [[ ! -t 0 || ! -t 1 ]]; then
+    printf 'release-wemeet-audio must be run interactively after leaving the meeting\n' >&2
+    exit 2
+fi
+
+read -r -p 'Restart Wemeet and release its audio? [y/N] ' answer
+[[ $answer == [yY] ]] || exit 1
+
+mapfile -t pids < <(pgrep -x wemeetapp || true)
+((${#pids[@]})) || {
+    printf 'Wemeet is not running\n' >&2
+    exit 1
+}
+
+kill -TERM "${pids[@]}"
+for _ in {1..30}; do
+    pgrep -x wemeetapp >/dev/null || break
+    sleep 0.1
+done
+if pgrep -x wemeetapp >/dev/null; then
+    printf 'Wemeet did not stop; no forced cleanup was attempted\n' >&2
+    exit 1
+fi
+
+nohup wemeet >/dev/null 2>&1 &

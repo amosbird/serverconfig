@@ -188,14 +188,14 @@ if [[ -n $GUI ]]; then
     paru -S --needed --noconfirm bzmenu-bin
     install -Dm644 "$DIR/systemd/audio-mute-led.service" \
         "$HOME/.config/systemd/user/audio-mute-led.service"
-    install -Dm644 "$DIR/systemd/bluetooth-audio-default.service" \
-        "$HOME/.config/systemd/user/bluetooth-audio-default.service"
-    install -Dm644 "$DIR/systemd/bluetooth-sco-watchdog.service" \
+    systemctl --user disable --now \
+        bluetooth-audio-default.service bluetooth-sco-watchdog.service || true
+    rm -f "$HOME/.config/systemd/user/bluetooth-audio-default.service" \
         "$HOME/.config/systemd/user/bluetooth-sco-watchdog.service"
     systemctl --user daemon-reload
+    systemctl --user reset-failed \
+        bluetooth-audio-default.service bluetooth-sco-watchdog.service || true
     systemctl --user enable --now audio-mute-led.service
-    systemctl --user enable --now bluetooth-audio-default.service
-    systemctl --user enable --now bluetooth-sco-watchdog.service
     systemctl --user enable --now \
         pipewire.service pipewire-pulse.service wireplumber.service
     wpctl settings -d bluetooth.autoswitch-to-headset-profile
