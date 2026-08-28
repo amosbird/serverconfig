@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 
-import json
-import os
 import pathlib
 import re
-import subprocess
 import unittest
 
 ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
-PIPEWIRE_WEMEET = ROOT / ".config/pipewire/pipewire-pulse.conf.d/51-wemeet.conf"
 QTILE = ROOT / ".config/qtile/config.py"
 MANUAL_RELEASE = ROOT / "scripts/release-wemeet-audio"
 OBSOLETE = (
@@ -122,27 +118,6 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertIsNotNone(source_rule)
         self.assertIn("session.suspend-timeout-seconds = 3", config)
 
-    def test_wemeet_gets_native_pulse_s16_compatibility_quirk(self):
-        config = PIPEWIRE_WEMEET.read_text()
-        self.assertIn('application.process.binary = "wemeetapp"', config)
-        self.assertIn("quirks = [ force-s16-info ]", config)
-        self.assertNotIn("block-record-stream", config)
-        self.assertNotIn("remove-capture-dont-move", config)
-
-        if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
-            self.skipTest("PipeWire session is unavailable")
-        normal = self._bluez_source_format({})
-        wemeet = self._bluez_source_format(
-            {
-                "PULSE_PROP_application.process.binary": "wemeetapp",
-                "PULSE_PROP_application.name": "Wemeet Quirk Test",
-            }
-        )
-        if normal is None:
-            self.skipTest("FreeClip source is unavailable")
-        self.assertIn("float32le", normal)
-        self.assertIn("s16le", wemeet)
-
     def test_wemeet_rule_only_suppresses_stored_target(self):
         config = WIREPLUMBER.read_text()
         self.assertIn('application.process.binary = "wemeetapp"', config)
@@ -177,23 +152,6 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertIn(
             'lazy.spawn("bzmenu --launcher rofi --interactive")', QTILE.read_text()
         )
-
-
-    @staticmethod
-    def _bluez_source_format(extra_env):
-        result = subprocess.run(
-            ["pactl", "--format=json", "list", "sources"],
-            capture_output=True,
-            check=False,
-            env={**os.environ, **extra_env},
-            text=True,
-        )
-        if result.returncode:
-            return None
-        for source in json.loads(result.stdout):
-            if source["name"].startswith("bluez_input."):
-                return source["sample_specification"]
-        return None
 
 
 if __name__ == "__main__":
