@@ -8,12 +8,22 @@ ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
 QTILE = ROOT / ".config/qtile/config.py"
-MANUAL_RELEASE = ROOT / "scripts/release-wemeet-audio"
+TLP = ROOT / "tlp/tlp.conf"
+AUDIO_POLICY = (
+    WIREPLUMBER,
+    ROOT / "scripts/volume",
+    ROOT / "scripts/microphone-mute",
+    ROOT / "scripts/audio-mute-led",
+)
 OBSOLETE = (
     ROOT / "scripts/bluetooth-audio-default",
     ROOT / "systemd/bluetooth-audio-default.service",
     ROOT / "scripts/bluetooth-sco-watchdog",
     ROOT / "systemd/bluetooth-sco-watchdog.service",
+    ROOT / "scripts/audio-mute-state",
+    ROOT / "scripts/rofisound",
+    ROOT / "scripts/restartbluetooth",
+    ROOT / "scripts/release-wemeet-audio",
 )
 
 
@@ -30,7 +40,7 @@ class PipeWireMigrationTest(unittest.TestCase):
             "pipewire.service pipewire-pulse.service wireplumber.service", restore
         )
 
-    def test_unsafe_policy_daemons_are_removed_and_migrated(self):
+    def test_policy_helpers_are_removed(self):
         for path in OBSOLETE:
             self.assertFalse(path.exists(), path)
 
@@ -38,93 +48,81 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertIn("systemctl --user disable --now", restore)
         self.assertIn("bluetooth-audio-default.service", restore)
         self.assertIn("bluetooth-sco-watchdog.service", restore)
-        self.assertIn('rm -f "$HOME/.config/systemd/user/bluetooth-audio-default.service"', restore)
+        self.assertIn(
+            'rm -f "$HOME/.config/systemd/user/bluetooth-audio-default.service"',
+            restore,
+        )
         self.assertIn('"$HOME/.config/systemd/user/bluetooth-sco-watchdog.service"', restore)
         self.assertIn("systemctl --user reset-failed", restore)
         self.assertNotIn("enable --now bluetooth-audio-default.service", restore)
         self.assertNotIn("enable --now bluetooth-sco-watchdog.service", restore)
 
-    def test_no_audio_policy_component_uses_destructive_automation(self):
-        source = "\n".join(
-            path.read_text(errors="replace")
-            for path in (
-                *ROOT.glob("scripts/bluetooth-audio-*"),
-                *ROOT.glob("scripts/bluetooth-sco-*"),
-                MANUAL_RELEASE,
-                *ROOT.glob("systemd/bluetooth-audio-*"),
-                *ROOT.glob("systemd/bluetooth-sco-*"),
-                *ROOT.glob(".config/wireplumber/**/*"),
-                *ROOT.glob(".local/share/wireplumber/**/*"),
-            )
-            if path.is_file() and not path.name.startswith("test_")
-        )
+    def test_audio_policy_does_not_probe_or_repair_transports(self):
+        source = "\n".join(path.read_text(errors="replace") for path in AUDIO_POLICY)
         forbidden = (
             "move-sink-input",
             "move-source-output",
             "parecord",
             "bluetoothctl disconnect",
             "bluetoothctl connect",
+            "rfkill block",
             "rfkill unblock",
+            "systemctl restart bluetooth",
             "set-card-profile",
             "pw-cli destroy",
         )
         for command in forbidden:
             self.assertNotIn(command, source, command)
 
-    def test_wireplumber_is_the_single_routing_owner(self):
+    def test_tlp_does_not_disable_bluetooth(self):
+        config = TLP.read_text()
+        self.assertIn('DEVICES_TO_DISABLE_ON_BAT="nfc wwan"', config)
+        self.assertNotRegex(config, r'DEVICES_TO_.*="[^"]*bluetooth')
+        self.assertIn(
+            'sudo install -Dm644 "$DIR"/tlp/tlp.conf /etc/tlp.conf',
+            RESTORE.read_text(),
+        )
+
+    def test_wireplumber_keeps_only_the_required_setting_override(self):
         config = WIREPLUMBER.read_text()
-        self.assertIn("linking.follow-default-target = true", config)
-        self.assertIn("node.restore-default-targets = false", config)
-        self.assertNotIn("node.stream.restore-target = false", config)
-        self.assertNotIn("node.passive", config)
-        self.assertNotIn("pulse.idle.timeout", config)
+        settings = re.search(r"wireplumber\.settings = \{(.*?)\}", config, re.DOTALL)
+        self.assertIsNotNone(settings)
+        self.assertEqual(
+            settings.group(1).strip(),
+            "bluetooth.autoswitch-to-headset-profile = false",
+        )
+        for setting in (
+            "bluetooth.use-persistent-storage",
+            "device.restore-profile",
+            "linking.follow-default-target",
+            "node.restore-default-targets",
+            "node.stream.restore-target",
+        ):
+            self.assertNotIn(setting, config)
 
     def test_freeclip_is_hfp_msbc_only(self):
         config = WIREPLUMBER.read_text()
-        self.assertIn("bluetooth.autoswitch-to-headset-profile = false", config)
-        self.assertIn("bluetooth.use-persistent-storage = false", config)
-        self.assertIn("device.restore-profile = false", config)
         self.assertIn("bluez5.roles = [ hfp_hf hfp_ag ]", config)
         self.assertIn("bluez5.enable-msbc = true", config)
-        self.assertIn('bluez5.hfphsp-backend = "native"', config)
-        self.assertNotRegex(config, r"a2dp[_-]")
+        self.assertNotIn("bluez5.hfphsp-backend", config)
+        self.assertNotRegex(config, r"\b(?:a2dp|bap|hsp)[_-]")
 
-    def test_freeclip_output_does_not_outrank_local_speaker(self):
+    def test_freeclip_only_customization_is_idle_suspend(self):
         config = WIREPLUMBER.read_text()
-        output_rule = re.search(
-            r'node\.name = "~bluez_output[^\n]+"(.*?)(?:\n  \}|\Z)',
-            config,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(output_rule)
-        self.assertNotIn("priority.session", output_rule.group(1))
-        self.assertIn("session.suspend-timeout-seconds = 3", output_rule.group(1))
-
-    def test_freeclip_specific_rules_only_cover_special_behavior(self):
-        config = WIREPLUMBER.read_text()
-        self.assertIn('device.name = "bluez_card.C0_DA_5E_EC_FB_7F"', config)
         self.assertIn('node.name = "~bluez_output.C0_DA_5E_EC_FB_7F.*"', config)
         self.assertIn('node.name = "bluez_input.C0:DA:5E:EC:FB:7F"', config)
-        self.assertNotIn('device.name = "~bluez_card.*"', config)
-        self.assertNotIn('node.name = "~bluez_output.*"', config)
-        self.assertNotIn('node.name = "~bluez_input.*"', config)
-        self.assertNotIn('node.name = "~alsa_input.*"', config)
-        self.assertNotIn("priority.session", config)
-        source_rule = re.search(
-            r'node\.name = "bluez_input[^\n]+".*?session\.suspend-timeout-seconds = 3',
-            config,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(source_rule)
-        self.assertIn("session.suspend-timeout-seconds = 3", config)
+        self.assertEqual(config.count("update-props"), 1)
+        self.assertEqual(config.count("session.suspend-timeout-seconds = 3"), 1)
+        self.assertNotIn("bluez5.auto-connect", config)
+        self.assertNotIn("priority.", config)
+        self.assertNotIn("device.name", config)
 
-    def test_wemeet_rule_only_suppresses_stored_target(self):
+    def test_no_application_specific_audio_policy(self):
         config = WIREPLUMBER.read_text()
-        self.assertIn('application.process.binary = "wemeetapp"', config)
-        self.assertIn("state.restore-target = false", config)
-        self.assertIn("cannot distinguish a quiet/listen-only meeting", config)
-        self.assertIn("Never automate", config)
-        self.assertNotIn("target.object =", config)
+        self.assertNotIn("stream.rules", config)
+        self.assertNotIn("wemeet", config.lower())
+        self.assertNotIn("state.restore-target", config)
+        self.assertFalse((ROOT / "scripts/release-wemeet-audio").exists())
 
     def test_ctrl_f4_uses_wireplumber_native_mute(self):
         script = (ROOT / "scripts/microphone-mute").read_text()
@@ -138,15 +136,22 @@ class PipeWireMigrationTest(unittest.TestCase):
         )
         self.assertNotIn("system-microphone-mute", config)
 
-    def test_restore_clears_runtime_setting_overrides(self):
+    def test_restore_clears_old_runtime_setting_overrides(self):
         restore = RESTORE.read_text()
-        self.assertIn("wpctl settings -d bluetooth.autoswitch-to-headset-profile", restore)
-        self.assertIn("wpctl settings -d device.restore-profile", restore)
-        self.assertIn("wpctl settings -d node.stream.restore-target", restore)
+        for setting in (
+            "bluetooth.autoswitch-to-headset-profile",
+            "bluetooth.use-persistent-storage",
+            "device.restore-profile",
+            "linking.follow-default-target",
+            "node.stream.restore-target",
+            "node.restore-default-targets",
+        ):
+            self.assertIn(f"wpctl settings -d {setting}", restore)
 
-    def test_restore_installs_native_bluetooth_menu(self):
+    def test_restore_installs_native_audio_tools(self):
         restore = RESTORE.read_text()
         self.assertIn("bzmenu-bin", restore)
+        self.assertIn("pavucontrol", restore)
 
     def test_qtile_launches_native_bluetooth_menu(self):
         self.assertIn(

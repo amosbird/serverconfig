@@ -53,6 +53,12 @@ class MicrophoneMuteTest(unittest.TestCase):
         self.assertEqual(speaker, "0")
         self.assertEqual(microphone, "1")
 
+    def test_missing_default_microphone_turns_micmute_led_on(self):
+        result, speaker, microphone = self._sync_led("no", "")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(speaker, "0")
+        self.assertEqual(microphone, "1")
+
     def test_led_sync_is_not_bluetooth_specific(self):
         script = LED_SYNC.read_text()
         self.assertIn("pactl get-sink-mute @DEFAULT_SINK@", script)
@@ -63,7 +69,7 @@ class MicrophoneMuteTest(unittest.TestCase):
     def test_restore_uses_current_led_service(self):
         restore = (ROOT / "restore.sh").read_text()
         self.assertIn("systemd/audio-mute-led.service", restore)
-        self.assertTrue((ROOT / "scripts/audio-mute-state").exists())
+        self.assertFalse((ROOT / "scripts/audio-mute-state").exists())
         self.assertFalse((ROOT / "scripts/audio-mute-intent").exists())
         self.assertIn("enable --now audio-mute-led.service", restore)
         self.assertNotIn("bluetooth-profile-led.service", restore)

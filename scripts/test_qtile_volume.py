@@ -13,6 +13,11 @@ class QtileVolumeTest(unittest.TestCase):
         for command in ("volume mute", "volume down", "volume up"):
             self.assertIn(command, config)
 
+    def test_sound_control_uses_pavucontrol(self):
+        config = CONFIG.read_text()
+        self.assertIn('Key([super_r], "v", lazy.spawn("pavucontrol"))', config)
+        self.assertNotIn("rofisound", config)
+
 
 if __name__ == "__main__":
     unittest.main()

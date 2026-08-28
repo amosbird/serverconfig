@@ -142,6 +142,7 @@ if [[ -n $GUI ]]; then
         "$HOME/.config/google-chrome-main/NativeMessagingHosts/io.github.amosbird.rofi.chrome.json"
     update-desktop-database "$HOME/.local/share/applications"
     sudo cp "$DIR"/xkb/symbols/{us,pc,inet} /usr/share/X11/xkb/symbols/
+    sudo install -Dm644 "$DIR"/tlp/tlp.conf /etc/tlp.conf
     setxkbmap us
     sudo mkdir -p /etc/pacman.d/hooks
     sudo cp "$DIR"/xkb-restore.hook /etc/pacman.d/hooks/xkb-restore.hook
@@ -185,7 +186,7 @@ if [[ -n $GUI ]]; then
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
-    paru -S --needed --noconfirm bzmenu-bin
+    paru -S --needed --noconfirm bzmenu-bin pavucontrol
     install -Dm644 "$DIR/systemd/audio-mute-led.service" \
         "$HOME/.config/systemd/user/audio-mute-led.service"
     systemctl --user disable --now \

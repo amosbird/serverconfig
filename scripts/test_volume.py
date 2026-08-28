@@ -18,63 +18,77 @@ class VolumeTest(unittest.TestCase):
         self.assertNotIn("wpctl set-volume", config)
         self.assertNotIn("wpctl set-mute", config)
 
-    def test_up_changes_volume_and_shows_replacing_progress_notification(self):
+    def test_up_changes_only_the_default_sink(self):
+        result, output = self._run("up", "Volume: 0.53")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 3%+", output)
+        self.assertIn("wpctl get-volume @DEFAULT_AUDIO_SINK@", output)
+        self.assertIn("audio-mute-led --once", output)
+        self.assertNotIn("pactl ", output)
+        self.assertNotIn("wpctl inspect", output)
+        self.assertIn("--stack-tag volume", output)
+        self.assertIn("int:value:53", output)
+        self.assertIn("Volume up", output)
+        self.assertIn("Volume 53%", output)
+
+    def test_mute_changes_only_the_default_sink(self):
+        result, output = self._run("mute", "Volume: 0.53 [MUTED]")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle", output)
+        self.assertIn("audio-mute-led --once", output)
+        self.assertNotIn("audio-mute-state", output)
+        self.assertNotIn("pactl ", output)
+        self.assertIn("Muted", output)
+        self.assertIn("string:state:true", output)
+
+    def test_invalid_action_fails_without_side_effects(self):
+        result, output = self._run("invalid", "Volume: 0.53")
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage: volume {up|down|mute}", result.stderr)
+        self.assertEqual(output, "")
+
+    @classmethod
+    def _run(cls, action, status):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory)
             log = path / "log"
-            self._write_mock(
+            cls._write_mock(
                 path / "wpctl",
                 f'''#!/usr/bin/env bash
 printf 'wpctl %s\\n' "$*" >>{log!s}
-if [[ $1 == get-volume ]]; then printf 'Volume: 0.53\\n'; fi
-if [[ $1 == inspect ]]; then printf '    api.bluez5.profile = "a2dp-sink"\\n    api.bluez5.codec = "aac"\\n'; fi
+if [[ $1 == get-volume ]]; then printf '%s\\n' {status!r}; fi
 ''',
             )
-            self._write_mock(
+            cls._write_mock(
+                path / "audio-mute-led",
+                f'''#!/usr/bin/env bash
+printf 'audio-mute-led %s\\n' "$*" >>{log!s}
+''',
+            )
+            cls._write_mock(
                 path / "dunstify",
                 f'''#!/usr/bin/env bash
 printf 'dunstify %s\\n' "$*" >>{log!s}
 ''',
             )
-            self._write_mock(
+            cls._write_mock(
                 path / "pactl",
                 f'''#!/usr/bin/env bash
 printf 'pactl %s\\n' "$*" >>{log!s}
-if [[ $* == 'list sink-inputs short' ]]; then printf '361\\t292\\t360\\tPipeWire\\n'; fi
-if [[ $* == info ]]; then printf 'Default Sink: bluez_output.C0_DA_5E_EC_FB_7F.1\\n'; fi
 ''',
             )
             result = subprocess.run(
-                [SCRIPT, "up"], env={"PATH": f"{path}:/usr/bin"}, check=False
+                [SCRIPT, action],
+                env={"PATH": f"{path}:/usr/bin"},
+                check=False,
+                capture_output=True,
+                text=True,
             )
-            output = log.read_text()
-
-        self.assertEqual(result.returncode, 0)
-        self.assertIn(
-            "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 3%+", output
-        )
-        self.assertIn(
-            "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 3%+", output
-        )
-        self.assertIn("pactl set-sink-input-volume 361 53%", output)
-        self.assertIn("--stack-tag volume", output)
-        self.assertIn("int:value:53", output)
-        self.assertIn("A2DP/AAC", output)
-        self.assertIn("Volume 53%", output)
-
-    def test_profile_labels_cover_hfp_and_non_bluetooth(self):
-        script = SCRIPT.read_text()
-        self.assertIn("HFP/", script)
-        self.assertIn("Local", script)
-
-    def test_mute_notification_distinguishes_mute_and_unmute(self):
-        script = SCRIPT.read_text()
-        self.assertIn("audio-mute-led --once", script)
-        self.assertIn("audio-mute-state speaker", script)
-        self.assertIn("set-sink-input-mute", script)
-        self.assertIn("Muted", script)
-        self.assertIn("Unmuted", script)
-        self.assertIn("string:state:$muted", script)
+            output = log.read_text() if log.exists() else ""
+            return result, output
 
     @staticmethod
     def _write_mock(path, content):

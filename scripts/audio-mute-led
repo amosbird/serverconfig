@@ -19,7 +19,7 @@ sync_leds() {
     [[ $muted == yes ]] && write_leds "$mute_led_glob" 1 || write_leds "$mute_led_glob" 0
 
     muted=$(pactl get-source-mute @DEFAULT_SOURCE@ 2>/dev/null | awk '{ print $2 }')
-    [[ $muted == yes ]] && write_leds "$micmute_led_glob" 1 || write_leds "$micmute_led_glob" 0
+    [[ $muted == no ]] && write_leds "$micmute_led_glob" 0 || write_leds "$micmute_led_glob" 1
 }
 
 sync_leds

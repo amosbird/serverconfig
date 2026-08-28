@@ -328,7 +328,7 @@ keys = [
         defer_inputstr("k", "$(pass show scripts/otp | bash)", shell=True),
     ),
     Key([super_r], "s", lazy.spawn("/home/amos/git/work/scripts/rofitsearch")),
-    Key([super_r], "v", lazy.spawn("rofisound")),
+    Key([super_r], "v", lazy.spawn("pavucontrol")),
     Key([ctrl], "F8", lazy.spawn("iwmenu --launcher rofi")),
     Key([ctrl], "F10", lazy.spawn("bzmenu --launcher rofi --interactive")),
     Key([super_l, shift], "f", lazy.window.toggle_fullscreen()),
