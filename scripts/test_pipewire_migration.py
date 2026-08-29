@@ -11,6 +11,7 @@ QTILE = ROOT / ".config/qtile/config.py"
 TLP = ROOT / "tlp/tlp.conf"
 AUDIO_POLICY = (
     WIREPLUMBER,
+    ROOT / "scripts/bluetooth-profile",
     ROOT / "scripts/volume",
     ROOT / "scripts/microphone-mute",
     ROOT / "scripts/audio-mute-led",
@@ -45,15 +46,11 @@ class PipeWireMigrationTest(unittest.TestCase):
             self.assertFalse(path.exists(), path)
 
         restore = RESTORE.read_text()
-        self.assertIn("systemctl --user disable --now", restore)
-        self.assertIn("bluetooth-audio-default.service", restore)
-        self.assertIn("bluetooth-sco-watchdog.service", restore)
         self.assertIn(
             'rm -f "$HOME/.config/systemd/user/bluetooth-audio-default.service"',
             restore,
         )
         self.assertIn('"$HOME/.config/systemd/user/bluetooth-sco-watchdog.service"', restore)
-        self.assertIn("systemctl --user reset-failed", restore)
         self.assertNotIn("enable --now bluetooth-audio-default.service", restore)
         self.assertNotIn("enable --now bluetooth-sco-watchdog.service", restore)
 
@@ -68,11 +65,11 @@ class PipeWireMigrationTest(unittest.TestCase):
             "rfkill block",
             "rfkill unblock",
             "systemctl restart bluetooth",
-            "set-card-profile",
             "pw-cli destroy",
         )
         for command in forbidden:
             self.assertNotIn(command, source, command)
+        self.assertEqual(source.count("pactl set-card-profile"), 1)
 
     def test_tlp_does_not_disable_bluetooth(self):
         config = TLP.read_text()
@@ -100,12 +97,12 @@ class PipeWireMigrationTest(unittest.TestCase):
         ):
             self.assertNotIn(setting, config)
 
-    def test_freeclip_is_hfp_msbc_only(self):
+    def test_freeclip_supports_manual_a2dp_and_hfp_msbc(self):
         config = WIREPLUMBER.read_text()
-        self.assertIn("bluez5.roles = [ hfp_hf hfp_ag ]", config)
+        self.assertIn("bluez5.roles = [ a2dp_source hfp_hf hfp_ag ]", config)
         self.assertIn("bluez5.enable-msbc = true", config)
         self.assertNotIn("bluez5.hfphsp-backend", config)
-        self.assertNotRegex(config, r"\b(?:a2dp|bap|hsp)[_-]")
+        self.assertNotRegex(config, r"\b(?:a2dp_sink|bap[_-]|hsp[_-])")
 
     def test_freeclip_only_customization_is_idle_suspend(self):
         config = WIREPLUMBER.read_text()

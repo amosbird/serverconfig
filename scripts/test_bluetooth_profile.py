@@ -6,17 +6,132 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).parents[1]
+PROFILE = ROOT / "scripts/bluetooth-profile"
 MUTE = ROOT / "scripts/microphone-mute"
 LED_SYNC = ROOT / "scripts/audio-mute-led"
 LED_SERVICE = ROOT / "systemd/audio-mute-led.service"
 CONFIG = ROOT / ".config/qtile/config.py"
 
 
-class MicrophoneMuteTest(unittest.TestCase):
+class AudioControlTest(unittest.TestCase):
     def test_qtile_ctrl_f4_toggles_default_microphone(self):
         config = CONFIG.read_text()
         self.assertIn('Key([ctrl], "F4", lazy.spawn("microphone-mute"))', config)
+        self.assertIn(
+            'Key([ctrl, shift], "F4", lazy.spawn("bluetooth-profile"))', config
+        )
         self.assertNotIn('Key([ctrl], "F4", lazy.spawn("bluetooth-profile"))', config)
+
+    def test_profile_toggle_is_manual_and_transport_local(self):
+        script = PROFILE.read_text()
+        self.assertIn('pactl set-card-profile "$card" "$target"', script)
+        self.assertIn("headset-head-unit", script)
+        self.assertIn("a2dp-sink", script)
+        for command in (
+            "move-sink-input",
+            "move-source-output",
+            "bluetoothctl",
+            "rfkill",
+            "systemctl",
+            "parecord",
+        ):
+            self.assertNotIn(command, script)
+
+    def test_hfp_switches_to_a2dp(self):
+        result, output = self._toggle("headset-head-unit", "a2dp-sink")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("set-card-profile bluez_card.C0_DA_5E_EC_FB_7F a2dp-sink", output)
+        self.assertIn("A2DP", output)
+
+    def test_a2dp_switches_to_best_hfp_profile(self):
+        result, output = self._toggle("a2dp-sink", "headset-head-unit")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(
+            "set-card-profile bluez_card.C0_DA_5E_EC_FB_7F headset-head-unit",
+            output,
+        )
+        self.assertIn("HFP/mSBC", output)
+
+    def test_missing_a2dp_profile_explains_that_reconnection_is_required(self):
+        result, output = self._run_profile(
+            "Name: bluez_card.C0_DA_5E_EC_FB_7F\n"
+            "Active Profile: headset-head-unit\n",
+            available_profiles=("off", "headset-head-unit"),
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn("set-card-profile", output)
+        self.assertIn("Reconnect FreeClip once", output)
+
+    def test_profile_switch_failure_keeps_the_current_profile(self):
+        result, output = self._run_profile(
+            "Name: bluez_card.C0_DA_5E_EC_FB_7F\n"
+            "Active Profile: headset-head-unit\n",
+            fail_switch=True,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("set-card-profile", output)
+        self.assertIn("A2DP is unavailable", output)
+
+    def test_disconnected_freeclip_does_not_touch_other_bluetooth_cards(self):
+        result, output = self._run_profile(
+            "Name: bluez_card.AA_BB\nActive Profile: a2dp-sink\n"
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertNotIn("set-card-profile", output)
+        self.assertIn("FreeClip 2 is not connected", output)
+
+    @classmethod
+    def _toggle(cls, active, target):
+        cards = (
+            "Name: bluez_card.C0_DA_5E_EC_FB_7F\n"
+            f"Active Profile: {active}\n"
+        )
+        return cls._run_profile(cards, target)
+
+    @staticmethod
+    def _run_profile(cards, target=None, fail_switch=False, available_profiles=None):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            log = path / "log"
+            state = path / "state"
+            state.write_text(cards)
+            profiles = available_profiles or ("off", "a2dp-sink", "headset-head-unit")
+            profile_lines = "".join(f"    {profile}: Profile\n" for profile in profiles)
+            switch = "exit 1" if fail_switch else (
+                f'''printf 'Name: %s\\nActive Profile: %s\\n' "$2" "$3" >{state}'''
+            )
+            pactl = path / "pactl"
+            pactl.write_text(
+                f'''#!/usr/bin/env bash
+printf 'pactl %s\\n' "$*" >>{log}
+if [[ $* == "list cards" ]]; then
+    cat {state}
+    printf 'Profiles:\\n'
+    printf '%s' '{profile_lines}'
+elif [[ $1 == "set-card-profile" ]]; then
+    {switch}
+fi
+'''
+            )
+            pactl.chmod(0o755)
+            dunstify = path / "dunstify"
+            dunstify.write_text(
+                f'''#!/usr/bin/env bash
+printf 'dunstify %s\\n' "$*" >>{log}
+'''
+            )
+            dunstify.chmod(0o755)
+            result = subprocess.run(
+                [PROFILE],
+                env={"PATH": f"{path}:/usr/bin", "XDG_RUNTIME_DIR": directory},
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            output = log.read_text() if log.exists() else ""
+            if target is not None:
+                assert f"Active Profile: {target}" in state.read_text()
+            return result, output
 
     def test_toggle_uses_default_source_and_syncs_led(self):
         script = MUTE.read_text()

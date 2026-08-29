@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+set -u
+
+card=bluez_card.C0_DA_5E_EC_FB_7F
+
+notify() {
+    command -v dunstify >/dev/null 2>&1 || return
+    dunstify --app-name Bluetooth --stack-tag bluetooth-profile --timeout 2000 \
+        "$1" "${2:-}" >/dev/null 2>&1 || true
+}
+
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/bluetooth-profile.lock"
+flock -n 9 || exit 0
+
+card_info=$(pactl list cards 2>/dev/null) || {
+    notify "Bluetooth profile unavailable" "PipeWire is not running"
+    exit 0
+}
+active=$(awk -v card="$card" '
+    $1 == "Name:" { in_card = ($2 == card) }
+    in_card && $1 == "Active" && $2 == "Profile:" { print $3; exit }
+' <<<"$card_info")
+
+case $active in
+headset-head-unit*)
+    target=a2dp-sink
+    label=A2DP
+    ;;
+a2dp-sink*)
+    target=headset-head-unit
+    label=HFP/mSBC
+    ;;
+"")
+    notify "Bluetooth profile unavailable" "FreeClip 2 is not connected"
+    exit 0
+    ;;
+*)
+    notify "Bluetooth profile unavailable" "Unsupported profile: $active"
+    exit 0
+    ;;
+esac
+
+if ! awk -v card="$card" -v target="$target" '
+    $1 == "Name:" {
+        if (in_card) exit !found
+        in_card = ($2 == card)
+    }
+    in_card && $1 == target ":" { found = 1 }
+    END { exit !found }
+' <<<"$card_info"; then
+    notify "Bluetooth profile unavailable" "Reconnect FreeClip once, then retry $label"
+    exit 0
+fi
+
+if ! pactl set-card-profile "$card" "$target" >/dev/null 2>&1; then
+    notify "Bluetooth profile switch failed" "$label is unavailable"
+    exit 0
+fi
+
+for _ in {1..20}; do
+    active=$(pactl list cards 2>/dev/null | awk -v card="$card" '
+        $1 == "Name:" { in_card = ($2 == card) }
+        in_card && $1 == "Active" && $2 == "Profile:" { print $3; exit }
+    ') || break
+    [[ $active == "$target" ]] && break
+    sleep 0.05
+done
+
+if [[ $active == "$target" ]]; then
+    notify "Bluetooth profile" "$label"
+else
+    notify "Bluetooth profile switch failed" "Timed out waiting for $label"
+fi

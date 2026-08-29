@@ -369,6 +369,7 @@ keys = [
     Key([ctrl], "F2", lazy.spawn("volume down")),
     Key([ctrl], "F3", lazy.spawn("volume up")),
     Key([ctrl], "F4", lazy.spawn("microphone-mute")),
+    Key([ctrl, shift], "F4", lazy.spawn("bluetooth-profile")),
     Key([], "XF86AudioLowerVolume", lazy.spawn("volume down")),
     Key([], "XF86AudioRaiseVolume", lazy.spawn("volume up")),
     Key([], "XF86AudioMute", lazy.spawn("volume mute")),
