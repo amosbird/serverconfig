@@ -142,6 +142,9 @@ if [[ -n $GUI ]]; then
         "$HOME/.config/google-chrome-main/NativeMessagingHosts/io.github.amosbird.rofi.chrome.json"
     update-desktop-database "$HOME/.local/share/applications"
     sudo cp "$DIR"/xkb/symbols/{us,pc,inet} /usr/share/X11/xkb/symbols/
+    sudo install -Dm644 "$DIR"/xorg/30-touchpad.conf \
+        /etc/X11/xorg.conf.d/30-touchpad.conf
+    sudo install -Dm644 "$DIR"/modprobe.d/psmouse.conf /etc/modprobe.d/psmouse.conf
     sudo install -Dm644 "$DIR"/tlp/tlp.conf /etc/tlp.conf
     setxkbmap us
     sudo mkdir -p /etc/pacman.d/hooks
