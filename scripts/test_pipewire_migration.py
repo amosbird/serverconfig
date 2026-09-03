@@ -7,8 +7,6 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
-WEMEET_LOOPBACK = ROOT / ".config/pipewire/pipewire.conf.d/51-wemeet-stable.conf"
-WEMEET = ROOT / "scripts/wemeet"
 QTILE = ROOT / ".config/qtile/config.py"
 TLP = ROOT / "tlp/tlp.conf"
 AUDIO_POLICY = (
@@ -122,53 +120,6 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertNotIn("wemeet", config.lower())
         self.assertNotIn("state.restore-target", config)
         self.assertFalse((ROOT / "scripts/release-wemeet-audio").exists())
-
-    def test_wemeet_uses_stable_pipewire_endpoints(self):
-        config = WEMEET_LOOPBACK.read_text()
-        self.assertEqual(config.count("name = libpipewire-module-loopback"), 2)
-        for endpoint, media_class in (
-            ("wemeet_output", "Audio/Sink"),
-            ("wemeet_input", "Audio/Source"),
-        ):
-            self.assertIn(f'node.name = "{endpoint}"', config)
-            self.assertIn(f"media.class = {media_class}", config)
-        self.assertIn('node.name = "wemeet_output.backend"', config)
-        self.assertIn('node.name = "wemeet_input.backend"', config)
-        self.assertEqual(config.count("node.virtual = false"), 2)
-        self.assertEqual(config.count("node.dont-fallback = true"), 2)
-        self.assertEqual(config.count("node.linger = true"), 2)
-        self.assertEqual(config.count("state.restore-props = false"), 4)
-
-    def test_manual_profile_switch_routes_only_loopback_backends(self):
-        script = (ROOT / "scripts/bluetooth-profile").read_text()
-        self.assertIn('route_backend wemeet_output.backend', script)
-        self.assertIn('route_backend wemeet_input.backend', script)
-        self.assertIn("bluez_output.C0_DA_5E_EC_FB_7F.1", script)
-        self.assertIn("bluez_input.C0:DA:5E:EC:FB:7F", script)
-        self.assertIn("HiFi__Mic1__source", script)
-        self.assertNotIn("pgrep", script)
-        forbidden = (
-            "move-sink-input",
-            "move-source-output",
-            "bluetoothctl",
-            "rfkill",
-            "systemctl restart",
-            "parecord",
-            "pw-cli destroy",
-        )
-        for command in forbidden:
-            self.assertNotIn(command, script)
-
-    def test_wemeet_bypasses_only_the_aur_pulse_hooks(self):
-        script = WEMEET.read_text()
-        pulse = "/usr/lib/libpulse.so.0"
-        wrapper = "/usr/lib/wemeet/libwemeetwrap.so"
-        self.assertIn(pulse, script)
-        self.assertIn(wrapper, script)
-        self.assertLess(script.index(pulse), script.index(wrapper))
-        self.assertIn('exec /usr/bin/wemeet "$@"', script)
-        self.assertNotIn("PULSE_SINK", script)
-        self.assertNotIn("PULSE_SOURCE", script)
 
     def test_ctrl_f4_uses_wireplumber_native_mute(self):
         script = (ROOT / "scripts/microphone-mute").read_text()

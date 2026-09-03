@@ -41,8 +41,6 @@ class AudioControlTest(unittest.TestCase):
         result, output = self._toggle("headset-head-unit", "a2dp-sink")
         self.assertEqual(result.returncode, 0)
         self.assertIn("set-card-profile bluez_card.C0_DA_5E_EC_FB_7F a2dp-sink", output)
-        self.assertIn("pw-metadata -n default 201 target.object 601 Spa:Id", output)
-        self.assertIn("pw-metadata -n default 202 target.object 603 Spa:Id", output)
         self.assertIn("A2DP", output)
 
     def test_a2dp_switches_to_best_hfp_profile(self):
@@ -52,8 +50,6 @@ class AudioControlTest(unittest.TestCase):
             "set-card-profile bluez_card.C0_DA_5E_EC_FB_7F headset-head-unit",
             output,
         )
-        self.assertIn("pw-metadata -n default 201 target.object 601 Spa:Id", output)
-        self.assertIn("pw-metadata -n default 202 target.object 602 Spa:Id", output)
         self.assertIn("HFP/mSBC", output)
 
     def test_missing_a2dp_profile_explains_that_reconnection_is_required(self):
@@ -125,28 +121,6 @@ printf 'dunstify %s\\n' "$*" >>{log}
 '''
             )
             dunstify.chmod(0o755)
-            pw_dump = path / "pw-dump"
-            pw_dump.write_text(
-                """#!/usr/bin/env bash
-cat <<'JSON'
-[
-  {"id":201,"info":{"props":{"node.name":"wemeet_output.backend"}}},
-  {"id":202,"info":{"props":{"node.name":"wemeet_input.backend"}}},
-  {"id":301,"info":{"props":{"node.name":"bluez_output.C0_DA_5E_EC_FB_7F.1","object.serial":"601"}}},
-  {"id":302,"info":{"props":{"node.name":"bluez_input.C0:DA:5E:EC:FB:7F","object.serial":"602"}}},
-  {"id":303,"info":{"props":{"node.name":"alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source","object.serial":"603"}}}
-]
-JSON
-"""
-            )
-            pw_dump.chmod(0o755)
-            pw_metadata = path / "pw-metadata"
-            pw_metadata.write_text(
-                f'''#!/usr/bin/env bash
-printf 'pw-metadata %s\n' "$*" >>{log}
-'''
-            )
-            pw_metadata.chmod(0o755)
             result = subprocess.run(
                 [PROFILE],
                 env={"PATH": f"{path}:/usr/bin", "XDG_RUNTIME_DIR": directory},
