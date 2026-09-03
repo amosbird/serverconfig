@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+pulse=/usr/lib/libpulse.so.0
+wrapper=/usr/lib/wemeet/libwemeetwrap.so
+
+[[ -r $pulse && -r $wrapper ]] || exec /usr/bin/wemeet "$@"
+
+# The AUR wrapper still interposes Pulse sink enumeration through process-global
+# callback slots. PipeWire already marks real sinks as hardware, so resolve the
+# Pulse API first while retaining the wrapper's unrelated crash workarounds.
+export LD_PRELOAD="$pulse:$wrapper${LD_PRELOAD:+:$LD_PRELOAD}"
+exec /usr/bin/wemeet "$@"
