@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+version=1
+name=rmi4-touchpad-health
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source_dir=/usr/src/$name-$version
+
+if (( EUID != 0 )); then
+    exec sudo -- "$0" "$@"
+fi
+
+install -d "$source_dir"
+install -m644 "$script_dir"/{Makefile,dkms.conf,rmi4_touchpad_health.c} "$source_dir"/
+install -Dm755 "$script_dir/check-image.py" /usr/local/lib/reloadtouchpad/check-image.py
+
+modprobe -r rmi4_touchpad_health 2>/dev/null || true
+dkms remove "$name/$version" --all 2>/dev/null || true
+rm -rf "/var/lib/dkms/$name/$version"
+
+dkms add "$name/$version"
+for modules_dir in /usr/lib/modules/*; do
+    kernel=${modules_dir##*/}
+    [[ -f $modules_dir/build/Makefile ]] || continue
+    dkms install "$name/$version" -k "$kernel"
+done
+modprobe rmi4_touchpad_health

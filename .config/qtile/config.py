@@ -331,6 +331,7 @@ keys = [
     Key([super_r], "v", lazy.spawn("pavucontrol")),
     Key([ctrl], "F8", lazy.spawn("iwmenu --launcher rofi")),
     Key([ctrl], "F10", lazy.spawn("bzmenu --launcher rofi --interactive")),
+    Key([ctrl], "F12", lazy.spawn("reloadtouchpad")),
     Key([super_l, shift], "f", lazy.window.toggle_fullscreen()),
     Key([super_l], "f", lazy.window.toggle_floating()),
     Key([super_l], "z", lazy.spawn("lockscreen")),

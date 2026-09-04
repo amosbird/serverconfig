@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+version=1
+name=rmi4-touchpad-health
+
+if (( EUID != 0 )); then
+    exec sudo -- "$0" "$@"
+fi
+
+modprobe -r rmi4_touchpad_health 2>/dev/null || true
+dkms remove "$name/$version" --all 2>/dev/null || true
+rm -rf "/usr/src/$name-$version" /usr/local/lib/reloadtouchpad

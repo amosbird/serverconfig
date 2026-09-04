@@ -1,4 +1,133 @@
 #!/usr/bin/env bash
 
-sudo modprobe -r psmouse
-sudo modprobe psmouse
+set -euo pipefail
+
+max_attempts=${RELOADTOUCHPAD_MAX_ATTEMPTS:-8}
+settle_seconds=${RELOADTOUCHPAD_SETTLE_SECONDS:-1}
+module=rmi4_touchpad_health
+checker=/usr/local/lib/reloadtouchpad/check-image.py
+health=/sys/kernel/debug/rmi4_touchpad_normalized_image
+notification_tag=reloadtouchpad
+
+if ! [[ $max_attempts =~ ^[1-9][0-9]*$ ]] || (( max_attempts > 20 )); then
+    printf 'RELOADTOUCHPAD_MAX_ATTEMPTS must be between 1 and 20\n' >&2
+    exit 2
+fi
+if ! [[ $settle_seconds =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf 'RELOADTOUCHPAD_SETTLE_SECONDS must be a non-negative number\n' >&2
+    exit 2
+fi
+
+notify() {
+    command -v dunstify >/dev/null 2>&1 || return
+
+    if (( EUID == 0 )) && [[ -n ${SUDO_USER:-} ]]; then
+        sudo -u "$SUDO_USER" env DISPLAY="${DISPLAY:-:0}" \
+            DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+            XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+            dunstify --app-name Touchpad --stack-tag "$notification_tag" \
+            "$@" >/dev/null 2>&1 || true
+    else
+        dunstify --app-name Touchpad --stack-tag "$notification_tag" \
+            "$@" >/dev/null 2>&1 || true
+    fi
+}
+
+if (( EUID != 0 )); then
+    exec 9>"${XDG_RUNTIME_DIR:-/tmp}/reloadtouchpad.lock"
+    if ! flock -n 9; then
+        notify --timeout 2500 "Touchpad recovery" "Recovery is already running"
+        exit 0
+    fi
+
+    notify --timeout 0 "Touchpad recovery" "Checking touchpad health…"
+    if sudo -n --preserve-env=DISPLAY,DBUS_SESSION_BUS_ADDRESS,XDG_RUNTIME_DIR \
+        env RELOADTOUCHPAD_MAX_ATTEMPTS="$max_attempts" \
+        RELOADTOUCHPAD_SETTLE_SECONDS="$settle_seconds" "$0" --root; then
+        notify --timeout 3500 "Touchpad recovered" "Health check passed"
+        exit 0
+    else
+        status=$?
+        notify --urgency critical --timeout 7000 "Touchpad recovery failed" \
+            "Still unhealthy after $max_attempts attempts"
+        exit "$status"
+    fi
+fi
+
+if [[ ${1:-} != --root ]]; then
+    printf 'Refusing to run root worker directly without --root\n' >&2
+    exit 2
+fi
+
+load_health_module() {
+    if ! grep -q "^$module " /proc/modules; then
+        modprobe "$module"
+    fi
+}
+
+health_is_good() {
+    local directory
+    local frame
+    local frames=()
+
+    directory=$(mktemp -d)
+    for frame in {1..20}; do
+        if ! timeout 3 cp "$health" "$directory/$frame.bin"; then
+            rm -rf "$directory"
+            return 1
+        fi
+        frames+=("$directory/$frame.bin")
+        sleep 0.15
+    done
+
+    if "$checker" "${frames[@]}"; then
+        rm -rf "$directory"
+        return 0
+    fi
+
+    rm -rf "$directory"
+    return 1
+}
+
+reset_touchpad() {
+    if ! grep -qw LEN040f /sys/bus/serio/devices/serio1/firmware_id; then
+        printf 'refusing to reset unexpected serio1 device\n' >&2
+        return 1
+    fi
+
+    printf 'none' > /sys/bus/serio/devices/serio1/drvctl
+    sleep 0.2
+    if ! printf 'psmouse' > /sys/bus/serio/devices/serio1/drvctl; then
+        sleep 1
+        printf 'psmouse' > /sys/bus/serio/devices/serio1/drvctl
+    fi
+}
+
+ensure_psmouse_bound() {
+    if [[ ! -L /sys/bus/serio/devices/serio1/driver ]]; then
+        printf 'psmouse' > /sys/bus/serio/devices/serio1/drvctl 2>/dev/null || true
+    fi
+}
+
+trap ensure_psmouse_bound EXIT
+
+for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    load_health_module
+    sleep "$settle_seconds"
+
+    printf 'touchpad health check %d/%d\n' "$attempt" "$max_attempts"
+    if health_is_good; then
+        printf 'touchpad initialization is healthy\n'
+        exit 0
+    fi
+
+    if (( attempt < max_attempts )); then
+        printf 'touchpad initialization is unhealthy; resetting serio1\n' >&2
+        notify --timeout 0 "Touchpad recovery" \
+            "Resetting touchpad ($attempt/$max_attempts)…"
+        reset_touchpad
+    fi
+done
+
+printf 'touchpad remained unhealthy after %d attempts\n' "$max_attempts" >&2
+exit 1
