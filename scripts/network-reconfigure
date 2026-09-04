@@ -18,6 +18,9 @@ if [ -z "${NETWORK_RECONFIGURE_LOCKED:-}" ]; then
 fi
 
 IOA_MARK="0x1/0xffffffff"
+IOA_OWNER_MARK="0x1000000/0xffffffff"
+IOA_CGROUP_PATHS_VALUE=${IOA_CGROUP_PATHS_OVERRIDE-"system.slice/ngnclient.service"}
+read -r -a IOA_CGROUP_PATHS <<<"$IOA_CGROUP_PATHS_VALUE"
 TS_MARK="0x80000/0xff0000"
 CHAIN="NETMODE_IOA"
 NEXT_CHAIN="NETMODE_IOA_NEXT"
@@ -30,8 +33,11 @@ RT_TABLES="${RT_TABLES_OVERRIDE:-/etc/iproute2/rt_tables}"
 TMPDIR="${TMPDIR_OVERRIDE:-/tmp}"
 IOA_TABLE="ioa"
 ROUTEFILE="/home/amos/.routefile"
+CN_EXCLUDE_FILE="/home/amos/git/serverconfig/network/cn-exclude.conf"
 OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
 OFFICE_DST="/etc/smartdns/office.conf"
+P_IOA_OWNER=400
+P_IOA_OWNER_STOP=401
 P_TS=500
 P_LOCAL=1000
 P_IOA_MARK=1400
@@ -45,7 +51,7 @@ clean_pref() { while ip rule del pref "$1" 2>/dev/null; do :; done; }
 
 # Add desired rules before deleting stale rules, so an owned band is never empty.
 normalise_rule() {
-    sed -E 's/fwmark (0x[0-9a-f]+)( lookup)/fwmark \1\/0xffffffff\2/' <<<"$1"
+    sed -E 's/fwmark (0x[0-9a-f]+)( (lookup|prohibit))/fwmark \1\/0xffffffff\2/' <<<"$1"
 }
 
 canonical_rules() {
@@ -108,6 +114,12 @@ dhcp_router() {
         awk '$2 == "router" && $3 ~ /^[0-9.]+$/ { print $3; exit }'
 }
 
+dhcp_captive_portal_hostname() {
+    { networkctl dhcp-lease "$1" 2>/dev/null || true; } |
+        awk '$2 == "captive" && $3 == "portal" { print $4; exit }' |
+        python3 -c 'import sys, urllib.parse; print(urllib.parse.urlparse(sys.stdin.read().strip()).hostname or "")'
+}
+
 wired_devices() {
     ip -o link show up |
         awk -F': ' '$2 ~ /^enp/ { sub(/@.*/, "", $2); print $2 }' |
@@ -128,6 +140,17 @@ wired_candidate() {
 count_routes() { { ip route show table "$1" 2>/dev/null || true; } | wc -l; }
 has_routes() { [ "$(count_routes "$1")" -gt 0 ]; }
 
+cn_routes_match() {
+    local table=$1 gateway=$2 device=$3 expected=$4
+    { ip route show table "$table" 2>/dev/null || true; } |
+        awk -v gateway="$gateway" -v device="$device" -v expected="$expected" '
+            $1 == "throw" { count++; next }
+            $2 != "via" || $3 != gateway || $4 != "dev" || $5 != device { bad = 1 }
+            { count++ }
+            END { exit bad || count != expected }
+        '
+}
+
 wired_up() {
     local dev
     while read -r dev; do
@@ -140,9 +163,12 @@ validate_fixed_table() {
     local id=$1 name=$2 id_count name_count exact_count
     read -r id_count name_count exact_count < <(awk -v id="$id" -v name="$name" '
         $1 !~ /^#/ && NF >= 2 {
-            if ($1 == id) id_count++
-            if ($2 == name) name_count++
-            if ($1 == id && $2 == name) exact_count++
+            key = $1 SUBSEP $2
+            if (!seen[key]++) {
+                if ($1 == id) id_count++
+                if ($2 == name) name_count++
+                if ($1 == id && $2 == name) exact_count++
+            }
         }
         END { print id_count + 0, name_count + 0, exact_count + 0 }
     ' "$RT_TABLES")
@@ -152,23 +178,25 @@ validate_fixed_table() {
     if [ "$id_count" -eq 1 ] && [ "$name_count" -eq 1 ] && [ "$exact_count" -eq 1 ]; then
         return
     fi
-    warn "routing table registration is ambiguous: $id $name"
+    warn "routing table registration conflicts: $id $name"
     return 1
 }
 
 register_fixed_table() {
     local id=$1 name=$2 tmp
     validate_fixed_table "$id" "$name"
-    if awk -v id="$id" -v name="$name" '
-        $1 !~ /^#/ && $1 == id && $2 == name { found = 1 }
-        END { exit !found }
-    ' "$RT_TABLES"; then
+    tmp=$(mktemp "$RT_TABLES.XXXXXX")
+    awk -v id="$id" -v name="$name" '
+        $1 !~ /^#/ && $1 == id && $2 == name {
+            if (found++) next
+        }
+        { print }
+        END { if (!found) print id, name }
+    ' "$RT_TABLES" > "$tmp"
+    if cmp -s "$tmp" "$RT_TABLES"; then
+        rm -f "$tmp"
         return
     fi
-
-    tmp=$(mktemp "$RT_TABLES.XXXXXX")
-    cat "$RT_TABLES" > "$tmp"
-    printf '%s %s\n' "$id" "$name" >> "$tmp"
     chmod --reference="$RT_TABLES" "$tmp"
     chown --reference="$RT_TABLES" "$tmp"
     mv "$tmp" "$RT_TABLES"
@@ -224,6 +252,7 @@ for _ in {1..10}; do
     [ -n "${dns:-}" ] && break
     sleep 1
 done || true
+portal_hostname=$(dhcp_captive_portal_hostname "$IFACE")
 
 # Keep SmartDNS fragments atomic and restart only when their contents change.
 SMARTDNS_CHANGED=0
@@ -250,12 +279,17 @@ write_if_changed() {
     return 0
 }
 
-if [ -n "${dns:-}" ]; then
+if [ -n "${dns:-}" ] && [ -n "$portal_hostname" ]; then
+    # DHCP DNS is untrusted and exists only to resolve the RFC 8910 captive-portal endpoint.
+    # Never add it to SmartDNS' default group: hotels commonly rewrite public names (including
+    # google.com) to policy-enforcing addresses even after authentication succeeds.
     # shellcheck disable=SC2086 # DNS servers intentionally expand to separate arguments
     write_if_changed /etc/smartdns/dhcp-dns.conf \
-        "$(printf '# DHCP DNS from %s\n' "$IFACE"; printf 'server %s\n' $dns)"
+        "$(printf '# Captive portal DNS from %s\n' "$IFACE"; \
+           printf 'server %s -group captive -exclude-default-group\n' $dns; \
+           printf 'nameserver /%s/captive\n' "$portal_hostname")"
 else
-    write_if_changed /etc/smartdns/dhcp-dns.conf "# No DHCP DNS"
+    write_if_changed /etc/smartdns/dhcp-dns.conf "# No captive portal DNS"
 fi
 
 if ! wired_up; then
@@ -274,11 +308,11 @@ wired_dev=''
 wired_gateway=''
 read -r wired_dev wired_gateway < <(wired_candidate || true) || true
 if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
-    ip route replace default via "$wired_gateway" dev "$wired_dev" \
+    ip route replace default via "$wired_gateway" dev "$wired_dev" onlink \
         table "$WIRED_UNDERLAY_TABLE"
     while read -r route; do
         [ -n "$route" ] || continue
-        [ "$route" = "default via $wired_gateway dev $wired_dev" ] ||
+        [ "$route" = "default via $wired_gateway dev $wired_dev onlink" ] ||
             ip route del $route table "$WIRED_UNDERLAY_TABLE"
     done < <(ip route show table "$WIRED_UNDERLAY_TABLE")
 else
@@ -290,11 +324,16 @@ STATE_FILE="$CACHE_DIR/last-applied"
 CN_STATE_FILE="$CACHE_DIR/cn-last-applied"
 mkdir -p "$CACHE_DIR"
 routefile_state=$(sha256sum "$ROUTEFILE" 2>/dev/null | awk '{print $1}' || printf missing)
-current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-} routefile=$routefile_state"
+cn_exclude_state=$(sha256sum "$CN_EXCLUDE_FILE" 2>/dev/null |
+    awk '{print $1}' || printf missing)
+current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-}"
+current_state+=" portal=${portal_hostname:-} routefile=$routefile_state exclude=$cn_exclude_state"
 
 declare -A DESIRED_BANDS
 band_of() { canonical_rules "$@" | paste -sd';' -; }
 
+DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"
+DESIRED_BANDS[$P_IOA_OWNER_STOP]="from all fwmark $IOA_OWNER_MARK prohibit"
 DESIRED_BANDS[$P_TS]="from all fwmark $TS_MARK lookup main"
 
 local_band=()
@@ -349,21 +388,41 @@ actual_fingerprint() {
     done | sort
 }
 
+active_ioa_cgroups() {
+    local cgroup
+    if [ -n "${IOA_CGROUP_PATHS_OVERRIDE+x}" ]; then
+        [ "${#IOA_CGROUP_PATHS[@]}" -eq 0 ] || printf '%s\n' "${IOA_CGROUP_PATHS[@]}"
+        return
+    fi
+    for cgroup in "${IOA_CGROUP_PATHS[@]}"; do
+        [ -d "/sys/fs/cgroup/$cgroup" ] && printf '%s\n' "$cgroup"
+    done
+}
+
 firewall_fingerprint_ok() {
-    local expected actual
-    expected=$(printf '%s\n' \
-        "-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN" \
-        "-A $CHAIN -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff")
+    local expected actual cgroup
+    expected=''
+    while read -r cgroup; do
+        expected+="-A $CHAIN -m cgroup --path \"$cgroup\" -j MARK --set-xmark 0x1000000/0xffffffff"$'\n'
+    done < <(active_ioa_cgroups)
+    expected+="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
+    expected+="-A $CHAIN -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff"
     actual=$(iptables -t mangle -S "$CHAIN" 2>/dev/null | grep "^-A $CHAIN " || true)
     [ "$actual" = "$expected" ] || return 1
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
-        grep -Fxc -- '-A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE')" -eq 1 ]
+        grep -Fxc -- '-A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE')" -eq 1 ] ||
+        return 1
+    local physical_dev
+    physical_dev=$(physical_device)
+    [ -n "$physical_dev" ] || return 1
+    [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
+        grep -Fxc -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x1000000 -j MASQUERADE")" -eq 1 ]
 }
 
 if [ "${FORCE:-0}" != 1 ] &&
    [ "$current_state" = "$(cat "$STATE_FILE" 2>/dev/null || true)" ] &&
-   [ "$({ ip route show table "$CN_TABLE" 2>/dev/null || true; } |
-          awk '{print $3; exit}')" = "$(physical_gateway)" ] &&
+   cn_routes_match "$CN_TABLE" "$(physical_gateway)" "$(physical_device)" \
+       "$(count_routes "$CN_TABLE")" &&
    iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null &&
    firewall_fingerprint_ok &&
    [ "$(desired_fingerprint)" = "$(actual_fingerprint)" ]; then
@@ -384,7 +443,7 @@ finish_state() {
 trap 'finish_state $?' EXIT
 
 # Retire only obsolete repository-owned policy from earlier versions.
-for p in 100 900 2000 3500 4000 4500; do clean_pref "$p"; done
+for p in 100 900 1401 2000 2501 3500 4000 4500; do clean_pref "$p"; done
 rm -f "$CACHE_DIR/derp-ips" "$CACHE_DIR/ioa-endpoints"
 
 valid_ipv4() {
@@ -397,7 +456,7 @@ valid_ipv4() {
 }
 
 parse_routefile() {
-    local line prefix address length
+    local gateway=$1 device=$2 line prefix address length
     local prefixes=()
     local grammar='^[[:space:]]*route[[:space:]]+(add|replace)[[:space:]]+([^[:space:]]+)[[:space:]]+via[[:space:]]+GATEWAY[[:space:]]+table[[:space:]]+cn[[:space:]]*$'
     while IFS= read -r line || [ -n "$line" ]; do
@@ -412,9 +471,32 @@ parse_routefile() {
         fi
         valid_ipv4 "$address" || return 1
         prefixes+=("$prefix")
-        printf 'route replace %s via %s table %s\n' "$prefix" "$1" "$CN_STAGE_TABLE"
+        printf 'route replace %s via %s dev %s table %s\n' \
+            "$prefix" "$gateway" "$device" "$CN_STAGE_TABLE"
     done < "$ROUTEFILE"
     [ "$(printf '%s\n' "${prefixes[@]}" | sort -u | wc -l)" -eq "${#prefixes[@]}" ]
+}
+
+parse_cn_excludes() {
+    local line prefix address length
+    local prefixes=()
+    [ -e "$CN_EXCLUDE_FILE" ] || return 0
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%%#*}
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        [ -n "$line" ] || continue
+        prefix=$line
+        [[ "$prefix" != */* ]] && prefix="$prefix/32"
+        address=${prefix%/*}
+        length=${prefix##*/}
+        [[ "$length" =~ ^(0|[1-9]|[12][0-9]|3[0-2])$ ]] || return 1
+        valid_ipv4 "$address" || return 1
+        prefixes+=("$prefix")
+        printf 'route replace throw %s table %s\n' "$prefix" "$CN_STAGE_TABLE"
+    done < "$CN_EXCLUDE_FILE"
+    [ "${#prefixes[@]}" -eq 0 ] ||
+        [ "$(printf '%s\n' "${prefixes[@]}" | sort -u | wc -l)" -eq "${#prefixes[@]}" ]
 }
 
 write_cn_state() {
@@ -433,7 +515,9 @@ if [ -s "$ROUTEFILE" ]; then
     gw=$(physical_gateway)
     dev=$(physical_device)
     if [ -n "${gw:-}" ]; then
-        cn_route_batch=$(parse_routefile "$gw")
+        cn_route_batch=$(parse_routefile "$gw" "$dev")
+        cn_exclude_batch=$(parse_cn_excludes)
+        cn_route_batch+="${cn_exclude_batch:+$'\n'$cn_exclude_batch}"
         cn_expected_routes=$(grep -c '^route replace ' <<<"$cn_route_batch")
         [ "$cn_expected_routes" -gt 0 ]
     fi
@@ -441,11 +525,12 @@ else
     gw=$(physical_gateway)
     dev=$(physical_device)
 fi
-cn_expected_state="routefile=$routefile_state dev=${dev:-} gw=${gw:-} count=$cn_expected_routes"
+cn_expected_state="routefile=$routefile_state exclude=$cn_exclude_state"
+cn_expected_state+=" dev=${dev:-} gw=${gw:-} count=$cn_expected_routes"
 cn_rebuild=false
 if [ "${FORCE_CN:-0}" = 1 ] ||
    [ "$cn_expected_state" != "$(cat "$CN_STATE_FILE" 2>/dev/null || true)" ] ||
-   [ "$(count_routes "$CN_TABLE")" -ne "$cn_expected_routes" ]; then
+   ! cn_routes_match "$CN_TABLE" "${gw:-}" "${dev:-}" "$cn_expected_routes"; then
     cn_rebuild=true
 fi
 
@@ -474,10 +559,12 @@ elif $cn_rebuild; then
     { ip route show table "$CN_TABLE" 2>/dev/null || true; } |
         sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//' |
         sort >"$current_routes"
-    awk '{print $1}' "$desired_routes" | sort -u >"$desired_keys"
+    awk '{print ($1 == "throw" ? $2 : $1)}' "$desired_routes" | sort -u >"$desired_keys"
     sed -E "s|^|route replace |; s|$| table $CN_TABLE|" \
         "$desired_routes" >"$promotion_batch"
-    awk 'NR == FNR { desired[$1] = 1; next } !($1 in desired)' \
+    awk 'NR == FNR { desired[$1] = 1; next }
+         { key = ($1 == "throw" ? $2 : $1) }
+         !(key in desired)' \
         "$desired_keys" "$current_routes" |
         sed -E "s|^|route del |; s|$| table $CN_TABLE|" >>"$promotion_batch"
     ip -batch "$promotion_batch"
@@ -500,6 +587,11 @@ while iptables -t mangle -D OUTPUT -j "$NEXT_CHAIN" 2>/dev/null; do :; done
 iptables -t mangle -F "$NEXT_CHAIN" 2>/dev/null || true
 iptables -t mangle -X "$NEXT_CHAIN" 2>/dev/null || true
 iptables -t mangle -N "$NEXT_CHAIN"
+while read -r cgroup; do
+    iptables -t mangle -A "$NEXT_CHAIN" \
+        -m cgroup --path "$cgroup" \
+        -j MARK --set-xmark "$IOA_OWNER_MARK"
+done < <(active_ioa_cgroups)
 iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
 ensure_ipset ioa
 iptables -t mangle -A "$NEXT_CHAIN" \
@@ -526,7 +618,18 @@ iptables-restore --noflush <<<"$mark_transaction"
 # It is unreferenced after the atomic chain switch, so destruction is safe and idempotent.
 ipset destroy ioa_intranet 2>/dev/null || true
 
-# Manage only the repository-owned exact NAT rule; similar rules belong to others.
+# SmartGateAgent sometimes binds control sockets to tailscale0's address. The owner mark routes
+# those packets over the physical underlay; MASQUERADE also replaces that unusable source address.
+while read -r rule; do
+    [ -n "$rule" ] && iptables -t nat ${rule/-A /-D }
+done < <(iptables -t nat -S POSTROUTING 2>/dev/null |
+    grep -F -- '--mark 0x1000000 -j MASQUERADE' || true)
+physical_dev=$(physical_device)
+[ -z "$physical_dev" ] ||
+    iptables -t nat -A POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
+        -o "$physical_dev" -j MASQUERADE
+
+# Manage only the repository-owned exact IOA payload NAT rule; similar rules belong to others.
 while iptables -t nat -D POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 \
     -j MASQUERADE 2>/dev/null; do :; done
 iptables -t nat -A POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 -j MASQUERADE

@@ -6,8 +6,8 @@ TCPDUMP=${TCPDUMP:-/usr/bin/tcpdump}
 MAX_TEXT_BYTES=1048576
 
 diagnostic_commands=()
-deep_wlan_pid=
-deep_tail_pid=
+deep_pids=()
+deep_labels=()
 
 sanitize_note() {
     LC_ALL=C tr -d '[:cntrl:]'
@@ -100,7 +100,7 @@ record_route_events() {
 }
 
 run_snapshot() {
-    local incident=$1 phase=$2 entry label limit command
+    local incident=$1 phase=$2 entry label limit command gateway dhcp_dns
     if ((${#diagnostic_commands[@]})); then
         for entry in "${diagnostic_commands[@]}"; do
             IFS='|' read -r label limit command entry <<<"$entry"
@@ -113,12 +113,49 @@ run_snapshot() {
     record_command "$incident" "$phase" uname 5 /usr/bin/uname -a
     record_command "$incident" "$phase" uptime 5 /usr/bin/uptime
     record_command "$incident" "$phase" iw-link 5 /usr/bin/iw dev wlan0 link
+    record_command "$incident" "$phase" iw-station 5 /usr/bin/iw dev wlan0 station dump
+    record_command "$incident" "$phase" networkctl-wlan 10 /usr/bin/networkctl status wlan0 --no-pager
     record_command "$incident" "$phase" ip-addr 5 /usr/bin/ip addr show
     record_command "$incident" "$phase" ip-link-stats 5 /usr/bin/ip -s link
+    record_command "$incident" "$phase" ip-link-xdp 5 /usr/bin/ip -details link show dev wlan0
+    record_command "$incident" "$phase" tc-qdisc 5 /usr/bin/tc -s qdisc show dev wlan0
+    record_command "$incident" "$phase" tc-filter-ingress 5 /usr/bin/tc -s filter show dev wlan0 ingress
+    record_command "$incident" "$phase" tc-filter-egress 5 /usr/bin/tc -s filter show dev wlan0 egress
+    record_command "$incident" "$phase" ethtool-stats 5 /usr/bin/ethtool -S wlan0
+    record_command "$incident" "$phase" iw-power-save 5 /usr/bin/iw dev wlan0 get power_save
+    record_command "$incident" "$phase" iwlwifi-parameters 5 /usr/bin/sh -c \
+        'for p in /sys/module/iwlwifi/parameters/* /sys/module/iwlmvm/parameters/*; do [ ! -r "$p" ] || printf "%s=%s\\n" "$p" "$(cat "$p")"; done'
+    record_command "$incident" "$phase" ip-neigh-wlan 5 /usr/bin/ip -4 neigh show dev wlan0
     record_command "$incident" "$phase" ip-rule 5 /usr/bin/ip rule show
+    record_command "$incident" "$phase" route-get-internet 5 /usr/bin/ip -4 route get 1.1.1.1 mark 0x80000
     for entry in main 52 ioa 20 230 cn; do
         record_command "$incident" "$phase" "ip-route-$entry" 5 /usr/bin/ip route show table "$entry"
     done
+    gateway=$(/usr/bin/ip -4 route show table main default 2>/dev/null |
+        /usr/bin/awk '$5 == "wlan0" {print $3; exit}')
+    if [ -n "$gateway" ]; then
+        record_command "$incident" "$phase" probe-gateway-arp 8 /usr/bin/arping -c 3 -w 5 -I wlan0 "$gateway"
+        record_command "$incident" "$phase" probe-gateway-icmp 8 /usr/bin/ping -n -c 3 -W 1 -I wlan0 "$gateway"
+    else
+        printf 'no wlan0 default gateway\n' >"$incident/$phase/probe-gateway-skipped.txt"
+        append_manifest "$incident" 0 "gateway probes skipped (no wlan0 default)" "$phase"
+    fi
+    record_command "$incident" "$phase" probe-internet-icmp 8 /usr/bin/ping -n -c 3 -W 1 -m 524288 -I wlan0 1.1.1.1
+    record_command "$incident" "$phase" probe-internet-http 10 /usr/bin/curl \
+        -4 --interface wlan0 --connect-timeout 5 --max-time 8 -sS -o /dev/null \
+        -w 'remote=%{remote_ip} code=%{http_code} connect=%{time_connect} total=%{time_total}\n' \
+        http://1.1.1.1/
+    record_command "$incident" "$phase" probe-dns-local 8 \
+        /usr/bin/dig +time=2 +tries=1 +short @127.0.0.1 example.com A
+    dhcp_dns=$(/usr/bin/networkctl dhcp-lease wlan0 2>/dev/null |
+        /usr/bin/awk '$2 == "domain" && $3 == "name" && $4 == "server" {print $5; exit}')
+    if [ -n "$dhcp_dns" ]; then
+        record_command "$incident" "$phase" probe-dns-dhcp 8 \
+            /usr/bin/dig +time=2 +tries=1 +short "@$dhcp_dns" example.com A
+    else
+        printf 'no DHCP DNS server\n' >"$incident/$phase/probe-dns-dhcp-skipped.txt"
+        append_manifest "$incident" 0 "DHCP DNS probe skipped (no server)" "$phase"
+    fi
     record_command "$incident" "$phase" iptables-mangle 10 /usr/bin/iptables-save -t mangle
     record_command "$incident" "$phase" iptables-nat 10 /usr/bin/iptables-save -t nat
     record_command "$incident" "$phase" nft-ruleset 10 /usr/bin/nft list ruleset
@@ -141,40 +178,88 @@ run_snapshot() {
     record_command "$incident" "$phase" tailscale-derp-map 10 /usr/bin/tailscale debug derp-map
     record_command "$incident" "$phase" tailscale-goroutines 15 /usr/bin/tailscale debug daemon-goroutines
     record_route_events "$incident" "$phase"
-    for entry in tailscaled systemd-networkd network-reconfigure smartdns ngnclient; do
+    record_command "$incident" "$phase" journal-kernel-network 15 \
+        /usr/bin/journalctl -b -k --since=-15min -n 5000 --no-pager
+    for entry in tailscaled systemd-networkd iwd network-reconfigure smartdns ngnclient; do
         record_command "$incident" "$phase" "journal-$entry" 15 \
             /usr/bin/journalctl -b -u "$entry" --since=-15min -n 5000 --no-pager
     done
 }
 
+start_timed_capture() {
+    local incident=$1 duration=$2 label=$3 output=$4
+    shift 4
+    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$@" >"$incident/$output" 2>&1 &
+    deep_pids+=("$!")
+    deep_labels+=("$label")
+}
+
+sample_link_state() {
+    local incident=$1 duration=$2 deadline=$((SECONDS + duration)) gateway now
+    while ((SECONDS < deadline)); do
+        now=$(/usr/bin/date --iso-8601=ns)
+        {
+            printf '===== %s =====\n' "$now"
+            /usr/bin/iw dev wlan0 link
+            /usr/bin/iw dev wlan0 station dump
+            /usr/bin/ip -s link show dev wlan0
+            /usr/bin/ip -4 neigh show dev wlan0
+            /usr/bin/ethtool -S wlan0
+        } >>"$incident/link-state-timeline.txt" 2>&1
+        gateway=$(/usr/bin/ip -4 route show table main default 2>/dev/null |
+            /usr/bin/awk '$5 == "wlan0" {print $3; exit}')
+        {
+            printf '%s\tgateway=%s\t' "$now" "${gateway:--}"
+            if [ -n "$gateway" ] && /usr/bin/arping -q -c 1 -w 1 -I wlan0 "$gateway"; then
+                printf 'arp=ok\n'
+            else
+                printf 'arp=failed\n'
+            fi
+        } >>"$incident/gateway-arp-timeline.tsv" 2>&1
+        sleep 1
+    done
+}
+
 start_deep() {
     local incident=$1 duration=$2
-    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -p -i wlan0 -s 96 -n \
-        -C 8 -W 1 -w "$incident/wlan0.pcap" \
-        'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443' \
-        >"$incident/wlan0-tcpdump.txt" 2>&1 &
-    deep_wlan_pid=$!
-    "$TIMEOUT" --signal=INT --kill-after=5s "$duration" "$TCPDUMP" -p -i tailscale0 -s 96 -n \
-        -C 8 -W 1 -w "$incident/tailscale0.pcap" \
-        'udp port 3478 or tcp port 80 or tcp port 443' \
-        >"$incident/tailscale0-tcpdump.txt" 2>&1 &
-    deep_tail_pid=$!
+    deep_pids=()
+    deep_labels=()
+    start_timed_capture "$incident" "$duration" 'tcpdump wlan0' wlan0-tcpdump.txt \
+        "$TCPDUMP" -p -i wlan0 -s 256 -n -U -C 16 -W 1 -w "$incident/wlan0.pcap" \
+        'arp or icmp or udp port 53 or udp port 67 or udp port 68 or udp port 3478 or udp port 41641 or tcp port 53 or tcp port 80 or tcp port 443'
+    start_timed_capture "$incident" "$duration" 'tcpdump tailscale0' tailscale0-tcpdump.txt \
+        "$TCPDUMP" -p -i tailscale0 -s 256 -n -U -C 16 -W 1 -w "$incident/tailscale0.pcap" \
+        'icmp or udp port 53 or udp port 3478 or tcp port 53 or tcp port 80 or tcp port 443'
+    start_timed_capture "$incident" "$duration" 'iw event' iw-events.txt \
+        /usr/bin/iw event -t
+    start_timed_capture "$incident" "$duration" 'ip monitor' ip-monitor.txt \
+        /usr/bin/ip -ts monitor all
+    start_timed_capture "$incident" "$duration" 'kernel journal follow' journal-kernel-follow.txt \
+        /usr/bin/journalctl -b -f -n 0 -o short-monotonic -k
+    start_timed_capture "$incident" "$duration" 'service journal follow' journal-services-follow.txt \
+        /usr/bin/journalctl -b -f -n 0 -o short-monotonic \
+        -u iwd -u systemd-networkd -u tailscaled -u network-reconfigure.service \
+        -u smartdns -u ngnclient
+    start_timed_capture "$incident" "$duration" 'conntrack events' conntrack-events.txt \
+        /usr/bin/conntrack -E -o timestamp,extended
+    start_timed_capture "$incident" "$duration" 'nft monitor' nft-monitor.txt \
+        /usr/bin/nft monitor
+    sample_link_state "$incident" "$duration" &
+    deep_pids+=("$!")
+    deep_labels+=('link/ARP timeline')
 }
 
 wait_deep() {
-    local incident=$1 wlan_rc tail_rc wlan_label='tcpdump wlan0' tail_label='tcpdump tailscale0'
-    if wait "$deep_wlan_pid"; then wlan_rc=0; else wlan_rc=$?; fi
-    if wait "$deep_tail_pid"; then tail_rc=0; else tail_rc=$?; fi
-    if [ "$wlan_rc" -eq 124 ]; then
-        wlan_rc=0
-        wlan_label+=' (duration complete)'
-    fi
-    if [ "$tail_rc" -eq 124 ]; then
-        tail_rc=0
-        tail_label+=' (duration complete)'
-    fi
-    append_manifest "$incident" "$wlan_rc" "$wlan_label" capture
-    append_manifest "$incident" "$tail_rc" "$tail_label" capture
+    local incident=$1 i rc label
+    for i in "${!deep_pids[@]}"; do
+        label=${deep_labels[i]}
+        if wait "${deep_pids[i]}"; then rc=0; else rc=$?; fi
+        if [ "$rc" -eq 124 ]; then
+            rc=0
+            label+=' (duration complete)'
+        fi
+        append_manifest "$incident" "$rc" "$label" capture
+    done
 }
 
 prune_incidents() {
@@ -211,8 +296,9 @@ capture_main() (
         printf '%s' "$note" | sanitize_note >"$incident/note.txt"
     fi
 
-    start_deep "$incident" "$duration"
     run_snapshot "$incident" before
+    start_deep "$incident" "$duration"
+    printf 'Capture armed for %s seconds: reproduce the Wi-Fi roam now.\n' "$duration" >&2
     wait_deep "$incident"
     run_snapshot "$incident" after
     if $bugreport; then
@@ -226,18 +312,42 @@ capture_main() (
 )
 
 main() {
-    local bugreport=false
+    local bugreport=false duration=180
     if [ "${EUID:-$(id -u)}" -ne 0 ]; then
         exec sudo -n -- "$0" "$@"
     fi
-    if [ "${1-}" = --bugreport ]; then
-        bugreport=true
-        shift
-    elif [ "${1-}" = --help ]; then
-        printf 'Usage: %s [--bugreport] [note ...]\n' "$0"
-        return
-    fi
-    capture_main /var/log/network-debug/incidents 30 "$bugreport" \
+    while (($#)); do
+        case $1 in
+            --bugreport)
+                bugreport=true
+                shift
+                ;;
+            --duration)
+                [[ ${2-} =~ ^[1-9][0-9]*$ ]] || {
+                    printf 'FAILED: --duration requires a positive number of seconds\n' >&2
+                    return 2
+                }
+                duration=$2
+                shift 2
+                ;;
+            --help)
+                printf 'Usage: %s [--duration SECONDS] [--bugreport] [note ...]\n' "$0"
+                return
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                printf 'FAILED: unknown option: %s\n' "$1" >&2
+                return 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    capture_main /var/log/network-debug/incidents "$duration" "$bugreport" \
         /run/lock/network-debug-capture.lock "$@"
 }
 

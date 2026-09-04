@@ -23,16 +23,29 @@ assert_not_contains() {
 }
 
 assert_capture_success() {
-    local manifest=$1
-    assert_contains "$manifest" $'0\ttcpdump wlan0 (duration complete)\tcapture'
-    assert_contains "$manifest" $'0\ttcpdump tailscale0 (duration complete)\tcapture'
+    local manifest=$1 label
+    local -a labels=(
+        'tcpdump wlan0'
+        'tcpdump tailscale0'
+        'iw event'
+        'ip monitor'
+        'kernel journal follow'
+        'service journal follow'
+        'conntrack events'
+        'nft monitor'
+        'link/ARP timeline'
+    )
+    for label in "${labels[@]}"; do
+        grep -Eq "^0[[:space:]]+${label}( \(duration complete\))?[[:space:]]+capture$" "$manifest" ||
+            fail "capture missing successful stream: $label"
+    done
 }
 
 capture_manifest_mutation_contract() (
     local manifest="$WORK/capture-manifest-mutated.tsv"
     printf '124\ttcpdump wlan0\tcapture\n124\ttcpdump tailscale0\tcapture\n' >"$manifest"
     if (assert_capture_success "$manifest") >/dev/null 2>&1; then
-        fail 'capture contract accepted timeout rc 124 as a failure'
+        fail 'capture contract accepted incomplete streams and timeout rc 124'
     fi
 )
 
@@ -99,10 +112,22 @@ service_directory_mutation_contract() (
 )
 
 snapshot_command_contract() {
-    local script=$1 command
+    local script=$1 mode=${2:-static} command
     # shellcheck disable=SC2016 # Assert literal script source, not test variables.
     local -a commands=(
         'record_command "$incident" "$phase" ip-link-stats 5 /usr/bin/ip -s link'
+        'record_command "$incident" "$phase" ip-link-xdp 5 /usr/bin/ip -details link show dev wlan0'
+        'record_command "$incident" "$phase" tc-qdisc 5 /usr/bin/tc -s qdisc show dev wlan0'
+        'record_command "$incident" "$phase" tc-filter-ingress 5 /usr/bin/tc -s filter show dev wlan0 ingress'
+        'record_command "$incident" "$phase" tc-filter-egress 5 /usr/bin/tc -s filter show dev wlan0 egress'
+        'record_command "$incident" "$phase" ethtool-stats 5 /usr/bin/ethtool -S wlan0'
+        'record_command "$incident" "$phase" iw-power-save 5 /usr/bin/iw dev wlan0 get power_save'
+        'record_command "$incident" "$phase" iwlwifi-parameters 5 /usr/bin/sh -c'
+        'record_command "$incident" "$phase" ip-neigh-wlan 5 /usr/bin/ip -4 neigh show dev wlan0'
+        'record_command "$incident" "$phase" networkctl-wlan 10 /usr/bin/networkctl status wlan0 --no-pager'
+        'record_command "$incident" "$phase" iw-station 5 /usr/bin/iw dev wlan0 station dump'
+        'record_command "$incident" "$phase" route-get-internet 5 /usr/bin/ip -4 route get 1.1.1.1 mark 0x80000'
+        'record_command "$incident" "$phase" journal-kernel-network 15'
         'record_command "$incident" "$phase" conntrack-tcp 10 /usr/bin/conntrack -L -p tcp'
         'record_command "$incident" "$phase" ss-tcp 5 /usr/bin/ss -tapne'
         'record_command "$incident" "$phase" ss-udp 5 /usr/bin/ss -uapne'
@@ -112,6 +137,14 @@ snapshot_command_contract() {
         'record_command "$incident" "$phase" nstat 5 /usr/bin/nstat -asz'
         'record_route_events "$incident" "$phase"'
     )
+    if [ "$mode" = static ]; then
+        commands+=(
+            'record_command "$incident" "$phase" probe-gateway-arp 8 /usr/bin/arping -c 3 -w 5 -I wlan0 "$gateway"'
+            'record_command "$incident" "$phase" probe-gateway-icmp 8 /usr/bin/ping -n -c 3 -W 1 -I wlan0 "$gateway"'
+            'record_command "$incident" "$phase" probe-internet-icmp 8 /usr/bin/ping -n -c 3 -W 1 -m 524288 -I wlan0 1.1.1.1'
+            'record_command "$incident" "$phase" probe-internet-http 10 /usr/bin/curl'
+        )
+    fi
     for command in "${commands[@]}"; do
         assert_contains "$script" "$command"
     done
@@ -122,6 +155,20 @@ snapshot_command_mutation_contract() (
     # shellcheck disable=SC2016 # Remove literal script source, not test variables.
     local -a commands=(
         'record_command "$incident" "$phase" ip-link-stats 5 /usr/bin/ip -s link'
+        'record_command "$incident" "$phase" ip-link-xdp 5 /usr/bin/ip -details link show dev wlan0'
+        'record_command "$incident" "$phase" tc-qdisc 5 /usr/bin/tc -s qdisc show dev wlan0'
+        'record_command "$incident" "$phase" tc-filter-ingress 5 /usr/bin/tc -s filter show dev wlan0 ingress'
+        'record_command "$incident" "$phase" tc-filter-egress 5 /usr/bin/tc -s filter show dev wlan0 egress'
+        'record_command "$incident" "$phase" ethtool-stats 5 /usr/bin/ethtool -S wlan0'
+        'record_command "$incident" "$phase" iw-power-save 5 /usr/bin/iw dev wlan0 get power_save'
+        'record_command "$incident" "$phase" iwlwifi-parameters 5 /usr/bin/sh -c'
+        'record_command "$incident" "$phase" ip-neigh-wlan 5 /usr/bin/ip -4 neigh show dev wlan0'
+        'record_command "$incident" "$phase" networkctl-wlan 10 /usr/bin/networkctl status wlan0 --no-pager'
+        'record_command "$incident" "$phase" iw-station 5 /usr/bin/iw dev wlan0 station dump'
+        'record_command "$incident" "$phase" probe-gateway-arp 8 /usr/bin/arping -c 3 -w 5 -I wlan0 "$gateway"'
+        'record_command "$incident" "$phase" probe-gateway-icmp 8 /usr/bin/ping -n -c 3 -W 1 -I wlan0 "$gateway"'
+        'record_command "$incident" "$phase" probe-internet-icmp 8 /usr/bin/ping -n -c 3 -W 1 -m 524288 -I wlan0 1.1.1.1'
+        'record_command "$incident" "$phase" probe-internet-http 10 /usr/bin/curl'
         'record_command "$incident" "$phase" conntrack-tcp 10 /usr/bin/conntrack -L -p tcp'
         'record_command "$incident" "$phase" ss-tcp 5 /usr/bin/ss -tapne'
         'record_command "$incident" "$phase" ss-udp 5 /usr/bin/ss -uapne'
@@ -135,7 +182,7 @@ snapshot_command_mutation_contract() (
         cp "$SCRIPT" "$mutated"
         grep -Fv -- "$command" "$mutated" >"$mutated.tmp"
         mv "$mutated.tmp" "$mutated"
-        if (snapshot_command_contract "$mutated") >/dev/null 2>&1; then
+        if (snapshot_command_contract "$mutated" static) >/dev/null 2>&1; then
             fail "snapshot contract accepted missing command: $command"
         fi
     done
@@ -163,7 +210,7 @@ snapshot_runtime_contract() (
     }
     diagnostic_commands=()
     run_snapshot "$WORK/snapshot" before
-    snapshot_command_contract "$log"
+    snapshot_command_contract "$log" runtime
 )
 
 route_event_summary_contract() (
@@ -232,13 +279,18 @@ static_script_contract() {
     # shellcheck disable=SC2016 # assert literal source, not this test's positional parameters
     assert_contains "$SCRIPT" 'exec sudo -n -- "$0" "$@"'
     # shellcheck disable=SC2016 # Assert literal shell source.
-    assert_contains "$SCRIPT" 'capture_main /var/log/network-debug/incidents 30 "$bugreport"'
+    assert_contains "$SCRIPT" 'capture_main /var/log/network-debug/incidents "$duration" "$bugreport"'
     # shellcheck disable=SC2016 # Assert literal shell source.
     assert_contains "$SCRIPT" '/usr/bin/journalctl -b -u "$entry" --since=-15min -n 5000 --no-pager'
-    assert_contains "$SCRIPT" "'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443'"
-    assert_contains "$SCRIPT" "'udp port 3478 or tcp port 80 or tcp port 443'"
+    assert_contains "$SCRIPT" "'arp or icmp or udp port 53 or udp port 67 or udp port 68 or udp port 3478 or udp port 41641 or tcp port 53 or tcp port 80 or tcp port 443'"
+    assert_contains "$SCRIPT" "'icmp or udp port 53 or udp port 3478 or tcp port 53 or tcp port 80 or tcp port 443'"
     assert_contains "$SCRIPT" 'MAX_TEXT_BYTES=1048576'
     assert_contains "$SCRIPT" 'monitor: RTM_(NEW|DEL)ROUTE'
+    assert_contains "$SCRIPT" '/usr/bin/iw event -t'
+    assert_contains "$SCRIPT" '/usr/bin/ip -ts monitor all'
+    assert_contains "$SCRIPT" '/usr/bin/conntrack -E -o timestamp,extended'
+    assert_contains "$SCRIPT" '/usr/bin/nft monitor'
+    assert_contains "$SCRIPT" 'sample_link_state "$incident" "$duration" &'
     snapshot_command_contract "$SCRIPT"
     assert_not_contains "$SCRIPT" 'network-debug-pcap.service|freeze_ring|RING_DIR|restore_recorder'
     assert_not_contains "$SCRIPT" '^[[:space:]]*(/usr/bin/)?tailscale (down|up|set)( |$)'
@@ -287,9 +339,19 @@ EOF
 #!/usr/bin/env bash
 while [[ ${1-} == --* ]]; do shift; done
 shift
+command=$1
+if [ "${command##*/}" = diag ]; then
+    "$@"
+    exit $?
+fi
+if [ "${command##*/}" != tcpdump ]; then
+    printf 'stream %s\n' "$*" >>"$NETWORK_DEBUG_TEST_LOG"
+    [ "${NETWORK_DEBUG_TIMEOUT_STREAM_RC:-124}" -eq 0 ] || exit "$NETWORK_DEBUG_TIMEOUT_STREAM_RC"
+    exit 0
+fi
 "$@"
 rc=$?
-if [ "${NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC:-0}" -ne 0 ] && [ "${1##*/}" = tcpdump ]; then
+if [ "${NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC:-0}" -ne 0 ]; then
     exit "$NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC"
 fi
 exit "$rc"
@@ -307,7 +369,7 @@ out=
 while [ "$#" -gt 0 ]; do
     if [ "$1" = -w ]; then out=$2; shift 2; else shift; fi
 done
-printf 'pcap\n' >"${out}0"
+printf 'pcap\n' >"$out"
 printf 'tcpdump-done %s\n' "$interface" >>"$NETWORK_DEBUG_TEST_LOG"
 EOF
     cat >"$dir/cp" <<'EOF'
@@ -438,6 +500,10 @@ runtime_contract() (
         "failing command|5|$fakebin/diag|fail"
         "large command|5|$fakebin/diag|huge"
     )
+    sample_link_state() {
+        printf 'timeline\n' >"$1/link-state-timeline.txt"
+        printf 'now\tgateway=10.0.0.1\tarp=ok\n' >"$1/gateway-arp-timeline.tsv"
+    }
 
     NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC=124; export NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC
     capture_main "$base" 0 false "$lock" \
@@ -448,13 +514,22 @@ runtime_contract() (
     [ "${#incidents[@]}" -eq 1 ] || fail 'capture did not create exactly one incident'
     local incident="$base/${incidents[0]}"
     [ ! -e "$incident/ring" ] || fail 'manual capture unexpectedly copied a packet ring'
-    [ -f "$incident/wlan0.pcap0" ] || fail 'bounded wlan capture missing'
-    [ -f "$incident/tailscale0.pcap0" ] || fail 'bounded tailscale capture missing'
+    [ -f "$incident/wlan0.pcap" ] || fail 'bounded wlan capture missing'
+    [ -f "$incident/tailscale0.pcap" ] || fail 'bounded tailscale capture missing'
+    [ -f "$incident/iw-events.txt" ] || fail 'iw event capture missing'
+    [ -f "$incident/ip-monitor.txt" ] || fail 'ip monitor capture missing'
+    [ -f "$incident/journal-kernel-follow.txt" ] || fail 'kernel journal capture missing'
+    [ -f "$incident/journal-services-follow.txt" ] || fail 'service journal capture missing'
+    [ -f "$incident/gateway-arp-timeline.tsv" ] || fail 'gateway ARP timeline missing'
     assert_capture_success "$incident/manifest.tsv"
     local failed_capture="$WORK/failed-capture"
     mkdir "$failed_capture"
-    (exit 125) & deep_wlan_pid=$!
-    (exit 1) & deep_tail_pid=$!
+    (exit 125) &
+    deep_pids=("$!")
+    deep_labels=('tcpdump wlan0')
+    (exit 1) &
+    deep_pids+=("$!")
+    deep_labels+=('tcpdump tailscale0')
     wait_deep "$failed_capture"
     assert_contains "$failed_capture/manifest.tsv" $'125\ttcpdump wlan0\tcapture'
     assert_contains "$failed_capture/manifest.tsv" $'1\ttcpdump tailscale0\tcapture'
@@ -464,18 +539,18 @@ runtime_contract() (
     [ "$(stat -c %s "$incident/before/large_command.txt")" -le 1048576 ] ||
         fail 'diagnostic output exceeded 1 MiB'
     assert_not_contains "$incident/note.txt" '[[:cntrl:]]'
-    assert_contains "$log" 'tcpdump-start wlan0 -p -i wlan0 -s 96 -n -C 8 -W 1 -w'
-    assert_contains "$log" 'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443'
-    assert_contains "$log" 'tcpdump-start tailscale0 -p -i tailscale0 -s 96 -n -C 8 -W 1 -w'
-    assert_contains "$log" 'udp port 3478 or tcp port 80 or tcp port 443'
-    local wlan_start tail_start first_before capture_done after_start
+    assert_contains "$log" 'tcpdump-start wlan0 -p -i wlan0 -s 256 -n -U -C 16 -W 1 -w'
+    assert_contains "$log" 'arp or icmp or udp port 53 or udp port 67 or udp port 68 or udp port 3478 or udp port 41641 or tcp port 53 or tcp port 80 or tcp port 443'
+    assert_contains "$log" 'tcpdump-start tailscale0 -p -i tailscale0 -s 256 -n -U -C 16 -W 1 -w'
+    assert_contains "$log" 'icmp or udp port 53 or udp port 3478 or tcp port 53 or tcp port 80 or tcp port 443'
+    local before_done wlan_start tail_start capture_done after_start
+    before_done=$(grep -n 'diag-start ok' "$log" | head -1 | cut -d: -f1)
     wlan_start=$(grep -n 'tcpdump-start wlan0 ' "$log" | head -1 | cut -d: -f1)
     tail_start=$(grep -n 'tcpdump-start tailscale0 ' "$log" | head -1 | cut -d: -f1)
-    first_before=$(grep -n 'diag-start ' "$log" | head -1 | cut -d: -f1)
     capture_done=$(grep -n 'tcpdump-done' "$log" | tail -1 | cut -d: -f1)
     after_start=$(grep -n 'diag-start ok' "$log" | tail -1 | cut -d: -f1)
-    [ "$wlan_start" -lt "$first_before" ] && [ "$tail_start" -lt "$first_before" ] &&
-        [ "$capture_done" -lt "$after_start" ] || fail 'deep capture/snapshot order is wrong'
+    [ "$before_done" -lt "$wlan_start" ] && [ "$before_done" -lt "$tail_start" ] &&
+        [ "$capture_done" -lt "$after_start" ] || fail 'snapshot/deep capture order is wrong'
     assert_not_contains "$log" 'bugreport'
 
     # The lock covers incident creation, so a concurrent capture leaves no partial incident.
@@ -540,8 +615,8 @@ EOF
 
 /usr/bin/tcpdump --version >/dev/null
 /usr/bin/tcpdump -d 'udp port 3478 or udp port 41641' >/dev/null
-/usr/bin/tcpdump -d 'udp port 3478 or udp port 41641 or tcp port 80 or tcp port 443' >/dev/null
-/usr/bin/tcpdump -d 'udp port 3478 or tcp port 80 or tcp port 443' >/dev/null
+/usr/bin/tcpdump -d 'arp or icmp or udp port 53 or udp port 67 or udp port 68 or udp port 3478 or udp port 41641 or tcp port 53 or tcp port 80 or tcp port 443' >/dev/null
+/usr/bin/tcpdump -d 'icmp or udp port 53 or udp port 3478 or tcp port 53 or tcp port 80 or tcp port 443' >/dev/null
 static_script_contract
 route_event_summary_contract
 record_route_events_contract

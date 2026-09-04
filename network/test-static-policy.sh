@@ -343,12 +343,12 @@ if [ "$(grep -Fxc 'AddressRandomization=network' "$iwd_config")" -ne 1 ]; then
 else
     echo 'OK   iwd uses stable per-network MAC addresses'
 fi
-if [ "$(grep -Fxc 'IgnoreCarrierLoss=3s' "$wireless_config")" -ne 1 ] ||
-   grep -Eq '^IgnoreCarrierLoss=(yes|infinite)$' "$wireless_config"; then
-    echo 'FAIL wireless carrier grace is not exactly finite 3s' >&2
+if [ "$(grep -Ec '^IgnoreCarrierLoss=' "$wireless_config")" -ne 1 ] ||
+   [ "$(grep -Fxc 'IgnoreCarrierLoss=no' "$wireless_config")" -ne 1 ]; then
+    echo 'FAIL wireless does not drop DHCP state immediately on carrier loss' >&2
     fail=1
 else
-    echo 'OK   wireless carrier grace is finite 3s'
+    echo 'OK   wireless drops DHCP state immediately on carrier loss'
 fi
 if [ -e "$obsolete_tencent_config" ]; then
     echo 'FAIL obsolete Tencent no-gateway networkd config still exists' >&2
@@ -439,7 +439,13 @@ if ! awk '
     echo 'FAIL restore does not safely retire the installed fallback before daemon-reload' >&2
     fail=1
 fi
-reject 'restore leaves Tailscale alone' 'tailscale|tailscaled' restore.sh
+if ! grep -Fq 'sudo rm -f /etc/systemd/system/tailscaled.service.d/transport.conf' \
+        restore.sh; then
+    echo 'FAIL restore does not remove the rejected DERP-only Tailscale policy' >&2
+    fail=1
+else
+    echo 'OK   restore removes the rejected DERP-only Tailscale policy without restarting it'
+fi
 if ! grep -Fq 'sudo rm -f /var/lib/network-reconfigure/derp-ips' restore.sh ||
    ! grep -Fq '/var/lib/network-reconfigure/ioa-endpoints' restore.sh; then
     echo 'FAIL restore does not remove obsolete network cache files' >&2
@@ -755,9 +761,12 @@ reject 'table 19 is advertisement-only and has no policy rule' \
 reject 'wired advertisement does not mutate tunnel-owned tables' \
     'ip route (flush|del|replace).*table (20|230|52|ioa)' scripts/network-reconfigure
 for statement in \
-    'IgnoreCarrierLoss=3s' \
+    'IgnoreCarrierLoss=no' \
     'AddressRandomization=network' \
     'AddressOverride=1e:dc:46:00:66:1b' \
+    'priorities 1100 and 1200' \
+    'table `wired_underlay` has absolute preference' \
+    'not on hard-coding `wlan0`' \
     'restore.sh'
 do
     if ! grep -Fq "$statement" network/README.md; then

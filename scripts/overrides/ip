@@ -1,9 +1,74 @@
 #!/usr/bin/env bash
 
 IP_REAL=${IP_REAL:-/usr/bin/ip}
+SMARTGATE_MARK_RULE_PRIORITY=${SMARTGATE_MARK_RULE_PRIORITY:-1100}
+SMARTGATE_SOURCE_RULE_PRIORITY=${SMARTGATE_SOURCE_RULE_PRIORITY:-1200}
+TENCENT_UNDERLAY_TABLE=${TENCENT_UNDERLAY_TABLE:-19}
+
+route_device() {
+    local table=$1 gateway=$2
+    "$IP_REAL" -4 route show table "$table" default 2>/dev/null |
+        awk -v gateway="$gateway" '
+            $1 == "default" {
+                route_gateway = ""
+                device = ""
+                for (i = 1; i < NF; i++) {
+                    if ($i == "via") route_gateway = $(i + 1)
+                    if ($i == "dev" && $(i + 1) ~ /^(en|eth|wl)/) device = $(i + 1)
+                }
+                if (route_gateway == gateway && device != "") {
+                    print device
+                    exit
+                }
+            }
+        '
+}
+
+physical_route() {
+    local requested_gateway=$1 gateway device
+    local advertised=''
+    advertised=$("$IP_REAL" -4 route show table "$TENCENT_UNDERLAY_TABLE" default 2>/dev/null |
+        awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }') || true
+    if [ -n "$advertised" ]; then
+        gateway=$advertised
+        device=$(route_device "$TENCENT_UNDERLAY_TABLE" "$gateway")
+    else
+        gateway=$requested_gateway
+        device=$(route_device main "$gateway")
+    fi
+    [ -n "$gateway" ] && [ -n "$device" ] || return 1
+    printf '%s %s\n' "$gateway" "$device"
+}
 
 if [ "$*" = "route add default via 192.168.255.1 dev tun0" ]; then
     exec "$IP_REAL" route add default dev tun0 table ioa metric 101
+fi
+
+if [ "${1:-} ${2:-} ${3:-}" = "route add default" ] &&
+   [ "${4:-}" = via ] && [ "${6:-}" = table ] &&
+   { [ "${7:-}" = 20 ] || [ "${7:-}" = 230 ]; } && [ "$#" -eq 7 ]; then
+    route=$(physical_route "$5") || exit 1
+    read -r gateway device <<<"$route"
+    exec "$IP_REAL" route add default via "$gateway" dev "$device" table "$7"
+fi
+
+if [ "$*" = "rule add fwmark 2616 table 20" ]; then
+    exec "$IP_REAL" rule add priority "$SMARTGATE_MARK_RULE_PRIORITY" fwmark 2616 table 20
+fi
+
+if [ "$*" = "rule del fwmark 2616 table 20" ]; then
+    exec "$IP_REAL" rule del fwmark 2616 table 20
+fi
+
+if [ "${1:-} ${2:-}" = "rule add" ] && [ "${3:-}" = from ] &&
+   [ "${5:-} ${6:-}" = "table 230" ] && [ "$#" -eq 6 ]; then
+    exec "$IP_REAL" rule add priority "$SMARTGATE_SOURCE_RULE_PRIORITY" \
+        from "$4" table 230
+fi
+
+if [ "${1:-} ${2:-}" = "rule del" ] && [ "${3:-}" = from ] &&
+   [ "${5:-} ${6:-}" = "table 230" ] && [ "$#" -eq 6 ]; then
+    exec "$IP_REAL" rule del from "$4" table 230
 fi
 
 exec "$IP_REAL" "$@"

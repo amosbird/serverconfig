@@ -19,16 +19,24 @@ Ownership is deliberately narrow:
   the physical default route. The repository installs `ManageForeignRoutingPolicyRules=no` and
   `ManageForeignRoutes=no`, so networkd does not garbage-collect route/rule objects owned by
   Tailscale, SmartGateAgent, or `network-reconfigure`.
-- **`scripts/network-reconfigure`** owns the repository's rules at priorities 500, 1000,
-  1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage` table; the
-  `NETMODE_IOA` chain and its OUTPUT hook; the exact IOA MASQUERADE rule; and the generated DHCP
-  and office SmartDNS fragments.
+- **`scripts/network-reconfigure`** owns the repository's rules at priorities 400, 401, 500, 1000,
+  1400, 1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage`
+  table; the `NETMODE_IOA` chain and its OUTPUT hook; the exact IOA MASQUERADE rule; and the
+  generated DHCP and office SmartDNS fragments. It owner-marks traffic from `ngnclient.service` as
+  `0x1000000` before its first route lookup and masquerades that traffic on the current physical
+  device, correcting SmartGate control sockets that bind to a Tailscale source address.
 - **SmartDNS** owns the domain-derived `ipset ioa` membership.
 - **SmartGateAgent** owns `tun0`, mark `0xa38`, tables `20` and `230`, and the contents and
-  lifetime of table `ioa`. The `scripts/overrides/ip` wrapper only rewrites its unqualified
-  `tun0` default into table `ioa`; every other `ip` operation passes through unchanged.
+  lifetime of table `ioa`. When table `wired_underlay` advertises the authenticated Tencent USB
+  Ethernet route, the `scripts/overrides/ip` wrapper forces SmartGateAgent's unqualified table-20/230
+  defaults onto that gateway and device, regardless of `main` route metrics. Without that
+  advertisement it uses SmartGateAgent's requested gateway only when it is a physical default in
+  `main`. The wrapper gives SmartGateAgent's mark and source rules explicit priorities 1100 and 1200,
+  and isolates its unqualified `tun0` default in table `ioa`; every other `ip` operation passes
+  through unchanged.
 - **Tailscale** owns `tailscale0`, mark `0x80000/0xff0000`, table `52`, DERP and control-plane
-  selection, the exit-node preference, and tunnel recovery.
+  selection, the exit-node preference, and tunnel recovery. No local policy forces DERP or disables
+  direct UDP.
 
 Operator tools respect the same boundary. `scripts/network-status` observes repository and
 owner state without changing it. `scripts/netfix` may force reconciliation of repository-owned
@@ -36,30 +44,44 @@ objects, but it does not change tunnel preferences or owner-managed tables.
 
 ## Effective policy
 
-Linux evaluates lower numeric priorities first. The repository-owned rules are:
+The repository-owned rules use priorities 400, 401, 500, 1000, 1400, 1500, 2500, and 3000;
+the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owner-managed rules.
 
 | Priority | Match | Lookup | Purpose |
 |---:|---|---|---|
+| 400 | `fwmark 0x1000000` | `main` | Force the system IOA underlay packets onto the physical route. |
+| 401 | `fwmark 0x1000000` | `prohibit` | Fail closed if no physical route exists; never fall through to Tailscale. |
 | 500 | `fwmark 0x80000/0xff0000` | `main` | Let Tailscale-owned transport packets reach the physical network. |
 | 1000 | current `scope link` routes, physical gateway, and DHCP resolvers | `main` | Keep the actual LAN and its infrastructure direct. |
+| 1100 | SmartGateAgent-owned `fwmark 0xa38` | `20` | Send SmartGate control traffic through its current physical underlay. |
+| 1200 | SmartGateAgent-owned physical source address | `230` | Keep its source-bound sockets on the current physical underlay. |
+| 1400 | exact `fwmark 0x1` | `ioa` | Send domain-classified IOA payload into `tun0`. |
 | 1500 | all destinations with a route in `cn` | `cn` | Make `~/.routefile` authoritative for physical egress. |
-| 2500 | exact mark `0x1`, `10.0.0.0/8`, and `100.12.0.0/16` | `ioa` | Select IOA business traffic. |
+| 2500 | `10.0.0.0/8` and `100.12.0.0/16` | `ioa` | Select static IOA business traffic; these destinations follow ordinary policy if IOA is unavailable. |
 | 3000 | `100.64.0.0/10` | `52` | Reach tailnet peers through Tailscale. |
 
-SmartGateAgent chooses the priority of its own `0xa38 -> table 20` rule. The repository does
-not define its position relative to repository-owned bands and does not move, duplicate, repair,
-or delete it. Among repository-owned policy, routefile lookup precedes IOA business selection.
+SmartGateAgent owns the `0xa38 -> table 20` and physical-source `-> table 230` rules. The exact
+command wrapper assigns priorities 1100 and 1200, so Tailscale's transport escape at priority 500
+always wins. Tables 20 and 230 remain SmartGateAgent-owned. An authenticated Tencent USB Ethernet
+route advertised in table `wired_underlay` has absolute preference for those two defaults, even when
+Wi-Fi has the lower `main` metric. Otherwise, the wrapper validates SmartGateAgent's requested gateway
+against physical defaults in `main`. This policy is based on the registered adapter advertisement,
+not on hard-coding `wlan0` or assuming every Ethernet interface is Tencent Ethernet.
 
-The repository-owned order is:
+Linux evaluates lower numeric priorities first:
 
-1. Tailscale owner-marked packets use `main`.
-2. Actual connected LAN destinations, the physical gateway, and DHCP resolvers use `main`.
-3. A destination present in `~/.routefile` uses `cn` and the physical gateway.
-4. Exact mark `0x1`, `10.0.0.0/8`, and `100.12.0.0/16` use table `ioa`.
-5. `100.64.0.0/10` uses Tailscale table `52`.
-
-SmartGateAgent owner-marked packets follow its independently positioned table `20` rule, and
-unmatched traffic follows Tailscale's independently managed selected exit node.
+1. Every packet created by the system IOA cgroup is owner-marked before its first route lookup,
+   uses `main`, and is masqueraded on the current physical device. The source rewrite is required
+   because SmartGate can bind control sockets to `tailscale0` after Tailscale starts.
+2. Tailscale owner-marked packets use `main`.
+3. Actual connected LAN destinations, the physical gateway, and DHCP resolvers use `main`.
+4. SmartGateAgent owner-marked packets use owner table `20`.
+5. SmartGateAgent physical-source sockets use owner table `230`.
+6. A destination present in `~/.routefile` uses `cn` and the physical gateway.
+7. IOA business payload uses table `ioa`; domain-classified payload is distinct from IOA
+   underlay traffic.
+8. `100.64.0.0/10` uses Tailscale table `52`.
+9. Unmatched traffic follows Tailscale's independently managed selected exit node.
 
 ### Routefile is authoritative
 
@@ -148,16 +170,21 @@ Other failures stay within ownership boundaries:
 - without a physical network, external traffic can fail;
 - LAN, routefile, and IOA traffic continue through their explicit higher-priority paths when
   those paths are available;
-- if SmartGateAgent removes the route from table `ioa`, an IOA lookup misses and continues to
-  later policy; the reconciler does not infer IOA liveness;
+- if SmartGateAgent removes the route from table `ioa`, its business lookup follows the existing
+  later policy; IOA underlay traffic remains physically pinned independently;
+- if the physical default disappears, traffic from the system IOA cgroup fails with `prohibit`
+  instead of using either tunnel; when it exists, owner-marked packets are source-NATed only on
+  that physical device;
 - a reconciliation failure must not change SmartGateAgent tables `20`, `230`, or `ioa`, or
   Tailscale table `52`, preferences, and recovery state.
 
 ## Wi-Fi roaming and MAC identity
 
-The generic `25-wireless.network` applies `IgnoreCarrierLoss=3s` to every WLAN. A short iwd BSSID
-roam therefore retains the DHCP address, connected route, and physical default route. A longer
-carrier loss still expires the lease normally; infinite carrier retention is intentionally forbidden.
+The generic `25-wireless.network` applies `IgnoreCarrierLoss=no` to every WLAN. Every carrier loss
+therefore discards the DHCP state immediately, so a fast roam to a BSSID on another IP subnet cannot
+retain a stale address, connected route, or physical default route. This intentionally trades seamless
+same-subnet roaming for deterministic DHCP reconfiguration without an SSID-specific exception or a
+custom attachment-detection daemon.
 
 `network/iwd/main.conf` sets `AddressRandomization=network`, so ordinary SSIDs receive a stable
 per-network MAC. The local secret profile `/var/lib/iwd/Tencent-WiFi.8021x` additionally contains
@@ -167,7 +194,7 @@ physical routing; there is no special no-gateway `.network` file.
 
 The iwd global setting takes effect after the next natural iwd start. Do not restart iwd merely to
 apply it during an active remote session. Validate the MAC and routing on the next natural
-`Tencent-WiFi` connection, and validate carrier grace on the next natural room-to-room roam.
+`Tencent-WiFi` connection, and validate DHCP reconfiguration on the next natural room-to-room roam.
 
 ## Reconciliation and AP changes
 
@@ -181,7 +208,7 @@ The reconciler then:
 1. atomically updates the generated DHCP and office SmartDNS fragments when their content changes;
 2. derives actual connected-LAN, gateway, and DHCP DNS rules;
 3. stages routefile routes, validates them, and updates `cn` for the current gateway;
-4. reconciles only the five repository-owned priority bands;
+4. reconciles only the eight repository-owned priority bands;
 5. restores the dual-ipset, mark-0-only firewall policy and exact IOA NAT rule;
 6. records the physical state only after a successful run.
 
@@ -226,14 +253,14 @@ The command uses non-interactive `sudo -n`, writes a root-only incident under
 `/var/log/network-debug/incidents`, and retains the newest five incidents. It never changes routes,
 firewall rules, tunnel preferences, or network services. `tailscale netcheck` does perform active
 connectivity probes while collecting diagnostics. Individual diagnostic failures and timeout return
-codes are recorded in `manifest.tsv` instead of aborting collection. Text command
-output is capped at 1 MiB per command and marked `truncated=true`; each deep pcap is capped at 8 MB.
-The route-event summary is bounded separately: it keeps counts and first/last events, then retains the
-latest matching events in a 900 KB byte ring (at most 5,000, with each line capped at 512 bytes), so
-it remains below 1 MiB without discarding the newest timeline tail. The snapshots include TCP/UDP
-sockets, TCP/UDP conntrack state, kernel network counters, interface statistics, bounded tailscaled
-goroutines, and this route-event timeline. Do not put passwords, tokens, or other secrets in the
-incident note or command line.
+codes are recorded in `manifest.tsv` instead of aborting collection. Text command output is capped at
+1 MiB per command and marked `truncated=true`; each deep pcap is capped at 8 MB. The route-event
+summary is bounded separately: it keeps counts and first/last events, then retains the latest matching
+events in a 900 KB byte ring (at most 5,000, with each line capped at 512 bytes), so it remains below
+1 MiB without discarding the newest timeline tail. The snapshots include TCP/UDP sockets, TCP/UDP
+conntrack state, kernel network counters, interface statistics, bounded tailscaled goroutines, and this
+route-event timeline. Do not put passwords, tokens, or other secrets in the incident note or command
+line.
 
 `--bugreport` additionally runs `tailscale bugreport --diagnose`. This can upload diagnostic logs
 to Tailscale and return a shareable identifier, so it is never run by default:
@@ -244,10 +271,12 @@ scripts/network-debug-capture --bugreport "incident note"
 
 ## Testing and diagnostics
 
-Run the four repository checks:
+Run the network checks:
 
 ```bash
 bash network/test-ip-override.sh
+bash network/test-smartgate-underlay.sh
+bash network/test-ioa-fail-closed.sh
 sudo -n bash network/test-reconfigure.sh
 bash network/test-static-policy.sh
 bash network/test-debug-capture.sh
@@ -279,7 +308,9 @@ not copy ordinary Wi-Fi credentials: iwd profiles under `/var/lib/iwd` remain lo
 There is no supported return to the retired pre-iwd network stack.
 
 For a focused network-only update, copy the changed repository files to their matching `/etc` paths,
-remove obsolete installed files explicitly, and use `networkctl reload`. Do not restart iwd,
-systemd-networkd, Tailscale, SmartGateAgent, or SmartDNS merely to apply the Wi-Fi roaming policy.
-Installed pre-iwd files under `/etc` are intentionally left for a separate inventoried cleanup so the
-wired 802.1X credential path is not removed accidentally.
+remove obsolete installed files explicitly, and use `networkctl reload`. A changed `.network` causes
+networkd to reconfigure matching links; it should retain or immediately reacquire the current lease, and
+the new carrier-loss behavior applies to the next roam. Do not restart iwd, systemd-networkd,
+Tailscale, SmartGateAgent, or SmartDNS merely to apply the Wi-Fi roaming policy. Installed pre-iwd
+files under `/etc` are intentionally left for a separate inventoried cleanup so the wired 802.1X
+credential path is not removed accidentally.
