@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+card=bluez_card.C0_DA_5E_EC_FB_7F
+stable_sink=freeclip_stable_output
+stable_source=freeclip_stable_input
+
+profile=$(pactl list cards 2>/dev/null | awk -v card="$card" '
+    $1 == "Name:" { in_card = ($2 == card) }
+    in_card && $1 == "Active" && $2 == "Profile:" { print $3; exit }
+')
+
+case $profile in
+headset-head-unit*|a2dp-sink*) ;;
+*) exec /usr/bin/wemeet "$@" ;;
+esac
+
+for _ in {1..50}; do
+    if pactl list sinks short 2>/dev/null | awk '{ print $2 }' | grep -qx "$stable_sink" &&
+        pactl list sources short 2>/dev/null | awk '{ print $2 }' | grep -qx "$stable_source" &&
+        bluetooth-profile --route; then
+        break
+    fi
+    sleep 0.1
+done
+
+if ! pactl list sinks short 2>/dev/null | awk '{ print $2 }' | grep -qx "$stable_sink" ||
+    ! pactl list sources short 2>/dev/null | awk '{ print $2 }' | grep -qx "$stable_source"; then
+    exec /usr/bin/wemeet "$@"
+fi
+
+PULSE_SINK=$stable_sink PULSE_SOURCE=$stable_source exec /usr/bin/wemeet "$@"

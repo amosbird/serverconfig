@@ -7,6 +7,8 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
+STABLE_AUDIO = ROOT / ".config/pipewire/pipewire.conf.d/51-freeclip-stable.conf"
+WEMEET = ROOT / "scripts/wemeet"
 QTILE = ROOT / ".config/qtile/config.py"
 TLP = ROOT / "tlp/tlp.conf"
 AUDIO_POLICY = (
@@ -120,6 +122,26 @@ class PipeWireMigrationTest(unittest.TestCase):
         self.assertNotIn("wemeet", config.lower())
         self.assertNotIn("state.restore-target", config)
         self.assertFalse((ROOT / "scripts/release-wemeet-audio").exists())
+
+    def test_stable_endpoints_hide_physical_profile_churn(self):
+        config = STABLE_AUDIO.read_text()
+        self.assertEqual(config.count("name = libpipewire-module-loopback"), 2)
+        for node in (
+            "freeclip_stable_output",
+            "freeclip_stable_input",
+            "freeclip_stable_output.backend",
+            "freeclip_stable_input.backend",
+        ):
+            self.assertIn(f'node.name = "{node}"', config)
+        self.assertEqual(config.count("node.dont-fallback = true"), 2)
+        self.assertEqual(config.count("node.linger = true"), 2)
+
+    def test_wemeet_uses_stable_endpoints_without_preload_changes(self):
+        script = WEMEET.read_text()
+        self.assertIn("PULSE_SINK=$stable_sink PULSE_SOURCE=$stable_source", script)
+        self.assertIn('bluetooth-profile --route', script)
+        self.assertIn('exec /usr/bin/wemeet "$@"', script)
+        self.assertNotIn("LD_PRELOAD", script)
 
     def test_ctrl_f4_uses_wireplumber_native_mute(self):
         script = (ROOT / "scripts/microphone-mute").read_text()

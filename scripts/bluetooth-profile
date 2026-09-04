@@ -3,11 +3,178 @@
 set -u
 
 card=bluez_card.C0_DA_5E_EC_FB_7F
+freeclip_output=bluez_output.C0_DA_5E_EC_FB_7F.1
+freeclip_input=bluez_input.C0:DA:5E:EC:FB:7F
+local_input=alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source
+local_output=alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink
+stable_output_backend=freeclip_stable_output.backend
+stable_input_backend=freeclip_stable_input.backend
+stable_output=freeclip_stable_output
+stable_input=freeclip_stable_input
 
 notify() {
     command -v dunstify >/dev/null 2>&1 || return
     dunstify --app-name Bluetooth --stack-tag bluetooth-profile --timeout 2000 \
         "$1" "${2:-}" >/dev/null 2>&1 || true
+}
+
+route_backend() {
+    local backend=$1 target=$2 mapping backend_id target_serial
+
+    mapping=$(pw-dump 2>/dev/null | jq -r --arg backend "$backend" --arg target "$target" '
+        reduce .[] as $object (
+            { backend: null, target: null };
+            if $object.info.props["node.name"] == $backend then
+                .backend = $object.id
+            elif $object.info.props["node.name"] == $target then
+                .target = $object.info.props["object.serial"]
+            else . end
+        ) | select(.backend != null and .target != null) |
+        "\(.backend) \(.target)"
+    ') || return 1
+    read -r backend_id target_serial <<<"$mapping"
+    [[ -n ${backend_id:-} && -n ${target_serial:-} ]] || return 1
+    pw-metadata -n default "$backend_id" target.object "$target_serial" Spa:Id \
+        >/dev/null 2>&1
+}
+
+set_volume() {
+    local type=$1 node=$2
+
+    pactl "set-$type-volume" "$node" 100% >/dev/null 2>&1 || true
+}
+
+normalize_volume() {
+    local profile=$1 input
+
+    case $profile in
+    headset-head-unit*) input=$freeclip_input ;;
+    a2dp-sink*) input=$local_input ;;
+    *) return ;;
+    esac
+
+    set_volume sink "$freeclip_output"
+    set_volume source "$stable_input"
+    set_volume source "$input"
+}
+
+wait_backends() {
+    local input=$1 output=$2
+
+    for _ in {1..30}; do
+        if backend_is_routed "$stable_input_backend" "$input" &&
+            backend_is_routed "$stable_output_backend" "$output"; then
+            return
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+park_backends() {
+    route_backend "$stable_input_backend" "$local_input" || return 1
+    route_backend "$stable_output_backend" "$local_output" || return 1
+    wait_backends "$local_input" "$local_output" || return 1
+
+    # Let the old Bluetooth graph become idle before changing its profile.
+    sleep 0.5
+}
+
+wait_profile() {
+    local target=$1 active
+
+    for _ in {1..50}; do
+        active=$(pactl list cards 2>/dev/null | awk -v card="$card" '
+            $1 == "Name:" { in_card = ($2 == card) }
+            in_card && $1 == "Active" && $2 == "Profile:" { print $3; exit }
+        ') || return 1
+        [[ $active == "$target" ]] && return
+        sleep 0.1
+    done
+    return 1
+}
+
+wait_nodes_stable() {
+    local profile=$1 input stable=0 output_serial= current
+
+    case $profile in
+    headset-head-unit*) input=$freeclip_input ;;
+    a2dp-sink*) input=$local_input ;;
+    *) return 1 ;;
+    esac
+
+    for _ in {1..50}; do
+        current=$(node_serial "$freeclip_output") || current=
+        if [[ -n $current ]] && node_is_healthy "$freeclip_output" &&
+            node_is_healthy "$input"; then
+            if [[ $current == "$output_serial" ]]; then
+                ((++stable >= 5)) && return
+            else
+                output_serial=$current
+                stable=1
+            fi
+        else
+            stable=0
+            output_serial=
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+node_serial() {
+    local node=$1
+
+    pw-dump 2>/dev/null | jq -er --arg node "$node" '
+        first(.[] | select(.info.props["node.name"] == $node) |
+            .info.props["object.serial"])
+    '
+}
+
+route_profile() {
+    local profile=$1 input
+
+    case $profile in
+    headset-head-unit*) input=$freeclip_input ;;
+    a2dp-sink*) input=$local_input ;;
+    *) return 1 ;;
+    esac
+
+    wait_nodes_stable "$profile" || return 1
+    route_backend "$stable_input_backend" "$input" || return 1
+    route_backend "$stable_output_backend" "$freeclip_output" || return 1
+    wait_backends "$input" "$freeclip_output" || return 1
+
+    # A link can exist before the transport is actually usable. Require it to
+    # remain healthy briefly; never keep reattaching an errored transport.
+    for _ in {1..10}; do
+        node_is_healthy "$input" && node_is_healthy "$freeclip_output" || return 1
+        sleep 0.1
+    done
+    normalize_volume "$profile"
+}
+
+backend_is_routed() {
+    local backend=$1 target=$2
+
+    pw-link -l 2>/dev/null | awk -v backend="$backend" -v target="$target" '
+        $0 == backend ":output_FL" || $0 == backend ":output_MONO" ||
+            $0 == backend ":input_FL" || $0 == backend ":input_MONO" {
+            in_backend = 1
+            next
+        }
+        in_backend && $0 ~ /^[^ ]/ { in_backend = 0 }
+        in_backend && index($0, target ":") { found = 1 }
+        END { exit !found }
+    '
+}
+
+node_is_healthy() {
+    local node=$1
+
+    pw-dump 2>/dev/null | jq -e --arg node "$node" '
+        any(.[]; .info.props["node.name"] == $node and .info.state != "error")
+    ' >/dev/null
 }
 
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/bluetooth-profile.lock"
@@ -41,6 +208,11 @@ a2dp-sink*)
     ;;
 esac
 
+if [[ ${1:-} == --route ]]; then
+    route_profile "$active"
+    exit
+fi
+
 if ! awk -v card="$card" -v target="$target" '
     $1 == "Name:" {
         if (in_card) exit !found
@@ -53,22 +225,27 @@ if ! awk -v card="$card" -v target="$target" '
     exit 0
 fi
 
+# Complete the handoff to local devices before BlueZ removes the old nodes.
+if ! park_backends; then
+    notify "Bluetooth profile switch failed" "Could not park stable audio backends"
+    exit 0
+fi
+
 if ! pactl set-card-profile "$card" "$target" >/dev/null 2>&1; then
     notify "Bluetooth profile switch failed" "$label is unavailable"
     exit 0
 fi
 
-for _ in {1..20}; do
-    active=$(pactl list cards 2>/dev/null | awk -v card="$card" '
-        $1 == "Name:" { in_card = ($2 == card) }
-        in_card && $1 == "Active" && $2 == "Profile:" { print $3; exit }
-    ') || break
-    [[ $active == "$target" ]] && break
-    sleep 0.05
-done
+if ! wait_profile "$target"; then
+    notify "Bluetooth profile switch failed" "Timed out waiting for $label"
+    exit 0
+fi
 
-if [[ $active == "$target" ]]; then
+if route_profile "$target"; then
     notify "Bluetooth profile" "$label"
 else
-    notify "Bluetooth profile switch failed" "Timed out waiting for $label"
+    # Keep applications alive on local audio instead of repeatedly touching a
+    # failed Bluetooth transport.
+    park_backends || true
+    notify "Bluetooth profile switched" "$label failed; using local audio"
 fi
