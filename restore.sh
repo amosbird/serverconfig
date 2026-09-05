@@ -134,8 +134,12 @@ ln -sf gopass "$HOME/.local/bin/pass"
 "$HOME/scripts/update-mambatools"
 
 if [[ -n $GUI ]]; then
-    sudo install -d -m 755 /etc/opt /etc/opt/chrome
-    "$DIR/scripts/rofi-chrome-mode" install-policy
+    paru -S --needed --noconfirm touchegg
+    "$HOME/scripts/package-external-links"
+    sudo rm -f /etc/opt/chrome/policies/managed/extensions.json \
+        /etc/chromium/policies/managed/extensions.json
+    sudo install -Dm644 "$DIR/chromium/external-links/package/external-extension.json" \
+        /opt/google/chrome/extensions/ahonjbfnmpjgjgaabbppofphidfomgcj.json
     install -Dm755 "$DIR/rofi-chrome/host/main.py" \
         "$HOME/.local/share/rofi-chrome/host/main.py"
     install -Dm644 "$DIR/rofi-chrome/io.github.amosbird.rofi.chrome.json" \
@@ -166,8 +170,15 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
+    sudo rm -f /etc/systemd/system/tailscaled.service.d/transport.conf
+    sudo systemctl disable --now network-debug-pcap.service 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/network-debug-pcap.service
+    sudo rm -rf /var/log/network-debug/ring
     sudo cp "$DIR"/network/iOA /usr/lib/iOA/bin/iOA
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
+
+    sudo rm -f /var/lib/network-reconfigure/derp-ips \
+        /var/lib/network-reconfigure/ioa-endpoints
 
     sudo systemctl daemon-reload
     # SmartDNS includes must exist before validating and atomically installing the base config.
@@ -189,16 +200,16 @@ if [[ -n $GUI ]]; then
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
-    paru -S --needed --noconfirm bzmenu-bin pavucontrol
+    sudo systemctl disable --now libinput-gestures.service 2>/dev/null || true
+    sudo install -Dm644 "$DIR/systemd/touchegg.service.d/override.conf" \
+        /etc/systemd/system/touchegg.service.d/override.conf
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now touchegg.service
     install -Dm644 "$DIR/systemd/audio-mute-led.service" \
         "$HOME/.config/systemd/user/audio-mute-led.service"
-    systemctl --user disable --now \
-        bluetooth-audio-default.service bluetooth-sco-watchdog.service || true
     rm -f "$HOME/.config/systemd/user/bluetooth-audio-default.service" \
         "$HOME/.config/systemd/user/bluetooth-sco-watchdog.service"
     systemctl --user daemon-reload
-    systemctl --user reset-failed \
-        bluetooth-audio-default.service bluetooth-sco-watchdog.service || true
     systemctl --user enable --now audio-mute-led.service
     systemctl --user enable --now \
         pipewire.service pipewire-pulse.service wireplumber.service
