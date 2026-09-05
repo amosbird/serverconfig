@@ -47,6 +47,7 @@ fishd.*
 /aurs/*/*
 !/aurs/*/PKGBUILD
 /.config/copyq/copyq.lock
+/.config/touchegg/.touchegg:*.lock
 /.config/copyq/copyq_geometry.ini.lock*
 /.config/copyq/copyq_geometry.ini.*
 /.local/share/applications/org.telegram.desktop._*.desktop
@@ -68,3 +69,4 @@ fishd.*
 .config/opencode/bun.lock
 .crush/
 /.config/crush/search.db
+/chromium/external-links/package/

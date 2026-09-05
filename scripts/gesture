@@ -13,7 +13,7 @@ swipe3left() {
     qutebrowser)
         xdotool key --window $id alt+F9
         ;;
-    Google-chrome|Chromium)
+    Google-chrome|Chromium|webchat|chatgpt|firefox)
         xdotool key --window $id alt+Left
         ;;
     llpp)
@@ -31,7 +31,7 @@ swipe3right() {
     qutebrowser)
         xdotool key --window $id alt+F10
         ;;
-    Google-chrome|Chromium)
+    Google-chrome|Chromium|webchat|chatgpt|firefox)
         xdotool key --window $id alt+Right
         ;;
     llpp)
@@ -50,8 +50,11 @@ swipe3up() {
         # xdotool key --window $id alt+F6
         xdotool key --window $id alt+F8
         ;;
-    Google-chrome|Chromium)
+    Google-chrome|Chromium|webchat|chatgpt)
         xdotool key --window $id alt+shift+Home
+        ;;
+    firefox)
+        xdotool key --window $id Home
         ;;
     llpp)
         # xdotool key --window $id alt+F6
@@ -69,8 +72,11 @@ swipe3down() {
         xdotool key --window $id alt+F7
         # xdotool key --window $id G
         ;;
-    Google-chrome|Chromium)
+    Google-chrome|Chromium|webchat|chatgpt)
         xdotool key --window $id alt+shift+End
+        ;;
+    firefox)
+        xdotool key --window $id End
         ;;
     llpp)
         # xdotool key --window $id alt+F6
@@ -87,7 +93,7 @@ swipe4left() {
     qutebrowser|jupyterlab|discord)
         xdotool key --window $id ctrl+comma
         ;;
-    Google-chrome|Chromium)
+    Google-chrome|Chromium|webchat|chatgpt|firefox)
         xdotool key --window $id ctrl+shift+Tab
         ;;
     esac
@@ -101,7 +107,7 @@ swipe4right() {
     qutebrowser|jupyterlab|discord)
         xdotool key --window $id ctrl+period
         ;;
-    Google-chrome|Chromium)
+    Google-chrome|Chromium|webchat|chatgpt|firefox)
         xdotool key --window $id ctrl+Tab
         ;;
     esac
@@ -115,7 +121,7 @@ swipe4up() {
     qutebrowser)
         xdotool key --window $id alt+F5
         ;;
-    Google-chrome|Chromium)
+    Google-chrome|Chromium|webchat|chatgpt|firefox)
         xdotool key --window $id ctrl+shift+t
         ;;
     esac
@@ -129,7 +135,7 @@ swipe4down() {
     qutebrowser)
         xdotool key --window $id alt+F4
         ;;
-    Google-chrome|Chromium)
+    Google-chrome|Chromium|webchat|chatgpt|firefox)
         xdotool key --window $id ctrl+w
         ;;
     esac

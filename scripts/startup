@@ -60,7 +60,7 @@ run "microsocks-fw" sudo iptables -C INPUT -p tcp --dport 8080 -i lo -j ACCEPT 2
          sudo iptables -A INPUT -p tcp --dport 8080 -i tailscale0 -j ACCEPT; \
          sudo iptables -A INPUT -p tcp --dport 8080 -j REJECT; }
 run_fish_bg "microsocks" "/home/amos/git/microsocks/microsocks -i 0.0.0.0 -p 8080 &> /tmp/microsocks.log &"
-run_fish_bg "libinput-gestures" "libinput-gestures-setup start &> /tmp/gestures.log &"
+run_fish_bg "touchegg" "touchegg --client &> /tmp/touchegg.log &"
 run_fish_bg "clipserver" "clipserver -S &> /tmp/clipserver.log &"
 run_fish_bg "v2raysocks" "pass show v2raysocks | v2ray -c /dev/stdin &> /tmp/v2raysocks.log &"
 run_fish_bg "miniserve" "miniserve -i 127.0.0.1 -p 8099 /home/amos/git/serverconfig/amos.pac &"
@@ -71,7 +71,6 @@ run_fish_bg "flameshot" "/usr/bin/flameshot &> /tmp/flameshot.log &"
 run_fish_bg "fcitx5" "fcitx5 -d"
 # autocutsel -fork -selection PRIMARY
 # autocutsel -fork -selection CLIPBOARD
-run_fish_bg "hister" "hister listen &> /tmp/hister.log &"
 run_fish_bg "kitty" "kitty &"
 
 echo "=== startup end: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$LOG"
