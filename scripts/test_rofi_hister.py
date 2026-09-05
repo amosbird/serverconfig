@@ -4,6 +4,7 @@ import importlib.util
 import json
 import pathlib
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -54,14 +55,35 @@ class FakeSocket:
 
 
 class RofiHisterTest(unittest.TestCase):
-    def test_hister_query_strips_fts_syntax(self):
-        self.assertEqual(module.build_hister_query('foo "bar" baz*'), "foo* bar* baz*")
+    def test_chromium_history_search_matches_all_tokens_and_orders_by_recency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "History"
+            connection = sqlite3.connect(path)
+            connection.execute(
+                "CREATE TABLE urls (url TEXT, title TEXT, last_visit_time INTEGER, hidden INTEGER)"
+            )
+            connection.executemany(
+                "INSERT INTO urls VALUES (?, ?, ?, 0)",
+                [
+                    ("https://old.example/github", "Python", 1),
+                    ("https://new.example", "GitHub Python", 3),
+                    ("https://ignored.example", "GitHub Rust", 4),
+                ],
+            )
+            connection.commit()
+            connection.close()
+            self.assertEqual(
+                module.chromium_history_search("github python", path),
+                [
+                    ("GitHub Python", "https://new.example"),
+                    ("Python", "https://old.example/github"),
+                ],
+            )
 
-    def test_hister_json_accepts_trailing_comma_from_hister_2(self):
-        self.assertEqual(
-            module.parse_hister_json('[{"title":"T","url":"https://example.com"},\n]'),
-            [{"title": "T", "url": "https://example.com"}],
-        )
+    def test_missing_chromium_history_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "History"
+            self.assertEqual(module.chromium_history_search("github", path), [])
 
     def test_load_chromium_bookmarks_flattens_folders(self):
         tree = {
@@ -208,24 +230,20 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn("rofi-hister-qtile", launcher)
         self.assertNotIn("xdotool set_desktop", launcher)
 
-    def test_restore_installs_hister_browser_and_rofi_plugins(self):
+    def test_restore_installs_rofi_chrome_native_host(self):
         root = SCRIPT.parent.parent
-        policy = (root / "chromium" / "extensions-policy.json").read_text()
         restore = (root / "restore.sh").read_text()
-        self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk", policy)
+        self.assertFalse((root / "chromium" / "extensions-policy.json").exists())
         native_manifest = (root / "rofi-chrome" / "io.github.amosbird.rofi.chrome.json").read_text()
         self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk", native_manifest)
         self.assertIn("aocepclkpgckjeikiphffdlileoaceec", native_manifest)
         host = (root / "rofi-chrome" / "host" / "main.py").read_text()
         self.assertIn("openInBrowser", host)
-        self.assertIn('["xdg-open", url]', host)
+        self.assertIn('["/home/amos/scripts/chromium", url]', host)
+        self.assertNotIn('["xdg-open", url]', host)
         self.assertNotIn("rofi-browser-blocklist", host)
         self.assertNotIn('"copyDownload"', host)
         self.assertNotIn('["fcp"', host)
-        self.assertIn('"RestoreOnStartup": 1', policy)
-        self.assertNotIn('"BookmarkBarEnabled"', policy)
-        self.assertNotIn("aocepclkpgckjeikiphffdlileoaceec", policy)
-        self.assertIn("rofi-chrome-mode", restore)
         gui_restore = restore[restore.index("if [[ -n $GUI ]]") :]
         self.assertIn("rofi-chrome/host/main.py", gui_restore)
         self.assertIn("io.github.amosbird.rofi.chrome.json", gui_restore)
@@ -340,55 +358,32 @@ class RofiHisterTest(unittest.TestCase):
         self.assertNotIn("--load-extension", launcher)
         self.assertNotIn("--disable-extensions-except", launcher)
 
-    def test_rofi_chrome_mode_switches_policy_without_loading_extensions(self):
+    def test_rofi_chrome_mode_only_selects_extension_id(self):
         root = SCRIPT.parent.parent
         switcher = root / "scripts/rofi-chrome-mode"
         source = switcher.read_text()
         restore = (root / "restore.sh").read_text()
         self.assertIn("dev|store|status|id", source)
         self.assertIn("MODE_FILE", source)
-        self.assertNotIn("--load-extension", source)
-        self.assertIn('"$DIR/scripts/rofi-chrome-mode" install-policy', restore)
-        self.assertIn("sudo install -d -m 755 /etc/opt /etc/opt/chrome", restore)
+        self.assertNotIn("install-policy", source)
+        self.assertNotIn("ExtensionSettings", source)
+        self.assertNotIn("install-policy", restore)
+        self.assertIn("sudo rm -f /etc/opt/chrome/policies/managed/extensions.json", restore)
 
         with tempfile.TemporaryDirectory() as temp:
             env = {"HOME": temp, "XDG_STATE_HOME": f"{temp}/state"}
-            dev_policy = json.loads(
+            self.assertEqual(
                 subprocess.run(
-                    [switcher, "policy"], env=env, text=True, capture_output=True, check=True
-                ).stdout
+                    [switcher, "id"], env=env, text=True, capture_output=True, check=True
+                ).stdout.strip(),
+                "aocepclkpgckjeikiphffdlileoaceec",
             )
+            subprocess.run([switcher, "store"], env=env, check=True, capture_output=True)
             self.assertEqual(
-                dev_policy["ExtensionSettings"]["jpgfhlaplofoaempbhliigmjbpofeghk"][
-                    "installation_mode"
-                ],
-                "blocked",
-            )
-            self.assertEqual(
-                dev_policy["ExtensionSettings"]["aocepclkpgckjeikiphffdlileoaceec"][
-                    "installation_mode"
-                ],
-                "allowed",
-            )
-            mode_dir = pathlib.Path(env["XDG_STATE_HOME"]) / "rofi-chrome"
-            mode_dir.mkdir(parents=True)
-            (mode_dir / "mode").write_text("store\n")
-            store_policy = json.loads(
                 subprocess.run(
-                    [switcher, "policy"], env=env, text=True, capture_output=True, check=True
-                ).stdout
-            )
-            self.assertEqual(
-                store_policy["ExtensionSettings"]["jpgfhlaplofoaempbhliigmjbpofeghk"][
-                    "installation_mode"
-                ],
-                "normal_installed",
-            )
-            self.assertEqual(
-                store_policy["ExtensionSettings"]["aocepclkpgckjeikiphffdlileoaceec"][
-                    "installation_mode"
-                ],
-                "blocked",
+                    [switcher, "id"], env=env, text=True, capture_output=True, check=True
+                ).stdout.strip(),
+                "jpgfhlaplofoaempbhliigmjbpofeghk",
             )
 
     def test_chromium_reuses_main_profile_and_switches_to_browser_group(self):
@@ -437,7 +432,6 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn('"/usr/bin/google-chrome-stable"', remote)
         self.assertIn('Match(wm_class="Google-chrome")', qtile_config)
         self.assertIn(".config/google-chrome-main/NativeMessagingHosts", restore)
-        self.assertIn("rofi-chrome-mode", restore)
 
     def test_default_browser_uses_chromium_wrapper(self):
         root = SCRIPT.parent.parent
@@ -544,7 +538,7 @@ class RofiHisterTest(unittest.TestCase):
             ],
         )
 
-    def test_full_text_history_hit_promotes_all_matching_open_tabs(self):
+    def test_history_hit_promotes_all_matching_open_tabs(self):
         open_tabs = [
             ("First", "https://example.com/article", "target-1"),
             ("Second", "https://example.com/article", "target-2"),

@@ -22,6 +22,10 @@ class ToggleWemeetTest(unittest.TestCase):
         self.assertNotIn("len(wemeet_windows) > 1", script)
         self.assertNotIn("next_window()", script)
 
+    def test_launches_wemeet_when_process_is_closed_even_if_qtile_has_a_stale_window(self):
+        script = SCRIPT.read_text()
+        self.assertIn("if not has_window or process.returncode != 0:", script)
+
     def test_restarts_wemeet_when_process_has_no_window(self):
         script = SCRIPT.read_text()
         self.assertIn("client.windows()", script)

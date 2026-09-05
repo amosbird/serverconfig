@@ -52,13 +52,18 @@ class QtileScratchpadTest(unittest.TestCase):
         launcher = ROOT / "scripts/bookmark-manager"
         self.assertTrue(launcher.exists())
         source = launcher.read_text()
-        self.assertIn('--app="$url"', source)
+        self.assertIn('--current-group --app="$url"', source)
         self.assertIn("rofi-chrome-mode id", source)
         self.assertIn('chrome-extension://$extension_id/bookmarks.html', source)
         self.assertNotIn("--no-startup-window", source)
         self.assertNotIn("/json/version", source)
         self.assertNotIn("--class", source)
         self.assertIn("/home/amos/scripts/chromium", source)
+        chromium = (ROOT / "scripts/chromium").read_text()
+        self.assertIn('if [[ ${1:-} == --current-group ]]; then', chromium)
+        self.assertIn("focus_group=false", chromium)
+        self.assertIn("if $focus_group; then", chromium)
+        self.assertGreater(chromium.rindex("focus_main_group"), chromium.index('chromium-remote "$@"'))
         self.assertIn(
             'Key([ctrl, alt], "b", toggle_scratchpad("bookmarks"))',
             self.config,

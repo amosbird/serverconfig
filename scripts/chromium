@@ -5,10 +5,23 @@ host="$profile/NativeMessagingHosts/io.github.amosbird.browser_router.json"
 mkdir -p "$(dirname "$host")"
 ln -sf /home/amos/git/serverconfig/chromium/external-links/native-host.json "$host"
 
-printf '%s' '[[["group","f"]],"toscreen",[],{},true]' \
-    | nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY" >/dev/null
+focus_main_group() {
+    printf '%s' '[[["group","f"]],"toscreen",[],{},true]' \
+        | nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY" >/dev/null
+}
+
+focus_group=true
+if [[ ${1:-} == --current-group ]]; then
+    focus_group=false
+    shift
+else
+    focus_main_group
+fi
 
 if chromium-remote "$@"; then
+    if $focus_group; then
+        focus_main_group
+    fi
     exit
 fi
 

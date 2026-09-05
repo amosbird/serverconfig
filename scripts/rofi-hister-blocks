@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Fast, live Chromium tab and Hister history search for rofi-blocks."""
+"""Fast, live Chromium tab, bookmark, and history search for rofi-blocks."""
 
 import html
 import http.client
 import json
 import pathlib
 import re
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -14,8 +15,8 @@ import urllib.parse
 
 BROWSER_CDP_PORT = 9222
 BOOKMARKS_PATH = pathlib.Path.home() / ".config/google-chrome-main/Default/Bookmarks"
+HISTORY_PATH = pathlib.Path.home() / ".config/google-chrome-main/Default/History"
 BLOCKLIST_SCRIPT = "/home/amos/scripts/rofi-browser-blocklist.sh"
-HISTER_BIN = "hister"
 HISTORY_LIMIT = 50
 GOOGLE_SEARCH_URL = "https://www.google.com/search?q="
 URL_RE = re.compile(r'^(ftp|http|https)://[^ "]+$')
@@ -110,55 +111,27 @@ def load_chromium_bookmarks(path=BOOKMARKS_PATH):
     return result
 
 
-def build_hister_query(query):
-    # Keep only word tokens so user punctuation cannot become FTS query syntax.
-    return " ".join(f"{token}*" for token in re.findall(r"\w+", query))
-
-
-def parse_hister_json(output):
-    # shortcut: Hister 2.0 emits a trailing comma when a limited result page is full.
-    return json.loads(re.sub(r",\s*]$", "]", output))
-
-
-def hister_search(query):
-    search_query = build_hister_query(query)
-    if not search_query:
+def chromium_history_search(query, path=HISTORY_PATH):
+    if not query.strip():
         return []
 
     try:
-        result = subprocess.run(
-            [
-                HISTER_BIN,
-                "search",
-                "-f",
-                "json",
-                "-F",
-                "url,title",
-                "-L",
-                str(HISTORY_LIMIT),
-                search_query,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=3,
-            check=True,
-        )
-        data = parse_hister_json(result.stdout)
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        uri = f"file:{path}?mode=ro&immutable=1"
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            rows = connection.execute(
+                """
+                SELECT COALESCE(NULLIF(title, ''), url), url
+                FROM urls
+                WHERE hidden = 0
+                ORDER BY last_visit_time DESC
+                """
+            )
+            return [row for row in rows if match_query(query, *row)][:HISTORY_LIMIT]
+        finally:
+            connection.close()
+    except sqlite3.Error:
         return []
-
-    # Hister 2 returns an array; older builds wrapped it in {"documents": [...]}.
-    documents = data if isinstance(data, list) else data.get("documents") or []
-    results = []
-    seen = set()
-    for document in documents:
-        url = document.get("url", "")
-        title = document.get("title", "") or url
-        if url and url not in seen:
-            seen.add(url)
-            results.append((title, url))
-    return results
 
 
 def match_query(query, title, url):
@@ -288,26 +261,6 @@ def open_entry(data):
         launch_url(url)
 
 
-def delete_entry(data, current_query):
-    url = data.get("url", "")
-    if not url or data.get("kind") != "hist":
-        return
-    subprocess.run(
-        [HISTER_BIN, "delete", url],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    result = merge_results(
-        build_tab_entries(current_query),
-        hister_search(current_query),
-        bookmark_entries=build_bookmark_entries(current_query),
-    )
-    with state_lock:
-        entries[:] = result
-    send({"lines": format_lines(result)})
-
-
 def main():
     global blocklist, bookmarks, tabs
     bookmark_mode = False
@@ -339,7 +292,7 @@ def main():
             tab_entries = build_tab_entries(query)
             result = merge_results(
                 tab_entries,
-                hister_search(query),
+                chromium_history_search(query),
                 bookmark_entries=build_bookmark_entries(query),
             )
         with state_lock:
@@ -393,7 +346,7 @@ def main():
                 if bookmark_mode
                 else merge_results(
                     build_tab_entries(current_query),
-                    hister_search(current_query),
+                    chromium_history_search(current_query),
                     bookmark_entries=build_bookmark_entries(current_query),
                 )
             )
@@ -406,21 +359,20 @@ def main():
                 }
             )
 
-        elif name in ("select entry", "delete entry"):
+        elif name == "select entry":
             with state_lock:
                 entry = get_event_entry(raw_data)
             if entry is None:
                 continue
             kind, _, url, metadata = entry
-            data = {
-                "kind": kind,
-                "url": url,
-                "target_id": metadata if kind == "tab" else "",
-            }
-            if name == "select entry":
-                open_entry(data)
-                return
-            delete_entry(data, current_query)
+            open_entry(
+                {
+                    "kind": kind,
+                    "url": url,
+                    "target_id": metadata if kind == "tab" else "",
+                }
+            )
+            return
 
         elif name == "execute custom input":
             open_or_search(current_query or value)

@@ -88,7 +88,7 @@ def open_in_browser(param):
     if not re.match(r"^https?://", url):
         return ""
     subprocess.Popen(
-        ["xdg-open", url],
+        ["/home/amos/scripts/chromium", url],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

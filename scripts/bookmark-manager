@@ -2,4 +2,4 @@
 
 extension_id=$(rofi-chrome-mode id)
 url="chrome-extension://$extension_id/bookmarks.html"
-exec /home/amos/scripts/chromium --app="$url"
+exec /home/amos/scripts/chromium --current-group --app="$url"
