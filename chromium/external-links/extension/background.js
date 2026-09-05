@@ -26,6 +26,63 @@ async function configureSiteLanguages() {
 
 configureSiteLanguages();
 
+let nativePort;
+let rejectNativeRequests = [];
+let scrollQueues = Promise.resolve();
+
+function connectNativePort() {
+    if (nativePort) return nativePort;
+    nativePort = chrome.runtime.connectNative("io.github.amosbird.browser_router");
+    nativePort.onDisconnect.addListener(() => {
+        nativePort = null;
+        rejectNativeRequests.splice(0).forEach(resolve => resolve({ok: false}));
+    });
+    return nativePort;
+}
+
+function sendNativeRequest(message) {
+    return new Promise(resolve => {
+        const port = connectNativePort();
+        const finish = response => {
+            clearTimeout(timeout);
+            port.onMessage.removeListener(finish);
+            rejectNativeRequests = rejectNativeRequests.filter(resolve => resolve !== finish);
+            resolve(response);
+        };
+        const timeout = setTimeout(() => finish({ok: false}), 3000);
+        rejectNativeRequests.push(finish);
+        port.onMessage.addListener(finish);
+        port.postMessage(message);
+    });
+}
+
+function handleScrollCommand(command, tab) {
+    const current = scrollQueues
+        .catch(() => {})
+        .then(async () => {
+            const response = await sendNativeRequest({
+                command: "scroll",
+                direction: command,
+                url: tab?.url,
+            });
+            if (!response?.ok) {
+                chrome.notifications.create({
+                    type: "basic",
+                    iconUrl: "icon.png",
+                    title: "Browser integration failed",
+                    message: command,
+                });
+            }
+        });
+    scrollQueues = current.catch(() => {});
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+    if (command === "scrollToTop" || command === "scrollToBottom") {
+        handleScrollCommand(command, tab);
+    }
+});
+
 function sendNativeMessage(message, callback = () => {}) {
     chrome.runtime.sendNativeMessage(
         "io.github.amosbird.browser_router",
@@ -37,7 +94,7 @@ function sendNativeMessage(message, callback = () => {}) {
                     type: "basic",
                     iconUrl: "icon.png",
                     title: "Browser integration failed",
-                    message: error?.message || message.path || message.url,
+                    message: error?.message || message.path || message.url || message.direction,
                 });
             }
             callback(response);

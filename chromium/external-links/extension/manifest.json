@@ -3,7 +3,7 @@
     "name": "External Links",
     "version": "3.0",
     "description": "Open external links from isolated web apps in the main Chromium profile.",
-    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn0HPFOWR2Q4meYlgofTTU2rJYPOOfkIml1xSPdd3V2tKOI5uPEYVZw+v3wf37CNSQze4v913r6cUQuV5DfiDLuRnFSj3+4EO7iGP4YVOQtkb/EMwkLiyL6wdL8IF+S2jMyCWJq+vcssFTAz+OSfrHLP8eT0lKa0SLCzODua0/JaSiHX40PNzxe6pBvUxapioPuapatcGrmOJIa/TygDtSWcky+JCJC6g/jdKJDynTbcgi2L9NKR/6F/HaM5oRGnP/3+7BY0EAqggqf6BY2mgikGsTvb2CkA2IrxpdqLFN/HlC0NUlNKA8+lhwTuRqKh5cFBGUcVZq8pjQLTjMbUcQQIDAQAB",
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmbgrei9GZNp3UZVFdguyosXHblDb80XfloNUNtt95kLMg5tgQPAzSjY583V9E6bcILr3oUQ3Vn4Q6xHUQSleCTY7nSOG4p+qDHVMjj3IkwIkZA+GTgjkgRfdVZbXhuU8H6F/4odEailmKTFBv1RXSyF4iCiGWWXVSmNwvfMwsdgIjJ1eguAJ6qjq1znsOfAP5q6Q+Th4GODS/KcNbq4avWx2KMmYk7oYPJf5L98mpWF4MOTuHNqm4jdUcNHM0HqrZciLqrpM8bLQaVvcVsfwPoeZE0PZA8OilcL2hq/JQOmvtFIceUeI160JeoEX5EgjdMydTLQfeFdMp9hynFANlwIDAQAB",
     "permissions": [
         "nativeMessaging",
         "notifications",
@@ -12,6 +12,20 @@
     ],
     "background": {
         "service_worker": "background.js"
+    },
+    "commands": {
+        "scrollToTop": {
+            "suggested_key": {
+                "default": "Alt+Shift+Home"
+            },
+            "description": "Scroll the current page to the beginning"
+        },
+        "scrollToBottom": {
+            "suggested_key": {
+                "default": "Alt+Shift+End"
+            },
+            "description": "Scroll the current page to the end"
+        }
     },
     "content_scripts": [
         {

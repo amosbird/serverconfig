@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+profile=$1
+extension_id=ahonjbfnmpjgjgaabbppofphidfomgcj
+declaration=/opt/google/chrome/extensions/$extension_id.json
+preferences="$profile/Default/Preferences"
+
+[[ -r $declaration && -f $preferences ]] || exit 0
+wanted=$(jq -r '.external_version // empty' "$declaration")
+[[ -n $wanted ]] || exit 0
+installed=$(jq -r --arg id "$extension_id" \
+    '.extensions.settings[$id].manifest.version // empty' "$preferences")
+[[ -z $installed || $installed == "$wanted" ]] && exit 0
+
+if ps -eo args= | grep -F -- "--user-data-dir=$profile" | grep -q '/chrome'; then
+    exit 0
+fi
+
+backup="$profile/external-links-backups/$installed"
+mkdir -p "$backup"
+cp -a "$preferences" "$backup/Preferences"
+if [[ -d $profile/Default/Extensions/$extension_id ]]; then
+    cp -a "$profile/Default/Extensions/$extension_id" "$backup/"
+fi
+
+python3 - "$preferences" "$extension_id" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+extension_id = sys.argv[2]
+data = json.loads(path.read_text())
+data.get("extensions", {}).get("settings", {}).pop(extension_id, None)
+temporary = path.with_suffix(".tmp")
+temporary.write_text(json.dumps(data, separators=(",", ":")))
+temporary.replace(path)
+PY
+rm -rf "$profile/Default/Extensions/$extension_id"

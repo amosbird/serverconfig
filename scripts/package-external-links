@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+root=/home/amos/git/serverconfig/chromium/external-links
+extension="$root/extension"
+output="$root/package"
+state="$output/build-state.json"
+key=$(mktemp)
+work=$(mktemp -d)
+trap 'rm -f "$key"; rm -rf "$work"' EXIT
+
+mkdir -p "$output"
+source_hash=$(
+    find "$extension" -type f -print0 \
+        | sort -z \
+        | xargs -0 sha256sum \
+        | sha256sum \
+        | cut -d ' ' -f 1
+)
+
+if [[ -f $state ]]; then
+    previous_hash=$(jq -r .source_hash "$state")
+    previous_version=$(jq -r .version "$state")
+else
+    previous_hash=
+    previous_version=
+fi
+
+if [[ $source_hash != "$previous_hash" || ! -f $output/extension.crx ]]; then
+    version=$(python3 - "$previous_version" <<'PY'
+import datetime
+import sys
+
+now = datetime.datetime.now()
+candidate = (now.year, now.month, now.day, now.hour * 100 + now.minute)
+previous = tuple(int(part) for part in sys.argv[1].split(".")) if sys.argv[1] else ()
+if previous and candidate <= previous:
+    candidate = (*previous[:3], previous[3] + 1)
+print(".".join(map(str, candidate)))
+PY
+    )
+
+    cp -a "$extension" "$work/extension"
+    jq --arg version "$version" '.version = $version' \
+        "$extension/manifest.json" > "$work/extension/manifest.json"
+    pass show chrome/external-links.pem > "$key"
+    chmod 600 "$key"
+    python3 - "$key" "$extension/manifest.json" <<'PY'
+import base64
+import hashlib
+import json
+import pathlib
+import subprocess
+import sys
+
+expected = "ahonjbfnmpjgjgaabbppofphidfomgcj"
+public_key = subprocess.check_output([
+    "openssl", "pkey", "-in", sys.argv[1], "-pubout", "-outform", "DER",
+])
+manifest_key = base64.b64decode(json.loads(pathlib.Path(sys.argv[2]).read_text())["key"])
+digest = hashlib.sha256(public_key).hexdigest()[:32]
+extension_id = "".join(chr(ord("a") + int(nibble, 16)) for nibble in digest)
+if public_key != manifest_key or extension_id != expected:
+    raise SystemExit(f"External Links signing identity mismatch: {extension_id}")
+PY
+    /usr/bin/google-chrome-stable \
+        --pack-extension="$work/extension" \
+        --pack-extension-key="$key"
+    mv "$work/extension.crx" "$output/extension.crx"
+    jq -n --arg source_hash "$source_hash" --arg version "$version" \
+        '{source_hash: $source_hash, version: $version}' > "$state"
+else
+    version=$previous_version
+fi
+
+cat > "$output/external-extension.json" <<EOF
+{
+    "external_crx": "$output/extension.crx",
+    "external_version": "$version"
+}
+EOF

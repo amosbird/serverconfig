@@ -16,7 +16,8 @@ CHROMIUM = ROOT / "scripts/chromium"
 class ChatChromiumTest(unittest.TestCase):
     def test_launcher_uses_one_non_kiosk_profile_with_explicit_tabs(self):
         launcher = RUNCHAT.read_text()
-        self.assertIn('--disable-extensions-except="$extension"', launcher)
+        self.assertNotIn("--disable-extensions-except", launcher)
+        self.assertNotIn("--load-extension", launcher)
         self.assertIn("profile=/home/amos/.config/chrome-chat", launcher)
         self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
         self.assertNotIn("exec /usr/bin/chromium", launcher)
@@ -72,7 +73,7 @@ for (const [url, expected] of cases) {{
         launcher = (ROOT / "scripts/bookmark-manager").read_text()
         self.assertNotIn("--no-startup-window", launcher)
         self.assertNotIn("/json/version", launcher)
-        self.assertIn('exec /home/amos/scripts/chromium --app="$url"', launcher)
+        self.assertIn('exec /home/amos/scripts/chromium --current-group --app="$url"', launcher)
 
     def test_all_browser_profiles_disable_smooth_scrolling(self):
         launchers = (CHROMIUM, RUNCHAT, ROOT / "scripts/runai")
@@ -84,6 +85,10 @@ for (const [url, expected] of cases) {{
             script = launcher.read_text()
             self.assertNotIn("router_state=", script)
             self.assertNotIn("Service Worker.stale", script)
+
+    def test_all_browser_profiles_allow_installed_extensions(self):
+        for launcher in (CHROMIUM, RUNCHAT, ROOT / "scripts/runai"):
+            self.assertNotIn("--disable-extensions-except", launcher.read_text())
 
     def test_main_chromium_uses_installed_extensions_and_registers_native_host(self):
         launcher = CHROMIUM.read_text()

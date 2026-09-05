@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-extension=/home/amos/git/serverconfig/chromium/external-links/extension
 profile=/home/amos/.config/chrome-chat
 remote=/home/amos/scripts/chromium-profile-remote
 host="$profile/NativeMessagingHosts/io.github.amosbird.browser_router.json"
@@ -42,8 +41,6 @@ exec /usr/bin/google-chrome-stable \
     --user-data-dir="$profile" \
     --no-default-browser-check \
     --disable-smooth-scrolling \
-    --disable-extensions-except="$extension" \
-    --load-extension="$extension" \
     --remote-debugging-port=9224 \
     --class=webchat \
     "${urls[@]}"
