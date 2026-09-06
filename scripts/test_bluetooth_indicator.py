@@ -55,7 +55,10 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertNotIn("timeout_add", source)
 
     def test_startup_launches_indicator(self):
-        self.assertIn('run_bg "bluetooth-indicator" bluetooth-indicator', STARTUP.read_text())
+        self.assertIn(
+            'run_bg "bluetooth-indicator" env GDK_SCALE=1 bluetooth-indicator',
+            STARTUP.read_text(),
+        )
 
 
 if __name__ == "__main__":
