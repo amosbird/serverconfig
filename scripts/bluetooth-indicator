@@ -10,7 +10,7 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 
-ICON_SIZE = 192
+ICON_SIZE = 96
 DESIGN_SIZE = 96
 FREECLIP_ADDRESS = "C0:DA:5E:EC:FB:7F"
 
@@ -46,8 +46,10 @@ class BluetoothIndicator:
         self.devices = {}
         self.cards = {}
         self.adapter_powered = False
-        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon("OFF"))
+        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon("OFF", ICON_SIZE))
+        self.icon_state = "OFF"
         self.icon.set_title("Bluetooth")
+        self.icon.connect("size-changed", self.on_icon_size_changed)
         self.icon.connect("popup-menu", self.show_menu)
         self.icon.connect("activate", self.activate)
         self.icon.set_visible(True)
@@ -127,7 +129,7 @@ class BluetoothIndicator:
     def profile(self, address):
         card = self.cards.get(address)
         if not card:
-            return "", ""
+            return "", "", ""
         active = card.get("active_profile", "off")
         description = card.get("profiles", {}).get(active, {}).get("description", "")
         return profile_details(active, description)
@@ -159,7 +161,7 @@ class BluetoothIndicator:
         context.set_line_join(cairo.LINE_JOIN_ROUND)
         context.stroke()
 
-    def status_icon(self, state):
+    def status_icon(self, state, size):
         if state in PROFILE_STYLES:
             color = PROFILE_STYLES[state]["color"]
             label = PROFILE_STYLES[state]["title"]
@@ -173,9 +175,9 @@ class BluetoothIndicator:
             color = (0.12, 0.62, 0.48)
             label = "LINK"
 
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, ICON_SIZE, ICON_SIZE)
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
         context = cairo.Context(surface)
-        context.scale(ICON_SIZE / DESIGN_SIZE, ICON_SIZE / DESIGN_SIZE)
+        context.scale(size / DESIGN_SIZE, size / DESIGN_SIZE)
         self.rounded_rectangle(context, 0, 0, DESIGN_SIZE, DESIGN_SIZE, 18)
         context.set_source_rgb(*color)
         context.fill()
@@ -189,7 +191,18 @@ class BluetoothIndicator:
         extents = context.text_extents(label)
         context.move_to(48 - extents.width / 2, 78)
         context.show_text(label)
-        return Gdk.pixbuf_get_from_surface(surface, 0, 0, ICON_SIZE, ICON_SIZE)
+        return Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
+
+    def set_icon_state(self, state):
+        self.icon_state = state
+        size = self.icon.get_size() or ICON_SIZE
+        self.icon.set_from_pixbuf(self.status_icon(state, size))
+
+    def on_icon_size_changed(self, _icon, size):
+        # GtkStatusIcon otherwise keeps its 48 px natural allocation centered
+        # when stalonetray expands the XEmbed socket to 96 px on HiDPI.
+        self.icon.set_from_pixbuf(self.status_icon(self.icon_state, size))
+        return True
 
     def refresh(self):
         self.load_devices()
@@ -200,7 +213,7 @@ class BluetoothIndicator:
             if device["connected"]
         ]
         if not self.adapter_powered:
-            self.icon.set_from_pixbuf(self.status_icon("OFF"))
+            self.set_icon_state("OFF")
             tooltip = "Bluetooth is off"
         elif connected:
             lines = ["Bluetooth audio"]
@@ -216,10 +229,10 @@ class BluetoothIndicator:
                     lines.append("Connected")
                 if device["battery"] is not None:
                     lines.append(f"Battery  {device['battery']}%")
-            self.icon.set_from_pixbuf(self.status_icon(icon_state))
+            self.set_icon_state(icon_state)
             tooltip = "\n".join(lines)
         else:
-            self.icon.set_from_pixbuf(self.status_icon("IDLE"))
+            self.set_icon_state("IDLE")
             tooltip = "Bluetooth is on\nNo devices connected"
         self.icon.set_tooltip_text(tooltip)
         return False

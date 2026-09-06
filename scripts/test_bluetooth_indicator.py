@@ -32,8 +32,10 @@ class BluetoothIndicatorTest(unittest.TestCase):
 
     def test_profile_is_prominent_in_icon_and_menu(self):
         source = INDICATOR.read_text()
-        self.assertIn("ICON_SIZE = 192", source)
+        self.assertIn("ICON_SIZE = 96", source)
         self.assertIn("DESIGN_SIZE = 96", source)
+        self.assertIn('self.icon.connect("size-changed", self.on_icon_size_changed)', source)
+        self.assertIn("return True", source)
         self.assertIn('"title": "A2DP"', source)
         self.assertIn('"title": "HFP"', source)
         self.assertIn('"High quality playback"', source)
@@ -57,7 +59,7 @@ class BluetoothIndicatorTest(unittest.TestCase):
 
     def test_startup_launches_indicator(self):
         self.assertIn(
-            'run_bg "bluetooth-indicator" env GDK_SCALE=1 bluetooth-indicator',
+            'run_bg "bluetooth-indicator" env GDK_SCALE=2 bluetooth-indicator',
             STARTUP.read_text(),
         )
 
