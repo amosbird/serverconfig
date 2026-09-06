@@ -21,14 +21,22 @@ class BluetoothIndicatorTest(unittest.TestCase):
             module.profile_details(
                 "a2dp-sink", "High Fidelity Playback (A2DP Sink, codec AAC)"
             ),
-            ("A2DP · AAC", "A"),
+            ("A2DP · AAC", "A2DP", "High quality playback"),
         )
         self.assertEqual(
             module.profile_details(
                 "headset-head-unit", "Headset Head Unit (HSP/HFP, codec MSBC)"
             ),
-            ("HFP · MSBC", "H"),
+            ("HFP · MSBC", "HFP", "Calls + microphone"),
         )
+
+    def test_profile_is_prominent_in_icon_and_menu(self):
+        source = INDICATOR.read_text()
+        self.assertIn("ICON_SIZE = 96", source)
+        self.assertIn('"title": "A2DP"', source)
+        self.assertIn('"title": "HFP"', source)
+        self.assertIn('"High quality playback"', source)
+        self.assertIn('"Calls + microphone"', source)
 
     def test_indicator_is_global_but_freeclip_uses_session_manager(self):
         source = INDICATOR.read_text()

@@ -10,20 +10,33 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 
+ICON_SIZE = 96
 FREECLIP_ADDRESS = "C0:DA:5E:EC:FB:7F"
+
+PROFILE_STYLES = {
+    "a2dp": {
+        "title": "A2DP",
+        "purpose": "High quality playback",
+        "color": (0.10, 0.47, 0.95),
+    },
+    "hfp": {
+        "title": "HFP",
+        "purpose": "Calls + microphone",
+        "color": (0.48, 0.30, 0.90),
+    },
+}
 
 
 def profile_details(name, description):
     if name.startswith("a2dp-sink"):
-        mode = "A2DP"
-        badge = "A"
+        style = PROFILE_STYLES["a2dp"]
     elif name.startswith("headset-head-unit"):
-        mode = "HFP"
-        badge = "H"
+        style = PROFILE_STYLES["hfp"]
     else:
-        return name, ""
+        return name, "", ""
     codec = description.rsplit("codec ", 1)[-1].rstrip(")") if "codec " in description else ""
-    return (f"{mode} · {codec}" if codec else mode), badge
+    label = f"{style['title']} · {codec}" if codec else style["title"]
+    return label, style["title"], style["purpose"]
 
 
 class BluetoothIndicator:
@@ -32,7 +45,7 @@ class BluetoothIndicator:
         self.devices = {}
         self.cards = {}
         self.adapter_powered = False
-        self.icon = Gtk.StatusIcon.new_from_icon_name("bluetooth-disabled-symbolic")
+        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon("OFF"))
         self.icon.set_title("Bluetooth")
         self.icon.connect("popup-menu", self.show_menu)
         self.icon.connect("activate", self.activate)
@@ -118,28 +131,66 @@ class BluetoothIndicator:
         description = card.get("profiles", {}).get(active, {}).get("description", "")
         return profile_details(active, description)
 
-    def profile_icon(self, badge):
-        theme = Gtk.IconTheme.get_default()
-        try:
-            base = theme.load_icon("bluetooth-active", 48, Gtk.IconLookupFlags.FORCE_SIZE)
-        except GLib.Error:
-            base = theme.load_icon("bluetooth", 48, Gtk.IconLookupFlags.FORCE_SIZE)
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 48, 48)
-        context = cairo.Context(surface)
-        Gdk.cairo_set_source_pixbuf(context, base, 0, 0)
-        context.paint()
-        context.arc(37, 37, 10, 0, 2 * 3.141592653589793)
-        context.set_source_rgb(0.12, 0.12, 0.12)
-        context.fill_preserve()
-        context.set_source_rgb(0.95, 0.95, 0.95)
-        context.set_line_width(1.5)
+    @staticmethod
+    def rounded_rectangle(context, x, y, width, height, radius):
+        context.new_sub_path()
+        context.arc(x + width - radius, y + radius, radius, -1.5708, 0)
+        context.arc(x + width - radius, y + height - radius, radius, 0, 1.5708)
+        context.arc(x + radius, y + height - radius, radius, 1.5708, 3.1416)
+        context.arc(x + radius, y + radius, radius, 3.1416, 4.7124)
+        context.close_path()
+
+    @staticmethod
+    def draw_bluetooth(context, center_x, center_y, size):
+        top = center_y - size / 2
+        bottom = center_y + size / 2
+        right = center_x + size * 0.32
+        context.move_to(center_x, top)
+        context.line_to(right, center_y - size * 0.18)
+        context.line_to(center_x - size * 0.28, center_y + size * 0.12)
+        context.move_to(center_x, bottom)
+        context.line_to(right, center_y + size * 0.18)
+        context.line_to(center_x - size * 0.28, center_y - size * 0.12)
+        context.move_to(center_x, top)
+        context.line_to(center_x, bottom)
+        context.set_line_width(size * 0.10)
+        context.set_line_cap(cairo.LINE_CAP_ROUND)
+        context.set_line_join(cairo.LINE_JOIN_ROUND)
         context.stroke()
+
+    def status_icon(self, state):
+        if state in PROFILE_STYLES:
+            color = PROFILE_STYLES[state]["color"]
+            label = PROFILE_STYLES[state]["title"]
+        elif state == "OFF":
+            color = (0.30, 0.32, 0.36)
+            label = "OFF"
+        elif state == "IDLE":
+            color = (0.18, 0.56, 0.78)
+            label = "ON"
+        else:
+            color = (0.12, 0.62, 0.48)
+            label = "LINK"
+
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, ICON_SIZE, ICON_SIZE)
+        context = cairo.Context(surface)
+        self.rounded_rectangle(context, 3, 3, 90, 90, 21)
+        context.set_source_rgb(*color)
+        context.fill()
+
+        context.set_source_rgb(1, 1, 1)
+        self.draw_bluetooth(context, 48, 35, 43)
+
+        self.rounded_rectangle(context, 13, 64, 70, 23, 11)
+        context.set_source_rgba(0.04, 0.06, 0.10, 0.76)
+        context.fill()
+        context.set_source_rgb(1, 1, 1)
         context.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        context.set_font_size(13)
-        extents = context.text_extents(badge)
-        context.move_to(37 - extents.width / 2, 37 + extents.height / 2)
-        context.show_text(badge)
-        return Gdk.pixbuf_get_from_surface(surface, 0, 0, 48, 48)
+        context.set_font_size(14 if len(label) > 3 else 16)
+        extents = context.text_extents(label)
+        context.move_to(48 - extents.width / 2, 81)
+        context.show_text(label)
+        return Gdk.pixbuf_get_from_surface(surface, 0, 0, ICON_SIZE, ICON_SIZE)
 
     def refresh(self):
         self.load_devices()
@@ -150,28 +201,27 @@ class BluetoothIndicator:
             if device["connected"]
         ]
         if not self.adapter_powered:
-            self.icon.set_from_icon_name("bluetooth-disabled-symbolic")
-            tooltip = "Bluetooth disabled"
+            self.icon.set_from_pixbuf(self.status_icon("OFF"))
+            tooltip = "Bluetooth is off"
         elif connected:
-            lines = []
-            badge = ""
+            lines = ["Bluetooth audio"]
+            icon_state = "LINK"
             for address, device in connected:
-                line = device["name"]
-                if device["battery"] is not None:
-                    line += f" · {device['battery']}%"
-                profile, device_badge = self.profile(address)
+                profile, mode, purpose = self.profile(address)
+                lines.append(f"\n{device['name']}")
                 if profile:
-                    line += f" · {profile}"
-                    badge = badge or device_badge
-                lines.append(line)
-            if badge:
-                self.icon.set_from_pixbuf(self.profile_icon(badge))
-            else:
-                self.icon.set_from_icon_name("bluetooth-active-symbolic")
+                    lines.append(f"Profile  {profile}")
+                    lines.append(purpose)
+                    icon_state = mode.lower()
+                else:
+                    lines.append("Connected")
+                if device["battery"] is not None:
+                    lines.append(f"Battery  {device['battery']}%")
+            self.icon.set_from_pixbuf(self.status_icon(icon_state))
             tooltip = "\n".join(lines)
         else:
-            self.icon.set_from_icon_name("bluetooth-symbolic")
-            tooltip = "Bluetooth enabled · no connected devices"
+            self.icon.set_from_pixbuf(self.status_icon("IDLE"))
+            tooltip = "Bluetooth is on\nNo devices connected"
         self.icon.set_tooltip_text(tooltip)
         return False
 
@@ -208,8 +258,8 @@ class BluetoothIndicator:
             for name, profile in card.get("profiles", {}).items():
                 if name == "off" or not profile.get("available", False):
                     continue
-                label, _badge = profile_details(name, profile.get("description", ""))
-                item = Gtk.CheckMenuItem(label=label)
+                label, _mode, purpose = profile_details(name, profile.get("description", ""))
+                item = Gtk.CheckMenuItem(label=f"{label}    {purpose}")
                 item.set_draw_as_radio(True)
                 item.set_active(name == active)
                 item.connect("activate", self.set_profile, address, card["name"], name)
@@ -233,8 +283,11 @@ class BluetoothIndicator:
         if connected:
             for address, device in connected:
                 label = device["name"]
+                profile, _mode, _purpose = self.profile(address)
+                if profile:
+                    label += f"    ·    {profile}"
                 if device["battery"] is not None:
-                    label += f" ({device['battery']}%)"
+                    label += f"    {device['battery']}%"
                 item = Gtk.MenuItem(label=label)
                 item.set_submenu(self.device_menu(address))
                 menu.append(item)
