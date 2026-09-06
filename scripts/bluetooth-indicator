@@ -174,21 +174,18 @@ class BluetoothIndicator:
 
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, ICON_SIZE, ICON_SIZE)
         context = cairo.Context(surface)
-        self.rounded_rectangle(context, 3, 3, 90, 90, 21)
+        self.rounded_rectangle(context, 0, 0, ICON_SIZE, ICON_SIZE, 18)
         context.set_source_rgb(*color)
         context.fill()
 
-        context.set_source_rgb(1, 1, 1)
-        self.draw_bluetooth(context, 48, 35, 43)
+        context.set_source_rgba(1, 1, 1, 0.92)
+        self.draw_bluetooth(context, 48, 27, 34)
 
-        self.rounded_rectangle(context, 13, 64, 70, 23, 11)
-        context.set_source_rgba(0.04, 0.06, 0.10, 0.76)
-        context.fill()
         context.set_source_rgb(1, 1, 1)
         context.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        context.set_font_size(14 if len(label) > 3 else 16)
+        context.set_font_size(27 if len(label) > 3 else 31)
         extents = context.text_extents(label)
-        context.move_to(48 - extents.width / 2, 81)
+        context.move_to(48 - extents.width / 2, 78)
         context.show_text(label)
         return Gdk.pixbuf_get_from_surface(surface, 0, 0, ICON_SIZE, ICON_SIZE)
 
