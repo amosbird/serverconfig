@@ -18,6 +18,7 @@ zig = "latest"
 micromamba = "latest"
 gopass = "latest"
 gh = "latest"
+"github:git-lfs/git-lfs" = { version = "latest", exe = "git-lfs" }
 
 [settings]
 experimental = true
