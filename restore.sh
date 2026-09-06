@@ -3,6 +3,42 @@
 set -e
 set -x
 
+setup_vinput() {
+    command -v vinput >/dev/null || return
+    command -v jq >/dev/null || return
+
+    local model=onnx-xasr-zh-en-960ms-punct-stream
+    local models providers
+    models=$(vinput -j model list)
+    providers=$(vinput -j provider list)
+
+    if jq -e --arg id "$model" \
+        'any(.[]; .id == $id and .status == "active")' <<<"$models" >/dev/null &&
+        jq -e 'any(.[]; .id == "sherpa-onnx" and .active)' \
+            <<<"$providers" >/dev/null &&
+        systemctl --user is-enabled --quiet vinput-daemon.service &&
+        systemctl --user is-active --quiet vinput-daemon.service; then
+        return
+    fi
+
+    [[ -f "$HOME/.config/vinput/config.json" ]] || vinput init
+    if ! jq -e --arg id "$model" 'any(.[]; .id == $id)' <<<"$models" >/dev/null; then
+        vinput model add "$model"
+    fi
+    if ! jq -e --arg id "$model" \
+        'any(.[]; .id == $id and .status == "active")' <<<"$models" >/dev/null; then
+        vinput model use "$model"
+    fi
+    if ! jq -e 'any(.[]; .id == "sherpa-onnx" and .active)' \
+        <<<"$providers" >/dev/null; then
+        vinput provider use sherpa-onnx
+    fi
+    if ! systemctl --user is-enabled --quiet vinput-daemon.service ||
+        ! systemctl --user is-active --quiet vinput-daemon.service; then
+        systemctl --user enable --now vinput-daemon.service
+    fi
+}
+
 cd $HOME
 
 mkdir -p $HOME/.config
@@ -134,7 +170,8 @@ ln -sf gopass "$HOME/.local/bin/pass"
 "$HOME/scripts/update-mambatools"
 
 if [[ -n $GUI ]]; then
-    paru -S --needed --noconfirm touchegg
+    setup_vinput
+
     "$HOME/scripts/package-external-links"
     sudo rm -f /etc/opt/chrome/policies/managed/extensions.json \
         /etc/chromium/policies/managed/extensions.json

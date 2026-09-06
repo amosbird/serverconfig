@@ -2,6 +2,7 @@
 direnv = "latest"
 eza = "latest"
 ripgrep = "latest"
+rclone = "latest"
 fd = "latest"
 fzf = "latest"
 k6 = "latest"
