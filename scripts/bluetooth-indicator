@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+
+import json
+import subprocess
+
+import cairo
+import gi
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk
+
+FREECLIP_ADDRESS = "C0:DA:5E:EC:FB:7F"
+
+
+def profile_details(name, description):
+    if name.startswith("a2dp-sink"):
+        mode = "A2DP"
+        badge = "A"
+    elif name.startswith("headset-head-unit"):
+        mode = "HFP"
+        badge = "H"
+    else:
+        return name, ""
+    codec = description.rsplit("codec ", 1)[-1].rstrip(")") if "codec " in description else ""
+    return (f"{mode} · {codec}" if codec else mode), badge
+
+
+class BluetoothIndicator:
+    def __init__(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        self.devices = {}
+        self.cards = {}
+        self.adapter_powered = False
+        self.icon = Gtk.StatusIcon.new_from_icon_name("bluetooth-disabled-symbolic")
+        self.icon.set_title("Bluetooth")
+        self.icon.connect("popup-menu", self.show_menu)
+        self.icon.connect("activate", self.activate)
+        self.icon.set_visible(True)
+        self.bus.signal_subscribe(
+            "org.bluez",
+            None,
+            None,
+            None,
+            None,
+            Gio.DBusSignalFlags.NONE,
+            self.on_bluez_changed,
+        )
+        self.pulse_events = subprocess.Popen(
+            ["pactl", "subscribe"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        GLib.io_add_watch(
+            self.pulse_events.stdout,
+            GLib.IO_IN | GLib.IO_HUP,
+            self.on_pulse_event,
+        )
+        self.refresh()
+
+    def bluez_objects(self):
+        try:
+            result = self.bus.call_sync(
+                "org.bluez",
+                "/",
+                "org.freedesktop.DBus.ObjectManager",
+                "GetManagedObjects",
+                None,
+                None,
+                Gio.DBusCallFlags.NONE,
+                2000,
+                None,
+            )
+            return result.unpack()[0]
+        except GLib.Error:
+            return {}
+
+    def load_devices(self):
+        self.devices = {}
+        self.adapter_powered = False
+        for path, interfaces in self.bluez_objects().items():
+            adapter = interfaces.get("org.bluez.Adapter1")
+            if adapter:
+                self.adapter_powered = self.adapter_powered or adapter.get("Powered", False)
+            device = interfaces.get("org.bluez.Device1")
+            if not device:
+                continue
+            self.devices[device.get("Address", "")] = {
+                "name": device.get("Alias") or device.get("Name") or "Bluetooth device",
+                "connected": device.get("Connected", False),
+                "battery": interfaces.get("org.bluez.Battery1", {}).get("Percentage"),
+            }
+
+    def load_cards(self):
+        self.cards = {}
+        try:
+            result = subprocess.run(
+                ["pactl", "--format=json", "list", "cards"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            cards = json.loads(result.stdout)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            return
+        for card in cards:
+            properties = card.get("properties", {})
+            if properties.get("device.bus") == "bluetooth":
+                self.cards[properties.get("device.string", "").upper()] = card
+
+    def profile(self, address):
+        card = self.cards.get(address)
+        if not card:
+            return "", ""
+        active = card.get("active_profile", "off")
+        description = card.get("profiles", {}).get(active, {}).get("description", "")
+        return profile_details(active, description)
+
+    def profile_icon(self, badge):
+        theme = Gtk.IconTheme.get_default()
+        try:
+            base = theme.load_icon("bluetooth-active", 48, Gtk.IconLookupFlags.FORCE_SIZE)
+        except GLib.Error:
+            base = theme.load_icon("bluetooth", 48, Gtk.IconLookupFlags.FORCE_SIZE)
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 48, 48)
+        context = cairo.Context(surface)
+        Gdk.cairo_set_source_pixbuf(context, base, 0, 0)
+        context.paint()
+        context.arc(37, 37, 10, 0, 2 * 3.141592653589793)
+        context.set_source_rgb(0.12, 0.12, 0.12)
+        context.fill_preserve()
+        context.set_source_rgb(0.95, 0.95, 0.95)
+        context.set_line_width(1.5)
+        context.stroke()
+        context.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        context.set_font_size(13)
+        extents = context.text_extents(badge)
+        context.move_to(37 - extents.width / 2, 37 + extents.height / 2)
+        context.show_text(badge)
+        return Gdk.pixbuf_get_from_surface(surface, 0, 0, 48, 48)
+
+    def refresh(self):
+        self.load_devices()
+        self.load_cards()
+        connected = [
+            (address, device)
+            for address, device in self.devices.items()
+            if device["connected"]
+        ]
+        if not self.adapter_powered:
+            self.icon.set_from_icon_name("bluetooth-disabled-symbolic")
+            tooltip = "Bluetooth disabled"
+        elif connected:
+            lines = []
+            badge = ""
+            for address, device in connected:
+                line = device["name"]
+                if device["battery"] is not None:
+                    line += f" · {device['battery']}%"
+                profile, device_badge = self.profile(address)
+                if profile:
+                    line += f" · {profile}"
+                    badge = badge or device_badge
+                lines.append(line)
+            if badge:
+                self.icon.set_from_pixbuf(self.profile_icon(badge))
+            else:
+                self.icon.set_from_icon_name("bluetooth-active-symbolic")
+            tooltip = "\n".join(lines)
+        else:
+            self.icon.set_from_icon_name("bluetooth-symbolic")
+            tooltip = "Bluetooth enabled · no connected devices"
+        self.icon.set_tooltip_text(tooltip)
+        return False
+
+    def on_bluez_changed(self, *_args):
+        GLib.idle_add(self.refresh)
+
+    def on_pulse_event(self, stream, condition):
+        if condition & GLib.IO_HUP:
+            return False
+        line = stream.readline()
+        if "card" in line or "server" in line:
+            GLib.idle_add(self.refresh)
+        return True
+
+    def set_profile(self, item, address, card_name, profile):
+        if not item.get_active():
+            return
+        if address == FREECLIP_ADDRESS:
+            if profile.startswith("a2dp-sink"):
+                command = ["bluetooth-profile", "a2dp"]
+            elif profile.startswith("headset-head-unit"):
+                command = ["bluetooth-profile", "hfp"]
+            else:
+                return
+        else:
+            command = ["pactl", "set-card-profile", card_name, profile]
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def device_menu(self, address):
+        submenu = Gtk.Menu()
+        card = self.cards.get(address)
+        if card:
+            active = card.get("active_profile", "off")
+            for name, profile in card.get("profiles", {}).items():
+                if name == "off" or not profile.get("available", False):
+                    continue
+                label, _badge = profile_details(name, profile.get("description", ""))
+                item = Gtk.CheckMenuItem(label=label)
+                item.set_draw_as_radio(True)
+                item.set_active(name == active)
+                item.connect("activate", self.set_profile, address, card["name"], name)
+                submenu.append(item)
+        if not submenu.get_children():
+            item = Gtk.MenuItem(label="No audio profiles")
+            item.set_sensitive(False)
+            submenu.append(item)
+        return submenu
+
+    def activate(self, icon):
+        self.show_menu(icon, 1, Gtk.get_current_event_time())
+
+    def show_menu(self, icon, button=0, activate_time=0):
+        menu = Gtk.Menu()
+        connected = [
+            (address, device)
+            for address, device in self.devices.items()
+            if device["connected"]
+        ]
+        if connected:
+            for address, device in connected:
+                label = device["name"]
+                if device["battery"] is not None:
+                    label += f" ({device['battery']}%)"
+                item = Gtk.MenuItem(label=label)
+                item.set_submenu(self.device_menu(address))
+                menu.append(item)
+        else:
+            item = Gtk.MenuItem(label="No connected devices")
+            item.set_sensitive(False)
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        settings = Gtk.MenuItem(label="Bluetooth settings…")
+        settings.connect(
+            "activate",
+            lambda *_: subprocess.Popen(["bzmenu", "--launcher", "rofi", "--interactive"]),
+        )
+        menu.append(settings)
+        menu.show_all()
+        menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, activate_time)
+
+
+def main():
+    BluetoothIndicator()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

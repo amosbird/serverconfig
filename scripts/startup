@@ -32,6 +32,7 @@ run_fish_bg() {
 }
 
 run_bg "caps-indicator" caps-indicator
+run_bg "bluetooth-indicator" bluetooth-indicator
 run "xset-dpms" xset s off -dpms
 run "xset-bell" xset b off
 run "feh-wallpaper" timeout 5 feh --bg-fill ~/git/serverconfig/black_4k.jpg
