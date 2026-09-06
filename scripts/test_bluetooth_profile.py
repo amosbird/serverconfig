@@ -8,6 +8,10 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 PROFILE = ROOT / "scripts/bluetooth-profile"
 STABLE_AUDIO = ROOT / ".config/pipewire/pipewire.conf.d/51-freeclip-stable.conf"
+SESSION = ROOT / ".config/wireplumber/scripts/freeclip-session.lua"
+SESSION_COMPONENT = (
+    ROOT / ".config/wireplumber/wireplumber.conf.d/52-freeclip-session.conf"
+)
 WEMEET = ROOT / "scripts/wemeet"
 MUTE = ROOT / "scripts/microphone-mute"
 LED_SYNC = ROOT / "scripts/audio-mute-led"
@@ -24,21 +28,16 @@ class AudioControlTest(unittest.TestCase):
         )
         self.assertNotIn('Key([ctrl], "F4", lazy.spawn("bluetooth-profile"))', config)
 
-    def test_profile_toggle_is_manual_and_transport_local(self):
+    def test_profile_cli_only_writes_session_intent(self):
         script = PROFILE.read_text()
-        self.assertIn('pactl set-card-profile "$card" "$target"', script)
-        self.assertIn("headset-head-unit", script)
-        self.assertIn("a2dp-sink", script)
-        self.assertIn('route_backend "$stable_input_backend" "$local_input"', script)
-        self.assertIn('route_profile "$active"', script)
-        self.assertIn("wait_backends", script)
-        self.assertIn("wait_nodes_stable", script)
-        self.assertIn("node_is_healthy", script)
-        self.assertIn("failed; using local audio", script)
-        self.assertIn('set_volume sink "$freeclip_output"', script)
-        self.assertIn('set_volume source "$input"', script)
-        self.assertNotIn("set-sink-input-volume", script)
+        self.assertIn("pw-metadata -n default", script)
+        self.assertIn("freeclip.session.desired-mode", script)
+        self.assertIn("freeclip.session.request-id", script)
+        self.assertIn('case ${1:-toggle}', script)
         for command in (
+            "pactl set-card-profile",
+            "pw-dump",
+            "pw-link",
             "move-sink-input",
             "move-source-output",
             "bluetoothctl",
@@ -47,6 +46,32 @@ class AudioControlTest(unittest.TestCase):
             "parecord",
         ):
             self.assertNotIn(command, script)
+
+    def test_session_manager_owns_profile_and_backend_routing(self):
+        script = SESSION.read_text()
+        self.assertIn("bluez_card.C0_DA_5E_EC_FB_7F", script)
+        self.assertIn("freeclip_stable_output.backend", script)
+        self.assertIn("freeclip_stable_input.backend", script)
+        self.assertIn('metadata:set (backend["bound-id"], "target.object"', script)
+        self.assertIn('device:set_param ("Profile", param)', script)
+        self.assertIn('new_state == "error"', script)
+        self.assertIn("recovery_generation", script)
+        self.assertIn("RECOVERY_COOLDOWN_MS = 10000", script)
+        self.assertIn("LOCAL_FALLBACK", script)
+        self.assertIn("Core.timeout_add", script)
+        self.assertIn('find_node ("freeclip_stable_output"), 0.5', script)
+        self.assertIn('set_node_volume (output, 1.0)', script)
+        self.assertNotIn("set-sink-input-volume", script)
+        for command in ("bluetoothctl", "rfkill", "systemctl", "parecord"):
+            self.assertNotIn(command, script)
+
+    def test_session_manager_is_loaded_after_metadata_and_bluez(self):
+        config = SESSION_COMPONENT.read_text()
+        self.assertIn("name = /home/amos/.config/wireplumber/scripts/freeclip-session.lua", config)
+        self.assertIn("provides = custom.freeclip-session", config)
+        self.assertIn("metadata.default", config)
+        self.assertIn("monitor.bluez", config)
+        self.assertIn("support.standard-event-source", config)
 
     def test_stable_endpoints_hide_physical_profile_churn(self):
         config = STABLE_AUDIO.read_text()
@@ -58,153 +83,58 @@ class AudioControlTest(unittest.TestCase):
         self.assertEqual(config.count("node.dont-fallback = true"), 2)
         self.assertEqual(config.count("node.linger = true"), 2)
 
-    def test_wemeet_is_pinned_to_stable_endpoints(self):
+    def test_wemeet_is_pinned_to_stable_endpoints_without_routing(self):
         script = WEMEET.read_text()
         self.assertIn("PULSE_SINK=$stable_sink PULSE_SOURCE=$stable_source", script)
-        self.assertIn('bluetooth-profile --route', script)
         self.assertIn('exec /usr/bin/wemeet "$@"', script)
+        self.assertNotIn("bluetooth-profile --route", script)
         self.assertNotIn("LD_PRELOAD", script)
 
-    def test_hfp_switches_to_a2dp(self):
-        result, output = self._toggle("headset-head-unit", "a2dp-sink")
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("set-card-profile bluez_card.C0_DA_5E_EC_FB_7F a2dp-sink", output)
-        self.assertIn("pw-metadata -n default 202 target.object 603 Spa:Id", output)
-        self.assertIn("pw-metadata -n default 201 target.object 604 Spa:Id", output)
-        self.assertIn("pw-metadata -n default 201 target.object 601 Spa:Id", output)
-        self.assertIn("A2DP", output)
+    def test_cli_commands_write_metadata(self):
+        for command, expected in (("a2dp", '"a2dp"'), ("hfp", '"hfp"')):
+            result, output = self._run_profile(command)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn(
+                f"freeclip.session.desired-mode {expected} Spa:String:JSON", output
+            )
+            self.assertIn("freeclip.session.request-id", output)
 
-    def test_a2dp_switches_to_best_hfp_profile(self):
-        result, output = self._toggle("a2dp-sink", "headset-head-unit")
+    def test_toggle_uses_manager_status(self):
+        result, output = self._run_profile("toggle", mode="hfp")
         self.assertEqual(result.returncode, 0)
-        self.assertIn(
-            "set-card-profile bluez_card.C0_DA_5E_EC_FB_7F headset-head-unit",
-            output,
-        )
-        self.assertIn("pw-metadata -n default 202 target.object 602 Spa:Id", output)
-        self.assertIn("pw-metadata -n default 201 target.object 601 Spa:Id", output)
-        self.assertIn("HFP/mSBC", output)
+        self.assertIn('freeclip.session.desired-mode "a2dp"', output)
 
-    def test_missing_a2dp_profile_explains_that_reconnection_is_required(self):
-        result, output = self._run_profile(
-            "Name: bluez_card.C0_DA_5E_EC_FB_7F\n"
-            "Active Profile: headset-head-unit\n",
-            available_profiles=("off", "headset-head-unit"),
-        )
+    def test_retry_sends_unique_request_without_changing_mode(self):
+        result, output = self._run_profile("retry", mode="hfp")
         self.assertEqual(result.returncode, 0)
-        self.assertNotIn("set-card-profile", output)
-        self.assertIn("Reconnect FreeClip once", output)
-
-    def test_profile_switch_failure_keeps_the_current_profile(self):
-        result, output = self._run_profile(
-            "Name: bluez_card.C0_DA_5E_EC_FB_7F\n"
-            "Active Profile: headset-head-unit\n",
-            fail_switch=True,
-        )
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("set-card-profile", output)
-        self.assertIn("A2DP is unavailable", output)
-
-    def test_disconnected_freeclip_does_not_touch_other_bluetooth_cards(self):
-        result, output = self._run_profile(
-            "Name: bluez_card.AA_BB\nActive Profile: a2dp-sink\n"
-        )
-        self.assertEqual(result.returncode, 0)
-        self.assertNotIn("set-card-profile", output)
-        self.assertIn("FreeClip 2 is not connected", output)
-
-    @classmethod
-    def _toggle(cls, active, target):
-        cards = (
-            "Name: bluez_card.C0_DA_5E_EC_FB_7F\n"
-            f"Active Profile: {active}\n"
-        )
-        return cls._run_profile(cards, target)
+        self.assertNotIn("freeclip.session.desired-mode", output)
+        self.assertIn('freeclip.session.command "retry"', output)
+        self.assertIn("freeclip.session.request-id", output)
 
     @staticmethod
-    def _run_profile(cards, target=None, fail_switch=False, available_profiles=None):
+    def _run_profile(command, mode="a2dp"):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory)
             log = path / "log"
-            state = path / "state"
-            state.write_text(cards)
-            profiles = available_profiles or ("off", "a2dp-sink", "headset-head-unit")
-            profile_lines = "".join(f"    {profile}: Profile\n" for profile in profiles)
-            switch = "exit 1" if fail_switch else (
-                f'''printf 'Name: %s\\nActive Profile: %s\\n' "$2" "$3" >{state}'''
-            )
-            pactl = path / "pactl"
-            pactl.write_text(
-                f'''#!/usr/bin/env bash
-printf 'pactl %s\\n' "$*" >>{log}
-if [[ $* == "list cards" ]]; then
-    cat {state}
-    printf 'Profiles:\\n'
-    printf '%s' '{profile_lines}'
-elif [[ $* == "list sink-inputs" ]]; then
-    printf 'Sink Input #701\\n'
-    printf '\\tapplication.name = "Wemeet VoiceEngine"\\n'
-elif [[ $1 == "set-card-profile" ]]; then
-    {switch}
-fi
-'''
-            )
-            pactl.chmod(0o755)
-            dunstify = path / "dunstify"
-            dunstify.write_text(
-                f'''#!/usr/bin/env bash
-printf 'dunstify %s\\n' "$*" >>{log}
-'''
-            )
-            dunstify.chmod(0o755)
-            pw_dump = path / "pw-dump"
-            pw_dump.write_text(
-                """#!/usr/bin/env bash
-cat <<'JSON'
-[
-  {"id":201,"info":{"props":{"node.name":"freeclip_stable_output.backend"}}},
-  {"id":202,"info":{"props":{"node.name":"freeclip_stable_input.backend"}}},
-  {"id":301,"info":{"props":{"node.name":"bluez_output.C0_DA_5E_EC_FB_7F.1","object.serial":"601"}}},
-  {"id":302,"info":{"props":{"node.name":"bluez_input.C0:DA:5E:EC:FB:7F","object.serial":"602"}}},
-  {"id":303,"info":{"props":{"node.name":"alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source","object.serial":"603"}}},
-  {"id":304,"info":{"props":{"node.name":"alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink","object.serial":"604"}}}
-]
-JSON
-"""
-            )
-            pw_dump.chmod(0o755)
             pw_metadata = path / "pw-metadata"
             pw_metadata.write_text(
                 f'''#!/usr/bin/env bash
 printf 'pw-metadata %s\n' "$*" >>{log}
+if [[ $* == *freeclip.session.desired-mode ]]; then
+    printf 'Found "default" metadata 1\n'
+    printf '%s\n' "update: id:0 key:'freeclip.session.desired-mode' value:'\\\"{mode}\\\"' type:'Spa:String:JSON'"
+fi
 '''
             )
             pw_metadata.chmod(0o755)
-            pw_link = path / "pw-link"
-            pw_link.write_text(
-                """#!/usr/bin/env bash
-cat <<'LINKS'
-freeclip_stable_output.backend:output_FL
-  |-> bluez_output.C0_DA_5E_EC_FB_7F.1:playback_FL
-  |-> alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink:playback_FL
-freeclip_stable_input.backend:input_MONO
-  |<- bluez_input.C0:DA:5E:EC:FB:7F:capture_MONO
-  |<- alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source:capture_FL
-LINKS
-"""
-            )
-            pw_link.chmod(0o755)
             result = subprocess.run(
-                [PROFILE],
-                env={"PATH": f"{path}:/usr/bin", "XDG_RUNTIME_DIR": directory},
+                [PROFILE, command],
+                env={"PATH": f"{path}:/usr/bin"},
                 check=False,
                 capture_output=True,
                 text=True,
             )
-            output = log.read_text() if log.exists() else ""
-            if target is not None:
-                assert f"Active Profile: {target}" in state.read_text()
-            return result, output
+            return result, log.read_text() if log.exists() else ""
 
     def test_toggle_uses_default_source_and_syncs_led(self):
         script = MUTE.read_text()

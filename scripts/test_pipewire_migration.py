@@ -7,12 +7,14 @@ import unittest
 ROOT = pathlib.Path(__file__).parents[1]
 RESTORE = ROOT / "restore.sh"
 WIREPLUMBER = ROOT / ".config/wireplumber/wireplumber.conf.d/51-bluetooth.conf"
+WIREPLUMBER_SESSION = ROOT / ".config/wireplumber/scripts/freeclip-session.lua"
 STABLE_AUDIO = ROOT / ".config/pipewire/pipewire.conf.d/51-freeclip-stable.conf"
 WEMEET = ROOT / "scripts/wemeet"
 QTILE = ROOT / ".config/qtile/config.py"
 TLP = ROOT / "tlp/tlp.conf"
 AUDIO_POLICY = (
     WIREPLUMBER,
+    WIREPLUMBER_SESSION,
     ROOT / "scripts/bluetooth-profile",
     ROOT / "scripts/volume",
     ROOT / "scripts/microphone-mute",
@@ -71,7 +73,8 @@ class PipeWireMigrationTest(unittest.TestCase):
         )
         for command in forbidden:
             self.assertNotIn(command, source, command)
-        self.assertEqual(source.count("pactl set-card-profile"), 1)
+        self.assertNotIn("pactl set-card-profile", source)
+        self.assertIn('device:set_param ("Profile", param)', source)
 
     def test_tlp_does_not_disable_bluetooth(self):
         config = TLP.read_text()
@@ -139,7 +142,7 @@ class PipeWireMigrationTest(unittest.TestCase):
     def test_wemeet_uses_stable_endpoints_without_preload_changes(self):
         script = WEMEET.read_text()
         self.assertIn("PULSE_SINK=$stable_sink PULSE_SOURCE=$stable_source", script)
-        self.assertIn('bluetooth-profile --route', script)
+        self.assertNotIn('bluetooth-profile --route', script)
         self.assertIn('exec /usr/bin/wemeet "$@"', script)
         self.assertNotIn("LD_PRELOAD", script)
 
