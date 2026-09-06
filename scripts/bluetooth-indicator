@@ -10,7 +10,8 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 
-ICON_SIZE = 96
+ICON_SIZE = 192
+DESIGN_SIZE = 96
 FREECLIP_ADDRESS = "C0:DA:5E:EC:FB:7F"
 
 PROFILE_STYLES = {
@@ -174,7 +175,8 @@ class BluetoothIndicator:
 
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, ICON_SIZE, ICON_SIZE)
         context = cairo.Context(surface)
-        self.rounded_rectangle(context, 0, 0, ICON_SIZE, ICON_SIZE, 18)
+        context.scale(ICON_SIZE / DESIGN_SIZE, ICON_SIZE / DESIGN_SIZE)
+        self.rounded_rectangle(context, 0, 0, DESIGN_SIZE, DESIGN_SIZE, 18)
         context.set_source_rgb(*color)
         context.fill()
 

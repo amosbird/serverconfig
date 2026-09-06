@@ -32,7 +32,8 @@ class BluetoothIndicatorTest(unittest.TestCase):
 
     def test_profile_is_prominent_in_icon_and_menu(self):
         source = INDICATOR.read_text()
-        self.assertIn("ICON_SIZE = 96", source)
+        self.assertIn("ICON_SIZE = 192", source)
+        self.assertIn("DESIGN_SIZE = 96", source)
         self.assertIn('"title": "A2DP"', source)
         self.assertIn('"title": "HFP"', source)
         self.assertIn('"High quality playback"', source)
