@@ -20,6 +20,16 @@ PROFILE_STYLES = {
         "purpose": "High quality playback",
         "color": (0.10, 0.47, 0.95),
     },
+    "local": {
+        "title": "LOCAL",
+        "purpose": "Bluetooth unavailable · using built-in audio",
+        "color": (0.90, 0.45, 0.10),
+    },
+    "switching": {
+        "title": "···",
+        "purpose": "Switching audio profile",
+        "color": (0.18, 0.56, 0.78),
+    },
     "hfp": {
         "title": "HFP",
         "purpose": "Calls + microphone",
@@ -45,6 +55,7 @@ class BluetoothIndicator:
         self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
         self.devices = {}
         self.cards = {}
+        self.session = {}
         self.adapter_powered = False
         self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon("OFF", ICON_SIZE))
         self.icon_state = "OFF"
@@ -68,10 +79,21 @@ class BluetoothIndicator:
             stderr=subprocess.DEVNULL,
             text=True,
         )
+        self.metadata_events = subprocess.Popen(
+            ["pw-metadata", "-n", "default", "-m"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
         GLib.io_add_watch(
             self.pulse_events.stdout,
             GLib.IO_IN | GLib.IO_HUP,
             self.on_pulse_event,
+        )
+        GLib.io_add_watch(
+            self.metadata_events.stdout,
+            GLib.IO_IN | GLib.IO_HUP,
+            self.on_metadata_event,
         )
         self.refresh()
 
@@ -126,7 +148,37 @@ class BluetoothIndicator:
             if properties.get("device.bus") == "bluetooth":
                 self.cards[properties.get("device.string", "").upper()] = card
 
+    def load_session(self):
+        self.session = {}
+        try:
+            result = subprocess.run(
+                ["bluetooth-profile", "status", "--json"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            self.session = json.loads(result.stdout)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            pass
+
+    def managed_profile(self):
+        state = self.session.get("state", "")
+        if state == "A2DP_READY":
+            style = PROFILE_STYLES["a2dp"]
+        elif state == "HFP_READY":
+            style = PROFILE_STYLES["hfp"]
+        elif state.endswith("_STARTING") or state == "HFP_RECOVERING":
+            style = PROFILE_STYLES["switching"]
+        elif state in ("LOCAL_FALLBACK", "DISCONNECTED"):
+            style = PROFILE_STYLES["local"]
+        else:
+            return "", "", ""
+        return style["title"], style["title"], style["purpose"]
+
     def profile(self, address):
+        if address == FREECLIP_ADDRESS:
+            return self.managed_profile()
         card = self.cards.get(address)
         if not card:
             return "", "", ""
@@ -207,6 +259,7 @@ class BluetoothIndicator:
     def refresh(self):
         self.load_devices()
         self.load_cards()
+        self.load_session()
         connected = [
             (address, device)
             for address, device in self.devices.items()
@@ -248,6 +301,14 @@ class BluetoothIndicator:
             GLib.idle_add(self.refresh)
         return True
 
+    def on_metadata_event(self, stream, condition):
+        if condition & GLib.IO_HUP:
+            return False
+        line = stream.readline()
+        if "freeclip.session." in line:
+            GLib.idle_add(self.refresh)
+        return True
+
     def set_profile(self, item, address, card_name, profile):
         if not item.get_active():
             return
@@ -262,11 +323,21 @@ class BluetoothIndicator:
             command = ["pactl", "set-card-profile", card_name, profile]
         subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    def effective_profile_name(self, address, physical):
+        if address != FREECLIP_ADDRESS:
+            return physical
+        state = self.session.get("state", "")
+        if state == "A2DP_READY":
+            return "a2dp-sink"
+        if state == "HFP_READY":
+            return "headset-head-unit"
+        return ""
+
     def device_menu(self, address):
         submenu = Gtk.Menu()
         card = self.cards.get(address)
         if card:
-            active = card.get("active_profile", "off")
+            active = self.effective_profile_name(address, card.get("active_profile", "off"))
             for name, profile in card.get("profiles", {}).items():
                 if name == "off" or not profile.get("available", False):
                     continue

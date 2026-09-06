@@ -41,6 +41,29 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn('"High quality playback"', source)
         self.assertIn('"Calls + microphone"', source)
 
+    def test_managed_freeclip_displays_effective_route(self):
+        indicator = module.BluetoothIndicator.__new__(module.BluetoothIndicator)
+        for state, expected in (
+            ("A2DP_READY", ("A2DP", "A2DP", "High quality playback")),
+            ("HFP_READY", ("HFP", "HFP", "Calls + microphone")),
+            (
+                "LOCAL_FALLBACK",
+                ("LOCAL", "LOCAL", "Bluetooth unavailable · using built-in audio"),
+            ),
+            ("A2DP_STARTING", ("···", "···", "Switching audio profile")),
+        ):
+            indicator.session = {"state": state}
+            self.assertEqual(indicator.managed_profile(), expected)
+        indicator.session = {"state": "LOCAL_FALLBACK"}
+        self.assertEqual(
+            indicator.effective_profile_name(module.FREECLIP_ADDRESS, "headset-head-unit"),
+            "",
+        )
+        self.assertEqual(
+            indicator.effective_profile_name("AA:BB", "headset-head-unit"),
+            "headset-head-unit",
+        )
+
     def test_indicator_is_global_but_freeclip_uses_session_manager(self):
         source = INDICATOR.read_text()
         self.assertIn('properties.get("device.bus") == "bluetooth"', source)
@@ -55,6 +78,8 @@ class BluetoothIndicatorTest(unittest.TestCase):
         source = INDICATOR.read_text()
         self.assertIn("signal_subscribe", source)
         self.assertIn('["pactl", "subscribe"]', source)
+        self.assertIn('["pw-metadata", "-n", "default", "-m"]', source)
+        self.assertIn('["bluetooth-profile", "status", "--json"]', source)
         self.assertNotIn("timeout_add", source)
 
     def test_startup_launches_indicator(self):
