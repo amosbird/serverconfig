@@ -397,6 +397,11 @@ active_ioa_cgroups() {
     for cgroup in "${IOA_CGROUP_PATHS[@]}"; do
         [ -d "/sys/fs/cgroup/$cgroup" ] && printf '%s\n' "$cgroup"
     done
+    # Always succeed: a stopped ngnclient simply has no cgroup to mark. A
+    # non-zero exit here would fire the inherited ERR trap inside the
+    # caller's process substitution and log a spurious "aborted" line even
+    # though the parent shell continues normally.
+    return 0
 }
 
 firewall_fingerprint_ok() {
