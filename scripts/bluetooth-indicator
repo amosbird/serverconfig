@@ -69,6 +69,7 @@ class BluetoothIndicator:
         self.event_sources = {}
         self.metadata_kick_pending = False
         self.adapter_powered = False
+        self.output_muted = False
         self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon("OFF", ICON_SIZE))
         self.icon_state = "OFF"
         self.icon.set_title("Bluetooth")
@@ -224,6 +225,22 @@ class BluetoothIndicator:
             self.session_retry_pending = True
             GLib.timeout_add_seconds(3, self.retry_refresh)
 
+    def load_output_mute(self):
+        # The stable output is the system default sink; its mute state is
+        # invisible otherwise and silences every app while the icon claims
+        # HFP. Failures keep the last known value (fail-open: no fake MUTE).
+        try:
+            result = subprocess.run(
+                ["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            self.output_muted = "[MUTED]" in result.stdout
+        except (OSError, subprocess.SubprocessError):
+            pass
+
     def retry_refresh(self):
         self.session_retry_pending = False
         self.refresh()
@@ -287,6 +304,9 @@ class BluetoothIndicator:
         if state in PROFILE_STYLES:
             color = PROFILE_STYLES[state]["color"]
             label = PROFILE_STYLES[state]["title"]
+        elif state == "MUTED":
+            color = (0.78, 0.22, 0.22)
+            label = "MUTE"
         elif state == "OFF":
             color = (0.30, 0.32, 0.36)
             label = "OFF"
@@ -330,6 +350,7 @@ class BluetoothIndicator:
         self.load_devices()
         self.load_cards()
         self.load_session()
+        self.load_output_mute()
         connected = [
             (address, device)
             for address, device in self.devices.items()
@@ -357,6 +378,11 @@ class BluetoothIndicator:
         else:
             self.set_icon_state("IDLE")
             tooltip = "Bluetooth is on\nNo devices connected"
+        # A muted default sink overrides the profile display: the icon must
+        # never claim a healthy HFP route while all audio is silenced.
+        if self.adapter_powered and self.output_muted:
+            self.set_icon_state("MUTED")
+            tooltip += "\nOutput muted — Ctrl-F1 / volume mute to unmute"
         self.icon.set_tooltip_text(tooltip)
         return False
 
@@ -375,6 +401,9 @@ class BluetoothIndicator:
         events = self.drain_events(stream)
         if "card" in events or "server" in events:
             self.kick_metadata_watcher()
+            GLib.idle_add(self.refresh)
+        elif "sink" in events or "source" in events:
+            # Volume/mute changes: refresh only, no metadata churn.
             GLib.idle_add(self.refresh)
 
     def on_metadata_event(self, stream):

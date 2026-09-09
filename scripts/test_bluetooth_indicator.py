@@ -108,6 +108,18 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn("def kick_metadata_watcher(self):", source)
         self.assertEqual(source.count("self.kick_metadata_watcher()"), 2)
 
+    def test_output_mute_is_a_first_class_icon_state(self):
+        # A muted default sink silences every app while the profile icon
+        # claims HFP; the mute state must override the profile display and
+        # sink/source pulse events must trigger a refresh to pick it up.
+        source = INDICATOR.read_text()
+        self.assertIn('elif state == "MUTED":', source)
+        self.assertIn('["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"]', source)
+        self.assertIn("if self.adapter_powered and self.output_muted:", source)
+        self.assertIn('self.set_icon_state("MUTED")', source)
+        self.assertIn("Output muted — Ctrl-F1", source)
+        self.assertIn('elif "sink" in events or "source" in events:', source)
+
     def test_failed_status_read_keeps_last_known_state(self):
         source = INDICATOR.read_text()
         self.assertIn("if session and session.get(\"state\"):", source)
