@@ -99,8 +99,12 @@ local function route_node (backend_name, target)
   if not backend or not target then
     return false
   end
-  metadata:set (backend["bound-id"], "target.object", "Spa:Id",
-      target.properties["object.serial"])
+  -- Route by node NAME, not object.serial: the serial dangles as soon as
+  -- the bluez node is recreated (every profile switch), leaving the backend
+  -- waiting forever for a dead target (node.dont-fallback=True). The name
+  -- survives node recreation and re-resolves on the next graph rescan.
+  metadata:set (backend["bound-id"], "target.object", "Spa:String",
+      target.properties["node.name"])
   return true
 end
 
