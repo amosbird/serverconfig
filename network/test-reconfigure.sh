@@ -998,6 +998,79 @@ main() {
         && ok "CN gateway change preserves tunnel-owned state" \
         || bad "CN gateway change modified tunnel-owned state"
 
+    head_ "SmartGate underlay audit (iOA pref 1100/1200, tables 20/230)"
+
+    # The healthy table 230 default matches the shim's choice: the wired
+    # underlay advertisement (table 19) when present, else the main default.
+    expected_default=$(ip -4 route show table 19 default 2>/dev/null)
+    [ -n "$expected_default" ] ||
+        expected_default=$(ip -4 route show table main default | awk '$5 ~ /^wl/')
+    exp_gw=$(awk '{ for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }' \
+        <<<"$expected_default")
+    exp_dev=$(awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }' \
+        <<<"$expected_default")
+    ip route replace default via "$exp_gw" dev "$exp_dev" table 230
+    ip route replace default via "$exp_gw" dev "$exp_dev" table 20
+    ip rule add pref 1100 fwmark 0xa38 lookup 20
+    ip rule add pref 1200 from 10.36.43.250 lookup 230
+    rc=$(run_status 0)
+    [ "$rc" -eq 0 ] && ok "SmartGate audit run exits clean" \
+                    || bad "SmartGate audit run exited $rc"
+    [ -n "$(ip -4 rule show pref 1200)" ] &&
+    [ -n "$(ip -4 rule show pref 1100)" ] &&
+    ip route show table 230 | grep -q "via $exp_gw" \
+        && ok "healthy SmartGate policy preserved" \
+        || bad "healthy SmartGate policy torn down"
+
+    # Stale: table 230 points at the pre-roam gateway. Rule 1200 captures all
+    # locally sourced traffic, so this blackholes the machine; the audit must
+    # fail open so iOA redeploys against the settled main table.
+    ip route replace default via 10.36.48.1 dev wlan0 table 230
+    rc=$(run_status 0)
+    [ "$rc" -eq 0 ] && ok "stale SmartGate audit run exits clean" \
+                    || bad "stale SmartGate audit run exited $rc"
+    [ -z "$(ip -4 rule show pref 1200)" ] &&
+    [ -z "$(ip -4 rule show pref 1100)" ] &&
+    [ -z "$(ip route show table 230)" ] &&
+    [ -z "$(ip route show table 20)" ] \
+        && ok "stale SmartGate underlay torn down (fail open)" \
+        || bad "stale SmartGate underlay left in place"
+
+    # Service stopped: iOA's own teardown can be killed mid-cleanup; leftover
+    # SmartGate policy is residue and must go.
+    ip route replace default via "$exp_gw" dev "$exp_dev" table 230
+    ip route replace default via "$exp_gw" dev "$exp_dev" table 20
+    ip rule add pref 1100 fwmark 0xa38 lookup 20
+    ip rule add pref 1200 from 10.36.43.250 lookup 230
+    NGNCLIENT_ACTIVE_OVERRIDE=0 FORCE=0 NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
+        IOA_CGROUP_PATHS_OVERRIDE= bash "$SCRIPT" wlan0 >/dev/null 2>&1
+    rc=$?
+    [ "$rc" -eq 0 ] && ok "inactive SmartGate cleanup exits clean" \
+                    || bad "inactive SmartGate cleanup exited $rc"
+    [ -z "$(ip -4 rule show pref 1200)" ] &&
+    [ -z "$(ip -4 rule show pref 1100)" ] &&
+    [ -z "$(ip route show table 230)" ] &&
+    [ -z "$(ip route show table 20)" ] \
+        && ok "inactive SmartGate residue cleaned" \
+        || bad "inactive SmartGate residue left behind"
+
+    # Hard isolation: owner-marked (iOA) packets must never leave via
+    # tailscale0. The rule keys off the owner mark, not the cgroup match, so
+    # it installs fine inside the namespace.
+    FORCE=1 NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
+        IOA_CGROUP_PATHS_OVERRIDE= bash "$SCRIPT" wlan0 >/dev/null 2>&1
+    rc=$?
+    [ "$rc" -eq 0 ] && ok "isolation run exits clean" \
+                    || bad "isolation run exited $rc"
+    iptables -t filter -C OUTPUT -m mark --mark 0x1000000/0xffffffff \
+        -o tailscale0 -j REJECT 2>/dev/null \
+        && ok "owner-mark REJECT on tailscale0 installed" \
+        || bad "owner-mark REJECT on tailscale0 missing"
+
+    # Restore the owner sentinels the cold-boot block expects to find.
+    ip route replace default dev owner0 table 20
+    ip route replace default dev owner0 table 230
+
     head_ "cold boot: no owned rules, no cn table, no state"
     # Restore owner sentinels independently before the cold-boot run.
     while ip rule del pref 490 2>/dev/null; do :; done

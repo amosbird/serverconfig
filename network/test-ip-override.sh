@@ -16,6 +16,9 @@ if [ "$*" = "-4 route show table 19 default" ]; then
     exit 0
 fi
 if [ "$*" = "-4 route show table main default" ]; then
+    if [ "${MAIN_DEFAULT_EMPTY:-0}" = 1 ]; then
+        exit 0
+    fi
     printf '%s\n' \
         'default via 192.0.2.1 dev enp1s0 proto dhcp src 192.0.2.20 metric 100' \
         'default via 198.51.100.1 dev wlan0 proto dhcp src 198.51.100.20 metric 600'
@@ -105,3 +108,22 @@ expect 'unknown rule is not swallowed' \
 expect 'table flush passes through' \
     'route flush table 230 ' \
     route flush table 230
+expect 'tunnel default delete is translated to table ioa' \
+    'route del default dev tun0 table ioa ' \
+    route del default via 192.168.255.1
+
+# Mid-roam there is no physical default route: the shim must fail open by
+# flushing the SmartGate table instead of leaving a stale default that would
+# blackhole everything matching rule 1100/1200.
+: > "$LOG"
+if MAIN_DEFAULT_EMPTY=1 IP_REAL="$FAKE" IP_LOG="$LOG" \
+   "$ROOT/scripts/overrides/ip" route add default via 198.51.100.1 table 230; then
+    echo 'FAIL unreachable gateway did not fail' >&2
+    exit 1
+fi
+if [ "$(cat "$LOG")" != 'route flush table 230 ' ]; then
+    echo 'FAIL unreachable gateway did not flush table 230 to fail open' >&2
+    cat "$LOG" >&2
+    exit 1
+fi
+echo 'OK   unreachable gateway fails open by flushing the SmartGate table'

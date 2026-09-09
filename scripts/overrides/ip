@@ -41,15 +41,35 @@ physical_route() {
 }
 
 if [ "$*" = "route add default via 192.168.255.1 dev tun0" ]; then
+    logger -t ioa-ip-shim "tun0 default redirected to table ioa"
     exec "$IP_REAL" route add default dev tun0 table ioa metric 101
+fi
+
+# iOA tears the tunnel default down by its main-table address, but the shim
+# installed it in table ioa. Translate so a redeploy cannot leave a stale
+# tun0 default behind; the route is idempotent, so a missing one is fine.
+if [ "$*" = "route del default via 192.168.255.1" ]; then
+    "$IP_REAL" route del default dev tun0 table ioa 2>/dev/null || true
+    exit 0
 fi
 
 if [ "${1:-} ${2:-} ${3:-}" = "route add default" ] &&
    [ "${4:-}" = via ] && [ "${6:-}" = table ] &&
    { [ "${7:-}" = 20 ] || [ "${7:-}" = 230 ]; } && [ "$#" -eq 7 ]; then
-    route=$(physical_route "$5") || exit 1
-    read -r gateway device <<<"$route"
-    exec "$IP_REAL" route add default via "$gateway" dev "$device" table "$7"
+    if route=$(physical_route "$5"); then
+        read -r gateway device <<<"$route"
+        logger -t ioa-ip-shim \
+            "table $7 default via $gateway dev $device (iOA requested $5)"
+        exec "$IP_REAL" route add default via "$gateway" dev "$device" table "$7"
+    fi
+    # Fail open: no physical gateway is resolvable (mid-roam). A default left
+    # in this table would blackhole every packet matching rule 1100/1200 —
+    # rule 1200 matches all locally sourced traffic. Flush instead, so the
+    # lookup falls through to the normal rules until iOA redeploys.
+    logger -t ioa-ip-shim -p daemon.warning \
+        "no physical gateway for table $7 (iOA requested $5); flushed to fail open"
+    "$IP_REAL" route flush table "$7" 2>/dev/null || true
+    exit 1
 fi
 
 if [ "$*" = "rule add fwmark 2616 table 20" ]; then

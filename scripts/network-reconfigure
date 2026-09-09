@@ -44,6 +44,14 @@ P_IOA_MARK=1400
 P_CN=1500
 P_IOA=2500
 P_TAILNET=3000
+# iOA SmartGate's own policy, installed through scripts/overrides/ip. This
+# script never manages these bands, but it audits their consistency: rule
+# 1200 captures every locally sourced packet, so a stale table 230 default
+# (dead gateway after a roam) blackholes the whole machine.
+P_IOA_SMART_MARK=1100
+P_IOA_SMART_SRC=1200
+IOA_SMART_TABLE=20
+IOA_SRC_TABLE=230
 
 warn() { logger -t network-reconfigure -p daemon.err "$*"; }
 
@@ -421,8 +429,62 @@ firewall_fingerprint_ok() {
     physical_dev=$(physical_device)
     [ -n "$physical_dev" ] || return 1
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
-        grep -Fxc -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x1000000 -j MASQUERADE")" -eq 1 ]
+        grep -Fxc -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x1000000 -j MASQUERADE")" -eq 1 ] ||
+        return 1
+    iptables -t filter -C OUTPUT -m mark --mark "$IOA_OWNER_MARK" \
+        -o tailscale0 -j REJECT 2>/dev/null
 }
+
+ngnclient_active() {
+    if [ -n "${NGNCLIENT_ACTIVE_OVERRIDE:-}" ]; then
+        [ "$NGNCLIENT_ACTIVE_OVERRIDE" = 1 ]
+        return
+    fi
+    systemctl is-active --quiet ngnclient.service 2>/dev/null
+}
+
+# Audit iOA SmartGate's underlay policy on every invocation, including runs
+# that would otherwise exit "no change": a same-subnet roam leaves
+# current_state untouched, yet iOA may have redeployed table 230 against a
+# transiently stale main table. The healthy table 230 default matches the
+# shim's choice in scripts/overrides/ip — the wired underlay advertisement
+# (table 19) when present, else the main table's physical default. Anything
+# else is torn down (fail open): the netlink events make iOA redeploy
+# against the now-settled main table, and until then lookups fall through
+# to the normal rules instead of a dead gateway.
+reconcile_ioa_smartgate() {
+    local expected_default expected_gw expected_dev src_default src_gw src_dev
+    if ngnclient_active; then
+        [ -n "$(ip -4 rule show pref "$P_IOA_SMART_SRC" 2>/dev/null)" ] || return 0
+        expected_default=$(ip -4 route show table "$WIRED_UNDERLAY_TABLE" default 2>/dev/null)
+        if [ -z "$expected_default" ]; then
+            expected_default=$(ip -4 route show table main default 2>/dev/null |
+                awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/')
+        fi
+        expected_gw=$(awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }' <<<"$expected_default")
+        expected_dev=$(awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }' <<<"$expected_default")
+        src_default=$(ip -4 route show table "$IOA_SRC_TABLE" default 2>/dev/null)
+        src_gw=$(awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }' <<<"$src_default")
+        src_dev=$(awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }' <<<"$src_default")
+        if [ -n "$src_gw" ] && [ "$src_gw" = "$expected_gw" ] && [ "$src_dev" = "$expected_dev" ]; then
+            return 0
+        fi
+        warn "SmartGate underlay stale: table $IOA_SRC_TABLE default '${src_gw:-none}' dev '${src_dev:-none}', expected '${expected_gw:-none}' dev '${expected_dev:-none}'; tearing down pref $P_IOA_SMART_MARK/$P_IOA_SMART_SRC so iOA redeploys"
+    else
+        # iOA's own teardown can be killed mid-cleanup (SIGTERM races
+        # observed), leaving pref 1100/1200 behind over flushed tables.
+        [ -n "$(ip -4 rule show pref "$P_IOA_SMART_SRC" 2>/dev/null)" ] ||
+        [ -n "$(ip -4 rule show pref "$P_IOA_SMART_MARK" 2>/dev/null)" ] ||
+        has_routes "$IOA_SMART_TABLE" || has_routes "$IOA_SRC_TABLE" ||
+            return 0
+        warn "ngnclient inactive but SmartGate policy remains; cleaning pref $P_IOA_SMART_MARK/$P_IOA_SMART_SRC and tables $IOA_SMART_TABLE/$IOA_SRC_TABLE"
+    fi
+    clean_pref "$P_IOA_SMART_MARK"
+    clean_pref "$P_IOA_SMART_SRC"
+    ip route flush table "$IOA_SMART_TABLE" 2>/dev/null || true
+    ip route flush table "$IOA_SRC_TABLE" 2>/dev/null || true
+}
+reconcile_ioa_smartgate
 
 if [ "${FORCE:-0}" != 1 ] &&
    [ "$current_state" = "$(cat "$STATE_FILE" 2>/dev/null || true)" ] &&
@@ -618,6 +680,17 @@ mark_transaction+=$'\n'"-F $NEXT_CHAIN"
 mark_transaction+=$'\n'"-X $NEXT_CHAIN"
 mark_transaction+=$'\nCOMMIT'
 iptables-restore --noflush <<<"$mark_transaction"
+
+# Hard isolation, independent of any routing-table state: iOA-owned packets
+# must never leave via tailscale0, even while an exit node is engaged. Rules
+# 400/401 already steer cgroup-marked traffic to the physical underlay or
+# nowhere; this filter backstop keys off the owner mark the NETMODE_IOA
+# chain has already applied, so a routing surprise can never leak iOA
+# traffic into the tailnet.
+iptables -t filter -C OUTPUT -m mark --mark "$IOA_OWNER_MARK" \
+    -o tailscale0 -j REJECT 2>/dev/null ||
+    iptables -t filter -A OUTPUT -m mark --mark "$IOA_OWNER_MARK" \
+        -o tailscale0 -j REJECT
 
 # Remove the repository-owned set retired by the authoritative SmartDNS model.
 # It is unreferenced after the atomic chain switch, so destruction is safe and idempotent.
