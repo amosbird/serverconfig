@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
+import faulthandler
 import json
+import os
 import subprocess
+
+faulthandler.enable()
 
 import cairo
 import gi
@@ -13,6 +17,11 @@ from gi.repository import Gdk, Gio, GLib, Gtk
 ICON_SIZE = 96
 DESIGN_SIZE = 96
 FREECLIP_ADDRESS = "C0:DA:5E:EC:FB:7F"
+
+# Sibling script, resolved so the indicator does not depend on PATH (the
+# systemd user manager environment has no ~/scripts).
+HERE = os.path.dirname(os.path.realpath(__file__))
+BLUETOOTH_PROFILE = os.path.join(HERE, "bluetooth-profile")
 
 PROFILE_STYLES = {
     "a2dp": {
@@ -73,29 +82,49 @@ class BluetoothIndicator:
             Gio.DBusSignalFlags.NONE,
             self.on_bluez_changed,
         )
-        self.pulse_events = subprocess.Popen(
+        self.spawn_event_source(
             ["pactl", "subscribe"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        self.metadata_events = subprocess.Popen(
-            ["pw-metadata", "-n", "default", "-m"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
-        GLib.io_add_watch(
-            self.pulse_events.stdout,
-            GLib.IO_IN | GLib.IO_HUP,
             self.on_pulse_event,
         )
-        GLib.io_add_watch(
-            self.metadata_events.stdout,
-            GLib.IO_IN | GLib.IO_HUP,
+        self.spawn_event_source(
+            ["pw-metadata", "-n", "default", "-m"],
             self.on_metadata_event,
         )
         self.refresh()
+
+    def spawn_event_source(self, command, callback):
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        os.set_blocking(process.stdout.fileno(), False)
+        GLib.io_add_watch(
+            process.stdout,
+            GLib.IO_IN | GLib.IO_HUP,
+            self.on_event_source,
+            process,
+            command,
+            callback,
+        )
+
+    def on_event_source(self, stream, condition, process, command, callback):
+        if condition & GLib.IO_HUP:
+            # The event pipe died (e.g. PipeWire restarted). Respawn it
+            # instead of going permanently deaf.
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            print(f"event source exited, respawning: {' '.join(command)}", flush=True)
+            GLib.timeout_add_seconds(2, self.respawn_event_source, command, callback)
+            return False
+        callback(stream)
+        return True
+
+    def respawn_event_source(self, command, callback):
+        self.spawn_event_source(command, callback)
+        return False
 
     def bluez_objects(self):
         try:
@@ -152,7 +181,7 @@ class BluetoothIndicator:
         self.session = {}
         try:
             result = subprocess.run(
-                ["bluetooth-profile", "status", "--json"],
+                [BLUETOOTH_PROFILE, "status", "--json"],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -293,30 +322,30 @@ class BluetoothIndicator:
     def on_bluez_changed(self, *_args):
         GLib.idle_add(self.refresh)
 
-    def on_pulse_event(self, stream, condition):
-        if condition & GLib.IO_HUP:
-            return False
-        line = stream.readline()
-        if "card" in line or "server" in line:
-            GLib.idle_add(self.refresh)
-        return True
+    @staticmethod
+    def drain_events(stream):
+        try:
+            return os.read(stream.fileno(), 65536).decode(errors="replace")
+        except BlockingIOError:
+            return ""
 
-    def on_metadata_event(self, stream, condition):
-        if condition & GLib.IO_HUP:
-            return False
-        line = stream.readline()
-        if "freeclip.session." in line:
+    def on_pulse_event(self, stream):
+        events = self.drain_events(stream)
+        if "card" in events or "server" in events:
             GLib.idle_add(self.refresh)
-        return True
+
+    def on_metadata_event(self, stream):
+        if "freeclip.session." in self.drain_events(stream):
+            GLib.idle_add(self.refresh)
 
     def set_profile(self, item, address, card_name, profile):
         if not item.get_active():
             return
         if address == FREECLIP_ADDRESS:
             if profile.startswith("a2dp-sink"):
-                command = ["bluetooth-profile", "a2dp"]
+                command = [BLUETOOTH_PROFILE, "a2dp"]
             elif profile.startswith("headset-head-unit"):
-                command = ["bluetooth-profile", "hfp"]
+                command = [BLUETOOTH_PROFILE, "hfp"]
             else:
                 return
         else:
@@ -390,6 +419,7 @@ class BluetoothIndicator:
 
 
 def main():
+    print(f"bluetooth-indicator started (pid {os.getpid()})", flush=True)
     BluetoothIndicator()
     Gtk.main()
 

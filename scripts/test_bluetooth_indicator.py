@@ -2,6 +2,7 @@
 
 import importlib.machinery
 import importlib.util
+import os
 import pathlib
 import unittest
 
@@ -68,25 +69,47 @@ class BluetoothIndicatorTest(unittest.TestCase):
         source = INDICATOR.read_text()
         self.assertIn('properties.get("device.bus") == "bluetooth"', source)
         self.assertIn('["pactl", "set-card-profile", card_name, profile]', source)
-        self.assertIn('["bluetooth-profile", "a2dp"]', source)
-        self.assertIn('["bluetooth-profile", "hfp"]', source)
+        self.assertIn('[BLUETOOTH_PROFILE, "a2dp"]', source)
+        self.assertIn('[BLUETOOTH_PROFILE, "hfp"]', source)
         self.assertNotIn("bluetoothctl", source)
         self.assertNotIn("rfkill", source)
         self.assertNotIn("systemctl", source)
+
+    def test_repo_scripts_are_resolved_without_path(self):
+        # The systemd user environment has no ~/scripts in PATH, so the
+        # indicator must reach the sibling CLI by absolute path (bzmenu is
+        # a system binary and stays on PATH).
+        self.assertTrue(os.path.isfile(module.BLUETOOTH_PROFILE))
+        source = INDICATOR.read_text()
+        self.assertNotIn('["bluetooth-profile",', source)
 
     def test_indicator_is_event_driven(self):
         source = INDICATOR.read_text()
         self.assertIn("signal_subscribe", source)
         self.assertIn('["pactl", "subscribe"]', source)
         self.assertIn('["pw-metadata", "-n", "default", "-m"]', source)
-        self.assertIn('["bluetooth-profile", "status", "--json"]', source)
-        self.assertNotIn("timeout_add", source)
+        self.assertIn('[BLUETOOTH_PROFILE, "status", "--json"]', source)
+        self.assertIn('os.read(stream.fileno(), 65536)', source)
+        self.assertIn("os.set_blocking", source)
+        self.assertNotIn("stream.readline()", source)
+        # A one-shot respawn timer for a dead event pipe is fine, but there
+        # must be no periodic polling of refresh().
+        self.assertEqual(source.count("timeout_add"), 1)
+        self.assertIn("GLib.timeout_add_seconds(2, self.respawn_event_source", source)
+
+    def test_indicator_respawns_dead_event_sources(self):
+        source = INDICATOR.read_text()
+        self.assertIn("respawning:", source)
+        self.assertIn("faulthandler.enable()", source)
 
     def test_startup_launches_indicator(self):
         self.assertIn(
-            'run_bg "bluetooth-indicator" env GDK_SCALE=2 bluetooth-indicator',
+            'run "bluetooth-indicator" systemctl --user start bluetooth-indicator.service',
             STARTUP.read_text(),
         )
+        unit = (ROOT / "systemd/bluetooth-indicator.service").read_text()
+        self.assertIn("Restart=always", unit)
+        self.assertIn("GDK_SCALE=2", unit)
 
 
 if __name__ == "__main__":

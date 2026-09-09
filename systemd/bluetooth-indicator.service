@@ -1,0 +1,8 @@
+[Unit]
+Description=Bluetooth audio profile tray indicator
+
+[Service]
+ExecStart=/home/amos/scripts/bluetooth-indicator
+Environment=DISPLAY=:0 XAUTHORITY=/home/amos/.Xauthority GDK_SCALE=2 PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=2

@@ -16,6 +16,7 @@ local INPUT_BACKEND = "freeclip_stable_input.backend"
 
 local STEP_MS = 100
 local NODE_WAIT_STEPS = 20
+local HFP_TRANSPORT_WAIT_STEPS = 20
 local PARK_MS = 500
 local RELEASE_MS = 1200
 local RECOVERY_COOLDOWN_MS = 10000
@@ -28,6 +29,7 @@ local timer = nil
 local recovery_generation = nil
 local recovery_cooldown = false
 local active_serials = {}
+local recover
 
 local nodes = ObjectManager {
   Interest { type = "node" }
@@ -72,21 +74,31 @@ local function find_node (name)
   }
 end
 
+local function find_profile_node (name, profile)
+  return nodes:lookup {
+    Constraint { "node.name", "=", name, type = "pw" },
+    Constraint { "api.bluez5.profile", "=", profile, type = "pw" }
+  }
+end
+
 local function find_device ()
   return devices:lookup {
     Constraint { "device.name", "=", CARD, type = "pw" }
   }
 end
 
-local function route (backend_name, target_name)
+local function route_node (backend_name, target)
   local backend = find_node (backend_name)
-  local target = find_node (target_name)
   if not backend or not target then
     return false
   end
   metadata:set (backend["bound-id"], "target.object", "Spa:Id",
       target.properties["object.serial"])
   return true
+end
+
+local function route (backend_name, target_name)
+  return route_node (backend_name, find_node (target_name))
 end
 
 local function set_node_volume (node, volume)
@@ -154,7 +166,8 @@ end
 
 local function wait_for_nodes (mode, remaining, callback)
   if generation ~= callback.generation then return end
-  local output = find_node (FREECLIP_OUTPUT)
+  local profile = mode == "hfp" and "headset-head-unit" or "a2dp-sink"
+  local output = find_profile_node (FREECLIP_OUTPUT, profile)
   local input = mode == "hfp" and find_node (FREECLIP_INPUT) or find_node (LOCAL_INPUT)
   if output and input then
     callback.run (output, input)
@@ -165,22 +178,61 @@ local function wait_for_nodes (mode, remaining, callback)
   end
 end
 
+local function route_input (mode, output, input)
+  local input_target = mode == "hfp" and input or find_node (LOCAL_INPUT)
+  if not route_node (INPUT_BACKEND, input_target) then
+    fallback ("could not route stable input")
+    return
+  end
+  normalize_volumes (output, mode == "hfp" and input or nil)
+  Core.sync (function ()
+    later (STEP_MS, function ()
+      if output["state"] == "error" or
+          (mode == "hfp" and input["state"] == "error") then
+        recover (generation)
+      else
+        set_state (string.upper (mode) .. "_READY")
+      end
+    end)
+  end)
+end
+
+local function wait_hfp_output_running (output, input, remaining)
+  local backend = find_node (OUTPUT_BACKEND)
+  if output["state"] == "error" then
+    recover (generation)
+  elseif output["state"] == "running" or
+      (backend and backend["state"] ~= "running") then
+    -- If the stable output graph is inactive there is no concurrent acquire
+    -- to serialize. Otherwise wait for the output side to own the SCO socket.
+    route_input ("hfp", output, input)
+  elseif remaining > 0 then
+    later (STEP_MS, function ()
+      wait_hfp_output_running (output, input, remaining - 1)
+    end)
+  else
+    fallback ("timed out activating HFP output transport")
+  end
+end
+
 local function route_ready (mode, output, input)
   remember_node (output)
   if mode == "hfp" then remember_node (input) end
-  if not route (OUTPUT_BACKEND, FREECLIP_OUTPUT) then
+  if output["state"] == "error" or (mode == "hfp" and input["state"] == "error") then
+    recover (generation)
+    return
+  end
+  if not route_node (OUTPUT_BACKEND, output) then
     fallback ("could not route FreeClip output")
     return
   end
   Core.sync (function ()
     later (STEP_MS, function ()
-      local input_target = mode == "hfp" and FREECLIP_INPUT or LOCAL_INPUT
-      if not route (INPUT_BACKEND, input_target) then
-        fallback ("could not route stable input")
-        return
+      if mode == "hfp" then
+        wait_hfp_output_running (output, input, HFP_TRANSPORT_WAIT_STEPS)
+      else
+        route_input (mode, output, input)
       end
-      normalize_volumes (output, mode == "hfp" and input or nil)
-      Core.sync (function () set_state (string.upper (mode) .. "_READY") end)
     end)
   end)
 end
@@ -223,7 +275,7 @@ local function transact (mode, recovering)
   end
 end
 
-local function recover (failed_generation)
+recover = function (failed_generation)
   if desired_mode ~= "hfp" then return end
   if recovery_generation ~= nil or recovery_cooldown then
     fallback ("HFP transport failed after recovery")

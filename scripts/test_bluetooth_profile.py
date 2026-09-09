@@ -50,10 +50,25 @@ class AudioControlTest(unittest.TestCase):
     def test_session_manager_owns_profile_and_backend_routing(self):
         script = SESSION.read_text()
         self.assertIn("bluez_card.C0_DA_5E_EC_FB_7F", script)
+        self.assertIn("bluez_input.C0:DA:5E:EC:FB:7F", script)
+        self.assertNotIn(
+            'local FREECLIP_INPUT = "bluez_input.C0_DA_5E_EC_FB_7F.0"', script
+        )
         self.assertIn("freeclip_stable_output.backend", script)
         self.assertIn("freeclip_stable_input.backend", script)
+        self.assertIn('find_profile_node (FREECLIP_OUTPUT, profile)', script)
+        self.assertIn('route_node (OUTPUT_BACKEND, output)', script)
         self.assertIn('metadata:set (backend["bound-id"], "target.object"', script)
         self.assertIn('device:set_param ("Profile", param)', script)
+        self.assertIn("HFP_TRANSPORT_WAIT_STEPS = 20", script)
+        self.assertIn("wait_hfp_output_running", script)
+        self.assertIn('output["state"] == "running"', script)
+        self.assertIn('backend["state"] ~= "running"', script)
+        self.assertLess(
+            script.index("wait_hfp_output_running (output, input"),
+            script.index('route_input ("hfp", output, input)'),
+        )
+        self.assertIn('output["state"] == "error"', script)
         self.assertIn('new_state == "error"', script)
         self.assertIn("recovery_generation", script)
         self.assertIn("RECOVERY_COOLDOWN_MS = 10000", script)

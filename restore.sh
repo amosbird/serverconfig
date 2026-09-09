@@ -244,6 +244,8 @@ if [[ -n $GUI ]]; then
     sudo systemctl enable --now touchegg.service
     install -Dm644 "$DIR/systemd/audio-mute-led.service" \
         "$HOME/.config/systemd/user/audio-mute-led.service"
+    install -Dm644 "$DIR/systemd/bluetooth-indicator.service" \
+        "$HOME/.config/systemd/user/bluetooth-indicator.service"
     rm -f "$HOME/.config/systemd/user/bluetooth-audio-default.service" \
         "$HOME/.config/systemd/user/bluetooth-sco-watchdog.service"
     systemctl --user daemon-reload
