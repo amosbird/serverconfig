@@ -142,6 +142,13 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn("Restart=always", unit)
         self.assertIn("GDK_SCALE=2", unit)
 
+    def test_restore_deploys_audio_stack(self):
+        restore = (ROOT / "restore.sh").read_text()
+        for unit in ("audio-mute-led.service", "bluetooth-indicator.service"):
+            self.assertIn(f'install -Dm644 "$DIR/systemd/{unit}"', restore)
+        # A fresh machine must come up with the HFP intent seeded.
+        self.assertIn("desired-mode=hfp", restore)
+
 
 if __name__ == "__main__":
     unittest.main()

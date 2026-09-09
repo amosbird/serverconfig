@@ -246,6 +246,13 @@ if [[ -n $GUI ]]; then
         "$HOME/.config/systemd/user/audio-mute-led.service"
     install -Dm644 "$DIR/systemd/bluetooth-indicator.service" \
         "$HOME/.config/systemd/user/bluetooth-indicator.service"
+    # Seed the FreeClip session intent on first install so a fresh machine
+    # brings the headset up in HFP out of the box (StateMetadata state file,
+    # owned and rewritten by WirePlumber afterwards).
+    mkdir -p "$HOME/.local/state/wireplumber"
+    [[ -e "$HOME/.local/state/wireplumber/freeclip-session" ]] ||
+        printf '[freeclip-session]\ndesired-mode=hfp\n' \
+            > "$HOME/.local/state/wireplumber/freeclip-session"
     rm -f "$HOME/.config/systemd/user/bluetooth-audio-default.service" \
         "$HOME/.config/systemd/user/bluetooth-sco-watchdog.service"
     systemctl --user daemon-reload
