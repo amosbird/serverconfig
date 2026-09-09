@@ -71,9 +71,12 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn('["pactl", "set-card-profile", card_name, profile]', source)
         self.assertIn('[BLUETOOTH_PROFILE, "a2dp"]', source)
         self.assertIn('[BLUETOOTH_PROFILE, "hfp"]', source)
-        self.assertNotIn("bluetoothctl", source)
         self.assertNotIn("rfkill", source)
         self.assertNotIn("systemctl", source)
+        # bluetoothctl is confined to the approved zombie-eSCO remedy
+        # (request_reconnect/reconnect_headset); profile management never
+        # touches BlueZ directly.
+        self.assertEqual(source.count("bluetoothctl"), 2)
 
     def test_repo_scripts_are_resolved_without_path(self):
         # The systemd user environment has no ~/scripts in PATH, so the
@@ -119,6 +122,18 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn('self.set_icon_state("MUTED")', source)
         self.assertIn("Output muted — Ctrl-F1", source)
         self.assertIn('elif "sink" in events or "source" in events:', source)
+
+    def test_transport_dead_triggers_rated_reconnect(self):
+        # The zombie-eSCO wedge (HCI-proven) has exactly one remedy: an
+        # ACL-level reconnect. The session manager publishes a
+        # transport-dead generation; the indicator must reconnect the
+        # headset once per incident, globally rate-limited.
+        source = INDICATOR.read_text()
+        self.assertIn("freeclip.session.transport-dead", source)
+        self.assertIn('["bluetoothctl", "disconnect", FREECLIP_ADDRESS]', source)
+        self.assertIn('["bluetoothctl", "connect", FREECLIP_ADDRESS]', source)
+        self.assertIn("self.last_reconnect_generation", source)
+        self.assertIn("time.monotonic() - self.last_reconnect_at < 60", source)
 
     def test_failed_status_read_keeps_last_known_state(self):
         source = INDICATOR.read_text()

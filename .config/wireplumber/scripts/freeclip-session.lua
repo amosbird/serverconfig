@@ -20,6 +20,12 @@ local HFP_TRANSPORT_WAIT_STEPS = 20
 local PARK_MS = 500
 local RELEASE_MS = 1200
 local RECOVERY_COOLDOWN_MS = 10000
+-- HCI-proven trigger: rapid profile switches race BlueZ's connect state
+-- machine (it aborts with Create_Connection_Cancel on a live link, then
+-- fails to adopt the eSCO it just created -> zombie handle, only an ACL
+-- reconnect clears it). Serialize switches and let the headset settle
+-- after every completed transition before honoring the next request.
+local SWITCH_SETTLE_MS = 4000
 
 -- Persists desired-mode across WirePlumber restarts (the default metadata
 -- object is owned by WirePlumber and loses all values on restart).
@@ -33,7 +39,11 @@ local timer = nil
 local recovery_generation = nil
 local recovery_cooldown = false
 local active_serials = {}
+local transacting = false
+local switch_settling = false
+local pending_transact = nil
 local recover
+local transact
 
 local nodes = ObjectManager {
   Interest { type = "node" }
@@ -58,6 +68,21 @@ local function set_state (value)
   -- only error producer and publishes its reason right after set_state ().
   publish ("error", "")
   log:info ("state=" .. value .. " generation=" .. tostring (generation))
+  if value:find ("_READY$") or value == "LOCAL_FALLBACK"
+      or value == "DISCONNECTED" then
+    -- Terminal state reached: keep the switch gate closed briefly so a
+    -- follow-up toggle cannot race BlueZ while the headset settles.
+    switch_settling = true
+    transacting = false
+    Core.timeout_add (SWITCH_SETTLE_MS, function ()
+      switch_settling = false
+      if pending_transact then
+        local pending = pending_transact
+        pending_transact = nil
+        transact (pending.mode, pending.recovering)
+      end
+    end)
+  end
 end
 
 local function cancel_timer ()
@@ -181,6 +206,12 @@ local function fallback (reason)
     recover (generation)
     return
   end
+  if desired_mode == "hfp" and find_device () then
+    -- Recovery was already consumed (or is cooling down) and the transport
+    -- still failed: the HCI-proven zombie-eSCO case. Signal the desktop
+    -- agent to force an ACL-level reconnect, the only working remedy.
+    publish ("transport-dead", generation)
+  end
   set_state ("LOCAL_FALLBACK")
   publish ("error", reason)
 end
@@ -213,6 +244,16 @@ local function route_input (mode, output, input)
         recover (generation)
       else
         set_state (string.upper (mode) .. "_READY")
+        if mode == "hfp" then
+          -- Vacuous-success guard: a zombie eSCO can let the nodes appear
+          -- and even run briefly before the transport fd fails. Re-verify
+          -- the routed nodes shortly after declaring readiness.
+          Core.timeout_add (3000, function ()
+            if output["state"] == "error" or input["state"] == "error" then
+              recover (generation)
+            end
+          end)
+        end
       end
     end)
   end)
@@ -273,7 +314,8 @@ local function start_profile (mode)
   end)
 end
 
-local function transact (mode, recovering)
+transact = function (mode, recovering)
+  transacting = true
   generation = generation + 1
   active_serials = {}
   cancel_timer ()
@@ -296,6 +338,17 @@ local function transact (mode, recovering)
   end
 end
 
+-- Gate for external triggers (CLI toggles, device reconnection). A second
+-- switch request while one is in flight or settling is queued, not raced.
+local function request_transact (mode, recovering)
+  if transacting or switch_settling then
+    pending_transact = { mode = mode, recovering = recovering }
+    log:info ("switch request queued: " .. mode)
+    return
+  end
+  transact (mode, recovering)
+end
+
 recover = function (failed_generation)
   if desired_mode ~= "hfp" then return end
   if recovery_generation ~= nil or recovery_cooldown then
@@ -312,10 +365,22 @@ recover = function (failed_generation)
 end
 
 local function on_node_state_changed (node, _, new_state)
-  if new_state == "error" and desired_mode == "hfp" then
-    local serial = tostring (node.properties["object.serial"] or "")
-    local failed_generation = active_serials[serial]
-    if failed_generation == generation then recover (failed_generation) end
+  if new_state ~= "error" or desired_mode ~= "hfp" then return end
+  local serial = tostring (node.properties["object.serial"] or "")
+  local failed_generation = active_serials[serial]
+  if failed_generation == generation then
+    recover (failed_generation)
+    return
+  end
+  -- Serial bookkeeping can miss nodes recreated outside a tracked
+  -- transaction; if a currently routed HFP node dies while we believe the
+  -- session is ready, that is the transport-dead signature.
+  if state == "HFP_READY" then
+    local name = node.properties["node.name"] or ""
+    if name == FREECLIP_OUTPUT or name == FREECLIP_INPUT
+        or name == "bluez_input.C0_DA_5E_EC_FB_7F.0" then
+      recover (generation)
+    end
   end
 end
 
@@ -325,7 +390,7 @@ end)
 
 devices:connect ("object-added", function ()
   if state == "DISCONNECTED" or state == "LOCAL_FALLBACK" then
-    transact (desired_mode, false)
+    request_transact (desired_mode, false)
   end
 end)
 
@@ -351,11 +416,11 @@ metadata:connect ("changed", function (_, subject, key, _, value)
     if command == "apply" then
       recovery_generation = nil
       recovery_cooldown = false
-      transact (desired_mode, false)
+      request_transact (desired_mode, false)
     elseif command == "retry" then
       recovery_generation = nil
       recovery_cooldown = false
-      transact (desired_mode, false)
+      request_transact (desired_mode, false)
     end
   end
 end)
@@ -371,6 +436,6 @@ intent_meta:activate (Features.ALL, function (_, err)
   devices:activate ()
   later (STEP_MS, function ()
     set_node_volume (find_node ("freeclip_stable_output"), 0.5)
-    if find_device () then transact (desired_mode, false) else park () end
+    if find_device () then request_transact (desired_mode, false) else park () end
   end)
 end)

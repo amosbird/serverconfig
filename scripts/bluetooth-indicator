@@ -3,7 +3,10 @@
 import faulthandler
 import json
 import os
+import re
 import subprocess
+import threading
+import time
 
 faulthandler.enable()
 
@@ -70,6 +73,8 @@ class BluetoothIndicator:
         self.metadata_kick_pending = False
         self.adapter_powered = False
         self.output_muted = False
+        self.last_reconnect_generation = None
+        self.last_reconnect_at = 0.0
         self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon("OFF", ICON_SIZE))
         self.icon_state = "OFF"
         self.icon.set_title("Bluetooth")
@@ -407,8 +412,39 @@ class BluetoothIndicator:
             GLib.idle_add(self.refresh)
 
     def on_metadata_event(self, stream):
-        if "freeclip.session." in self.drain_events(stream):
+        events = self.drain_events(stream)
+        if "freeclip.session.transport-dead" in events:
+            match = re.search(r"transport-dead' value:'\"(\d+)\"'", events)
+            if match:
+                self.request_reconnect(match.group(1))
+        if "freeclip.session." in events:
             GLib.idle_add(self.refresh)
+
+    def request_reconnect(self, generation):
+        # The session manager publishes transport-dead when the HCI-proven
+        # zombie-eSCO wedge is detected; only an ACL-level reconnect clears
+        # it. Once per incident (generation) and globally rate-limited, so a
+        # permanently wedged link cannot loop.
+        if generation == self.last_reconnect_generation:
+            return
+        if time.monotonic() - self.last_reconnect_at < 60:
+            return
+        self.last_reconnect_generation = generation
+        self.last_reconnect_at = time.monotonic()
+        print(f"transport dead (generation {generation}), reconnecting headset", flush=True)
+        threading.Thread(target=self.reconnect_headset, daemon=True).start()
+
+    def reconnect_headset(self):
+        for command in (
+            ["bluetoothctl", "disconnect", FREECLIP_ADDRESS],
+            ["bluetoothctl", "connect", FREECLIP_ADDRESS],
+        ):
+            try:
+                subprocess.run(command, capture_output=True, timeout=20)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            time.sleep(2)
+        GLib.idle_add(self.refresh)
 
     def set_profile(self, item, address, card_name, profile):
         if not item.get_active():
