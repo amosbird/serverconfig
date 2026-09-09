@@ -1055,17 +1055,22 @@ main() {
         || bad "inactive SmartGate residue left behind"
 
     # Hard isolation: owner-marked (iOA) packets must never leave via
-    # tailscale0. The rule keys off the owner mark, not the cgroup match, so
-    # it installs fine inside the namespace.
+    # tailscale0. The rule lives in mangle POSTROUTING (after the reroute
+    # triggered by the NETMODE_IOA marking) and keys off the owner mark, not
+    # the cgroup match, so it installs fine inside the namespace.
     FORCE=1 NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
         IOA_CGROUP_PATHS_OVERRIDE= bash "$SCRIPT" wlan0 >/dev/null 2>&1
     rc=$?
     [ "$rc" -eq 0 ] && ok "isolation run exits clean" \
                     || bad "isolation run exited $rc"
-    iptables -t filter -C OUTPUT -m mark --mark 0x1000000/0xffffffff \
+    iptables -t mangle -C POSTROUTING -m mark --mark 0x1000000/0xffffffff \
+        -o tailscale0 -j DROP 2>/dev/null \
+        && ok "owner-mark DROP on tailscale0 installed in mangle POSTROUTING" \
+        || bad "owner-mark DROP on tailscale0 missing from mangle POSTROUTING"
+    ! iptables -t filter -C OUTPUT -m mark --mark 0x1000000/0xffffffff \
         -o tailscale0 -j REJECT 2>/dev/null \
-        && ok "owner-mark REJECT on tailscale0 installed" \
-        || bad "owner-mark REJECT on tailscale0 missing"
+        && ok "no pre-reroute filter OUTPUT variant remains" \
+        || bad "pre-reroute filter OUTPUT REJECT variant still present"
 
     # Restore the owner sentinels the cold-boot block expects to find.
     ip route replace default dev owner0 table 20

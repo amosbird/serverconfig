@@ -431,8 +431,8 @@ firewall_fingerprint_ok() {
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
         grep -Fxc -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x1000000 -j MASQUERADE")" -eq 1 ] ||
         return 1
-    iptables -t filter -C OUTPUT -m mark --mark "$IOA_OWNER_MARK" \
-        -o tailscale0 -j REJECT 2>/dev/null
+    iptables -t mangle -C POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
+        -o tailscale0 -j DROP 2>/dev/null
 }
 
 ngnclient_active() {
@@ -456,14 +456,18 @@ reconcile_ioa_smartgate() {
     local expected_default expected_gw expected_dev src_default src_gw src_dev
     if ngnclient_active; then
         [ -n "$(ip -4 rule show pref "$P_IOA_SMART_SRC" 2>/dev/null)" ] || return 0
-        expected_default=$(ip -4 route show table "$WIRED_UNDERLAY_TABLE" default 2>/dev/null)
+        # A named table that has never held a route does not exist in the
+        # kernel FIB: `ip route show table` then exits 2, which must not
+        # abort the run under set -e — an absent underlay table simply means
+        # "fall back to the main table's physical default".
+        expected_default=$(ip -4 route show table "$WIRED_UNDERLAY_TABLE" default 2>/dev/null || true)
         if [ -z "$expected_default" ]; then
             expected_default=$(ip -4 route show table main default 2>/dev/null |
                 awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/')
         fi
         expected_gw=$(awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }' <<<"$expected_default")
         expected_dev=$(awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }' <<<"$expected_default")
-        src_default=$(ip -4 route show table "$IOA_SRC_TABLE" default 2>/dev/null)
+        src_default=$(ip -4 route show table "$IOA_SRC_TABLE" default 2>/dev/null || true)
         src_gw=$(awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }' <<<"$src_default")
         src_dev=$(awk '$1 == "default" { for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }' <<<"$src_default")
         if [ -n "$src_gw" ] && [ "$src_gw" = "$expected_gw" ] && [ "$src_dev" = "$expected_dev" ]; then
@@ -683,14 +687,25 @@ iptables-restore --noflush <<<"$mark_transaction"
 
 # Hard isolation, independent of any routing-table state: iOA-owned packets
 # must never leave via tailscale0, even while an exit node is engaged. Rules
-# 400/401 already steer cgroup-marked traffic to the physical underlay or
-# nowhere; this filter backstop keys off the owner mark the NETMODE_IOA
-# chain has already applied, so a routing surprise can never leak iOA
-# traffic into the tailnet.
-iptables -t filter -C OUTPUT -m mark --mark "$IOA_OWNER_MARK" \
-    -o tailscale0 -j REJECT 2>/dev/null ||
-    iptables -t filter -A OUTPUT -m mark --mark "$IOA_OWNER_MARK" \
-        -o tailscale0 -j REJECT
+# 400/401 steer cgroup-marked traffic to the physical underlay or nowhere,
+# but the mark is applied in mangle OUTPUT and the resulting reroute happens
+# only after the LOCAL_OUT hooks — so at filter OUTPUT time the packet still
+# carries its pre-mark route (table 52 → tailscale0 whenever an exit node is
+# engaged) and a REJECT there would kill every iOA connection before the
+# reroute can save it. POSTROUTING runs after the reroute, where the egress
+# interface is final; keying off the owner mark the NETMODE_IOA chain has
+# already applied, this backstop fires only if a routing surprise still
+# leaks iOA traffic into the tailnet. REJECT is not allowed in POSTROUTING
+# (no way to return an ICMP error), so DROP is the only terminal verdict.
+# Retire the mis-placed filter OUTPUT variant from the first version of this
+# backstop: it evaluated packets before the mark-triggered reroute and
+# killed healthy iOA connections whenever an exit node was engaged.
+while iptables -t filter -D OUTPUT -m mark --mark "$IOA_OWNER_MARK" \
+    -o tailscale0 -j REJECT 2>/dev/null; do :; done
+iptables -t mangle -C POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
+    -o tailscale0 -j DROP 2>/dev/null ||
+    iptables -t mangle -A POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
+        -o tailscale0 -j DROP
 
 # Remove the repository-owned set retired by the authoritative SmartDNS model.
 # It is unreferenced after the atomic chain switch, so destruction is safe and idempotent.
