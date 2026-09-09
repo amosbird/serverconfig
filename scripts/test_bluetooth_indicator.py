@@ -92,10 +92,29 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn('os.read(stream.fileno(), 65536)', source)
         self.assertIn("os.set_blocking", source)
         self.assertNotIn("stream.readline()", source)
-        # A one-shot respawn timer for a dead event pipe is fine, but there
-        # must be no periodic polling of refresh().
-        self.assertEqual(source.count("timeout_add"), 1)
+        # One-shot timers (dead pipe respawn, failed-read retry, metadata
+        # watcher recycle debounce) are fine, but there must be no periodic
+        # polling of refresh().
+        self.assertEqual(source.count("timeout_add"), 3)
         self.assertIn("GLib.timeout_add_seconds(2, self.respawn_event_source", source)
+        self.assertIn("GLib.timeout_add_seconds(3, self.retry_refresh)", source)
+        self.assertIn("GLib.timeout_add_seconds(10, self.respawn_metadata_watcher)", source)
+
+    def test_metadata_watcher_is_recycled_on_graph_churn(self):
+        # pw-metadata silently goes deaf when the "default" metadata object
+        # is recreated by a WirePlumber restart; the watcher must be
+        # recycled whenever the graph churns.
+        source = INDICATOR.read_text()
+        self.assertIn("def kick_metadata_watcher(self):", source)
+        self.assertEqual(source.count("self.kick_metadata_watcher()"), 2)
+
+    def test_failed_status_read_keeps_last_known_state(self):
+        source = INDICATOR.read_text()
+        self.assertIn("if session and session.get(\"state\"):", source)
+        self.assertIn("return  # keep the last known cards", source)
+        # FreeClip falls back to the physical card profile when the session
+        # state is unreadable instead of showing LINK.
+        self.assertIn("fall back to the physical profile", source)
 
     def test_indicator_respawns_dead_event_sources(self):
         source = INDICATOR.read_text()

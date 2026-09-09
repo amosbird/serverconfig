@@ -65,6 +65,9 @@ class BluetoothIndicator:
         self.devices = {}
         self.cards = {}
         self.session = {}
+        self.session_retry_pending = False
+        self.event_sources = {}
+        self.metadata_kick_pending = False
         self.adapter_powered = False
         self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon("OFF", ICON_SIZE))
         self.icon_state = "OFF"
@@ -98,32 +101,55 @@ class BluetoothIndicator:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
+        self.event_sources[process] = (command, callback)
         os.set_blocking(process.stdout.fileno(), False)
         GLib.io_add_watch(
             process.stdout,
             GLib.IO_IN | GLib.IO_HUP,
             self.on_event_source,
             process,
-            command,
-            callback,
         )
 
-    def on_event_source(self, stream, condition, process, command, callback):
+    def on_event_source(self, stream, condition, process):
+        command, callback = self.event_sources.get(process, (None, None))
         if condition & GLib.IO_HUP:
             # The event pipe died (e.g. PipeWire restarted). Respawn it
             # instead of going permanently deaf.
+            self.event_sources.pop(process, None)
             try:
                 process.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 process.kill()
-            print(f"event source exited, respawning: {' '.join(command)}", flush=True)
-            GLib.timeout_add_seconds(2, self.respawn_event_source, command, callback)
+            if command:
+                print(f"event source exited, respawning: {' '.join(command)}", flush=True)
+                GLib.timeout_add_seconds(2, self.respawn_event_source, command, callback)
             return False
         callback(stream)
         return True
 
     def respawn_event_source(self, command, callback):
         self.spawn_event_source(command, callback)
+        return False
+
+    def kick_metadata_watcher(self):
+        # pw-metadata silently goes deaf when the "default" metadata object
+        # it bound to is recreated (every WirePlumber restart) or did not
+        # exist when it started. Any pulse/BlueZ event means graph churn of
+        # exactly that kind may have happened, so recycle the watcher,
+        # debounced; the fresh child replays all keys, which also refreshes.
+        if self.metadata_kick_pending:
+            return
+        self.metadata_kick_pending = True
+        GLib.timeout_add_seconds(10, self.respawn_metadata_watcher)
+
+    def respawn_metadata_watcher(self):
+        self.metadata_kick_pending = False
+        for process, (command, _callback) in list(self.event_sources.items()):
+            if command[0] == "pw-metadata" and process.poll() is None:
+                try:
+                    process.terminate()  # the HUP handler respawns it fresh
+                except OSError:
+                    pass
         return False
 
     def bluez_objects(self):
@@ -160,36 +186,48 @@ class BluetoothIndicator:
             }
 
     def load_cards(self):
-        self.cards = {}
         try:
             result = subprocess.run(
                 ["pactl", "--format=json", "list", "cards"],
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=2,
+                timeout=5,
             )
             cards = json.loads(result.stdout)
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
-            return
+            return  # keep the last known cards
+        self.cards = {}
         for card in cards:
             properties = card.get("properties", {})
             if properties.get("device.bus") == "bluetooth":
                 self.cards[properties.get("device.string", "").upper()] = card
 
     def load_session(self):
-        self.session = {}
         try:
             result = subprocess.run(
                 [BLUETOOTH_PROFILE, "status", "--json"],
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=2,
+                timeout=5,
             )
-            self.session = json.loads(result.stdout)
+            session = json.loads(result.stdout)
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
-            pass
+            session = None
+        if session and session.get("state"):
+            self.session = session
+            self.session_retry_pending = False
+        elif not self.session_retry_pending:
+            # A failed read during a profile transition must not drop the
+            # icon back to LINK: keep the last known state and retry once.
+            self.session_retry_pending = True
+            GLib.timeout_add_seconds(3, self.retry_refresh)
+
+    def retry_refresh(self):
+        self.session_retry_pending = False
+        self.refresh()
+        return False
 
     def managed_profile(self):
         state = self.session.get("state", "")
@@ -207,7 +245,10 @@ class BluetoothIndicator:
 
     def profile(self, address):
         if address == FREECLIP_ADDRESS:
-            return self.managed_profile()
+            managed = self.managed_profile()
+            if managed[0]:
+                return managed
+            # Session state unreadable: fall back to the physical profile.
         card = self.cards.get(address)
         if not card:
             return "", "", ""
@@ -320,6 +361,7 @@ class BluetoothIndicator:
         return False
 
     def on_bluez_changed(self, *_args):
+        self.kick_metadata_watcher()
         GLib.idle_add(self.refresh)
 
     @staticmethod
@@ -332,6 +374,7 @@ class BluetoothIndicator:
     def on_pulse_event(self, stream):
         events = self.drain_events(stream)
         if "card" in events or "server" in events:
+            self.kick_metadata_watcher()
             GLib.idle_add(self.refresh)
 
     def on_metadata_event(self, stream):

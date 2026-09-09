@@ -53,6 +53,9 @@ status)
     mode=$(read_value "$mode_key")
     state=$(read_value freeclip.session.state)
     error=$(read_value freeclip.session.error)
+    # An empty state means the session manager is unreachable or the read
+    # raced a rewrite; fail instead of reporting a bogus empty state.
+    [[ -n $state ]] || exit 1
     if [[ ${2:-} == --json ]]; then
         printf '{"desired_mode":"%s","state":"%s","error":"%s"}\n' \
             "$mode" "$state" "$error"

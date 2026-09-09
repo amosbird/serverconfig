@@ -71,6 +71,11 @@ class AudioControlTest(unittest.TestCase):
         self.assertIn('output["state"] == "error"', script)
         self.assertIn('new_state == "error"', script)
         self.assertIn("recovery_generation", script)
+        # A failed transition with the device still present (e.g. BlueZ
+        # rejected the HFP transport so nodes never appeared) also feeds
+        # the single automatic recovery instead of parking dead.
+        self.assertIn("recover (generation)", script)
+        self.assertIn("and find_device () then", script)
         self.assertIn("RECOVERY_COOLDOWN_MS = 10000", script)
         self.assertIn("LOCAL_FALLBACK", script)
         self.assertIn("Core.timeout_add", script)

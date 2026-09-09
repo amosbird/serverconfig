@@ -21,6 +21,10 @@ local PARK_MS = 500
 local RELEASE_MS = 1200
 local RECOVERY_COOLDOWN_MS = 10000
 
+-- Persists desired-mode across WirePlumber restarts (the default metadata
+-- object is owned by WirePlumber and loses all values on restart).
+local intent_meta = StateMetadata ("freeclip-session")
+
 local metadata = cutils.get_default_metadata_object ()
 local desired_mode = "a2dp"
 local state = "DISCONNECTED"
@@ -50,6 +54,9 @@ local function set_state (value)
   state = value
   publish ("state", value)
   publish ("generation", generation)
+  -- Any state transition resolves the previous failure. fallback () is the
+  -- only error producer and publishes its reason right after set_state ().
+  publish ("error", "")
   log:info ("state=" .. value .. " generation=" .. tostring (generation))
 end
 
@@ -160,6 +167,16 @@ end
 local function fallback (reason)
   cancel_timer ()
   park ()
+  -- A failed transition while the device is still present is an explicit
+  -- transport failure (profile rejected, or nodes never appeared within the
+  -- timeout): allow the single automatic HFP recovery before settling for
+  -- local audio.
+  if desired_mode == "hfp" and recovery_generation == nil
+      and not recovery_cooldown and find_device () then
+    log:info ("recovering after failure: " .. reason)
+    recover (generation)
+    return
+  end
   set_state ("LOCAL_FALLBACK")
   publish ("error", reason)
 end
@@ -320,6 +337,7 @@ metadata:connect ("changed", function (_, subject, key, _, value)
     local mode = Json.Raw (value):parse ()
     if mode == "a2dp" or mode == "hfp" then
       desired_mode = mode
+      intent_meta:set ("desired-mode", mode)
       recovery_generation = nil
       publish ("error", "")
     end
@@ -339,10 +357,16 @@ metadata:connect ("changed", function (_, subject, key, _, value)
 end)
 
 nodes:activate ()
-devices:activate ()
-publish ("desired-mode", desired_mode)
 set_state ("DISCONNECTED")
-later (STEP_MS, function ()
-  set_node_volume (find_node ("freeclip_stable_output"), 0.5)
-  if find_device () then transact (desired_mode, false) else park () end
+intent_meta:activate (Features.ALL, function (_, err)
+  if not err then
+    local stored = intent_meta:get ("desired-mode")
+    if stored == "a2dp" or stored == "hfp" then desired_mode = stored end
+  end
+  publish ("desired-mode", desired_mode)
+  devices:activate ()
+  later (STEP_MS, function ()
+    set_node_volume (find_node ("freeclip_stable_output"), 0.5)
+    if find_device () then transact (desired_mode, false) else park () end
+  end)
 end)
