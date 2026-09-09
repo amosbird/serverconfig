@@ -369,23 +369,18 @@ if ! grep -Fq 'systemd-networkd.conf.d/foreign-routing.conf' restore.sh; then
     echo 'FAIL foreign-routing drop-in is not installed by restore' >&2
     fail=1
 fi
-if ! grep -Fq 'sudo rm -f /etc/systemd/network/26-wireless-tencent.network' restore.sh ||
-   ! grep -Fq 'if sudo systemctl is-active --quiet systemd-networkd.service; then' restore.sh ||
+# The stale 26-wireless-tencent.network cleanup was a one-time migration,
+# retired from restore.sh (34350c0) after it had run everywhere; what remains
+# load-bearing is the guarded reload.
+if ! grep -Fq 'if sudo systemctl is-active --quiet systemd-networkd.service; then' restore.sh ||
    ! grep -Fq 'sudo networkctl reload' restore.sh; then
-    echo 'FAIL restore does not remove stale Tencent policy or safely reload networkd' >&2
+    echo 'FAIL restore does not safely reload networkd' >&2
     fail=1
 else
-    echo 'OK   restore removes stale Tencent policy and only reloads active networkd'
+    echo 'OK   restore only reloads active networkd'
 fi
-if ! grep -Fq 'for unit in /etc/systemd/system/multi-user.target.wants/netctl@*.service; do' \
-       restore.sh ||
-   ! grep -Fq 'sudo systemctl disable "$(basename "$unit")"' restore.sh ||
-   ! grep -Fq 'sudo systemctl disable netctl.service' restore.sh; then
-    echo 'FAIL restore does not disable stale netctl units for the next boot' >&2
-    fail=1
-else
-    echo 'OK   restore disables stale netctl units without stopping the active link'
-fi
+# Stale netctl unit disablement was likewise a one-time migration, retired
+# from restore.sh (34350c0) after it had run everywhere; netctl is uninstalled.
 reject 'restore does not stop legacy network owners during deployment' \
     "systemctl disable --now .*netctl|systemctl stop .*netctl|netctl stop" restore.sh
 if ! grep -Fq 'sudo systemctl enable systemd-networkd.service iwd.service' restore.sh; then
@@ -394,10 +389,8 @@ if ! grep -Fq 'sudo systemctl enable systemd-networkd.service iwd.service' resto
 else
     echo 'OK   restore enables the network stack for the next boot'
 fi
-if ! grep -Fq "grep -Fqx 'AddressOverride=1e:dc:46:00:66:1b'" restore.sh; then
-    echo 'FAIL restore does not validate the Tencent Android MAC override' >&2
-    fail=1
-fi
+# The Tencent Android MAC override validation was a one-time deployment
+# check, retired from restore.sh (34350c0); the installed profile carries it.
 reject 'restore never prints Tencent credential profile contents' \
     'cat .*Tencent-WiFi\.8021x|sed .*Tencent-WiFi\.8021x|grep -v .*Tencent-WiFi\.8021x' \
     restore.sh
@@ -426,19 +419,9 @@ fi
 reject 'no fallback deployment references' \
     'cp .*network-fallback|systemctl enable( --now)? .*network-fallback' \
     restore.sh
-if ! awk '
-    /sudo systemctl disable --now network-fallback\.service/ { disabled = NR }
-    /sudo rm -f \/etc\/systemd\/system\/network-fallback\.service/ { unit_removed = NR }
-    /sudo rm -rf \/var\/lib\/network-fallback/ { state_removed = NR }
-    /sudo systemctl daemon-reload/ { reload = NR }
-    END {
-        exit !(disabled && disabled < unit_removed && unit_removed < state_removed &&
-               state_removed < reload)
-    }
-' restore.sh; then
-    echo 'FAIL restore does not safely retire the installed fallback before daemon-reload' >&2
-    fail=1
-fi
+# The fallback retirement sequence was a one-time migration, retired from
+# restore.sh (34350c0) after it had run everywhere; the guards above keep it
+# from being reintroduced.
 if ! grep -Fq 'sudo rm -f /etc/systemd/system/tailscaled.service.d/transport.conf' \
         restore.sh; then
     echo 'FAIL restore does not remove the rejected DERP-only Tailscale policy' >&2
