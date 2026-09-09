@@ -257,7 +257,7 @@ class BluetoothIndicator:
             style = PROFILE_STYLES["a2dp"]
         elif state == "HFP_READY":
             style = PROFILE_STYLES["hfp"]
-        elif state.endswith("_STARTING") or state == "HFP_RECOVERING":
+        elif state.endswith("_STARTING") or state in ("HFP_RECOVERING", "HFP_RECONNECTING"):
             style = PROFILE_STYLES["switching"]
         elif state in ("LOCAL_FALLBACK", "DISCONNECTED"):
             style = PROFILE_STYLES["local"]
