@@ -17,9 +17,9 @@ class QtileScratchpadTest(unittest.TestCase):
             "1": "ioa",
             "4": "stalonetray",
             "8": "chatgpt",
-            "9": "stardict",
+            "9": "webchat",
             "0": "tdesktop",
-            "minus": "webchat",
+            "minus": "stardict",
         }
         for key, name in shortcuts.items():
             self.assertIn(
@@ -30,6 +30,19 @@ class QtileScratchpadTest(unittest.TestCase):
         self.assertIn("def toggle_scratchpad(name):", self.config)
         self.assertIn("dropdown.window.bring_to_front()", self.config)
         self.assertIn("dropdown.window.focus(warp=True)", self.config)
+
+    def test_toggle_adopts_existing_window_instead_of_hanging_on_systemd_spawn(self):
+        toggle = self.config.split("def toggle_scratchpad(name):", 1)[1].split(
+            "pending_inputstr", 1
+        )[0]
+        self.assertIn("_adopt_scratchpad_window(qtile, name)", toggle)
+        self.assertIn("_scratchpad_window_alive", toggle)
+        self.assertIn("_drop_scratchpad_dropdown", self.config)
+        self.assertIn("no-op when the unit is already active", self.config)
+        self.assertLess(
+            toggle.index("_adopt_scratchpad_window(qtile, name)"),
+            toggle.index("scratchpad.dropdown_toggle(name)"),
+        )
 
     def test_reload_recovers_orphan_dropdown_windows_before_state_is_saved(self):
         self.assertIn("def register_scratchpad_window(window, hide=True):", self.config)

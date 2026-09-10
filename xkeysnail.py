@@ -113,10 +113,27 @@ define_keymap(
         K("C-LM-a"): K("LM-d"),
         K("C-r"): K("C-Shift-t"),
         K("LM-w"): K("C-w"),
-        K("C-key_0"): K("C-tab"),
-        K("C-key_9"): K("C-Shift-tab"),
+        # Use PageUp/PageDown, not Ctrl-Tab: synthetic Tab can land in the newly
+        # focused page and move :focus-visible onto the composer (black border).
+        K("C-key_0"): K("C-page_down"),
+        K("C-key_9"): K("C-page_up"),
+        # Chrome zoom is per-origin and sticky, so a mistyped Ctrl goes nowhere.
+        K("C-minus"): lambda: None,
+        K("C-equal"): lambda: None,
+        K("C-Shift-equal"): lambda: None,
     },
     "Chromium Emacs-like keys",
+)
+
+# kitty and Emacs bind LSuper-F1/F2/F3 themselves, so re-emit the combo untranslated.
+define_keymap(
+    re.compile(r"^(kitty|Emacs)$"),
+    {
+        K("LSuper-f1"): K("LSuper-f1"),
+        K("LSuper-f2"): K("LSuper-f2"),
+        K("LSuper-f3"): K("LSuper-f3"),
+    },
+    "Native zoom keys",
 )
 
 # Emacs-like keybindings in non-Emacs applications
@@ -128,4 +145,15 @@ define_keymap(
         K("C-d"): K("delete"),
     },
     "copyq Emacs-like keys",
+)
+
+# Zoom reset/out/in: LSuper-F1/F2/F3 mirrors Emacs' bare F1/F2/F3 in every other app.
+define_keymap(
+    None,
+    {
+        K("LSuper-f1"): K("C-key_0"),
+        K("LSuper-f2"): K("C-minus"),
+        K("LSuper-f3"): K("C-equal"),
+    },
+    "Unified zoom keys",
 )

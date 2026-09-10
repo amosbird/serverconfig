@@ -199,13 +199,63 @@ def show_shell(qtile: Qtile):
     shell.show_shell()
 
 
+def _scratchpad_window_alive(qtile: Qtile, window) -> bool:
+    return window is not None and window.wid in qtile.windows_map
+
+
+def _drop_scratchpad_dropdown(scratchpad, name):
+    dropdown = scratchpad.dropdowns.pop(name, None)
+    if dropdown is None:
+        return
+    try:
+        dropdown.unsubscribe()
+    except Exception:
+        pass
+    scratchpad._spawned.pop(name, None)
+    if not scratchpad._spawned:
+        try:
+            hook.unsubscribe.client_new(scratchpad.on_client_new)
+        except Exception:
+            pass
+
+
+def _adopt_scratchpad_window(qtile: Qtile, name):
+    """Bind an already-mapped window to a dropdown instead of re-spawning.
+
+    ioagui (and similar) is owned by systemd: `systemctl --user start` is a
+    no-op when the unit is already active, so ScratchPad's spawn waiter would
+    hang forever on Match(title=...) for a window that already exists.
+    """
+    scratchpad = qtile.groups_map["scratchpad"]
+    match = scratchpad_matches[name]
+    existing = next(
+        (window for window in qtile.windows_map.values() if match.compare(window)),
+        None,
+    )
+    if existing is None:
+        return False
+    scratchpad._spawned.pop(name, None)
+    if not scratchpad._spawned:
+        try:
+            hook.unsubscribe.client_new(scratchpad.on_client_new)
+        except Exception:
+            pass
+    register_scratchpad_window(existing, hide=True)
+    return name in scratchpad.dropdowns
+
+
 def toggle_scratchpad(name):
     @lazy.function
     def toggle(qtile: Qtile):
         scratchpad = qtile.groups_map["scratchpad"]
+        if name in scratchpad.dropdowns and not _scratchpad_window_alive(
+            qtile, scratchpad.dropdowns[name].window
+        ):
+            _drop_scratchpad_dropdown(scratchpad, name)
         if name not in scratchpad.dropdowns:
-            scratchpad.dropdown_toggle(name)
-            return
+            if not _adopt_scratchpad_window(qtile, name):
+                scratchpad.dropdown_toggle(name)
+                return
         dropdown = scratchpad.dropdowns[name]
         if dropdown.window.has_focus:
             dropdown.hide()
@@ -341,9 +391,9 @@ keys = [
     Key([ctrl, alt], "3", lazy.spawn("echo p | nc -U /tmp/scrcpy.socket", shell=True)),
     Key([ctrl, alt], "4", toggle_scratchpad("stalonetray")),
     Key([ctrl, alt], "8", toggle_scratchpad("chatgpt")),
-    Key([ctrl, alt], "9", toggle_scratchpad("stardict")),
+    Key([ctrl, alt], "9", toggle_scratchpad("webchat")),
     Key([ctrl, alt], "0", toggle_scratchpad("tdesktop")),
-    Key([ctrl, alt], "minus", toggle_scratchpad("webchat")),
+    Key([ctrl, alt], "minus", toggle_scratchpad("stardict")),
     Key([ctrl, alt], "t", lazy.spawn("rofi-hister")),
     Key([ctrl, alt], "b", toggle_scratchpad("bookmarks")),
     Key(
@@ -419,7 +469,10 @@ groups = [
         [
             DropDown(
                 "ioa",
-                "/opt/ioa/bin/iOALinux",
+                # Start via the user unit so the ngnclient daemon's recovery
+                # path (`systemctl --user restart ioagui.service`) owns the
+                # same process instead of spawning a second GUI.
+                "systemctl --user start ioagui.service",
                 match=scratchpad_matches["ioa"],
                 x=0.26,
                 y=0.224,
@@ -545,10 +598,20 @@ def register_scratchpad_window(window, hide=True):
     if any(dropdown.window is window for dropdown in scratchpad.dropdowns.values()):
         return
     for name, match in scratchpad_matches.items():
-        if name in scratchpad.dropdowns or not match.compare(window):
+        if not match.compare(window):
             continue
+        if name in scratchpad.dropdowns:
+            if _scratchpad_window_alive(qtile, scratchpad.dropdowns[name].window):
+                continue
+            _drop_scratchpad_dropdown(scratchpad, name)
         config = next(config for config in groups[0].dropdowns if config.name == name)
+        first = not scratchpad.dropdowns
         scratchpad.dropdowns[name] = DropDownToggler(window, scratchpad.name, config)
+        # Manual registration bypasses ScratchPad.on_client_new, so subscribe the
+        # same cleanup hooks it would have installed for the first dropdown.
+        if first:
+            hook.subscribe.client_killed(scratchpad.on_client_killed)
+            hook.subscribe.float_change(scratchpad.on_float_change)
         if hide:
             scratchpad.dropdowns[name].hide()
         else:
@@ -603,6 +666,13 @@ def before_window_created(client):
 @hook.subscribe.client_killed
 def window_killed(client):
     shell.on_client_killed(client)
+    scratchpad = qtile.groups_map.get("scratchpad")
+    if scratchpad is None:
+        return
+    for name, dropdown in list(scratchpad.dropdowns.items()):
+        if dropdown.window is client:
+            _drop_scratchpad_dropdown(scratchpad, name)
+            break
 
 
 @hook.subscribe.client_managed

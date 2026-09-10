@@ -1358,6 +1358,9 @@ in normal state for a second press."
   (global-set-key (kbd "<f1>") #'amos/reset-zoom)
   (global-set-key (kbd "<f2>") #'amos/decrease-zoom)
   (global-set-key (kbd "<f3>") #'amos/increase-zoom)
+  (global-set-key (kbd "s-<f1>") #'amos/reset-zoom)
+  (global-set-key (kbd "s-<f2>") #'amos/decrease-zoom)
+  (global-set-key (kbd "s-<f3>") #'amos/increase-zoom)
 
   ;; zygospore — C-x 1 toggles delete-other-windows / restore window layout
   (defvar amos/zygospore-register "zygospore-win"

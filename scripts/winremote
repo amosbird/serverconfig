@@ -8,15 +8,43 @@ export NO_PROXY=1
 # USB_PARAMS="/dvc:urbdrc,id,dev:18d1:d00d"
 # USB_PARAMS="/usb:auto"
 # VAAPI="/vaapi-connection-type:x11"
-# ip=100.123.145.119
-# user=amos
-# password=$(pass show pass)
 
-# ip=$(pass show windows_ip)
-# user=Administrator
-# password=$(pass show windows)
-ip=$(pass show windows_qtw)
-ip=100.66.107.106
+rdp_hosts=(
+    100.89.130.111
+    100.125.242.70
+    100.66.107.106
+)
+
+pick_rdp_ip() {
+    local tmp ip ms best_ip="" best_ms=999999999
+    tmp=$(mktemp -d) || return 1
+    for ip in "$@"; do
+        (
+            start=$(date +%s%N)
+            if timeout 1.5 bash -c "exec 3>/dev/tcp/${ip}/3389" 2>/dev/null; then
+                now=$(date +%s%N)
+                echo $(((now - start) / 1000000)) >"$tmp/$ip"
+            fi
+        ) &
+    done
+    wait
+    for ip in "$@"; do
+        [[ -s $tmp/$ip ]] || continue
+        ms=$(<"$tmp/$ip")
+        echo "rdp probe $ip ${ms}ms" >&2
+        if (( ms < best_ms )); then
+            best_ms=$ms
+            best_ip=$ip
+        fi
+    done
+    rm -rf "$tmp"
+    [[ -n $best_ip ]] || return 1
+    echo "rdp using $best_ip (${best_ms}ms)" >&2
+    printf '%s\n' "$best_ip"
+}
+
+ip=$(pick_rdp_ip "${rdp_hosts[@]}")
+[[ -n $ip ]] || ip=$(pass show windows_qtw)
 user=Tencent_Go
 password=$(pass show gpg)
 

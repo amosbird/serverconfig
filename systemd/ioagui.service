@@ -1,0 +1,17 @@
+# Managed instance of the iOA GUI. The ngnclient daemon's recovery path for a
+# dead session is `systemctl --user restart ioagui.service` (observed in its
+# logs); owning the GUI here makes that bounce kill the stale process and
+# bring up a fresh login window. The qtile scratchpad hotkey starts the same
+# unit, so there is always exactly one GUI, owned by systemd.
+[Unit]
+Description=iOA zero-trust client GUI
+
+[Service]
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+# /usr/lib/iOA/bin/iOALinux (the vendor unit's ExecStart) is deliberately
+# gutted on this machine: it chains through a missing launcher script into an
+# empty iOALinux.bin stub. The live GUI is the /opt copy.
+ExecStart=/opt/ioa/bin/iOALinux
+Restart=always
+RestartSec=10

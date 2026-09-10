@@ -212,6 +212,8 @@ if [[ -n $GUI ]]; then
     sudo rm -f /etc/systemd/system/network-debug-pcap.service
     sudo rm -rf /var/log/network-debug/ring
     sudo cp "$DIR"/network/iOA /usr/lib/iOA/bin/iOA
+    sudo cp "$DIR"/network/SmartGateAgent /usr/lib/iOA/bin/SmartGateAgent
+    sudo chmod 755 /usr/lib/iOA/bin/SmartGateAgent
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
     sudo rm -f /var/lib/network-reconfigure/derp-ips \
@@ -246,6 +248,10 @@ if [[ -n $GUI ]]; then
         "$HOME/.config/systemd/user/audio-mute-led.service"
     install -Dm644 "$DIR/systemd/bluetooth-indicator.service" \
         "$HOME/.config/systemd/user/bluetooth-indicator.service"
+    # The ngnclient daemon bounces a dead session via
+    # `systemctl --user restart ioagui.service`; the unit must exist.
+    install -Dm644 "$DIR/systemd/ioagui.service" \
+        "$HOME/.config/systemd/user/ioagui.service"
     # Seed the FreeClip session intent on first install so a fresh machine
     # brings the headset up in HFP out of the box (StateMetadata state file,
     # owned and rewritten by WirePlumber afterwards).

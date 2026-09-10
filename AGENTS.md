@@ -107,6 +107,8 @@ A consistent Emacs + Vim hybrid runs through the entire setup:
 - **Modal editing**: Enabled in Emacs, Neovim, Helix, IdeaVim, FakeVim
 - **Navigation**: `Alt+h/j/k/l` for pane/window movement (everywhere)
 - **Window switching**: `Alt+1..8` across tmux, kitty, and Crush tmux
+- **Zoom**: `Super+F1/F2/F3` = reset/out/in everywhere (kitty and Emacs bind it
+  natively, `xkeysnail.py` translates it to `Ctrl+0/-/=` for every other app)
 - **Prompt anchor**: `❯` symbol used for scrollback search/jump
 
 ## Environment Details

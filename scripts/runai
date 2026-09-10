@@ -10,14 +10,17 @@ if ! "$remote" "$profile" --check; then
     rm -rf "$profile/Default/Sessions"
     python3 - "$profile/Default/Preferences" <<'PY'
 import json
+import math
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
-if path.exists():
-    preferences = json.loads(path.read_text())
-    preferences.setdefault("profile", {})["exit_type"] = "Normal"
-    path.write_text(json.dumps(preferences, separators=(",", ":")))
+preferences = json.loads(path.read_text()) if path.exists() else {}
+preferences.setdefault("profile", {})["exit_type"] = "Normal"
+# Chrome stores zoom as log(factor)/log(1.2); 110% => ~0.5228
+zoom_110 = math.log(1.1) / math.log(1.2)
+preferences.setdefault("partition", {}).setdefault("default_zoom_level", {})["x"] = zoom_110
+path.write_text(json.dumps(preferences, separators=(",", ":")))
 PY
 else
     if [[ $# -gt 0 ]]; then

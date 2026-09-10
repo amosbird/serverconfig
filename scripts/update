@@ -88,9 +88,12 @@ if [[ -x "$HOME/.local/bin/mise" ]]; then
     "$HOME/.local/bin/mise" self-update -y
     "$HOME/.local/bin/mise" upgrade -y
     "$HOME/.local/bin/mise" prune -y
-    "$HOME/.local/bin/mise" bin-paths | while read -r bin; do
+    "$HOME/.local/bin/mise" bin-paths | while IFS= read -r bin; do
+        [[ -d "$bin" ]] || continue
         for f in "$bin"/*; do
-            [[ -f "$f" && -x "$f" ]] && ln -sf "$f" "$HOME/.local/bin/"
+            if [[ -f "$f" && -x "$f" ]]; then
+                ln -sf "$f" "$HOME/.local/bin/"
+            fi
         done
     done
 fi

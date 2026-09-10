@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+# Wrapper around the versioned SmartGateAgent ELF.
+#
+# Two constraints from the vendor binary / ngnclient watchdog:
+# 1. Config and assets are resolved from cwd / argv0, so we must run with
+#    cwd=/usr/lib/iOA/bin and argv0=SmartGateAgent (no directory component).
+# 2. ngnclient probes liveness with `killall SmartGateAgent`, which matches
+#    /proc/*/comm. comm is the executable basename truncated to 15 chars, so
+#    exec'ing SmartGateAgent.bin yields comm=SmartGateAgent. and killall never
+#    finds it. Exec a same-FS hardlink whose basename is exactly SmartGateAgent.
+
+export PATH=/home/amos/scripts/overrides:$PATH
+
+ip_bin=${SMARTGATE_IP_BIN:-ip}
+agent=${SMARTGATE_AGENT_BIN:-/usr/lib/iOA/bin/SmartGateAgent.bin}
+retry=${SMARTGATE_RETRY_SECONDS:-1}
+lock=${SMARTGATE_LOCK_FILE:-/run/smartgateagent-wrapper.lock}
+bindir=${SMARTGATE_BINDIR:-/usr/lib/iOA/bin}
+realdir=${SMARTGATE_REALDIR:-$bindir/.real}
+real=$realdir/SmartGateAgent
+
+exec 9>"$lock"
+flock -n 9 || exit 0
+
+until "$ip_bin" -4 route show table main default |
+    grep -qE ' dev (en|eth|wl)'; do
+    sleep "$retry" 9>&-
+done
+
+mkdir -p "$realdir"
+target=$(readlink -f "$agent")
+ln -f "$target" "$real"
+
+cd "$bindir" || exit 1
+exec -a SmartGateAgent "$real" "$@"
