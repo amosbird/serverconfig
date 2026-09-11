@@ -66,9 +66,9 @@ grep -Fq 'network/iOA' "$ROOT/restore.sh" || {
     echo 'FAIL restore does not install the iOA wrapper' >&2
     exit 1
 }
-! grep -Fq 'network/SmartGateAgent' "$ROOT/restore.sh" || {
-    echo 'FAIL restore still installs the ineffective SmartGateAgent wrapper' >&2
+grep -Fq 'network/SmartGateAgent' "$ROOT/restore.sh" || {
+    echo 'FAIL restore does not install the SmartGateAgent underlay wrapper' >&2
     exit 1
 }
 
-echo 'OK   restore installs only the iOA entrypoint wrapper'
+echo 'OK   restore installs both iOA entrypoint wrappers'

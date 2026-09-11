@@ -19,12 +19,17 @@ fi
 
 IOA_MARK="0x1/0xffffffff"
 IOA_OWNER_MARK="0x1000000/0xffffffff"
+# Both iOA processes create their own transport: the ngnclient daemon runs SmartGateAgent, and the
+# GUI (ioagui.service, a user unit) opens its own control connections to the iOA cloud. The GUI's
+# endpoints are deliberately excluded from ipset ioa, so without an owner mark they match no policy
+# rule and follow the Tailscale exit node — nesting iOA control traffic inside the tailnet.
 IOA_CGROUP_PATHS_VALUE=${IOA_CGROUP_PATHS_OVERRIDE-"system.slice/ngnclient.service"}
 read -r -a IOA_CGROUP_PATHS <<<"$IOA_CGROUP_PATHS_VALUE"
+CGROUP_ROOT=${CGROUP_ROOT_OVERRIDE:-/sys/fs/cgroup}
 TS_MARK="0x80000/0xff0000"
 CHAIN="NETMODE_IOA"
 NEXT_CHAIN="NETMODE_IOA_NEXT"
-IOA_STATIC_CIDRS=("10.0.0.0/8" "100.12.0.0/16")
+IOA_STATIC_CIDRS=("10.0.0.0/8")
 TAILNET_NETS=("100.64.0.0/10")
 CN_TABLE="cn"
 CN_STAGE_TABLE="cn_stage"
@@ -40,7 +45,7 @@ P_IOA_OWNER=400
 P_IOA_OWNER_STOP=401
 P_TS=500
 P_LOCAL=1000
-P_IOA_MARK=1400
+P_RETIRED_IOA_MARK=1400
 P_CN=1500
 P_IOA=2500
 P_TAILNET=3000
@@ -159,12 +164,12 @@ cn_routes_match() {
         '
 }
 
-wired_up() {
-    local dev
-    while read -r dev; do
-        [ -n "$(ip -4 -o addr show "$dev" scope global)" ] && return 0
-    done < <(wired_devices)
-    return 1
+office_dns_servers() {
+    awk '
+        $1 == "server" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {
+            print $2
+        }
+    ' "$OFFICE_SRC" 2>/dev/null | sort -u
 }
 
 validate_fixed_table() {
@@ -261,6 +266,9 @@ for _ in {1..10}; do
     sleep 1
 done || true
 portal_hostname=$(dhcp_captive_portal_hostname "$IFACE")
+wired_dev=''
+wired_gateway=''
+read -r wired_dev wired_gateway < <(wired_candidate || true) || true
 
 # Keep SmartDNS fragments atomic and restart only when their contents change.
 SMARTDNS_CHANGED=0
@@ -300,7 +308,7 @@ else
     write_if_changed /etc/smartdns/dhcp-dns.conf "# No captive portal DNS"
 fi
 
-if ! wired_up; then
+if [ -z "$wired_dev" ] || [ -z "$wired_gateway" ]; then
     write_if_changed "$OFFICE_DST" "# Not on the office LAN"
 elif [ -r "$OFFICE_SRC" ]; then
     write_if_changed "$OFFICE_DST" "$(cat "$OFFICE_SRC")"
@@ -312,9 +320,6 @@ if [ "$SMARTDNS_CHANGED" -eq 1 ]; then
     systemctl restart smartdns 2>/dev/null || true
 fi
 
-wired_dev=''
-wired_gateway=''
-read -r wired_dev wired_gateway < <(wired_candidate || true) || true
 if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
     ip route replace default via "$wired_gateway" dev "$wired_dev" onlink \
         table "$WIRED_UNDERLAY_TABLE"
@@ -343,6 +348,7 @@ band_of() { canonical_rules "$@" | paste -sd';' -; }
 DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"
 DESIRED_BANDS[$P_IOA_OWNER_STOP]="from all fwmark $IOA_OWNER_MARK prohibit"
 DESIRED_BANDS[$P_TS]="from all fwmark $TS_MARK lookup main"
+DESIRED_BANDS[$P_RETIRED_IOA_MARK]=""
 
 local_band=()
 while read -r subnet _; do
@@ -351,6 +357,11 @@ done < <({ ip route show table main scope link 2>/dev/null || true; })
 for addr in "$(physical_gateway)" ${dns:-}; do
     [ -n "$addr" ] && local_band+=("from all to $addr lookup main")
 done
+if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
+    while read -r addr; do
+        [ -n "$addr" ] && local_band+=("from all to $addr lookup main")
+    done < <(office_dns_servers)
+fi
 DESIRED_BANDS[$P_LOCAL]=$(band_of "${local_band[@]}")
 
 if has_routes "$CN_TABLE"; then
@@ -359,9 +370,7 @@ else
     DESIRED_BANDS[$P_CN]=""
 fi
 
-DESIRED_BANDS[$P_IOA_MARK]="from all fwmark 0x1 lookup $IOA_TABLE"
-
-ioa_band=()
+ioa_band=("from all fwmark 0x1 lookup $IOA_TABLE")
 for cidr in "${IOA_STATIC_CIDRS[@]}"; do
     ioa_band+=("from all to $cidr lookup $IOA_TABLE")
 done
@@ -397,13 +406,16 @@ actual_fingerprint() {
 }
 
 active_ioa_cgroups() {
-    local cgroup
+    local cgroup path
     if [ -n "${IOA_CGROUP_PATHS_OVERRIDE+x}" ]; then
         [ "${#IOA_CGROUP_PATHS[@]}" -eq 0 ] || printf '%s\n' "${IOA_CGROUP_PATHS[@]}"
         return
     fi
     for cgroup in "${IOA_CGROUP_PATHS[@]}"; do
-        [ -d "/sys/fs/cgroup/$cgroup" ] && printf '%s\n' "$cgroup"
+        [ -d "$CGROUP_ROOT/$cgroup" ] && printf '%s\n' "$cgroup"
+    done
+    for path in "$CGROUP_ROOT"/user.slice/user-*.slice/user@*.service/app.slice/ioagui.service; do
+        [ -d "$path" ] && printf '%s\n' "${path#"$CGROUP_ROOT"/}"
     done
     # Always succeed: a stopped ngnclient simply has no cgroup to mark. A
     # non-zero exit here would fire the inherited ERR trap inside the

@@ -344,12 +344,14 @@ else
     echo 'OK   iwd uses stable per-network MAC addresses'
 fi
 if [ "$(grep -Ec '^IgnoreCarrierLoss=' "$wireless_config")" -ne 1 ] ||
-   [ "$(grep -Fxc 'IgnoreCarrierLoss=no' "$wireless_config")" -ne 1 ]; then
-    echo 'FAIL wireless does not drop DHCP state immediately on carrier loss' >&2
+   [ "$(grep -Fxc 'IgnoreCarrierLoss=3s' "$wireless_config")" -ne 1 ]; then
+    echo 'FAIL wireless does not keep DHCP state across a short carrier gap' >&2
     fail=1
 else
-    echo 'OK   wireless drops DHCP state immediately on carrier loss'
+    echo 'OK   wireless keeps DHCP state across a short carrier gap'
 fi
+reject 'wireless carrier grace is finite' \
+    '^IgnoreCarrierLoss=(yes|infinite)$' "$wireless_config"
 if [ -e "$obsolete_tencent_config" ]; then
     echo 'FAIL obsolete Tencent no-gateway networkd config still exists' >&2
     fail=1
@@ -486,7 +488,6 @@ case "$command" in
             '-4 rule show pref 2500')
                 echo '2500: from all fwmark 0x1 lookup ioa'
                 echo '2500: from all to 10.0.0.0/8 lookup ioa'
-                echo '2500: from all to 100.12.0.0/16 lookup ioa'
                 ;;
             '-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
         esac
@@ -720,6 +721,9 @@ reject 'no static 9/8 IOA rule' 'IOA_STATIC_CIDRS=.*9\.0\.0\.0/8' \
 reject 'no static 21/8 IOA rule' \
     'IOA_STATIC_CIDRS=.*21\.0\.0\.0/8|ip rule add to 21\.0\.0\.0/8.*lookup ioa' \
     scripts/network-reconfigure
+reject 'no static 100.12/16 IOA rule' \
+    'IOA_STATIC_CIDRS=.*100\.12\.0\.0/16|ip rule add to 100\.12\.0\.0/16.*lookup ioa' \
+    scripts/network-reconfigure
 reject 'active policy no longer intersects SmartDNS results with a static prefix set' \
     'IOA_INTRANET|--match-set ioa_intranet|ipset (create|add|flush) ioa_intranet' \
     scripts/network-reconfigure network/README.md
@@ -744,7 +748,7 @@ reject 'table 19 is advertisement-only and has no policy rule' \
 reject 'wired advertisement does not mutate tunnel-owned tables' \
     'ip route (flush|del|replace).*table (20|230|52|ioa)' scripts/network-reconfigure
 for statement in \
-    'IgnoreCarrierLoss=no' \
+    'IgnoreCarrierLoss=3s' \
     'AddressRandomization=network' \
     'AddressOverride=1e:dc:46:00:66:1b' \
     'priorities 1100 and 1200' \

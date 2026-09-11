@@ -9,6 +9,7 @@ if [ -z "${IN_NETNS:-}" ]; then
     for expected in \
         'IOA_OWNER_MARK="0x1000000/0xffffffff"' \
         'system.slice/ngnclient.service' \
+        'user.slice/user-*.slice/user@*.service/app.slice/ioagui.service' \
         'active_ioa_cgroups()' \
         'IOA_CGROUP_PATHS_OVERRIDE+x' \
         'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"' \

@@ -5,8 +5,10 @@ Type=wlan
 
 [Network]
 DHCP=yes
-# Drop DHCP state on every carrier loss so a cross-subnet roam cannot retain stale routes.
-IgnoreCarrierLoss=no
+# Keep DHCP state across a short carrier gap (BSSID roam, resume deauth) so the physical default
+# route is not torn down and reinstalled in a race with networkd's post-resume reconfigure. The
+# grace is deliberately finite: a longer loss is a real network change and must drop the lease.
+IgnoreCarrierLoss=3s
 # DNS handled by SmartDNS on 127.0.0.1
 DNS=127.0.0.1
 DNSDefaultRoute=false

@@ -20,11 +20,12 @@ Ownership is deliberately narrow:
   `ManageForeignRoutes=no`, so networkd does not garbage-collect route/rule objects owned by
   Tailscale, SmartGateAgent, or `network-reconfigure`.
 - **`scripts/network-reconfigure`** owns the repository's rules at priorities 400, 401, 500, 1000,
-  1400, 1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage`
+  1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage`
   table; the `NETMODE_IOA` chain and its OUTPUT hook; the exact IOA MASQUERADE rule; and the
-  generated DHCP and office SmartDNS fragments. It owner-marks traffic from `ngnclient.service` as
-  `0x1000000` before its first route lookup and masquerades that traffic on the current physical
-  device, correcting SmartGate control sockets that bind to a Tailscale source address.
+  generated DHCP and office SmartDNS fragments. It owner-marks traffic from both iOA cgroups —
+  `ngnclient.service` and the `ioagui.service` user unit — as `0x1000000` before its first route
+  lookup and masquerades that traffic on the current physical device, correcting iOA control
+  sockets that bind to a Tailscale source address.
 - **SmartDNS** owns the domain-derived `ipset ioa` membership.
 - **SmartGateAgent** owns `tun0`, mark `0xa38`, tables `20` and `230`, and the contents and
   lifetime of table `ioa`. When table `wired_underlay` advertises the authenticated Tencent USB
@@ -44,7 +45,7 @@ objects, but it does not change tunnel preferences or owner-managed tables.
 
 ## Effective policy
 
-The repository-owned rules use priorities 400, 401, 500, 1000, 1400, 1500, 2500, and 3000;
+The repository-owned rules use priorities 400, 401, 500, 1000, 1500, 2500, and 3000;
 the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owner-managed rules.
 
 | Priority | Match | Lookup | Purpose |
@@ -52,12 +53,11 @@ the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owne
 | 400 | `fwmark 0x1000000` | `main` | Force the system IOA underlay packets onto the physical route. |
 | 401 | `fwmark 0x1000000` | `prohibit` | Fail closed if no physical route exists; never fall through to Tailscale. |
 | 500 | `fwmark 0x80000/0xff0000` | `main` | Let Tailscale-owned transport packets reach the physical network. |
-| 1000 | current `scope link` routes, physical gateway, and DHCP resolvers | `main` | Keep the actual LAN and its infrastructure direct. |
+| 1000 | current `scope link` routes, physical gateway, DHCP resolvers, and active office resolvers | `main` | Keep the actual LAN and its infrastructure direct. |
 | 1100 | SmartGateAgent-owned `fwmark 0xa38` | `20` | Send SmartGate control traffic through its current physical underlay. |
 | 1200 | SmartGateAgent-owned physical source address | `230` | Keep its source-bound sockets on the current physical underlay. |
-| 1400 | exact `fwmark 0x1` | `ioa` | Send domain-classified IOA payload into `tun0`. |
 | 1500 | all destinations with a route in `cn` | `cn` | Make `~/.routefile` authoritative for physical egress. |
-| 2500 | `10.0.0.0/8` and `100.12.0.0/16` | `ioa` | Select static IOA business traffic; these destinations follow ordinary policy if IOA is unavailable. |
+| 2500 | exact `fwmark 0x1`, then `10.0.0.0/8` | `ioa` | Select DNS-classified IOA traffic and retain a literal-address fallback for private Tencent destinations. |
 | 3000 | `100.64.0.0/10` | `52` | Reach tailnet peers through Tailscale. |
 
 SmartGateAgent owns the `0xa38 -> table 20` and physical-source `-> table 230` rules. The exact
@@ -70,11 +70,12 @@ not on hard-coding `wlan0` or assuming every Ethernet interface is Tencent Ether
 
 Linux evaluates lower numeric priorities first:
 
-1. Every packet created by the system IOA cgroup is owner-marked before its first route lookup,
-   uses `main`, and is masqueraded on the current physical device. The source rewrite is required
-   because SmartGate can bind control sockets to `tailscale0` after Tailscale starts.
+1. Every packet created by an IOA cgroup is owner-marked before its first route lookup, uses
+   `main`, and is masqueraded on the current physical device. The source rewrite is required
+   because iOA can bind control sockets to `tailscale0` after Tailscale starts.
 2. Tailscale owner-marked packets use `main`.
-3. Actual connected LAN destinations, the physical gateway, and DHCP resolvers use `main`.
+3. Actual connected LAN destinations, the physical gateway, DHCP resolvers, and office DNS
+   servers enabled for the authenticated wired link use `main`.
 4. SmartGateAgent owner-marked packets use owner table `20`.
 5. SmartGateAgent physical-source sockets use owner table `230`.
 6. A destination present in `~/.routefile` uses `cn` and the physical gateway.
@@ -88,8 +89,9 @@ Linux evaluates lower numeric priorities first:
 `scripts/updateroutes` generates `~/.routefile`; `network-reconfigure` loads those prefixes
 into table `cn` with the current physical gateway. Priority 1500 is before every
 repository-owned IOA business rule, so routefile destinations have absolute priority over IOA
-business selection. This remains true when a routefile prefix overlaps static `10/8` or
-`100.12/16`, and when a packet already has the exact SmartDNS business mark `0x1`.
+business selection. This remains true when a routefile prefix overlaps static `10/8`, a
+dynamically classified `100.12/16` address, or a packet already has the exact SmartDNS business
+mark `0x1`.
 
 This authority does not take ownership of SmartGateAgent's `0xa38` control traffic. That mark
 and its table `20` path remain SmartGateAgent's responsibility.
@@ -97,7 +99,10 @@ and its table `20` path remain SmartGateAgent's responsibility.
 Only networks currently present as kernel `scope link` routes are considered local. Broad
 RFC1918 assumptions are intentionally absent: an unrelated private destination follows the
 normal unmatched policy. The physical gateway and DHCP resolvers are explicit priority-1000
-exceptions because a LAN can overlap `10/8` and a DHCP resolver can be a public address.
+exceptions because a LAN can overlap `10/8` and a DHCP resolver can be a public address. While an
+authenticated wired link has both an address and DHCP gateway, `network-reconfigure` also extracts
+the office resolver addresses from `network/smartdns/office.conf` and pins those exact addresses to
+`main`; it removes the pins with the office fragment when the link disappears.
 
 The registered Tencent USB Ethernet adapter is path-matched by
 `network/systemd-network/10-tencent-wired.link`. A hardware-restricted udev rule matches USB identity
@@ -143,8 +148,10 @@ exclusions cover the regional SmartGate discovery names and scene/policy control
 SmartGateAgent logs. This keeps transport endpoints out of `ioa` without guessing their changing IP
 addresses. No static `9/8` or `21/8` IOA route exists:
 those prefixes use IOA only when a configured business-domain query adds the exact answer to `ioa`.
-By contrast, `10.0.0.0/8` and `100.12.0.0/16` remain static IOA business ranges, subject to the
-earlier actual-LAN and routefile rules.
+`100.12/16` is also domain-derived only: observed services in that range are already classified by
+SmartDNS, so the former broad static rule was redundant. `10.0.0.0/8` remains the sole static IOA
+fallback for literal-address clients that make no DNS query, subject to the earlier actual-LAN and
+routefile rules.
 
 ## Tunnel independence and failure semantics
 
@@ -172,7 +179,7 @@ Other failures stay within ownership boundaries:
   those paths are available;
 - if SmartGateAgent removes the route from table `ioa`, its business lookup follows the existing
   later policy; IOA underlay traffic remains physically pinned independently;
-- if the physical default disappears, traffic from the system IOA cgroup fails with `prohibit`
+- if the physical default disappears, traffic from an IOA cgroup fails with `prohibit`
   instead of using either tunnel; when it exists, owner-marked packets are source-NATed only on
   that physical device;
 - a reconciliation failure must not change SmartGateAgent tables `20`, `230`, or `ioa`, or
@@ -180,11 +187,21 @@ Other failures stay within ownership boundaries:
 
 ## Wi-Fi roaming and MAC identity
 
-The generic `25-wireless.network` applies `IgnoreCarrierLoss=no` to every WLAN. Every carrier loss
-therefore discards the DHCP state immediately, so a fast roam to a BSSID on another IP subnet cannot
-retain a stale address, connected route, or physical default route. This intentionally trades seamless
-same-subnet roaming for deterministic DHCP reconfiguration without an SSID-specific exception or a
-custom attachment-detection daemon.
+The generic `25-wireless.network` applies `IgnoreCarrierLoss=3s` to every WLAN. A carrier gap shorter
+than the grace period retains the address, connected route, and physical default route; a longer loss
+expires the grace and performs normal DHCP teardown, so a roam to a BSSID on another IP subnet cannot
+keep a stale gateway. The value is deliberately finite: `yes` and `infinite` are rejected by the
+static checks because either could preserve an old lease indefinitely after leaving a network.
+
+The grace covers two gaps that are not real network changes. iwd roaming between access points
+briefly drops carrier, and the kernel deauthenticates (`Reason: 3=DEAUTH_LEAVING`) before entering
+S3 suspend. Without the grace, resume produced an observable failure: networkd processed the
+carrier loss only after resume, iwd reconnected and DHCP reacquired the same lease within the same
+second, and networkd's subsequent `Reconfiguring with 25-wireless.network` deleted the just-installed
+default route without reinstalling it. The interface stayed associated with its address, so the
+machine looked connected while `main` had no physical default until the Wi-Fi was manually
+reconnected. `ManageForeignRoutes=no` does not prevent this: it stops networkd from collecting
+routes owned by others, not from tearing down its own DHCP default route.
 
 `network/iwd/main.conf` sets `AddressRandomization=network`, so ordinary SSIDs receive a stable
 per-network MAC. The local secret profile `/var/lib/iwd/Tencent-WiFi.8021x` additionally contains
@@ -208,7 +225,8 @@ The reconciler then:
 1. atomically updates the generated DHCP and office SmartDNS fragments when their content changes;
 2. derives actual connected-LAN, gateway, and DHCP DNS rules;
 3. stages routefile routes, validates them, and updates `cn` for the current gateway;
-4. reconciles only the eight repository-owned priority bands;
+4. reconciles only the seven active repository-owned priority bands and removes the retired
+   priority-1400 mark rule;
 5. restores the dual-ipset, mark-0-only firewall policy and exact IOA NAT rule;
 6. records the physical state only after a successful run.
 
