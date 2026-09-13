@@ -239,6 +239,7 @@ if [[ -n $GUI ]]; then
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
+    paru -S --needed --noconfirm bzmenu-bin pavucontrol
     sudo systemctl disable --now libinput-gestures.service 2>/dev/null || true
     sudo install -Dm644 "$DIR/systemd/touchegg.service.d/override.conf" \
         /etc/systemd/system/touchegg.service.d/override.conf

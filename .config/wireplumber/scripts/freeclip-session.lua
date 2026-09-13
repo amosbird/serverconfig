@@ -2,19 +2,17 @@
 -- Owns profile changes and routes the persistent stable endpoints.
 
 local cutils = require ("common-utils")
+local lutils = require ("linking-utils")
 local log = Log.open_topic ("freeclip-session")
 
 local CARD = "bluez_card.C0_DA_5E_EC_FB_7F"
 local FREECLIP_OUTPUT = "bluez_output.C0_DA_5E_EC_FB_7F.1"
 local FREECLIP_INPUT = "bluez_input.C0:DA:5E:EC:FB:7F"
-local LOCAL_OUTPUT =
-    "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Speaker__sink"
-local LOCAL_INPUT =
-    "alsa_input.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__Mic1__source"
 local OUTPUT_BACKEND = "freeclip_stable_output.backend"
 local INPUT_BACKEND = "freeclip_stable_input.backend"
 
 local STEP_MS = 100
+local UNMUTE_ATTEMPTS = 20
 local NODE_WAIT_STEPS = 20
 local HFP_TRANSPORT_WAIT_STEPS = 20
 local PARK_MS = 500
@@ -55,6 +53,10 @@ local devices = ObjectManager {
     type = "device",
     Constraint { "device.name", "=", CARD }
   }
+}
+-- Needed to answer "is this node's route actually available", see pick_local ().
+local all_devices = ObjectManager {
+  Interest { type = "device" }
 }
 
 local function publish (key, value)
@@ -124,11 +126,94 @@ local function find_device ()
   }
 end
 
+-- Local fallback targets are resolved at use time, never hardcoded: Speaker
+-- and Headphones live in *mutually exclusive* UCM profiles, so the speaker
+-- sink disappears the instant a jack is plugged in. A pinned node name would
+-- leave the backend (node.dont-fallback = true) aimed at a dead target, i.e.
+-- total silence. Rank the same way WirePlumber ranks default-node candidates:
+-- highest priority.session among non-bluetooth device nodes whose route is
+-- currently available (this is what keeps the unplugged mic jack and the dark
+-- HDMI outputs from winning).
+local function pick_local (media_class)
+  local best, best_priority = nil, -1
+  for node in nodes:iterate {
+    Constraint { "media.class", "=", media_class, type = "pw" },
+    Constraint { "device.api", "!", "bluez5", type = "pw" },
+    Constraint { "device.id", "+", type = "pw" },
+  } do
+    local props = node.properties
+    local priority = tonumber (props ["priority.session"]) or 0
+    if priority > best_priority
+        and lutils.haveAvailableRoutes (props, all_devices) then
+      best, best_priority = node, priority
+    end
+  end
+  return best
+end
+
+-- Returns true once the node's own route has been inspected (and unmuted if
+-- needed), false while that is not yet possible -- the device params are not
+-- cached during the first moments after startup.
+local function unmute_route (node)
+  local device_id = node.properties ["device.id"]
+  local card_device = tonumber (node.properties ["card.profile.device"] or "")
+  if not device_id or not card_device then return false end
+  local device = all_devices:lookup {
+    Constraint { "bound-id", "=", device_id, type = "gobject" }
+  }
+  if not device then return false end
+  for p in device:iterate_params ("Route") do
+    local route = cutils.parseParam (p, "Route")
+    if route and route.device == card_device and route.props then
+      local route_props = route.props.properties or {}
+      if route_props.mute then
+        log:info ("clearing stale mute on route " .. tostring (route.name))
+        device:set_param ("Route", Pod.Object {
+          "Spa:Pod:Object:Param:Route", "Route",
+          index = route.index,
+          device = route.device,
+          props = Pod.Object {
+            "Spa:Pod:Object:Param:Props", "Route",
+            mute = false,
+          },
+          -- Persist it: the stale value otherwise comes back on every start.
+          save = true,
+        })
+      end
+      return true
+    end
+  end
+  return false
+end
+
+-- Applications only ever see the stable endpoint, so it is the only thing the
+-- desktop's volume/mute keys touch. That makes a mute left behind on the
+-- physical device both invisible and unreachable: the graph stays fully
+-- linked and every stream keeps "playing" while the card silently drops the
+-- audio. Physical devices are an implementation detail of the endpoint, so
+-- assert them unmuted whenever we aim a backend at one.
+local function ensure_unmuted (node, attempt)
+  if node.properties ["card.profile.device"] then
+    if unmute_route (node) then return end
+    attempt = (attempt or 0) + 1
+    if attempt <= UNMUTE_ATTEMPTS then
+      Core.timeout_add (STEP_MS, function () ensure_unmuted (node, attempt) end)
+    end
+    return
+  end
+  -- Bluetooth nodes carry no routes; mute lives on the node itself.
+  node:set_param ("Props", Pod.Object {
+    "Spa:Pod:Object:Param:Props", "Props",
+    mute = false,
+  })
+end
+
 local function route_node (backend_name, target)
   local backend = find_node (backend_name)
   if not backend or not target then
     return false
   end
+  ensure_unmuted (target)
   -- Route by node NAME, not object.serial: the serial dangles as soon as
   -- the bluez node is recreated (every profile switch), leaving the backend
   -- waiting forever for a dead target (node.dont-fallback=True). The name
@@ -136,10 +221,6 @@ local function route_node (backend_name, target)
   metadata:set (backend["bound-id"], "target.object", "Spa:String",
       target.properties["node.name"])
   return true
-end
-
-local function route (backend_name, target_name)
-  return route_node (backend_name, find_node (target_name))
 end
 
 local function set_node_volume (node, volume)
@@ -158,8 +239,8 @@ local function normalize_volumes (output, input)
 end
 
 local function park ()
-  local input_ok = route (INPUT_BACKEND, LOCAL_INPUT)
-  local output_ok = route (OUTPUT_BACKEND, LOCAL_OUTPUT)
+  local input_ok = route_node (INPUT_BACKEND, pick_local ("Audio/Source"))
+  local output_ok = route_node (OUTPUT_BACKEND, pick_local ("Audio/Sink"))
   return input_ok and output_ok
 end
 
@@ -244,7 +325,7 @@ local function wait_for_nodes (mode, remaining, callback)
   if generation ~= callback.generation then return end
   local profile = mode == "hfp" and "headset-head-unit" or "a2dp-sink"
   local output = find_profile_node (FREECLIP_OUTPUT, profile)
-  local input = mode == "hfp" and find_node (FREECLIP_INPUT) or find_node (LOCAL_INPUT)
+  local input = mode == "hfp" and find_node (FREECLIP_INPUT) or pick_local ("Audio/Source")
   if output and input then
     callback.run (output, input)
   elseif remaining > 0 then
@@ -255,7 +336,7 @@ local function wait_for_nodes (mode, remaining, callback)
 end
 
 local function route_input (mode, output, input)
-  local input_target = mode == "hfp" and input or find_node (LOCAL_INPUT)
+  local input_target = mode == "hfp" and input or pick_local ("Audio/Source")
   if not route_node (INPUT_BACKEND, input_target) then
     fallback ("could not route stable input")
     return
@@ -407,9 +488,37 @@ local function on_node_state_changed (node, _, new_state)
   end
 end
 
-nodes:connect ("object-added", function (_, node)
+local repark_scheduled = false
+
+-- A local fallback target is only valid while its node exists, and a UCM
+-- profile switch (plugging the headphone jack) destroys and recreates the
+-- analog nodes. Since the backend never falls back on its own, re-resolve
+-- whenever the pool of local devices changes. Debounced: one jack event
+-- churns several nodes at once.
+local function on_local_device_churn (_, node)
+  local props = node.properties
+  if props ["device.api"] == "bluez5" or not props ["device.id"] then return end
+  local class = props ["media.class"]
+  if class ~= "Audio/Sink" and class ~= "Audio/Source" then return end
+  if repark_scheduled then return end
+  repark_scheduled = true
+  Core.timeout_add (STEP_MS, function ()
+    repark_scheduled = false
+    if state == "DISCONNECTED" or state == "LOCAL_FALLBACK" then
+      park ()
+    elseif state == "A2DP_READY" then
+      -- The headset owns the output in A2DP; only the mic side is local.
+      route_node (INPUT_BACKEND, pick_local ("Audio/Source"))
+    end
+  end)
+end
+
+nodes:connect ("object-added", function (om, node)
   node:connect ("state-changed", on_node_state_changed)
+  on_local_device_churn (om, node)
 end)
+
+nodes:connect ("object-removed", on_local_device_churn)
 
 devices:connect ("object-added", function ()
   if state == "DISCONNECTED" or state == "LOCAL_FALLBACK" then
@@ -449,6 +558,7 @@ metadata:connect ("changed", function (_, subject, key, _, value)
   end
 end)
 
+all_devices:activate ()
 nodes:activate ()
 set_state ("DISCONNECTED")
 intent_meta:activate (Features.ALL, function (_, err)

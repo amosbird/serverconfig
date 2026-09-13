@@ -69,7 +69,7 @@ class AudioControlTest(unittest.TestCase):
             script.index('route_input ("hfp", output, input)'),
         )
         self.assertIn('output["state"] == "error"', script)
-        self.assertIn('new_state == "error"', script)
+        self.assertIn('new_state ~= "error"', script)
         self.assertIn("recovery_generation", script)
         # A failed transition with the device still present (e.g. BlueZ
         # rejected the HFP transport so nodes never appeared) also feeds
