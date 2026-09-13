@@ -36,6 +36,17 @@ class VolumeTest(unittest.TestCase):
         self.assertIn("Volume up", output)
         self.assertIn("Volume 53%", output)
 
+    def test_up_unmutes_a_muted_sink(self):
+        result, output = self._run("up", "Volume: 0.53 [MUTED]")
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("wpctl set-mute @DEFAULT_AUDIO_SINK@ 0", output)
+        self.assertNotIn("toggle", output)
+        # The mute state did change here, so the LED needs the nudge.
+        self.assertIn("audio-mute-led --once", output)
+        self.assertIn("Volume up", output)
+        self.assertIn("string:state:false", output)
+
     def test_mute_changes_only_the_default_sink(self):
         result, output = self._run("mute", "Volume: 0.53 [MUTED]")
 

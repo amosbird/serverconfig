@@ -18,6 +18,12 @@ state=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/volume
 request=$state/request
 lock=$state/lock
 
+led_sync() {
+    if command -v audio-mute-led >/dev/null 2>&1; then
+        audio-mute-led --once
+    fi
+}
+
 notify() {
     local summary=$1 volume=$2 muted=$3
     command -v dunstify >/dev/null 2>&1 || return 0
@@ -49,6 +55,13 @@ drive() {
             # Authoritative once per burst; stepping locally afterwards keeps
             # the loop down to a single wpctl round trip per press.
             read -r volume muted <<<"$(read_volume)"
+            if [[ $muted == true ]]; then
+                # Reaching for the volume keys means the user wants to hear
+                # the result, so a step doubles as an unmute.
+                wpctl set-mute "$target" 0
+                muted=false
+                led_sync
+            fi
         elif [[ $direction == up ]]; then
             volume=$((volume + step < 100 ? volume + step : 100))
         else
@@ -80,11 +93,9 @@ up | down)
     ;;
 mute)
     wpctl set-mute "$target" toggle
-    # Volume steps never change the mute state, so only this path needs the
-    # LED nudge; audio-mute-led.service keeps it in sync the rest of the time.
-    if command -v audio-mute-led >/dev/null 2>&1; then
-        audio-mute-led --once
-    fi
+    # Only mute changes need the nudge; audio-mute-led.service keeps the LED
+    # in sync the rest of the time.
+    led_sync
     read -r volume muted <<<"$(read_volume)"
     summary=Unmuted
     [[ $muted == true ]] && summary=Muted
