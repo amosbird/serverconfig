@@ -3,35 +3,95 @@
 set -euo pipefail
 
 target=@DEFAULT_AUDIO_SINK@
+step=3
+
+# Autorepeat delivers a press every ~30 ms while the key is held, but one
+# process per press cost ~200 ms and they raced each other on a
+# read-modify-write, so a held key produced a couple of steps at best and
+# frequently nothing at all, with a jittering notification value. Instead a
+# press only records a request; whoever wins the lock keeps stepping until the
+# requests stop arriving, so exactly one process ever touches the volume.
+poll_interval=0.01
+grace_polls=12
+
+state=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/volume
+request=$state/request
+lock=$state/lock
+
+notify() {
+    local summary=$1 volume=$2 muted=$3
+    command -v dunstify >/dev/null 2>&1 || return 0
+    dunstify --app-name Volume --stack-tag volume --timeout 1200 \
+        --hints "int:value:$volume" --hints "string:state:$muted" \
+        "$summary" "Volume $volume%" >/dev/null 2>&1 || true
+}
+
+# Echoes "<percent> <muted>".
+read_volume() {
+    local status muted=false
+    status=$(wpctl get-volume "$target")
+    [[ $status == *MUTED* ]] && muted=true
+    printf '%s %s' "$(awk '{ printf "%d", $2 * 100 + 0.5 }' <<<"$status")" "$muted"
+}
+
+drive() {
+    local direction summary volume= muted=false polls
+    while [[ -s $request ]]; do
+        direction=$(<"$request")
+        rm -f "$request"
+        case $direction in
+        up) wpctl set-volume -l 1.0 "$target" "$step%+" ;;
+        down) wpctl set-volume -l 1.0 "$target" "$step%-" ;;
+        *) return ;;
+        esac
+
+        if [[ -z $volume ]]; then
+            # Authoritative once per burst; stepping locally afterwards keeps
+            # the loop down to a single wpctl round trip per press.
+            read -r volume muted <<<"$(read_volume)"
+        elif [[ $direction == up ]]; then
+            volume=$((volume + step < 100 ? volume + step : 100))
+        else
+            volume=$((volume - step > 0 ? volume - step : 0))
+        fi
+
+        summary="Volume $direction"
+        [[ $muted == true ]] && summary=Muted
+        notify "$summary" "$volume" "$muted"
+
+        # Wait ~120 ms for the next autorepeat; silence means the key is up.
+        polls=0
+        while [[ ! -s $request && $polls -lt $grace_polls ]]; do
+            sleep "$poll_interval"
+            polls=$((polls + 1))
+        done
+    done
+}
+
 case ${1:-} in
-up)
-    wpctl set-volume -l 1.0 "$target" 3%+
-    summary='Volume up'
-    ;;
-down)
-    wpctl set-volume -l 1.0 "$target" 3%-
-    summary='Volume down'
+up | down)
+    mkdir -p "$state"
+    printf '%s' "$1" >"$request.$$"
+    mv "$request.$$" "$request"
+    exec 9>"$lock"
+    # A press arriving mid-burst has done its job by recording the request.
+    flock -n 9 || exit 0
+    drive
     ;;
 mute)
     wpctl set-mute "$target" toggle
+    # Volume steps never change the mute state, so only this path needs the
+    # LED nudge; audio-mute-led.service keeps it in sync the rest of the time.
+    if command -v audio-mute-led >/dev/null 2>&1; then
+        audio-mute-led --once
+    fi
+    read -r volume muted <<<"$(read_volume)"
     summary=Unmuted
+    [[ $muted == true ]] && summary=Muted
+    notify "$summary" "$volume" "$muted"
     ;;
 *)
     printf 'usage: volume {up|down|mute}\n' >&2
     exit 2
     ;;
 esac
-
-status=$(wpctl get-volume "$target")
-command -v audio-mute-led >/dev/null 2>&1 && audio-mute-led --once
-volume=$(awk '{printf "%d", $2 * 100 + 0.5}' <<<"$status")
-muted=false
-if [[ $status == *MUTED* ]]; then
-    summary=Muted
-    muted=true
-fi
-
-command -v dunstify >/dev/null 2>&1 &&
-    dunstify --app-name Volume --stack-tag volume --timeout 1200 \
-        --hints "int:value:$volume" --hints "string:state:$muted" \
-        "$summary" "Volume $volume%" >/dev/null 2>&1 || true

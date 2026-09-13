@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import fcntl
 import pathlib
 import subprocess
 import tempfile
@@ -24,7 +25,10 @@ class VolumeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 3%+", output)
         self.assertIn("wpctl get-volume @DEFAULT_AUDIO_SINK@", output)
-        self.assertIn("audio-mute-led --once", output)
+        # A volume step cannot change the mute state, and the extra process
+        # cost it added made held keys drop presses; audio-mute-led.service
+        # keeps the LED in sync instead.
+        self.assertNotIn("audio-mute-led", output)
         self.assertNotIn("pactl ", output)
         self.assertNotIn("wpctl inspect", output)
         self.assertIn("--stack-tag volume", output)
@@ -50,45 +54,71 @@ class VolumeTest(unittest.TestCase):
         self.assertIn("usage: volume {up|down|mute}", result.stderr)
         self.assertEqual(output, "")
 
+    def test_repeat_only_records_a_request_while_a_burst_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory)
+            log = self._write_mocks(path, "Volume: 0.53")
+            lock = path / "volume" / "lock"
+            lock.parent.mkdir()
+            lock.touch()
+
+            with open(lock, "w") as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                result = self._spawn(path, "up")
+
+            self.assertEqual(result.returncode, 0)
+            # The running burst owns the volume; this press only queued itself.
+            self.assertFalse(log.exists())
+            self.assertEqual((path / "volume" / "request").read_text(), "up")
+
     @classmethod
     def _run(cls, action, status):
         with tempfile.TemporaryDirectory() as directory:
             path = pathlib.Path(directory)
-            log = path / "log"
-            cls._write_mock(
-                path / "wpctl",
-                f'''#!/usr/bin/env bash
+            log = cls._write_mocks(path, status)
+            result = cls._spawn(path, action)
+            output = log.read_text() if log.exists() else ""
+            return result, output
+
+    @staticmethod
+    def _spawn(path, action):
+        return subprocess.run(
+            [SCRIPT, action],
+            env={"PATH": f"{path}:/usr/bin", "XDG_RUNTIME_DIR": str(path)},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    @classmethod
+    def _write_mocks(cls, path, status):
+        log = path / "log"
+        cls._write_mock(
+            path / "wpctl",
+            f'''#!/usr/bin/env bash
 printf 'wpctl %s\\n' "$*" >>{log!s}
 if [[ $1 == get-volume ]]; then printf '%s\\n' {status!r}; fi
 ''',
-            )
-            cls._write_mock(
-                path / "audio-mute-led",
-                f'''#!/usr/bin/env bash
+        )
+        cls._write_mock(
+            path / "audio-mute-led",
+            f'''#!/usr/bin/env bash
 printf 'audio-mute-led %s\\n' "$*" >>{log!s}
 ''',
-            )
-            cls._write_mock(
-                path / "dunstify",
-                f'''#!/usr/bin/env bash
+        )
+        cls._write_mock(
+            path / "dunstify",
+            f'''#!/usr/bin/env bash
 printf 'dunstify %s\\n' "$*" >>{log!s}
 ''',
-            )
-            cls._write_mock(
-                path / "pactl",
-                f'''#!/usr/bin/env bash
+        )
+        cls._write_mock(
+            path / "pactl",
+            f'''#!/usr/bin/env bash
 printf 'pactl %s\\n' "$*" >>{log!s}
 ''',
-            )
-            result = subprocess.run(
-                [SCRIPT, action],
-                env={"PATH": f"{path}:/usr/bin"},
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            output = log.read_text() if log.exists() else ""
-            return result, output
+        )
+        return log
 
     @staticmethod
     def _write_mock(path, content):
