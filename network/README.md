@@ -53,7 +53,7 @@ the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owne
 | 400 | `fwmark 0x1000000` | `main` | Force the system IOA underlay packets onto the physical route. |
 | 401 | `fwmark 0x1000000` | `prohibit` | Fail closed if no physical route exists; never fall through to Tailscale. |
 | 500 | `fwmark 0x80000/0xff0000` | `main` | Let Tailscale-owned transport packets reach the physical network. |
-| 1000 | current `scope link` routes, physical gateway, DHCP resolvers, and active office resolvers | `main` | Keep the actual LAN and its infrastructure direct. |
+| 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, DHCP resolvers, and active office resolvers | `main` | Keep the actual LAN and its infrastructure direct. |
 | 1100 | SmartGateAgent-owned `fwmark 0xa38` | `20` | Send SmartGate control traffic through its current physical underlay. |
 | 1200 | SmartGateAgent-owned physical source address | `230` | Keep its source-bound sockets on the current physical underlay. |
 | 1500 | all destinations with a route in `cn` | `cn` | Make `~/.routefile` authoritative for physical egress. |
@@ -74,8 +74,9 @@ Linux evaluates lower numeric priorities first:
    `main`, and is masqueraded on the current physical device. The source rewrite is required
    because iOA can bind control sockets to `tailscale0` after Tailscale starts.
 2. Tailscale owner-marked packets use `main`.
-3. Actual connected LAN destinations, the physical gateway, DHCP resolvers, and office DNS
-   servers enabled for the authenticated wired link use `main`.
+3. Any destination that currently has a non-default route in `main` — the connected LAN and the
+   physical gateway — uses `main`, as do the explicitly pinned physical gateway, DHCP resolvers,
+   and office DNS servers enabled for the authenticated wired link.
 4. SmartGateAgent owner-marked packets use owner table `20`.
 5. SmartGateAgent physical-source sockets use owner table `230`.
 6. A destination present in `~/.routefile` uses `cn` and the physical gateway.
@@ -103,6 +104,18 @@ exceptions because a LAN can overlap `10/8` and a DHCP resolver can be a public 
 authenticated wired link has both an address and DHCP gateway, `network-reconfigure` also extracts
 the office resolver addresses from `network/smartdns/office.conf` and pins those exact addresses to
 `main`; it removes the pins with the office fragment when the link disappears.
+
+Those enumerated pins are a snapshot, so priority 1000 also carries `from all lookup main
+suppress_prefixlength 0`. It asks the kernel for `main` without its default route, which is exactly
+the set of destinations that are on-link at this instant, and needs no snapshot to stay correct.
+This matters because the priority-2500 `10.0.0.0/8` rule and table `ioa` both outlive any single
+reconciliation: roaming between two different `10/8` subnets leaves the pins naming the previous
+LAN while the new gateway is itself inside `10/8`, so without the suppressed lookup the new gateway
+is routed into `tun0` until the next run finishes — observed at up to 21 seconds. The interface
+holds an address and a default route while nothing beyond it is reachable, which is
+indistinguishable from a dead network. Suppressing prefix length 0 is deliberately not a bypass of
+IOA selection: a `10/8` destination that is not on-link still has no route in `main` other than the
+suppressed default, so it falls through to priority 2500 and table `ioa` as before.
 
 The registered Tencent USB Ethernet adapter is path-matched by
 `network/systemd-network/10-tencent-wired.link`. A hardware-restricted udev rule matches USB identity
@@ -295,6 +308,7 @@ Run the network checks:
 bash network/test-ip-override.sh
 bash network/test-smartgate-underlay.sh
 bash network/test-ioa-fail-closed.sh
+sudo -n bash network/test-ioa-static-lan-overlap.sh
 sudo -n bash network/test-reconfigure.sh
 bash network/test-static-policy.sh
 bash network/test-debug-capture.sh

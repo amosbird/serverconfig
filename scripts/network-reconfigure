@@ -350,7 +350,16 @@ DESIRED_BANDS[$P_IOA_OWNER_STOP]="from all fwmark $IOA_OWNER_MARK prohibit"
 DESIRED_BANDS[$P_TS]="from all fwmark $TS_MARK lookup main"
 DESIRED_BANDS[$P_RETIRED_IOA_MARK]=""
 
-local_band=()
+# The enumerated pins below are a snapshot taken when this script runs, but the
+# priority-2500 `to 10.0.0.0/8 lookup ioa` rule and table `ioa` both outlive it.
+# A roam onto a different 10/8 subnet therefore leaves the pins naming the old
+# LAN while the new gateway is still inside 10/8, so until the next run finishes
+# — observed at up to 21s — rule 2500 swallows the gateway into tun0 and the
+# machine has an address and a default route but no reachable next hop.
+# Suppressing prefix length 0 asks the kernel for main minus its default route,
+# which is exactly "destinations that are on-link right now". It needs no
+# snapshot, so the actual LAN and gateway stay direct even mid-roam.
+local_band=("from all lookup main suppress_prefixlength 0")
 while read -r subnet _; do
     [ -n "$subnet" ] && local_band+=("from all to $subnet lookup main")
 done < <({ ip route show table main scope link 2>/dev/null || true; })
