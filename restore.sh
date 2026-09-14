@@ -217,18 +217,17 @@ if [[ -n $GUI ]]; then
     sudo systemctl disable --now network-debug-pcap.service 2>/dev/null || true
     sudo rm -f /etc/systemd/system/network-debug-pcap.service
     sudo rm -rf /var/log/network-debug/ring
+    # iOA is the vendor 1.0.3.62 package everywhere except these two wrappers, which exist for
+    # reasons documented in each file. iOALinux and iOA_upgrade in particular must stay the
+    # vendor ELFs: iOA_upgrade is not merely a self-upgrader but the resident netlink worker
+    # that tells iOA about address changes, so replacing it blinds iOA to roaming.
     sudo cp "$DIR"/network/iOA /usr/lib/iOA/bin/iOA
     sudo cp "$DIR"/network/SmartGateAgent /usr/lib/iOA/bin/SmartGateAgent
     sudo chmod 755 /usr/lib/iOA/bin/SmartGateAgent
-    # Pin iOA to 1.0.3.62: the vendor entry point hands off to the systemd-owned GUI instead
-    # of starting a second one, the self-upgrader is declined, and no other version is kept.
-    sudo cp "$DIR"/network/iOALinux /usr/lib/iOA/bin/iOALinux
-    sudo cp "$DIR"/network/iOA_upgrade /usr/lib/iOA/bin/iOA_upgrade
-    sudo chmod 755 /usr/lib/iOA/bin/iOALinux /usr/lib/iOA/bin/iOA_upgrade
-    sudo rm -f /usr/lib/iOA/bin/iOA.bin.39 /usr/lib/iOA/bin/iOA.bin.40 \
-        /usr/lib/iOA/bin/SmartGateAgent.bin.39 /usr/lib/iOA/bin/SmartGateAgent.bin.40 \
-        /usr/lib/iOA/bin/SmartGateAgent.bin.40.patched \
-        /opt/ioa/bin/iOALinux.bin.39 /opt/ioa/bin/iOALinux.bin.40
+    # The GUI is the package binary at the package path, which is also the vendor unit's
+    # ExecStart, so drop the gutted iOALinux.bin shim and the duplicate tree under /opt.
+    sudo rm -f /usr/lib/iOA/bin/iOALinux.bin /usr/lib/iOA/bin/iOALinux.bin.62
+    sudo rm -rf /opt/ioa/bin
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
     sudo rm -f /var/lib/network-reconfigure/derp-ips \
