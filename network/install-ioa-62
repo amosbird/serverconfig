@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Converge the live iOA installation on the extracted 1.0.3.62 package.
+#
+# The package is authoritative for every vendor file. serverconfig only replaces the iOA and
+# SmartGateAgent entry points with wrappers; their real ELFs remain byte-identical package copies
+# under versioned names. The Arch GUI adaptation is the user ioagui.service, not a launcher shim.
+
+set -euo pipefail
+
+version=62
+target_user=${SUDO_USER:-${USER:-amos}}
+target_home=$(getent passwd "$target_user" | cut -d: -f6)
+package_root=${IOA_PACKAGE_ROOT:-"$target_home/ioa-1.0.3.62-1-x86_64.pkg"}
+source_dir="$package_root/usr/lib/iOA/bin"
+live_dir=/usr/lib/iOA/bin
+
+[ "$(id -u)" -eq 0 ] || {
+    echo "install-ioa-62: must run as root" >&2
+    exit 1
+}
+
+for file in conf.yaml ifconfig2 iOA iOADiagnosticTool iOALinux iOAStandard iOA_upgrade \
+    SmartGateAgent wpa.sh; do
+    [ -f "$source_dir/$file" ] || {
+        echo "install-ioa-62: missing package file: $source_dir/$file" >&2
+        exit 1
+    }
+done
+
+mkdir -p "$live_dir"
+
+# Replace through rename rather than truncating a running executable. Existing processes may keep
+# their old inode until their normal restart; every subsequent exec sees the verified package file.
+install_vendor_file() {
+    local source=$1 destination=$2 mode=${3:-755} temporary
+    cmp -s "$source" "$destination" 2>/dev/null && return
+    temporary=$(mktemp "$live_dir/.install-ioa-62.XXXXXX")
+    install -m "$mode" -o root -g root "$source" "$temporary"
+    mv -f "$temporary" "$destination"
+}
+
+install_vendor_file "$source_dir/conf.yaml" "$live_dir/conf.yaml"
+install_vendor_file "$source_dir/ifconfig2" "$live_dir/ifconfig2"
+install_vendor_file "$source_dir/iOA" "$live_dir/iOA.bin.$version"
+install_vendor_file "$source_dir/iOADiagnosticTool" "$live_dir/iOADiagnosticTool"
+install_vendor_file "$source_dir/iOALinux" "$live_dir/iOALinux"
+install_vendor_file "$source_dir/iOAStandard" "$live_dir/iOAStandard"
+install_vendor_file "$source_dir/iOA_upgrade" "$live_dir/iOA_upgrade"
+install_vendor_file "$source_dir/SmartGateAgent" "$live_dir/SmartGateAgent.bin.$version"
+install_vendor_file "$source_dir/wpa.sh" "$live_dir/wpa.sh"
+
+ln -sfn "iOA.bin.$version" "$live_dir/iOA.bin"
+ln -sfn "SmartGateAgent.bin.$version" "$live_dir/SmartGateAgent.bin"
+
+# No iOALinux.bin or launcher exists in the package. The genuine iOALinux ELF is the entry point.
+rm -f "$live_dir"/iOALinux.bin "$live_dir"/iOALinux.bin.*
+rm -rf /opt/ioa/bin
+
+# Delete every stale version, not merely versions observed on this machine.
+for file in "$live_dir"/iOA.bin.*; do
+    [ "$file" = "$live_dir/iOA.bin.$version" ] || rm -f "$file"
+done
+for file in "$live_dir"/SmartGateAgent.bin.*; do
+    [ "$file" = "$live_dir/SmartGateAgent.bin.$version" ] || rm -f "$file"
+done
+
+verify_pair() {
+    local package_file=$1 live_file=$2
+    cmp -s "$source_dir/$package_file" "$live_dir/$live_file" || {
+        echo "install-ioa-62: verification failed: $live_file" >&2
+        exit 1
+    }
+}
+
+verify_pair conf.yaml conf.yaml
+verify_pair ifconfig2 ifconfig2
+verify_pair iOA "iOA.bin.$version"
+verify_pair iOADiagnosticTool iOADiagnosticTool
+verify_pair iOALinux iOALinux
+verify_pair iOAStandard iOAStandard
+verify_pair iOA_upgrade iOA_upgrade
+verify_pair SmartGateAgent "SmartGateAgent.bin.$version"
+verify_pair wpa.sh wpa.sh
+
+[ "$(readlink "$live_dir/iOA.bin")" = "iOA.bin.$version" ]
+[ "$(readlink "$live_dir/SmartGateAgent.bin")" = "SmartGateAgent.bin.$version" ]
+[ ! -e /opt/ioa/bin ]
+
+echo "iOA vendor files match package 1.0.3.62"
