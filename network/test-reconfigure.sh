@@ -28,6 +28,7 @@ SCRIPT=""   # set once $WORK exists
 # numeric comparison here would never match what the kernel reports back.
 UNDERLAY_TABLE="underlay"
 CN_TABLE="cn"
+CN_STAGE_TABLE="cn_stage"
 pass=0; fail=0
 
 ok()   { printf '  \033[32mOK\033[0m   %s\n' "$*"; pass=$((pass+1)); }
@@ -84,11 +85,9 @@ run_status() {
     echo $?
 }
 
-# Move the namespace onto a different AP: new subnet, new gateway, new
-# resolvers. This is the event that broke the live machine — the old AP's
-# resolver was its own gateway and so was covered by the subnet rule by
-# accident, and the new one hands out public addresses that are covered by
-# nothing unless they are named.
+# Move the namespace onto a different AP: new subnet, new gateway, and new
+# resolvers. No RFC 8910 portal is advertised, so the public resolvers must not
+# acquire a physical-route exception that bypasses the selected exit node.
 roam_to() {
     local subnet="$1" gw="$2" dns1="$3" dns2="$4"
     ip addr flush dev wlan0
@@ -101,6 +100,11 @@ roam_to() {
 band() { ip -4 rule show pref "$1" 2>/dev/null | sed 's/^[0-9]*:[[:space:]]*//' | sort; }
 count() { ip -4 rule show pref "$1" 2>/dev/null | wc -l; }
 routes() { ip route show table "$1" 2>/dev/null | wc -l; }
+cn_entries() {
+    ipset save cn_direct 2>/dev/null |
+        awk '$1 == "add" {print $3 ($4 == "nomatch" ? " nomatch" : "")}' | sort
+}
+cn_contains() { ipset test cn_direct "$1" >/dev/null 2>&1; }
 
 snapshot_owner_state() {
     local table pref
@@ -193,7 +197,7 @@ networkctl() {
 }
 systemctl()  { printf '%s\n' "$*" >> WORKDIR/systemctl-calls; return 0; }
 tailscale()  { return 1; }
-logger()     { return 0; }
+logger()     { printf '%s\n' "$*" >> WORKDIR/logger; return 0; }
 dig()        { return 9; }
 ip() {
     local batch
@@ -319,19 +323,17 @@ main() {
     done
 
     head_ "fixed routing table registration conflicts"
-    check_fixed_table_conflict 'table 101 bound to foreign name' \
-        '101 foreign' '400 ioa' '102 kwai'
-    check_fixed_table_conflict 'cn bound to another ID' \
-        '201 cn' '400 ioa' '102 kwai'
     check_fixed_table_conflict 'table 400 bound to foreign name' \
-        '101 cn' '400 foreign' '102 kwai'
+        '400 foreign' '102 kwai'
     local duplicate_owner_before duplicate_rc
     write_rt_tables '101 cn' '400 ioa' '400 ioa' '102 kwai'
     duplicate_owner_before=$(snapshot_owner_state)
     duplicate_rc=$(run_status 1)
     if [ "$duplicate_rc" -eq 0 ] &&
        [ "$(awk '$1 == 400 && $2 == "ioa" {count++} END {print count + 0}' \
-           "$WORK/rt_tables")" -eq 1 ]; then
+           "$WORK/rt_tables")" -eq 1 ] &&
+       [ "$(awk '$2 == "cn" || $2 == "cn_stage" {count++} END {print count + 0}' \
+           "$WORK/rt_tables")" -eq 0 ]; then
         ok "duplicate exact ioa mapping is normalized"
     else
         bad "duplicate exact ioa mapping was not normalized (rc=$duplicate_rc)"
@@ -345,9 +347,10 @@ main() {
     fixed_owner_before=$(snapshot_owner_state)
     fixed_rc=$(run_status 1)
     if [ "$fixed_rc" -eq 0 ] &&
-       [ "$(awk '$1 == 101 && $2 == "cn" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 1 ] &&
+       [ "$(awk '$1 == 101 && $2 == "cn" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 0 ] &&
+       [ "$(awk '$2 == "cn_stage" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 0 ] &&
        [ "$(awk '$1 == 400 && $2 == "ioa" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 1 ]; then
-        ok "unused fixed table IDs register once"
+        ok "unused fixed table IDs register once and leave retired CN tables unregistered"
     else
         bad "normal fixed table registration failed (rc=$fixed_rc)"
     fi
@@ -450,6 +453,12 @@ main() {
     else
         bad "gateway rule did not converge uniquely: $(band 1000)"
     fi
+    if [ "$(band 1000 |
+        grep -Fxc 'from all lookup main suppress_prefixlength 0')" -eq 1 ]; then
+        ok "live connected routes always override stale IOA 10/8 policy"
+    else
+        bad "priority 1000 lacks the live connected-route lookup: $(band 1000)"
+    fi
     for resolver in 10.76.3.38 10.76.3.39 10.14.198.15; do
         if [ "$(band 1000 | grep -Fxc "from all to $resolver lookup main")" -eq 1 ]; then
             ok "active office resolver $resolver is pinned to main"
@@ -458,88 +467,56 @@ main() {
         fi
     done
     run_script 1 >/dev/null
-    local stage_id
-    stage_id=$(awk '$2 == "cn_stage" {print $1}' "$WORK/rt_tables")
-    [ "$(awk '$2 == "cn_stage" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 1 ] &&
-        [ "$stage_id" != 102 ] &&
-        [ "$(awk -v id="$stage_id" '$1 == id {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 1 ] \
-        && ok "cn_stage has one unique non-conflicting table ID ($stage_id)" \
-        || bad "cn_stage registration conflicts: $(grep -E '[[:space:]](cn_stage|kwai)$' "$WORK/rt_tables")"
+    [ "$(awk '$2 == "cn" || $2 == "cn_stage" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 0 ] \
+        && ok "retired CN routing tables stay unregistered" \
+        || bad "retired CN routing tables were registered: $(grep -E '[[:space:]](cn|cn_stage)$' "$WORK/rt_tables")"
     ip route show table 102 | grep -Fq 'blackhole 203.0.113.0/24' \
         && ok "foreign kwai staging sentinel is untouched" \
         || bad "foreign kwai staging sentinel was changed"
-    run_script 1 >/dev/null
-    [ "$(awk '$2 == "cn_stage" {print $1}' "$WORK/rt_tables")" = "$stage_id" ] \
-        && ok "existing unique cn_stage ID is reused" \
-        || bad "cn_stage ID changed after registration"
 
     head_ "CN rebuild gating"
-    ip route replace 1.0.1.0/24 via 192.168.255.1 dev tun0 table cn
-    : > "$WORK/ip-calls"
+    ip route replace 1.0.1.0/24 via 192.168.255.1 dev tun0 table 101 2>/dev/null || true
     run_script 0 >/dev/null
-    if ip route show table cn | grep -Eq '^1\.0\.1\.0/24 via 10\.36\.48\.1 dev wlan0($| )' &&
-       grep -q -- '-batch -' "$WORK/ip-calls"; then
-        ok "wrong-device CN route triggers reconciliation"
+    if [ -z "$(ip route show table cn 2>/dev/null)" ] &&
+       [ -z "$(ip route show table cn_stage 2>/dev/null)" ] &&
+       [ -z "$(ip route show table 101 2>/dev/null)" ]; then
+        ok "legacy gateway-coupled CN tables are retired"
     else
-        bad "wrong-device CN route survived reconciliation: $(ip route show table cn)"
+        bad "legacy CN route survived reconciliation: $(ip route show table 101 2>/dev/null)"
     fi
-    : > "$WORK/ip-calls"
+    local cn_before
+    cn_before=$(cn_entries)
     run_script 1 >/dev/null
-    if ! grep -Eq '(^| )route (flush|add|replace|del).*table (cn|cn_stage)|-batch -' \
-            "$WORK/ip-calls"; then
-        ok "ordinary FORCE leaves healthy CN tables untouched"
+    if [ "$(cn_entries)" = "$cn_before" ]; then
+        ok "ordinary FORCE leaves the healthy CN classifier unchanged"
     else
-        bad "ordinary FORCE mutated healthy CN tables"
+        bad "ordinary FORCE mutated the healthy CN classifier"
     fi
-    : > "$WORK/ip-calls"
-    FORCE_CN=1 run_script 0 >/dev/null
-    if grep -Eq '(^| )route (flush|add|replace|del).*table (cn|cn_stage)|-batch -' \
-            "$WORK/ip-calls"; then
-        ok "FORCE_CN rebuilds CN tables"
-    else
-        bad "FORCE_CN did not rebuild CN tables"
-    fi
-    local cn_state_before batch_calls standalone_promotions
-    cn_state_before=$(cat "$WORK/cn-last-applied")
-    ip route replace blackhole 198.18.0.0/15 table cn
-    : > "$WORK/ip-calls"
-    FORCE_CN=1 run_script 0 >/dev/null
-    batch_calls=$(grep -c '^-batch ' "$WORK/ip-calls")
-    standalone_promotions=$(grep -Ec '^route replace .* table cn$' "$WORK/ip-calls" || true)
-    [ "$batch_calls" -eq 2 ] \
-        && ok "CN rebuild uses one staging and one promotion batch" \
-        || bad "CN rebuild used $batch_calls batch calls instead of two"
-    [ "$standalone_promotions" -eq 0 ] \
-        && ok "CN promotion launches no per-route ip process" \
-        || bad "CN promotion launched $standalone_promotions standalone route replacements"
-    if ip route show table cn | grep -Fq 'blackhole 198.18.0.0/15'; then
-        bad "CN promotion retained a stale route"
-    else
-        ok "CN promotion removes stale routes"
-    fi
-    [ "$(cat "$WORK/cn-last-applied")" = "$cn_state_before" ] ||
-        bad "forced convergent rebuild changed CN state content"
 
-    if ip route show table cn | sed -E 's/[[:space:]]+$//' |
-            grep -Fqx 'throw 193.112.78.32'; then
-        ok "CN exclusions install a throw route"
+    ipset del cn_direct 1.0.1.0/24
+    FORCE_CN=1 run_script 0 >/dev/null
+    if cn_contains 1.0.1.1; then
+        ok "FORCE_CN rebuilds the CN classifier"
     else
-        bad "CN exclusion throw route is missing: $(ip route show table cn)"
+        bad "FORCE_CN did not rebuild the CN classifier"
     fi
-    if [ "$(route_table 193.112.78.32)" = 52 ]; then
-        ok "CN exclusion falls through to later policy rules"
-    else
-        bad "CN exclusion did not fall through: $(ip route get 193.112.78.32)"
-    fi
+
+    local cn_state_before
     cn_state_before=$(cat "$WORK/cn-last-applied")
-    printf '# Explicit CN bypasses\n193.112.78.33\n' > "$WORK/cn-exclude.conf"
-    : > "$WORK/ip-calls"
+    ipset del cn_direct 1.0.1.0/24
+    ipset add cn_direct 198.18.0.0/15
     run_script 0 >/dev/null
-    if grep -q -- '-batch -' "$WORK/ip-calls" &&
-       ip route show table cn | sed -E 's/[[:space:]]+$//' |
-           grep -Fqx 'throw 193.112.78.33' &&
-       ! ip route show table cn | grep -Fq '193.112.78.32'; then
-        ok "CN exclusion changes trigger reconciliation"
+    if cn_contains 1.0.1.1 && ! cn_contains 198.18.0.1; then
+        ok "same-count CN set drift triggers exact repair"
+    else
+        bad "same-count CN set drift survived reconciliation"
+    fi
+
+    cn_state_before=$(cat "$WORK/cn-last-applied")
+    printf '# Explicit CN bypasses\n10.20.1.0/24\n' > "$WORK/cn-exclude.conf"
+    run_script 0 >/dev/null
+    if ! cn_contains 10.20.1.1 && cn_contains 10.20.2.1; then
+        ok "CN exclusions are atomic nomatch entries"
     else
         bad "CN exclusion change was not reconciled"
     fi
@@ -548,7 +525,7 @@ main() {
         || bad "CN exclusion state did not change"
 
     cn_state_before=$(cat "$WORK/cn-last-applied")
-    printf '193.112.78.33/32\n193.112.78.33/32\n' > "$WORK/cn-exclude.conf"
+    printf '10.20.1.0/24\n10.20.1.0/24\n' > "$WORK/cn-exclude.conf"
     run_status 0 >/dev/null
     [ "$(cat "$WORK/cn-last-applied")" = "$cn_state_before" ] \
         && ok "duplicate CN exclusion preserves state" \
@@ -647,8 +624,9 @@ main() {
        grep -Fqx 'server 203.0.113.53 -group captive -exclude-default-group' \
            "$WORK/dhcp-dns.conf" &&
        grep -Fqx 'nameserver /login.hotel.test/captive' "$WORK/dhcp-dns.conf" &&
+       grep -Fq 'to 203.0.113.53 lookup main' <<<"$(band 1000)" &&
        [ "$(grep -Fxc 'restart smartdns' "$WORK/systemctl-calls")" -eq 1 ]; then
-        ok "changed captive DNS is scoped to the portal hostname"
+        ok "changed captive DNS is portal-scoped and physically reachable"
     else
         bad "changed captive DNS escaped its portal-only group"
     fi
@@ -662,8 +640,9 @@ main() {
     printf '   6 domain name server 203.0.113.53\n' > "$WORK/lease"
     run_script 1 >/dev/null
     if grep -Fqx '# No captive portal DNS' "$WORK/dhcp-dns.conf" &&
-       ! grep -Fq 'server ' "$WORK/dhcp-dns.conf"; then
-        ok "DHCP DNS without a captive portal is excluded from SmartDNS"
+       ! grep -Fq 'server ' "$WORK/dhcp-dns.conf" &&
+       ! grep -Fq 'to 203.0.113.53 lookup main' <<<"$(band 1000)"; then
+        ok "ordinary DHCP DNS has neither a SmartDNS nor a physical-route exception"
     else
         bad "ordinary DHCP DNS leaked into SmartDNS: $(cat "$WORK/dhcp-dns.conf")"
     fi
@@ -672,11 +651,17 @@ main() {
     run_script 1 >/dev/null
 
     head_ "direct routes override IOA business policy"
-    [ "$(route_table 10.20.1.1)" = cn ] && ok "routefile overrides static 10/8 IOA" \
-                                        || bad "routefile lost to static 10/8"
-    [ "$(route_table 100.12.34.5)" = cn ] \
-        && ok "routefile handles unclassified 100.12 destinations directly" \
-        || bad "unclassified routefile destination did not use cn"
+    if cn_contains 10.20.1.1 && [ "$(route_table 10.20.1.1 'mark 0x2')" = main ]; then
+        ok "routefile classification overrides static 10/8 IOA through current main"
+    else
+        bad "routefile classification lost to static 10/8"
+    fi
+    if cn_contains 100.12.34.5 &&
+       [ "$(route_table 100.12.34.5 'mark 0x2')" = main ]; then
+        ok "unclassified 100.12 routefile destination uses current main"
+    else
+        bad "unclassified routefile destination did not use current main"
+    fi
     [ "$(route_table 10.36.48.1)" = main ] && ok "connected 10/8 LAN overrides IOA" \
                                             || bad "connected LAN routed into IOA"
 
@@ -694,9 +679,11 @@ main() {
     full_width_fwmark_rule 2500 0x1 ioa \
         && ok "IOA rule matches the exact full-width mark after CN" \
         || bad "IOA rule is not exact 0x1/0xffffffff after CN"
-    [ "$(route_table 10.20.1.1 'mark 0x1')" = cn ] \
-        && ok "routefile overrides a SmartDNS business mark" \
-        || bad "SmartDNS business mark bypassed routefile authority"
+    cn_line=$(grep -n -- "--match-set cn_direct dst" <<<"$chain" | cut -d: -f1)
+    ioa_line=$(grep -n -- "--match-set ioa dst" <<<"$chain" | cut -d: -f1)
+    [ -n "$cn_line" ] && [ -n "$ioa_line" ] && [ "$cn_line" -lt "$ioa_line" ] \
+        && ok "routefile classifier runs before SmartDNS business classification" \
+        || bad "SmartDNS business classifier precedes routefile classification"
     [ "$(band 500 | grep -Fxc 'from all fwmark 0x80000/0xff0000 lookup main')" -eq 1 ] \
         && ok "pref 500 contains the complete Tailscale mark rule exactly once" \
         || bad "pref 500 lacks the complete Tailscale mark rule: $(band 500)"
@@ -732,7 +719,8 @@ main() {
     for mark in 2616 524288 2; do
         ping -q -c 1 -W 1 -m "$mark" 21.34.11.74 >/dev/null 2>&1 || true
     done
-    nonzero_return=$(iptables -t mangle -L NETMODE_IOA -nvx | awk '$3 == "RETURN" {print $1}')
+    nonzero_return=$(iptables -t mangle -L NETMODE_IOA -nvx |
+        awk '$3 == "RETURN" {sum += $1} END {print sum + 0}')
     nonzero_mark=$(iptables -t mangle -L NETMODE_IOA -nvx |
         awk '$3 == "MARK" && /match-set ioa dst/ {print $1}')
     if [ "$nonzero_return" -eq 3 ] && [ "$nonzero_mark" -eq 0 ]; then
@@ -768,6 +756,9 @@ main() {
         ! grep -Fq -- '-o owner0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules" \
         && ok "IOA owner NAT follows the current physical device exactly once" \
         || bad "IOA owner NAT is stale, missing, or duplicated"
+    [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
+        && ok "CN reroute source NAT follows the physical device exactly once" \
+        || bad "CN reroute source NAT is stale, missing, or duplicated"
 
     head_ "early-exit fingerprint repairs owned firewall drift"
     iptables -t mangle -A NETMODE_IOA -j ACCEPT
@@ -776,10 +767,12 @@ main() {
         && ok "chain content drift triggers reconciliation" || bad "chain drift survived early exit"
     while iptables -t nat -D POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE 2>/dev/null; do :; done
     while iptables -t nat -D POSTROUTING -o wlan0 -m mark --mark 0x1000000 -j MASQUERADE 2>/dev/null; do :; done
+    while iptables -t nat -D POSTROUTING -o wlan0 -m mark --mark 0x2 -j MASQUERADE 2>/dev/null; do :; done
     run_script 0 >/dev/null
     nat_rules=$(iptables -t nat -S POSTROUTING)
     [ "$(grep -Fc -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
-        [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
+        [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
+        [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "owned NAT drift triggers reconciliation" \
         || bad "owned NAT drift survived early exit"
 
@@ -793,13 +786,15 @@ main() {
 
     head_ "routefile failures preserve active policy"
     local cn_before marking_before malicious_owner_before table52_before invalid_route
-    cn_before=$(ip route show table cn | sed -E 's/[[:space:]]+$//' | sort)
+    cn_before=$(cn_entries)
     marking_before=$(snapshot_marking)
     printf 'route add malformed via GATEWAY table cn\n' > "$WORK/routefile"
-    [ "$(run_status 1)" -ne 0 ] \
-        && ok "malformed routefile fails the run" || bad "malformed routefile was accepted"
-    [ "$(ip route show table cn | sed -E 's/[[:space:]]+$//' | sort)" = "$cn_before" ] \
-        && ok "failed staging batch preserves old cn" || bad "failed batch changed cn"
+    [ "$(run_status 1)" -eq 0 ] \
+        && ok "malformed optional routefile does not fail base reconciliation" \
+        || bad "malformed optional routefile failed base reconciliation"
+    [ "$(cn_entries)" = "$cn_before" ] \
+        && ok "malformed routefile preserves the last known-good CN set" \
+        || bad "malformed routefile changed the active CN set"
     [ "$(snapshot_marking)" = "$marking_before" ] \
         && ok "failed staging preserves the active marking chain and hook byte-for-byte" \
         || bad "failed staging changed the active marking chain or hook"
@@ -837,15 +832,15 @@ main() {
     printf '%s\n' \
         'route add 1.0.3.0/24 via GATEWAY table cn' \
         'route flush table 52' > "$WORK/routefile"
-    [ "$(run_status 1)" -ne 0 ] \
-        && ok "routefile rejects commands outside the route grammar" \
-        || bad "routefile executed an out-of-grammar command"
+    [ "$(run_status 1)" -eq 0 ] \
+        && ok "out-of-grammar optional routefile does not fail base reconciliation" \
+        || bad "out-of-grammar optional routefile failed base reconciliation"
     [ "$(snapshot_owner_state)" = "$malicious_owner_before" ] &&
         [ "$(ip route show table 52 | sort)" = "$table52_before" ] \
         && ok "rejected routefile preserves owner state and table 52" \
         || bad "rejected routefile changed owner state or table 52"
-    [ "$(ip route show table cn | sed -E 's/[[:space:]]+$//' | sort)" = "$cn_before" ] \
-        && ok "rejected routefile preserves old cn" || bad "rejected routefile changed cn"
+    [ "$(cn_entries)" = "$cn_before" ] \
+        && ok "rejected routefile preserves old CN set" || bad "rejected routefile changed CN set"
 
     for invalid_route in \
         'route add 256.0.0.1/24 via GATEWAY table cn' \
@@ -854,17 +849,21 @@ main() {
         'route add 1.0.1.0/24 via GATEWAY table main' \
         'route add 1.0.1.0/24 via GATEWAY table cn metric 1'; do
         printf '%s\n' "$invalid_route" > "$WORK/routefile"
-        [ "$(run_status 1)" -ne 0 ] \
-            && ok "routefile rejects: $invalid_route" \
-            || bad "routefile accepted: $invalid_route"
+        if [ "$(run_status 1)" -eq 0 ] && [ "$(cn_entries)" = "$cn_before" ]; then
+            ok "invalid optional routefile is isolated: $invalid_route"
+        else
+            bad "invalid optional routefile changed base policy: $invalid_route"
+        fi
     done
 
     printf '%s\n' \
         'route add 1.0.1.0/24 via GATEWAY table cn' \
         'route replace 1.0.1.0/24 via GATEWAY table cn' > "$WORK/routefile"
-    [ "$(run_status 1)" -ne 0 ] \
-        && ok "routefile rejects duplicate destination prefixes" \
-        || bad "routefile accepted duplicate destination prefixes"
+    if [ "$(run_status 1)" -eq 0 ] && [ "$(cn_entries)" = "$cn_before" ]; then
+        ok "duplicate routefile prefixes preserve last known-good acceleration"
+    else
+        bad "duplicate routefile prefixes changed base policy"
+    fi
 
     printf 'route add 1.0.1.0/24 via GATEWAY table cn\nroute add 1.0.2.0/23 via GATEWAY table cn\n' > "$WORK/routefile"
     run_script 1 >/dev/null
@@ -872,16 +871,21 @@ main() {
     head_ "missing and empty routefiles authoritatively disable cn"
     rm -f "$WORK/routefile"
     run_script 1 >/dev/null
-    [ "$(routes cn)" -eq 0 ] && [ "$(count 1500)" -eq 0 ] \
-        && ok "missing routefile converges cn table and rule to empty" \
-        || bad "missing routefile left cn policy"
+    [ -z "$(cn_entries)" ] && [ "$(routes cn)" -eq 0 ] && [ "$(count 1500)" -eq 0 ] \
+        && ok "missing routefile disables optional CN acceleration" \
+        || bad "missing routefile left CN acceleration active"
     : > "$WORK/routefile"
-    ip route add blackhole 203.0.113.0/24 table cn
-    ip rule add lookup cn pref 1500
+    ip route add blackhole 203.0.113.0/24 table 101 2>/dev/null || true
+    ip rule add lookup cn pref 1500 2>/dev/null || true
     run_script 1 >/dev/null
-    [ "$(routes cn)" -eq 0 ] && [ "$(count 1500)" -eq 0 ] \
-        && ok "empty routefile converges cn table and rule to empty" \
-        || bad "empty routefile left cn policy"
+    [ -z "$(cn_entries)" ] && [ "$(routes cn)" -eq 0 ] && [ "$(count 1500)" -eq 0 ] \
+        && ok "empty routefile disables optional CN acceleration and legacy policy" \
+        || bad "empty routefile left CN acceleration active"
+    printf '# only a comment\n\n' > "$WORK/routefile"
+    run_script 1 >/dev/null
+    [ -z "$(cn_entries)" ] && [ "$(count 1500)" -eq 0 ] \
+        && ok "comment-only routefile disables optional CN acceleration" \
+        || bad "comment-only routefile left CN acceleration active"
     printf 'route add 1.0.1.0/24 via GATEWAY table cn\nroute add 1.0.2.0/23 via GATEWAY table cn\n' > "$WORK/routefile"
     run_script 1 >/dev/null
 
@@ -964,13 +968,11 @@ main() {
         && ok "new gateway pinned at 1000" || bad "new gateway missing from 1000"
     grep -q 'to 10.36.40.0/21 lookup main'   <<<"$b1000" \
         && ok "new subnet pinned at 1000" || bad "new subnet missing from 1000"
-    # The bug that took the machine offline: public DHCP resolvers are inside no
-    # private range, so if they are not named here they follow the exit node.
-    if grep -q 'to 202.152.254.230 lookup main' <<<"$b1000" &&
-       grep -q 'to 202.152.254.65 lookup main'  <<<"$b1000"; then
-        ok "both public DHCP resolvers pinned at 1000"
+    if ! grep -q 'to 202.152.254.230 lookup main' <<<"$b1000" &&
+       ! grep -q 'to 202.152.254.65 lookup main'  <<<"$b1000"; then
+        ok "ordinary public DHCP resolvers do not bypass the exit node"
     else
-        bad "public DHCP resolvers not pinned: $b1000"
+        bad "ordinary public DHCP resolver received a physical bypass: $b1000"
     fi
     # A rule that outlives the AP it was built for is a black hole, not a leftover.
     if grep -qE 'to (10\.36\.48\.|10\.36\.32\.0/20)' <<<"$b1000"; then
@@ -979,45 +981,26 @@ main() {
         ok "no rule from the previous AP survived"
     fi
 
-    # Tables carry the gateway; rules do not. Put desired prefixes back on the old
-    # gateway and add one truly stale prefix, reproducing replace-then-delete failure.
-    ip route add 10.36.48.1/32 dev wlan0 scope link 2>/dev/null || true
-    ip route show table "$CN_TABLE" |
-        sed -E 's/ via [^ ]+ dev [^ ]+/ via 10.36.48.1 dev wlan0/; s/$/ table cn/; s/^/route replace /' |
-        ip -batch -
-    ip route replace blackhole 198.51.100.0/24 table "$CN_TABLE"
+    # CN classification contains no gateway. A roam must leave the set byte-identical while
+    # retiring any injected legacy route-table state.
+    cn_before=$(cn_entries)
+    ip route replace blackhole 198.51.100.0/24 table 101 2>/dev/null || true
     owner_before=$(snapshot_owner_state)
-    rm -f "$WORK/cn-last-applied"
-    : > "$WORK/ip-calls"
-    : > "$WORK/ip-batch-commands"
-    FORCE_CN=1 run_script 0 >/dev/null
+    run_script 0 >/dev/null
     rc=$?
-    [ "$rc" -eq 0 ] && ok "CN gateway-change promotion exits cleanly" \
-                    || bad "CN gateway-change promotion exited $rc"
-    if ip route show table "$CN_TABLE" 2>/dev/null | grep -q '10.36.48.1'; then
-        bad "cn table still points at the previous gateway"
-    elif ip route show table "$CN_TABLE" 2>/dev/null |
-            grep -Eq 'via 10\.36\.40\.1 dev wlan0($| )'; then
-        ok "cn table rebuilt onto the new physical gateway and device"
+    [ "$rc" -eq 0 ] && ok "CN acceleration survives a gateway change" \
+                    || bad "CN acceleration failed after gateway change (rc=$rc)"
+    if [ "$(cn_entries)" = "$cn_before" ]; then
+        ok "gateway change does not rebuild the gateway-independent CN set"
     else
-        bad "cn table has no route via the new physical gateway and device"
+        bad "gateway change mutated the gateway-independent CN set"
     fi
-    if ip route show table "$CN_TABLE" | grep -Fq '198.51.100.0/24'; then
-        bad "CN gateway-change promotion retained a stale-only prefix"
+    if [ -n "$(ip route show table "$CN_TABLE" 2>/dev/null)" ] ||
+       [ -n "$(ip route show table "$CN_STAGE_TABLE" 2>/dev/null)" ] ||
+       [ -n "$(ip route show table 101 2>/dev/null)" ]; then
+        bad "gateway change retained legacy CN routing-table state"
     else
-        ok "CN gateway-change promotion removes stale-only prefixes"
-    fi
-    if grep -Eq '^route replace (1\.0\.1\.0/24|1\.0\.2\.0/23|10\.20\.0\.0/16|100\.12\.34\.0/24) via 10\.36\.40\.1 dev wlan0 table cn_stage$' \
-            "$WORK/ip-batch-commands"; then
-        ok "CN staging pins the physical device explicitly"
-    else
-        bad "CN staging omitted or selected the wrong physical device"
-    fi
-    if grep -Eq '^route del (1\.0\.1\.0/24|1\.0\.2\.0/23|10\.20\.0\.0/16|100\.12\.34\.0/24)' \
-            "$WORK/ip-batch-commands"; then
-        bad "promotion deletes a desired prefix after replacing its gateway"
-    else
-        ok "promotion does not delete desired prefixes after gateway replacement"
+        ok "gateway change leaves no stale CN gateway routes"
     fi
     [ "$(snapshot_owner_state)" = "$owner_before" ] \
         && ok "CN gateway change preserves tunnel-owned state" \
@@ -1050,7 +1033,7 @@ main() {
     # Stale: table 230 points at the pre-roam gateway. Rule 1200 captures all
     # locally sourced traffic, so this blackholes the machine; the audit must
     # fail open so iOA redeploys against the settled main table.
-    ip route replace default via 10.36.48.1 dev wlan0 table 230
+    ip route replace default via 10.36.48.1 dev wlan0 onlink table 230
     rc=$(run_status 0)
     [ "$rc" -eq 0 ] && ok "stale SmartGate audit run exits clean" \
                     || bad "stale SmartGate audit run exited $rc"
@@ -1171,7 +1154,6 @@ host_test_state() {
         grep -E '10\.20|100\.12\.34|192\.0\.2|198\.51\.100|203\.0\.113' || true
     ip -br link show 2>/dev/null |
         grep -E '^(owner0|wired-peer|enp1s0|wlan0)[[:space:]]' || true
-    ip netns list 2>/dev/null | sed 's/^/netns /'
     ipset list ioa_intranet 2>/dev/null | sed 's/^/ipset /' || true
     iptables -t mangle -S NETMODE_IOA 2>/dev/null | sed 's/^/iptables /' || true
     iptables -t mangle -S NETMODE_IOA_NEXT 2>/dev/null | sed 's/^/iptables /' || true
@@ -1185,7 +1167,11 @@ host_test_state() {
 if [ -z "${IN_NETNS:-}" ]; then
     WORK=$(mktemp -d /tmp/nstest.XXXXXX) || exit 1
     export WORK
-    trap 'rm -rf "$WORK"' EXIT
+    if [ "${KEEP_WORK:-0}" = 1 ]; then
+        trap 'printf "test artifacts: %s\n" "$WORK"' EXIT
+    else
+        trap 'rm -rf "$WORK"' EXIT
+    fi
     # `unshare -r` maps the caller to nobody inside the namespace, so everything
     # it must read or execute has to be world-accessible from out here.
     chmod 755 "$WORK"

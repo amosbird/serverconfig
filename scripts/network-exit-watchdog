@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# network-exit-watchdog — repair the Tailscale exit-node data path after a Wi-Fi roam.
+# network-exit-watchdog — repair a failed Tailscale exit-node path after a link change.
 #
 # Why this exists, from a captured outage (2026-09-14 17:46:04, SSID XLSMART Public):
 #
@@ -14,14 +14,14 @@
 # A roam is one trigger, not the only one. On 2026-09-14 18:53:52 restarting the iOA GUI tore
 # down SmartGateAgent, removing tun0; tailscaled rebound twice and the exit-node path wedged the
 # same way, 43 `open-conn-track` timeouts in 100 seconds with no roam anywhere. So the trigger is
-# any change to the link state tailscaled keys on — BSSID, the physical default route, or the set
-# of global addresses — which covers a roam, a tun0 flap and a tailscale0 change alike.
+# any change to the relevant link state — BSSID, the physical default route, or addresses on the
+# physical device, tun0, and tailscale0 — which covers a roam and either tunnel changing.
 #
-# Detection stays event-driven: this runs when link state changes, does nothing unless the
-# fingerprint actually moved, and then verifies within a bounded window instead of probing
-# forever. Recovery escalates strictly inside Tailscale. Unmatched traffic is never redirected
-# onto the physical network, so the fail-closed guarantee in network/README.md holds: an
-# unrecoverable tunnel fails closed rather than silently leaking default traffic.
+# Detection stays event-driven: this runs when link state changes and probes once after the link
+# settles. A healthy path is never rebound. Recovery of a confirmed failure escalates strictly
+# inside Tailscale. Unmatched traffic is never redirected onto the physical network, so the
+# fail-closed guarantee in network/README.md holds: an unrecoverable tunnel fails closed rather
+# than silently leaking default traffic.
 
 set -uo pipefail # deliberately not -e: every step must stay reportable
 
@@ -30,11 +30,13 @@ PROBE_IP=216.239.32.117
 PROBE_URL="http://$PROBE_HOST/generate_204"
 PROBE_TIMEOUT=6
 PROBE_INTERVAL=8
+SETTLE_DELAY=2
 REBIND_WINDOW=24
 RESTART_WINDOW=30
-# A tailscaled that only just started has not had a fair chance yet; this replaces a restart
-# cooldown with no persistent state, since systemd already knows when it came up.
-MIN_TAILSCALED_UPTIME=120
+# Only watchdog-initiated restarts are rate-limited. A manual/package restart must not suppress
+# recovery of an independently confirmed dead path.
+RESTART_COOLDOWN=120
+LOCK_WAIT=90
 
 STATE_DIR="${STATE_DIR_OVERRIDE:-/var/lib/network-exit-watchdog}"
 LOCK="${LOCK_OVERRIDE:-/run/lock/network-exit-watchdog.lock}"
@@ -45,18 +47,25 @@ warn() { logger -t network-exit-watchdog -p daemon.err "$*"; }
 # The trigger fires on any link-state change, so runs can overlap during churn.
 if [ -z "${NETWORK_EXIT_WATCHDOG_LOCKED:-}" ]; then
     export NETWORK_EXIT_WATCHDOG_LOCKED=1
-    exec flock -w 5 "$LOCK" "$0" "$@"
+    exec flock -w "$LOCK_WAIT" "$LOCK" "$0" "$@"
 fi
 
 mkdir -p "$STATE_DIR"
 LINK_STATE_FILE="$STATE_DIR/linkstate"
 STATUS_FILE="$STATE_DIR/status"
+LAST_RESTART_FILE="$STATE_DIR/last-watchdog-restart"
 
 read_state()  { cat "$1" 2>/dev/null || true; }
 write_state() { printf '%s\n' "$2" >"$1" 2>/dev/null || true; }
 
 done_with() {
     write_state "$STATUS_FILE" "$1"
+    exit 0
+}
+
+retry_after_next_event() {
+    write_state "$STATUS_FILE" "$1"
+    rm -f "$LINK_STATE_FILE"
     exit 0
 }
 
@@ -78,14 +87,23 @@ current_bssid() {
 # The same inputs tailscaled's link monitor keys on. A carrier flap short enough to keep the
 # address leaves this unchanged, which is exactly the case the BSSID line catches.
 link_fingerprint() {
-    printf 'bssid %s\n' "$(current_bssid "$iface")"
+    printf 'bssid %s\n' "$bssid"
     ip -4 route show table main default 2>/dev/null | sed 's/^/default /'
-    ip -4 -o addr show scope global 2>/dev/null | awk '{print "addr", $2, $4}' | sort
+    ip -4 -o addr show scope global 2>/dev/null |
+        awk -v physical="$iface" '
+            $2 == physical || $2 == "tailscale0" || $2 == "tun0" {
+                print "addr", $2, $4
+            }
+        ' | sort
 }
 
 exit_node_engaged() {
     tailscale status --json 2>/dev/null |
-        jq -e '.ExitNodeStatus != null and .ExitNodeStatus.ID != ""' >/dev/null 2>&1
+        jq -e '
+            .ExitNodeStatus != null and
+            .ExitNodeStatus.ID != "" and
+            .ExitNodeStatus.Online == true
+        ' >/dev/null 2>&1
 }
 
 # Some gateways forward normally but drop ICMP echo outright (172.20.32.1 here answers no ping
@@ -111,79 +129,127 @@ probe_ok() {
     [ "$code" = 204 ]
 }
 
-tailscaled_uptime() {
-    local started now_us
-    started=$(systemctl show -P ActiveEnterTimestampMonotonic tailscaled 2>/dev/null)
-    [[ "$started" =~ ^[0-9]+$ ]] && [ "$started" -gt 0 ] || return 1
-    now_us=$(awk '{printf "%d", $1 * 1000000}' /proc/uptime 2>/dev/null)
-    [[ "$now_us" =~ ^[0-9]+$ ]] || return 1
-    printf '%s\n' "$(((now_us - started) / 1000000))"
+restart_cooldown_remaining() {
+    local last now elapsed
+    last=$(read_state "$LAST_RESTART_FILE")
+    [[ "$last" =~ ^[0-9]+$ ]] || return 1
+    now=$(date +%s)
+    elapsed=$((now - last))
+    [ "$elapsed" -lt "$RESTART_COOLDOWN" ] || return 1
+    printf '%s\n' "$((RESTART_COOLDOWN - elapsed))"
 }
 
 # 0 = path recovered, 1 = still dead at the deadline, 2 = not a tunnel fault, stop.
 verify_path() {
-    local deadline=$(($(date +%s) + $1))
+    local deadline=$(($(date +%s) + $1)) saw_gateway=0 saw_tunnel=0
     while [ "$(date +%s)" -lt "$deadline" ]; do
-        sleep "$PROBE_INTERVAL"
         if ! gateway_reachable; then
-            log "gateway $gateway unreachable; a physical fault, not the tunnel"
-            write_state "$STATUS_FILE" "gateway $gateway unreachable; physical fault"
-            return 2
+            sleep "$PROBE_INTERVAL"
+            continue
         fi
+        saw_gateway=1
         if ! probe_uses_tunnel; then
-            write_state "$STATUS_FILE" "probe no longer selects the tunnel; not a tunnel fault"
-            return 2
+            sleep "$PROBE_INTERVAL"
+            continue
         fi
+        saw_tunnel=1
         probe_ok && return 0
+        sleep "$PROBE_INTERVAL"
     done
+    if [ "$saw_gateway" -eq 0 ]; then
+        write_state "$STATUS_FILE" "gateway $gateway unreachable; physical fault"
+        return 2
+    fi
+    if [ "$saw_tunnel" -eq 0 ]; then
+        write_state "$STATUS_FILE" "probe did not select the tunnel; not a tunnel fault"
+        return 2
+    fi
     return 1
 }
 
+# Path units run while networkd is still publishing a burst of link changes. Let that burst
+# settle before taking the snapshot; otherwise a transient empty BSSID or half-built address set
+# causes an unnecessary rebind of a healthy tunnel.
+sleep "$SETTLE_DELAY"
+
 iface=$(physical_device)
 gateway=$(physical_gateway)
-[ -n "$iface" ] && [ -n "$gateway" ] ||
+if [ -z "$iface" ] || [ -z "$gateway" ]; then
+    write_state "$LINK_STATE_FILE" "no physical default route"
     done_with "no physical default route; nothing to check"
+fi
+
+bssid=''
+if [[ "$iface" =~ ^wl ]]; then
+    for _ in {1..3}; do
+        bssid=$(current_bssid "$iface")
+        [ -z "$bssid" ] || break
+        sleep 1
+    done
+fi
+if [[ "$iface" =~ ^wl ]] && [ -z "$bssid" ]; then
+    # Record the down edge. A reconnect to the same BSSID and address must still count as a new
+    # event, because the captured outage survived exactly that kind of reconnect.
+    write_state "$LINK_STATE_FILE" "disconnected $iface"
+    done_with "$iface is not associated; waiting for the link to return"
+fi
 
 fingerprint=$(link_fingerprint)
 [ "$fingerprint" != "$(read_state "$LINK_STATE_FILE")" ] || exit 0
 write_state "$LINK_STATE_FILE" "$fingerprint"
-summary="bssid=$(current_bssid "$iface") addrs=$(grep -c '^addr ' <<<"$fingerprint")"
+summary="bssid=${bssid:-none} addrs=$(grep -c '^addr ' <<<"$fingerprint")"
 
 systemctl is-active --quiet tailscaled 2>/dev/null ||
     done_with "link state changed ($summary); tailscaled inactive, nothing to repair"
 
-# The change may be invisible to tailscaled's own monitor, so tell it the path moved. This alone
-# is often enough and is harmless when the tunnel is still healthy.
-log "link state changed ($summary); forcing a magicsock rebind"
-tailscale debug rebind >/dev/null 2>&1 || warn "rebind after link change failed"
-
 exit_node_engaged ||
-    done_with "link state changed ($summary); no exit node engaged, not tunnel-dependent"
+    done_with "link changed ($summary); no online exit node reported, no local repair"
+
+# Never disturb a healthy tunnel merely because a link input changed. Earlier versions rebound
+# first and only checked afterwards; live history shows that did so on every iOA login and even
+# on a transient empty BSSID, while a rebind is itself associated with the captured wedge.
+if ! probe_uses_tunnel; then
+    done_with "link changed; probe does not select the tunnel, no repair needed"
+fi
+if probe_ok; then
+    done_with "exit-node path healthy after link change; no repair needed"
+fi
+if ! gateway_reachable; then
+    retry_after_next_event "gateway $gateway unreachable; physical fault"
+fi
+
+warn "exit-node path failed after link change ($summary); forcing a magicsock rebind"
+tailscale debug rebind >/dev/null 2>&1 || warn "rebind after link change failed"
 
 verify_path "$REBIND_WINDOW"
 case $? in
     0) log "exit-node path healthy after rebind"
        done_with "recovered after link change: rebind" ;;
-    2) exit 0 ;;
+    2) retry_after_next_event "$(read_state "$STATUS_FILE")" ;;
 esac
 
-uptime_s=$(tailscaled_uptime)
-if [[ "$uptime_s" =~ ^[0-9]+$ ]] && [ "$uptime_s" -lt "$MIN_TAILSCALED_UPTIME" ]; then
-    warn "exit-node path dead but tailscaled started ${uptime_s}s ago; not restarting again"
-    done_with "exit-node path dead; restart withheld, tailscaled is ${uptime_s}s old"
+cooldown_s=$(restart_cooldown_remaining)
+if [[ "$cooldown_s" =~ ^[0-9]+$ ]]; then
+    warn "exit-node path dead; watchdog restart cooldown has ${cooldown_s}s remaining"
+    retry_after_next_event \
+        "exit-node path dead; restart withheld by ${cooldown_s}s watchdog cooldown"
 fi
 
 # Restarting repairs the tunnel instead of routing around it, so the fail-closed posture is
 # preserved. This is the step that demonstrably recovered the captured outage.
 warn "exit-node path still dead after rebind; restarting tailscaled"
-systemctl restart tailscaled 2>/dev/null || warn "tailscaled restart failed"
+if systemctl restart tailscaled 2>/dev/null; then
+    write_state "$LAST_RESTART_FILE" "$(date +%s)"
+else
+    warn "tailscaled restart failed"
+fi
 
 verify_path "$RESTART_WINDOW"
 case $? in
     0) log "exit-node path healthy after restarting tailscaled"
        done_with "recovered after link change: tailscaled restart" ;;
-    2) exit 0 ;;
+    2) retry_after_next_event "$(read_state "$STATUS_FILE")" ;;
 esac
 
 warn "exit-node path dead after rebind and restart; failing closed, no bypass installed"
-done_with "exit-node path dead; recovery exhausted, failing closed (no bypass)"
+retry_after_next_event "exit-node path dead; recovery exhausted, failing closed (no bypass)"

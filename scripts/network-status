@@ -22,7 +22,9 @@ else
 fi
 
 printf '\nroutefile direct\n'
-printf '  cn routes     %s\n' "$(routes cn)"
+cn_prefixes=$(ipset save cn_direct 2>/dev/null |
+    awk '$1 == "add" && $NF != "nomatch" {count++} END {print count + 0}')
+printf '  cn prefixes   %s (optional acceleration)\n' "$cn_prefixes"
 printf '  pref 1500     %s\n' "$([ -n "$(rules 1500)" ] && echo present || echo missing)"
 
 printf '\nIOA business\n'
@@ -59,3 +61,8 @@ if command -v tailscale >/dev/null; then
 else
     printf '  tailscale not installed\n'
 fi
+# Builtins only: this stays a read-only status query with no external command.
+exit_path=''
+[ -r /var/lib/network-exit-watchdog/status ] &&
+    read -r exit_path < /var/lib/network-exit-watchdog/status
+printf '  exit path     %s\n' "${exit_path:-not yet checked}"

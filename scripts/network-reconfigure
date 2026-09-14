@@ -18,6 +18,7 @@ if [ -z "${NETWORK_RECONFIGURE_LOCKED:-}" ]; then
 fi
 
 IOA_MARK="0x1/0xffffffff"
+CN_MARK="0x2/0xffffffff"
 IOA_OWNER_MARK="0x1000000/0xffffffff"
 # Both iOA processes create their own transport: the ngnclient daemon runs SmartGateAgent, and the
 # GUI (ioagui.service, a user unit) opens its own control connections to the iOA cloud. The GUI's
@@ -31,8 +32,8 @@ CHAIN="NETMODE_IOA"
 NEXT_CHAIN="NETMODE_IOA_NEXT"
 IOA_STATIC_CIDRS=("10.0.0.0/8")
 TAILNET_NETS=("100.64.0.0/10")
-CN_TABLE="cn"
-CN_STAGE_TABLE="cn_stage"
+CN_SET="cn_direct"
+CN_NEXT_SET="cn_direct_next"
 WIRED_UNDERLAY_TABLE="wired_underlay"
 RT_TABLES="${RT_TABLES_OVERRIDE:-/etc/iproute2/rt_tables}"
 TMPDIR="${TMPDIR_OVERRIDE:-/tmp}"
@@ -100,7 +101,7 @@ reconcile_pref() {
         ip rule del pref "$pref" $have
     done <<<"$({ ip -4 rule show pref "$pref" 2>/dev/null || true; })"
     [ "$(normalise_actual_band "$(band_fingerprint "$pref")")" = \
-        "$(printf '%s\n' "${desired[@]}" | grep -v '^$' | sort | paste -sd';' -)" ]
+        "$(printf '%s\n' "${desired[@]}" | awk 'NF' | sort | paste -sd';' -)" ]
 }
 
 physical_gateway() {
@@ -153,17 +154,6 @@ wired_candidate() {
 count_routes() { { ip route show table "$1" 2>/dev/null || true; } | wc -l; }
 has_routes() { [ "$(count_routes "$1")" -gt 0 ]; }
 
-cn_routes_match() {
-    local table=$1 gateway=$2 device=$3 expected=$4
-    { ip route show table "$table" 2>/dev/null || true; } |
-        awk -v gateway="$gateway" -v device="$device" -v expected="$expected" '
-            $1 == "throw" { count++; next }
-            $2 != "via" || $3 != gateway || $4 != "dev" || $5 != device { bad = 1 }
-            { count++ }
-            END { exit bad || count != expected }
-        '
-}
-
 office_dns_servers() {
     awk '
         $1 == "server" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {
@@ -215,46 +205,36 @@ register_fixed_table() {
     mv "$tmp" "$RT_TABLES"
 }
 
-register_stage_table() {
-    local id tmp
-    id=$(awk -v name="$CN_STAGE_TABLE" '
-        $1 !~ /^#/ && $2 == name { registrations++; value = $1 }
-        END { if (registrations == 1) print value }
-    ' "$RT_TABLES")
-    if [ -n "$id" ] && ! awk -v id="$id" -v name="$CN_STAGE_TABLE" '
-        $1 !~ /^#/ && $1 == id && $2 != name { found = 1 }
-        END { exit !found }
-    ' "$RT_TABLES"; then
+validate_fixed_table 19 "$WIRED_UNDERLAY_TABLE"
+validate_fixed_table 400 "$IOA_TABLE"
+register_fixed_table 19 "$WIRED_UNDERLAY_TABLE"
+register_fixed_table 400 "$IOA_TABLE"
+
+# Names left by the gateway-coupled CN tables. Flushing the FIB is not enough:
+# as long as the names remain, `ip rule add lookup cn` still resolves.
+unregister_named_tables() {
+    local tmp
+    tmp=$(mktemp "$RT_TABLES.XXXXXX")
+    awk '$1 ~ /^#/ || ($2 != "cn" && $2 != "cn_stage")' "$RT_TABLES" > "$tmp"
+    if cmp -s "$tmp" "$RT_TABLES"; then
+        rm -f "$tmp"
         return
     fi
-
-    # shortcut: reserve a bounded private range; fail rather than guess if it is exhausted.
-    id=$(awk '
-        $1 !~ /^#/ { used[$1] = 1 }
-        END { for (id = 10000; id <= 10999; id++) if (!used[id]) { print id; exit } }
-    ' "$RT_TABLES")
-    [ -n "$id" ]
-    tmp=$(mktemp "$RT_TABLES.XXXXXX")
-    awk -v name="$CN_STAGE_TABLE" '$1 ~ /^#/ || $2 != name' "$RT_TABLES" > "$tmp"
-    printf '%s %s\n' "$id" "$CN_STAGE_TABLE" >> "$tmp"
     chmod --reference="$RT_TABLES" "$tmp"
     chown --reference="$RT_TABLES" "$tmp"
     mv "$tmp" "$RT_TABLES"
 }
 
-validate_fixed_table 19 "$WIRED_UNDERLAY_TABLE"
-validate_fixed_table 101 "$CN_TABLE"
-validate_fixed_table 400 "$IOA_TABLE"
-register_fixed_table 19 "$WIRED_UNDERLAY_TABLE"
-register_fixed_table 101 "$CN_TABLE"
-register_fixed_table 400 "$IOA_TABLE"
-register_stage_table
+unregister_named_tables
 
 ensure_ipset() {
     local name=$1 type=${2:-hash:ip}
-    ipset list -n "$name" >/dev/null 2>&1 ||
-        ipset create "$name" "$type" family inet -exist
+    ipset -t list "$name" >/dev/null 2>&1 && return 0
+    ipset create "$name" "$type" family inet maxelem 655360 -exist
 }
+
+ensure_ipset "$CN_SET" hash:net
+ensure_ipset "$CN_NEXT_SET" hash:net
 
 for _ in {1..10}; do
     [ -n "$(ip route show table main scope link dev "$IFACE" 2>/dev/null)" ] && break
@@ -341,6 +321,39 @@ cn_exclude_state=$(sha256sum "$CN_EXCLUDE_FILE" 2>/dev/null |
     awk '{print $1}' || printf missing)
 current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-}"
 current_state+=" portal=${portal_hostname:-} routefile=$routefile_state exclude=$cn_exclude_state"
+cn_input_state="routefile=$routefile_state exclude=$cn_exclude_state"
+
+cn_set_entries() {
+    ipset save "$CN_SET" 2>/dev/null |
+        awk -v set="$CN_SET" '
+            $1 == "add" && $2 == set {
+                printf "%s", $3
+                if ($4 == "nomatch") printf " nomatch"
+                print ""
+            }
+        ' | sort
+}
+
+cn_set_hash() { cn_set_entries | sha256sum | awk '{print $1}'; }
+
+cn_state_matches() {
+    local state recorded_hash
+    state=$(cat "$CN_STATE_FILE" 2>/dev/null || true)
+    [[ "$state" == "$cn_input_state "* ]] || return 1
+    recorded_hash=${state##* sethash=}
+    [[ "$recorded_hash" =~ ^[0-9a-f]{64}$ ]] || return 1
+    [ "$recorded_hash" = "$(cn_set_hash)" ]
+}
+
+# Read the whole set before deciding. Any early exit — `grep -q` or a `return` out of a read
+# loop — closes the pipe, SIGPIPEs the upstream `sort`, and pipefail then reports failure even
+# though a positive prefix exists, silently dropping priority 1500.
+cn_set_has_matches() {
+    local entries positive
+    entries=$(cn_set_entries)
+    positive=$(awk 'NF && $NF != "nomatch"' <<<"$entries")
+    [ -n "$positive" ]
+}
 
 declare -A DESIRED_BANDS
 band_of() { canonical_rules "$@" | paste -sd';' -; }
@@ -363,9 +376,14 @@ local_band=("from all lookup main suppress_prefixlength 0")
 while read -r subnet _; do
     [ -n "$subnet" ] && local_band+=("from all to $subnet lookup main")
 done < <({ ip route show table main scope link 2>/dev/null || true; })
-for addr in "$(physical_gateway)" ${dns:-}; do
+for addr in "$(physical_gateway)"; do
     [ -n "$addr" ] && local_band+=("from all to $addr lookup main")
 done
+if [ -n "$portal_hostname" ]; then
+    for addr in ${dns:-}; do
+        [ -n "$addr" ] && local_band+=("from all to $addr lookup main")
+    done
+fi
 if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
     while read -r addr; do
         [ -n "$addr" ] && local_band+=("from all to $addr lookup main")
@@ -373,8 +391,8 @@ if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
 fi
 DESIRED_BANDS[$P_LOCAL]=$(band_of "${local_band[@]}")
 
-if has_routes "$CN_TABLE"; then
-    DESIRED_BANDS[$P_CN]="from all lookup $CN_TABLE"
+if cn_set_has_matches; then
+    DESIRED_BANDS[$P_CN]="from all fwmark $CN_MARK lookup main"
 else
     DESIRED_BANDS[$P_CN]=""
 fi
@@ -391,8 +409,10 @@ for net in "${TAILNET_NETS[@]}"; do
 done
 DESIRED_BANDS[$P_TAILNET]=$(band_of "${tailnet_band[@]}")
 
-normalise_desired_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort -u | paste -sd';' -; }
-normalise_actual_band() { tr ';' '\n' <<<"$1" | grep -v '^$' | sort | paste -sd';' -; }
+# `awk NF` instead of `grep -v '^$'`: an empty band is normal, but grep exits 1 on no match and
+# pipefail then fires the ERR trap, logging a false "aborted" line that hides real aborts.
+normalise_desired_band() { tr ';' '\n' <<<"$1" | awk 'NF' | sort -u | paste -sd';' -; }
+normalise_actual_band() { tr ';' '\n' <<<"$1" | awk 'NF' | sort | paste -sd';' -; }
 band_fingerprint() {
     ip -4 rule show pref "$1" 2>/dev/null | sed 's/^[0-9]*:[[:space:]]*//' |
         while read -r rule; do normalise_rule "$rule"; done
@@ -440,6 +460,8 @@ firewall_fingerprint_ok() {
         expected+="-A $CHAIN -m cgroup --path \"$cgroup\" -j MARK --set-xmark 0x1000000/0xffffffff"$'\n'
     done < <(active_ioa_cgroups)
     expected+="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
+    expected+="-A $CHAIN -m set --match-set $CN_SET dst -j MARK --set-xmark 0x2/0xffffffff"$'\n'
+    expected+="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
     expected+="-A $CHAIN -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff"
     actual=$(iptables -t mangle -S "$CHAIN" 2>/dev/null | grep "^-A $CHAIN " || true)
     [ "$actual" = "$expected" ] || return 1
@@ -451,6 +473,9 @@ firewall_fingerprint_ok() {
     [ -n "$physical_dev" ] || return 1
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
         grep -Fxc -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x1000000 -j MASQUERADE")" -eq 1 ] ||
+        return 1
+    [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
+        grep -E -c -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x2(/0xffffffff)? -j MASQUERADE")" -eq 1 ] ||
         return 1
     iptables -t mangle -C POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
         -o tailscale0 -j DROP 2>/dev/null
@@ -513,8 +538,7 @@ reconcile_ioa_smartgate
 
 if [ "${FORCE:-0}" != 1 ] &&
    [ "$current_state" = "$(cat "$STATE_FILE" 2>/dev/null || true)" ] &&
-   cn_routes_match "$CN_TABLE" "$(physical_gateway)" "$(physical_device)" \
-       "$(count_routes "$CN_TABLE")" &&
+   cn_state_matches &&
    iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null &&
    firewall_fingerprint_ok &&
    [ "$(desired_fingerprint)" = "$(actual_fingerprint)" ]; then
@@ -548,25 +572,33 @@ valid_ipv4() {
 }
 
 parse_routefile() {
-    local gateway=$1 device=$2 line prefix address length
+    local line prefix address length
     local prefixes=()
-    local grammar='^[[:space:]]*route[[:space:]]+(add|replace)[[:space:]]+([^[:space:]]+)[[:space:]]+via[[:space:]]+GATEWAY[[:space:]]+table[[:space:]]+cn[[:space:]]*$'
+    local legacy='^[[:space:]]*route[[:space:]]+(add|replace)[[:space:]]+([^[:space:]]+)[[:space:]]+via[[:space:]]+GATEWAY[[:space:]]+table[[:space:]]+cn[[:space:]]*$'
+    local plain='^[[:space:]]*([^[:space:]#]+)[[:space:]]*(#.*)?$'
     while IFS= read -r line || [ -n "$line" ]; do
         [[ "$line" =~ ^[[:space:]]*$ ]] && continue
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ "$line" =~ $grammar ]] || return 1
-        prefix=${BASH_REMATCH[2]}
+        if [[ "$line" =~ $legacy ]]; then
+            prefix=${BASH_REMATCH[2]}
+        elif [[ "$line" =~ $plain ]]; then
+            prefix=${BASH_REMATCH[1]}
+        else
+            return 1
+        fi
         address=${prefix%/*}
         if [[ "$prefix" == */* ]]; then
             length=${prefix##*/}
             [[ "$length" =~ ^(0|[1-9]|[12][0-9]|3[0-2])$ ]] || return 1
+        else
+            prefix="$prefix/32"
         fi
         valid_ipv4 "$address" || return 1
         prefixes+=("$prefix")
-        printf 'route replace %s via %s dev %s table %s\n' \
-            "$prefix" "$gateway" "$device" "$CN_STAGE_TABLE"
+        printf '%s\n' "$prefix"
     done < "$ROUTEFILE"
-    [ "$(printf '%s\n' "${prefixes[@]}" | sort -u | wc -l)" -eq "${#prefixes[@]}" ]
+    [ "${#prefixes[@]}" -eq 0 ] ||
+        [ "$(printf '%s\n' "${prefixes[@]}" | sort -u | wc -l)" -eq "${#prefixes[@]}" ]
 }
 
 parse_cn_excludes() {
@@ -585,7 +617,7 @@ parse_cn_excludes() {
         [[ "$length" =~ ^(0|[1-9]|[12][0-9]|3[0-2])$ ]] || return 1
         valid_ipv4 "$address" || return 1
         prefixes+=("$prefix")
-        printf 'route replace throw %s table %s\n' "$prefix" "$CN_STAGE_TABLE"
+        printf '%s nomatch\n' "$prefix"
     done < "$CN_EXCLUDE_FILE"
     [ "${#prefixes[@]}" -eq 0 ] ||
         [ "$(printf '%s\n' "${prefixes[@]}" | sort -u | wc -l)" -eq "${#prefixes[@]}" ]
@@ -599,76 +631,67 @@ write_cn_state() {
     mv "$tmp" "$CN_STATE_FILE"
 }
 
-# A missing or empty routefile authoritatively disables cn. Heavy CN work has its own state gate,
-# so unrelated policy or virtual-interface changes never rewrite a healthy route table.
-cn_route_batch=''
-cn_expected_routes=0
-if [ -s "$ROUTEFILE" ]; then
-    gw=$(physical_gateway)
-    dev=$(physical_device)
-    if [ -n "${gw:-}" ]; then
-        cn_route_batch=$(parse_routefile "$gw" "$dev")
-        cn_exclude_batch=$(parse_cn_excludes)
-        cn_route_batch+="${cn_exclude_batch:+$'\n'$cn_exclude_batch}"
-        cn_expected_routes=$(grep -c '^route replace ' <<<"$cn_route_batch")
-        [ "$cn_expected_routes" -gt 0 ]
+# CN is an optional acceleration classifier, not a gateway-bearing route table. Build an
+# inactive hash:net set and swap it atomically. A stale set can only change which destinations
+# go directly through the current main default; it cannot retain an old AP's gateway or blackhole
+# the machine during a roam.
+if [ "${FORCE_CN:-0}" = 1 ] || ! cn_state_matches; then
+    cn_candidate=$(mktemp "$TMPDIR/cn-candidate.XXXXXX")
+    cn_excludes=$(mktemp "$TMPDIR/cn-excludes.XXXXXX")
+    cn_restore=$(mktemp "$TMPDIR/cn-restore.XXXXXX")
+    TEMP_FILES+=("$cn_candidate" "$cn_excludes" "$cn_restore")
+    cn_valid=true
+    if [ -s "$ROUTEFILE" ]; then
+        if ! parse_routefile | sort -u >"$cn_candidate" ||
+           ! parse_cn_excludes | sed 's/ nomatch$//' | sort -u >"$cn_excludes"; then
+            cn_valid=false
+            warn "invalid routefile or exclusion list; keeping the last known-good CN acceleration set"
+        fi
+    else
+        : >"$cn_candidate"
+        : >"$cn_excludes"
     fi
-else
-    gw=$(physical_gateway)
-    dev=$(physical_device)
-fi
-cn_expected_state="routefile=$routefile_state exclude=$cn_exclude_state"
-cn_expected_state+=" dev=${dev:-} gw=${gw:-} count=$cn_expected_routes"
-cn_rebuild=false
-if [ "${FORCE_CN:-0}" = 1 ] ||
-   [ "$cn_expected_state" != "$(cat "$CN_STATE_FILE" 2>/dev/null || true)" ] ||
-   ! cn_routes_match "$CN_TABLE" "${gw:-}" "${dev:-}" "$cn_expected_routes"; then
-    cn_rebuild=true
-fi
 
-if $cn_rebuild && [ ! -s "$ROUTEFILE" ]; then
-    DESIRED_BANDS[$P_CN]=""
-    reconcile_pref "$P_CN"
-    ip route flush table "$CN_TABLE" 2>/dev/null || true
-    ip route flush table "$CN_STAGE_TABLE" 2>/dev/null || true
-    write_cn_state "$cn_expected_state"
-elif $cn_rebuild && [ -z "${gw:-}" ]; then
-    warn "no default gateway; leaving the cn table and state alone"
-elif $cn_rebuild; then
-    ip route flush table "$CN_STAGE_TABLE" 2>/dev/null || true
-    ip -batch - <<<"$cn_route_batch"
-    staged_routes=$(count_routes "$CN_STAGE_TABLE")
-    [ "$staged_routes" -eq "$cn_expected_routes" ]
-
-    desired_routes=$(mktemp "$TMPDIR/cn-desired.XXXXXX")
-    desired_keys=$(mktemp "$TMPDIR/cn-desired-keys.XXXXXX")
-    current_routes=$(mktemp "$TMPDIR/cn-current.XXXXXX")
-    promotion_batch=$(mktemp "$TMPDIR/cn-promotion.XXXXXX")
-    TEMP_FILES+=("$desired_routes" "$desired_keys" "$current_routes" "$promotion_batch")
-    ip route show table "$CN_STAGE_TABLE" |
-        sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//' |
-        sort >"$desired_routes"
-    { ip route show table "$CN_TABLE" 2>/dev/null || true; } |
-        sed -E 's/[[:space:]]+table[[:space:]]+[^ ]+$//; s/[[:space:]]+$//' |
-        sort >"$current_routes"
-    awk '{print ($1 == "throw" ? $2 : $1)}' "$desired_routes" | sort -u >"$desired_keys"
-    sed -E "s|^|route replace |; s|$| table $CN_TABLE|" \
-        "$desired_routes" >"$promotion_batch"
-    awk 'NR == FNR { desired[$1] = 1; next }
-         { key = ($1 == "throw" ? $2 : $1) }
-         !(key in desired)' \
-        "$desired_keys" "$current_routes" |
-        sed -E "s|^|route del |; s|$| table $CN_TABLE|" >>"$promotion_batch"
-    ip -batch "$promotion_batch"
-    [ "$(ip route show table "$CN_TABLE" | sed -E 's/[[:space:]]+$//' | sort)" = \
-        "$(cat "$desired_routes")" ]
-    rm -f "$desired_routes" "$desired_keys" "$current_routes" "$promotion_batch"
+    if $cn_valid; then
+        {
+            printf 'flush %s\n' "$CN_NEXT_SET"
+            awk -v set="$CN_NEXT_SET" '{print "add " set " " $0}' "$cn_candidate"
+        } >"$cn_restore"
+        ipset restore -exist <"$cn_restore"
+        # hash:net accepts a nomatch exception only when a positive parent currently matches it.
+        # Irrelevant exclusions are safely omitted; they already fall through because no positive
+        # CN prefix contains them. An empty positive list must stay empty: some ipset versions
+        # accept orphan nomatch entries, which would keep a non-empty classifier with no effect.
+        if [ -s "$cn_candidate" ]; then
+            while read -r prefix; do
+                [ -n "$prefix" ] || continue
+                if ipset add "$CN_NEXT_SET" "$prefix" nomatch 2>/dev/null; then
+                    printf '%s nomatch\n' "$prefix" >>"$cn_candidate"
+                fi
+            done <"$cn_excludes"
+            sort -u -o "$cn_candidate" "$cn_candidate"
+        fi
+        ipset swap "$CN_SET" "$CN_NEXT_SET"
+        ipset flush "$CN_NEXT_SET"
+        write_cn_state "$cn_input_state sethash=$(cn_set_hash)"
+    fi
+    rm -f "$cn_candidate" "$cn_excludes" "$cn_restore"
     TEMP_FILES=()
-    write_cn_state "$cn_expected_state"
 fi
 
-if has_routes "$CN_TABLE"; then
-    DESIRED_BANDS[$P_CN]="from all lookup $CN_TABLE"
+# Retire the gateway-coupled implementation. These tables are no longer consulted; flushing them
+# makes an old priority-1500 rule harmless even if this process is interrupted before rule repair.
+clean_pref "$P_CN"
+ip route flush table cn 2>/dev/null || true
+ip route flush table 101 2>/dev/null || true
+ip route flush table cn_stage 2>/dev/null || true
+while read -r legacy_stage_id; do
+    [[ "$legacy_stage_id" =~ ^10[0-9]{3}$ ]] || continue
+    ip route flush table "$legacy_stage_id" 2>/dev/null || true
+done < <(awk '$2 == "cn_stage" {print $1}' "$RT_TABLES")
+
+if cn_set_has_matches; then
+    DESIRED_BANDS[$P_CN]="from all fwmark $CN_MARK lookup main"
 else
     DESIRED_BANDS[$P_CN]=""
 fi
@@ -684,6 +707,10 @@ while read -r cgroup; do
         -m cgroup --path "$cgroup" \
         -j MARK --set-xmark "$IOA_OWNER_MARK"
 done < <(active_ioa_cgroups)
+iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
+iptables -t mangle -A "$NEXT_CHAIN" \
+    -m set --match-set "$CN_SET" dst \
+    -j MARK --set-xmark "$CN_MARK"
 iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
 ensure_ipset ioa
 iptables -t mangle -A "$NEXT_CHAIN" \
@@ -737,10 +764,21 @@ ipset destroy ioa_intranet 2>/dev/null || true
 while read -r rule; do
     [ -n "$rule" ] && iptables -t nat ${rule/-A /-D }
 done < <(iptables -t nat -S POSTROUTING 2>/dev/null |
-    grep -F -- '--mark 0x1000000 -j MASQUERADE' || true)
+    grep -E -- '--mark 0x1000000(/0xffffffff)? -j MASQUERADE' || true)
 physical_dev=$(physical_device)
 [ -z "$physical_dev" ] ||
     iptables -t nat -A POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
+        -o "$physical_dev" -j MASQUERADE
+
+# The first route lookup can select a Tailscale source before mangle OUTPUT classifies a CN
+# destination. The mark-triggered reroute uses main, and this exact-mark NAT rewrites that stale
+# source to the current physical address without touching owner or IOA traffic.
+while read -r rule; do
+    [ -n "$rule" ] && iptables -t nat ${rule/-A /-D }
+done < <(iptables -t nat -S POSTROUTING 2>/dev/null |
+    grep -E -- '--mark 0x2(/0xffffffff)? -j MASQUERADE' || true)
+[ -z "$physical_dev" ] ||
+    iptables -t nat -A POSTROUTING -m mark --mark "$CN_MARK" \
         -o "$physical_dev" -j MASQUERADE
 
 # Manage only the repository-owned exact IOA payload NAT rule; similar rules belong to others.

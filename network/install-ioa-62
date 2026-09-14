@@ -12,9 +12,11 @@ target_user=${SUDO_USER:-${USER:-amos}}
 target_home=$(getent passwd "$target_user" | cut -d: -f6)
 package_root=${IOA_PACKAGE_ROOT:-"$target_home/ioa-1.0.3.62-1-x86_64.pkg"}
 source_dir="$package_root/usr/lib/iOA/bin"
-live_dir=/usr/lib/iOA/bin
+live_dir=${IOA_LIVE_DIR_OVERRIDE:-/usr/lib/iOA/bin}
+opt_root=${IOA_OPT_ROOT_OVERRIDE:-/opt/ioa}
 
-[ "$(id -u)" -eq 0 ] || {
+[ "$(id -u)" -eq 0 ] ||
+    { [ -n "${IOA_LIVE_DIR_OVERRIDE:-}" ] && [ -n "${IOA_OPT_ROOT_OVERRIDE:-}" ]; } || {
     echo "install-ioa-62: must run as root" >&2
     exit 1
 }
@@ -33,9 +35,11 @@ mkdir -p "$live_dir"
 # their old inode until their normal restart; every subsequent exec sees the verified package file.
 install_vendor_file() {
     local source=$1 destination=$2 mode=${3:-755} temporary
+    local ownership=()
     cmp -s "$source" "$destination" 2>/dev/null && return
     temporary=$(mktemp "$live_dir/.install-ioa-62.XXXXXX")
-    install -m "$mode" -o root -g root "$source" "$temporary"
+    [ "$(id -u)" -ne 0 ] || ownership=(-o root -g root)
+    install -m "$mode" "${ownership[@]}" "$source" "$temporary"
     mv -f "$temporary" "$destination"
 }
 
@@ -54,7 +58,7 @@ ln -sfn "SmartGateAgent.bin.$version" "$live_dir/SmartGateAgent.bin"
 
 # No iOALinux.bin or launcher exists in the package. The genuine iOALinux ELF is the entry point.
 rm -f "$live_dir"/iOALinux.bin "$live_dir"/iOALinux.bin.*
-rm -rf /opt/ioa/bin
+rm -rf "$opt_root/bin"
 
 # Delete every stale version, not merely versions observed on this machine.
 for file in "$live_dir"/iOA.bin.*; do
@@ -84,6 +88,6 @@ verify_pair wpa.sh wpa.sh
 
 [ "$(readlink "$live_dir/iOA.bin")" = "iOA.bin.$version" ]
 [ "$(readlink "$live_dir/SmartGateAgent.bin")" = "SmartGateAgent.bin.$version" ]
-[ ! -e /opt/ioa/bin ]
+[ ! -e "$opt_root/bin" ]
 
 echo "iOA vendor files match package 1.0.3.62"

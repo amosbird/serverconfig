@@ -1,65 +1,106 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+"""Atomically refresh the optional CN direct-routing prefix list."""
 
-import re
-import urllib.request, urllib.error, urllib.parse
-import sys
 import argparse
-import math
-import textwrap
+import ipaddress
 import os
-import subprocess as s
+import pathlib
+import subprocess
+import tempfile
+import urllib.request
+
+DEFAULT_SOURCE = "https://ftp.apnic.net/apnic/stats/apnic/delegated-apnic-latest"
+DEFAULT_MINIMUM_PREFIXES = 1000
 
 
-def generate_mac():
-    results = fetch_ip_data()
+def parse_apnic(data: str, minimum_prefixes: int = DEFAULT_MINIMUM_PREFIXES) -> list[str]:
+    networks = []
+    for number, raw_line in enumerate(data.splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("|")
+        if len(fields) < 7:
+            continue
+        registry, country, kind, start, value, _date, status = fields[:7]
+        if (
+            registry.lower() != "apnic"
+            or country.upper() != "CN"
+            or kind.lower() != "ipv4"
+            or status.lower() not in {"allocated", "assigned"}
+        ):
+            continue
+        try:
+            addresses = int(value)
+            if addresses <= 0 or addresses & (addresses - 1):
+                raise ValueError("address count is not a power of two")
+            prefix_length = 32 - (addresses.bit_length() - 1)
+            network = ipaddress.IPv4Network(f"{start}/{prefix_length}", strict=True)
+        except ValueError as error:
+            raise ValueError(f"invalid APNIC IPv4 record at line {number}: {error}") from error
+        networks.append(network)
 
-    upfile = open(f"{os.path.expanduser('~')}/.routefile", "w")
-
-    for ip, _, mask in results:
-        upfile.write("route add %s/%s via GATEWAY table cn\n" % (ip, mask))
-
-    upfile.write("\n")
-
-    upfile.close()
-    s.call(["notify-send", "route", "route updated"])
+    collapsed = list(ipaddress.collapse_addresses(networks))
+    if len(collapsed) < minimum_prefixes:
+        raise ValueError(
+            f"refusing implausible APNIC result: {len(collapsed)} CN prefixes "
+            f"(minimum {minimum_prefixes})"
+        )
+    return [network.with_prefixlen for network in collapsed]
 
 
-def fetch_ip_data():
-    url = r"https://ftp.apnic.net/apnic/stats/apnic/delegated-apnic-latest"
-    data = urllib.request.urlopen(url).read().decode()
+def fetch(source: str, timeout: float) -> str:
+    with urllib.request.urlopen(source, timeout=timeout) as response:
+        return response.read().decode("utf-8")
 
-    cnregex = re.compile(
-        r"apnic\|cn\|ipv4\|[0-9\.]+\|[0-9]+\|[0-9]+\|a.*", re.IGNORECASE
-    )
-    cndata = cnregex.findall(data)
 
-    results = []
+def replace_if_changed(path: pathlib.Path, content: bytes) -> bool:
+    try:
+        if path.read_bytes() == content:
+            return False
+    except FileNotFoundError:
+        pass
 
-    for item in cndata:
-        unit_items = item.split("|")
-        starting_ip = unit_items[3]
-        num_ip = int(unit_items[4])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+    return True
 
-        imask = 0xFFFFFFFF ^ (num_ip - 1)
-        # convert to string
-        imask = hex(imask)[2:]
-        mask = [0] * 4
-        mask[0] = imask[0:2]
-        mask[1] = imask[2:4]
-        mask[2] = imask[4:6]
-        mask[3] = imask[6:8]
 
-        # convert str to int
-        mask = [int(i, 16) for i in mask]
-        mask = "%d.%d.%d.%d" % tuple(mask)
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", default=DEFAULT_SOURCE)
+    parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path.home() / ".routefile")
+    parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--minimum-prefixes", type=int, default=DEFAULT_MINIMUM_PREFIXES)
+    args = parser.parse_args()
 
-        # mask in *nix format
-        mask2 = 32 - int(math.log(num_ip, 2))
-
-        results.append((starting_ip, mask, mask2))
-
-    return results
+    prefixes = parse_apnic(fetch(args.source, args.timeout), args.minimum_prefixes)
+    content = "".join(f"{prefix}\n" for prefix in prefixes).encode()
+    if replace_if_changed(args.output, content):
+        subprocess.run(
+            ["notify-send", "route", f"CN acceleration updated ({len(prefixes)} prefixes)"],
+            check=False,
+        )
+    return 0
 
 
 if __name__ == "__main__":
-    generate_mac()
+    raise SystemExit(main())

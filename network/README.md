@@ -53,7 +53,7 @@ the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owne
 | 400 | `fwmark 0x1000000` | `main` | Force the system IOA underlay packets onto the physical route. |
 | 401 | `fwmark 0x1000000` | `prohibit` | Fail closed if no physical route exists; never fall through to Tailscale. |
 | 500 | `fwmark 0x80000/0xff0000` | `main` | Let Tailscale-owned transport packets reach the physical network. |
-| 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, DHCP resolvers, and active office resolvers | `main` | Keep the actual LAN and its infrastructure direct. |
+| 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, captive-portal resolvers, and active office resolvers | `main` | Keep the actual LAN and its required infrastructure direct. |
 | 1100 | SmartGateAgent-owned `fwmark 0xa38` | `20` | Send SmartGate control traffic through its current physical underlay. |
 | 1200 | SmartGateAgent-owned physical source address | `230` | Keep its source-bound sockets on the current physical underlay. |
 | 1500 | exact `fwmark 0x2` | `main` | Send optional CN-accelerated traffic through the current physical default. |
@@ -75,8 +75,9 @@ Linux evaluates lower numeric priorities first:
    because iOA can bind control sockets to `tailscale0` after Tailscale starts.
 2. Tailscale owner-marked packets use `main`.
 3. Any destination that currently has a non-default route in `main` — the connected LAN and the
-   physical gateway — uses `main`, as do the explicitly pinned physical gateway, DHCP resolvers,
-   and office DNS servers enabled for the authenticated wired link.
+   physical gateway — uses `main`, as do the explicitly pinned physical gateway, a DHCP resolver
+   while an RFC 8910 captive portal is advertised, and office DNS servers enabled for the
+   authenticated wired link.
 4. SmartGateAgent owner-marked packets use owner table `20`.
 5. SmartGateAgent physical-source sockets use owner table `230`.
 6. An unmarked destination present in `~/.routefile` receives mark `0x2`, is rerouted through
@@ -115,11 +116,13 @@ and its table `20` path remain SmartGateAgent's responsibility.
 
 Only networks currently present as kernel `scope link` routes are considered local. Broad
 RFC1918 assumptions are intentionally absent: an unrelated private destination follows the
-normal unmatched policy. The physical gateway and DHCP resolvers are explicit priority-1000
-exceptions because a LAN can overlap `10/8` and a DHCP resolver can be a public address. While an
-authenticated wired link has both an address and DHCP gateway, `network-reconfigure` also extracts
-the office resolver addresses from `network/smartdns/office.conf` and pins those exact addresses to
-`main`; it removes the pins with the office fragment when the link disappears.
+normal unmatched policy. The physical gateway is an explicit priority-1000 exception because a
+LAN can overlap `10/8`. DHCP resolvers receive an exception only while the lease advertises an
+RFC 8910 captive portal; without that portal SmartDNS does not use them and sending arbitrary
+traffic to their possibly public addresses outside the exit node would violate fail-closed.
+While an authenticated wired link has both an address and DHCP gateway, `network-reconfigure`
+also extracts the office resolver addresses from `network/smartdns/office.conf` and pins those
+exact addresses to `main`; it removes the pins with the office fragment when the link disappears.
 
 Those enumerated pins are a snapshot, so priority 1000 also carries `from all lookup main
 suppress_prefixlength 0`. It asks the kernel for `main` without its default route, which is exactly
@@ -200,8 +203,8 @@ unavailable, unmatched/default traffic stops rather than leaking onto the physic
 Local code must not detach the exit node, bypass it through `main`, call `tailscale down` or
 `tailscale up`, or edit the exit-node preference.
 
-Recovery of the tunnel itself is not left to Tailscale, because two captured outages proved it
-does not happen. A roam between BSSIDs on one subnet flaps the carrier for ~137ms;
+One captured outage showed that Tailscale does not always initiate recovery. A roam between
+BSSIDs on one subnet flaps the carrier for ~137ms;
 `IgnoreCarrierLoss=3s` deliberately keeps the address and both routes, so the roam produces no
 netlink change, tailscaled's link monitor sees no interface delta, and it never rebinds. Its
 magicsock socket and DERP sessions stay bound to the pre-roam path and stop passing data while
@@ -209,25 +212,28 @@ control keeps reporting the exit node as online, so no failover occurs: seven mi
 continuous `open-conn-track` timeouts followed, spanning two full Wi-Fi reconnects that did
 rebind and did regain direct contact. Restarting `tailscaled` restored it.
 
-The wedge is not exclusive to roaming. On 2026-09-14 18:53:52, restarting the iOA GUI killed
-SmartGateAgent and removed `tun0`; tailscaled did see that and rebound twice, and the exit-node
-path wedged anyway — 43 `open-conn-track` timeouts in 100 seconds, `online=yes`, no roam
-involved. A rebind is therefore the hazard, whatever provokes it, and a BSSID-scoped detector
-misses every non-roam cause.
+The wedge is not exclusive to roaming. On 2026-09-14 18:53:52, an operator-triggered iOA GUI
+restart killed SmartGateAgent and removed `tun0`; tailscaled did see that and rebound twice, and
+the exit-node path wedged anyway — 43 `open-conn-track` timeouts in 100 seconds, `online=yes`,
+no roam involved. This second incident was self-inflicted and is not evidence for automatically
+repairing every link change. It only proves that the detector must recognize a failed path after
+non-roam changes too.
 
 `scripts/network-exit-watchdog` therefore repairs the path instead of routing around it.
 Detection is event-driven, not roam-scoped: `network-exit-watchdog.path` runs it on link-state
 changes and it does nothing unless the link fingerprint moved — BSSID, the physical default
-route, or the set of global addresses, which are the inputs tailscaled itself keys on, so a
-roam, a `tun0` flap and a `tailscale0` change all qualify. It then rebinds magicsock and
-verifies within a bounded window rather than probing forever. There is deliberately no standing
-timer. If the path is still dead it restarts `tailscaled` once — withheld when systemd reports
-`tailscaled` came up less than two minutes ago, which replaces a restart cooldown with no
-persistent state. Escalation stays inside Tailscale: if it fails the watchdog logs and **stays
-fail-closed**, never installing a bypass and never touching the exit-node preference. It also
-refuses to blame the tunnel unless the physical gateway answers and the kernel confirms the probe
-selects `tailscale0`, so an ordinary LAN outage cannot trigger a restart. `network-status`
-reports the last verdict.
+route, or addresses on the physical device, `tun0`, and `tailscale0`, so a roam or either tunnel
+changing qualifies without reacting to unrelated Docker interfaces. After a short settling
+delay it first performs a read-only probe. A healthy path is left completely untouched. Only a
+failed path causes a magicsock rebind and bounded verification; there is deliberately no standing
+timer. If
+the path is still dead it restarts `tailscaled` once, unless this watchdog already restarted it
+within the last two minutes. Manual and package restarts do not consume that cooldown.
+Escalation stays inside Tailscale: if it fails the watchdog logs and
+**stays fail-closed**, never installing a bypass and never touching the exit-node preference. It
+also refuses to blame the tunnel unless the physical gateway resolves and the kernel confirms
+the probe selects `tailscale0`, so an ordinary local-link outage cannot trigger a restart.
+`network-status` reports the last verdict.
 
 Other failures stay within ownership boundaries:
 
@@ -280,7 +286,7 @@ Tailscale and SmartGateAgent receive link changes independently and repair their
 The reconciler then:
 
 1. atomically updates the generated DHCP and office SmartDNS fragments when their content changes;
-2. derives actual connected-LAN, gateway, and DHCP DNS rules;
+2. derives actual connected-LAN and gateway rules, plus portal-scoped DHCP DNS rules when needed;
 3. validates routefile prefixes into an inactive hash:net set and atomically swaps it active;
 4. reconciles only the seven active repository-owned priority bands and removes the retired
    priority-1400 mark rule;
@@ -309,9 +315,9 @@ bidirectional: missing owned objects and unexpected objects inside an owned band
 repair. Desired rules are added before stale rules are removed, and the final band must match
 exactly.
 
-This retains three important invariants across AP changes: public DHCP DNS remains reachable,
-CN acceleration immediately follows the current `main` default without rebuilding, and
-tunnel-owned tables and marks remain untouched.
+This retains three important invariants across AP changes: captive-portal DNS remains reachable
+without creating a permanent public bypass, CN acceleration immediately follows the current
+`main` default without rebuilding, and tunnel-owned tables and marks remain untouched.
 
 ## Manual incident capture
 
@@ -350,8 +356,10 @@ Run the network checks:
 bash network/test-ip-override.sh
 bash network/test-smartgate-underlay.sh
 bash network/test-ioa-fail-closed.sh
+bash network/test-install-ioa-62.sh
 sudo -n bash network/test-ioa-static-lan-overlap.sh
 sudo -n bash network/test-reconfigure.sh
+bash network/test-exit-watchdog.sh
 bash network/test-static-policy.sh
 bash network/test-debug-capture.sh
 python3 network/test-updateroutes.py

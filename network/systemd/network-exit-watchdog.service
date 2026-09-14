@@ -1,0 +1,10 @@
+[Unit]
+Description=Repair a failed Tailscale exit-node path after a link change
+Wants=network-reconfigure.service
+After=network-reconfigure.service tailscaled.service
+
+[Service]
+Type=oneshot
+# Read-only preflight, then bounded recovery: rebind, verify, restart once, verify again.
+TimeoutStartSec=180
+ExecStart=/home/amos/scripts/network-exit-watchdog

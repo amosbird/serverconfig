@@ -3,6 +3,7 @@ Description=Watch networkd state and reconfigure network on changes
 
 [Path]
 PathChanged=/run/systemd/netif/links
+PathChanged=/home/amos/.routefile
 Unit=network-reconfigure.service
 
 [Install]

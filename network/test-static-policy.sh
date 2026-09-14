@@ -479,7 +479,12 @@ case "$command" in
     ip)
         case "$*" in
             '-4 route show table main default') echo 'default via 192.0.2.1 dev wlan0' ;;
+            '-4 rule show pref 400') echo '400: from all fwmark 0x1000000 lookup main' ;;
+            '-4 rule show pref 401') echo '401: from all fwmark 0x1000000 prohibit' ;;
             '-4 rule show pref 500') echo '500: from all fwmark 0x80000/0xff0000 lookup main' ;;
+            '-4 rule show pref 1000')
+                echo '1000: from all lookup main suppress_prefixlength 0'
+                ;;
             '-4 rule show pref 1500') echo '1500: from all fwmark 0x2 lookup main' ;;
             '-4 rule show pref 2500')
                 echo '2500: from all fwmark 0x1 lookup ioa'
@@ -528,7 +533,10 @@ EOF
                 'reconfigure|FORCE=1|wlan0'| \
                 'ip|-4|route|show|table|main|default'| \
                 'ipset|save|cn_direct'| \
+                'ip|-4|rule|show|pref|400'| \
+                'ip|-4|rule|show|pref|401'| \
                 'ip|-4|rule|show|pref|500'| \
+                'ip|-4|rule|show|pref|1000'| \
                 'ip|-4|rule|show|pref|1500'| \
                 'ip|-4|rule|show|pref|2500'| \
                 'ip|-4|rule|show|pref|3000'| \
@@ -745,7 +753,7 @@ reject 'exit-node watchdog never bypasses the tunnel or edits its preference' \
 for contract in \
     'tailscale debug rebind' \
     'systemctl restart tailscaled' \
-    'MIN_TAILSCALED_UPTIME' \
+    'RESTART_COOLDOWN' \
     'failing closed'
 do
     if ! grep -Fq "$contract" scripts/network-exit-watchdog; then
@@ -764,6 +772,26 @@ elif grep -Fq 'network-exit-watchdog.timer' restore.sh &&
     fail=1
 else
     echo 'OK   exit-node watchdog is link-triggered rather than perpetually probing'
+fi
+for contract in \
+    'network/systemd/network-exit-watchdog.{service,path}' \
+    'systemctl enable network-exit-watchdog.path'
+do
+    if ! grep -Fq "$contract" restore.sh; then
+        echo "FAIL restore.sh does not deploy the watchdog contract: $contract" >&2
+        fail=1
+    fi
+done
+if grep -Fq 'PathChanged=/run/systemd/netif/links' \
+       network/systemd/network-exit-watchdog.path &&
+   grep -Fq 'Wants=network-reconfigure.service' \
+       network/systemd/network-exit-watchdog.service &&
+   grep -Fq 'After=network-reconfigure.service tailscaled.service' \
+       network/systemd/network-exit-watchdog.service; then
+    echo 'OK   exit-node watchdog deploys on link changes after route reconciliation'
+else
+    echo 'FAIL exit-node watchdog trigger or service ordering is incomplete' >&2
+    fail=1
 fi
 # The 2026-09-14 tun0 outage: a BSSID-only trigger cannot see a non-roam rebind.
 if grep -Fq 'link_fingerprint' scripts/network-exit-watchdog &&

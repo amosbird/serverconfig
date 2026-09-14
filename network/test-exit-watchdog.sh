@@ -60,6 +60,14 @@ EOF
 
 cat >"$BIN/ping" <<'EOF'
 #!/usr/bin/env bash
+if [ -n "${FAKE_GATEWAYS:-}" ]; then
+    read -r -a codes <<<"$FAKE_GATEWAYS"
+    n=$(cat "$SANDBOX/gateway-count" 2>/dev/null || echo 0)
+    printf '%s\n' "$((n + 1))" >"$SANDBOX/gateway-count"
+    idx=$n
+    [ "$idx" -lt "${#codes[@]}" ] || idx=$(( ${#codes[@]} - 1 ))
+    exit "${codes[$idx]}"
+fi
 exit "${FAKE_GATEWAY_DOWN:-0}"
 EOF
 
@@ -79,8 +87,11 @@ cat >"$BIN/tailscale" <<'EOF'
 printf 'tailscale %s\n' "$*" >>"$ACTIONS"
 case "$*" in
     "status --json")
-        if [ "${FAKE_EXIT_NODE:-1}" = 1 ]; then
-            printf '{"ExitNodeStatus":{"ID":"nXPA5k1Aw811CNTRL","Online":true}}\n'
+        if [ "${FAKE_BAD_JSON:-0}" = 1 ]; then
+            printf '{not-json\n'
+        elif [ "${FAKE_EXIT_NODE:-1}" = 1 ]; then
+            printf '{"ExitNodeStatus":{"ID":"nXPA5k1Aw811CNTRL","Online":%s}}\n' \
+                "${FAKE_EXIT_ONLINE:-true}"
         else
             printf '{"ExitNodeStatus":null}\n'
         fi
@@ -92,11 +103,6 @@ cat >"$BIN/systemctl" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
     "is-active --quiet tailscaled") exit "${FAKE_TS_INACTIVE:-0}" ;;
-    "show -P ActiveEnterTimestampMonotonic tailscaled")
-        # /proc/uptime is real, so anchor the fake start relative to it.
-        awk -v age="${FAKE_TS_UPTIME:-3600}" \
-            '{printf "%d\n", ($1 - age) * 1000000}' /proc/uptime
-        ;;
     *) printf 'systemctl %s\n' "$*" >>"$ACTIONS" ;;
 esac
 EOF
@@ -124,7 +130,7 @@ chmod +x "$BIN"/*
 
 run() {
     : >"$ACTIONS"
-    rm -f "$SANDBOX/probe-count"
+    rm -f "$SANDBOX/probe-count" "$SANDBOX/gateway-count"
     printf '0\n' >"$SANDBOX/clock"
     env PATH="$BIN:$PATH" ACTIONS="$ACTIONS" SANDBOX="$SANDBOX" \
         NETWORK_EXIT_WATCHDOG_LOCKED=1 \
@@ -162,48 +168,75 @@ run FAKE_HAS_DEFAULT=0
 [ -z "$(recovery_actions)" ] && ok "no physical default route means nothing to check" \
                              || bad "acted without a physical default route"
 
-head_ "every input tailscaled keys on is a trigger"
+head_ "every link input triggers a check, but never disturbs a healthy tunnel"
 reset_state
 run
-[ "$(recovery_actions)" = 'tailscale debug rebind' ] && ok "a BSSID change (roam) rebinds" \
-                                                     || bad "roam did not rebind"
+if [ -z "$(recovery_actions)" ] && [[ "$(status)" == *"healthy"* ]]; then
+    ok "a healthy BSSID change (roam) needs no repair"
+else
+    bad "a healthy roam caused recovery: $(recovery_actions) / $(status)"
+fi
 # Regression for 2026-09-14 18:53: restarting the iOA GUI removed tun0 with no roam at all, and
 # the exit-node path wedged. A BSSID-only trigger missed it entirely.
 reset_state bb:bb:bb:bb:bb:bb
 printf '%s\n%s\n' "$WLAN_ADDR" "$TUN_ADDR" >"$ADDRS"
-run
+run FAKE_PROBES='000 204'
 [ "$(recovery_actions)" = 'tailscale debug rebind' ] \
-    && ok "tun0 appearing rebinds even though the BSSID is unchanged" \
-    || bad "a tun0 flap with no roam was missed: $(recovery_actions)"
+    && ok "a failed path after tun0 appears rebinds without a roam" \
+    || bad "a failed path after tun0 appeared was missed: $(recovery_actions)"
 reset_state bb:bb:bb:bb:bb:bb
 printf '%s\n' "$WLAN_ADDR" >"$ADDRS"
 { printf 'bssid bb:bb:bb:bb:bb:bb\n'; printf 'default %s\n' "$DEFAULT_ROUTE"
   printf 'addr tun0 192.168.255.10/24\naddr wlan0 10.36.50.129/20\n'; } >"$STATE/linkstate"
-run
+run FAKE_PROBES='000 204'
 [ "$(recovery_actions)" = 'tailscale debug rebind' ] \
-    && ok "tun0 disappearing rebinds even though the BSSID is unchanged" \
-    || bad "tun0 removal was missed: $(recovery_actions)"
+    && ok "a failed path after tun0 disappears rebinds without a roam" \
+    || bad "a failed path after tun0 removal was missed: $(recovery_actions)"
+reset_state bb:bb:bb:bb:bb:bb
+printf '%s\n%s\n' "$WLAN_ADDR" \
+    '12: tailscale0    inet 100.88.203.53/32 scope global tailscale0' >"$ADDRS"
+run FAKE_PROBES='000 204'
+[ "$(recovery_actions)" = 'tailscale debug rebind' ] \
+    && ok "a failed path after tailscale0 appears triggers recovery" \
+    || bad "a tailscale0 address change was missed: $(recovery_actions)"
 reset_state bb:bb:bb:bb:bb:bb
 DEFAULT_ROUTE='default via 10.36.48.1 dev wlan0 proto dhcp src 10.36.50.129 metric 1024'
 run
-[ "$(recovery_actions)" = 'tailscale debug rebind' ] \
-    && ok "a changed physical default route rebinds" || bad "default route change was missed"
+[ -z "$(recovery_actions)" ] \
+    && ok "a healthy changed physical default route needs no repair" \
+    || bad "a healthy default route change caused recovery"
 DEFAULT_ROUTE='default via 10.36.48.1 dev wlan0 proto dhcp src 10.36.50.129 metric 600'
 
-head_ "a link change tells tailscaled to rebind, then stops"
+head_ "healthy or irrelevant changes are read-only"
 reset_state
 run
-[ "$(status)" = 'recovered after link change: rebind' ] \
-    && ok "a healthy tunnel gets a rebind and nothing more" || bad "status is: $(status)"
+[ "$(status)" = 'exit-node path healthy after link change; no repair needed' ] &&
+   [ -z "$(recovery_actions)" ] \
+    && ok "a healthy tunnel is not rebound" || bad "status/actions: $(status) / $(recovery_actions)"
 reset_state
 run FAKE_TS_INACTIVE=1
 [ -z "$(recovery_actions)" ] && ok "inactive tailscaled is left alone" \
                              || bad "acted while tailscaled was inactive"
 reset_state
 run FAKE_EXIT_NODE=0 FAKE_PROBES=000
-[ "$(recovery_actions)" = 'tailscale debug rebind' ] \
-    && ok "with no exit node engaged it rebinds but never escalates" \
-    || bad "escalated with no exit node engaged: $(recovery_actions)"
+[ -z "$(recovery_actions)" ] \
+    && ok "with no exit node engaged it performs no recovery" \
+    || bad "acted with no exit node engaged: $(recovery_actions)"
+reset_state
+run FAKE_BAD_JSON=1 FAKE_PROBES=000
+[ -z "$(recovery_actions)" ] \
+    && ok "malformed tailscale status cannot trigger recovery" \
+    || bad "malformed tailscale status caused recovery: $(recovery_actions)"
+reset_state
+run FAKE_EXIT_ONLINE=false FAKE_PROBES=000
+[ -z "$(recovery_actions)" ] \
+    && ok "a known-offline exit node does not trigger a local daemon restart" \
+    || bad "known-offline exit node caused recovery: $(recovery_actions)"
+reset_state
+run FAKE_BSSID= FAKE_PROBES=000
+[ -z "$(recovery_actions)" ] && [[ "$(status)" == *"not associated"* ]] \
+    && ok "a transient empty BSSID is recorded without a rebind" \
+    || bad "an empty BSSID caused recovery: $(recovery_actions) / $(status)"
 
 head_ "faults that are not the tunnel never restart it"
 reset_state
@@ -223,6 +256,13 @@ else
     bad "an ICMP-dropping gateway suppressed escalation: $(status)"
 fi
 reset_state
+run FAKE_GATEWAYS='0 1 0' FAKE_GATEWAY_GONE=1 FAKE_PROBES='000 204'
+if [ "$(recovery_actions)" = 'tailscale debug rebind' ]; then
+    ok "one transient gateway miss during recovery does not abort it"
+else
+    bad "a transient gateway miss aborted recovery: $(status) / $(recovery_actions)"
+fi
+reset_state
 run FAKE_ROUTE_TUNNEL=0 FAKE_PROBES=000
 ! grep -Fq 'restart tailscaled' "$ACTIONS" \
     && ok "a probe routed off-tunnel never restarts tailscaled" \
@@ -230,7 +270,7 @@ run FAKE_ROUTE_TUNNEL=0 FAKE_PROBES=000
 
 head_ "bounded escalation ends in a single restart"
 reset_state
-run FAKE_PROBES='000 000 000 204'
+run FAKE_PROBES='000 000 000 000 204'
 grep -Fq 'systemctl restart tailscaled' "$ACTIONS" \
     && ok "a path still dead after rebind restarts tailscaled" \
     || bad "expected a restart, got: $(recovery_actions)"
@@ -239,17 +279,19 @@ grep -Fq 'systemctl restart tailscaled' "$ACTIONS" \
 reset_state
 run FAKE_PROBES=000
 if [ "$(grep -Fc 'systemctl restart tailscaled' "$ACTIONS")" -eq 1 ] &&
-   [[ "$(status)" == *"failing closed"* ]]; then
-    ok "an unrecoverable path restarts once, then fails closed"
+   [[ "$(status)" == *"failing closed"* ]] && [ ! -e "$STATE/linkstate" ]; then
+    ok "an unrecoverable path restarts once, fails closed, and permits an event retry"
 else
     bad "expected one restart then fail-closed: $(status) / $(recovery_actions)"
 fi
 reset_state
-run FAKE_PROBES=000 FAKE_TS_UPTIME=10
-if ! grep -Fq 'restart tailscaled' "$ACTIONS" && [[ "$(status)" == *"restart withheld"* ]]; then
-    ok "systemd's own start timestamp withholds a repeat restart"
+printf '0\n' >"$STATE/last-watchdog-restart"
+run FAKE_PROBES=000
+if ! grep -Fq 'restart tailscaled' "$ACTIONS" &&
+   [[ "$(status)" == *"restart withheld"* ]] && [ ! -e "$STATE/linkstate" ]; then
+    ok "a recent watchdog restart withholds a repeat but permits an event retry"
 else
-    bad "restarted a tailscaled that just started: $(status) / $(recovery_actions)"
+    bad "ignored the watchdog restart cooldown: $(status) / $(recovery_actions)"
 fi
 
 head_ "no action ever installs a bypass"

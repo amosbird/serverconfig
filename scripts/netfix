@@ -43,15 +43,15 @@ main() {
     fi
 
     say "OWNED POLICY"
-    n=$(ip route show table cn 2>/dev/null | wc -l)
-    [ "$n" -gt 1000 ] && ok "direct table: $n routes" || {
-        bad "direct table nearly empty ($n routes)"
-        fail=1
-    }
+    n=$(ipset save cn_direct 2>/dev/null | awk '$1 == "add" && $NF != "nomatch" {count++}
+        END {print count + 0}')
+    info "optional CN acceleration: $n prefixes"
 
     for spec in \
+        '400:fwmark 0x1000000 lookup main' \
+        '401:fwmark 0x1000000 prohibit' \
         '500:fwmark 0x80000/0xff0000 lookup main' \
-        '1500:lookup cn' \
+        '1000:lookup main suppress_prefixlength 0' \
         '2500:fwmark 0x1 lookup ioa' \
         '2500:to 10.0.0.0/8 lookup ioa' \
         '3000:to 100.64.0.0/10 lookup 52'
@@ -65,6 +65,19 @@ main() {
             fail=1
         fi
     done
+    if [ "$n" -gt 0 ]; then
+        if ip -4 rule show pref 1500 2>/dev/null | grep -Fq 'fwmark 0x2 lookup main'; then
+            ok "fwmark 0x2 lookup main"
+        else
+            bad "missing: fwmark 0x2 lookup main"
+            fail=1
+        fi
+    elif [ -n "$(ip -4 rule show pref 1500 2>/dev/null)" ]; then
+        bad "CN acceleration rule remains with an empty classifier"
+        fail=1
+    else
+        ok "CN acceleration disabled"
+    fi
 
     say "CONNECTIVITY (READ-ONLY)"
     code=$(online)
