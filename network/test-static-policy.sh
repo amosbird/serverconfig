@@ -479,18 +479,17 @@ case "$command" in
     ip)
         case "$*" in
             '-4 route show table main default') echo 'default via 192.0.2.1 dev wlan0' ;;
-            'route show table cn')
-                i=0
-                while [ "$i" -lt 1001 ]; do echo '192.0.2.0/24 dev wlan0'; i=$((i + 1)); done
-                ;;
             '-4 rule show pref 500') echo '500: from all fwmark 0x80000/0xff0000 lookup main' ;;
-            '-4 rule show pref 1500') echo '1500: from all lookup cn' ;;
+            '-4 rule show pref 1500') echo '1500: from all fwmark 0x2 lookup main' ;;
             '-4 rule show pref 2500')
                 echo '2500: from all fwmark 0x1 lookup ioa'
                 echo '2500: from all to 10.0.0.0/8 lookup ioa'
                 ;;
             '-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
         esac
+        ;;
+    ipset)
+        [ "$*" = 'save cn_direct' ] && echo 'add cn_direct 1.0.1.0/24'
         ;;
     curl) printf '204' ;;
     dig) echo '142.250.72.14' ;;
@@ -528,7 +527,7 @@ EOF
                 "timeout|120|env|FORCE=1|$fakebin/reconfigure|wlan0"| \
                 'reconfigure|FORCE=1|wlan0'| \
                 'ip|-4|route|show|table|main|default'| \
-                'ip|route|show|table|cn'| \
+                'ipset|save|cn_direct'| \
                 'ip|-4|rule|show|pref|500'| \
                 'ip|-4|rule|show|pref|1500'| \
                 'ip|-4|rule|show|pref|2500'| \
@@ -597,8 +596,7 @@ case "$command|$*" in
     'ip|-4 route show table main default') echo 'default via 192.0.2.1 dev wlan0' ;;
     'ip|-4 route show table main scope link') echo '192.0.2.0/24 dev wlan0 scope link' ;;
     'ip|-4 rule show pref 1000') echo '1000: from all to 192.0.2.0/24 lookup main' ;;
-    'ip|-4 route show table cn') echo '203.0.113.0/24 via 192.0.2.1 dev wlan0' ;;
-    'ip|-4 rule show pref 1500') echo '1500: from all lookup cn' ;;
+    'ip|-4 rule show pref 1500') echo '1500: from all fwmark 0x2 lookup main' ;;
     'ip|-4 route show table ioa') echo '10.0.0.0/8 dev tun0' ;;
     'ip|-4 -o addr show tun0') echo '8: tun0 inet 198.51.100.2/24 scope global tun0' ;;
     'ip|-4 rule show pref 2500') echo '2500: from all to 10.0.0.0/8 lookup ioa' ;;
@@ -613,6 +611,7 @@ case "$command|$*" in
             *) printf '{"BackendState":"Running","Health":[]}\n' ;;
         esac
         ;;
+    'ipset|save cn_direct') echo 'add cn_direct 203.0.113.0/24' ;;
 esac
 EOF
     chmod +x "$fakebin/sensitive-command"
@@ -651,7 +650,7 @@ EOF
                 'ip|-4|route|show|table|main|default'| \
                 'ip|-4|route|show|table|main|scope|link'| \
                 'ip|-4|rule|show|pref|1000'| \
-                'ip|-4|route|show|table|cn'| \
+                'ipset|save|cn_direct'| \
                 'ip|-4|rule|show|pref|1500'| \
                 'ip|-4|route|show|table|ioa'| \
                 'ip|-4|-o|addr|show|tun0'| \
@@ -740,6 +739,53 @@ do
         fail=1
     fi
 done
+reject 'exit-node watchdog never bypasses the tunnel or edits its preference' \
+    'ip rule|tailscale (set|up|down)[[:space:]]|lookup main|--exit-node' \
+    scripts/network-exit-watchdog
+for contract in \
+    'tailscale debug rebind' \
+    'systemctl restart tailscaled' \
+    'MIN_TAILSCALED_UPTIME' \
+    'failing closed'
+do
+    if ! grep -Fq "$contract" scripts/network-exit-watchdog; then
+        echo "FAIL exit-node watchdog lacks recovery contract: $contract" >&2
+        fail=1
+    fi
+done
+echo 'OK   exit-node watchdog escalates inside Tailscale and then fails closed'
+# Detection is event-driven on purpose: no standing timer, no perpetual probing.
+if [ -e network/systemd/network-exit-watchdog.timer ]; then
+    echo 'FAIL exit-node watchdog must be link-triggered, not driven by a standing timer' >&2
+    fail=1
+elif grep -Fq 'network-exit-watchdog.timer' restore.sh &&
+     ! grep -Fq 'rm -f /etc/systemd/system/network-exit-watchdog.timer' restore.sh; then
+    echo 'FAIL restore.sh installs a watchdog timer instead of retiring it' >&2
+    fail=1
+else
+    echo 'OK   exit-node watchdog is link-triggered rather than perpetually probing'
+fi
+# The 2026-09-14 tun0 outage: a BSSID-only trigger cannot see a non-roam rebind.
+if grep -Fq 'link_fingerprint' scripts/network-exit-watchdog &&
+   grep -Fq 'addr show scope global' scripts/network-exit-watchdog; then
+    echo 'OK   exit-node watchdog triggers on link state, not the BSSID alone'
+else
+    echo 'FAIL exit-node watchdog must trigger on the full link fingerprint' >&2
+    fail=1
+fi
+if grep -Fq 'ping -c 1 -W 1 -I' scripts/network-exit-watchdog &&
+   grep -Fq 'probe_uses_tunnel' scripts/network-exit-watchdog; then
+    echo 'OK   exit-node watchdog blames the tunnel only when LAN and route prove it'
+else
+    echo 'FAIL exit-node watchdog must gate on gateway health and tunnel route selection' >&2
+    fail=1
+fi
+if [ -e scripts/addroutes ] || [ -e scripts/addroutes_ipv4 ]; then
+    echo "FAIL retired addroutes scripts must not exist" >&2
+    fail=1
+else
+    echo "OK   retired addroutes scripts are absent"
+fi
 reject 'CN promotion does not launch one ip process per route' \
     'ip route replace \\$route table "\\$CN_TABLE"|grep -Fqx "\\$route" <<<"\\$stage_routes"' \
     scripts/network-reconfigure

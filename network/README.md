@@ -20,9 +20,9 @@ Ownership is deliberately narrow:
   `ManageForeignRoutes=no`, so networkd does not garbage-collect route/rule objects owned by
   Tailscale, SmartGateAgent, or `network-reconfigure`.
 - **`scripts/network-reconfigure`** owns the repository's rules at priorities 400, 401, 500, 1000,
-  1500, 2500, and 3000; table `cn`; the dynamically registered `cn_stage`
-  table; the `NETMODE_IOA` chain and its OUTPUT hook; the exact IOA MASQUERADE rule; and the
-  generated DHCP and office SmartDNS fragments. It owner-marks traffic from both iOA cgroups —
+  1500, 2500, and 3000; the atomic `cn_direct`/`cn_direct_next` ipsets; the `NETMODE_IOA`
+  chain and its OUTPUT hook; the exact CN and IOA MASQUERADE rules; and the generated DHCP and
+  office SmartDNS fragments. It owner-marks traffic from both iOA cgroups —
   `ngnclient.service` and the `ioagui.service` user unit — as `0x1000000` before its first route
   lookup and masquerades that traffic on the current physical device, correcting iOA control
   sockets that bind to a Tailscale source address.
@@ -56,7 +56,7 @@ the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owne
 | 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, DHCP resolvers, and active office resolvers | `main` | Keep the actual LAN and its infrastructure direct. |
 | 1100 | SmartGateAgent-owned `fwmark 0xa38` | `20` | Send SmartGate control traffic through its current physical underlay. |
 | 1200 | SmartGateAgent-owned physical source address | `230` | Keep its source-bound sockets on the current physical underlay. |
-| 1500 | all destinations with a route in `cn` | `cn` | Make `~/.routefile` authoritative for physical egress. |
+| 1500 | exact `fwmark 0x2` | `main` | Send optional CN-accelerated traffic through the current physical default. |
 | 2500 | exact `fwmark 0x1`, then `10.0.0.0/8` | `ioa` | Select DNS-classified IOA traffic and retain a literal-address fallback for private Tencent destinations. |
 | 3000 | `100.64.0.0/10` | `52` | Reach tailnet peers through Tailscale. |
 
@@ -79,20 +79,36 @@ Linux evaluates lower numeric priorities first:
    and office DNS servers enabled for the authenticated wired link.
 4. SmartGateAgent owner-marked packets use owner table `20`.
 5. SmartGateAgent physical-source sockets use owner table `230`.
-6. A destination present in `~/.routefile` uses `cn` and the physical gateway.
+6. An unmarked destination present in `~/.routefile` receives mark `0x2`, is rerouted through
+   the current `main` default, and is masqueraded on that physical device.
 7. IOA business payload uses table `ioa`; domain-classified payload is distinct from IOA
    underlay traffic.
 8. `100.64.0.0/10` uses Tailscale table `52`.
 9. Unmatched traffic follows Tailscale's independently managed selected exit node.
 
-### Routefile is authoritative
+### Routefile is optional acceleration
 
-`scripts/updateroutes` generates `~/.routefile`; `network-reconfigure` loads those prefixes
-into table `cn` with the current physical gateway. Priority 1500 is before every
-repository-owned IOA business rule, so routefile destinations have absolute priority over IOA
-business selection. This remains true when a routefile prefix overlaps static `10/8`, a
-dynamically classified `100.12/16` address, or a packet already has the exact SmartDNS business
-mark `0x1`.
+`scripts/updateroutes` generates `~/.routefile` as a canonical CIDR-per-line data file.
+`network-reconfigure` validates it into the inactive `cn_direct_next` hash:net set and swaps that
+set with `cn_direct` atomically. `NETMODE_IOA` classifies a matching unmarked destination as exact
+mark `0x2` before considering SmartDNS's `ioa` set; priority 1500 reroutes that mark through
+`main`. This makes routefile acceleration authoritative over IOA business classification while
+the file is healthy, including overlaps with static `10/8` or domain-derived addresses.
+
+The routefile is never required for connectivity. Missing, empty, or comment-only input
+atomically disables CN acceleration. Malformed input preserves the last known-good set and
+does not fail reconciliation of LAN, IOA, Tailscale, DNS, or firewall policy. A stale set can
+only choose direct physical egress for additional destinations; it contains no interface or
+gateway and therefore cannot blackhole traffic after an AP change. The retired tables `cn`
+and `cn_stage` are flushed, their names are removed from `rt_tables`, and no policy rule
+consults them.
+
+`updateroutes` accepts only exact APNIC `CN|ipv4` records whose status is `allocated` or
+`assigned`, validates power-of-two counts and network alignment, collapses the result, and rejects
+an implausibly small response. It writes and fsyncs a temporary file beside `~/.routefile`, then
+uses `os.replace`; an interrupted download, parse failure, short response, or write failure leaves
+the previous file byte-for-byte intact. Identical output is a true no-op. The path unit watches
+the routefile, so only a successful changed replacement requests reconciliation.
 
 This authority does not take ownership of SmartGateAgent's `0xa38` control traffic. That mark
 and its table `20` path remain SmartGateAgent's responsibility.
@@ -180,10 +196,38 @@ it has no gateway. During a physical-link outage Tailscale waits for a physical 
 never select `tun0`.
 
 The selected Tailscale exit node is intentionally **fail-closed**. If the exit node is
-unavailable, unmatched/default traffic may stop until Tailscale recovers. Local code must not
-detach the exit node, bypass it through `main`, call `tailscale down` or `tailscale up`, or
-restart `tailscaled` as recovery. This prevents an outage from silently leaking default
-traffic onto the physical network.
+unavailable, unmatched/default traffic stops rather than leaking onto the physical network.
+Local code must not detach the exit node, bypass it through `main`, call `tailscale down` or
+`tailscale up`, or edit the exit-node preference.
+
+Recovery of the tunnel itself is not left to Tailscale, because two captured outages proved it
+does not happen. A roam between BSSIDs on one subnet flaps the carrier for ~137ms;
+`IgnoreCarrierLoss=3s` deliberately keeps the address and both routes, so the roam produces no
+netlink change, tailscaled's link monitor sees no interface delta, and it never rebinds. Its
+magicsock socket and DERP sessions stay bound to the pre-roam path and stop passing data while
+control keeps reporting the exit node as online, so no failover occurs: seven minutes of
+continuous `open-conn-track` timeouts followed, spanning two full Wi-Fi reconnects that did
+rebind and did regain direct contact. Restarting `tailscaled` restored it.
+
+The wedge is not exclusive to roaming. On 2026-09-14 18:53:52, restarting the iOA GUI killed
+SmartGateAgent and removed `tun0`; tailscaled did see that and rebound twice, and the exit-node
+path wedged anyway — 43 `open-conn-track` timeouts in 100 seconds, `online=yes`, no roam
+involved. A rebind is therefore the hazard, whatever provokes it, and a BSSID-scoped detector
+misses every non-roam cause.
+
+`scripts/network-exit-watchdog` therefore repairs the path instead of routing around it.
+Detection is event-driven, not roam-scoped: `network-exit-watchdog.path` runs it on link-state
+changes and it does nothing unless the link fingerprint moved — BSSID, the physical default
+route, or the set of global addresses, which are the inputs tailscaled itself keys on, so a
+roam, a `tun0` flap and a `tailscale0` change all qualify. It then rebinds magicsock and
+verifies within a bounded window rather than probing forever. There is deliberately no standing
+timer. If the path is still dead it restarts `tailscaled` once — withheld when systemd reports
+`tailscaled` came up less than two minutes ago, which replaces a restart cooldown with no
+persistent state. Escalation stays inside Tailscale: if it fails the watchdog logs and **stays
+fail-closed**, never installing a bypass and never touching the exit-node preference. It also
+refuses to blame the tunnel unless the physical gateway answers and the kernel confirms the probe
+selects `tailscale0`, so an ordinary LAN outage cannot trigger a restart. `network-status`
+reports the last verdict.
 
 Other failures stay within ownership boundaries:
 
@@ -228,7 +272,7 @@ apply it during an active remote session. Validate the MAC and routing on the ne
 
 ## Reconciliation and AP changes
 
-`network-reconfigure.path` watches networkd link state. On a physical link or DHCP change,
+`network-reconfigure.path` watches networkd link state and `~/.routefile`. On a physical link or DHCP change,
 `network-reconfigure` derives a physical identity from the interface, physical device,
 gateway, DHCP resolvers, and routefile hash. Tunnel interfaces are not routing-rebuild inputs.
 Tailscale and SmartGateAgent receive link changes independently and repair their own state.
@@ -237,39 +281,37 @@ The reconciler then:
 
 1. atomically updates the generated DHCP and office SmartDNS fragments when their content changes;
 2. derives actual connected-LAN, gateway, and DHCP DNS rules;
-3. stages routefile routes, validates them, and updates `cn` for the current gateway;
+3. validates routefile prefixes into an inactive hash:net set and atomically swaps it active;
 4. reconciles only the seven active repository-owned priority bands and removes the retired
    priority-1400 mark rule;
 5. restores the dual-ipset, mark-0-only firewall policy and exact IOA NAT rule;
 6. records the physical state only after a successful run.
 
-### Failure-safe route staging
+### Failure-safe CN classification
 
-`cn_stage` is assigned a free ID in the private range 10000-10999 after checking all existing
-`rt_tables` registrations. An existing unique, non-conflicting ID is reused. Exhaustion or a
-conflict fails visibly rather than borrowing another table's ID.
+The preferred routefile grammar is one IPv4 CIDR per non-comment line. The legacy
+`route add|replace IPv4[/prefix] via GATEWAY table cn` representation remains read-only compatible
+so an existing file can migrate without an outage; neither form is executed as shell or `ip`
+input. Duplicate or invalid prefixes reject the candidate.
 
-A non-empty routefile is parsed as data, not executed as an `ip -batch` program. Its only accepted
-non-comment grammar is `route add|replace IPv4[/prefix] via GATEWAY table cn`, with an IPv4 prefix
-length from 0 through 32 and no trailing tokens. The reconciler emits its own `route replace`
-commands into `cn_stage` using the current gateway. The route count must match before the active
-`cn` table is changed, so malformed input or a staging failure leaves both `cn` and the active
-marking hook unchanged. During active reconciliation, new routes are installed before stale routes
-are deleted to reduce the update window, but a netlink failure can leave a partial active update
-and is reported as an error. A missing or empty routefile is authoritative and safely disables the
-`cn` rule and routes.
+The candidate is loaded into `cn_direct_next`, exclusions are added as hash:net `nomatch`
+entries, and one `ipset swap` publishes the complete set. Failed parsing or loading never changes
+the active set. The saved state records both input hashes and a hash of the actual active entries,
+so same-count drift is detected without coupling the classifier to a gateway. Missing or empty
+input swaps an empty set active and removes priority 1500.
 
 ### Fingerprints and convergence
 
 The saved physical identity is only an early-exit hint. Before skipping work, the reconciler
 also compares desired and actual fingerprints for every owned priority band, checks the active
-`cn` gateway, and verifies the complete firewall, ipset, and NAT shape. Comparison is
+CN set hash, and verifies the complete firewall, ipset, and NAT shape. Comparison is
 bidirectional: missing owned objects and unexpected objects inside an owned band both trigger
 repair. Desired rules are added before stale rules are removed, and the final band must match
 exactly.
 
 This retains three important invariants across AP changes: public DHCP DNS remains reachable,
-`cn` routes use the current gateway, and tunnel-owned tables and marks remain untouched.
+CN acceleration immediately follows the current `main` default without rebuilding, and
+tunnel-owned tables and marks remain untouched.
 
 ## Manual incident capture
 
@@ -312,6 +354,7 @@ sudo -n bash network/test-ioa-static-lan-overlap.sh
 sudo -n bash network/test-reconfigure.sh
 bash network/test-static-policy.sh
 bash network/test-debug-capture.sh
+python3 network/test-updateroutes.py
 ```
 
 `network/test-reconfigure.sh` runs destructive routing, firewall, roaming, cold-start, and
@@ -325,7 +368,7 @@ Live inspection is read-only:
 scripts/network-status
 ```
 
-It reports interfaces, connected routes, repository priority bands, `cn` and `ioa` state,
+It reports interfaces, connected routes, repository priority bands, optional CN-set and IOA state,
 SmartGateAgent's owner mark, Tailscale table `52`, and exit-node health without repairing or
 mutating them.
 

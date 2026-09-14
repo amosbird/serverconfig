@@ -207,6 +207,12 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
+    sudo cp "$DIR"/network/systemd/network-exit-watchdog.{service,path} \
+        /etc/systemd/system/
+    sudo systemctl disable --now network-exit-watchdog.timer 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/network-exit-watchdog.timer
+    # Superseded by the full link fingerprint in linkstate; a leftover file is never read.
+    sudo rm -f /var/lib/network-exit-watchdog/bssid
     sudo rm -f /etc/systemd/system/tailscaled.service.d/transport.conf
     sudo systemctl disable --now network-debug-pcap.service 2>/dev/null || true
     sudo rm -f /etc/systemd/system/network-debug-pcap.service
@@ -214,6 +220,15 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/network/iOA /usr/lib/iOA/bin/iOA
     sudo cp "$DIR"/network/SmartGateAgent /usr/lib/iOA/bin/SmartGateAgent
     sudo chmod 755 /usr/lib/iOA/bin/SmartGateAgent
+    # Pin iOA to 1.0.3.62: the vendor entry point hands off to the systemd-owned GUI instead
+    # of starting a second one, the self-upgrader is declined, and no other version is kept.
+    sudo cp "$DIR"/network/iOALinux /usr/lib/iOA/bin/iOALinux
+    sudo cp "$DIR"/network/iOA_upgrade /usr/lib/iOA/bin/iOA_upgrade
+    sudo chmod 755 /usr/lib/iOA/bin/iOALinux /usr/lib/iOA/bin/iOA_upgrade
+    sudo rm -f /usr/lib/iOA/bin/iOA.bin.39 /usr/lib/iOA/bin/iOA.bin.40 \
+        /usr/lib/iOA/bin/SmartGateAgent.bin.39 /usr/lib/iOA/bin/SmartGateAgent.bin.40 \
+        /usr/lib/iOA/bin/SmartGateAgent.bin.40.patched \
+        /opt/ioa/bin/iOALinux.bin.39 /opt/ioa/bin/iOALinux.bin.40
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
     sudo rm -f /var/lib/network-reconfigure/derp-ips \
@@ -277,6 +292,7 @@ if [[ -n $GUI ]]; then
     sudo systemctl enable --now bluetooth.service
     sudo systemctl enable systemd-networkd.service iwd.service
     sudo systemctl enable network-reconfigure.path
+    sudo systemctl enable network-exit-watchdog.path
 fi
 
 echo 'Restored!'
