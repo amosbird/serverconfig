@@ -111,7 +111,13 @@ Expected:
 | `U+1F5C0` folder / document symbols | Noto Sans Symbols2 |
 | `U+2500` box drawing, `U+25A0` geometric, `U+2190` arrows | DejaVu |
 
-## Two things fonts cannot fix
+The last row is what `fc-match` reports for a request carrying no language.
+A browser rendering a page that declares `lang="zh"` resolves those same
+codepoints to Noto Sans CJK SC instead, because the Noto packages prepend the
+SC face for Chinese and it covers box drawing, geometric shapes and arrows
+too. They render either way; only the metrics differ.
+
+## Three things fonts cannot fix
 
 **Private Use Area icons in a browser.** Chromium does not fall back for PUA
 codepoints, because they carry no Unicode script to search on. Installing
@@ -123,6 +129,12 @@ font.
 **Webfonts are not system fonts.** VS Code's icons are the `codicon` webfont
 the page loads itself, so they are unaffected by everything here — they
 already worked on a host with nothing but DejaVu installed.
+
+**Programs that rasterise from bundled fonts.** Anything drawing its own UI
+from fonts compiled into the binary never consults fontconfig. terminal-browser
+is the example on these hosts: page content goes through Chromium and picks up
+everything above, but its tab titles and address bar come from bundled Inter
+and JetBrains Mono, so Chinese there stays blank no matter what is installed.
 
 `fc-match` only reports what fontconfig would pick, and a glyph no font covers
 is still reported under some family name. To prove a character actually

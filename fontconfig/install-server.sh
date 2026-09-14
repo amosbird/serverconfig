@@ -12,6 +12,10 @@ if [[ -f /etc/os-release ]] && grep -qx 'ID=arch' /etc/os-release; then
     exit 1
 fi
 
+for t in sudo dnf curl tar xz python3 fc-cache fc-match; do
+    command -v "$t" >/dev/null || { echo "missing required tool: $t" >&2; exit 1; }
+done
+
 here=$(cd "$(dirname "$0")" && pwd)
 fonts_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fonts"
 conf_dst=/etc/fonts/conf.d/70-noto-cjk-sc-prefer.conf
@@ -33,8 +37,15 @@ mkdir -p "$fonts_dir"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-# Icon glyphs. No distro package ships these.
+# Icon glyphs. No distro package ships these. The URL floats on the latest
+# release, so check the member names rather than trusting them.
 curl -fsSL "$nf_url" -o "$tmp/nerd.tar.xz"
+for member in SymbolsNerdFont-Regular.ttf SymbolsNerdFontMono-Regular.ttf; do
+    tar -tJf "$tmp/nerd.tar.xz" "$member" >/dev/null 2>&1 || {
+        echo "nerd-fonts release no longer contains $member; check $nf_url" >&2
+        exit 1
+    }
+done
 tar -xJf "$tmp/nerd.tar.xz" -C "$fonts_dir" \
     SymbolsNerdFont-Regular.ttf \
     SymbolsNerdFontMono-Regular.ttf
@@ -46,23 +57,39 @@ python3 - "$tmp/ubuntu.zip" "$fonts_dir" <<'PY'
 import pathlib, sys, zipfile
 src, dst = sys.argv[1], pathlib.Path(sys.argv[2])
 with zipfile.ZipFile(src) as z:
-    for n in z.namelist():
-        if "UbuntuMono-" in n and n.endswith(".ttf"):
-            (dst / pathlib.Path(n).name).write_bytes(z.read(n))
+    found = [n for n in z.namelist()
+             if "UbuntuMono-" in n and n.endswith(".ttf")]
+    if not found:
+        sys.exit(f"no UbuntuMono faces in {src}; the pinned asset may have moved")
+    for n in found:
+        (dst / pathlib.Path(n).name).write_bytes(z.read(n))
 PY
 
 sudo install -Dm644 "$here/70-noto-cjk-sc-prefer.conf" "$conf_dst"
 fc-cache -f
 
 echo
-printf '%-18s %s\n' \
-    'sans-serif' "$(fc-match sans-serif --format '%{family}')" \
-    'serif' "$(fc-match serif --format '%{family}')" \
-    'monospace' "$(fc-match monospace --format '%{family}')" \
-    'han' "$(fc-match :charset=4e2d --format '%{family}')" \
-    'emoji' "$(fc-match :charset=1f680 --format '%{family}')" \
-    'nerd icon' "$(fc-match :charset=e0b0 --format '%{family}')"
+failed=0
+check() {
+    local label=$1 pattern=$2 got
+    got=$(fc-match "$pattern" --format '%{family}')
+    if [[ $got == "$3" ]]; then
+        printf '  %-28s %s\n' "$label" "$got"
+    else
+        printf '  %-28s %s  (expected %s)\n' "$label" "$got" "$3"
+        failed=1
+    fi
+}
+check 'sans-serif'            'sans-serif'      'Roboto'
+check 'serif'                 'serif'           'Roboto Slab'
+check 'monospace'             'monospace'       'Ubuntu Mono'
+check 'han U+4E2D'            ':charset=4e2d'   'Noto Sans CJK SC'
+check 'emoji U+1F680'         ':charset=1f680'  'Noto Color Emoji'
+check 'symbols2 U+1F5C0'      ':charset=1f5c0'  'Noto Sans Symbols2'
+check 'nerd icon U+E0B0'      ':charset=e0b0'   'Symbols Nerd Font'
 echo
-echo "expected: Roboto / Roboto Slab / Ubuntu Mono / Noto Sans CJK SC /"
-echo "          Noto Color Emoji / Symbols Nerd Font"
+if (( failed )); then
+    echo "font resolution is not what this script installs for; see README.md" >&2
+    exit 1
+fi
 echo "restart anything already running: fonts are sampled once at startup."
