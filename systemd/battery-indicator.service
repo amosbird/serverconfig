@@ -1,0 +1,8 @@
+[Unit]
+Description=Battery level tray indicator
+
+[Service]
+ExecStart=/home/amos/scripts/battery-indicator
+Environment=DISPLAY=:0 XAUTHORITY=/home/amos/.Xauthority GDK_SCALE=2 PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=2

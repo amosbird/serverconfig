@@ -61,6 +61,21 @@ class QtileScratchpadTest(unittest.TestCase):
         ):
             self.assertIn(f'"{name}": Match(', self.config)
 
+    def test_tray_starts_before_fcitx5_so_its_icon_is_not_blank(self):
+        # fcitx5 paints its XEmbed icon only while connecting to a tray, so a
+        # tray spawned later (first Ctrl-Alt-4 of the session) leaves a blank
+        # slot. The session must start the tray first, and a tray that starts
+        # with fcitx5 already up must force the repaint itself.
+        launcher = ROOT / "scripts/tray"
+        source = launcher.read_text()
+        self.assertIn("exec stalonetray --icon-size=96 --kludges=force_icons_size", source)
+        self.assertIn("pgrep -x fcitx5", source)
+        self.assertIn("repaint_fcitx5_icon &", source)
+        self.assertIn('"stalonetray",\n                "tray",', self.config)
+        startup = (ROOT / "scripts/startup").read_text()
+        self.assertIn('run_bg "tray" tray', startup)
+        self.assertLess(startup.index('run_bg "tray" tray'), startup.index("fcitx5 -d"))
+
     def test_bookmark_manager_is_a_reusable_scratchpad(self):
         launcher = ROOT / "scripts/bookmark-manager"
         self.assertTrue(launcher.exists())

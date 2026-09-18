@@ -244,6 +244,22 @@ def _adopt_scratchpad_window(qtile: Qtile, name):
     return name in scratchpad.dropdowns
 
 
+# These dropdowns share the same screen real estate, so showing one hides the
+# others instead of stacking them on top of each other.
+exclusive_scratchpads = ("chatgpt", "webchat", "tdesktop")
+
+
+def _hide_exclusive_scratchpads(scratchpad, name):
+    if name not in exclusive_scratchpads:
+        return
+    for other in exclusive_scratchpads:
+        if other == name:
+            continue
+        dropdown = scratchpad.dropdowns.get(other)
+        if dropdown is not None:
+            dropdown.hide()
+
+
 def toggle_scratchpad(name):
     @lazy.function
     def toggle(qtile: Qtile):
@@ -254,12 +270,14 @@ def toggle_scratchpad(name):
             _drop_scratchpad_dropdown(scratchpad, name)
         if name not in scratchpad.dropdowns:
             if not _adopt_scratchpad_window(qtile, name):
+                _hide_exclusive_scratchpads(scratchpad, name)
                 scratchpad.dropdown_toggle(name)
                 return
         dropdown = scratchpad.dropdowns[name]
         if dropdown.window.has_focus:
             dropdown.hide()
             return
+        _hide_exclusive_scratchpads(scratchpad, name)
         current_group = qtile.current_group
         dropdown.window.togroup(current_group.name)
         dropdown.show()
@@ -483,10 +501,10 @@ groups = [
                 "tdesktop",
                 "/opt/telegram/Telegram",
                 match=scratchpad_matches["tdesktop"],
-                x=0.15,
+                x=0.1,
                 y=0.1,
-                width=0.7,
-                height=0.8,
+                width=0.8,
+                height=0.85,
                 opacity=1,
                 on_focus_lost_hide=False,
             ),
@@ -536,7 +554,7 @@ groups = [
             ),
             DropDown(
                 "stalonetray",
-                "stalonetray --icon-size=96 --kludges=force_icons_size",
+                "tray",
                 match=scratchpad_matches["stalonetray"],
                 x=0.45,
                 y=0.45,
@@ -623,6 +641,7 @@ def show_scratchpad(name):
     scratchpad = qtile.groups_map["scratchpad"]
     if name in scratchpad.dropdowns:
         dropdown = scratchpad.dropdowns[name]
+        _hide_exclusive_scratchpads(scratchpad, name)
         dropdown.show()
         dropdown.window.bring_to_front()
         dropdown.window.focus(warp=True)

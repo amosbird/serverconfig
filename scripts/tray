@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+# The system tray, as a 96 px row of icons for this HiDPI screen. Shown and
+# hidden as the qtile "stalonetray" scratchpad (Ctrl-Alt-4).
+#
+# fcitx5 paints its XEmbed tray icon only while connecting to a tray: a tray
+# that shows up afterwards gets fcitx5's icon window re-embedded but never
+# painted, so the slot stays blank. Neither hide/show cycles nor
+# `fcitx5-remote -r` repaint it, only an input method state change does.
+# Hence the session starts the tray before fcitx5, and a tray started with
+# fcitx5 already running round-trips the input method state to force a
+# repaint.
+
+repaint_fcitx5_icon() {
+    sleep 3
+    case "$(fcitx5-remote 2>/dev/null)" in
+        1) fcitx5-remote -o && sleep 0.3 && fcitx5-remote -c ;;  # inactive
+        2) fcitx5-remote -c && sleep 0.3 && fcitx5-remote -o ;;  # active
+    esac
+}
+
+if pgrep -x fcitx5 > /dev/null; then
+    repaint_fcitx5_icon &
+fi
+
+exec stalonetray --icon-size=96 --kludges=force_icons_size

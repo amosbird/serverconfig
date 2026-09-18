@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+
+import faulthandler
+import os
+import subprocess
+
+faulthandler.enable()
+
+import cairo
+import gi
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gdk, Gio, GLib, Gtk
+
+ICON_SIZE = 96
+DESIGN_SIZE = 96
+
+UPOWER = "org.freedesktop.UPower"
+DEVICE_INTERFACE = "org.freedesktop.UPower.Device"
+DISPLAY_DEVICE = "/org/freedesktop/UPower/devices/DisplayDevice"
+BATTERY_SYSFS = "/sys/class/power_supply/BAT0"
+
+# org.freedesktop.UPower.Device State
+STATE_CHARGING = (1, 5)
+STATE_FULL = 4
+STATE_EMPTY = 3
+
+# Percentage floors, checked top down. Charging overrides the colour so a
+# plugged-in machine never shows an alarming icon.
+LEVEL_COLORS = (
+    (60, (0.12, 0.62, 0.48)),
+    (30, (0.85, 0.62, 0.10)),
+    (15, (0.90, 0.45, 0.10)),
+    (0, (0.78, 0.22, 0.22)),
+)
+CHARGING_COLOR = (0.10, 0.47, 0.95)
+UNKNOWN_COLOR = (0.30, 0.32, 0.36)
+
+# Discharge warnings, fired once per crossing and rearmed by charging.
+WARNING_LEVELS = (15, 5)
+
+
+def level_color(percentage, charging):
+    if charging:
+        return CHARGING_COLOR
+    if percentage is None:
+        return UNKNOWN_COLOR
+    for floor, color in LEVEL_COLORS:
+        if percentage >= floor:
+            return color
+    return UNKNOWN_COLOR
+
+
+def format_duration(seconds):
+    if not seconds or seconds <= 0:
+        return ""
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return "less than a minute"
+    if minutes < 60:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60} min"
+
+
+def read_sysfs(name):
+    try:
+        with open(os.path.join(BATTERY_SYSFS, name)) as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+class BatteryIndicator:
+    def __init__(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        self.percentage = None
+        self.charging = False
+        self.state = 0
+        self.rate = 0.0
+        self.remaining = 0
+        self.warned = set()
+        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon(None, False, ICON_SIZE))
+        self.icon.set_title("Battery")
+        self.icon.connect("size-changed", self.on_icon_size_changed)
+        self.icon.connect("popup-menu", self.show_menu)
+        self.icon.connect("activate", self.activate)
+        self.icon.set_visible(True)
+        # UPower recomputes the composite DisplayDevice on every battery and
+        # line-power change, so one subscription covers both.
+        self.bus.signal_subscribe(
+            UPOWER,
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            None,
+            None,
+            Gio.DBusSignalFlags.NONE,
+            self.on_upower_changed,
+        )
+        # UPower signals are the fast path; the slow tick only covers a
+        # restarted daemon whose first signal we missed.
+        GLib.timeout_add_seconds(60, self.tick)
+        self.refresh()
+
+    def upower_properties(self):
+        try:
+            result = self.bus.call_sync(
+                UPOWER,
+                DISPLAY_DEVICE,
+                "org.freedesktop.DBus.Properties",
+                "GetAll",
+                GLib.Variant("(s)", (DEVICE_INTERFACE,)),
+                None,
+                Gio.DBusCallFlags.NONE,
+                2000,
+                None,
+            )
+            return result.unpack()[0]
+        except GLib.Error:
+            return {}
+
+    def load(self):
+        properties = self.upower_properties()
+        if properties:
+            self.percentage = properties.get("Percentage")
+            self.state = int(properties.get("State", 0))
+            self.charging = self.state in STATE_CHARGING
+            self.rate = properties.get("EnergyRate", 0.0)
+            self.remaining = (
+                properties.get("TimeToFull", 0)
+                if self.charging
+                else properties.get("TimeToEmpty", 0)
+            )
+            return
+        # UPower is down (restart, crash): sysfs still knows the essentials,
+        # which is exactly what the icon shows.
+        capacity = read_sysfs("capacity")
+        status = read_sysfs("status")
+        self.percentage = float(capacity) if capacity.isdigit() else None
+        self.charging = status in ("Charging", "Full")
+        self.state = STATE_FULL if status == "Full" else 1 if self.charging else 2
+        self.rate = 0.0
+        self.remaining = 0
+
+    def state_label(self):
+        if self.state in STATE_CHARGING:
+            return "Charging"
+        if self.state == STATE_FULL:
+            return "Fully charged"
+        if self.state == STATE_EMPTY:
+            return "Empty"
+        if self.state == 2:
+            return "Discharging"
+        return "Unknown"
+
+    def health(self):
+        full = read_sysfs("energy_full")
+        design = read_sysfs("energy_full_design")
+        if not full.isdigit() or not design.isdigit() or not int(design):
+            return ""
+        return f"{round(100 * int(full) / int(design))}%"
+
+    @staticmethod
+    def rounded_rectangle(context, x, y, width, height, radius):
+        context.new_sub_path()
+        context.arc(x + width - radius, y + radius, radius, -1.5708, 0)
+        context.arc(x + width - radius, y + height - radius, radius, 0, 1.5708)
+        context.arc(x + radius, y + height - radius, radius, 1.5708, 3.1416)
+        context.arc(x + radius, y + radius, radius, 3.1416, 4.7124)
+        context.close_path()
+
+    @classmethod
+    def draw_battery(cls, context, percentage, color):
+        left, top, width, height = 17, 13, 54, 28
+        context.set_source_rgba(1, 1, 1, 0.92)
+        cls.rounded_rectangle(context, left, top, width, height, 6)
+        context.set_line_width(4)
+        context.stroke()
+        cls.rounded_rectangle(context, left + width + 1, top + 8, 6, 12, 2)
+        context.fill()
+        if percentage is None:
+            return
+        inner = width - 10
+        filled = max(3.0, inner * min(100.0, max(0.0, percentage)) / 100.0)
+        cls.rounded_rectangle(context, left + 5, top + 5, filled, height - 10, 3)
+        context.fill()
+        # Knock the bolt out of the fill so it reads at any charge level.
+        if color == CHARGING_COLOR:
+            context.move_to(46, top + 3)
+            context.line_to(35, top + height / 2 + 2)
+            context.line_to(43, top + height / 2 + 2)
+            context.line_to(39, top + height - 3)
+            context.line_to(52, top + height / 2 - 3)
+            context.line_to(44, top + height / 2 - 3)
+            context.close_path()
+            context.set_source_rgba(1, 1, 1, 0.92)
+            context.set_line_width(5)
+            context.set_line_join(cairo.LINE_JOIN_ROUND)
+            context.stroke_preserve()
+            context.set_source_rgb(*color)
+            context.fill()
+
+    def status_icon(self, percentage, charging, size):
+        color = level_color(percentage, charging)
+        label = "--" if percentage is None else str(round(percentage))
+
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+        context = cairo.Context(surface)
+        context.scale(size / DESIGN_SIZE, size / DESIGN_SIZE)
+        self.rounded_rectangle(context, 0, 0, DESIGN_SIZE, DESIGN_SIZE, 18)
+        context.set_source_rgb(*color)
+        context.fill()
+
+        self.draw_battery(context, percentage, color)
+
+        context.set_source_rgb(1, 1, 1)
+        context.select_font_face("Sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        context.set_font_size(34 if len(label) < 3 else 28)
+        extents = context.text_extents(label)
+        context.move_to(48 - extents.width / 2 - extents.x_bearing, 80)
+        context.show_text(label)
+        return Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
+
+    def draw_icon(self):
+        size = self.icon.get_size() or ICON_SIZE
+        self.icon.set_from_pixbuf(self.status_icon(self.percentage, self.charging, size))
+
+    def on_icon_size_changed(self, _icon, size):
+        # GtkStatusIcon otherwise keeps its 48 px natural allocation centered
+        # when stalonetray expands the XEmbed socket to 96 px on HiDPI.
+        self.icon.set_from_pixbuf(self.status_icon(self.percentage, self.charging, size))
+        return True
+
+    def tooltip(self):
+        lines = [
+            "Battery unavailable"
+            if self.percentage is None
+            else f"Battery  {round(self.percentage)}%"
+        ]
+        state = self.state_label()
+        if self.rate:
+            state += f"  ·  {self.rate:.1f} W"
+        lines.append(state)
+        remaining = format_duration(self.remaining)
+        if remaining:
+            lines.append(f"{remaining} {'until full' if self.charging else 'remaining'}")
+        health = self.health()
+        cycles = read_sysfs("cycle_count")
+        if health:
+            lines.append(f"Health  {health}  ·  {cycles} cycles" if cycles else f"Health  {health}")
+        return "\n".join(lines)
+
+    def refresh(self):
+        self.load()
+        self.draw_icon()
+        self.icon.set_tooltip_text(self.tooltip())
+        self.warn_if_low()
+        return False
+
+    def warn_if_low(self):
+        if self.charging or self.percentage is None:
+            self.warned.clear()
+            return
+        for level in WARNING_LEVELS:
+            if self.percentage <= level and level not in self.warned:
+                self.warned.add(level)
+                self.notify(level)
+
+    def notify(self, level):
+        remaining = format_duration(self.remaining)
+        body = f"{round(self.percentage)}% left"
+        if remaining:
+            body += f"  ·  {remaining} remaining"
+        try:
+            subprocess.Popen(
+                [
+                    "notify-send",
+                    "--app-name=battery",
+                    f"--urgency={'critical' if level <= 5 else 'normal'}",
+                    "--icon=battery-low",
+                    "Battery low",
+                    body,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            pass
+
+    def on_upower_changed(self, *_args):
+        GLib.idle_add(self.refresh)
+
+    def tick(self):
+        self.refresh()
+        return True
+
+    def activate(self, icon):
+        self.show_menu(icon, 1, Gtk.get_current_event_time())
+
+    def show_menu(self, icon, button=0, activate_time=0):
+        menu = Gtk.Menu()
+        for line in self.tooltip().split("\n"):
+            item = Gtk.MenuItem(label=line)
+            item.set_sensitive(False)
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        refresh = Gtk.MenuItem(label="Refresh")
+        refresh.connect("activate", lambda *_: self.refresh())
+        menu.append(refresh)
+        menu.show_all()
+        menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, activate_time)
+
+
+def main():
+    print(f"battery-indicator started (pid {os.getpid()})", flush=True)
+    BatteryIndicator()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()
