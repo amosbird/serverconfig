@@ -16,8 +16,7 @@ if [ -z "${IN_NETNS:-}" ]; then
         'DESIRED_BANDS[$P_IOA_OWNER_STOP]="from all fwmark $IOA_OWNER_MARK prohibit"' \
         '-m cgroup --path "$cgroup"' \
         '-j MARK --set-xmark "$IOA_OWNER_MARK"' \
-        'iptables -t nat -A POSTROUTING -m mark --mark "$IOA_OWNER_MARK"' \
-        '-o "$physical_dev" -j MASQUERADE'
+        'reconcile_mark_masquerade "$IOA_OWNER_MARK" "$physical_dev"'
     do
         grep -Fq -- "$expected" "$SCRIPT" || {
             printf 'FAIL missing policy: %s\n' "$expected" >&2

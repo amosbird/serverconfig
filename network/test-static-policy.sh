@@ -47,6 +47,54 @@ reject 'SmartDNS base config does not include a dynamic IOA fragment' \
     'conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf' network/smartdns/smartdns.conf
 reject 'production reconciler has no dynamic IOA DNS logic' \
     'IOA_RESOLVER|ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
+# iOA installs `from <underlay address> lookup 230` at its own priority, and an unbound socket has
+# already taken that source by the time OUTPUT mangle applies a mark, so the mark-triggered reroute
+# still matches it. Any priority above iOA's therefore makes the IOA band unreachable for the traffic
+# it exists to carry, with no error anywhere: on 2026-09-18 the set marked packets correctly, iOA's
+# rule returned them to wlan0, and tun0 carried zero packets while every internal host timed out.
+p_ioa=$(awk -F= '$1 == "P_IOA" {print $2; exit}' scripts/network-reconfigure)
+p_ioa_smart_src=$(awk -F= '$1 == "P_IOA_SMART_SRC" {print $2; exit}' scripts/network-reconfigure)
+if [ -z "$p_ioa" ] || [ -z "$p_ioa_smart_src" ] || [ "$p_ioa" -ge "$p_ioa_smart_src" ]; then
+    printf 'FAIL IOA band priority %s does not precede iOA source rule %s\n' \
+        "${p_ioa:-none}" "${p_ioa_smart_src:-none}" >&2
+    fail=1
+else
+    echo 'OK   IOA band precedes the iOA source rule'
+fi
+# A source guard belongs nowhere in mangle POSTROUTING. That hook runs at priority -150, before
+# srcnat at 100, so no packet has been through source NAT yet and there is no way to tell one the
+# MASQUERADE is about to fix from one it will never see. Dropping on a foreign source there killed
+# 19 healthy CN connections per 20 seconds when it was tried on 2026-09-18. Anything enforcing this
+# invariant has to sit at a postrouting priority above srcnat, which iptables cannot express.
+reject 'no source guard sits in mangle POSTROUTING, ahead of source NAT' \
+    'iptables -t mangle -A POSTROUTING.*--src-type LOCAL' scripts/network-reconfigure
+# CN acceleration is physical-only. A successful rule match whose main-table lookup finds no route
+# continues at the next RPDB rule, which used to be Tailscale table 52. During DHCP replacement that
+# moved a tailnet-sourced socket into table 52, created no-NAT conntrack state, and later leaked it
+# onto wlan0. The lookup and stop are one adjacent band and must precede every tailnet fallback.
+p_cn=$(awk -F= '$1 == "P_CN" {print $2; exit}' scripts/network-reconfigure)
+p_cn_stop=$(awk -F= '$1 == "P_CN_STOP" {print $2; exit}' scripts/network-reconfigure)
+p_tailnet=$(awk -F= '$1 == "P_TAILNET" {print $2; exit}' scripts/network-reconfigure)
+if [ -z "$p_cn" ] || [ -z "$p_cn_stop" ] || [ -z "$p_tailnet" ] ||
+   [ "$p_cn_stop" -ne "$((p_cn + 1))" ] || [ "$p_cn_stop" -ge "$p_tailnet" ] ||
+   ! grep -Fq 'DESIRED_BANDS[$P_CN_STOP]="from all fwmark $CN_MARK prohibit"' \
+        scripts/network-reconfigure; then
+    echo 'FAIL CN direct lookup is not immediately fail-closed before Tailscale' >&2
+    fail=1
+else
+    echo 'OK   CN direct lookup is immediately fail-closed before Tailscale'
+fi
+# A stale ESTABLISHED flow may still retain a no-NAT decision across the failed lookup. Its final
+# source is therefore checked after srcnat, where healthy packets have already been masqueraded.
+if grep -Fq 'hook postrouting priority 110' scripts/network-reconfigure &&
+   grep -Fq '100.64.0.0/10, 192.168.255.0/24' scripts/network-reconfigure &&
+   grep -Fq 'PHYSICAL_IFACE_GLOBS=(wlan wlp enp eth eno ens)' scripts/network-reconfigure &&
+   grep -Fq 'install_source_guard' scripts/network-reconfigure; then
+    echo 'OK   post-srcnat source validity guard covers physical interfaces'
+else
+    echo 'FAIL no post-srcnat guard prevents tunnel sources reaching physical interfaces' >&2
+    fail=1
+fi
 for domain in \
     smartgate.oa.tencent.com \
     sgw.woa.com \
@@ -343,6 +391,28 @@ if [ "$(grep -Fxc 'AddressRandomization=network' "$iwd_config")" -ne 1 ]; then
 else
     echo 'OK   iwd uses stable per-network MAC addresses'
 fi
+# Roaming on XLSMART leaves the station associated but unforwarded, and the tempting response is to
+# stop iwd from roaming. It is the wrong response and was tried on 2026-09-18: the eleven roams that
+# day were the low-signal path working correctly, one `roam-info` per `roam-scan` with no beacon or
+# packet loss, which is what a station walking through a building is supposed to do. Suppressing it
+# holds a dying access point instead of moving, and moving the RSSI thresholds does not even change the
+# behaviour, because the roams happened above the -76 dBm default. The repair belongs in
+# scripts/network-dhcp-refresh, which reassociates to rebuild the controller's authorisation.
+reject 'iwd roaming is not suppressed to work around a controller that stops forwarding' \
+    '^(DisableRoamingScan|RoamThreshold|RoamThreshold5G|CriticalRoamThreshold|CriticalRoamThreshold5G)=' \
+    "$iwd_config"
+# iwd's exact-BSSID commands need developer mode, which only exists behind a drop-in that replaces
+# ExecStart. That was deployed on 2026-09-18 and took wireless out completely: the accompanying
+# ExecStartPost, needed because developer mode drops autoconnect, exited non-zero, so systemd tore
+# iwd down after every start until the restart counter reached start-limit-hit. Directed roaming is
+# not worth owning iwd's startup, so no drop-in may reintroduce it.
+if compgen -G 'network/systemd/iwd.service.d/*' >/dev/null ||
+   grep -Fq '"$DIR"/network/systemd/iwd.service.d' restore.sh; then
+    echo 'FAIL an iwd drop-in overrides ExecStart, which already cost a full wireless outage' >&2
+    fail=1
+else
+    echo 'OK   iwd keeps its packaged ExecStart'
+fi
 if [ "$(grep -Ec '^IgnoreCarrierLoss=' "$wireless_config")" -ne 1 ] ||
    [ "$(grep -Fxc 'IgnoreCarrierLoss=3s' "$wireless_config")" -ne 1 ]; then
     echo 'FAIL wireless does not keep DHCP state across a short carrier gap' >&2
@@ -352,6 +422,68 @@ else
 fi
 reject 'wireless carrier grace is finite' \
     '^IgnoreCarrierLoss=(yes|infinite)$' "$wireless_config"
+# The grace period suppresses the DHCP run that a Cisco WLC needs in order to relearn the station's
+# address after it deauthenticates with reason 108, so it must never be deployed without the hook
+# that reasserts the lease once per association. Keeping the two together is the whole fix.
+if grep -Eq '^IgnoreCarrierLoss=' "$wireless_config"; then
+    dhcp_refresh_missing=()
+    [ -x scripts/network-dhcp-refresh ] || dhcp_refresh_missing+=(scripts/network-dhcp-refresh)
+    for unit in path service; do
+        [ -f "network/systemd/network-dhcp-refresh.$unit" ] ||
+            dhcp_refresh_missing+=("network/systemd/network-dhcp-refresh.$unit")
+    done
+    grep -Fq 'network-dhcp-refresh.path' restore.sh ||
+        dhcp_refresh_missing+=('restore.sh does not enable network-dhcp-refresh.path')
+    grep -Fq '/home/amos/scripts/network-dhcp-refresh' \
+        network/systemd/network-dhcp-refresh.service 2>/dev/null ||
+        dhcp_refresh_missing+=('network-dhcp-refresh.service does not run the deployed script')
+    # A burst of link transitions exceeds systemd's default start limit, and hitting it fails the
+    # triggering path unit instead of just the service, which silently disables the hook. That is
+    # how the 2026-09-18 resume went unrepaired.
+    grep -Fxq 'StartLimitIntervalSec=0' network/systemd/network-dhcp-refresh.service 2>/dev/null ||
+        dhcp_refresh_missing+=('network-dhcp-refresh.service keeps a start limit that fails its path unit')
+    # Reconciliation is triggered by the same link changes and is far more frequent, so the identical
+    # trap applies to it, and hitting it stops all policy reconciliation rather than just one repair.
+    grep -Fxq 'StartLimitIntervalSec=0' network/systemd/network-reconfigure.service 2>/dev/null ||
+        dhcp_refresh_missing+=('network-reconfigure.service keeps a start limit that fails its path unit')
+    # Both path units watch /run/systemd/netif/links, so a repair and a policy reconciliation start
+    # together, and the repair reassociates. Sharing network-reconfigure's lock is what stops the link
+    # being torn down underneath policy that is being built against it.
+    grep -Fq '/run/lock/network-reconfigure.lock' scripts/network-dhcp-refresh ||
+        dhcp_refresh_missing+=('network-dhcp-refresh can reassociate during a policy reconciliation')
+    # The controller answers ARP while refusing to route, so an ARP reply proves the lease names the
+    # right segment and nothing else. On 2026-09-18 at 13:20:17 that made the hook report success while
+    # the station was unforwarded, and the outage ran another 78 seconds. Forwarding has to be measured
+    # by something that crosses the gateway, pinned to the physical path so it cannot pass through the
+    # tunnel it is testing.
+    grep -Fq 'network-probe-tcp' scripts/network-dhcp-refresh ||
+        dhcp_refresh_missing+=('network-dhcp-refresh trusts ARP alone and cannot see withheld forwarding')
+    grep -Fq '0x80000' scripts/network-dhcp-refresh ||
+        dhcp_refresh_missing+=('network-dhcp-refresh forwarding probe is not pinned to the probe mark')
+    # A lease kept across a fast reassociation may belong to another VLAN, so reasserting it is not
+    # enough on its own: the hook has to confirm the gateway and replace the lease when it cannot.
+    grep -Fq 'reconfigure' scripts/network-dhcp-refresh ||
+        dhcp_refresh_missing+=('network-dhcp-refresh cannot replace a lease from another segment')
+    # Reassociation is the repair for a controller that has stopped forwarding. Directing it at a
+    # specific BSSID is not available: that needs iwd developer mode, which cost a wireless outage.
+    grep -Fq 'station "$IFACE" connect' scripts/network-dhcp-refresh ||
+        dhcp_refresh_missing+=('network-dhcp-refresh cannot rebuild the association after a bad roam')
+    grep -Fq 'REASSOCIATE_COOLDOWN' scripts/network-dhcp-refresh ||
+        dhcp_refresh_missing+=('forced reassociation has no cooldown and can loop')
+    # That cooldown is measured against /proc/uptime, which restarts at zero every boot, so its state
+    # has to die with the boot. Under /var/lib a stamp from a longer previous boot stayed in the
+    # future and closed the cooldown permanently, which is why the 2026-09-18 19:10 blackhole ran its
+    # full three minutes with the repair firing and doing nothing.
+    grep -Eq '^STATE_DIR=\$\{STATE_DIR_OVERRIDE:-/run/' scripts/network-dhcp-refresh ||
+        dhcp_refresh_missing+=('network-dhcp-refresh keeps uptime-based state outside /run')
+    if [ "${#dhcp_refresh_missing[@]}" -ne 0 ]; then
+        printf 'FAIL carrier grace is deployed without the per-association DHCP renew: %s\n' \
+            "${dhcp_refresh_missing[*]}" >&2
+        fail=1
+    else
+        echo 'OK   carrier grace is paired with the per-association DHCP renew'
+    fi
+fi
 if [ -e "$obsolete_tencent_config" ]; then
     echo 'FAIL obsolete Tencent no-gateway networkd config still exists' >&2
     fail=1
@@ -486,9 +618,10 @@ case "$command" in
                 echo '1000: from all lookup main suppress_prefixlength 0'
                 ;;
             '-4 rule show pref 1500') echo '1500: from all fwmark 0x2 lookup main' ;;
-            '-4 rule show pref 2500')
-                echo '2500: from all fwmark 0x1 lookup ioa'
-                echo '2500: from all to 10.0.0.0/8 lookup ioa'
+            '-4 rule show pref 1501') echo '1501: from all fwmark 0x2 prohibit' ;;
+            '-4 rule show pref 1150')
+                echo '1150: from all fwmark 0x1 lookup ioa'
+                echo '1150: from all to 10.0.0.0/8 lookup ioa'
                 ;;
             '-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
         esac
@@ -538,7 +671,8 @@ EOF
                 'ip|-4|rule|show|pref|500'| \
                 'ip|-4|rule|show|pref|1000'| \
                 'ip|-4|rule|show|pref|1500'| \
-                'ip|-4|rule|show|pref|2500'| \
+                'ip|-4|rule|show|pref|1501'| \
+                'ip|-4|rule|show|pref|1150'| \
                 'ip|-4|rule|show|pref|3000'| \
                 'curl|-s|-o|/dev/null|-m|8|-w|%{http_code}|--resolve|connectivitycheck.gstatic.com:80:216.239.32.117|http://connectivitycheck.gstatic.com/generate_204'| \
                 'curl|-s|-o|/dev/null|-m|10|-w|%{http_code}|http://ioa.tencent.com'| \
@@ -605,9 +739,10 @@ case "$command|$*" in
     'ip|-4 route show table main scope link') echo '192.0.2.0/24 dev wlan0 scope link' ;;
     'ip|-4 rule show pref 1000') echo '1000: from all to 192.0.2.0/24 lookup main' ;;
     'ip|-4 rule show pref 1500') echo '1500: from all fwmark 0x2 lookup main' ;;
+    'ip|-4 rule show pref 1501') echo '1501: from all fwmark 0x2 prohibit' ;;
     'ip|-4 route show table ioa') echo '10.0.0.0/8 dev tun0' ;;
     'ip|-4 -o addr show tun0') echo '8: tun0 inet 198.51.100.2/24 scope global tun0' ;;
-    'ip|-4 rule show pref 2500') echo '2500: from all to 10.0.0.0/8 lookup ioa' ;;
+    'ip|-4 rule show pref 1150') echo '1150: from all to 10.0.0.0/8 lookup ioa' ;;
     'ip|-4 rule show') echo '490: from all fwmark 0xa38 lookup main' ;;
     'ip|-4 route show table 52') echo 'default dev tailscale0' ;;
     'ip|-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
@@ -660,9 +795,10 @@ EOF
                 'ip|-4|rule|show|pref|1000'| \
                 'ipset|save|cn_direct'| \
                 'ip|-4|rule|show|pref|1500'| \
+                'ip|-4|rule|show|pref|1501'| \
                 'ip|-4|route|show|table|ioa'| \
                 'ip|-4|-o|addr|show|tun0'| \
-                'ip|-4|rule|show|pref|2500'| \
+                'ip|-4|rule|show|pref|1150'| \
                 'ip|-4|rule|show'| \
                 'ip|-4|route|show|table|52'| \
                 'ip|-4|rule|show|pref|3000'| \
@@ -747,66 +883,36 @@ do
         fail=1
     fi
 done
-reject 'exit-node watchdog never bypasses the tunnel or edits its preference' \
-    'ip rule|tailscale (set|up|down)[[:space:]]|lookup main|--exit-node' \
-    scripts/network-exit-watchdog
-for contract in \
-    'tailscale debug rebind' \
-    'systemctl restart tailscaled' \
-    'RESTART_COOLDOWN' \
-    'failing closed'
+# The exit-node watchdog is retired: it restarted tailscaled on the theory that a roam leaves
+# magicsock bound to a dead path without any netlink event, but the 2026-09-14 journal shows
+# tailscaled did log LinkChange and rebind, and the outage outlived both that rebind and an
+# ngnclient stop. Nothing may reintroduce an automatic tailscaled restart on link changes.
+for retired in \
+    scripts/network-exit-watchdog \
+    network/systemd/network-exit-watchdog.service \
+    network/systemd/network-exit-watchdog.path \
+    network/systemd/network-exit-watchdog.timer \
+    network/test-exit-watchdog.sh
 do
-    if ! grep -Fq "$contract" scripts/network-exit-watchdog; then
-        echo "FAIL exit-node watchdog lacks recovery contract: $contract" >&2
+    if [ -e "$retired" ]; then
+        echo "FAIL retired exit-node watchdog file must not exist: $retired" >&2
         fail=1
     fi
 done
-echo 'OK   exit-node watchdog escalates inside Tailscale and then fails closed'
-# Detection is event-driven on purpose: no standing timer, no perpetual probing.
-if [ -e network/systemd/network-exit-watchdog.timer ]; then
-    echo 'FAIL exit-node watchdog must be link-triggered, not driven by a standing timer' >&2
-    fail=1
-elif grep -Fq 'network-exit-watchdog.timer' restore.sh &&
-     ! grep -Fq 'rm -f /etc/systemd/system/network-exit-watchdog.timer' restore.sh; then
-    echo 'FAIL restore.sh installs a watchdog timer instead of retiring it' >&2
-    fail=1
+if grep -Fq 'rm -rf /var/lib/network-exit-watchdog' restore.sh &&
+   ! grep -Eq '^[^#]*systemctl enable network-exit-watchdog' restore.sh; then
+    echo 'OK   exit-node watchdog is retired and its units are actively removed'
 else
-    echo 'OK   exit-node watchdog is link-triggered rather than perpetually probing'
-fi
-for contract in \
-    'network/systemd/network-exit-watchdog.{service,path}' \
-    'systemctl enable network-exit-watchdog.path'
-do
-    if ! grep -Fq "$contract" restore.sh; then
-        echo "FAIL restore.sh does not deploy the watchdog contract: $contract" >&2
-        fail=1
-    fi
-done
-if grep -Fq 'PathChanged=/run/systemd/netif/links' \
-       network/systemd/network-exit-watchdog.path &&
-   grep -Fq 'Wants=network-reconfigure.service' \
-       network/systemd/network-exit-watchdog.service &&
-   grep -Fq 'After=network-reconfigure.service tailscaled.service' \
-       network/systemd/network-exit-watchdog.service; then
-    echo 'OK   exit-node watchdog deploys on link changes after route reconciliation'
-else
-    echo 'FAIL exit-node watchdog trigger or service ordering is incomplete' >&2
+    echo 'FAIL restore.sh must retire the exit-node watchdog rather than deploy it' >&2
     fail=1
 fi
-# The 2026-09-14 tun0 outage: a BSSID-only trigger cannot see a non-roam rebind.
-if grep -Fq 'link_fingerprint' scripts/network-exit-watchdog &&
-   grep -Fq 'addr show scope global' scripts/network-exit-watchdog; then
-    echo 'OK   exit-node watchdog triggers on link state, not the BSSID alone'
-else
-    echo 'FAIL exit-node watchdog must trigger on the full link fingerprint' >&2
+# Deployed code only; the test files below quote the pattern in order to forbid it.
+if grep -rlE 'systemctl (restart|try-restart) tailscaled' \
+       --exclude='test-*' scripts network >/dev/null 2>&1; then
+    echo 'FAIL no deployed code may restart tailscaled automatically' >&2
     fail=1
-fi
-if grep -Fq 'ping -c 1 -W 1 -I' scripts/network-exit-watchdog &&
-   grep -Fq 'probe_uses_tunnel' scripts/network-exit-watchdog; then
-    echo 'OK   exit-node watchdog blames the tunnel only when LAN and route prove it'
 else
-    echo 'FAIL exit-node watchdog must gate on gateway health and tunnel route selection' >&2
-    fail=1
+    echo 'OK   no deployed code restarts tailscaled behind your back'
 fi
 if [ -e scripts/addroutes ] || [ -e scripts/addroutes_ipv4 ]; then
     echo "FAIL retired addroutes scripts must not exist" >&2
@@ -817,6 +923,8 @@ fi
 reject 'CN promotion does not launch one ip process per route' \
     'ip route replace \\$route table "\\$CN_TABLE"|grep -Fqx "\\$route" <<<"\\$stage_routes"' \
     scripts/network-reconfigure
+reject 'CN reconciliation does not clear its live rule before replacement' \
+    'clean_pref "\\$P_CN"' scripts/network-reconfigure
 reject 'table 19 is advertisement-only and has no policy rule' \
     'ip rule (add|replace).*lookup (19|wired_underlay)' scripts/network-reconfigure
 reject 'wired advertisement does not mutate tunnel-owned tables' \

@@ -2,6 +2,11 @@
 Description=Reconfigure network (IOA routing, Tailscale LAN, DHCP DNS, SmartDNS)
 After=network-online.target ipset.service tailscaled.service
 Wants=network-online.target ipset.service
+# A roam every ten to twenty-five seconds triggers this well above the default five-starts-in-ten-
+# seconds allowance, and exceeding it fails the triggering path unit, which silently stops all policy
+# reconciliation until someone notices. Reconciliation is idempotent and holds a lock, so rate limiting
+# it buys nothing and costs the reconciliation that matters most, the one after the last roam.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot

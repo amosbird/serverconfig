@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch networkd link state for a new wireless association
+
+[Path]
+PathChanged=/run/systemd/netif/links
+Unit=network-dhcp-refresh.service
+
+[Install]
+WantedBy=multi-user.target

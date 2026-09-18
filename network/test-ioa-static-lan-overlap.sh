@@ -2,7 +2,7 @@
 # Static IOA 10/8 selection must never capture the current physical LAN.
 #
 # The priority-1000 pins that keep the LAN direct are a snapshot written by
-# network-reconfigure, while the priority-2500 `to 10.0.0.0/8 lookup ioa` rule
+# network-reconfigure, while the priority-1150 `to 10.0.0.0/8 lookup ioa` rule
 # and table `ioa` outlive any single run. Roaming onto a different 10/8 subnet
 # leaves the pins naming the previous LAN, so the window until the next run
 # finishes is exactly when the new gateway can be swallowed into tun0.
@@ -51,7 +51,7 @@ nsx ip route add default dev tun0 table 400 metric 101
 
 # Stale snapshot: the pins still name the LAN from before the roam.
 nsx ip rule add pref 1000 to "$STALE_LAN" lookup main
-nsx ip rule add pref 2500 to 10.0.0.0/8 lookup 400
+nsx ip rule add pref 1150 to 10.0.0.0/8 lookup 400
 
 route_dev() {
     nsx ip route get "$1" 2>/dev/null | awk '{for (i=1;i<NF;i++) if ($i=="dev") {print $(i+1); exit}}'

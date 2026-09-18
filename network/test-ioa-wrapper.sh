@@ -25,8 +25,10 @@ printf '%s\n' "$@" >"$TEST_WORK/args"
 EOF
 chmod +x "$WORK/ip" "$WORK/reconfigure" "$WORK/client"
 
+# Exercise the root-only daemon path as a function so this fixture itself never needs root.
 TEST_WORK="$WORK" IOA_IP_BIN="$WORK/ip" IOA_RECONFIGURE="$WORK/reconfigure" \
-    IOA_CLIENT_BIN="$WORK/client" IOA_RETRY_SECONDS=0 "$WRAPPER" -flag value
+    IOA_CLIENT_BIN="$WORK/client" IOA_RETRY_SECONDS=0 \
+    bash -c 'source "$1"; shift; run_daemon "$@"' _ "$WRAPPER" -flag value
 
 [ "$(cat "$WORK/count")" -eq 2 ] || {
     echo 'FAIL iOA wrapper did not wait for a physical main-table default route' >&2
@@ -51,7 +53,8 @@ EOF
 chmod +x "$WORK/reconfigure-fails"
 rm -f "$WORK/order"
 if TEST_WORK="$WORK" IOA_IP_BIN="$WORK/ip" IOA_RECONFIGURE="$WORK/reconfigure-fails" \
-    IOA_CLIENT_BIN="$WORK/client" IOA_RETRY_SECONDS=0 "$WRAPPER"; then
+    IOA_CLIENT_BIN="$WORK/client" IOA_RETRY_SECONDS=0 \
+    bash -c 'source "$1"; run_daemon' _ "$WRAPPER"; then
     echo 'FAIL iOA wrapper succeeded after network reconfiguration failed' >&2
     exit 1
 fi
@@ -61,6 +64,29 @@ fi
 }
 
 echo 'OK   iOA stays stopped when network reconfiguration fails'
+
+# The GUI calls this same entrypoint as the desktop user when the daemon is absent. That path may
+# inspect daemon state but must never invoke the root-only reconciler or start another daemon.
+rm -f "$WORK/order"
+TEST_WORK="$WORK" bash -c '
+    source "$1"
+    daemon_active() { return 0; }
+    run_daemon() { printf "invalid\n" >>"$TEST_WORK/order"; }
+    main
+' _ "$WRAPPER"
+[ ! -e "$WORK/order" ] || {
+    echo 'FAIL unprivileged iOA invocation entered the root daemon path' >&2
+    exit 1
+}
+echo 'OK   desktop iOA invocation never enters root network reconciliation'
+
+grep -Fxq \
+    'ExecCondition=/usr/bin/systemctl is-active --quiet ngnclient.service' \
+    "$ROOT/systemd/ioagui.service" || {
+    echo 'FAIL ioagui can start before the root-owned daemon is active' >&2
+    exit 1
+}
+echo 'OK   iOA GUI waits for the system daemon without starting it'
 
 grep -Fq 'network/iOA' "$ROOT/restore.sh" || {
     echo 'FAIL restore does not install the iOA wrapper' >&2

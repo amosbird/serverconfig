@@ -1,0 +1,12 @@
+[Unit]
+Description=Reassert the DHCP lease after a wireless association
+After=systemd-networkd.service
+# The path unit watches a directory networkd rewrites on every link transition, so a burst of
+# transitions triggers this far more often than systemd's default five starts per ten seconds allows.
+# Hitting that limit fails the *path* unit and silently disables the hook, which is exactly what
+# happened at 2026-09-17 20:38:29 and left the 2026-09-18 resume unrepaired.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/home/amos/scripts/network-dhcp-refresh wlan0

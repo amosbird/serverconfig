@@ -217,7 +217,17 @@ iptables() {
     if [ "${FAIL_NEXT_MARK:-0}" = 1 ] && [ " $* " = " -t mangle -A NETMODE_IOA_NEXT -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff " ]; then
         return 42
     fi
+    local rc
     command iptables "$@"
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ "${AUDIT_CN_NAT_GAP:-0}" = 1 ] &&
+       [[ " $* " == *" -t nat "* ]] && [[ " $* " == *" POSTROUTING "* ]]; then
+        if [ "$(command iptables -t nat -S POSTROUTING 2>/dev/null |
+            grep -Ec -- '--mark 0x2(/0xffffffff)? -j MASQUERADE$')" -eq 0 ]; then
+            : > "${NAT_GAP_FILE:?}"
+        fi
+    fi
+    return "$rc"
 }
 iptables-restore() {
     local rules before after rc
@@ -545,24 +555,24 @@ main() {
         'route add 100.12.34.0/24 via GATEWAY table cn' > "$WORK/routefile"
     FORCE_CN=1 run_script 0 >/dev/null
 
-    local base500 base1000 base2500 chain duplicate_rc
-    base500=$(band 500); base1000=$(band 1000); base2500=$(band 2500)
-    [ "$(count 2500)" -gt 0 ] && ok "2500 installed ($(count 2500) rules)" \
-                              || bad "2500 empty"
+    local base500 base1000 base1150 chain duplicate_rc
+    base500=$(band 500); base1000=$(band 1000); base1150=$(band 1150)
+    [ "$(count 1150)" -gt 0 ] && ok "1150 installed ($(count 1150) rules)" \
+                              || bad "1150 empty"
     [ "$(count 1000)" -gt 0 ] && ok "1000 installed ($(count 1000) rules)" \
                               || bad "1000 empty"
 
     head_ "duplicate installed policy rule"
-    if ip rule add fwmark 0x1/0xffffffff lookup ioa pref 2500 2>/dev/null; then
-        [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 2 ] \
+    if ip rule add fwmark 0x1/0xffffffff lookup ioa pref 1150 2>/dev/null; then
+        [ "$(band 1150 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 2 ] \
             || bad "kernel accepted but did not expose the duplicate owned rule"
         run_script 0 >/dev/null
         duplicate_rc=$?
         if [ "$duplicate_rc" -eq 0 ] &&
-           [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ]; then
+           [ "$(band 1150 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ]; then
             ok "duplicate owned rule triggers non-FORCE reconciliation"
         else
-            bad "duplicate owned rule survived non-FORCE run (rc=$duplicate_rc): $(band 2500)"
+            bad "duplicate owned rule survived non-FORCE run (rc=$duplicate_rc): $(band 1150)"
         fi
     else
         ok "kernel rejects duplicate owned rules"
@@ -573,19 +583,29 @@ main() {
                                || bad "Tailscale mark escape is missing or duplicated"
     [ "$(count 1500)" -eq 1 ] && ok "routefile has one direct lookup rule" \
                                 || bad "routefile direct rule missing"
+    [ "$(band 1501 | grep -Ec '^from all fwmark 0x2(/0xffffffff)? prohibit$')" -eq 1 ] \
+        && ok "CN direct lookup fails closed before Tailscale" \
+        || bad "CN direct traffic can fall through to Tailscale: $(band 1501)"
+    ip route del default
+    if ! ip route get 203.0.113.1 mark 0x2 >/dev/null 2>&1; then
+        ok "CN traffic is prohibited while main has no route"
+    else
+        bad "CN traffic fell through while main had no route"
+    fi
+    ip route add default via 10.36.48.1 dev wlan0
     [ -z "$(band 1400)" ] \
         && ok "retired early IOA mark band is empty" \
         || bad "early IOA mark band still overrides routefile: $(band 1400)"
-    [ "$(band 2500 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ] \
+    [ "$(band 1150 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ] \
         && ok "IOA has exactly one post-routefile full-width mark rule" \
         || bad "IOA post-routefile exact mark rule is missing or duplicated"
-    [ "$(band 2500 | grep -Fxc 'from all to 10.0.0.0/8 lookup ioa')" -eq 1 ] \
+    [ "$(band 1150 | grep -Fxc 'from all to 10.0.0.0/8 lookup ioa')" -eq 1 ] \
         && ok "IOA has exactly one 10/8 rule" \
         || bad "IOA 10/8 rule is missing or duplicated"
-    ! band 2500 | grep -q '100.12.0.0/16' \
+    ! band 1150 | grep -q '100.12.0.0/16' \
         && ok "100.12/16 is classified dynamically, not statically" \
         || bad "static 100.12/16 IOA rule still exists"
-    ! band 2500 | grep -q '9.0.0.0/8' && ok "9/8 is not statically routed to IOA" \
+    ! band 1150 | grep -q '9.0.0.0/8' && ok "9/8 is not statically routed to IOA" \
                                            || bad "9/8 still has a static IOA rule"
     ! ip -4 rule show | grep -qE 'to (192\.168\.0\.0/16|172\.16\.0\.0/12|169\.254\.0\.0/16)' \
         && ok "no broad private-network bypass remains" \
@@ -676,7 +696,7 @@ main() {
     ! grep -q -- '--match-set ioa dst -m set' <<<"$chain" \
         && ok "IOA classification has no static prefix intersection" \
         || bad "IOA classification still depends on a static prefix set"
-    full_width_fwmark_rule 2500 0x1 ioa \
+    full_width_fwmark_rule 1150 0x1 ioa \
         && ok "IOA rule matches the exact full-width mark after CN" \
         || bad "IOA rule is not exact 0x1/0xffffffff after CN"
     cn_line=$(grep -n -- "--match-set cn_direct dst" <<<"$chain" | cut -d: -f1)
@@ -759,6 +779,25 @@ main() {
     [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "CN reroute source NAT follows the physical device exactly once" \
         || bad "CN reroute source NAT is stale, missing, or duplicated"
+    local source_guard
+    source_guard=$(nft -s list table ip serverconfig_source_guard 2>/dev/null)
+    if grep -Fq 'priority srcnat + 10' <<<"$source_guard" &&
+       grep -Fq 'elements = { 100.64.0.0/10, 192.168.255.0/24 }' <<<"$source_guard" &&
+       [ "$(grep -c 'ip saddr @foreign_sources counter drop' <<<"$source_guard")" -eq 6 ]; then
+        ok "physical source validity is enforced after source NAT"
+    else
+        bad "post-srcnat physical source guard is incomplete"
+    fi
+    iptables -t nat -A POSTROUTING -o owner0 -m mark --mark 0x2 -j MASQUERADE
+    rm -f "$WORK/nat-gap"
+    AUDIT_CN_NAT_GAP=1 NAT_GAP_FILE="$WORK/nat-gap" run_script 1 >/dev/null
+    if [ ! -e "$WORK/nat-gap" ] &&
+       [ "$(iptables -t nat -S POSTROUTING |
+            grep -Ec -- '--mark 0x2(/0xffffffff)? -j MASQUERADE$')" -eq 1 ]; then
+        ok "CN source NAT changes device without a zero-rule window"
+    else
+        bad "CN source NAT disappeared during reconciliation or kept a stale copy"
+    fi
 
     head_ "early-exit fingerprint repairs owned firewall drift"
     iptables -t mangle -A NETMODE_IOA -j ACCEPT
@@ -775,14 +814,20 @@ main() {
         [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "owned NAT drift triggers reconciliation" \
         || bad "owned NAT drift survived early exit"
+    nft delete table ip serverconfig_source_guard
+    run_script 0 >/dev/null
+    source_guard=$(nft -s list table ip serverconfig_source_guard 2>/dev/null)
+    [ "$(grep -c 'ip saddr @foreign_sources counter drop' <<<"$source_guard")" -eq 6 ] \
+        && ok "source-guard deletion triggers reconciliation" \
+        || bad "source-guard deletion survived early exit"
 
     head_ "equivalent kernel rule spelling converges exactly"
-    ip rule add fwmark 0x1/0xffffffff lookup ioa pref 2500
-    ip rule add to 8.8.8.8 lookup main pref 2500
+    ip rule add fwmark 0x1/0xffffffff lookup ioa pref 1150
+    ip rule add to 8.8.8.8 lookup main pref 1150
     run_script 0 >/dev/null
-    [ "$(band 2500)" = "$base2500" ] \
+    [ "$(band 1150)" = "$base1150" ] \
         && ok "equivalent duplicate and foreign stale rule are removed" \
-        || bad "pref 2500 did not converge exactly: $(band 2500)"
+        || bad "pref 1150 did not converge exactly: $(band 1150)"
 
     head_ "routefile failures preserve active policy"
     local cn_before marking_before malicious_owner_before table52_before invalid_route
@@ -871,19 +916,21 @@ main() {
     head_ "missing and empty routefiles authoritatively disable cn"
     rm -f "$WORK/routefile"
     run_script 1 >/dev/null
-    [ -z "$(cn_entries)" ] && [ "$(routes cn)" -eq 0 ] && [ "$(count 1500)" -eq 0 ] \
+    [ -z "$(cn_entries)" ] && [ "$(routes cn)" -eq 0 ] &&
+        [ "$(count 1500)" -eq 0 ] && [ "$(count 1501)" -eq 0 ] \
         && ok "missing routefile disables optional CN acceleration" \
         || bad "missing routefile left CN acceleration active"
     : > "$WORK/routefile"
     ip route add blackhole 203.0.113.0/24 table 101 2>/dev/null || true
     ip rule add lookup cn pref 1500 2>/dev/null || true
     run_script 1 >/dev/null
-    [ -z "$(cn_entries)" ] && [ "$(routes cn)" -eq 0 ] && [ "$(count 1500)" -eq 0 ] \
+    [ -z "$(cn_entries)" ] && [ "$(routes cn)" -eq 0 ] &&
+        [ "$(count 1500)" -eq 0 ] && [ "$(count 1501)" -eq 0 ] \
         && ok "empty routefile disables optional CN acceleration and legacy policy" \
         || bad "empty routefile left CN acceleration active"
     printf '# only a comment\n\n' > "$WORK/routefile"
     run_script 1 >/dev/null
-    [ -z "$(cn_entries)" ] && [ "$(count 1500)" -eq 0 ] \
+    [ -z "$(cn_entries)" ] && [ "$(count 1500)" -eq 0 ] && [ "$(count 1501)" -eq 0 ] \
         && ok "comment-only routefile disables optional CN acceleration" \
         || bad "comment-only routefile left CN acceleration active"
     printf 'route add 1.0.1.0/24 via GATEWAY table cn\nroute add 1.0.2.0/23 via GATEWAY table cn\n' > "$WORK/routefile"
@@ -905,23 +952,23 @@ main() {
 
     head_ "idempotence"
     run_script 1 >/dev/null
-    [ "$(band 2500)" = "$base2500" ] && ok "2500 unchanged" || bad "2500 drifted"
+    [ "$(band 1150)" = "$base1150" ] && ok "1150 unchanged" || bad "1150 drifted"
     [ "$(band 1000)" = "$base1000" ] && ok "1000 unchanged" || bad "1000 drifted"
 
     head_ "foreign rule injected into a band we own"
-    ip rule add to 8.8.8.8 lookup main pref 2500
-    [ "$(count 2500)" -gt "$(wc -l <<<"$base2500")" ] || bad "injection did not take"
+    ip rule add to 8.8.8.8 lookup main pref 1150
+    [ "$(count 1150)" -gt "$(wc -l <<<"$base1150")" ] || bad "injection did not take"
     run_script 0 >/dev/null
-    if [ "$(band 2500)" = "$base2500" ]; then
+    if [ "$(band 1150)" = "$base1150" ]; then
         ok "foreign rule removed without FORCE"
     else
-        bad "foreign rule survived: $(band 2500 | grep 8.8.8.8)"
+        bad "foreign rule survived: $(band 1150 | grep 8.8.8.8)"
     fi
 
     head_ "our rule deleted from a band we own"
-    ip rule del to 10.0.0.0/8 lookup ioa pref 2500 2>/dev/null
+    ip rule del to 10.0.0.0/8 lookup ioa pref 1150 2>/dev/null
     run_script 0 >/dev/null
-    [ "$(band 2500)" = "$base2500" ] && ok "missing rule restored without FORCE" \
+    [ "$(band 1150)" = "$base1150" ] && ok "missing rule restored without FORCE" \
                                      || bad "not restored"
 
     head_ "whole band deleted"
@@ -932,14 +979,14 @@ main() {
 
     head_ "band is never empty during a rebuild"
     local zero=0 i
-    ( for i in $(seq 1 400); do count 2500; sleep 0.01; done > "$WORK/samples" ) &
+    ( for i in $(seq 1 400); do count 1150; sleep 0.01; done > "$WORK/samples" ) &
     local sampler=$!
     sleep 0.3
     run_script 1 >/dev/null
     wait $sampler
     zero=$(grep -cx 0 "$WORK/samples")
-    [ "$zero" -eq 0 ] && ok "2500 never empty ($(wc -l < "$WORK/samples") samples)" \
-                      || bad "2500 was empty $zero times"
+    [ "$zero" -eq 0 ] && ok "1150 never empty ($(wc -l < "$WORK/samples") samples)" \
+                      || bad "1150 was empty $zero times"
 
     head_ "MASQUERADE survives a tun0 address change"
     ip addr flush dev tun0
@@ -1096,7 +1143,7 @@ main() {
     while ip rule del pref 500  2>/dev/null; do :; done
     while ip rule del pref 1000 2>/dev/null; do :; done
     while ip rule del pref 1500 2>/dev/null; do :; done
-    while ip rule del pref 2500 2>/dev/null; do :; done
+    while ip rule del pref 1150 2>/dev/null; do :; done
     while ip rule del pref 3000 2>/dev/null; do :; done
     ip route flush table "$CN_TABLE" 2>/dev/null || true
     iptables -t mangle -F 2>/dev/null || true
@@ -1109,8 +1156,8 @@ main() {
                     || bad "reconfigure exited $rc from a cold start"
     [ "$(count 1000)" -gt 0 ] && ok "1000 rebuilt from nothing ($(count 1000) rules)" \
                               || bad "1000 still empty after a cold start"
-    [ "$(count 2500)" -gt 0 ] && ok "2500 rebuilt from nothing ($(count 2500) rules)" \
-                              || bad "2500 still empty after a cold start"
+    [ "$(count 1150)" -gt 0 ] && ok "1150 rebuilt from nothing ($(count 1150) rules)" \
+                              || bad "1150 still empty after a cold start"
     [ "$(snapshot_owner_state)" = "$owner_before" ] \
         && ok "cold boot preserves tunnel-owned tables and rules" \
         || bad "cold boot modified tunnel-owned tables or rules"

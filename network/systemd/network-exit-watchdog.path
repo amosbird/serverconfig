@@ -1,9 +1,0 @@
-[Unit]
-Description=Check the Tailscale exit path after link changes
-
-[Path]
-PathChanged=/run/systemd/netif/links
-Unit=network-exit-watchdog.service
-
-[Install]
-WantedBy=multi-user.target

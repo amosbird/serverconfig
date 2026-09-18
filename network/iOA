@@ -1,15 +1,41 @@
 #!/usr/bin/env bash
 
-ip_bin=${IOA_IP_BIN:-ip}
-reconfigure=${IOA_RECONFIGURE:-/home/amos/scripts/network-reconfigure}
-client=${IOA_CLIENT_BIN:-/usr/lib/iOA/bin/iOA.bin}
-retry=${IOA_RETRY_SECONDS:-1}
+run_daemon() {
+    local ip_bin=${IOA_IP_BIN:-ip}
+    local reconfigure=${IOA_RECONFIGURE:-/home/amos/scripts/network-reconfigure}
+    local client=${IOA_CLIENT_BIN:-/usr/lib/iOA/bin/iOA.bin}
+    local retry=${IOA_RETRY_SECONDS:-1}
 
-until "$ip_bin" -4 route show table main default |
-    grep -qE ' dev (en|eth|wl)'; do
-    sleep "$retry"
-done
+    until "$ip_bin" -4 route show table main default |
+        grep -qE ' dev (en|eth|wl)'; do
+        sleep "$retry"
+    done
 
-"$reconfigure" || exit
+    "$reconfigure" || return
+    exec -a firefox "$client" "$@"
+}
 
-exec -a firefox "$client" "$@"
+daemon_active() {
+    systemctl is-active --quiet ngnclient.service
+}
+
+main() {
+    # iOALinux invokes the same `iOA` entrypoint when it cannot see the daemon. The GUI runs as the
+    # desktop user, while this wrapper is also ExecStart for the root-owned ngnclient.service.
+    # Running the reconciler from the GUI failed at its first write to /etc and made the GUI restart
+    # every 21 seconds. A user process must never attempt to mutate root-owned network policy.
+    if ((EUID != 0)); then
+        if daemon_active; then
+            return 0
+        fi
+        logger -t ioa-launcher -p user.warning \
+            "refusing to start the iOA daemon outside ngnclient.service"
+        return 1
+    fi
+
+    run_daemon "$@"
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
+fi

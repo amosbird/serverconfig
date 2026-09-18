@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# network-dhcp-refresh — make the DHCP lease valid for the network actually attached
+#
+# `IgnoreCarrierLoss=3s` in 25-wireless.network keeps the lease across a carrier gap shorter than the
+# grace. Nothing then checks whether the lease still belongs to the segment behind the new
+# association, and on XLSMART it frequently does not: its access points sit on different VLANs, so
+# `f8:c6:50:59:08:0b` leases `10.36.43.23/21` via `10.36.40.1` while `f8:c6:50:58:b8:0b` leases
+# `10.36.55.44/20` via `10.36.48.1`. Two proven ways to end up with the wrong one:
+#
+#   - Resume. The kernel deauthenticates with reason 3 before suspending, networkd processes that
+#     carrier loss only after resume, and iwd reassociates within the same second. On 2026-09-18 the
+#     12:20:14 suspend resumed at 12:24:10 onto an access point in the other VLAN with no DHCP run at
+#     all, leaving a /21 address and a gateway that does not exist on that segment.
+#   - A fast roam between access points in different VLANs, which is the same thing without suspend.
+#
+# A Cisco WLC adds a second, independent failure: it forwards a station's traffic only after learning
+# the station's IP, deauthenticating with reason 108 (CLIENT_DEAUTH_REASON_STA_NO_IP) until it has,
+# and it drops that context every time it deauthenticates. A reassociation inside the grace sends no
+# DHCP, so the controller never relearns the address and kicks again one IP-learn timeout later. On
+# 2026-09-17 that was an exact 2m01s loop with both tunnels stopped.
+#
+# So: renew once per association, which is all the controller needs and costs one packet each way,
+# then confirm the lease against the segment and escalate to a full DHCP when it does not hold. At
+# most one renew and one escalation per association, so this converges instead of polling.
+
+set -euo pipefail
+
+IFACE=${1:-wlan0}
+IW=${IW:-/usr/bin/iw}
+IP=${IP:-/usr/bin/ip}
+ARPING=${ARPING:-/usr/bin/arping}
+PROBE=${PROBE:-/home/amos/scripts/network-probe-tcp}
+# connectivitycheck.gstatic.com, the address the debug captures already use as the underlay liveness
+# target, on the mark reserved for probes that must stay on the physical path.
+PROBE_TARGET=${PROBE_TARGET:-216.239.32.117}
+PROBE_PORT=${PROBE_PORT:-80}
+PROBE_MARK=${PROBE_MARK:-0x80000}
+PROBE_TIMEOUT=${PROBE_TIMEOUT:-3}
+IWCTL=${IWCTL:-/usr/bin/iwctl}
+NETWORKCTL=${NETWORKCTL:-/usr/bin/networkctl}
+UPTIME_FILE=${UPTIME_FILE_OVERRIDE:-/proc/uptime}
+# Every timestamp kept here is read from /proc/uptime, so the state is only meaningful within one
+# boot and belongs on tmpfs. It used to live under /var/lib, where a value from the previous boot
+# survived into a shorter uptime and made the cooldown below reject every reassociation: on
+# 2026-09-18 that held the repair off for the three minutes it took the AP to deauthenticate.
+STATE_DIR=${STATE_DIR_OVERRIDE:-/run/network-dhcp-refresh}
+# network-reconfigure.path and network-dhcp-refresh.path both watch /run/systemd/netif/links, so every
+# association starts both at once, and the repair here reassociates. Without shared exclusion that
+# tears the link down underneath a policy reconciliation that is mid-flight, which is how a roam ends
+# with tun0, tables 20/230/ioa, Tailscale table 52 and the pref 500 escape all built against an
+# address that no longer exists. That is invisible with both tunnels stopped, because there is then
+# almost nothing for network-reconfigure to build, and it is why roaming recovers cleanly without them.
+#
+# Taking network-reconfigure's own lock is what serialises the two. Nothing else has to be coordinated:
+# a reassociation changes /run/systemd/netif/links, so network-reconfigure runs again afterwards and
+# reconciles against the repaired link.
+RECONFIGURE_LOCK=${RECONFIGURE_LOCK:-/run/lock/network-reconfigure.lock}
+FLOCK=${FLOCK:-/usr/bin/flock}
+if [ -z "${NETWORK_DHCP_REFRESH_LOCKED:-}" ]; then
+    export NETWORK_DHCP_REFRESH_LOCKED=1
+    exec "$FLOCK" -w 60 "$RECONFIGURE_LOCK" "$0" "$@"
+fi
+# `connected time` has one-second resolution, so the derived association start jitters by a second in
+# either direction. A real reassociation moves it by the whole length of the previous session.
+TOLERANCE=3
+# A renew is answered in milliseconds when the lease is valid here, so this only has to be long enough
+# to tell a working gateway from a silent one.
+RENEW_SETTLE=${RENEW_SETTLE:-3}
+# A fresh association reached a working gateway in two seconds when measured.
+REASSOCIATE_SETTLE=${REASSOCIATE_SETTLE:-8}
+# A full DHCP completes a DORA and reinstalls the default route in about a second on this network.
+RECONFIGURE_SETTLE=${RECONFIGURE_SETTLE:-8}
+# A forced reassociation produces a new association, which retriggers this hook, so a floor is needed
+# to keep that from becoming a loop. It is short because walking through the building produced a roam
+# every ten to twenty-five seconds, and a repair that is rate-limited below the roam rate never
+# catches up. One reassociation costs two seconds, so this bounds it well under a tenth of the time.
+REASSOCIATE_COOLDOWN=${REASSOCIATE_COOLDOWN:-20}
+
+log() { logger -t network-dhcp-refresh -p "daemon.$1" "$2"; }
+
+# ARP proves the gateway is on this segment and the lease names the right one, and nothing more. It
+# does NOT prove the station is being forwarded, because the controller answers ARP at layer two while
+# still refusing to route — which is the exact state this hook exists to repair. Trusting ARP alone
+# made the hook report success in the middle of an outage: on 2026-09-18 at 13:20:17 it logged "lease
+# confirmed on this segment" while direct HTTPS to every DERP address on the physical path timed out,
+# and the station stayed unforwarded for another 78 seconds until tailscaled was stopped by hand.
+#
+# So both have to hold. ARP first because it is cheap and fails fast when the lease is from another
+# VLAN, then one TCP handshake that has to cross the gateway to succeed. ICMP is not an alternative:
+# this network drops it outright, to the gateway and beyond.
+forwarding_works() {
+    local source
+    source=$("$IP" -4 -oneline addr show dev "$IFACE" 2>/dev/null |
+        awk '{for (i = 1; i <= NF; i++) if ($i == "inet") {split($(i + 1), a, "/"); print a[1]; exit}}')
+    [ -n "$source" ] || return 1
+    # The mark, device and source are fixed before connect() by the probe itself; setting a mark on an
+    # already-connected socket would emit the tailnet source address on wlan0 and can get the host
+    # blocked. Exit 2 means the probe never reached the path, so it measured nothing and must not be
+    # read as a verdict either way.
+    "$PROBE" --target "$PROBE_TARGET" --port "$PROBE_PORT" --source "$source" \
+        --interface "$IFACE" --mark "$PROBE_MARK" --timeout "$PROBE_TIMEOUT" >/dev/null 2>&1
+    case $? in
+        0) return 0 ;;
+        2) log warning "forwarding probe could not be placed on $IFACE; treating as inconclusive"
+           return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+segment_usable() {
+    local deadline=$((SECONDS + $1)) gateway
+    while :; do
+        gateway=$("$IP" -4 route show table main default 2>/dev/null |
+            awk -v want="$IFACE" '$5 == want {print $3; exit}')
+        if [ -n "$gateway" ] && "$ARPING" -c 1 -w 2 -I "$IFACE" "$gateway" >/dev/null 2>&1 &&
+            forwarding_works; then
+            return 0
+        fi
+        [ "$SECONDS" -lt "$deadline" ] || return 1
+        sleep 1
+    done
+}
+
+# Roaming leaves this client unforwarded: on 2026-09-18 three consecutive roams each kept a valid
+# lease and a DHCP server that answered, while the gateway stayed silent for 100 seconds. DHCP is
+# precisely the traffic the controller still relays, so no amount of it helps. A full deauthenticate
+# and reassociate restored forwarding in seconds, and the roam that followed was immediately healthy,
+# so the controller's per-station authorisation is what has to be rebuilt.
+claim_reassociation_slot() {
+    local now last=0
+    read -r now _ <"$UPTIME_FILE"
+    now=${now%.*}
+    [ ! -r "$STATE_DIR/reassociated" ] || read -r last <"$STATE_DIR/reassociated" || last=0
+    # A stamp ahead of the current uptime cannot have come from this boot, and treating it as a
+    # cooldown would suppress the repair for as long as the gap lasts.
+    [[ $last =~ ^[0-9]+$ ]] && [ "$last" -le "$now" ] || last=0
+    if [ "$((now - last))" -lt "$REASSOCIATE_COOLDOWN" ]; then
+        return 1
+    fi
+    mkdir -p "$STATE_DIR"
+    printf '%s\n' "$now" >"$STATE_DIR/reassociated"
+}
+
+reassociate() {
+    local ssid
+    ssid=$("$IW" dev "$IFACE" link | sed -n 's/^[[:space:]]*SSID:[[:space:]]*//p')
+    [ -n "$ssid" ] || return 1
+    claim_reassociation_slot || return 1
+    # Disconnect also clears iwd's autoconnect, so the reconnect has to be explicit.
+    "$IWCTL" station "$IFACE" disconnect || return 1
+    sleep 1
+    "$IWCTL" station "$IFACE" connect "$ssid" || return 1
+}
+
+# Reassociating comes before DHCP because that is the order the evidence supports. Roaming is the
+# common case by far, and there DHCP is provably useless: the lease is already correct and the server
+# answers immediately while the gateway stays silent. Spending twelve seconds on DHCP first meant the
+# repair never landed before the next roam arrived.
+reassert_lease() {
+    local association=$1
+    if ! "$NETWORKCTL" renew "$IFACE"; then
+        log err "renew failed on $IFACE; the AP controller may still hold no address"
+    fi
+    if segment_usable "$RENEW_SETTLE"; then
+        log info "$association: segment forwards this station"
+        return 0
+    fi
+    if reassociate; then
+        log warning "$association: segment not forwarding; reassociated to rebuild authorisation"
+        if segment_usable "$REASSOCIATE_SETTLE"; then
+            log info "$association: reassociating restored forwarding"
+            return 0
+        fi
+    fi
+    log warning "$association: still not forwarding; running a full DHCP for this segment"
+    if "$NETWORKCTL" reconfigure "$IFACE" && segment_usable "$RECONFIGURE_SETTLE"; then
+        log info "$association: full DHCP restored forwarding"
+        return 0
+    fi
+    log err "$association: still not forwarding after reassociating and a full DHCP"
+    return 1
+}
+
+state="$STATE_DIR/$IFACE"
+
+station=$("$IW" dev "$IFACE" station dump 2>/dev/null) || station=
+bssid=$(awk '$1 == "Station" {print $2; exit}' <<<"$station")
+connected=$(awk '$1 == "connected" && $2 == "time:" {print $3; exit}' <<<"$station")
+if [ -z "$bssid" ] || [ -z "$connected" ]; then
+    # Not associated: forget the association so the next one counts as new.
+    rm -f "$state"
+    exit 0
+fi
+
+# With no address there is nothing to renew and nothing to validate. networkd runs a full DHCP in
+# that case, and the resulting link-state change brings this hook back with an address in place.
+if [ -z "$("$IP" -4 -o addr show dev "$IFACE" scope global)" ]; then
+    exit 0
+fi
+
+read -r uptime _ <"$UPTIME_FILE"
+start=$((${uptime%.*} - connected))
+
+if [ -r "$state" ]; then
+    previous_bssid= previous_start=
+    read -r previous_bssid previous_start <"$state" || true
+    if [ "$previous_bssid" = "$bssid" ] && [[ $previous_start =~ ^[0-9]+$ ]] &&
+        [ "$((start > previous_start ? start - previous_start : previous_start - start))" \
+            -le "$TOLERANCE" ]; then
+        exit 0
+    fi
+fi
+
+# Record before acting. Reasserting a lease changes link state, which retriggers this hook, and a
+# segment that stays broken must not turn that into a repair loop: one attempt per association, and
+# the next association gets its own.
+mkdir -p "$STATE_DIR"
+printf '%s %s\n' "$bssid" "$start" >"$state"
+reassert_lease "association $bssid on $IFACE"

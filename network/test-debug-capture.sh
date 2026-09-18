@@ -123,10 +123,17 @@ snapshot_command_contract() {
         'record_command "$incident" "$phase" ethtool-stats 5 /usr/bin/ethtool -S wlan0'
         'record_command "$incident" "$phase" iw-power-save 5 /usr/bin/iw dev wlan0 get power_save'
         'record_command "$incident" "$phase" iwlwifi-parameters 5 /usr/bin/sh -c'
+        'record_command "$incident" "$phase" power-supply 5 /usr/bin/sh -c'
+        'record_command "$incident" "$phase" wlan-device-power 5 /usr/bin/sh -c'
         'record_command "$incident" "$phase" ip-neigh-wlan 5 /usr/bin/ip -4 neigh show dev wlan0'
         'record_command "$incident" "$phase" networkctl-wlan 10 /usr/bin/networkctl status wlan0 --no-pager'
         'record_command "$incident" "$phase" iw-station 5 /usr/bin/iw dev wlan0 station dump'
-        'record_command "$incident" "$phase" route-get-internet 5 /usr/bin/ip -4 route get 1.1.1.1 mark 0x80000'
+        'record_command "$incident" "$phase" route-get-exit 5 /usr/bin/ip -4 route get 216.239.32.117'
+        'record_command "$incident" "$phase" route-get-underlay 5'
+        'record_command "$incident" "$phase" route-get-ioa 5 /usr/bin/ip -4 route get 10.0.0.1'
+        'record_command "$incident" "$phase" ipset-ioa 10 /usr/bin/ipset save ioa'
+        'record_command "$incident" "$phase" ipset-cn-direct 10 /usr/bin/ipset save cn_direct'
+        'record_command "$incident" "$phase" journal-policy-tags 15'
         'record_command "$incident" "$phase" journal-kernel-network 15'
         'record_command "$incident" "$phase" conntrack-tcp 10 /usr/bin/conntrack -L -p tcp'
         'record_command "$incident" "$phase" ss-tcp 5 /usr/bin/ss -tapne'
@@ -139,10 +146,19 @@ snapshot_command_contract() {
     )
     if [ "$mode" = static ]; then
         commands+=(
-            'record_command "$incident" "$phase" probe-gateway-arp 8 /usr/bin/arping -c 3 -w 5 -I wlan0 "$gateway"'
-            'record_command "$incident" "$phase" probe-gateway-icmp 8 /usr/bin/ping -n -c 3 -W 1 -I wlan0 "$gateway"'
-            'record_command "$incident" "$phase" probe-internet-icmp 8 /usr/bin/ping -n -c 3 -W 1 -m 524288 -I wlan0 1.1.1.1'
-            'record_command "$incident" "$phase" probe-internet-http 10 /usr/bin/curl'
+            'record_command "$incident" "$phase" probe-gateway-tcp 8 "$TCP_PROBE"'
+            'record_command "$incident" "$phase" probe-underlay-tcp 8 "$TCP_PROBE"'
+            'record_command "$incident" "$phase" probe-gateway-arp-shape 8'
+            'record_command "$incident" "$phase" probe-gateway-icmp-shape 8'
+            'record_command "$incident" "$phase" probe-underlay-icmp-shape 8'
+            'record_command "$incident" "$phase" probe-exit-http 10 /usr/bin/curl'
+            'record_command "$incident" "$phase" probe-ioa-http 12 /usr/bin/curl'
+        )
+    else
+        commands+=(
+            'record_command "$incident" "$phase" ioa-client.log 10'
+            'record_command "$incident" "$phase" ioa-clientGui.log 10'
+            'record_command "$incident" "$phase" ioa-clientupgrade.log 10'
         )
     fi
     for command in "${commands[@]}"; do
@@ -162,13 +178,20 @@ snapshot_command_mutation_contract() (
         'record_command "$incident" "$phase" ethtool-stats 5 /usr/bin/ethtool -S wlan0'
         'record_command "$incident" "$phase" iw-power-save 5 /usr/bin/iw dev wlan0 get power_save'
         'record_command "$incident" "$phase" iwlwifi-parameters 5 /usr/bin/sh -c'
+        'record_command "$incident" "$phase" power-supply 5 /usr/bin/sh -c'
+        'record_command "$incident" "$phase" wlan-device-power 5 /usr/bin/sh -c'
         'record_command "$incident" "$phase" ip-neigh-wlan 5 /usr/bin/ip -4 neigh show dev wlan0'
         'record_command "$incident" "$phase" networkctl-wlan 10 /usr/bin/networkctl status wlan0 --no-pager'
         'record_command "$incident" "$phase" iw-station 5 /usr/bin/iw dev wlan0 station dump'
-        'record_command "$incident" "$phase" probe-gateway-arp 8 /usr/bin/arping -c 3 -w 5 -I wlan0 "$gateway"'
-        'record_command "$incident" "$phase" probe-gateway-icmp 8 /usr/bin/ping -n -c 3 -W 1 -I wlan0 "$gateway"'
-        'record_command "$incident" "$phase" probe-internet-icmp 8 /usr/bin/ping -n -c 3 -W 1 -m 524288 -I wlan0 1.1.1.1'
-        'record_command "$incident" "$phase" probe-internet-http 10 /usr/bin/curl'
+        'record_command "$incident" "$phase" probe-gateway-tcp 8 "$TCP_PROBE"'
+        'record_command "$incident" "$phase" probe-underlay-tcp 8 "$TCP_PROBE"'
+        'record_command "$incident" "$phase" probe-gateway-arp-shape 8'
+        'record_command "$incident" "$phase" probe-gateway-icmp-shape 8'
+        'record_command "$incident" "$phase" probe-underlay-icmp-shape 8'
+        'record_command "$incident" "$phase" probe-exit-http 10 /usr/bin/curl'
+        'record_command "$incident" "$phase" probe-ioa-http 12 /usr/bin/curl'
+        'record_command "$incident" "$phase" ipset-ioa 10 /usr/bin/ipset save ioa'
+        'record_command "$incident" "$phase" ipset-cn-direct 10 /usr/bin/ipset save cn_direct'
         'record_command "$incident" "$phase" conntrack-tcp 10 /usr/bin/conntrack -L -p tcp'
         'record_command "$incident" "$phase" ss-tcp 5 /usr/bin/ss -tapne'
         'record_command "$incident" "$phase" ss-udp 5 /usr/bin/ss -uapne'
@@ -291,6 +314,15 @@ static_script_contract() {
     assert_contains "$SCRIPT" '/usr/bin/conntrack -E -o timestamp,extended'
     assert_contains "$SCRIPT" '/usr/bin/nft monitor'
     assert_contains "$SCRIPT" 'sample_link_state "$incident" "$duration" &'
+    assert_contains "$SCRIPT" 'connectivity-timeline.tsv'
+    assert_contains "$SCRIPT" '/usr/bin/ping -q -n -c 1 -W 1 -m 524288'
+    assert_contains "$SCRIPT" 'http://connectivitycheck.gstatic.com/generate_204'
+    assert_contains "$SCRIPT" 'http://ioa.tencent.com/'
+    assert_contains "$SCRIPT" 'for entry in main 52 ioa 20 ioa_src; do'
+    assert_contains "$SCRIPT" '-t network-reconfigure -t ioa-ip-shim'
+    assert_contains "$SCRIPT" 'for entry in client.log clientGui.log clientupgrade.log; do'
+    assert_contains "$SCRIPT" '/usr/bin/iptables-save -c -t mangle'
+    assert_contains "$SCRIPT" '/usr/bin/iptables-save -c -t nat'
     snapshot_command_contract "$SCRIPT"
     assert_not_contains "$SCRIPT" 'network-debug-pcap.service|freeze_ring|RING_DIR|restore_recorder'
     assert_not_contains "$SCRIPT" '^[[:space:]]*(/usr/bin/)?tailscale (down|up|set)( |$)'
@@ -305,6 +337,37 @@ static_script_contract() {
         fail 'restore still enables the constant recorder'
     ! grep -Fq '/var/log/network-debug/incidents' "$ROOT/restore.sh" ||
         fail 'restore deletes retained incidents'
+}
+
+# A capture must observe the network without perturbing it. Any probe that forces a path by setting
+# a socket mark has to pin the egress device and source address too, or the kernel will emit the
+# source the first route chose and the host looks like it is spoofing.
+probe_safety_contract() {
+    local pattern='socat|setsockopt-int|SO_MARK'
+    if grep -Eqn -- "$pattern" "$SCRIPT"; then
+        grep -En -- "$pattern" "$SCRIPT" >&2
+        fail 'capture builds a marked socket itself instead of using network-probe-tcp'
+    fi
+    python3 - "$SCRIPT" <<'PY' || fail 'capture has an unpinned marked probe'
+import sys
+
+# Backslash continuations make one logical command span several lines.
+lines = open(sys.argv[1], encoding="utf-8").read().replace("\\\n", " ").splitlines()
+
+problems = []
+for line in lines:
+    if "$TCP_PROBE" in line:
+        missing = [o for o in ("--source", "--interface", "--mark") if o not in line]
+        if missing:
+            problems.append(f"TCP probe missing {' '.join(missing)}: {line.strip()}")
+    if "ping" in line and " -m " in line and " -I " not in line:
+        problems.append(f"marked ping does not bind an interface: {line.strip()}")
+
+for problem in problems:
+    print(problem, file=sys.stderr)
+raise SystemExit(1 if problems else 0)
+PY
+    printf 'OK   every marked probe pins device and source before it sends\n'
 }
 
 make_fakes() {
@@ -502,7 +565,8 @@ runtime_contract() (
     )
     sample_link_state() {
         printf 'timeline\n' >"$1/link-state-timeline.txt"
-        printf 'now\tgateway=10.0.0.1\tarp=ok\n' >"$1/gateway-arp-timeline.tsv"
+        printf 'time\tbssid\tac\tgateway\tgateway_tcp\tunderlay_tcp\texit_http\tioa_http\tunderlay_icmp\n' \
+            >"$1/connectivity-timeline.tsv"
     }
 
     NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC=124; export NETWORK_DEBUG_TIMEOUT_TCPDUMP_RC
@@ -520,7 +584,8 @@ runtime_contract() (
     [ -f "$incident/ip-monitor.txt" ] || fail 'ip monitor capture missing'
     [ -f "$incident/journal-kernel-follow.txt" ] || fail 'kernel journal capture missing'
     [ -f "$incident/journal-services-follow.txt" ] || fail 'service journal capture missing'
-    [ -f "$incident/gateway-arp-timeline.tsv" ] || fail 'gateway ARP timeline missing'
+    [ -f "$incident/connectivity-timeline.tsv" ] ||
+        fail 'connectivity timeline missing'
     assert_capture_success "$incident/manifest.tsv"
     local failed_capture="$WORK/failed-capture"
     mkdir "$failed_capture"
@@ -618,6 +683,7 @@ EOF
 /usr/bin/tcpdump -d 'arp or icmp or udp port 53 or udp port 67 or udp port 68 or udp port 3478 or udp port 41641 or tcp port 53 or tcp port 80 or tcp port 443' >/dev/null
 /usr/bin/tcpdump -d 'icmp or udp port 53 or udp port 3478 or tcp port 53 or tcp port 80 or tcp port 443' >/dev/null
 static_script_contract
+probe_safety_contract
 route_event_summary_contract
 record_route_events_contract
 snapshot_runtime_contract

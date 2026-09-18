@@ -26,14 +26,15 @@ cn_prefixes=$(ipset save cn_direct 2>/dev/null |
     awk '$1 == "add" && $NF != "nomatch" {count++} END {print count + 0}')
 printf '  cn prefixes   %s (optional acceleration)\n' "$cn_prefixes"
 printf '  pref 1500     %s\n' "$([ -n "$(rules 1500)" ] && echo present || echo missing)"
+printf '  pref 1501     %s\n' "$([ -n "$(rules 1501)" ] && echo fail-closed || echo missing)"
 
 printf '\nIOA business\n'
 printf '  table ioa     %s\n' \
     "$([ "$(routes ioa)" -gt 0 ] && echo populated || echo empty)"
 printf '  tun0          %s\n' \
     "$([ -n "$(ip -4 -o addr show tun0 2>/dev/null)" ] && echo up || echo down)"
-printf '  pref 2500\n'
-ioa_rules=$(rules 2500)
+printf '  pref 1150\n'
+ioa_rules=$(rules 1150)
 [ -n "$ioa_rules" ] && printf '%s\n' "$ioa_rules" | sed 's/^/    /' || printf '    missing\n'
 printf '  owner 0xa38   %s\n' \
     "$(ip -4 rule show 2>/dev/null | awk '
@@ -61,8 +62,3 @@ if command -v tailscale >/dev/null; then
 else
     printf '  tailscale not installed\n'
 fi
-# Builtins only: this stays a read-only status query with no external command.
-exit_path=''
-[ -r /var/lib/network-exit-watchdog/status ] &&
-    read -r exit_path < /var/lib/network-exit-watchdog/status
-printf '  exit path     %s\n' "${exit_path:-not yet checked}"

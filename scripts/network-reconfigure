@@ -48,7 +48,17 @@ P_TS=500
 P_LOCAL=1000
 P_RETIRED_IOA_MARK=1400
 P_CN=1500
-P_IOA=2500
+P_CN_STOP=1501
+# Above P_IOA_SMART_SRC, and that placement is the whole point. Rule 1200 matches on the underlay
+# source address, which every unbound socket picks during the routing decision that happens before
+# OUTPUT mangle sets a mark. The mark-triggered reroute keeps that source, so at any priority below
+# 1200 this band is unreachable for exactly the traffic it exists to carry: on 2026-09-18 the ioa set
+# marked packets correctly, rule 1200 sent them back out wlan0, and tun0 carried zero packets in
+# either direction while every internal address timed out. Still below 1100, so iOA's own fwmark
+# 0xa38 band keeps precedence, and below P_LOCAL, so the on-link protections stay in front.
+P_IOA=1150
+# 2500 held this band until 1200's precedence was understood.
+P_RETIRED_IOA=2500
 P_TAILNET=3000
 # iOA SmartGate's own policy, installed through scripts/overrides/ip. This
 # script never manages these bands, but it audits their consistency: rule
@@ -102,6 +112,76 @@ reconcile_pref() {
     done <<<"$({ ip -4 rule show pref "$pref" 2>/dev/null || true; })"
     [ "$(normalise_actual_band "$(band_fingerprint "$pref")")" = \
         "$(printf '%s\n' "${desired[@]}" | awk 'NF' | sort | paste -sd';' -)" ]
+}
+
+set_cn_bands() {
+    if cn_set_has_matches; then
+        DESIRED_BANDS[$P_CN]="from all fwmark $CN_MARK lookup main"
+        DESIRED_BANDS[$P_CN_STOP]="from all fwmark $CN_MARK prohibit"
+    else
+        DESIRED_BANDS[$P_CN]=""
+        DESIRED_BANDS[$P_CN_STOP]=""
+    fi
+}
+
+reconcile_desired_band() {
+    local band=$1
+    IFS=';' read -r -a want <<<"${DESIRED_BANDS[$band]}"
+    reconcile_pref "$band" "${want[@]}"
+}
+
+# Add the desired source-NAT rule before removing stale copies. Deleting all copies first opens a
+# real leak window: an unbound socket initially gets tailscale0's source, OUTPUT reroutes it to the
+# physical device, and a packet crossing this window leaves with that tailnet source. Worse, the
+# no-NAT decision is then retained by conntrack after the rule returns.
+# The third argument, when false, leaves similar MASQUERADE rules on other devices alone.
+reconcile_mark_masquerade() {
+    local mark=$1 dev=$2 replace_all=${3:-true} base desired rule kept=false
+    base=${mark%%/*}
+    iptables -t nat -C POSTROUTING -o "$dev" -m mark --mark "$mark" \
+        -j MASQUERADE 2>/dev/null ||
+        iptables -t nat -A POSTROUTING -o "$dev" -m mark --mark "$mark" \
+            -j MASQUERADE
+    desired=$(iptables -t nat -S POSTROUTING 2>/dev/null | grep -E -m1 -- \
+        "^-A POSTROUTING -o $dev -m mark --mark $base(/0xffffffff)? -j MASQUERADE$")
+    [ -n "$desired" ]
+    while IFS= read -r rule; do
+        [ -n "$rule" ] || continue
+        if [ "$rule" = "$desired" ] && ! $kept; then
+            kept=true
+            continue
+        fi
+        $replace_all || [ "$rule" = "$desired" ] || continue
+        # shellcheck disable=SC2086 # iptables -S output is intentional argument input
+        iptables -t nat ${rule/-A /-D }
+    done < <(iptables -t nat -S POSTROUTING 2>/dev/null |
+        grep -E -- "^-A POSTROUTING -o [^ ]+ -m mark --mark $base(/0xffffffff)? -j MASQUERADE$" ||
+        true)
+}
+
+PHYSICAL_IFACE_GLOBS=(wlan wlp enp eth eno ens)
+
+install_source_guard() {
+    local glob
+    {
+        cat <<'NFT'
+destroy table ip serverconfig_source_guard
+add table ip serverconfig_source_guard
+add set ip serverconfig_source_guard foreign_sources {
+    type ipv4_addr
+    flags interval
+    elements = { 100.64.0.0/10, 192.168.255.0/24 }
+}
+add chain ip serverconfig_source_guard postrouting {
+    type filter hook postrouting priority 110
+    policy accept
+}
+NFT
+        for glob in "${PHYSICAL_IFACE_GLOBS[@]}"; do
+            printf 'add rule ip serverconfig_source_guard postrouting oifname "%s*" ip saddr @foreign_sources counter drop\n' \
+                "$glob"
+        done
+    } | nft -f -
 }
 
 physical_gateway() {
@@ -362,12 +442,13 @@ DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"
 DESIRED_BANDS[$P_IOA_OWNER_STOP]="from all fwmark $IOA_OWNER_MARK prohibit"
 DESIRED_BANDS[$P_TS]="from all fwmark $TS_MARK lookup main"
 DESIRED_BANDS[$P_RETIRED_IOA_MARK]=""
+DESIRED_BANDS[$P_RETIRED_IOA]=""
 
 # The enumerated pins below are a snapshot taken when this script runs, but the
-# priority-2500 `to 10.0.0.0/8 lookup ioa` rule and table `ioa` both outlive it.
+# `to 10.0.0.0/8 lookup ioa` rule and table `ioa` both outlive it.
 # A roam onto a different 10/8 subnet therefore leaves the pins naming the old
 # LAN while the new gateway is still inside 10/8, so until the next run finishes
-# — observed at up to 21s — rule 2500 swallows the gateway into tun0 and the
+# — observed at up to 21s — that rule swallows the gateway into tun0 and the
 # machine has an address and a default route but no reachable next hop.
 # Suppressing prefix length 0 asks the kernel for main minus its default route,
 # which is exactly "destinations that are on-link right now". It needs no
@@ -390,12 +471,7 @@ if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
     done < <(office_dns_servers)
 fi
 DESIRED_BANDS[$P_LOCAL]=$(band_of "${local_band[@]}")
-
-if cn_set_has_matches; then
-    DESIRED_BANDS[$P_CN]="from all fwmark $CN_MARK lookup main"
-else
-    DESIRED_BANDS[$P_CN]=""
-fi
+set_cn_bands
 
 ioa_band=("from all fwmark 0x1 lookup $IOA_TABLE")
 for cidr in "${IOA_STATIC_CIDRS[@]}"; do
@@ -470,7 +546,7 @@ firewall_fingerprint_ok() {
         return 1
     local physical_dev
     physical_dev=$(physical_device)
-    [ -n "$physical_dev" ] || return 1
+    [ -n "$physical_dev" ] || physical_dev=$IFACE
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
         grep -Fxc -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x1000000 -j MASQUERADE")" -eq 1 ] ||
         return 1
@@ -479,6 +555,18 @@ firewall_fingerprint_ok() {
         return 1
     iptables -t mangle -C POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
         -o tailscale0 -j DROP 2>/dev/null
+}
+
+source_guard_fingerprint_ok() {
+    local rules glob
+    rules=$(nft -s list table ip serverconfig_source_guard 2>/dev/null) || return 1
+    grep -Fq 'elements = { 100.64.0.0/10, 192.168.255.0/24 }' <<<"$rules" || return 1
+    grep -Fq 'type filter hook postrouting priority srcnat + 10; policy accept;' \
+        <<<"$rules" || return 1
+    for glob in "${PHYSICAL_IFACE_GLOBS[@]}"; do
+        grep -Fq "oifname \"${glob}*\" ip saddr @foreign_sources counter drop" \
+            <<<"$rules" || return 1
+    done
 }
 
 ngnclient_active() {
@@ -541,6 +629,7 @@ if [ "${FORCE:-0}" != 1 ] &&
    cn_state_matches &&
    iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null &&
    firewall_fingerprint_ok &&
+   source_guard_fingerprint_ok &&
    [ "$(desired_fingerprint)" = "$(actual_fingerprint)" ]; then
     logger -t network-reconfigure -p daemon.info "no change ($current_state); nothing to do"
     exit 0
@@ -679,9 +768,9 @@ if [ "${FORCE_CN:-0}" = 1 ] || ! cn_state_matches; then
     TEMP_FILES=()
 fi
 
-# Retire the gateway-coupled implementation. These tables are no longer consulted; flushing them
-# makes an old priority-1500 rule harmless even if this process is interrupted before rule repair.
-clean_pref "$P_CN"
+# Retire the gateway-coupled implementation. These tables are no longer consulted. Do not clear
+# priority 1500 here: reconcile_pref repairs that owned band exactly at the end, while clearing it
+# early creates a needless interval where CN traffic falls back to the exit node on every link event.
 ip route flush table cn 2>/dev/null || true
 ip route flush table 101 2>/dev/null || true
 ip route flush table cn_stage 2>/dev/null || true
@@ -690,11 +779,7 @@ while read -r legacy_stage_id; do
     ip route flush table "$legacy_stage_id" 2>/dev/null || true
 done < <(awk '$2 == "cn_stage" {print $1}' "$RT_TABLES")
 
-if cn_set_has_matches; then
-    DESIRED_BANDS[$P_CN]="from all fwmark $CN_MARK lookup main"
-else
-    DESIRED_BANDS[$P_CN]=""
-fi
+set_cn_bands
 
 # Build an independent chain before switching, so construction failures leave
 # the previously healthy hook and chain byte-identical.
@@ -755,38 +840,46 @@ iptables -t mangle -C POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
     iptables -t mangle -A POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
         -o tailscale0 -j DROP
 
+# Final source validity is checked after srcnat, not in mangle POSTROUTING. At this priority every
+# healthy CN/owner packet has already been rewritten to the physical address, while an ESTABLISHED
+# flow whose old no-NAT conntrack state survived a DHCP transition still carries tailscale0/tun0's
+# source and is dropped before the device sees it. Forwarded Tailscale traffic is normally rewritten
+# by Tailscale's own srcnat before this hook too; forwarding a raw tailnet source onto a source-guarded
+# physical network is invalid for the same reason as the local leak. Wildcard physical names make
+# the invariant continuous across Wi-Fi/wired switches. The native nft table is replaced atomically.
+install_source_guard
+
 # Remove the repository-owned set retired by the authoritative SmartDNS model.
 # It is unreferenced after the atomic chain switch, so destruction is safe and idempotent.
 ipset destroy ioa_intranet 2>/dev/null || true
 
+# During DHCP replacement main temporarily has no default, but IFACE remains the device that is
+# about to receive it. Keep its NAT rule installed throughout that interval.
+physical_dev=$(physical_device)
+[ -n "$physical_dev" ] || physical_dev=$IFACE
+
 # SmartGateAgent sometimes binds control sockets to tailscale0's address. The owner mark routes
 # those packets over the physical underlay; MASQUERADE also replaces that unusable source address.
-while read -r rule; do
-    [ -n "$rule" ] && iptables -t nat ${rule/-A /-D }
-done < <(iptables -t nat -S POSTROUTING 2>/dev/null |
-    grep -E -- '--mark 0x1000000(/0xffffffff)? -j MASQUERADE' || true)
-physical_dev=$(physical_device)
-[ -z "$physical_dev" ] ||
-    iptables -t nat -A POSTROUTING -m mark --mark "$IOA_OWNER_MARK" \
-        -o "$physical_dev" -j MASQUERADE
+reconcile_mark_masquerade "$IOA_OWNER_MARK" "$physical_dev"
 
 # The first route lookup can select a Tailscale source before mangle OUTPUT classifies a CN
 # destination. The mark-triggered reroute uses main, and this exact-mark NAT rewrites that stale
 # source to the current physical address without touching owner or IOA traffic.
-while read -r rule; do
-    [ -n "$rule" ] && iptables -t nat ${rule/-A /-D }
-done < <(iptables -t nat -S POSTROUTING 2>/dev/null |
-    grep -E -- '--mark 0x2(/0xffffffff)? -j MASQUERADE' || true)
-[ -z "$physical_dev" ] ||
-    iptables -t nat -A POSTROUTING -m mark --mark "$CN_MARK" \
-        -o "$physical_dev" -j MASQUERADE
+reconcile_mark_masquerade "$CN_MARK" "$physical_dev"
 
-# Manage only the repository-owned exact IOA payload NAT rule; similar rules belong to others.
-while iptables -t nat -D POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 \
-    -j MASQUERADE 2>/dev/null; do :; done
-iptables -t nat -A POSTROUTING -m mark --mark "$IOA_MARK" -o tun0 -j MASQUERADE
+# Manage only the repository-owned exact IOA payload NAT rule; similar SNAT rules belong to others.
+reconcile_mark_masquerade "$IOA_MARK" tun0 false
 
+# The stop rule is part of the CN band. On upgrade, install it before exposing lookup main; when CN
+# acceleration is disabled, remove lookup main before its stop. Thus no transition can expose 0x2
+# to table 52, while a crash can at worst leave it safely prohibited.
+if [ -n "${DESIRED_BANDS[$P_CN]}" ]; then
+    reconcile_desired_band "$P_CN_STOP"
+    reconcile_desired_band "$P_CN"
+else
+    reconcile_desired_band "$P_CN"
+    reconcile_desired_band "$P_CN_STOP"
+fi
 for band in "${!DESIRED_BANDS[@]}"; do
-    IFS=';' read -r -a want <<<"${DESIRED_BANDS[$band]}"
-    reconcile_pref "$band" "${want[@]}"
+    [ "$band" = "$P_CN" ] || [ "$band" = "$P_CN_STOP" ] || reconcile_desired_band "$band"
 done

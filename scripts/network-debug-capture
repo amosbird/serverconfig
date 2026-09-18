@@ -3,6 +3,7 @@ set -uo pipefail
 
 TIMEOUT=${TIMEOUT:-/usr/bin/timeout}
 TCPDUMP=${TCPDUMP:-/usr/bin/tcpdump}
+TCP_PROBE=${TCP_PROBE:-/home/amos/scripts/network-probe-tcp}
 MAX_TEXT_BYTES=1048576
 
 diagnostic_commands=()
@@ -100,7 +101,7 @@ record_route_events() {
 }
 
 run_snapshot() {
-    local incident=$1 phase=$2 entry label limit command gateway dhcp_dns
+    local incident=$1 phase=$2 entry label limit command gateway physical_source dhcp_dns
     if ((${#diagnostic_commands[@]})); then
         for entry in "${diagnostic_commands[@]}"; do
             IFS='|' read -r label limit command entry <<<"$entry"
@@ -125,26 +126,62 @@ run_snapshot() {
     record_command "$incident" "$phase" iw-power-save 5 /usr/bin/iw dev wlan0 get power_save
     record_command "$incident" "$phase" iwlwifi-parameters 5 /usr/bin/sh -c \
         'for p in /sys/module/iwlwifi/parameters/* /sys/module/iwlmvm/parameters/*; do [ ! -r "$p" ] || printf "%s=%s\\n" "$p" "$(cat "$p")"; done'
+    # Power source and PCIe link power are the only remaining AC-versus-battery mechanisms that
+    # could plausibly disturb the physical link: TLP keeps Wi-Fi power save off on both, but sets
+    # PCIE_ASPM_ON_BAT=powersupersave. Recording both settles the question from the capture instead
+    # of from a stale upower sample.
+    record_command "$incident" "$phase" power-supply 5 /usr/bin/sh -c \
+        'for s in /sys/class/power_supply/*; do for f in type online status capacity; do [ ! -r "$s/$f" ] || printf "%s/%s=%s\\n" "${s##*/}" "$f" "$(cat "$s/$f")"; done; done'
+    record_command "$incident" "$phase" wlan-device-power 5 /usr/bin/sh -c \
+        'printf "aspm_policy=%s\\n" "$(cat /sys/module/pcie_aspm/parameters/policy)"; d=$(readlink -f /sys/class/net/wlan0/device); printf "wlan0_pci=%s\\n" "${d##*/}"; for f in power/control power/runtime_status; do [ ! -r "$d/$f" ] || printf "wlan0_%s=%s\\n" "$f" "$(cat "$d/$f")"; done; lspci -vv -s "${d##*/}" 2>/dev/null | grep -E "LnkCtl|LnkSta|ASPM|Power Management|Root Complex Integrated|Status:.*D[0-3]" || printf "no PCIe link power control reported\\n"'
     record_command "$incident" "$phase" ip-neigh-wlan 5 /usr/bin/ip -4 neigh show dev wlan0
     record_command "$incident" "$phase" ip-rule 5 /usr/bin/ip rule show
-    record_command "$incident" "$phase" route-get-internet 5 /usr/bin/ip -4 route get 1.1.1.1 mark 0x80000
-    for entry in main 52 ioa 20 230 cn; do
+    record_command "$incident" "$phase" route-get-exit 5 /usr/bin/ip -4 route get 216.239.32.117
+    record_command "$incident" "$phase" route-get-underlay 5 \
+        /usr/bin/ip -4 route get 216.239.32.117 mark 0x80000
+    record_command "$incident" "$phase" route-get-ioa 5 /usr/bin/ip -4 route get 10.0.0.1
+    for entry in main 52 ioa 20 ioa_src; do
         record_command "$incident" "$phase" "ip-route-$entry" 5 /usr/bin/ip route show table "$entry"
     done
     gateway=$(/usr/bin/ip -4 route show table main default 2>/dev/null |
         /usr/bin/awk '$5 == "wlan0" {print $3; exit}')
-    if [ -n "$gateway" ]; then
-        record_command "$incident" "$phase" probe-gateway-arp 8 /usr/bin/arping -c 3 -w 5 -I wlan0 "$gateway"
-        record_command "$incident" "$phase" probe-gateway-icmp 8 /usr/bin/ping -n -c 3 -W 1 -I wlan0 "$gateway"
+    physical_source=$(/usr/bin/ip -4 -o addr show dev wlan0 scope global 2>/dev/null |
+        /usr/bin/awk '{sub(/\/.*/, "", $4); print $4; exit}')
+    # Only TCP is a liveness signal. Set the mark, device, and physical source before connect:
+    # marking a socket only after connect can leak its tailnet source address onto wlan0.
+    if [ -n "$gateway" ] && [ -n "$physical_source" ]; then
+        record_command "$incident" "$phase" probe-gateway-tcp 8 "$TCP_PROBE" \
+            --target "$gateway" --port 53 --source "$physical_source" \
+            --interface wlan0 --mark 0x80000 --timeout 3
+        record_command "$incident" "$phase" probe-gateway-arp-shape 8 \
+            /usr/bin/arping -c 3 -w 5 -I wlan0 "$gateway"
+        record_command "$incident" "$phase" probe-gateway-icmp-shape 8 \
+            /usr/bin/ping -n -c 3 -W 1 -I wlan0 "$gateway"
     else
-        printf 'no wlan0 default gateway\n' >"$incident/$phase/probe-gateway-skipped.txt"
-        append_manifest "$incident" 0 "gateway probes skipped (no wlan0 default)" "$phase"
+        printf 'no wlan0 default gateway or physical IPv4 source\n' \
+            >"$incident/$phase/probe-gateway-skipped.txt"
+        append_manifest "$incident" 0 "gateway probes skipped (no gateway/source)" "$phase"
     fi
-    record_command "$incident" "$phase" probe-internet-icmp 8 /usr/bin/ping -n -c 3 -W 1 -m 524288 -I wlan0 1.1.1.1
-    record_command "$incident" "$phase" probe-internet-http 10 /usr/bin/curl \
-        -4 --interface wlan0 --connect-timeout 5 --max-time 8 -sS -o /dev/null \
+    if [ -n "$physical_source" ]; then
+        record_command "$incident" "$phase" probe-underlay-tcp 8 "$TCP_PROBE" \
+            --target 216.239.32.117 --port 80 --source "$physical_source" \
+            --interface wlan0 --mark 0x80000 --timeout 3
+    else
+        printf 'no wlan0 physical IPv4 source\n' \
+            >"$incident/$phase/probe-underlay-tcp-skipped.txt"
+        append_manifest "$incident" 0 "underlay TCP probe skipped (no source)" "$phase"
+    fi
+    record_command "$incident" "$phase" probe-underlay-icmp-shape 8 \
+        /usr/bin/ping -n -c 3 -W 1 -m 524288 -I wlan0 1.1.1.1
+    record_command "$incident" "$phase" probe-exit-http 10 /usr/bin/curl \
+        -4 --connect-timeout 5 --max-time 8 -sS -o /dev/null \
         -w 'remote=%{remote_ip} code=%{http_code} connect=%{time_connect} total=%{time_total}\n' \
-        http://1.1.1.1/
+        --resolve connectivitycheck.gstatic.com:80:216.239.32.117 \
+        http://connectivitycheck.gstatic.com/generate_204
+    record_command "$incident" "$phase" probe-ioa-http 12 /usr/bin/curl \
+        -4 --connect-timeout 5 --max-time 10 -sS -o /dev/null \
+        -w 'remote=%{remote_ip} code=%{http_code} connect=%{time_connect} total=%{time_total}\n' \
+        http://ioa.tencent.com/
     record_command "$incident" "$phase" probe-dns-local 8 \
         /usr/bin/dig +time=2 +tries=1 +short @127.0.0.1 example.com A
     dhcp_dns=$(/usr/bin/networkctl dhcp-lease wlan0 2>/dev/null |
@@ -156,8 +193,10 @@ run_snapshot() {
         printf 'no DHCP DNS server\n' >"$incident/$phase/probe-dns-dhcp-skipped.txt"
         append_manifest "$incident" 0 "DHCP DNS probe skipped (no server)" "$phase"
     fi
-    record_command "$incident" "$phase" iptables-mangle 10 /usr/bin/iptables-save -t mangle
-    record_command "$incident" "$phase" iptables-nat 10 /usr/bin/iptables-save -t nat
+    record_command "$incident" "$phase" iptables-mangle 10 /usr/bin/iptables-save -c -t mangle
+    record_command "$incident" "$phase" iptables-nat 10 /usr/bin/iptables-save -c -t nat
+    record_command "$incident" "$phase" ipset-ioa 10 /usr/bin/ipset save ioa
+    record_command "$incident" "$phase" ipset-cn-direct 10 /usr/bin/ipset save cn_direct
     record_command "$incident" "$phase" nft-ruleset 10 /usr/bin/nft list ruleset
     record_command "$incident" "$phase" conntrack-udp 10 /usr/bin/conntrack -L -p udp
     record_command "$incident" "$phase" conntrack-tcp 10 /usr/bin/conntrack -L -p tcp
@@ -178,11 +217,19 @@ run_snapshot() {
     record_command "$incident" "$phase" tailscale-derp-map 10 /usr/bin/tailscale debug derp-map
     record_command "$incident" "$phase" tailscale-goroutines 15 /usr/bin/tailscale debug daemon-goroutines
     record_route_events "$incident" "$phase"
+    record_command "$incident" "$phase" journal-policy-tags 15 \
+        /usr/bin/journalctl -b --since=-15min -n 5000 --no-pager \
+        -t network-reconfigure -t ioa-ip-shim -t network-dhcp-refresh
     record_command "$incident" "$phase" journal-kernel-network 15 \
         /usr/bin/journalctl -b -k --since=-15min -n 5000 --no-pager
-    for entry in tailscaled systemd-networkd iwd network-reconfigure smartdns ngnclient; do
+    for entry in tailscaled systemd-networkd iwd network-reconfigure network-dhcp-refresh \
+        smartdns ngnclient; do
         record_command "$incident" "$phase" "journal-$entry" 15 \
             /usr/bin/journalctl -b -u "$entry" --since=-15min -n 5000 --no-pager
+    done
+    for entry in client.log clientGui.log clientupgrade.log; do
+        record_command "$incident" "$phase" "ioa-$entry" 10 \
+            /usr/bin/tail -n 5000 "/data/iOALog/$entry"
     done
 }
 
@@ -195,9 +242,27 @@ start_timed_capture() {
 }
 
 sample_link_state() {
-    local incident=$1 duration=$2 deadline=$((SECONDS + duration)) gateway now
+    local incident=$1 duration=$2 deadline=$((SECONDS + duration)) gateway physical_source now bssid
+    local gateway_pid underlay_pid exit_pid ioa_pid icmp_pid
+    local probe_dir="$incident/.timeline-probes"
+    local gateway_tcp underlay_tcp exit_http ioa_http underlay_icmp ac ac_online supply
+    mkdir -p "$probe_dir"
+    # AC can be plugged in mid-capture, so the power source belongs in the per-sample record rather
+    # than only in the snapshots. Resolve the mains supply once; reading it later costs no process.
+    for supply in /sys/class/power_supply/*; do
+        [ -r "$supply/type" ] && [ -r "$supply/online" ] || continue
+        [ "$(<"$supply/type")" = Mains ] || continue
+        ac_online="$supply/online"
+        break
+    done
+    printf 'time\tbssid\tac\tgateway\tgateway_tcp\tunderlay_tcp\texit_http\tioa_http\tunderlay_icmp\texit_route\tunderlay_route\tioa_route\n' \
+        >"$incident/connectivity-timeline.tsv"
     while ((SECONDS < deadline)); do
         now=$(/usr/bin/date --iso-8601=ns)
+        ac=-
+        [ -z "${ac_online:-}" ] || read -r ac <"$ac_online" || ac=-
+        bssid=$(/usr/bin/iw dev wlan0 link |
+            /usr/bin/awk '$1 == "Connected" && $2 == "to" {print $3; exit}')
         {
             printf '===== %s =====\n' "$now"
             /usr/bin/iw dev wlan0 link
@@ -208,16 +273,68 @@ sample_link_state() {
         } >>"$incident/link-state-timeline.txt" 2>&1
         gateway=$(/usr/bin/ip -4 route show table main default 2>/dev/null |
             /usr/bin/awk '$5 == "wlan0" {print $3; exit}')
-        {
-            printf '%s\tgateway=%s\t' "$now" "${gateway:--}"
-            if [ -n "$gateway" ] && /usr/bin/arping -q -c 1 -w 1 -I wlan0 "$gateway"; then
-                printf 'arp=ok\n'
+        physical_source=$(/usr/bin/ip -4 -o addr show dev wlan0 scope global 2>/dev/null |
+            /usr/bin/awk '{sub(/\/.*/, "", $4); print $4; exit}')
+        (
+            if [ -n "$gateway" ] && [ -n "$physical_source" ]; then
+                /usr/bin/timeout 3 "$TCP_PROBE" \
+                    --target "$gateway" --port 53 --source "$physical_source" \
+                    --interface wlan0 --mark 0x80000 --timeout 2 >/dev/null 2>&1
+                printf '%s\n' "$?"
             else
-                printf 'arp=failed\n'
+                printf -- '-\n'
             fi
-        } >>"$incident/gateway-arp-timeline.tsv" 2>&1
+        ) >"$probe_dir/gateway-tcp" &
+        gateway_pid=$!
+        (
+            if [ -n "$physical_source" ]; then
+                /usr/bin/timeout 3 "$TCP_PROBE" \
+                    --target 216.239.32.117 --port 80 --source "$physical_source" \
+                    --interface wlan0 --mark 0x80000 --timeout 2 >/dev/null 2>&1
+                printf '%s\n' "$?"
+            else
+                printf -- '-\n'
+            fi
+        ) >"$probe_dir/underlay-tcp" &
+        underlay_pid=$!
+        (
+            /usr/bin/timeout 2 /usr/bin/ping -q -n -c 1 -W 1 -m 524288 \
+                -I wlan0 1.1.1.1 >/dev/null 2>&1
+            printf '%s\n' "$?"
+        ) >"$probe_dir/underlay-icmp" &
+        icmp_pid=$!
+        (
+            /usr/bin/timeout 3 /usr/bin/curl -4 --connect-timeout 1 --max-time 2 \
+                -sS -o /dev/null -w '%{http_code}/%{time_total}' \
+                --resolve connectivitycheck.gstatic.com:80:216.239.32.117 \
+                http://connectivitycheck.gstatic.com/generate_204 2>/dev/null
+            printf '/%s\n' "$?"
+        ) >"$probe_dir/exit-http" &
+        exit_pid=$!
+        (
+            /usr/bin/timeout 3 /usr/bin/curl -4 --connect-timeout 1 --max-time 2 \
+                -sS -o /dev/null -w '%{http_code}/%{time_total}' \
+                http://ioa.tencent.com/ 2>/dev/null
+            printf '/%s\n' "$?"
+        ) >"$probe_dir/ioa-http" &
+        ioa_pid=$!
+        wait "$gateway_pid" "$underlay_pid" "$icmp_pid" "$exit_pid" "$ioa_pid" 2>/dev/null || true
+        read -r gateway_tcp <"$probe_dir/gateway-tcp"
+        read -r underlay_tcp <"$probe_dir/underlay-tcp"
+        read -r underlay_icmp <"$probe_dir/underlay-icmp"
+        read -r exit_http <"$probe_dir/exit-http"
+        read -r ioa_http <"$probe_dir/ioa-http"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$now" "${bssid:--}" "$ac" "${gateway:--}" \
+            "$gateway_tcp" "$underlay_tcp" "$exit_http" "$ioa_http" "$underlay_icmp" \
+            "$(/usr/bin/ip -4 route get 216.239.32.117 2>&1 | /usr/bin/head -1)" \
+            "$(/usr/bin/ip -4 route get 216.239.32.117 mark 0x80000 2>&1 |
+                /usr/bin/head -1)" \
+            "$(/usr/bin/ip -4 route get 10.0.0.1 2>&1 | /usr/bin/head -1)" \
+            >>"$incident/connectivity-timeline.tsv"
         sleep 1
     done
+    rm -rf "$probe_dir"
 }
 
 start_deep() {
@@ -239,7 +356,7 @@ start_deep() {
     start_timed_capture "$incident" "$duration" 'service journal follow' journal-services-follow.txt \
         /usr/bin/journalctl -b -f -n 0 -o short-monotonic \
         -u iwd -u systemd-networkd -u tailscaled -u network-reconfigure.service \
-        -u smartdns -u ngnclient
+        -u network-dhcp-refresh.service -u smartdns -u ngnclient
     start_timed_capture "$incident" "$duration" 'conntrack events' conntrack-events.txt \
         /usr/bin/conntrack -E -o timestamp,extended
     start_timed_capture "$incident" "$duration" 'nft monitor' nft-monitor.txt \

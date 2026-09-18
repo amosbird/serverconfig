@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Open one TCP connection on an explicitly selected physical path.
+
+Exit codes are distinct on purpose, because conflating them is what made earlier incident
+captures unreadable:
+
+    0  the path carried a TCP handshake
+    1  the path did not: timeout, refused, unreachable, or blocked
+    2  the probe could not be placed on the path at all, so it measured nothing
+"""
+
+import argparse
+import ipaddress
+import socket
+import sys
+
+PLACED_ON_PATH = 0
+PATH_FAILED = 1
+PROBE_UNPLACEABLE = 2
+
+
+def ipv4(value: str) -> str:
+    address = ipaddress.ip_address(value)
+    if address.version != 4:
+        raise argparse.ArgumentTypeError("IPv4 address required")
+    return str(address)
+
+
+def port(value: str) -> int:
+    number = int(value, 10)
+    if not 1 <= number <= 65535:
+        raise argparse.ArgumentTypeError("port must be 1-65535")
+    return number
+
+
+def mark(value: str) -> int:
+    number = int(value, 0)
+    if number < 0:
+        raise argparse.ArgumentTypeError("mark must not be negative")
+    return number
+
+
+def timeout(value: str) -> float:
+    number = float(value)
+    if not number > 0:
+        raise argparse.ArgumentTypeError("timeout must be positive")
+    return number
+
+
+def unplaceable(reason: str) -> None:
+    print(f"probe not placed on path: {reason}", file=sys.stderr)
+    raise SystemExit(PROBE_UNPLACEABLE)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--target", required=True, type=ipv4)
+    parser.add_argument("--port", required=True, type=port)
+    parser.add_argument("--source", required=True, type=ipv4)
+    parser.add_argument("--interface", required=True)
+    parser.add_argument("--mark", required=True, type=mark)
+    parser.add_argument("--timeout", type=timeout, default=3.0)
+    args = parser.parse_args()
+
+    try:
+        socket.if_nametoindex(args.interface)
+    except OSError as error:
+        unplaceable(f"interface {args.interface}: {error}")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as connection:
+        # Mark, device and source must all be fixed before connect(). Setting the mark afterwards
+        # reroutes an already-connected socket onto another interface while it keeps the source
+        # address the first route chose, which emits a spoofed source and can get the host blocked.
+        try:
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, args.mark)
+            connection.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_BINDTODEVICE,
+                args.interface.encode() + b"\0",
+            )
+        except OSError as error:
+            unplaceable(f"cannot pin socket to {args.interface} mark {args.mark:#x}: {error}")
+        try:
+            connection.bind((args.source, 0))
+        except OSError as error:
+            unplaceable(f"source {args.source} not usable: {error}")
+
+        connection.settimeout(args.timeout)
+        try:
+            connection.connect((args.target, args.port))
+        except OSError as error:
+            print(f"path failed: {args.target}:{args.port}: {error}", file=sys.stderr)
+            raise SystemExit(PATH_FAILED)
+    raise SystemExit(PLACED_ON_PATH)
+
+
+if __name__ == "__main__":
+    main()

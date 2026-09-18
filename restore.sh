@@ -196,6 +196,11 @@ if [[ -n $GUI ]]; then
     sudo mkdir -p /etc/iwd /etc/systemd/network /etc/systemd/networkd.conf.d \
         /etc/systemd/system/wpa_supplicant@.service.d
     sudo cp "$DIR"/network/iwd/main.conf /etc/iwd/main.conf
+    # iwd must keep its packaged ExecStart. An earlier attempt added --developer plus an
+    # ExecStartPost that re-enabled autoconnect; the ExecStartPost exited non-zero, systemd tore
+    # iwd down, and the restart loop ended in start-limit-hit with no wireless at all.
+    sudo rm -f /etc/systemd/system/iwd.service.d/xlsmart-directed-recovery.conf
+    sudo rm -f /etc/dbus-1/system.d/iwd-station-debug-root.conf
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
     sudo cp "$DIR"/network/systemd-network/*.link /etc/systemd/network/
     if sudo systemctl is-active --quiet systemd-networkd.service; then
@@ -207,20 +212,29 @@ if [[ -n $GUI ]]; then
         /etc/systemd/system/wpa_supplicant@.service.d/override.conf
     sudo cp "$DIR"/network/systemd/network-{reconfigure.path,reconfigure.service} \
         /etc/systemd/system/
-    sudo cp "$DIR"/network/systemd/network-exit-watchdog.{service,path} \
-        /etc/systemd/system/
-    sudo systemctl disable --now network-exit-watchdog.timer 2>/dev/null || true
-    sudo rm -f /etc/systemd/system/network-exit-watchdog.timer
-    # Superseded by the full link fingerprint in linkstate; a leftover file is never read.
-    sudo rm -f /var/lib/network-exit-watchdog/bssid
+    # IgnoreCarrierLoss=3s keeps the lease across a short carrier gap, which also means networkd
+    # sends no DHCP after a fast reassociation. A Cisco WLC then never relearns the address and
+    # deauthenticates with reason 108 one IP-learn timeout later, so the lease is reasserted once per
+    # association instead. See network/README.md.
+    sudo cp "$DIR"/network/systemd/network-dhcp-refresh.{path,service} /etc/systemd/system/
+    # Its state is uptime-based, so it moved to /run; a leftover stamp from an older boot here would
+    # keep the reassociation cooldown permanently closed.
+    sudo rm -rf /var/lib/network-dhcp-refresh
+    # Retired: its premise was that tailscaled never rebinds after a roam, which the 2026-09-14
+    # journal contradicts. See network/README.md for the evidence.
+    for unit in path service timer; do
+        sudo systemctl disable --now "network-exit-watchdog.$unit" 2>/dev/null || true
+        sudo rm -f "/etc/systemd/system/network-exit-watchdog.$unit"
+    done
+    sudo rm -rf /var/lib/network-exit-watchdog
     sudo rm -f /etc/systemd/system/tailscaled.service.d/transport.conf
     sudo systemctl disable --now network-debug-pcap.service 2>/dev/null || true
     sudo rm -f /etc/systemd/system/network-debug-pcap.service
     sudo rm -rf /var/log/network-debug/ring
     # Restore every vendor file atomically from the authoritative 1.0.3.62 package, delete every
     # stale version, and verify the result byte-for-byte before installing the two documented
-    # serverconfig wrappers. iOA_upgrade must remain the vendor ELF: it is the resident netlink
-    # worker that tells iOA about address changes, so replacing it blinds iOA to roaming.
+    # serverconfig wrappers. Keep iOA_upgrade byte-identical too; its name does not justify
+    # replacing it with a policy shim. Address-change handling is a thread in the iOA processes.
     sudo "$DIR"/network/install-ioa-62
     sudo cp "$DIR"/network/iOA /usr/lib/iOA/bin/iOA
     sudo cp "$DIR"/network/SmartGateAgent /usr/lib/iOA/bin/SmartGateAgent
@@ -287,8 +301,7 @@ if [[ -n $GUI ]]; then
     systemctl --user restart wireplumber.service
     sudo systemctl enable --now bluetooth.service
     sudo systemctl enable systemd-networkd.service iwd.service
-    sudo systemctl enable network-reconfigure.path
-    sudo systemctl enable network-exit-watchdog.path
+    sudo systemctl enable network-reconfigure.path network-dhcp-refresh.path
 fi
 
 echo 'Restored!'
