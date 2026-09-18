@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+
+"""Date and time as the rightmost tray icons.
+
+A square 96 px slot is too narrow for a date, and stalonetray gives every
+XEmbed icon exactly one slot, so the card is drawn once across two slots and
+handed out as two icons. Their rounded corners are on the outer edges only and
+the slots are contiguous, so the pair reads as one wide card.
+
+The card redraws on the minute boundary, and right after a resume. A second
+timer watches the icon row: stalonetray appends icons as applications dock, so
+an icon that lands right of the clock makes it re-dock and reclaim the last
+slots.
+"""
+
+import faulthandler
+import os
+from datetime import datetime, timezone
+
+faulthandler.enable()
+
+import cairo
+import gi
+import xcffib
+import xcffib.xproto
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo
+
+ICON_SIZE = 96
+DESIGN_SIZE = 96
+
+# Tray slots the card covers, left to right.
+SLOTS = 2
+DESIGN_WIDTH = SLOTS * DESIGN_SIZE
+
+# WM_CLASS instance of our own tray icons, which is the script name.
+INSTANCE = "clock-indicator"
+
+CARD_TOP = (0.19, 0.21, 0.27)
+CARD_BOTTOM = (0.10, 0.11, 0.15)
+ACCENT = (0.36, 0.71, 0.94)
+TIME_COLOR = (1, 1, 1, 0.97)
+DATE_COLOR = (1, 1, 1, 0.74)
+TRACK_COLOR = (1, 1, 1, 0.16)
+
+WEEKDAYS = ("一", "二", "三", "四", "五", "六", "日")
+FONT = "Noto Sans CJK SC"
+
+# Icons dock whenever their application starts, so the row is checked far more
+# often than it is drawn; the check is four X round trips.
+ROW_CHECK_S = 15
+
+LOGIND = "org.freedesktop.login1"
+
+
+def now():
+    """Local time, timezone-aware so %Z, offsets and Unix time all work."""
+    return datetime.now().astimezone()
+
+
+def weekday(moment):
+    return "周" + WEEKDAYS[moment.weekday()]
+
+
+def icon_lines(moment):
+    return moment.strftime("%H:%M"), f"{moment.month}月{moment.day}日 {weekday(moment)}"
+
+
+def day_fraction(moment):
+    """How much of the day has passed, drawn as the bar under the time."""
+    seconds = moment.hour * 3600 + moment.minute * 60 + moment.second
+    return seconds / 86400
+
+
+def ms_to_next_minute(moment):
+    """Delay that lands the next redraw just after the minute flips."""
+    elapsed = moment.second * 1000 + moment.microsecond // 1000
+    return max(50, 60_000 - elapsed + 20)
+
+
+def utc_offset(moment):
+    offset = f"{moment:%z}"
+    return f"UTC{offset[:3]}:{offset[3:]}" if offset else "UTC"
+
+
+def tooltip_lines(moment):
+    _, week, _ = moment.isocalendar()
+    utc = moment.astimezone(timezone.utc)
+    return [
+        f"{moment:%Y-%m-%d} {weekday(moment)}",
+        f"{moment:%H:%M:%S} {moment:%Z} ({utc_offset(moment)})",
+        f"ISO week {week}  ·  day {moment.timetuple().tm_yday} of {moment.year}",
+        f"UTC {utc:%H:%M}  ·  Unix {int(moment.timestamp())}",
+    ]
+
+
+def copy_formats(moment):
+    return (
+        ("Copy date", f"{moment:%Y-%m-%d}"),
+        ("Copy time", f"{moment:%H:%M:%S}"),
+        ("Copy date and time", f"{moment:%Y-%m-%d %H:%M:%S}"),
+        ("Copy ISO 8601", moment.isoformat(timespec="seconds")),
+        ("Copy Unix time", str(int(moment.timestamp()))),
+    )
+
+
+class TrayRow:
+    """The stalonetray icon row, read straight off X."""
+
+    def __init__(self):
+        self.conn = None
+
+    def connection(self):
+        if self.conn is None:
+            self.conn = xcffib.connect()
+        return self.conn
+
+    def drop(self):
+        conn, self.conn = self.conn, None
+        if conn is not None:
+            try:
+                conn.disconnect()
+            except Exception:
+                pass
+
+    def instances(self):
+        """The row as instance names, left to right, or None when unreadable."""
+        try:
+            return self.read_instances()
+        except Exception:
+            # A tray restart takes the connection down with it; the next
+            # check reconnects.
+            self.drop()
+            return None
+
+    def read_instances(self):
+        conn = self.connection()
+        name = f"_NET_SYSTEM_TRAY_S{conn.pref_screen}".encode()
+        atom = conn.core.InternAtom(False, len(name), name).reply().atom
+        tray = conn.core.GetSelectionOwner(atom).reply().owner
+        if not tray:
+            return None
+        slots = []
+        for window in conn.core.QueryTree(tray).reply().children:
+            instance = self.instance_of(conn, window)
+            if instance is None:
+                continue
+            slots.append((conn.core.GetGeometry(window).reply().x, instance))
+        return [instance for _x, instance in sorted(slots)]
+
+    @staticmethod
+    def instance_of(conn, window):
+        """WM_CLASS instance of the icon embedded in a tray slot."""
+        candidates = list(conn.core.QueryTree(window).reply().children) + [window]
+        for candidate in candidates:
+            value = (
+                conn.core.GetProperty(
+                    False,
+                    candidate,
+                    xcffib.xproto.Atom.WM_CLASS,
+                    xcffib.xproto.Atom.STRING,
+                    0,
+                    64,
+                )
+                .reply()
+                .value.to_string()
+            )
+            if value:
+                return value.split("\0")[0]
+        return None
+
+
+class ClockIndicator:
+    def __init__(self):
+        self.row = TrayRow()
+        self.moment = now()
+        self.icons = []
+        self.settled = None
+        self.dock()
+        self.watch_resume()
+        self.tick()
+        GLib.timeout_add_seconds(ROW_CHECK_S, self.check_row)
+
+    # Tray slots -----------------------------------------------------------
+
+    def dock(self, slot=0):
+        """Dock the halves one after another so they land in drawing order."""
+        icon = Gtk.StatusIcon.new_from_pixbuf(self.slot_pixbuf(self.moment, ICON_SIZE, slot))
+        icon.set_title("Clock")
+        icon.set_tooltip_text("\n".join(tooltip_lines(self.moment)))
+        icon.connect("size-changed", self.on_icon_size_changed)
+        icon.connect("popup-menu", self.show_menu)
+        icon.connect("activate", self.activate)
+        icon.set_visible(True)
+        self.icons.append(icon)
+        if slot + 1 < SLOTS:
+            GLib.timeout_add(150, self.dock, slot + 1)
+        return False
+
+    def keep_rightmost(self):
+        row = self.row.instances()
+        if row is None or row.count(INSTANCE) != SLOTS:
+            # No tray, or a dock in flight: nothing to conclude yet.
+            return
+        if row[-SLOTS:].count(INSTANCE) == SLOTS:
+            self.settled = None
+            return
+        # Re-docking appends the halves, but it is tried once per row: a tray
+        # that keeps them in place (a different icon gravity, say) must not
+        # make the card flicker every check.
+        if tuple(row) == self.settled:
+            return
+        self.settled = tuple(row)
+        self.redock()
+
+    def redock(self):
+        # Dropping the last reference destroys the XEmbed windows, which frees
+        # the slots; the tray appends the fresh icons at the end of the row.
+        self.icons = []
+        GLib.timeout_add(200, self.dock)
+
+    # Drawing --------------------------------------------------------------
+
+    @staticmethod
+    def rounded_rectangle(context, x, y, width, height, radius):
+        context.new_sub_path()
+        context.arc(x + width - radius, y + radius, radius, -1.5708, 0)
+        context.arc(x + width - radius, y + height - radius, radius, 0, 1.5708)
+        context.arc(x + radius, y + height - radius, radius, 1.5708, 3.1416)
+        context.arc(x + radius, y + radius, radius, 3.1416, 4.7124)
+        context.close_path()
+
+    @staticmethod
+    def draw_text(context, text, pixels, x, center_y, color, weight=Pango.Weight.BOLD):
+        """Draw text centered on (x, center_y) of the card."""
+        layout = PangoCairo.create_layout(context)
+        description = Pango.FontDescription()
+        description.set_family(FONT)
+        description.set_weight(weight)
+        description.set_absolute_size(pixels * Pango.SCALE)
+        layout.set_font_description(description)
+        layout.set_text(text, -1)
+        _, logical = layout.get_pixel_extents()
+        context.set_source_rgba(*color)
+        context.move_to(
+            x - logical.width / 2 - logical.x,
+            center_y - logical.height / 2 - logical.y,
+        )
+        PangoCairo.show_layout(context, layout)
+
+    def card(self, moment, size):
+        """The whole card, SLOTS slots wide, at a slot size of `size`."""
+        time_text, date_text = icon_lines(moment)
+
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, SLOTS * size, size)
+        context = cairo.Context(surface)
+        context.scale(size / DESIGN_SIZE, size / DESIGN_SIZE)
+        self.rounded_rectangle(context, 0, 0, DESIGN_WIDTH, DESIGN_SIZE, 18)
+        gradient = cairo.LinearGradient(0, 0, 0, DESIGN_SIZE)
+        gradient.add_color_stop_rgb(0, *CARD_TOP)
+        gradient.add_color_stop_rgb(1, *CARD_BOTTOM)
+        context.set_source(gradient)
+        context.fill()
+
+        middle = DESIGN_WIDTH / 2
+        self.draw_text(context, time_text, 48, middle, 34, TIME_COLOR)
+        self.draw_text(context, date_text, 25, middle, 69, DATE_COLOR, Pango.Weight.MEDIUM)
+
+        left, top, width, height = 20, 84, DESIGN_WIDTH - 40, 5
+        self.rounded_rectangle(context, left, top, width, height, height / 2)
+        context.set_source_rgba(*TRACK_COLOR)
+        context.fill()
+        passed = max(height, width * day_fraction(moment))
+        self.rounded_rectangle(context, left, top, passed, height, height / 2)
+        context.set_source_rgb(*ACCENT)
+        context.fill()
+        return surface
+
+    def slot_pixbuf(self, moment, size, slot):
+        return Gdk.pixbuf_get_from_surface(self.card(moment, size), slot * size, 0, size, size)
+
+    def paint(self, size):
+        surface = self.card(self.moment, size)
+        for slot, icon in enumerate(self.icons):
+            icon.set_from_pixbuf(Gdk.pixbuf_get_from_surface(surface, slot * size, 0, size, size))
+
+    def on_icon_size_changed(self, _icon, size):
+        # GtkStatusIcon otherwise keeps its 48 px natural allocation centered
+        # when stalonetray expands the XEmbed socket to 96 px on HiDPI.
+        self.paint(size)
+        return True
+
+    # Updates --------------------------------------------------------------
+
+    def refresh(self):
+        self.moment = now()
+        if not self.icons:
+            # Mid re-dock; dock() draws the fresh icons from self.moment.
+            return False
+        self.paint(self.icons[0].get_size() or ICON_SIZE)
+        tooltip = "\n".join(tooltip_lines(self.moment))
+        for icon in self.icons:
+            icon.set_tooltip_text(tooltip)
+        return False
+
+    def tick(self):
+        self.refresh()
+        GLib.timeout_add(ms_to_next_minute(self.moment), self.tick)
+        return False
+
+    def check_row(self):
+        if len(self.icons) == SLOTS:
+            self.keep_rightmost()
+        return True
+
+    def watch_resume(self):
+        """A suspended machine wakes up with a stale icon until the next tick."""
+        try:
+            system = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        except GLib.Error:
+            return
+        system.signal_subscribe(
+            LOGIND,
+            f"{LOGIND}.Manager",
+            "PrepareForSleep",
+            "/org/freedesktop/login1",
+            None,
+            Gio.DBusSignalFlags.NONE,
+            self.on_prepare_for_sleep,
+        )
+        self.system = system
+
+    def on_prepare_for_sleep(self, _bus, _sender, _path, _iface, _signal, parameters):
+        if not parameters.unpack()[0]:
+            GLib.idle_add(self.refresh)
+
+    # Interaction ----------------------------------------------------------
+
+    def activate(self, icon):
+        self.show_menu(icon, 1, Gtk.get_current_event_time())
+
+    def copy(self, text):
+        Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(text, -1)
+
+    def build_menu(self):
+        menu = Gtk.Menu()
+        for line in tooltip_lines(self.moment):
+            item = Gtk.MenuItem(label=line)
+            item.set_sensitive(False)
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        calendar = Gtk.Calendar()
+        calendar.select_month(self.moment.month - 1, self.moment.year)
+        calendar.select_day(self.moment.day)
+        calendar.connect("day-selected-double-click", self.on_day_picked)
+        holder = Gtk.MenuItem()
+        holder.add(calendar)
+        menu.append(holder)
+        menu.append(Gtk.SeparatorMenuItem())
+        for label, text in copy_formats(self.moment):
+            item = Gtk.MenuItem(label=label)
+            item.connect("activate", lambda _item, text=text: self.copy(text))
+            menu.append(item)
+        return menu
+
+    def show_menu(self, icon, button=0, activate_time=0):
+        self.moment = now()
+        menu = self.build_menu()
+        menu.show_all()
+        menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, activate_time)
+
+    def on_day_picked(self, calendar):
+        year, month, day = calendar.get_date()
+        self.copy(f"{year:04d}-{month + 1:02d}-{day:02d}")
+
+
+def main():
+    print(f"clock-indicator started (pid {os.getpid()})", flush=True)
+    ClockIndicator()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

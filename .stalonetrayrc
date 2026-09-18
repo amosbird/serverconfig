@@ -1,5 +1,8 @@
 sticky false
 icon_size 48
+# fcitx5's own XEmbed icon stays blank whenever the tray starts after it;
+# scripts/fcitx5-indicator owns that slot instead.
+ignore_classes fcitx
 kludges force_icons_size
 window_strut none
 window_type toolbar

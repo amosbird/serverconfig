@@ -34,9 +34,10 @@ run_fish_bg() {
 run_bg "caps-indicator" caps-indicator
 run "bluetooth-indicator" systemctl --user start bluetooth-indicator.service
 run "battery-indicator" systemctl --user start battery-indicator.service
-# Must precede fcitx5: fcitx5 paints its tray icon only while connecting to
-# an existing tray (see scripts/tray).
+run "fcitx5-indicator" systemctl --user start fcitx5-indicator.service
 run_bg "tray" tray
+# Last, so it docks at the end of the icon row it then keeps itself at.
+run "clock-indicator" systemctl --user start clock-indicator.service
 run "xset-dpms" xset s off -dpms
 run "xset-bell" xset b off
 run "feh-wallpaper" timeout 5 feh --bg-fill ~/git/serverconfig/black_4k.jpg

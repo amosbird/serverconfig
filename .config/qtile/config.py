@@ -556,11 +556,8 @@ groups = [
                 "stalonetray",
                 "tray",
                 match=scratchpad_matches["stalonetray"],
-                x=0.45,
-                y=0.45,
-                # width=0.1,
-                # height=0.1,
-                # opacity=1,
+                # No position here: the row is as wide as the icons docked in
+                # it, so center_tray() places it on every move or resize.
                 on_focus_lost_hide=True,
             ),
         ],
@@ -667,11 +664,6 @@ def before_window_created(client):
     elif "xfreerdp" in client.get_wm_class():
         client.focus()
         client.togroup("w", switch_group=True)
-    elif "stalonetray" == client.window.get_name():
-        client.set_position_floating(
-            int(client.qtile.current_screen.width * 0.45),
-            int(client.qtile.current_screen.height * 0.45),
-        )
     elif "urxvt_scratchpad" == client.window.get_name():
         # client.togroup("scratchpad", switch_group=False)
         with open("/tmp/urxvt_scratchpad", "w") as file:
@@ -749,6 +741,25 @@ class ConditionalBorderWidth(int):
         return self.default
 
 
+def center_tray(win):
+    """Keep the tray row centered on screen.
+
+    stalonetray resizes its window as icons dock and undock, and the dropdown
+    can only be placed at a fixed fraction of the screen, so the window is
+    re-centered once it has been placed and its real size is known.
+    """
+    if not scratchpad_matches["stalonetray"].compare(win):
+        return
+    screen = (win.group.screen if win.group else None) or win.qtile.current_screen
+    if screen is None:
+        return
+    x = int(screen.x + (screen.width - win.width) / 2)
+    y = int(screen.y + (screen.height - win.height) / 2)
+    if (win.x, win.y) == (x, y):
+        return
+    win._place(x, y, win.width, win.height, win.borderwidth, win.bordercolor, above=True)
+
+
 def new_place(
     self,
     x,
@@ -789,6 +800,7 @@ def new_place(
         margin=margin,
         respect_hints=respect_hints,
     )
+    center_tray(self)
 
 
 @hook.subscribe.startup

@@ -61,20 +61,30 @@ class QtileScratchpadTest(unittest.TestCase):
         ):
             self.assertIn(f'"{name}": Match(', self.config)
 
-    def test_tray_starts_before_fcitx5_so_its_icon_is_not_blank(self):
+    def test_the_tray_row_stays_centered_however_many_icons_it_holds(self):
+        # The row is exactly as wide as the icons docked in it, so no fixed
+        # fraction of the screen centers it; every placement re-centers.
+        self.assertIn("def center_tray(win):", self.config)
+        self.assertIn("(screen.width - win.width) / 2", self.config)
+        self.assertIn("(screen.height - win.height) / 2", self.config)
+        self.assertIn("if (win.x, win.y) == (x, y):", self.config)
+        place = self.config.split("def new_place(", 1)[1]
+        # Centering reads the placed size, which is what the hints allowed.
+        self.assertLess(place.index("self._place("), place.index("center_tray(self)"))
+        self.assertNotIn("client.qtile.current_screen.width * 0.45", self.config)
+
+    def test_tray_drops_the_fcitx5_xembed_icon(self):
         # fcitx5 paints its XEmbed icon only while connecting to a tray, so a
         # tray spawned later (first Ctrl-Alt-4 of the session) leaves a blank
-        # slot. The session must start the tray first, and a tray that starts
-        # with fcitx5 already up must force the repaint itself.
-        launcher = ROOT / "scripts/tray"
-        source = launcher.read_text()
+        # slot that nothing repaints. The icon is the indicator's job now, and
+        # the tray must not carry fcitx5's own blank slot beside it.
+        source = (ROOT / "scripts/tray").read_text()
         self.assertIn("exec stalonetray --icon-size=96 --kludges=force_icons_size", source)
-        self.assertIn("pgrep -x fcitx5", source)
-        self.assertIn("repaint_fcitx5_icon &", source)
+        self.assertNotIn("fcitx5-remote", source)
+        self.assertIn("ignore_classes fcitx", (ROOT / ".stalonetrayrc").read_text())
         self.assertIn('"stalonetray",\n                "tray",', self.config)
         startup = (ROOT / "scripts/startup").read_text()
         self.assertIn('run_bg "tray" tray', startup)
-        self.assertLess(startup.index('run_bg "tray" tray'), startup.index("fcitx5 -d"))
 
     def test_bookmark_manager_is_a_reusable_scratchpad(self):
         launcher = ROOT / "scripts/bookmark-manager"

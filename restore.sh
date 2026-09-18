@@ -276,6 +276,10 @@ if [[ -n $GUI ]]; then
         "$HOME/.config/systemd/user/bluetooth-indicator.service"
     install -Dm644 "$DIR/systemd/battery-indicator.service" \
         "$HOME/.config/systemd/user/battery-indicator.service"
+    install -Dm644 "$DIR/systemd/fcitx5-indicator.service" \
+        "$HOME/.config/systemd/user/fcitx5-indicator.service"
+    install -Dm644 "$DIR/systemd/clock-indicator.service" \
+        "$HOME/.config/systemd/user/clock-indicator.service"
     # The ngnclient daemon bounces a dead session via
     # `systemctl --user restart ioagui.service`; the unit must exist.
     install -Dm644 "$DIR/systemd/ioagui.service" \

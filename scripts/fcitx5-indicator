@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+
+"""Input method tray indicator.
+
+fcitx5's own XEmbed icon paints only while it is connecting to a tray, so a
+tray that shows up afterwards leaves the slot blank, and neither a hide/show
+cycle nor `fcitx5-remote -r` repaints it. This indicator owns the slot
+instead: stalonetray drops fcitx5's icon (`ignore_classes fcitx` in
+.stalonetrayrc) and the state is read over D-Bus, which is always current.
+"""
+
+import faulthandler
+import os
+import subprocess
+
+faulthandler.enable()
+
+import cairo
+import gi
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo
+
+ICON_SIZE = 96
+DESIGN_SIZE = 96
+
+FCITX = "org.fcitx.Fcitx5"
+CONTROLLER = "/controller"
+CONTROLLER_IFACE = "org.fcitx.Fcitx.Controller1"
+RIME = "/rime"
+RIME_IFACE = "org.fcitx.Fcitx.Rime1"
+
+# org.fcitx.Fcitx.Controller1 State
+STATE_NO_CONTEXT = 0
+STATE_INACTIVE = 1
+STATE_ACTIVE = 2
+
+# fcitx5 has no signal for an input method switch (only InputMethodGroupsChanged),
+# and the per-pane hooks in kitty and tmux switch it constantly, so the state is
+# polled. Presence is event-driven through NameOwnerChanged, and every call is
+# NO_AUTO_START so a poll never starts fcitx5 behind the user's back.
+POLL_MS = 400
+
+CHINESE_COLOR = (0.16, 0.55, 0.35)
+ASCII_COLOR = (0.10, 0.47, 0.95)
+INACTIVE_COLOR = (0.30, 0.32, 0.36)
+ABSENT_COLOR = (0.45, 0.46, 0.50)
+
+FONT = "Noto Sans CJK SC"
+
+
+class State:
+    """What the indicator knows about fcitx5 at one point in time."""
+
+    def __init__(
+        self,
+        running=False,
+        state=STATE_NO_CONTEXT,
+        im="",
+        name="",
+        group="",
+        layout="",
+        ascii_mode=False,
+        schema="",
+    ):
+        self.running = running
+        self.state = state
+        self.im = im
+        self.name = name
+        self.group = group
+        self.layout = layout
+        self.ascii_mode = ascii_mode
+        self.schema = schema
+
+    def key(self):
+        return (
+            self.running,
+            self.state,
+            self.im,
+            self.name,
+            self.group,
+            self.layout,
+            self.ascii_mode,
+            self.schema,
+        )
+
+
+def short_name(im):
+    """The engine name as it fits under the icon label."""
+    if not im:
+        return ""
+    return im[len("keyboard-") :] if im.startswith("keyboard-") else im
+
+
+def appearance(state):
+    """Label, engine name and colour of the icon.
+
+    The label answers "what do I type right now", so rime in ASCII mode reads
+    as English; its colour still says an input method is engaged.
+    """
+    if not state.running:
+        return "—", "off", ABSENT_COLOR
+    if state.state == STATE_ACTIVE and not state.ascii_mode:
+        return "中", short_name(state.im), CHINESE_COLOR
+    if state.state == STATE_ACTIVE:
+        return "EN", short_name(state.im), ASCII_COLOR
+    return "EN", short_name(state.im), INACTIVE_COLOR
+
+
+def state_label(state):
+    if not state.running:
+        return "fcitx5 is not running"
+    if state.state == STATE_ACTIVE:
+        return "Active · ASCII mode" if state.ascii_mode else "Active · Chinese"
+    if state.state == STATE_INACTIVE:
+        return "Inactive · English"
+    return "No input context"
+
+
+def tooltip_lines(state):
+    lines = [f"Input method  {state.name or short_name(state.im) or 'unknown'}"]
+    lines.append(state_label(state))
+    if state.group:
+        group = f"Group  {state.group}"
+        if state.layout:
+            group += f"  ·  layout {state.layout}"
+        lines.append(group)
+    if state.schema:
+        lines.append(f"Schema  {state.schema}")
+    return lines
+
+
+class Fcitx5Indicator:
+    def __init__(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self.state = State()
+        self.owner = False
+        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon(self.state, ICON_SIZE))
+        self.icon.set_title("Input method")
+        self.icon.connect("size-changed", self.on_icon_size_changed)
+        self.icon.connect("popup-menu", self.show_menu)
+        self.icon.connect("activate", self.activate)
+        self.icon.set_visible(True)
+        self.bus.signal_subscribe(
+            "org.freedesktop.DBus",
+            "org.freedesktop.DBus",
+            "NameOwnerChanged",
+            "/org/freedesktop/DBus",
+            FCITX,
+            Gio.DBusSignalFlags.NONE,
+            self.on_name_owner_changed,
+        )
+        self.refresh_owner()
+        GLib.timeout_add(POLL_MS, self.tick)
+        self.refresh()
+
+    # D-Bus ----------------------------------------------------------------
+
+    def refresh_owner(self):
+        try:
+            result = self.bus.call_sync(
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "NameHasOwner",
+                GLib.Variant("(s)", (FCITX,)),
+                None,
+                Gio.DBusCallFlags.NONE,
+                1000,
+                None,
+            )
+            self.owner = bool(result.unpack()[0])
+        except GLib.Error:
+            self.owner = False
+
+    def on_name_owner_changed(self, _bus, _sender, _path, _iface, _signal, parameters):
+        self.owner = bool(parameters.unpack()[2])
+        GLib.idle_add(self.refresh)
+
+    def call(self, path, interface, method, arguments=None, signature=None):
+        if not self.owner:
+            return None
+        try:
+            result = self.bus.call_sync(
+                FCITX,
+                path,
+                interface,
+                method,
+                GLib.Variant(signature, arguments) if arguments is not None else None,
+                None,
+                Gio.DBusCallFlags.NO_AUTO_START,
+                1000,
+                None,
+            )
+        except GLib.Error:
+            return None
+        return result.unpack()
+
+    def controller(self, method, arguments=None, signature=None):
+        return self.call(CONTROLLER, CONTROLLER_IFACE, method, arguments, signature)
+
+    def rime(self, method, arguments=None, signature=None):
+        return self.call(RIME, RIME_IFACE, method, arguments, signature)
+
+    def load(self):
+        if not self.owner:
+            return State()
+        state = self.controller("State")
+        info = self.controller("CurrentInputMethodInfo")
+        if state is None or info is None:
+            # The name is owned but the call failed: fcitx5 is on its way out.
+            return State()
+        group = self.controller("CurrentInputMethodGroup")
+        layout = ""
+        if group:
+            details = self.controller("InputMethodGroupInfo", (group[0],), "(s)")
+            layout = details[0] if details else ""
+        im = info[0]
+        ascii_mode = False
+        schema = ""
+        if im == "rime":
+            mode = self.rime("IsAsciiMode")
+            ascii_mode = bool(mode[0]) if mode else False
+            current = self.rime("GetCurrentSchema")
+            schema = current[0] if current else ""
+        return State(
+            running=True,
+            state=state[0],
+            im=im,
+            name=info[2] or info[1],
+            group=group[0] if group else "",
+            layout=layout,
+            ascii_mode=ascii_mode,
+            schema=schema,
+        )
+
+    # Drawing --------------------------------------------------------------
+
+    @staticmethod
+    def rounded_rectangle(context, x, y, width, height, radius):
+        context.new_sub_path()
+        context.arc(x + width - radius, y + radius, radius, -1.5708, 0)
+        context.arc(x + width - radius, y + height - radius, radius, 0, 1.5708)
+        context.arc(x + radius, y + height - radius, radius, 1.5708, 3.1416)
+        context.arc(x + radius, y + radius, radius, 3.1416, 4.7124)
+        context.close_path()
+
+    @staticmethod
+    def draw_text(context, text, pixels, center_y, color, weight=Pango.Weight.BOLD):
+        layout = PangoCairo.create_layout(context)
+        description = Pango.FontDescription()
+        description.set_family(FONT)
+        description.set_weight(weight)
+        description.set_absolute_size(pixels * Pango.SCALE)
+        layout.set_font_description(description)
+        layout.set_text(text, -1)
+        _, logical = layout.get_pixel_extents()
+        context.set_source_rgba(*color)
+        context.move_to(
+            DESIGN_SIZE / 2 - logical.width / 2 - logical.x,
+            center_y - logical.height / 2 - logical.y,
+        )
+        PangoCairo.show_layout(context, layout)
+
+    def status_icon(self, state, size):
+        label, engine, color = appearance(state)
+
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+        context = cairo.Context(surface)
+        context.scale(size / DESIGN_SIZE, size / DESIGN_SIZE)
+        self.rounded_rectangle(context, 0, 0, DESIGN_SIZE, DESIGN_SIZE, 18)
+        context.set_source_rgb(*color)
+        context.fill()
+
+        self.draw_text(context, label, 48, 38, (1, 1, 1, 0.96))
+        if engine:
+            self.draw_text(context, engine, 20, 76, (1, 1, 1, 0.78), Pango.Weight.MEDIUM)
+        return Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
+
+    def draw_icon(self):
+        size = self.icon.get_size() or ICON_SIZE
+        self.icon.set_from_pixbuf(self.status_icon(self.state, size))
+
+    def on_icon_size_changed(self, _icon, size):
+        # GtkStatusIcon otherwise keeps its 48 px natural allocation centered
+        # when stalonetray expands the XEmbed socket to 96 px on HiDPI.
+        self.icon.set_from_pixbuf(self.status_icon(self.state, size))
+        return True
+
+    # Updates --------------------------------------------------------------
+
+    def refresh(self):
+        state = self.load()
+        if state.key() == self.state.key():
+            return False
+        self.state = state
+        self.draw_icon()
+        self.icon.set_tooltip_text("\n".join(tooltip_lines(state)))
+        return False
+
+    def tick(self):
+        self.refresh()
+        return True
+
+    # Interaction ----------------------------------------------------------
+
+    def activate(self, _icon):
+        self.controller("Toggle")
+        GLib.timeout_add(50, self.tick_once)
+
+    def tick_once(self):
+        self.refresh()
+        return False
+
+    def set_input_method(self, im):
+        self.controller("SetCurrentIM", (im,), "(s)")
+        if im.startswith("keyboard-"):
+            self.controller("Deactivate")
+        else:
+            self.controller("Activate")
+        GLib.timeout_add(50, self.tick_once)
+
+    def set_schema(self, schema):
+        self.rime("SetSchema", (schema,), "(s)")
+        GLib.timeout_add(50, self.tick_once)
+
+    def group_input_methods(self):
+        group = self.controller("CurrentInputMethodGroup")
+        if not group:
+            return []
+        details = self.controller("InputMethodGroupInfo", (group[0],), "(s)")
+        return [im for im, _layout in details[1]] if details else []
+
+    def build_menu(self):
+        menu = Gtk.Menu()
+        for line in tooltip_lines(self.state):
+            item = Gtk.MenuItem(label=line)
+            item.set_sensitive(False)
+            menu.append(item)
+        methods = self.group_input_methods()
+        if methods:
+            menu.append(Gtk.SeparatorMenuItem())
+            for im in methods:
+                item = Gtk.CheckMenuItem(label=short_name(im))
+                item.set_draw_as_radio(True)
+                item.set_active(im == self.state.im)
+                item.connect("activate", lambda _item, im=im: self.set_input_method(im))
+                menu.append(item)
+        schemas = self.rime("ListAllSchemas") if self.state.im == "rime" else None
+        if schemas and len(schemas[0]) > 1:
+            submenu = Gtk.Menu()
+            for schema in schemas[0]:
+                item = Gtk.CheckMenuItem(label=schema)
+                item.set_draw_as_radio(True)
+                item.set_active(schema == self.state.schema)
+                item.connect("activate", lambda _item, s=schema: self.set_schema(s))
+                submenu.append(item)
+            parent = Gtk.MenuItem(label="Rime schema")
+            parent.set_submenu(submenu)
+            menu.append(parent)
+        menu.append(Gtk.SeparatorMenuItem())
+        configure = Gtk.MenuItem(label="Configure…")
+        configure.connect("activate", lambda *_: self.spawn(["fcitx5-configtool"]))
+        menu.append(configure)
+        restart = Gtk.MenuItem(label="Restart fcitx5")
+        restart.connect("activate", lambda *_: self.controller("Restart"))
+        menu.append(restart)
+        return menu
+
+    def show_menu(self, icon, button=0, activate_time=0):
+        menu = self.build_menu()
+        menu.show_all()
+        menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, activate_time)
+
+    @staticmethod
+    def spawn(command):
+        try:
+            subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+
+
+def main():
+    print(f"fcitx5-indicator started (pid {os.getpid()})", flush=True)
+    Fcitx5Indicator()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()
