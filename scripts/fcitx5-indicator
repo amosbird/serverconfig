@@ -23,8 +23,13 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo
 
+import trayorder
+
 ICON_SIZE = 96
 DESIGN_SIZE = 96
+
+# WM_CLASS instance of our own tray icon, which is the script name.
+INSTANCE = "fcitx5-indicator"
 
 FCITX = "org.fcitx.Fcitx5"
 CONTROLLER = "/controller"
@@ -137,12 +142,9 @@ class Fcitx5Indicator:
         self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         self.state = State()
         self.owner = False
-        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon(self.state, ICON_SIZE))
-        self.icon.set_title("Input method")
-        self.icon.connect("size-changed", self.on_icon_size_changed)
-        self.icon.connect("popup-menu", self.show_menu)
-        self.icon.connect("activate", self.activate)
-        self.icon.set_visible(True)
+        self.icon = None
+        self.dock()
+        self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
         self.bus.signal_subscribe(
             "org.freedesktop.DBus",
             "org.freedesktop.DBus",
@@ -155,6 +157,20 @@ class Fcitx5Indicator:
         self.refresh_owner()
         GLib.timeout_add(POLL_MS, self.tick)
         self.refresh()
+
+    # Tray slot ------------------------------------------------------------
+
+    def dock(self):
+        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon(self.state, ICON_SIZE))
+        self.icon.set_title("Input method")
+        self.icon.set_tooltip_text("\n".join(tooltip_lines(self.state)))
+        self.icon.connect("size-changed", self.on_icon_size_changed)
+        self.icon.connect("popup-menu", self.show_menu)
+        self.icon.connect("activate", self.activate)
+        self.icon.set_visible(True)
+
+    def undock(self):
+        self.icon = None
 
     # D-Bus ----------------------------------------------------------------
 
@@ -280,6 +296,9 @@ class Fcitx5Indicator:
         return Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
 
     def draw_icon(self):
+        if self.icon is None:
+            # Out of the row for a sort; dock() draws from self.state.
+            return
         size = self.icon.get_size() or ICON_SIZE
         self.icon.set_from_pixbuf(self.status_icon(self.state, size))
 
@@ -297,7 +316,8 @@ class Fcitx5Indicator:
             return False
         self.state = state
         self.draw_icon()
-        self.icon.set_tooltip_text("\n".join(tooltip_lines(state)))
+        if self.icon is not None:
+            self.icon.set_tooltip_text("\n".join(tooltip_lines(state)))
         return False
 
     def tick(self):

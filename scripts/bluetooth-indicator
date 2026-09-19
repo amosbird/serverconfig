@@ -17,9 +17,14 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 
+import trayorder
+
 ICON_SIZE = 96
 DESIGN_SIZE = 96
 FREECLIP_ADDRESS = "C0:DA:5E:EC:FB:7F"
+
+# WM_CLASS instance of our own tray icon, which is the script name.
+INSTANCE = "bluetooth-indicator"
 
 # Sibling script, resolved so the indicator does not depend on PATH (the
 # systemd user manager environment has no ~/scripts).
@@ -75,13 +80,11 @@ class BluetoothIndicator:
         self.output_muted = False
         self.last_reconnect_generation = None
         self.last_reconnect_at = 0.0
-        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon("OFF", ICON_SIZE))
+        self.icon = None
         self.icon_state = "OFF"
-        self.icon.set_title("Bluetooth")
-        self.icon.connect("size-changed", self.on_icon_size_changed)
-        self.icon.connect("popup-menu", self.show_menu)
-        self.icon.connect("activate", self.activate)
-        self.icon.set_visible(True)
+        self.tooltip = ""
+        self.dock()
+        self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
         self.bus.signal_subscribe(
             "org.bluez",
             None,
@@ -340,8 +343,23 @@ class BluetoothIndicator:
         context.show_text(label)
         return Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
 
+    def dock(self):
+        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon(self.icon_state, ICON_SIZE))
+        self.icon.set_title("Bluetooth")
+        self.icon.set_tooltip_text(self.tooltip)
+        self.icon.connect("size-changed", self.on_icon_size_changed)
+        self.icon.connect("popup-menu", self.show_menu)
+        self.icon.connect("activate", self.activate)
+        self.icon.set_visible(True)
+
+    def undock(self):
+        self.icon = None
+
     def set_icon_state(self, state):
         self.icon_state = state
+        if self.icon is None:
+            # Out of the row for a sort; dock() draws from self.icon_state.
+            return
         size = self.icon.get_size() or ICON_SIZE
         self.icon.set_from_pixbuf(self.status_icon(state, size))
 
@@ -388,7 +406,9 @@ class BluetoothIndicator:
         if self.adapter_powered and self.output_muted:
             self.set_icon_state("MUTED")
             tooltip += "\nOutput muted — Ctrl-F1 / volume mute to unmute"
-        self.icon.set_tooltip_text(tooltip)
+        self.tooltip = tooltip
+        if self.icon is not None:
+            self.icon.set_tooltip_text(tooltip)
         return False
 
     def on_bluez_changed(self, *_args):

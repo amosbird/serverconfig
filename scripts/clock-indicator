@@ -7,10 +7,8 @@ XEmbed icon exactly one slot, so the card is drawn once across two slots and
 handed out as two icons. Their rounded corners are on the outer edges only and
 the slots are contiguous, so the pair reads as one wide card.
 
-The card redraws on the minute boundary, and right after a resume. A second
-timer watches the icon row: stalonetray appends icons as applications dock, so
-an icon that lands right of the clock makes it re-dock and reclaim the last
-slots.
+The card redraws on the minute boundary, and right after a resume. Its place
+at the end of the row is held by trayorder.Tail.
 """
 
 import faulthandler
@@ -21,13 +19,13 @@ faulthandler.enable()
 
 import cairo
 import gi
-import xcffib
-import xcffib.xproto
 
 gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo
+
+import trayorder
 
 ICON_SIZE = 96
 DESIGN_SIZE = 96
@@ -48,13 +46,6 @@ TRACK_COLOR = (1, 1, 1, 0.16)
 
 WEEKDAYS = ("一", "二", "三", "四", "五", "六", "日")
 FONT = "Noto Sans CJK SC"
-
-# Icons dock whenever their application starts, so the row is checked far more
-# often than it is drawn; the check is four X round trips.
-ROW_CHECK_S = 15
-
-# Grace for the icons that dock alongside ours before the row is judged.
-SETTLE_S = 3
 
 LOGIND = "org.freedesktop.login1"
 
@@ -110,82 +101,14 @@ def copy_formats(moment):
     )
 
 
-class TrayRow:
-    """The stalonetray icon row, read straight off X."""
-
-    def __init__(self):
-        self.conn = None
-
-    def connection(self):
-        if self.conn is None:
-            self.conn = xcffib.connect()
-        return self.conn
-
-    def drop(self):
-        conn, self.conn = self.conn, None
-        if conn is not None:
-            try:
-                conn.disconnect()
-            except Exception:
-                pass
-
-    def instances(self):
-        """The row as instance names, left to right, or None when unreadable."""
-        try:
-            return self.read_instances()
-        except Exception:
-            # A tray restart takes the connection down with it; the next
-            # check reconnects.
-            self.drop()
-            return None
-
-    def read_instances(self):
-        conn = self.connection()
-        name = f"_NET_SYSTEM_TRAY_S{conn.pref_screen}".encode()
-        atom = conn.core.InternAtom(False, len(name), name).reply().atom
-        tray = conn.core.GetSelectionOwner(atom).reply().owner
-        if not tray:
-            return None
-        slots = []
-        for window in conn.core.QueryTree(tray).reply().children:
-            instance = self.instance_of(conn, window)
-            if instance is None:
-                continue
-            slots.append((conn.core.GetGeometry(window).reply().x, instance))
-        return [instance for _x, instance in sorted(slots)]
-
-    @staticmethod
-    def instance_of(conn, window):
-        """WM_CLASS instance of the icon embedded in a tray slot."""
-        candidates = list(conn.core.QueryTree(window).reply().children) + [window]
-        for candidate in candidates:
-            value = (
-                conn.core.GetProperty(
-                    False,
-                    candidate,
-                    xcffib.xproto.Atom.WM_CLASS,
-                    xcffib.xproto.Atom.STRING,
-                    0,
-                    64,
-                )
-                .reply()
-                .value.to_string()
-            )
-            if value:
-                return value.split("\0")[0]
-        return None
-
-
 class ClockIndicator:
     def __init__(self):
-        self.row = TrayRow()
         self.moment = now()
         self.icons = []
-        self.settled = None
         self.dock()
         self.watch_resume()
         self.tick()
-        GLib.timeout_add_seconds(ROW_CHECK_S, self.check_row)
+        self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
 
     # Tray slots -----------------------------------------------------------
 
@@ -205,36 +128,9 @@ class ClockIndicator:
             icon.connect("activate", self.activate)
             icon.set_visible(True)
             self.icons.append(icon)
-        # A login still races the indicators that dock alongside us, so check
-        # the row once the dust settles instead of waiting for the slow timer.
-        GLib.timeout_add_seconds(SETTLE_S, self.settle)
-        return False
 
-    def settle(self):
-        self.check_row()
-        return False
-
-    def keep_rightmost(self):
-        row = self.row.instances()
-        if row is None or row.count(INSTANCE) != SLOTS:
-            # No tray, or a dock in flight: nothing to conclude yet.
-            return
-        if row[-SLOTS:].count(INSTANCE) == SLOTS:
-            self.settled = None
-            return
-        # Re-docking appends the halves, but it is tried once per row: a tray
-        # that keeps them in place (a different icon gravity, say) must not
-        # make the card flicker every check.
-        if tuple(row) == self.settled:
-            return
-        self.settled = tuple(row)
-        self.redock()
-
-    def redock(self):
-        # Dropping the last reference destroys the XEmbed windows, which frees
-        # the slots; the tray appends the fresh icons at the end of the row.
+    def undock(self):
         self.icons = []
-        GLib.timeout_add(200, self.dock)
 
     # Drawing --------------------------------------------------------------
 
@@ -312,7 +208,7 @@ class ClockIndicator:
     def refresh(self):
         self.moment = now()
         if not self.icons:
-            # Mid re-dock; dock() draws the fresh icons from self.moment.
+            # Out of the row for a sort; dock() draws from self.moment.
             return False
         self.paint(self.icons[0].get_size() or ICON_SIZE)
         tooltip = "\n".join(tooltip_lines(self.moment))
@@ -324,11 +220,6 @@ class ClockIndicator:
         self.refresh()
         GLib.timeout_add(ms_to_next_minute(self.moment), self.tick)
         return False
-
-    def check_row(self):
-        if len(self.icons) == SLOTS:
-            self.keep_rightmost()
-        return True
 
     def watch_resume(self):
         """A suspended machine wakes up with a stale icon until the next tick."""

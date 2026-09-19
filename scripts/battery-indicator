@@ -13,8 +13,13 @@ gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 
+import trayorder
+
 ICON_SIZE = 96
 DESIGN_SIZE = 96
+
+# WM_CLASS instance of our own tray icon, which is the script name.
+INSTANCE = "battery-indicator"
 
 UPOWER = "org.freedesktop.UPower"
 DEVICE_INTERFACE = "org.freedesktop.UPower.Device"
@@ -80,12 +85,9 @@ class BatteryIndicator:
         self.rate = 0.0
         self.remaining = 0
         self.warned = set()
-        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon(None, False, ICON_SIZE))
-        self.icon.set_title("Battery")
-        self.icon.connect("size-changed", self.on_icon_size_changed)
-        self.icon.connect("popup-menu", self.show_menu)
-        self.icon.connect("activate", self.activate)
-        self.icon.set_visible(True)
+        self.icon = None
+        self.dock()
+        self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
         # UPower recomputes the composite DisplayDevice on every battery and
         # line-power change, so one subscription covers both.
         self.bus.signal_subscribe(
@@ -221,7 +223,24 @@ class BatteryIndicator:
         context.show_text(label)
         return Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
 
+    def dock(self):
+        self.icon = Gtk.StatusIcon.new_from_pixbuf(
+            self.status_icon(self.percentage, self.charging, ICON_SIZE)
+        )
+        self.icon.set_title("Battery")
+        self.icon.set_tooltip_text(self.tooltip())
+        self.icon.connect("size-changed", self.on_icon_size_changed)
+        self.icon.connect("popup-menu", self.show_menu)
+        self.icon.connect("activate", self.activate)
+        self.icon.set_visible(True)
+
+    def undock(self):
+        self.icon = None
+
     def draw_icon(self):
+        if self.icon is None:
+            # Out of the row for a sort; dock() draws from self.percentage.
+            return
         size = self.icon.get_size() or ICON_SIZE
         self.icon.set_from_pixbuf(self.status_icon(self.percentage, self.charging, size))
 
@@ -253,7 +272,8 @@ class BatteryIndicator:
     def refresh(self):
         self.load()
         self.draw_icon()
-        self.icon.set_tooltip_text(self.tooltip())
+        if self.icon is not None:
+            self.icon.set_tooltip_text(self.tooltip())
         self.warn_if_low()
         return False
 

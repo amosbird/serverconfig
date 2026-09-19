@@ -4,11 +4,15 @@ import datetime
 import importlib.machinery
 import importlib.util
 import pathlib
+import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).parents[1]
 INDICATOR = ROOT / "scripts/clock-indicator"
 STARTUP = ROOT / "scripts/startup"
+
+sys.path.insert(0, str(ROOT / "scripts"))
+import trayorder
 
 loader = importlib.machinery.SourceFileLoader("clock_indicator", str(INDICATOR))
 spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -45,13 +49,11 @@ class ClockIndicatorTest(unittest.TestCase):
 
     def test_the_halves_dock_with_nothing_in_between(self):
         source = INDICATOR.read_text()
-        dock = source.split("    def dock(self):", 1)[1].split("    def settle", 1)[0]
+        dock = source.split("    def dock(self):", 1)[1].split("    def undock", 1)[0]
         # At login every indicator docks in the same instant, so a pause
         # between the halves hands one of them the slot in the middle.
         self.assertIn("for slot in range(SLOTS):", dock)
-        self.assertNotIn("timeout_add(150", dock)
-        self.assertIn("GLib.timeout_add_seconds(SETTLE_S, self.settle)", dock)
-        self.assertIn("SETTLE_S = 3", source)
+        self.assertNotIn("timeout_add", dock)
 
     def test_the_bar_tracks_the_day(self):
         midnight = MOMENT.replace(hour=0, minute=0, second=0)
@@ -83,53 +85,16 @@ class ClockIndicatorTest(unittest.TestCase):
         self.assertEqual(formats["Copy ISO 8601"], "2026-09-18T22:09:30+08:00")
         self.assertEqual(formats["Copy Unix time"], str(int(MOMENT.timestamp())))
 
-    def test_an_icon_docking_later_makes_the_clock_reclaim_the_last_slots(self):
+    def test_the_clock_holds_the_last_two_slots_of_the_row(self):
         source = INDICATOR.read_text()
         # stalonetray appends icons as applications dock, so the card only
-        # stays rightmost by re-docking after them.
-        self.assertIn("def instances(self)", source)
-        self.assertIn("if row[-SLOTS:].count(INSTANCE) == SLOTS:", source)
-        self.assertIn("if tuple(row) == self.settled:", source)
-        self.assertIn("def redock(self)", source)
-        self.assertIn("self.icons = []", source)
-        self.assertIn("GLib.timeout_add(200, self.dock)", source)
-        self.assertIn("ROW_CHECK_S = 15", source)
+        # stays rightmost by re-docking after them; trayorder decides when.
+        self.assertIn("import trayorder", source)
+        self.assertIn("self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)", source)
         self.assertIn('INSTANCE = "clock-indicator"', source)
-
-    def test_a_dock_in_flight_is_not_mistaken_for_a_lost_slot(self):
-        indicator = module.ClockIndicator.__new__(module.ClockIndicator)
-        indicator.row = module.TrayRow()
-        indicator.icons = []
-        indicator.settled = None
-        rows = []
-        indicator.row.instances = lambda: rows[0]
-        redocked = []
-        indicator.redock = lambda: redocked.append(indicator.settled)
-
-        for row in (
-            None,
-            ["copyq", "clock-indicator"],
-            ["clock-indicator", "clock-indicator", "copyq"],
-        ):
-            rows[:] = [row]
-            indicator.keep_rightmost()
-        # Only the last row is both readable and complete, and it is wrong.
-        self.assertEqual(redocked, [("clock-indicator", "clock-indicator", "copyq")])
-        # The same broken row is not chased twice, and a fixed row rearms.
-        indicator.keep_rightmost()
-        self.assertEqual(len(redocked), 1)
-        rows[:] = [["copyq", "clock-indicator", "clock-indicator"]]
-        indicator.keep_rightmost()
-        self.assertIsNone(indicator.settled)
-
-    def test_the_row_query_survives_a_tray_that_is_gone(self):
-        row = module.TrayRow()
-
-        def explode():
-            raise RuntimeError("tray went away")
-
-        row.read_instances = explode
-        self.assertIsNone(row.instances())
+        self.assertEqual(trayorder.ORDER[-1], "clock-indicator")
+        self.assertEqual(trayorder.SLOTS["clock-indicator"], module.SLOTS)
+        self.assertIn("    def undock(self):\n        self.icons = []", source)
 
     def test_icon_is_hidpi_and_cjk_capable(self):
         source = INDICATOR.read_text()
@@ -151,7 +116,6 @@ class ClockIndicatorTest(unittest.TestCase):
         self.assertIn(
             'run "clock-indicator" systemctl --user start clock-indicator.service', startup
         )
-        # Docking last puts the clock at the end of the row to begin with.
         self.assertLess(
             startup.index('run_bg "tray" tray'),
             startup.index('run "clock-indicator"'),
