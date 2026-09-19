@@ -42,7 +42,16 @@ class ClockIndicatorTest(unittest.TestCase):
         self.assertIn(
             "self.rounded_rectangle(context, 0, 0, DESIGN_WIDTH, DESIGN_SIZE, 18)", source
         )
-        self.assertIn("GLib.timeout_add(150, self.dock, slot + 1)", source)
+
+    def test_the_halves_dock_with_nothing_in_between(self):
+        source = INDICATOR.read_text()
+        dock = source.split("    def dock(self):", 1)[1].split("    def settle", 1)[0]
+        # At login every indicator docks in the same instant, so a pause
+        # between the halves hands one of them the slot in the middle.
+        self.assertIn("for slot in range(SLOTS):", dock)
+        self.assertNotIn("timeout_add(150", dock)
+        self.assertIn("GLib.timeout_add_seconds(SETTLE_S, self.settle)", dock)
+        self.assertIn("SETTLE_S = 3", source)
 
     def test_the_bar_tracks_the_day(self):
         midnight = MOMENT.replace(hour=0, minute=0, second=0)

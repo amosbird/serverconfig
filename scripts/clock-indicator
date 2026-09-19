@@ -53,6 +53,9 @@ FONT = "Noto Sans CJK SC"
 # often than it is drawn; the check is four X round trips.
 ROW_CHECK_S = 15
 
+# Grace for the icons that dock alongside ours before the row is judged.
+SETTLE_S = 3
+
 LOGIND = "org.freedesktop.login1"
 
 
@@ -186,18 +189,29 @@ class ClockIndicator:
 
     # Tray slots -----------------------------------------------------------
 
-    def dock(self, slot=0):
-        """Dock the halves one after another so they land in drawing order."""
-        icon = Gtk.StatusIcon.new_from_pixbuf(self.slot_pixbuf(self.moment, ICON_SIZE, slot))
-        icon.set_title("Clock")
-        icon.set_tooltip_text("\n".join(tooltip_lines(self.moment)))
-        icon.connect("size-changed", self.on_icon_size_changed)
-        icon.connect("popup-menu", self.show_menu)
-        icon.connect("activate", self.activate)
-        icon.set_visible(True)
-        self.icons.append(icon)
-        if slot + 1 < SLOTS:
-            GLib.timeout_add(150, self.dock, slot + 1)
+    def dock(self):
+        """Dock the halves back to back, in drawing order.
+
+        The requests have to reach the tray with nothing in between: at login
+        every indicator docks in the same instant, and any pause here lets one
+        of them take the slot between the halves.
+        """
+        for slot in range(SLOTS):
+            icon = Gtk.StatusIcon.new_from_pixbuf(self.slot_pixbuf(self.moment, ICON_SIZE, slot))
+            icon.set_title("Clock")
+            icon.set_tooltip_text("\n".join(tooltip_lines(self.moment)))
+            icon.connect("size-changed", self.on_icon_size_changed)
+            icon.connect("popup-menu", self.show_menu)
+            icon.connect("activate", self.activate)
+            icon.set_visible(True)
+            self.icons.append(icon)
+        # A login still races the indicators that dock alongside us, so check
+        # the row once the dust settles instead of waiting for the slow timer.
+        GLib.timeout_add_seconds(SETTLE_S, self.settle)
+        return False
+
+    def settle(self):
+        self.check_row()
         return False
 
     def keep_rightmost(self):
