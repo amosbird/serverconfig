@@ -48,21 +48,29 @@ class Shell:
             and self.window.has_focus
         )
 
+    def show_left(self):
+        self.show_float(0, 0)
+
+    def show_right(self):
+        screen = self.window.qtile.current_screen
+        if screen is None or not self.window.qtile.screens:
+            return
+        self.show_float(int(screen.width / 2), 0)
+
     def toggle_left(self):
-        if not self.visible() or self.window.float_x != 0:
-            self.show_float(0, 0)
-        else:
+        if self.visible() and self.window.float_x == 0:
             self.hide()
+        else:
+            self.show_left()
 
     def toggle_right(self):
         screen = self.window.qtile.current_screen
         if screen is None or not self.window.qtile.screens:
             return
-        x2 = int(screen.width / 2)
-        if not self.visible() or self.window.float_x != x2:
-            self.show_float(x2, 0)
-        else:
+        if self.visible() and self.window.float_x == int(screen.width / 2):
             self.hide()
+        else:
+            self.show_right()
 
     def show_float(self, x, y):
         win = self.window
@@ -103,10 +111,14 @@ class ShellHolder:
         self.spawn_lock = Lock()
 
     def _show(self, mode):
+        # The shell was just spawned for this, so it is shown rather than
+        # toggled: a window that has only now been managed is focused and may
+        # be tiled at exactly the half of the screen it is asked for, which a
+        # toggle reads as "already there" and hides again.
         if mode == 2:
-            self.shell.toggle_left()
+            self.shell.show_left()
         elif mode == 1:
-            self.shell.toggle_right()
+            self.shell.show_right()
         else:
             self.shell.show_tiled()
 
@@ -810,6 +822,30 @@ def patch_window_place():
     if not hasattr(_Window, "_place"):
         _Window._place = _Window.place
     _Window.place = new_place
+
+
+def process_screens(self, reloading: bool = False):
+    """Drop the screens qtile invented while it could see no output.
+
+    A monitor that is still waking up at login leaves qtile without outputs
+    for a moment, and it keeps itself a screen it never assigns a group to.
+    Every later screen change and every config reload then dies reading that
+    group, for as long as the session lasts. Nothing is ever shown on such a
+    screen, so it is thrown away and the real outputs are laid out afresh.
+    """
+    live = [screen for screen in self.screens if hasattr(screen, "group")]
+    if len(live) != len(self.screens):
+        self.screens = live
+        if not hasattr(getattr(self, "current_screen", None), "group"):
+            del self.current_screen
+    self._process_screens_unpatched(reloading)
+
+
+@hook.subscribe.startup
+def patch_process_screens():
+    if not hasattr(Qtile, "_process_screens_unpatched"):
+        Qtile._process_screens_unpatched = Qtile._process_screens
+    Qtile._process_screens = process_screens
 
 
 @hook.subscribe.startup_once

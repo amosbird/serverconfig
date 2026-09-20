@@ -153,6 +153,38 @@ class QtileScratchpadTest(unittest.TestCase):
         managed = self.config.split("def after_window_created(client):", 1)[1]
         self.assertIn("shell.register(client)", managed)
 
+    def test_a_shell_spawned_to_be_shown_is_not_toggled_away_again(self):
+        # A window that has only now been managed is focused and can already
+        # be tiled at the very half of the screen it is asked for, which a
+        # toggle reads as "already there" and hides.
+        show = self.config.split("    def _show(self, mode):", 1)[1].split(
+            "    def _spawn(self", 1
+        )[0]
+        self.assertIn("self.shell.show_left()", show)
+        self.assertIn("self.shell.show_right()", show)
+        self.assertIn("self.shell.show_tiled()", show)
+        self.assertNotIn("toggle_", show)
+        for half in ("left", "right"):
+            toggle = self.config.split(f"    def toggle_{half}(self):", 1)[1].split(
+                "    def ", 1
+            )[0]
+            self.assertIn("self.hide()", toggle)
+            self.assertIn(f"self.show_{half}()", toggle)
+
+    def test_a_screen_qtile_invented_without_an_output_is_thrown_away(self):
+        # Qtile keeps a screen it never gives a group to when it sees no
+        # output for a moment, and then every screen change and every config
+        # reload dies on it for the rest of the session.
+        process = self.config.split("def process_screens(self, reloading", 1)[1].split(
+            "@hook.subscribe.startup", 1
+        )[0]
+        self.assertIn('hasattr(screen, "group")', process)
+        self.assertIn("del self.current_screen", process)
+        self.assertIn("self._process_screens_unpatched(reloading)", process)
+        patch = self.config.split("def patch_process_screens():", 1)[1]
+        self.assertIn('if not hasattr(Qtile, "_process_screens_unpatched"):', patch)
+        self.assertIn("Qtile._process_screens = process_screens", patch)
+
     def test_shell_moves_to_current_group_and_marks_it_floating_before_resizing(self):
         show_float = self.config.split("def show_float(self, x, y):", 1)[1].split(
             "def show_tiled(self):", 1
