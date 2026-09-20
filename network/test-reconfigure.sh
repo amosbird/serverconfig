@@ -225,7 +225,14 @@ networkctl() {
         cat WORKDIR/lease
     fi
 }
-systemctl()  { printf '%s\n' "$*" >> WORKDIR/systemctl-calls; return 0; }
+systemctl()  {
+    printf '%s\n' "$*" >> WORKDIR/systemctl-calls
+    if [ "${FAIL_IOA_REFRESH:-0}" = 1 ] &&
+       [ "$*" = "--no-block try-restart ngnclient.service" ]; then
+        return 1
+    fi
+    return 0
+}
 tailscale()  { return 1; }
 logger()     { printf '%s\n' "$*" >> WORKDIR/logger; return 0; }
 dig()        { return 9; }
@@ -278,6 +285,7 @@ iptables-restore() {
 STATE_FILE_OVERRIDE=WORKDIR/last-applied
 CN_STATE_FILE_OVERRIDE=WORKDIR/cn-last-applied
 CACHE_DIR_OVERRIDE=WORKDIR/cache
+IOA_ENV_STATE_OVERRIDE=WORKDIR/ioa-environment
 RT_TABLES_OVERRIDE=WORKDIR/rt_tables
 TMPDIR_OVERRIDE=WORKDIR/tmp
 """
@@ -417,22 +425,40 @@ main() {
     else
         bad "table 19 does not contain the wired DHCP gateway: $(ip route show table 19)"
     fi
-    if ip -4 rule show | grep -Eq 'lookup (19|wired_underlay)'; then
-        bad "a policy rule incorrectly references table 19"
+    if [ "$(cat "$WORK/ioa-environment")" = office ] &&
+       [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
+            "$WORK/systemctl-calls")" -eq 1 ]; then
+        ok "entering office records the edge before refreshing iOA exactly once"
     else
-        ok "no policy rule references table 19"
+        bad "office entry did not refresh iOA exactly once"
+    fi
+    if [ "$(band 400 | grep -Fxc \
+            'from all fwmark 0x1000000 lookup wired_underlay')" -eq 1 ] &&
+       [ "$(route_table 10.30.1.1)" = ioa ]; then
+        ok "authorized office prefers wired for iOA underlay while business stays tunneled"
+    else
+        bad "authorized office mixed underlay and payload policy: owner=$(band 400)"
     fi
     for mapping in \
-        'nameserver /smartgate.oa.tencent.com/ioa' \
-        'nameserver /sgw.woa.com/ioa' \
-        'nameserver /ioa.tencent.com/ioa'
+        'nameserver /smartgate.oa.tencent.com/office' \
+        'nameserver /sgw.woa.com/office' \
+        'nameserver /ioa.tencent.com/office' \
+        'nameserver /woa.com/office'
     do
         if grep -Fqx "$mapping" "$WORK/office-dst.conf"; then
-            bad "office DNS overrides bootstrap with $mapping"
+            ok "office DNS selects internal bootstrap: $mapping"
         else
-            ok "office DNS leaves bootstrap public: $mapping"
+            bad "office DNS omitted internal bootstrap: $mapping"
         fi
     done
+    local initial_nat
+    initial_nat=$(iptables -t nat -S POSTROUTING)
+    if grep -Fq -- '-o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$initial_nat" &&
+       grep -Fq -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$initial_nat"; then
+        ok "office owner uses wired NAT while business payload keeps tunnel NAT"
+    else
+        bad "office NAT does not follow the selected underlay: $initial_nat"
+    fi
     # A pin to main is worthless while main has no route to the resolver: this link deliberately
     # contributes no default route, so each resolver needs its own way through the wired gateway.
     for resolver in $OFFICE_RESOLVERS; do
@@ -441,7 +467,7 @@ main() {
         else
             bad "office resolver $resolver has no route through the wired gateway"
         fi
-        if grep -Fqx "server $resolver -group ioa -exclude-default-group" \
+        if grep -Fqx "server $resolver -group office -exclude-default-group" \
                 "$WORK/office-dst.conf"; then
             ok "office DNS adopts lease resolver $resolver"
         else
@@ -475,6 +501,36 @@ main() {
     else
         bad "an unauthorized port was advertised in table 19: $(ip route show table 19)"
     fi
+    if [ "$(cat "$WORK/ioa-environment")" = external ] &&
+       [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
+            "$WORK/systemctl-calls")" -eq 2 ]; then
+        ok "leaving office records the edge and refreshes iOA once"
+    else
+        bad "office exit did not refresh iOA exactly once"
+    fi
+    if [ "$(band 400 | grep -Fxc 'from all fwmark 0x1000000 lookup main')" -eq 1 ]; then
+        ok "unauthorized wired falls back to ordinary owner main and tunnel business policy"
+    else
+        bad "unauthorized wired retained office routing: owner=$(band 400) office=$(band 1125)"
+    fi
+    for mapping in \
+        'nameserver /smartgate.oa.tencent.com/office' \
+        'nameserver /sgw.woa.com/office' \
+        'nameserver /ioa.tencent.com/office' \
+        'nameserver /woa.com/office'
+    do
+        if grep -Fqx "$mapping" "$WORK/office-dst.conf"; then
+            bad "unauthorized wired retained internal bootstrap: $mapping"
+        fi
+    done
+    local unauthorized_nat
+    unauthorized_nat=$(iptables -t nat -S POSTROUTING)
+    if grep -Fq -- '-o wlan0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$unauthorized_nat" &&
+       grep -Fq -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$unauthorized_nat"; then
+        ok "unauthorized wired restores the internet owner underlay and keeps tunnel payload"
+    else
+        bad "unauthorized wired retained stale office NAT: $unauthorized_nat"
+    fi
     for resolver in $OFFICE_RESOLVERS; do
         if band 1000 | grep -Fq "to $resolver lookup main"; then
             bad "an unauthorized port retained office resolver pin $resolver"
@@ -488,6 +544,10 @@ main() {
     else
         bad "a link with no supplicant was treated as the office LAN"
     fi
+    [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
+        "$WORK/systemctl-calls")" -eq 2 ] \
+        && ok "repeated external state does not restart iOA" \
+        || bad "unchanged external state restarted iOA"
 
     head_ "a wired default route has to be earned"
     # Still unauthenticated, and now the gateway answers a public anchor: an ordinary network that is
@@ -527,7 +587,7 @@ main() {
     fi
     supplicant_says Authorized
     run_script 1 >/dev/null
-    if grep -Fq 'nameserver /oa.com/ioa' "$WORK/office-dst.conf"; then
+    if grep -Fq 'nameserver /oa.com/office' "$WORK/office-dst.conf"; then
         ok "re-authorization restores the office fragment"
     else
         bad "re-authorization did not restore the office fragment"
@@ -537,6 +597,39 @@ main() {
     else
         ok "the authorized office gateway still owns no default route"
     fi
+    local refreshes
+    refreshes=$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
+        "$WORK/systemctl-calls")
+    supplicant_says Unauthorized
+    RUNNING_UNDER_NGNCLIENT_OVERRIDE=1 run_script 1 >/dev/null
+    if [ "$(cat "$WORK/ioa-environment")" = external ] &&
+       [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
+            "$WORK/systemctl-calls")" -eq "$refreshes" ]; then
+        ok "reconciliation launched by ngnclient records an edge without restarting itself"
+    else
+        bad "ngnclient-owned reconciliation queued a restart loop"
+    fi
+    supplicant_says Authorized
+    run_script 1 >/dev/null
+    refreshes=$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
+        "$WORK/systemctl-calls")
+    supplicant_says Unauthorized
+    FAIL_IOA_REFRESH=1 run_script 1 >/dev/null
+    if [ ! -e "$WORK/ioa-environment" ]; then
+        ok "failed iOA refresh leaves the environment edge retryable"
+    else
+        bad "failed iOA refresh was recorded as complete"
+    fi
+    run_script 1 >/dev/null
+    if [ "$(cat "$WORK/ioa-environment")" = external ] &&
+       [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
+            "$WORK/systemctl-calls")" -eq "$((refreshes + 2))" ]; then
+        ok "the next reconciliation retries a failed iOA refresh"
+    else
+        bad "failed iOA refresh was not retried exactly once"
+    fi
+    supplicant_says Authorized
+    run_script 1 >/dev/null
     local wired_owner_before
     wired_owner_before=$(snapshot_owner_state)
     ip link set enp1s0 down
@@ -551,7 +644,7 @@ main() {
     [ "$(snapshot_owner_state)" = "$wired_owner_before" ] \
         && ok "wired loss preserves tunnel-owned state" \
         || bad "wired loss changed tunnel-owned state"
-    if grep -Fq 'nameserver /ioa.tencent.com/ioa' "$WORK/office-dst.conf"; then
+    if grep -Fq 'nameserver /ioa.tencent.com/office' "$WORK/office-dst.conf"; then
         bad "wired loss retained office bootstrap DNS mappings"
     else
         ok "wired loss removes office bootstrap DNS mappings"
@@ -737,8 +830,8 @@ main() {
     [ "$(band 1150 | grep -Ec '^from all fwmark 0x1(/0xffffffff)? lookup ioa$')" -eq 1 ] \
         && ok "IOA has exactly one post-routefile full-width mark rule" \
         || bad "IOA post-routefile exact mark rule is missing or duplicated"
-    [ "$(band 1150 | grep -Fxc 'from all to 10.0.0.0/8 lookup ioa')" -eq 1 ] \
-        && ok "IOA has exactly one 10/8 rule" \
+    [ "$(band 1150 | grep -Fxc 'from all to 10.0.0.0/8 fwmark 0 lookup ioa')" -eq 1 ] \
+        && ok "IOA has exactly one unmarked 10/8 fallback rule" \
         || bad "IOA 10/8 rule is missing or duplicated"
     ! band 1150 | grep -q '100.12.0.0/16' \
         && ok "100.12/16 is classified dynamically, not statically" \
@@ -910,9 +1003,9 @@ main() {
     [ "$(grep -Fc -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "owned IOA payload NAT rule exists exactly once" \
         || bad "owned IOA payload NAT rule is missing or duplicated"
-    [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
+    [ "$(grep -Fc -- '-o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
         ! grep -Fq -- '-o owner0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules" \
-        && ok "IOA owner NAT follows the current physical device exactly once" \
+        && ok "IOA owner NAT follows the authorized office device exactly once" \
         || bad "IOA owner NAT is stale, missing, or duplicated"
     [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "CN reroute source NAT follows the physical device exactly once" \
@@ -943,12 +1036,12 @@ main() {
     ! iptables -t mangle -S NETMODE_IOA | grep -q -- '-j ACCEPT' \
         && ok "chain content drift triggers reconciliation" || bad "chain drift survived early exit"
     while iptables -t nat -D POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE 2>/dev/null; do :; done
-    while iptables -t nat -D POSTROUTING -o wlan0 -m mark --mark 0x1000000 -j MASQUERADE 2>/dev/null; do :; done
+    while iptables -t nat -D POSTROUTING -o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE 2>/dev/null; do :; done
     while iptables -t nat -D POSTROUTING -o wlan0 -m mark --mark 0x2 -j MASQUERADE 2>/dev/null; do :; done
     run_script 0 >/dev/null
     nat_rules=$(iptables -t nat -S POSTROUTING)
     [ "$(grep -Fc -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
-        [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
+        [ "$(grep -Fc -- '-o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
         [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "owned NAT drift triggers reconciliation" \
         || bad "owned NAT drift survived early exit"
@@ -1104,7 +1197,7 @@ main() {
     fi
 
     head_ "our rule deleted from a band we own"
-    ip rule del to 10.0.0.0/8 lookup ioa pref 1150 2>/dev/null
+    ip rule del to 10.0.0.0/8 fwmark 0x0/0xffffffff lookup ioa pref 1150 2>/dev/null
     run_script 0 >/dev/null
     [ "$(band 1150)" = "$base1150" ] && ok "missing rule restored without FORCE" \
                                      || bad "not restored"

@@ -12,11 +12,12 @@ if [ -z "${IN_NETNS:-}" ]; then
         'user.slice/user-*.slice/user@*.service/app.slice/ioagui.service' \
         'active_ioa_cgroups()' \
         'IOA_CGROUP_PATHS_OVERRIDE+x' \
+        'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup $WIRED_UNDERLAY_TABLE"' \
         'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"' \
         'DESIRED_BANDS[$P_IOA_OWNER_STOP]="from all fwmark $IOA_OWNER_MARK prohibit"' \
         '-m cgroup --path "$cgroup"' \
         '-j MARK --set-xmark "$IOA_OWNER_MARK"' \
-        'reconcile_mark_masquerade "$IOA_OWNER_MARK" "$physical_dev"'
+        'reconcile_mark_masquerade "$IOA_OWNER_MARK" "$owner_dev"'
     do
         grep -Fq -- "$expected" "$SCRIPT" || {
             printf 'FAIL missing policy: %s\n' "$expected" >&2

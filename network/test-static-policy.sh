@@ -113,14 +113,45 @@ for domain in smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com; do
         echo "FAIL base SmartDNS does not map $domain exactly once to china" >&2
         fail=1
     fi
-    # iOA's transport is owner-marked onto main, whose default route belongs to the internet-facing
-    # link, so its bootstrap endpoints must resolve to addresses reachable from there. Overriding
-    # them to the intranet answer on the office LAN is what stopped iOA logging in on 2026-09-20.
-    if grep -Fqx "nameserver /$domain/ioa" network/smartdns/office.conf; then
-        echo "FAIL office SmartDNS overrides the $domain bootstrap endpoint with an intranet answer" >&2
+    # The office override is safe only as one half of the same authorization switch that sends the
+    # owner mark to wired_underlay. Away from the office the fragment disappears and the public base
+    # rule above becomes authoritative again.
+    if [ "$(grep -Fxc "nameserver /$domain/office" network/smartdns/office.conf)" -ne 1 ]; then
+        echo "FAIL office SmartDNS does not select the internal $domain bootstrap endpoint" >&2
         fail=1
     fi
 done
+if ! grep -Fq 'server %s -group office -exclude-default-group' scripts/network-reconfigure ||
+   grep -Eq '^server[[:space:]].*-group ioa' network/smartdns/office.conf; then
+    echo 'FAIL office DHCP resolvers are mixed into the tunnel IOA DNS group' >&2
+    fail=1
+fi
+if [ "$(grep -Fxc 'nameserver /woa.com/office' network/smartdns/office.conf)" -ne 1 ]; then
+    echo 'FAIL office SmartDNS does not override the base woa.com tunnel resolver group' >&2
+    fail=1
+fi
+if ! awk '
+    /for band in "\$\{!DESIRED_BANDS\[@\]\}"/ { policy = NR }
+    /systemctl restart smartdns/ { restart = NR }
+    END { exit !(policy && restart && policy < restart) }
+' scripts/network-reconfigure; then
+    echo 'FAIL SmartDNS publishes office answers before their route policy is ready' >&2
+    fail=1
+fi
+if ! grep -Fq 'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup $WIRED_UNDERLAY_TABLE"' \
+        scripts/network-reconfigure ||
+   ! grep -Fq 'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"' \
+        scripts/network-reconfigure; then
+    echo 'FAIL iOA owner routing does not switch atomically between office wired and ordinary main' >&2
+    fail=1
+fi
+if ! grep -Fq 'IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environment}"' \
+        scripts/network-reconfigure ||
+   ! grep -Fq 'running_under_ngnclient && return 0' scripts/network-reconfigure ||
+   ! grep -Fq 'systemctl --no-block try-restart ngnclient.service' scripts/network-reconfigure; then
+    echo 'FAIL office/external edges do not safely refresh iOA cached network location' >&2
+    fail=1
+fi
 # The resolvers come from the wired DHCP lease, which differs per site. A checked-in list is stale
 # everywhere it was not written: this office advertises none of the three addresses once hardcoded.
 if grep -Eq '^server[[:space:]]' network/smartdns/office.conf; then
@@ -995,8 +1026,9 @@ reject 'CN promotion does not launch one ip process per route' \
     scripts/network-reconfigure
 reject 'CN reconciliation does not clear its live rule before replacement' \
     'clean_pref "\\$P_CN"' scripts/network-reconfigure
-reject 'table 19 is advertisement-only and has no policy rule' \
-    'ip rule (add|replace).*lookup (19|wired_underlay)' scripts/network-reconfigure
+reject 'table 19 is used only by the iOA owner underlay, never business payload' \
+    'P_OFFICE|fwmark \\$IOA_MARK lookup \\$WIRED_UNDERLAY_TABLE|to \\$cidr.*\\$WIRED_UNDERLAY_TABLE' \
+    scripts/network-reconfigure
 reject 'wired advertisement does not mutate tunnel-owned tables' \
     'ip route (flush|del|replace).*table (20|230|52|ioa)' scripts/network-reconfigure
 for statement in \

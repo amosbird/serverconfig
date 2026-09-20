@@ -50,6 +50,7 @@ ROUTEFILE="/home/amos/.routefile"
 CN_EXCLUDE_FILE="/home/amos/git/serverconfig/network/cn-exclude.conf"
 OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
 OFFICE_DST="/etc/smartdns/office.conf"
+IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environment}"
 P_IOA_OWNER=400
 P_IOA_OWNER_STOP=401
 P_TS=500
@@ -83,7 +84,10 @@ clean_pref() { while ip rule del pref "$1" 2>/dev/null; do :; done; }
 
 # Add desired rules before deleting stale rules, so an owned band is never empty.
 normalise_rule() {
-    sed -E 's/fwmark (0x[0-9a-f]+)( (lookup|prohibit))/fwmark \1\/0xffffffff\2/' <<<"$1"
+    sed -E \
+        -e 's/fwmark 0( |$)/fwmark 0x0\1/' \
+        -e 's/fwmark (0x[0-9a-f]+)( (lookup|prohibit))/fwmark \1\/0xffffffff\2/' \
+        <<<"$1"
 }
 
 canonical_rules() {
@@ -439,6 +443,11 @@ reconcile_wired_default_route
 wired_dev=''
 wired_gateway=''
 read -r wired_dev wired_gateway < <(office_wired_candidate || true) || true
+if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
+    ioa_environment=office
+else
+    ioa_environment=external
+fi
 
 # Keep SmartDNS fragments atomic and restart only when their contents change.
 SMARTDNS_CHANGED=0
@@ -485,14 +494,10 @@ elif [ -r "$OFFICE_SRC" ]; then
     write_if_changed "$OFFICE_DST" \
         "$(cat "$OFFICE_SRC"; \
            printf '\n# Resolvers advertised by the %s DHCP lease\n' "$wired_dev"; \
-           printf 'server %s -group ioa -exclude-default-group\n' \
+           printf 'server %s -group office -exclude-default-group\n' \
                $(office_dns_servers "$wired_dev"))"
 else
     warn "cannot read $OFFICE_SRC; leaving $OFFICE_DST as it is"
-fi
-
-if [ "$SMARTDNS_CHANGED" -eq 1 ]; then
-    systemctl restart smartdns 2>/dev/null || true
 fi
 
 if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
@@ -554,7 +559,11 @@ cn_set_has_matches() {
 declare -A DESIRED_BANDS
 band_of() { canonical_rules "$@" | paste -sd';' -; }
 
-DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"
+if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
+    DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup $WIRED_UNDERLAY_TABLE"
+else
+    DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"
+fi
 DESIRED_BANDS[$P_IOA_OWNER_STOP]="from all fwmark $IOA_OWNER_MARK prohibit"
 DESIRED_BANDS[$P_TS]="from all fwmark $TS_MARK lookup main"
 DESIRED_BANDS[$P_RETIRED_IOA_MARK]=""
@@ -591,7 +600,7 @@ set_cn_bands
 
 ioa_band=("from all fwmark 0x1 lookup $IOA_TABLE")
 for cidr in "${IOA_STATIC_CIDRS[@]}"; do
-    ioa_band+=("from all to $cidr lookup $IOA_TABLE")
+    ioa_band+=("from all to $cidr fwmark 0x0/0xffffffff lookup $IOA_TABLE")
 done
 DESIRED_BANDS[$P_IOA]=$(band_of "${ioa_band[@]}")
 
@@ -660,11 +669,12 @@ firewall_fingerprint_ok() {
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
         grep -Fxc -- '-A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE')" -eq 1 ] ||
         return 1
-    local physical_dev
+    local physical_dev owner_dev
     physical_dev=$(physical_device)
     [ -n "$physical_dev" ] || physical_dev=$IFACE
+    owner_dev=${wired_dev:-$physical_dev}
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
-        grep -Fxc -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x1000000 -j MASQUERADE")" -eq 1 ] ||
+        grep -Fxc -- "-A POSTROUTING -o $owner_dev -m mark --mark 0x1000000 -j MASQUERADE")" -eq 1 ] ||
         return 1
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
         grep -E -c -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x2(/0xffffffff)? -j MASQUERADE")" -eq 1 ] ||
@@ -691,6 +701,37 @@ ngnclient_active() {
         return
     fi
     systemctl is-active --quiet ngnclient.service 2>/dev/null
+}
+
+running_under_ngnclient() {
+    if [ -n "${RUNNING_UNDER_NGNCLIENT_OVERRIDE:-}" ]; then
+        [ "$RUNNING_UNDER_NGNCLIENT_OVERRIDE" = 1 ]
+        return
+    fi
+    grep -Fq '/system.slice/ngnclient.service' /proc/self/cgroup 2>/dev/null
+}
+
+# iOA caches its outer/inner network location when the root daemon starts. Changing DNS and routes
+# moves new sockets to the office endpoint, but does not update that cached mode: on 2026-09-20 it
+# kept logging "Set outer net timeout" once a minute until ngnclient restarted, then immediately
+# obtained its ticket from the internal endpoint. Refresh exactly once on each office/external edge.
+#
+# Record the edge before queuing the asynchronous restart. The restarted wrapper invokes this script
+# from inside ngnclient.service; that invocation sees the recorded state and, independently, is
+# excluded by running_under_ngnclient, so this cannot become a restart loop.
+refresh_ioa_environment() {
+    local previous state_dir
+    previous=$(cat "$IOA_ENV_STATE" 2>/dev/null || true)
+    [ "$previous" != "$ioa_environment" ] || return 0
+    state_dir=${IOA_ENV_STATE%/*}
+    mkdir -p "$state_dir"
+    printf '%s\n' "$ioa_environment" > "$IOA_ENV_STATE"
+    ngnclient_active || return 0
+    running_under_ngnclient && return 0
+    if ! systemctl --no-block try-restart ngnclient.service 2>/dev/null; then
+        rm -f "$IOA_ENV_STATE"
+        warn "cannot refresh ngnclient after network environment changed to $ioa_environment"
+    fi
 }
 
 # Audit iOA SmartGate's underlay policy on every invocation, including runs
@@ -741,6 +782,8 @@ reconcile_ioa_smartgate() {
 reconcile_ioa_smartgate
 
 if [ "${FORCE:-0}" != 1 ] &&
+   [ "$SMARTDNS_CHANGED" -eq 0 ] &&
+   [ "$(cat "$IOA_ENV_STATE" 2>/dev/null || true)" = "$ioa_environment" ] &&
    [ "$current_state" = "$(cat "$STATE_FILE" 2>/dev/null || true)" ] &&
    cn_state_matches &&
    iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null &&
@@ -973,10 +1016,11 @@ ipset destroy ioa_intranet 2>/dev/null || true
 # about to receive it. Keep its NAT rule installed throughout that interval.
 physical_dev=$(physical_device)
 [ -n "$physical_dev" ] || physical_dev=$IFACE
+owner_dev=${wired_dev:-$physical_dev}
 
 # SmartGateAgent sometimes binds control sockets to tailscale0's address. The owner mark routes
 # those packets over the physical underlay; MASQUERADE also replaces that unusable source address.
-reconcile_mark_masquerade "$IOA_OWNER_MARK" "$physical_dev"
+reconcile_mark_masquerade "$IOA_OWNER_MARK" "$owner_dev"
 
 # The first route lookup can select a Tailscale source before mangle OUTPUT classifies a CN
 # destination. The mark-triggered reroute uses main, and this exact-mark NAT rewrites that stale
@@ -999,3 +1043,12 @@ fi
 for band in "${!DESIRED_BANDS[@]}"; do
     [ "$band" = "$P_CN" ] || [ "$band" = "$P_CN_STOP" ] || reconcile_desired_band "$band"
 done
+
+# Publish DNS only after its matching routes and source-NAT are ready. On office entry this prevents
+# the old failure where SmartDNS returned an internal bootstrap address while owner traffic still
+# left over Wi-Fi. On office exit the old route fails closed until both policy and public DNS are
+# restored, rather than leaking internal traffic onto the external network.
+if [ "$SMARTDNS_CHANGED" -eq 1 ]; then
+    systemctl restart smartdns 2>/dev/null || true
+fi
+refresh_ioa_environment
