@@ -85,7 +85,7 @@ class BluetoothIndicator:
         self.icon_state = "OFF"
         self.tooltip = ""
         self.tip = traytooltip.Tooltip()
-        self.dock()
+        # The icons are the Tail's to make, once the row has settled.
         self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
         self.bus.signal_subscribe(
             "org.bluez",

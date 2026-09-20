@@ -35,7 +35,7 @@ run_bg "caps-indicator" caps-indicator
 run "bluetooth-indicator" systemctl --user start bluetooth-indicator.service
 run "battery-indicator" systemctl --user start battery-indicator.service
 run "fcitx5-indicator" systemctl --user start fcitx5-indicator.service
-run_bg "tray" tray
+run "tray" systemctl --user start tray.service
 # Start order does not decide the icon order: the indicators sort out the end
 # of the row between them (scripts/trayorder.py).
 run "clock-indicator" systemctl --user start clock-indicator.service

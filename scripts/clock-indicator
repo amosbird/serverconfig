@@ -107,9 +107,9 @@ class ClockIndicator:
         self.moment = now()
         self.icons = []
         self.tip = traytooltip.Tooltip()
-        self.dock()
         self.watch_resume()
         self.tick()
+        # The icons are the Tail's to make, once the row has settled.
         self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
 
     # Tray slots -----------------------------------------------------------
@@ -117,9 +117,9 @@ class ClockIndicator:
     def dock(self):
         """Dock the halves back to back, in drawing order.
 
-        The requests have to reach the tray with nothing in between: at login
-        every indicator docks in the same instant, and any pause here lets one
-        of them take the slot between the halves.
+        The requests have to reach the tray with nothing in between: any pause
+        here lets another icon take the slot between the halves and split the
+        card in two.
         """
         for slot in range(SLOTS):
             icon = Gtk.StatusIcon.new_from_pixbuf(self.slot_pixbuf(self.moment, ICON_SIZE, slot))

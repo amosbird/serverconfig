@@ -117,7 +117,7 @@ class ClockIndicatorTest(unittest.TestCase):
             'run "clock-indicator" systemctl --user start clock-indicator.service', startup
         )
         self.assertLess(
-            startup.index('run_bg "tray" tray'),
+            startup.index('run "tray" systemctl --user start tray.service'),
             startup.index('run "clock-indicator"'),
         )
         unit = (ROOT / "systemd/clock-indicator.service").read_text()

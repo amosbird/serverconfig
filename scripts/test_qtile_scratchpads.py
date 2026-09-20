@@ -84,7 +84,13 @@ class QtileScratchpadTest(unittest.TestCase):
         self.assertIn("ignore_classes fcitx", (ROOT / ".stalonetrayrc").read_text())
         self.assertIn('"stalonetray",\n                "tray",', self.config)
         startup = (ROOT / "scripts/startup").read_text()
-        self.assertIn('run_bg "tray" tray', startup)
+        self.assertIn('run "tray" systemctl --user start tray.service', startup)
+        # A unit of its own, so that an indicator can restart it without
+        # taking it down with itself the next time it restarts.
+        unit = (ROOT / "systemd/tray.service").read_text()
+        self.assertIn("ExecStart=/home/amos/scripts/tray", unit)
+        self.assertIn("Restart=always", unit)
+        self.assertIn("systemd/tray.service", (ROOT / "restore.sh").read_text())
 
     def test_bookmark_manager_is_a_reusable_scratchpad(self):
         launcher = ROOT / "scripts/bookmark-manager"

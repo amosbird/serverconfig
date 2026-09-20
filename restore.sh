@@ -289,6 +289,11 @@ if [[ -n $GUI ]]; then
         "$HOME/.config/systemd/user/fcitx5-indicator.service"
     install -Dm644 "$DIR/systemd/clock-indicator.service" \
         "$HOME/.config/systemd/user/clock-indicator.service"
+    # A unit of its own: the indicators restart the tray for a row of icons
+    # that will not come right, and a tray they had spawned themselves would
+    # go down with the next restart of the indicator that spawned it.
+    install -Dm644 "$DIR/systemd/tray.service" \
+        "$HOME/.config/systemd/user/tray.service"
     # The ngnclient daemon bounces a dead session via
     # `systemctl --user restart ioagui.service`; the unit must exist.
     install -Dm644 "$DIR/systemd/ioagui.service" \

@@ -1,22 +1,26 @@
 """A fixed order for this repo's icons at the right end of the tray row.
 
-stalonetray has no order of its own: an icon takes the first free slot when
-it docks, so the row ends up in whatever order the login race and later
-restarts produced. Taking an icon out of the middle is no way to fix it
-either, because the tray then lays out everything behind it again in an
-order of its own.
+stalonetray has no order of its own. It hands out slots, lowest free one
+first, and an icon keeps its slot until it leaves; whoever docks first is
+left of whoever docks next, for as long as the tray runs. A login is a race,
+so the row came out in a different order every time.
 
-What the tray does do reliably is append: an icon that leaves the row and
-comes back lands at the end. So the indicators sort the row together. Each
-holds a `Tail`, which reads the row off X on a wall clock boundary; when the
-last slots are not `ORDER`, they all pull their icons out of the row at that
-same instant and put them back one after another, in `ORDER`.
+An indicator therefore only docks into a row that has stopped moving: the
+applications that were still starting have their slots by then, and ours
+come after them. Each indicator holds a `Tail`, which reads the row off X on
+a wall clock boundary, and they dock one after another, in `ORDER`. The
+processes never talk to each other. The shared clock is all the agreement
+they need, and an indicator that is not running simply leaves a gap.
 
-The processes never talk to each other. The shared clock is all the
-agreement they need, and an indicator that is not running simply leaves a
-gap in the order.
+The same reading keeps the row in order later: when the last slots are not
+`ORDER` they all leave it at that same instant, and come back a couple of
+checks later, once the tray has given their slots to the icons behind them.
+A tray that will not do even that keeps ours wherever they are, since the
+slots it gives back are the ones they just freed, and the way out of that is
+to start the tray over: it hands its slots out from the beginning again.
 """
 
+import subprocess
 import time
 
 import xcffib
@@ -44,6 +48,18 @@ DECIDE_MS = 100
 # Spacing between the icons coming back, which is what puts them in ORDER.
 STEP_MS = 400
 
+# The tray, for the one case only a fresh set of slots can settle. Its own
+# unit, so that it does not go down with the indicator that restarted it.
+TRAY_UNIT = "tray.service"
+
+# Grace between the icons leaving the row and the tray going down with it,
+# so that a tray coming back has none of them to hand a slot to.
+RESTART_MS = 1000
+
+# A tray that is started over takes every icon in the session with it, so it
+# is worth doing once for a row that will not come right, and not again.
+RESTART_GAP_S = 600
+
 
 def ms_to_next_check():
     """Delay to the next boundary, the same instant in every indicator."""
@@ -63,6 +79,11 @@ def sorted_row(row):
     """Whether the row ends in ORDER."""
     tail = expected_tail(row)
     return row[len(row) - len(tail) :] == tail
+
+
+def first_in_row(row):
+    """The indicator that speaks for the rest, which is the first one docked."""
+    return next((instance for instance in ORDER if instance in row), None)
 
 
 class TrayRow:
@@ -134,10 +155,10 @@ class TrayRow:
 class Tail:
     """Holds one indicator's icons in their place at the end of the row.
 
-    `undock` drops the indicator's icons; `dock` makes fresh ones. Hiding an
-    icon and showing it again would be the obvious way to leave the row and
-    come back, but this tray forgets an icon that does that often enough to
-    matter, and new windows it always takes.
+    The indicator hands over the two halves of owning them: `dock` makes the
+    icons, `undock` drops them. Hiding an icon and showing it again would be
+    the obvious way to leave the row and come back, but this tray forgets an
+    icon that does that often enough to matter, and new windows it takes.
     """
 
     def __init__(self, instance, dock, undock):
@@ -145,9 +166,11 @@ class Tail:
         self.dock = dock
         self.undock = undock
         self.row = TrayRow()
-        self.counts = {}
-        self.sorting = False
+        self.docked = False
+        self.moving = False
+        self.before = None
         self.tried = None
+        self.restarted_at = 0.0
         self.schedule()
 
     def schedule(self):
@@ -155,49 +178,82 @@ class Tail:
 
     def check(self):
         self.schedule()
-        if self.sorting:
+        if self.moving:
             return False
         row = self.row.instances()
+        before, self.before = self.before, row
         if row is None:
-            # No tray, or it went away and took our icons with it.
-            self.counts = {}
+            # No tray. Drop the icons rather than let them dock themselves
+            # into the first slot a tray that comes back offers them.
+            if self.docked:
+                self.leave()
             return False
-        counts = {instance: row.count(instance) for instance in ORDER}
-        before, self.counts = self.counts, counts
-        if counts[self.instance] != SLOTS[self.instance]:
-            # The tray drops a dock request now and then, in the churn of a
-            # login or of a sort. Ask for our slots again, in our own place.
+        if row != before:
+            # The row is still filling up, or a sort is still in flight; a
+            # row that is halfway through something says nothing about order.
+            return False
+        if not self.docked:
+            self.arrive()
+            return False
+        if row.count(self.instance) != SLOTS[self.instance]:
+            # The tray drops a dock request now and then. Ask again, in place.
             self.sort()
-            return False
-        if any(count not in (0, SLOTS[instance]) for instance, count in counts.items()):
-            # Someone is half in the row, so a sort is still in flight.
-            return False
-        if any(count < before.get(instance, 0) for instance, count in counts.items()):
-            # Icons have left the row since the last look, which is either a
-            # sort in flight or an indicator that has just stopped.
             return False
         if sorted_row(row):
             self.tried = None
             return False
         if tuple(row) == self.tried:
-            # The last sort changed nothing, so a tray that keeps its own
-            # order (a different icon gravity, say) is left to it.
+            # Leaving the row gained nothing, so the slots themselves are in
+            # the way. Leave it again, and this time take the tray with it.
+            self.sort()
+            self.restart_tray(row)
             return False
         self.tried = tuple(row)
         self.sort()
         return False
 
     def sort(self):
-        """Leave the row, and come back once those before us have."""
-        self.sorting = True
+        """Leave the row; the rule for docking brings us back in our place.
+
+        The tray gives the slots of an icon that leaves to the ones behind it,
+        but only once it has been gone a while, so this waits out a couple of
+        checks rather than dock straight back into the slots it just freed.
+        """
+        self.moving = True
         GLib.timeout_add(DECIDE_MS, self.leave)
-        GLib.timeout_add(STEP_MS * (ORDER.index(self.instance) + 1), self.dock_back)
 
     def leave(self):
         self.undock()
+        self.docked = False
+        self.moving = False
         return False
 
-    def dock_back(self):
+    def arrive(self):
+        """Take our slots, after those of the indicators before us."""
+        self.moving = True
+        GLib.timeout_add(STEP_MS * (ORDER.index(self.instance) + 1), self.enter)
+
+    def enter(self):
         self.dock()
-        self.sorting = False
+        self.docked = True
+        self.moving = False
+        return False
+
+    def restart_tray(self, row):
+        """Start the tray over, for slots that will not come free any other way.
+
+        A tray that holds on to the slots of an icon that left is one nothing
+        can get past: the ones we are given back are the ones we just freed.
+        A tray that starts fresh hands them out from the beginning again, and
+        ours are asked for last, once the applications have theirs.
+        """
+        if self.instance != first_in_row(row) or time.time() - self.restarted_at < RESTART_GAP_S:
+            return
+        self.restarted_at = time.time()
+        # After the icons are out of the row, so that none of them is handed
+        # straight back to the tray that comes up.
+        GLib.timeout_add(RESTART_MS, self.start_tray_over)
+
+    def start_tray_over(self):
+        subprocess.run(["systemctl", "--user", "restart", TRAY_UNIT], check=False)
         return False

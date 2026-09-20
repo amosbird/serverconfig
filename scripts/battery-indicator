@@ -88,7 +88,7 @@ class BatteryIndicator:
         self.warned = set()
         self.icon = None
         self.tip = traytooltip.Tooltip()
-        self.dock()
+        # The icons are the Tail's to make, once the row has settled.
         self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
         # UPower recomputes the composite DisplayDevice on every battery and
         # line-power change, so one subscription covers both.

@@ -1,0 +1,8 @@
+[Unit]
+Description=System tray
+
+[Service]
+ExecStart=/home/amos/scripts/tray
+Environment=DISPLAY=:0 XAUTHORITY=/home/amos/.Xauthority
+Restart=always
+RestartSec=2
