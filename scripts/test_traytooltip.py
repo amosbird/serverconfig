@@ -36,11 +36,21 @@ class Icon:
         assert signal == "query-tooltip", signal
         self.handler = handler
 
-    def hover(self):
-        """What GTK does when it is about to show a tooltip."""
+    def ask(self):
+        """One of GTK's questions, answered with the text it is to show."""
         tooltip = Tip()
         shown = self.handler(self, 0, 0, False, tooltip)
         return tooltip.text if shown else None
+
+    def hover(self):
+        """What GTK does when it is about to show a tooltip: it asks twice.
+
+        Once on the motion that brought the pointer here, and once more with
+        nothing having moved since, and that second answer is the one that
+        decides whether the tooltip is shown at all.
+        """
+        self.ask()
+        return self.ask()
 
 
 class Tip:
@@ -129,6 +139,16 @@ class TrayTooltipTest(unittest.TestCase):
         self.assertIsNone(icon.hover())
         self.at(120, 520)
         self.assertEqual(icon.hover(), "Clock")
+
+    def test_a_hover_survives_being_asked_about_twice(self):
+        icon = Icon(x=100)
+        tip = traytooltip.Tooltip()
+        tip.attach([icon])
+        tip.set("Battery 50%")
+        self.at(120, 520)
+        self.assertEqual(icon.ask(), "Battery 50%")  # the pointer moved here
+        self.assertEqual(icon.ask(), "Battery 50%")  # and is still here
+        self.assertEqual(icon.ask(), "Battery 50%")
 
     def test_gtk_is_asked_before_every_tooltip(self):
         icon = Icon()
