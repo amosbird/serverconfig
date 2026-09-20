@@ -226,6 +226,10 @@ resolver and pointing SmartGateAgent's underlay at the phone's gateway. Matching
 adapter's hardware address identifies the dongle rather than the network: the same dongle in a hotel
 port claims to be the office LAN, and any other card in a real office port is missed.
 
+Rejecting the adapter as a way of classifying the network says nothing about whether that adapter's
+registered address matters, and conflating the two is what broke authentication — see the registered
+wired identity below.
+
 Authorization is also the honest reading of a port that hands out a lease and then refuses to
 authorize us. This one sat at `HELD`/`suppPortStatus=Unauthorized` after EAP-TLS failure: no
 internet, and its resolvers answered some intranet names and not others. Declining to call that the
@@ -258,9 +262,39 @@ on that would be installing one on no evidence. The route is removed by device r
 gateway, because a link that moved to another network leaves a default route naming the old gateway,
 which is exactly the blackhole this exists to avoid.
 
-There is no `.link` file. One existed to apply a registered MAC `08:3a:88:5a:b5:37`, matched on
-`Path=pci-0000:00:14.0-usb-0:1:1.0`; the adapter has been on `usb-0:6:1.0` since, so the override
-never applied, and EAP-TLS authenticates on the certificate rather than the address.
+### The registered wired identity
+
+`network/systemd-network/10-tencent-wired.link` presents the registered address
+`08:3a:88:5a:b5:37` on the office adapter. Tencent's NAC has that address on file for this adapter,
+and its EAP-TLS authorization depends on it: a cryptographically valid session is still refused
+without it. This is device identity and decides nothing about which network a link is on, which is
+the separate question the section above answers.
+
+The match is the adapter's `PermanentMACAddress=00:0e:c6:5d:e7:88`, not the USB port it occupies.
+Until 2026-09-20 it was `Path=pci-0000:00:14.0-usb-0:1:1.0`; the adapter moved to `usb-0:6:1.0`, the
+override silently stopped applying, and EAP-TLS failed from then on. The journal has both states,
+readable from the link-local address each MAC produces:
+
+| Date | Link-local | Result | Lease |
+|---|---|---|---|
+| 2026-08-24 | `fe80::a3a:88ff:fe5a:b537` (registered) | `EAP-SUCCESS` | `10.76.165.31/24` office |
+| 2026-09-20 | `fe80::20e:c6ff:fe5d:e788` (hardware) | `EAP-FAILURE` | `10.76.76.210/26` quarantine |
+
+Restoring the override on 2026-08-10 flipped the same machine from the quarantine lease to the office
+one within a minute, which is the causal half of the same evidence.
+
+The file was deleted on 2026-09-20 on the grounds that the override was not applying, which was the
+wrong reading: an override that is not applying is one to repair. Deleting it did not cause that
+day's failures — the port move had already disabled it, and the first failure at 14:41 predates the
+deletion — but it would have made the regression permanent. Matching the permanent address cannot
+fail the same way, because it survives moving the adapter.
+
+`NamePolicy=` and `AlternativeNamesPolicy=` are copied verbatim from `99-default.link`. The first
+matching `.link` replaces that file outright for the device, so omitting them would hand naming to a
+different policy, and `keep` is what preserves the `enp9s0u2u1u2` name that the udev rule below and
+the `wpa_supplicant@` instance are both written against. That name comes from
+`/etc/udev/rules.d/70-persistent-net.rules`, which is not owned by this repository and lists both the
+hardware and the registered address, so the name holds whether or not the override has been applied.
 
 A hardware-restricted udev rule matches USB identity `0b95:1790:00000EC65DE788` on every non-remove
 net event and requests `wpa_supplicant@enp9s0u2u1u2.service`; handling the rename `move` event

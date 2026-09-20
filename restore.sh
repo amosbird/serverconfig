@@ -205,9 +205,12 @@ if [[ -n $GUI ]]; then
     # not the network. 20-wired.network takes every Ethernet link again, and network-reconfigure
     # decides the default route by probing the offered gateway.
     sudo rm -f /etc/systemd/network/20-tencent-wired.network /etc/systemd/network/21-wired.network
-    # The MAC override this .link carried never applied: it matched one USB port and the adapter has
-    # been on another since. EAP-TLS authenticates on the certificate, not the address.
-    sudo rm -f /etc/systemd/network/10-tencent-wired.link
+    # The registered wired MAC is this adapter's NAC identity, which its EAP-TLS authorization
+    # depends on, and is unrelated to deciding which network a link is on. Deleting it on 2026-09-20
+    # was wrong: it had stopped applying because it matched a USB port the adapter moved off, and it
+    # matches the permanent address now. udev applies .link files on the next device event, so this
+    # deploys the policy without disturbing the current link.
+    sudo cp "$DIR"/network/systemd-network/*.link /etc/systemd/network/
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
     if sudo systemctl is-active --quiet systemd-networkd.service; then
         sudo networkctl reload

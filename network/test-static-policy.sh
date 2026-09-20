@@ -355,6 +355,7 @@ foreign_routing_config=network/systemd-networkd.conf.d/foreign-routing.conf
 iwd_config=network/iwd/main.conf
 wireless_config=network/systemd-network/25-wireless.network
 wired_config=network/systemd-network/20-wired.network
+tencent_wired_link=network/systemd-network/10-tencent-wired.link
 obsolete_tencent_config=network/systemd-network/26-wireless-tencent.network
 
 # networkd cannot tell an office port from a tether, so it takes the address and nothing else. A
@@ -374,8 +375,7 @@ for source_file in "$wired_config" scripts/network-reconfigure; do
     fi
 done
 for obsolete in network/systemd-network/20-tencent-wired.network \
-                network/systemd-network/21-wired.network \
-                network/systemd-network/10-tencent-wired.link
+                network/systemd-network/21-wired.network
 do
     if [ -e "$obsolete" ]; then
         echo "FAIL $obsolete was retired but still exists" >&2
@@ -386,6 +386,31 @@ do
         fail=1
     fi
 done
+# Presenting the registered address is device identity and is not a judgement about the network. The
+# office LAN check below is the judgement; this only lets the adapter authenticate at all. Matching
+# the permanent address is what keeps the override alive across USB ports: the Path= match it carried
+# until 2026-09-20 stopped applying when the adapter moved, and EAP-TLS failed from then on.
+if [ "$(grep -Fxc 'PermanentMACAddress=00:0e:c6:5d:e7:88' "$tencent_wired_link")" -ne 1 ] ||
+   [ "$(grep -Fxc 'MACAddress=08:3a:88:5a:b5:37' "$tencent_wired_link")" -ne 1 ]; then
+    echo 'FAIL the registered wired MAC is not restored on the adapter permanent address' >&2
+    fail=1
+fi
+reject 'the registered wired MAC is not bound to a USB port the adapter can move off' \
+    '^Path=' "$tencent_wired_link"
+# The first matching .link replaces 99-default.link outright for this device, and `keep` is what
+# preserves the enp9s0u2u1u2 name that both the udev rule and the wpa_supplicant@ instance below are
+# written against.
+if [ "$(grep -Fxc 'NamePolicy=keep kernel database onboard slot path' \
+        "$tencent_wired_link")" -ne 1 ]; then
+    echo 'FAIL the registered wired link does not preserve the name it is addressed by' >&2
+    fail=1
+fi
+if ! grep -Fq 'network/systemd-network/*.link' restore.sh; then
+    echo 'FAIL restore does not deploy the registered wired link policy' >&2
+    fail=1
+fi
+reject 'restore does not delete the registered wired link policy' \
+    'rm -f /etc/systemd/network/10-tencent-wired\.link' restore.sh
 # The office LAN is the link the office LAN authenticated. Anything weaker hands the office SmartDNS
 # fragment, the resolver pins and the table 19 underlay to a network that never authorized us.
 if ! grep -Fq "grep -Fqx 'suppPortStatus=Authorized'" scripts/network-reconfigure; then

@@ -1,0 +1,29 @@
+# The registered wired identity of this machine's Tencent USB Ethernet adapter.
+#
+# This is device identity, not network classification. Which Ethernet link is the office LAN is
+# decided by 802.1X authorization in scripts/network-reconfigure, and must not be inferred from an
+# adapter. This file does the unrelated job of presenting the hardware address Tencent's NAC has on
+# file for this adapter, which its EAP-TLS authorization depends on.
+#
+# Matched on the adapter's permanent address rather than the USB port it happens to occupy. Until
+# 2026-09-20 this matched Path=pci-0000:00:14.0-usb-0:1:1.0; the adapter moved to usb-0:6:1.0, the
+# override silently stopped applying, and EAP-TLS failed from that point on. Both halves are in the
+# journal: with the override applied the link came up as fe80::a3a:88ff:fe5a:b537 and authorized
+# into 10.76.165.31/24 on 2026-08-24, and without it the link came up as fe80::20e:c6ff:fe5d:e788
+# and was held at suppPortStatus=Unauthorized on the 10.76.76.0/26 quarantine lease on 2026-09-20.
+# The permanent address survives moving the adapter, so this match cannot fail the same way.
+#
+# Deleting this file that day was the wrong reading of the same evidence: an override that is not
+# applying is one to repair, not to remove.
+#
+# NamePolicy and AlternativeNamesPolicy are copied verbatim from 99-default.link. The first matching
+# .link replaces that file outright for this device, and `keep` is what preserves the enp9s0u2u1u2
+# name that udev/90-wired-8021x.rules and the wpa_supplicant@ instance are both written against.
+[Match]
+PermanentMACAddress=00:0e:c6:5d:e7:88
+Type=ether
+
+[Link]
+MACAddress=08:3a:88:5a:b5:37
+NamePolicy=keep kernel database onboard slot path
+AlternativeNamesPolicy=database onboard slot path mac
