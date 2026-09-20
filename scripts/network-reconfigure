@@ -146,9 +146,12 @@ reconcile_desired_band() {
 # real leak window: an unbound socket initially gets tailscale0's source, OUTPUT reroutes it to the
 # physical device, and a packet crossing this window leaves with that tailnet source. Worse, the
 # no-NAT decision is then retained by conntrack after the rule returns.
-# The third argument, when false, leaves similar MASQUERADE rules on other devices alone.
+# The third argument, when false, leaves similar MASQUERADE rules on other devices alone. The fourth,
+# when false, stages the desired rule without pruning anything so a route switch can happen between
+# those two operations.
 reconcile_mark_masquerade() {
-    local mark=$1 dev=$2 replace_all=${3:-true} base desired rule kept=false
+    local mark=$1 dev=$2 replace_all=${3:-true} prune=${4:-true}
+    local base desired rule kept=false
     base=${mark%%/*}
     iptables -t nat -C POSTROUTING -o "$dev" -m mark --mark "$mark" \
         -j MASQUERADE 2>/dev/null ||
@@ -157,6 +160,7 @@ reconcile_mark_masquerade() {
     desired=$(iptables -t nat -S POSTROUTING 2>/dev/null | grep -E -m1 -- \
         "^-A POSTROUTING -o $dev -m mark --mark $base(/0xffffffff)? -j MASQUERADE$")
     [ -n "$desired" ]
+    $prune || return 0
     while IFS= read -r rule; do
         [ -n "$rule" ] || continue
         if [ "$rule" = "$desired" ] && ! $kept; then
@@ -500,6 +504,15 @@ else
     warn "cannot read $OFFICE_SRC; leaving $OFFICE_DST as it is"
 fi
 
+# On office exit, publish public bootstrap DNS while the old wired underlay still exists. Switching
+# owner routing to main first would recreate the broken state where an internal answer leaves over
+# Wi-Fi. Office entry is the inverse: keep public DNS until the wired route and NAT are ready below.
+if [ "$ioa_environment" = external ] && [ "$SMARTDNS_CHANGED" -eq 1 ]; then
+    if systemctl restart smartdns 2>/dev/null; then
+        SMARTDNS_CHANGED=0
+    fi
+fi
+
 if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
     ip route replace default via "$wired_gateway" dev "$wired_dev" onlink \
         table "$WIRED_UNDERLAY_TABLE"
@@ -509,8 +522,6 @@ if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
             ip route del $route table "$WIRED_UNDERLAY_TABLE"
     done < <(ip route show table "$WIRED_UNDERLAY_TABLE")
     reconcile_office_resolver_routes "$wired_dev" "$wired_gateway"
-else
-    ip route flush table "$WIRED_UNDERLAY_TABLE" 2>/dev/null || true
 fi
 
 CACHE_DIR="/var/lib/network-reconfigure"
@@ -634,6 +645,20 @@ actual_fingerprint() {
             "$(normalise_actual_band "$(band_fingerprint "$band" | paste -sd';' -)")"
     done | sort
 }
+
+# Move the owner path without a zero-NAT window. During either direction both source-NAT rules exist:
+# first make the new egress source-valid, then switch pref 400, then prune the old egress rule. On
+# office exit table 19 remains usable until pref 400 is safely back on main.
+physical_dev=$(physical_device)
+[ -n "$physical_dev" ] || physical_dev=$IFACE
+owner_dev=${wired_dev:-$physical_dev}
+reconcile_mark_masquerade "$IOA_OWNER_MARK" "$owner_dev" true false
+reconcile_desired_band "$P_IOA_OWNER_STOP"
+reconcile_desired_band "$P_IOA_OWNER"
+reconcile_mark_masquerade "$IOA_OWNER_MARK" "$owner_dev"
+if [ "$ioa_environment" = external ]; then
+    ip route flush table "$WIRED_UNDERLAY_TABLE" 2>/dev/null || true
+fi
 
 active_ioa_cgroups() {
     local cgroup path
@@ -1016,11 +1041,6 @@ ipset destroy ioa_intranet 2>/dev/null || true
 # about to receive it. Keep its NAT rule installed throughout that interval.
 physical_dev=$(physical_device)
 [ -n "$physical_dev" ] || physical_dev=$IFACE
-owner_dev=${wired_dev:-$physical_dev}
-
-# SmartGateAgent sometimes binds control sockets to tailscale0's address. The owner mark routes
-# those packets over the physical underlay; MASQUERADE also replaces that unusable source address.
-reconcile_mark_masquerade "$IOA_OWNER_MARK" "$owner_dev"
 
 # The first route lookup can select a Tailscale source before mangle OUTPUT classifies a CN
 # destination. The mark-triggered reroute uses main, and this exact-mark NAT rewrites that stale
@@ -1041,7 +1061,9 @@ else
     reconcile_desired_band "$P_CN_STOP"
 fi
 for band in "${!DESIRED_BANDS[@]}"; do
-    [ "$band" = "$P_CN" ] || [ "$band" = "$P_CN_STOP" ] || reconcile_desired_band "$band"
+    [ "$band" = "$P_CN" ] || [ "$band" = "$P_CN_STOP" ] ||
+        [ "$band" = "$P_IOA_OWNER" ] || [ "$band" = "$P_IOA_OWNER_STOP" ] ||
+        reconcile_desired_band "$band"
 done
 
 # Publish DNS only after its matching routes and source-NAT are ready. On office entry this prevents

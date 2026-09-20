@@ -131,11 +131,22 @@ if [ "$(grep -Fxc 'nameserver /woa.com/office' network/smartdns/office.conf)" -n
     fail=1
 fi
 if ! awk '
+    /\[ "\$ioa_environment" = external \].*\$SMARTDNS_CHANGED/ { external_dns = NR }
+    /reconcile_mark_masquerade "\$IOA_OWNER_MARK" "\$owner_dev" true false/ { stage_nat = NR }
+    /reconcile_desired_band "\$P_IOA_OWNER"$/ { switch_owner = NR }
+    /reconcile_mark_masquerade "\$IOA_OWNER_MARK" "\$owner_dev"$/ { prune_nat = NR }
+    /ip route flush table "\$WIRED_UNDERLAY_TABLE"/ { flush_underlay = NR }
     /for band in "\$\{!DESIRED_BANDS\[@\]\}"/ { policy = NR }
-    /systemctl restart smartdns/ { restart = NR }
-    END { exit !(policy && restart && policy < restart) }
+    /systemctl restart smartdns/ { final_dns = NR }
+    END {
+        exit !(external_dns < stage_nat &&
+               stage_nat < switch_owner &&
+               switch_owner < prune_nat &&
+               prune_nat < flush_underlay &&
+               policy < final_dns)
+    }
 ' scripts/network-reconfigure; then
-    echo 'FAIL SmartDNS publishes office answers before their route policy is ready' >&2
+    echo 'FAIL office transition ordering opens a DNS, routing, NAT, or table-19 gap' >&2
     fail=1
 fi
 if ! grep -Fq 'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup $WIRED_UNDERLAY_TABLE"' \

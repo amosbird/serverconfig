@@ -327,6 +327,13 @@ flushes table 19, and moves owner routing/NAT back to `main`; business payload r
 `ioa` throughout. A phone tether or foreign Ethernet has no authorized
 supplicant, so it can never enable any office half.
 
+The transition order is asymmetric by design. Entering office installs table 19, stages wired owner
+NAT alongside the old NAT, switches priority 400, prunes the old NAT, and only then publishes office
+DNS. Leaving publishes public DNS first, stages the new `main` NAT, switches priority 400, prunes the
+wired NAT, and only then flushes table 19. Thus neither direction has a zero-NAT window or an internal
+bootstrap answer routed onto Wi-Fi; priority 401 remains a crash backstop rather than a normal
+transition step.
+
 The root iOA daemon caches its outer/inner mode at startup. It does open new connections to a changed
 DNS answer, but that alone did not clear its once-per-minute `Set outer net timeout` state.
 `network-reconfigure` therefore records `office` or `external` in `/run` after publishing the
