@@ -35,6 +35,14 @@ TAILNET_NETS=("100.64.0.0/10")
 CN_SET="cn_direct"
 CN_NEXT_SET="cn_direct_next"
 WIRED_UNDERLAY_TABLE="wired_underlay"
+WPA_CLI="${WPA_CLI_OVERRIDE:-/usr/bin/wpa_cli}"
+# Same anchor, port and probe mark the debug captures and network-dhcp-refresh use for underlay
+# liveness: connectivitycheck.gstatic.com on the mark reserved for probes that must stay physical.
+PROBE="${PROBE_OVERRIDE:-/home/amos/scripts/network-probe-tcp}"
+PROBE_TARGET="${PROBE_TARGET_OVERRIDE:-216.239.32.117}"
+PROBE_PORT=80
+PROBE_MARK="0x80000"
+PROBE_TIMEOUT=3
 RT_TABLES="${RT_TABLES_OVERRIDE:-/etc/iproute2/rt_tables}"
 TMPDIR="${TMPDIR_OVERRIDE:-/tmp}"
 IOA_TABLE="ioa"
@@ -214,23 +222,38 @@ dhcp_captive_portal_hostname() {
         python3 -c 'import sys, urllib.parse; print(urllib.parse.urlparse(sys.stdin.read().strip()).hostname or "")'
 }
 
-# Only the registered Tencent adapter is the office LAN, and everything downstream depends on that
-# distinction: the office SmartDNS fragment, the resolver pins, and the table 19 underlay
-# advertisement. Matching any Ethernet name instead — which is what this did until 2026-09-20 —
-# hands all three to a phone tethered over USB, mapping intranet domains at the phone's resolver and
-# pointing SmartGateAgent's underlay at the phone's gateway. The address comes from netlink rather
-# than /sys/class/net, which a bare network namespace does not virtualise.
-OFFICE_WIRED_MAC="${OFFICE_WIRED_MAC_OVERRIDE:-00:0e:c6:5d:e7:88}"
+wired_devices() {
+    ip -o link show up |
+        awk -F': ' '$2 ~ /^en/ { sub(/@.*/, "", $2); print $2 }' |
+        sort -u
+}
+
+# What makes a link the office LAN is that the office LAN authenticated it. The 802.1X supplicant
+# reports that directly, and everything downstream depends on the answer: the office SmartDNS
+# fragment, the resolver pins, and the table 19 underlay advertisement.
+#
+# Two weaker judgements were tried and both were wrong. Matching any Ethernet name hands all three to
+# a phone tethered over USB, mapping intranet domains at the phone's resolver and pointing
+# SmartGateAgent's underlay at the phone's gateway. Matching the registered adapter's hardware
+# address identifies the dongle rather than the network, so the same dongle in a hotel port claims to
+# be the office LAN, and any other card in a real office port is missed.
+#
+# Authorization is also the honest reading of a port that hands out a lease but refuses to authorize
+# us. On 2026-09-20 this one was HELD/Unauthorized after EAP-TLS failure: no internet, and its
+# resolvers answered some intranet names and not others. Declining to call that the office LAN is
+# correct, and it is what keeps iOA's bootstrap on the public endpoint it can actually reach. A link
+# with no supplicant at all — a tether, a hotel port — fails this for the same reason.
+office_wired_authorized() {
+    { "$WPA_CLI" -i "$1" status 2>/dev/null || true; } |
+        grep -Fqx 'suppPortStatus=Authorized'
+}
 
 office_wired_devices() {
-    ip -o link show up |
-        awk -v mac="$OFFICE_WIRED_MAC" -F': ' '
-            $2 !~ /^en/ { next }
-            match($0, /link\/ether [0-9a-f:]+/) &&
-            substr($0, RSTART + 11, RLENGTH - 11) == mac {
-                sub(/@.*/, "", $2); print $2
-            }
-        ' | sort -u
+    local dev
+    while read -r dev; do
+        office_wired_authorized "$dev" || continue
+        printf '%s\n' "$dev"
+    done < <(wired_devices)
 }
 
 office_wired_candidate() {
@@ -242,6 +265,54 @@ office_wired_candidate() {
         printf '%s %s\n' "$dev" "$gateway"
         return
     done < <(office_wired_devices)
+}
+
+# Whether a wired gateway is worth a default route is a question about the network, so it is answered
+# by asking the network. networkd is told to ignore the offered gateway entirely, because a wrong
+# default route here is not a degraded state but a total one: the office gateway reaches the intranet
+# and not the internet, and at metric 100 it outranks Wi-Fi and blackholes the host. So nothing is
+# installed until one TCP handshake through that gateway has crossed to a public anchor.
+#
+# The probe needs a route to the anchor before there is a default route, which is what the temporary
+# host route is for. It is withdrawn either way: on success the default route supersedes it, and on
+# failure nothing should be left pointing at a gateway that led nowhere.
+#
+# Exit 2 means the probe never reached the path and measured nothing; treating that as success would
+# install a default route on no evidence, which is the failure this function exists to prevent.
+wired_gateway_reaches_internet() {
+    local dev=$1 gateway=$2 source rc
+    source=$(ip -4 -oneline addr show dev "$dev" scope global 2>/dev/null |
+        awk '{for (i = 1; i <= NF; i++) if ($i == "inet") {split($(i + 1), a, "/"); print a[1]; exit}}')
+    [ -n "$source" ] || return 1
+    ip route replace "$PROBE_TARGET" via "$gateway" dev "$dev" 2>/dev/null || return 1
+    "$PROBE" --target "$PROBE_TARGET" --port "$PROBE_PORT" --source "$source" \
+        --interface "$dev" --mark "$PROBE_MARK" --timeout "$PROBE_TIMEOUT" >/dev/null 2>&1
+    rc=$?
+    ip route del "$PROBE_TARGET" via "$gateway" dev "$dev" 2>/dev/null || true
+    [ "$rc" -eq 0 ]
+}
+
+# A wired link earns main's default route by proving it, and loses it the moment it cannot. Removing
+# it by device rather than by gateway matters: a link that moved to another network leaves a default
+# route naming the old gateway, and that is exactly the blackhole this is here to avoid.
+reconcile_wired_default_route() {
+    local dev gateway desired='' existing
+    while read -r dev; do
+        gateway=$(dhcp_router "$dev")
+        [ -n "$gateway" ] || continue
+        [ -n "$(ip -4 -o addr show "$dev" scope global)" ] || continue
+        if wired_gateway_reaches_internet "$dev" "$gateway"; then
+            desired="default via $gateway dev $dev metric 100"
+            ip route replace default via "$gateway" dev "$dev" metric 100
+            break
+        fi
+    done < <(wired_devices)
+    while read -r existing; do
+        [ -n "$existing" ] || continue
+        [ "$existing" = "$desired" ] && continue
+        ip route del $existing 2>/dev/null || true
+    done < <(ip -4 route show table main default 2>/dev/null |
+        awk '{for (i = 1; i < NF; i++) if ($i == "dev" && $(i + 1) ~ /^en/) { print; next }}')
 }
 
 count_routes() { { ip route show table "$1" 2>/dev/null || true; } | wc -l; }
@@ -362,6 +433,9 @@ for _ in {1..10}; do
     sleep 1
 done || true
 portal_hostname=$(dhcp_captive_portal_hostname "$IFACE")
+# Before anything reads main's default route — the local band, the SmartGate underlay audit — settle
+# whether a wired link deserves to own it.
+reconcile_wired_default_route
 wired_dev=''
 wired_gateway=''
 read -r wired_dev wired_gateway < <(office_wired_candidate || true) || true

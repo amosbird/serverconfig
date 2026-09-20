@@ -354,51 +354,49 @@ fi
 foreign_routing_config=network/systemd-networkd.conf.d/foreign-routing.conf
 iwd_config=network/iwd/main.conf
 wireless_config=network/systemd-network/25-wireless.network
-office_wired_config=network/systemd-network/20-tencent-wired.network
-generic_wired_config=network/systemd-network/21-wired.network
+wired_config=network/systemd-network/20-wired.network
 obsolete_tencent_config=network/systemd-network/26-wireless-tencent.network
 
-# The office link reaches the intranet but not the internet, so it must never contribute main's
-# default route, and it is identified by the adapter rather than by matching every Ethernet name.
-if [ "$(grep -Fxc 'PermanentMACAddress=00:0e:c6:5d:e7:88' "$office_wired_config")" -ne 1 ] ||
-   [ "$(grep -Fxc 'UseGateway=false' "$office_wired_config")" -ne 1 ] ||
-   [ "$(grep -Fxc 'UseRoutes=false' "$office_wired_config")" -ne 1 ]; then
-    echo 'FAIL office wired profile does not withhold the default route from the registered adapter' >&2
+# networkd cannot tell an office port from a tether, so it takes the address and nothing else. A
+# default route from the office gateway would outrank Wi-Fi at metric 100 and blackhole the host,
+# which is why that decision waits for a probe instead of being accepted from the lease.
+if [ "$(grep -Fxc 'UseGateway=false' "$wired_config")" -ne 1 ] ||
+   [ "$(grep -Fxc 'UseRoutes=false' "$wired_config")" -ne 1 ]; then
+    echo 'FAIL wired profile accepts a DHCP gateway it has not verified' >&2
     fail=1
 fi
-# Any other Ethernet is an ordinary network and usually the only way out while it is plugged in.
-# Inheriting the office link's suppression is what made USB tethering look like a dead link.
-if grep -Eq '^Use(Gateway|Routes)=false' "$generic_wired_config"; then
-    echo 'FAIL generic wired profile withholds the DHCP gateway from ordinary Ethernet' >&2
-    fail=1
-fi
-if [ "$(grep -Fxc 'PermanentMACAddress=00:0e:c6:5d:e7:88' "$generic_wired_config")" -ne 0 ]; then
-    echo 'FAIL generic wired profile claims the registered office adapter' >&2
-    fail=1
-fi
-# networkd applies the first matching profile in lexical order, which is the only thing keeping the
-# office adapter off the generic profile.
-if ! [ "$office_wired_config" \< "$generic_wired_config" ]; then
-    echo 'FAIL office wired profile does not sort before the generic one' >&2
-    fail=1
-fi
-for obsolete in network/systemd-network/20-wired.network \
+# Identifying the dongle is not identifying the network: the same adapter in a hotel port would claim
+# to be the office LAN, and any other card in a real office port would be missed.
+for source_file in "$wired_config" scripts/network-reconfigure; do
+    if grep -Fq '00:0e:c6:5d:e7:88' "$source_file"; then
+        echo "FAIL $source_file identifies the office network by adapter address" >&2
+        fail=1
+    fi
+done
+for obsolete in network/systemd-network/20-tencent-wired.network \
+                network/systemd-network/21-wired.network \
                 network/systemd-network/10-tencent-wired.link
 do
     if [ -e "$obsolete" ]; then
-        echo "FAIL $obsolete was replaced by the split wired profiles but still exists" >&2
+        echo "FAIL $obsolete was retired but still exists" >&2
         fail=1
     fi
-    if ! grep -Fq "sudo rm -f /etc/systemd/network/$(basename "$obsolete")" restore.sh; then
+    if ! grep -Fq "/etc/systemd/network/$(basename "$obsolete")" restore.sh; then
         echo "FAIL restore does not remove the deployed $(basename "$obsolete")" >&2
         fail=1
     fi
 done
-# Only the registered adapter may be treated as the office LAN. Matching any Ethernet hands the
-# office SmartDNS fragment, the resolver pins and the table 19 underlay to a tethered phone.
-if ! grep -Fq 'OFFICE_WIRED_MAC="${OFFICE_WIRED_MAC_OVERRIDE:-00:0e:c6:5d:e7:88}"' \
-        scripts/network-reconfigure; then
-    echo 'FAIL network-reconfigure does not identify the office LAN by its registered adapter' >&2
+# The office LAN is the link the office LAN authenticated. Anything weaker hands the office SmartDNS
+# fragment, the resolver pins and the table 19 underlay to a network that never authorized us.
+if ! grep -Fq "grep -Fqx 'suppPortStatus=Authorized'" scripts/network-reconfigure; then
+    echo 'FAIL network-reconfigure does not identify the office LAN by its 802.1X authorization' >&2
+    fail=1
+fi
+# A probe that could not be placed measured nothing. Reading that as success would install a default
+# route on no evidence, which is the one outcome the probe exists to prevent.
+if ! grep -Fq 'rc=$?' scripts/network-reconfigure ||
+   ! grep -Fq '[ "$rc" -eq 0 ]' scripts/network-reconfigure; then
+    echo 'FAIL wired internet probe does not require a conclusive success' >&2
     fail=1
 fi
 if ! grep -Fqx 'ExecStart=/usr/bin/wpa_supplicant -D wired -c /etc/wpa_supplicant/wpa_supplicant-wired.conf -i %I' \

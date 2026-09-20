@@ -1,0 +1,36 @@
+# Every Ethernet link: the Tencent office adapter, a phone tethered over USB, a hotel desk port.
+# One profile, because networkd cannot tell them apart — the thing that distinguishes them is what
+# the network does, not what the adapter is, and [Match] cannot express that.
+#
+# So networkd takes the address and nothing else. The default route is decided by
+# scripts/network-reconfigure, which installs one only after a TCP probe through the offered gateway
+# actually reaches the public internet. That is fail-closed in the direction that matters: the office
+# gateway reaches the intranet but not the internet, and a default route from it at metric 100 would
+# outrank Wi-Fi and blackhole everything, whereas a tether that does reach the internet gets its
+# route a moment after the lease instead of never. Accepting the gateway here is what made USB
+# tethering look dead on 2026-09-18 — the address arrived and nothing else did.
+#
+# UseRoutes=false for the same reason: classless static routes are the gateway's opinion about where
+# traffic should go, and this link has not yet earned one.
+#
+# On the office adapter, wpa_supplicant handles the 802.1X EAP-TLS session; its authorization state
+# is what marks the link as the office LAN.
+[Match]
+Type=ether
+Name=en*
+
+[Network]
+DHCP=yes
+DNS=127.0.0.1
+DNSDefaultRoute=false
+
+[DHCPv4]
+UseDNS=false
+UseNTP=false
+UseGateway=false
+UseRoutes=false
+RouteMetric=100
+SendHostname=false
+
+[IPv6AcceptRA]
+UseDNS=false

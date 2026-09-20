@@ -75,8 +75,9 @@ command wrapper assigns priorities 1100 and 1200, so Tailscale's transport escap
 always wins. Tables 20 and 230 remain SmartGateAgent-owned. An authenticated Tencent USB Ethernet
 route advertised in table `wired_underlay` has absolute preference for those two defaults, even when
 Wi-Fi has the lower `main` metric. Otherwise, the wrapper validates SmartGateAgent's requested gateway
-against physical defaults in `main`. This policy is based on the registered adapter advertisement,
-not on hard-coding `wlan0` or assuming every Ethernet interface is Tencent Ethernet.
+against physical defaults in `main`. This policy is based on the underlay advertisement made for an
+802.1X-authorized link, not on hard-coding `wlan0` or assuming every Ethernet interface is Tencent
+Ethernet.
 
 Linux evaluates lower numeric priorities first:
 
@@ -190,8 +191,8 @@ normal unmatched policy. The physical gateway is an explicit priority-1000 excep
 LAN can overlap `10/8`. DHCP resolvers receive an exception only while the lease advertises an
 RFC 8910 captive portal; without that portal SmartDNS does not use them and sending arbitrary
 traffic to their possibly public addresses outside the exit node would violate fail-closed.
-While the registered office adapter has both an address and a DHCP gateway, `network-reconfigure`
-takes the office resolver addresses from that adapter's DHCP lease, pins those exact addresses to
+While an 802.1X-authorized wired link has both an address and a DHCP gateway, `network-reconfigure`
+takes the office resolver addresses from that link's DHCP lease, pins those exact addresses to
 `main`, and gives each one a host route through the wired gateway; it removes all of that with the
 office fragment when the link disappears. Both halves are necessary. The addresses come from the
 lease rather than a checked-in list because each office advertises its own resolvers — this site
@@ -215,26 +216,47 @@ suppressed default, so it falls through to priority 1150 and table `ioa` as befo
 
 ### Which Ethernet link is the office LAN
 
-Two wired profiles exist, and the distinction between them is the adapter, not the interface name.
-`network/systemd-network/20-tencent-wired.network` matches the registered office adapter on its
-permanent hardware address `00:0e:c6:5d:e7:88` and withholds the DHCP gateway and routes from it.
-That link reaches the intranet but not the internet — a public probe through its gateway failed while
-the same probe over Wi-Fi returned 204 — so at its metric of 100 a default route from it would
-outrank Wi-Fi and blackhole everything. Its gateway is advertised in table 19 instead, which is where
-SmartGateAgent's underlay reads it from.
+The office LAN is the link that the office LAN authenticated. `office_wired_authorized` asks the
+802.1X supplicant, and the office SmartDNS fragment, the resolver pins and the table 19
+advertisement all hang off that one answer.
 
-`network/systemd-network/21-wired.network` matches every other Ethernet device and gives it a
-complete DHCP configuration including the gateway. networkd applies the first matching profile in
-lexical order, which is the only thing keeping the office adapter off this one. Until 2026-09-20 a
-single profile matched every `enp*` and applied the office link's `UseGateway=false` to all of them:
-a phone tethered over USB handed out an address and nothing else, which looks exactly like DHCP
-having failed. Only the office adapter has a reason to withhold the gateway.
+Two weaker judgements were tried on 2026-09-20 and both were wrong on the same axis. Matching any
+Ethernet name hands all three to a phone tethered over USB, mapping intranet domains at the phone's
+resolver and pointing SmartGateAgent's underlay at the phone's gateway. Matching the registered
+adapter's hardware address identifies the dongle rather than the network: the same dongle in a hotel
+port claims to be the office LAN, and any other card in a real office port is missed.
 
-`network-reconfigure` draws the same line in `office_wired_candidate`, and it must: the office
-SmartDNS fragment, the resolver pins and the table 19 advertisement all hang off that decision.
-Matching any Ethernet link hands all three to a tethered phone, mapping intranet domains at the
-phone's resolver and pointing SmartGateAgent's underlay at the phone's gateway. The address is read
-from netlink rather than `/sys/class/net`, which a bare network namespace does not virtualise.
+Authorization is also the honest reading of a port that hands out a lease and then refuses to
+authorize us. This one sat at `HELD`/`suppPortStatus=Unauthorized` after EAP-TLS failure: no
+internet, and its resolvers answered some intranet names and not others. Declining to call that the
+office LAN is what keeps iOA's bootstrap on the public endpoint it can actually reach. It has one
+visible cost — while such a port is up and iOA's tunnel is not, intranet names time out in the `ioa`
+group instead of being answered by resolvers that happen to work. That group is
+`-exclude-default-group` on purpose, so there is no public fallback, and the state resolves itself
+when the tunnel comes up.
+
+A link with no supplicant at all — a tether, a hotel port — fails the same check for the same reason.
+
+### Which wired gateway deserves the default route
+
+`network/systemd-network/20-wired.network` matches every Ethernet link and takes the address and
+nothing else. networkd cannot tell an office port from a tether, because what distinguishes them is
+what the network does and `[Match]` cannot express that.
+
+So `reconcile_wired_default_route` decides, and it installs nothing until one TCP handshake through
+the offered gateway has crossed to the public anchor the debug captures already use. That direction
+of fail-closed is the one that matters: the office gateway reaches the intranet and not the internet,
+and a default route from it at metric 100 outranks Wi-Fi and blackholes the host, whereas a tether
+that does reach the internet gets its route a moment after the lease instead of never. Accepting the
+gateway from the lease is what made USB tethering look dead on 2026-09-18 — the address arrived and
+nothing else did.
+
+The probe needs a route to the anchor before any default route exists, which is what its temporary
+host route is for; it is withdrawn on both outcomes. Exit 2 from `network-probe-tcp` means the probe
+never reached the path and measured nothing, and is not read as success — installing a default route
+on that would be installing one on no evidence. The route is removed by device rather than by
+gateway, because a link that moved to another network leaves a default route naming the old gateway,
+which is exactly the blackhole this exists to avoid.
 
 There is no `.link` file. One existed to apply a registered MAC `08:3a:88:5a:b5:37`, matched on
 `Path=pci-0000:00:14.0-usb-0:1:1.0`; the adapter has been on `usb-0:6:1.0` since, so the override

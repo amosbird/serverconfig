@@ -46,6 +46,25 @@ office_lease() {
     printf '                        10.76.9.15\n'
 }
 
+# The two verdicts the wired link is judged on, each a file so a test can change the network's mind
+# between runs: the supplicant's authorization state and whether the gateway reaches the internet.
+supplicant_says() { printf 'suppPortStatus=%s\n' "$1" > "$WORK/supp-status"; }
+probe_verdict()   { printf '%s\n' "$1" > "$WORK/probe-verdict"; }
+
+write_tool_stubs() {
+    cat >"$WORK/wpa_cli" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$(dirname "$0")/wpa_cli-calls"
+cat "$(dirname "$0")/supp-status" 2>/dev/null
+EOF
+    cat >"$WORK/probe" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$(dirname "$0")/probe-calls"
+exit "$(cat "$(dirname "$0")/probe-verdict" 2>/dev/null || echo 1)"
+EOF
+    chmod 755 "$WORK/wpa_cli" "$WORK/probe"
+}
+
 setup() {
     ip link add wlan0 type dummy
     ip link set wlan0 up
@@ -55,9 +74,6 @@ setup() {
     ip route add default via 10.36.48.1 dev wlan0
     ip link add enp1s0 type veth peer name wired-peer
     ip link set wired-peer up
-    # Wear the registered office adapter's address: that identity, not the interface name, is what
-    # marks a link as the office LAN.
-    ip link set enp1s0 address 00:0e:c6:5d:e7:88
     ip link set enp1s0 up
     ip addr add 10.76.76.210/26 dev enp1s0
     ip link add tun0 type dummy
@@ -81,6 +97,7 @@ setup() {
 run_script() {
     FORCE="${1:-0}" NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
         IOA_CGROUP_PATHS_OVERRIDE= \
+        WPA_CLI_OVERRIDE="$WORK/wpa_cli" PROBE_OVERRIDE="$WORK/probe" \
         bash "$SCRIPT" wlan0 2>&1 |
         grep -vE '^\+'
     local rc=${PIPESTATUS[0]}
@@ -93,6 +110,7 @@ run_script() {
 run_status() {
     FORCE="${1:-0}" NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
         IOA_CGROUP_PATHS_OVERRIDE= \
+        WPA_CLI_OVERRIDE="$WORK/wpa_cli" PROBE_OVERRIDE="$WORK/probe" \
         bash "$SCRIPT" wlan0 >/dev/null 2>&1
     echo $?
 }
@@ -319,7 +337,11 @@ EOF
     # The office resolvers arrive in the wired lease, like they do in the real one, so the office
     # fragment and its pins follow whichever site the laptop is plugged into.
     office_lease > "$WORK/wired-lease"
+    # Start as the authorized office port whose gateway has no way out, which is what the real one is.
+    supplicant_says Authorized
+    probe_verdict 1
     chmod 644 "$WORK"/*
+    write_tool_stubs
     chmod 777 "$WORK/tmp"
     chmod 755 "$WORK/nr-under-test"
 }
@@ -436,27 +458,85 @@ main() {
     fi
     office_lease > "$WORK/wired-lease"
     run_script 1 >/dev/null
-    # An Ethernet link that is not the registered adapter is an ordinary network — a tethered phone,
-    # a hotel port — and must not inherit the office fragment, its pins, or the underlay.
-    ip link set enp1s0 address 02:00:00:00:00:01
+
+    head_ "the office LAN is the link that authenticated us"
+    # A port that hands out a lease but refuses to authorize us is not the office LAN, however much
+    # its lease looks like one. This is the state the real port was in on 2026-09-20, and calling it
+    # the office LAN is what pointed iOA's bootstrap at an address it could not reach.
+    supplicant_says Unauthorized
     run_script 1 >/dev/null
     if grep -Fq 'Not on the office LAN' "$WORK/office-dst.conf"; then
-        ok "a foreign Ethernet adapter is not treated as the office LAN"
+        ok "an unauthorized port is not treated as the office LAN"
     else
-        bad "a foreign Ethernet adapter was treated as the office LAN"
+        bad "an unauthorized port was treated as the office LAN"
     fi
     if [ -z "$(ip route show table 19)" ]; then
-        ok "a foreign Ethernet adapter gets no underlay advertisement"
+        ok "an unauthorized port gets no underlay advertisement"
     else
-        bad "a foreign Ethernet adapter was advertised in table 19: $(ip route show table 19)"
+        bad "an unauthorized port was advertised in table 19: $(ip route show table 19)"
     fi
     for resolver in $OFFICE_RESOLVERS; do
         if band 1000 | grep -Fq "to $resolver lookup main"; then
-            bad "a foreign Ethernet adapter retained office resolver pin $resolver"
+            bad "an unauthorized port retained office resolver pin $resolver"
         fi
     done
-    ip link set enp1s0 address 00:0e:c6:5d:e7:88
+    # A link with no supplicant at all — a tether, a hotel port — fails for the same reason.
+    rm -f "$WORK/supp-status"
     run_script 1 >/dev/null
+    if grep -Fq 'Not on the office LAN' "$WORK/office-dst.conf"; then
+        ok "a link with no supplicant is not treated as the office LAN"
+    else
+        bad "a link with no supplicant was treated as the office LAN"
+    fi
+
+    head_ "a wired default route has to be earned"
+    # Still unauthenticated, and now the gateway answers a public anchor: an ordinary network that is
+    # the only way out while it is plugged in, so it gets main's default route.
+    probe_verdict 0
+    run_script 1 >/dev/null
+    if ip -4 route show table main default | grep -Fq 'default via 10.76.76.193 dev enp1s0 metric 100'; then
+        ok "a gateway that reaches the internet earns main's default route"
+    else
+        bad "a verified wired gateway got no default route: $(ip -4 route show table main default)"
+    fi
+    if [ "$(grep -c -- "--target 216.239.32.117 --port 80" "$WORK/probe-calls")" -ge 1 ]; then
+        ok "the wired gateway is judged by a probe across it"
+    else
+        bad "no probe was placed across the wired gateway"
+    fi
+    if ip -4 route show table main | grep -Fq '216.239.32.117'; then
+        bad "the probe's host route was left behind: $(ip -4 route show table main | grep 216.239)"
+    else
+        ok "the probe withdraws its own host route"
+    fi
+    # The probe could not be placed, so it measured nothing. Installing a default route on that would
+    # be installing one on no evidence.
+    probe_verdict 2
+    run_script 1 >/dev/null
+    if ip -4 route show table main default | grep -Fq 'dev enp1s0'; then
+        bad "an unplaceable probe was read as success: $(ip -4 route show table main default)"
+    else
+        ok "an unplaceable probe does not earn a default route"
+    fi
+    probe_verdict 1
+    run_script 1 >/dev/null
+    if ip -4 route show table main default | grep -Fq 'dev enp1s0'; then
+        bad "a failed probe left a wired default route: $(ip -4 route show table main default)"
+    else
+        ok "a gateway that reaches nothing loses main's default route"
+    fi
+    supplicant_says Authorized
+    run_script 1 >/dev/null
+    if grep -Fq 'nameserver /oa.com/ioa' "$WORK/office-dst.conf"; then
+        ok "re-authorization restores the office fragment"
+    else
+        bad "re-authorization did not restore the office fragment"
+    fi
+    if ip -4 route show table main default | grep -Fq 'dev enp1s0'; then
+        bad "the authorized office gateway kept a default route it cannot serve"
+    else
+        ok "the authorized office gateway still owns no default route"
+    fi
     local wired_owner_before
     wired_owner_before=$(snapshot_owner_state)
     ip link set enp1s0 down
