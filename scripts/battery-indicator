@@ -14,6 +14,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 
 import trayorder
+import traytooltip
 
 ICON_SIZE = 96
 DESIGN_SIZE = 96
@@ -86,6 +87,7 @@ class BatteryIndicator:
         self.remaining = 0
         self.warned = set()
         self.icon = None
+        self.tip = traytooltip.Tooltip()
         self.dock()
         self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
         # UPower recomputes the composite DisplayDevice on every battery and
@@ -228,7 +230,8 @@ class BatteryIndicator:
             self.status_icon(self.percentage, self.charging, ICON_SIZE)
         )
         self.icon.set_title("Battery")
-        self.icon.set_tooltip_text(self.tooltip())
+        self.tip.attach([self.icon])
+        self.tip.set(self.tooltip())
         self.icon.connect("size-changed", self.on_icon_size_changed)
         self.icon.connect("popup-menu", self.show_menu)
         self.icon.connect("activate", self.activate)
@@ -272,8 +275,7 @@ class BatteryIndicator:
     def refresh(self):
         self.load()
         self.draw_icon()
-        if self.icon is not None:
-            self.icon.set_tooltip_text(self.tooltip())
+        self.tip.set(self.tooltip())
         self.warn_if_low()
         return False
 

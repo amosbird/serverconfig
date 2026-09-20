@@ -26,6 +26,7 @@ gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo
 
 import trayorder
+import traytooltip
 
 ICON_SIZE = 96
 DESIGN_SIZE = 96
@@ -105,6 +106,7 @@ class ClockIndicator:
     def __init__(self):
         self.moment = now()
         self.icons = []
+        self.tip = traytooltip.Tooltip()
         self.dock()
         self.watch_resume()
         self.tick()
@@ -122,12 +124,13 @@ class ClockIndicator:
         for slot in range(SLOTS):
             icon = Gtk.StatusIcon.new_from_pixbuf(self.slot_pixbuf(self.moment, ICON_SIZE, slot))
             icon.set_title("Clock")
-            icon.set_tooltip_text("\n".join(tooltip_lines(self.moment)))
             icon.connect("size-changed", self.on_icon_size_changed)
             icon.connect("popup-menu", self.show_menu)
             icon.connect("activate", self.activate)
             icon.set_visible(True)
             self.icons.append(icon)
+        self.tip.attach(self.icons)
+        self.tip.set("\n".join(tooltip_lines(self.moment)))
 
     def undock(self):
         self.icons = []
@@ -211,9 +214,7 @@ class ClockIndicator:
             # Out of the row for a sort; dock() draws from self.moment.
             return False
         self.paint(self.icons[0].get_size() or ICON_SIZE)
-        tooltip = "\n".join(tooltip_lines(self.moment))
-        for icon in self.icons:
-            icon.set_tooltip_text(tooltip)
+        self.tip.set("\n".join(tooltip_lines(self.moment)))
         return False
 
     def tick(self):

@@ -18,6 +18,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk
 
 import trayorder
+import traytooltip
 
 ICON_SIZE = 96
 DESIGN_SIZE = 96
@@ -83,6 +84,7 @@ class BluetoothIndicator:
         self.icon = None
         self.icon_state = "OFF"
         self.tooltip = ""
+        self.tip = traytooltip.Tooltip()
         self.dock()
         self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
         self.bus.signal_subscribe(
@@ -346,7 +348,8 @@ class BluetoothIndicator:
     def dock(self):
         self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon(self.icon_state, ICON_SIZE))
         self.icon.set_title("Bluetooth")
-        self.icon.set_tooltip_text(self.tooltip)
+        self.tip.attach([self.icon])
+        self.tip.set(self.tooltip)
         self.icon.connect("size-changed", self.on_icon_size_changed)
         self.icon.connect("popup-menu", self.show_menu)
         self.icon.connect("activate", self.activate)
@@ -407,8 +410,7 @@ class BluetoothIndicator:
             self.set_icon_state("MUTED")
             tooltip += "\nOutput muted — Ctrl-F1 / volume mute to unmute"
         self.tooltip = tooltip
-        if self.icon is not None:
-            self.icon.set_tooltip_text(tooltip)
+        self.tip.set(tooltip)
         return False
 
     def on_bluez_changed(self, *_args):
