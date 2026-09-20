@@ -214,13 +214,26 @@ dhcp_captive_portal_hostname() {
         python3 -c 'import sys, urllib.parse; print(urllib.parse.urlparse(sys.stdin.read().strip()).hostname or "")'
 }
 
-wired_devices() {
+# Only the registered Tencent adapter is the office LAN, and everything downstream depends on that
+# distinction: the office SmartDNS fragment, the resolver pins, and the table 19 underlay
+# advertisement. Matching any Ethernet name instead — which is what this did until 2026-09-20 —
+# hands all three to a phone tethered over USB, mapping intranet domains at the phone's resolver and
+# pointing SmartGateAgent's underlay at the phone's gateway. The address comes from netlink rather
+# than /sys/class/net, which a bare network namespace does not virtualise.
+OFFICE_WIRED_MAC="${OFFICE_WIRED_MAC_OVERRIDE:-00:0e:c6:5d:e7:88}"
+
+office_wired_devices() {
     ip -o link show up |
-        awk -F': ' '$2 ~ /^enp/ { sub(/@.*/, "", $2); print $2 }' |
-        sort -u
+        awk -v mac="$OFFICE_WIRED_MAC" -F': ' '
+            $2 !~ /^en/ { next }
+            match($0, /link\/ether [0-9a-f:]+/) &&
+            substr($0, RSTART + 11, RLENGTH - 11) == mac {
+                sub(/@.*/, "", $2); print $2
+            }
+        ' | sort -u
 }
 
-wired_candidate() {
+office_wired_candidate() {
     local dev gateway
     while read -r dev; do
         [ -n "$(ip -4 -o addr show "$dev" scope global)" ] || continue
@@ -228,18 +241,41 @@ wired_candidate() {
         [ -n "$gateway" ] || continue
         printf '%s %s\n' "$dev" "$gateway"
         return
-    done < <(wired_devices)
+    done < <(office_wired_devices)
 }
 
 count_routes() { { ip route show table "$1" 2>/dev/null || true; } | wc -l; }
 has_routes() { [ "$(count_routes "$1")" -gt 0 ]; }
 
+# Read from the lease, not from a checked-in list. Each office advertises its own resolvers — this
+# site hands out 21.7.193.132, 21.7.193.156 and 10.76.9.15, none of which were among the three
+# addresses the repository used to hardcode — so a fixed list is stale everywhere except where it
+# was written.
 office_dns_servers() {
-    awk '
-        $1 == "server" && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ {
-            print $2
-        }
-    ' "$OFFICE_SRC" 2>/dev/null | sort -u
+    [ -n "$1" ] || return 0
+    dhcp_dns_servers "$1"
+}
+
+# The office resolvers sit off-link behind the wired gateway, and the office link contributes no
+# default route to main, so the priority-1000 pins that send them to main had nothing to resolve them
+# through: all three timed out on 2026-09-20 while the same queries answered in milliseconds once
+# routed through that gateway. Give each one an explicit host route there. Resolvers left over from
+# another site are withdrawn; a link that goes away takes its routes with it.
+reconcile_office_resolver_routes() {
+    local dev=$1 gateway=$2 resolver wanted desired=()
+    while read -r resolver; do
+        [ -n "$resolver" ] || continue
+        ip route replace "$resolver" via "$gateway" dev "$dev"
+        desired+=("$resolver")
+    done < <(office_dns_servers "$dev")
+    while read -r resolver; do
+        [ -n "$resolver" ] || continue
+        for wanted in ${desired[@]+"${desired[@]}"}; do
+            [ "$wanted" = "$resolver" ] && continue 2
+        done
+        ip route del "$resolver" dev "$dev" 2>/dev/null || true
+    done < <(ip -4 route show table main dev "$dev" 2>/dev/null |
+        awk '$1 !~ /\// && $2 == "via" { print $1 }')
 }
 
 validate_fixed_table() {
@@ -328,7 +364,7 @@ done || true
 portal_hostname=$(dhcp_captive_portal_hostname "$IFACE")
 wired_dev=''
 wired_gateway=''
-read -r wired_dev wired_gateway < <(wired_candidate || true) || true
+read -r wired_dev wired_gateway < <(office_wired_candidate || true) || true
 
 # Keep SmartDNS fragments atomic and restart only when their contents change.
 SMARTDNS_CHANGED=0
@@ -371,7 +407,12 @@ fi
 if [ -z "$wired_dev" ] || [ -z "$wired_gateway" ]; then
     write_if_changed "$OFFICE_DST" "# Not on the office LAN"
 elif [ -r "$OFFICE_SRC" ]; then
-    write_if_changed "$OFFICE_DST" "$(cat "$OFFICE_SRC")"
+    # shellcheck disable=SC2086 # resolvers intentionally expand to separate arguments
+    write_if_changed "$OFFICE_DST" \
+        "$(cat "$OFFICE_SRC"; \
+           printf '\n# Resolvers advertised by the %s DHCP lease\n' "$wired_dev"; \
+           printf 'server %s -group ioa -exclude-default-group\n' \
+               $(office_dns_servers "$wired_dev"))"
 else
     warn "cannot read $OFFICE_SRC; leaving $OFFICE_DST as it is"
 fi
@@ -388,6 +429,7 @@ if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
         [ "$route" = "default via $wired_gateway dev $wired_dev onlink" ] ||
             ip route del $route table "$WIRED_UNDERLAY_TABLE"
     done < <(ip route show table "$WIRED_UNDERLAY_TABLE")
+    reconcile_office_resolver_routes "$wired_dev" "$wired_gateway"
 else
     ip route flush table "$WIRED_UNDERLAY_TABLE" 2>/dev/null || true
 fi
@@ -468,7 +510,7 @@ fi
 if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
     while read -r addr; do
         [ -n "$addr" ] && local_band+=("from all to $addr lookup main")
-    done < <(office_dns_servers)
+    done < <(office_dns_servers "$wired_dev")
 fi
 DESIRED_BANDS[$P_LOCAL]=$(band_of "${local_band[@]}")
 set_cn_bands

@@ -62,7 +62,7 @@ the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owne
 | 400 | `fwmark 0x1000000` | `main` | Force the system IOA underlay packets onto the physical route. |
 | 401 | `fwmark 0x1000000` | `prohibit` | Fail closed if no physical route exists; never fall through to Tailscale. |
 | 500 | `fwmark 0x80000/0xff0000` | `main` | Let Tailscale-owned transport packets reach the physical network. |
-| 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, captive-portal resolvers, and active office resolvers | `main` | Keep the actual LAN and its required infrastructure direct. |
+| 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, captive-portal resolvers, and the office resolvers from the wired lease | `main` | Keep the actual LAN and its required infrastructure direct. |
 | 1100 | SmartGateAgent-owned `fwmark 0xa38` | `20` | Send SmartGate control traffic through its current physical underlay. |
 | 1150 | exact `fwmark 0x1`, then `10.0.0.0/8` | `ioa` | Select DNS-classified IOA traffic and retain a literal-address fallback for private Tencent destinations. |
 | 1200 | SmartGateAgent-owned physical source address | `230` | Keep its source-bound sockets on the current physical underlay. |
@@ -190,9 +190,16 @@ normal unmatched policy. The physical gateway is an explicit priority-1000 excep
 LAN can overlap `10/8`. DHCP resolvers receive an exception only while the lease advertises an
 RFC 8910 captive portal; without that portal SmartDNS does not use them and sending arbitrary
 traffic to their possibly public addresses outside the exit node would violate fail-closed.
-While an authenticated wired link has both an address and DHCP gateway, `network-reconfigure`
-also extracts the office resolver addresses from `network/smartdns/office.conf` and pins those
-exact addresses to `main`; it removes the pins with the office fragment when the link disappears.
+While the registered office adapter has both an address and a DHCP gateway, `network-reconfigure`
+takes the office resolver addresses from that adapter's DHCP lease, pins those exact addresses to
+`main`, and gives each one a host route through the wired gateway; it removes all of that with the
+office fragment when the link disappears. Both halves are necessary. The addresses come from the
+lease rather than a checked-in list because each office advertises its own resolvers — this site
+hands out `21.7.193.132`, `21.7.193.156` and `10.76.9.15`, none of which were among the three
+addresses the repository hardcoded until 2026-09-20, so the pins named resolvers that do not exist
+here. The host routes exist because the office link deliberately contributes no default route to
+`main`, so a pin to `main` had nothing to resolve the address through: all three timed out while the
+same queries answered in milliseconds once routed through the wired gateway.
 
 Those enumerated pins are a snapshot, so priority 1000 also carries `from all lookup main
 suppress_prefixlength 0`. It asks the kernel for `main` without its default route, which is exactly
@@ -206,14 +213,59 @@ indistinguishable from a dead network. Suppressing prefix length 0 is deliberate
 IOA selection: a `10/8` destination that is not on-link still has no route in `main` other than the
 suppressed default, so it falls through to priority 1150 and table `ioa` as before.
 
-The registered Tencent USB Ethernet adapter is path-matched by
-`network/systemd-network/10-tencent-wired.link`. A hardware-restricted udev rule matches USB identity
-`0b95:1790:00000EC65DE788` on every non-remove net event and requests
-`wpa_supplicant@enp9s0u2u1u2.service`; handling the rename `move` event preserves the request after
-udev changes `eth0` to its persistent name. Other computers and Ethernet adapters do not start
-Tencent EAP-TLS. `BindsTo=` stops the supplicant when the USB adapter is removed, and reinsertion
-triggers a fresh authentication session. `restore.sh` installs this policy but never enables or
-starts a machine-specific instance.
+### Which Ethernet link is the office LAN
+
+Two wired profiles exist, and the distinction between them is the adapter, not the interface name.
+`network/systemd-network/20-tencent-wired.network` matches the registered office adapter on its
+permanent hardware address `00:0e:c6:5d:e7:88` and withholds the DHCP gateway and routes from it.
+That link reaches the intranet but not the internet — a public probe through its gateway failed while
+the same probe over Wi-Fi returned 204 — so at its metric of 100 a default route from it would
+outrank Wi-Fi and blackhole everything. Its gateway is advertised in table 19 instead, which is where
+SmartGateAgent's underlay reads it from.
+
+`network/systemd-network/21-wired.network` matches every other Ethernet device and gives it a
+complete DHCP configuration including the gateway. networkd applies the first matching profile in
+lexical order, which is the only thing keeping the office adapter off this one. Until 2026-09-20 a
+single profile matched every `enp*` and applied the office link's `UseGateway=false` to all of them:
+a phone tethered over USB handed out an address and nothing else, which looks exactly like DHCP
+having failed. Only the office adapter has a reason to withhold the gateway.
+
+`network-reconfigure` draws the same line in `office_wired_candidate`, and it must: the office
+SmartDNS fragment, the resolver pins and the table 19 advertisement all hang off that decision.
+Matching any Ethernet link hands all three to a tethered phone, mapping intranet domains at the
+phone's resolver and pointing SmartGateAgent's underlay at the phone's gateway. The address is read
+from netlink rather than `/sys/class/net`, which a bare network namespace does not virtualise.
+
+There is no `.link` file. One existed to apply a registered MAC `08:3a:88:5a:b5:37`, matched on
+`Path=pci-0000:00:14.0-usb-0:1:1.0`; the adapter has been on `usb-0:6:1.0` since, so the override
+never applied, and EAP-TLS authenticates on the certificate rather than the address.
+
+A hardware-restricted udev rule matches USB identity `0b95:1790:00000EC65DE788` on every non-remove
+net event and requests `wpa_supplicant@enp9s0u2u1u2.service`; handling the rename `move` event
+preserves the request after udev changes `eth0` to its persistent name. Other computers and Ethernet
+adapters do not start Tencent EAP-TLS. `BindsTo=` stops the supplicant when the USB adapter is
+removed, and reinsertion triggers a fresh authentication session. `restore.sh` installs this policy
+but never enables or starts a machine-specific instance.
+
+### iOA bootstrap endpoints stay public
+
+`network/smartdns/smartdns.conf` maps `smartgate.oa.tencent.com`, `sgw.woa.com` and
+`ioa.tencent.com` to the public `china` group and excludes them from the `ioa` ipset, and the office
+fragment must not override either half. iOA's own transport is owner-marked onto priority 400, which
+looks up `main`, whose default route belongs to the internet-facing link. Its endpoints therefore
+have to resolve to addresses reachable from there.
+
+The office fragment used to remap all three to the internal `ioa` group. On 2026-09-20 that returned
+`freeconnect.ioa.tencent.com = 10.88.202.158`, reachable only through the wired link or the tunnel,
+so iOA sprayed SYNs at it over Tencent-WiFi every three seconds, never logged in, and every intranet
+TLS connection through `tun0` was accepted and then dropped by SmartGate for want of a session. The
+public answer `124.223.148.20` was reachable from that same Wi-Fi throughout.
+
+Both test suites now check this, and neither did before. `test-reconfigure.sh` asserted the absence
+of those mappings in the *deployed* copy but pointed `OFFICE_SRC` at a hand-written stub that never
+contained them, so it passed while the shipped fragment broke login; it now copies the real
+fragment into the namespace. `test-static-policy.sh` asserted the opposite — that the mappings were
+present — which is how the two suites came to encode contradictory intent.
 
 ## SmartDNS IOA classification
 

@@ -201,8 +201,14 @@ if [[ -n $GUI ]]; then
     # iwd down, and the restart loop ended in start-limit-hit with no wireless at all.
     sudo rm -f /etc/systemd/system/iwd.service.d/xlsmart-directed-recovery.conf
     sudo rm -f /etc/dbus-1/system.d/iwd-station-debug-root.conf
+    # One profile used to match every enp*, so a phone tethered over USB inherited the office link's
+    # UseGateway=false and came up with an address but no way out. 20-tencent-wired.network now owns
+    # the office adapter alone and 21-wired.network gives every other Ethernet a full lease.
+    sudo rm -f /etc/systemd/network/20-wired.network
+    # The MAC override this .link carried never applied: it matched one USB port and the adapter has
+    # been on another since. EAP-TLS authenticates on the certificate, not the address.
+    sudo rm -f /etc/systemd/network/10-tencent-wired.link
     sudo cp "$DIR"/network/systemd-network/*.network /etc/systemd/network/
-    sudo cp "$DIR"/network/systemd-network/*.link /etc/systemd/network/
     if sudo systemctl is-active --quiet systemd-networkd.service; then
         sudo networkctl reload
     fi

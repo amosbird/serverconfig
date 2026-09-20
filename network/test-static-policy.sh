@@ -113,11 +113,24 @@ for domain in smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com; do
         echo "FAIL base SmartDNS does not map $domain exactly once to china" >&2
         fail=1
     fi
-    if [ "$(grep -Fxc "nameserver /$domain/ioa" network/smartdns/office.conf)" -ne 1 ]; then
-        echo "FAIL office SmartDNS does not map $domain exactly once to ioa" >&2
+    # iOA's transport is owner-marked onto main, whose default route belongs to the internet-facing
+    # link, so its bootstrap endpoints must resolve to addresses reachable from there. Overriding
+    # them to the intranet answer on the office LAN is what stopped iOA logging in on 2026-09-20.
+    if grep -Fqx "nameserver /$domain/ioa" network/smartdns/office.conf; then
+        echo "FAIL office SmartDNS overrides the $domain bootstrap endpoint with an intranet answer" >&2
         fail=1
     fi
 done
+# The resolvers come from the wired DHCP lease, which differs per site. A checked-in list is stale
+# everywhere it was not written: this office advertises none of the three addresses once hardcoded.
+if grep -Eq '^server[[:space:]]' network/smartdns/office.conf; then
+    echo 'FAIL office SmartDNS hardcodes resolvers instead of reading the wired DHCP lease' >&2
+    fail=1
+fi
+if ! grep -Fq 'dhcp_dns_servers "$1"' scripts/network-reconfigure; then
+    echo 'FAIL network-reconfigure does not derive office resolvers from the wired lease' >&2
+    fail=1
+fi
 if [ "$(grep -Fxc 'ipset /woa.com/ioa' network/smartdns/smartdns.conf)" -ne 1 ]; then
     echo 'FAIL SmartDNS broad woa.com business classification is missing or duplicated' >&2
     fail=1
@@ -341,17 +354,51 @@ fi
 foreign_routing_config=network/systemd-networkd.conf.d/foreign-routing.conf
 iwd_config=network/iwd/main.conf
 wireless_config=network/systemd-network/25-wireless.network
-tencent_wired_link=network/systemd-network/10-tencent-wired.link
+office_wired_config=network/systemd-network/20-tencent-wired.network
+generic_wired_config=network/systemd-network/21-wired.network
 obsolete_tencent_config=network/systemd-network/26-wireless-tencent.network
 
-if [ ! -f "$tencent_wired_link" ] ||
-   [ "$(grep -Fxc 'Path=pci-0000:00:14.0-usb-0:1:1.0' "$tencent_wired_link")" -ne 1 ] ||
-   [ "$(grep -Fxc 'MACAddress=08:3a:88:5a:b5:37' "$tencent_wired_link")" -ne 1 ]; then
-    echo 'FAIL Tencent wired registered MAC link policy is missing or incorrect' >&2
+# The office link reaches the intranet but not the internet, so it must never contribute main's
+# default route, and it is identified by the adapter rather than by matching every Ethernet name.
+if [ "$(grep -Fxc 'PermanentMACAddress=00:0e:c6:5d:e7:88' "$office_wired_config")" -ne 1 ] ||
+   [ "$(grep -Fxc 'UseGateway=false' "$office_wired_config")" -ne 1 ] ||
+   [ "$(grep -Fxc 'UseRoutes=false' "$office_wired_config")" -ne 1 ]; then
+    echo 'FAIL office wired profile does not withhold the default route from the registered adapter' >&2
     fail=1
 fi
-if ! grep -Fq 'network/systemd-network/*.link' restore.sh; then
-    echo 'FAIL restore does not deploy systemd link policy' >&2
+# Any other Ethernet is an ordinary network and usually the only way out while it is plugged in.
+# Inheriting the office link's suppression is what made USB tethering look like a dead link.
+if grep -Eq '^Use(Gateway|Routes)=false' "$generic_wired_config"; then
+    echo 'FAIL generic wired profile withholds the DHCP gateway from ordinary Ethernet' >&2
+    fail=1
+fi
+if [ "$(grep -Fxc 'PermanentMACAddress=00:0e:c6:5d:e7:88' "$generic_wired_config")" -ne 0 ]; then
+    echo 'FAIL generic wired profile claims the registered office adapter' >&2
+    fail=1
+fi
+# networkd applies the first matching profile in lexical order, which is the only thing keeping the
+# office adapter off the generic profile.
+if ! [ "$office_wired_config" \< "$generic_wired_config" ]; then
+    echo 'FAIL office wired profile does not sort before the generic one' >&2
+    fail=1
+fi
+for obsolete in network/systemd-network/20-wired.network \
+                network/systemd-network/10-tencent-wired.link
+do
+    if [ -e "$obsolete" ]; then
+        echo "FAIL $obsolete was replaced by the split wired profiles but still exists" >&2
+        fail=1
+    fi
+    if ! grep -Fq "sudo rm -f /etc/systemd/network/$(basename "$obsolete")" restore.sh; then
+        echo "FAIL restore does not remove the deployed $(basename "$obsolete")" >&2
+        fail=1
+    fi
+done
+# Only the registered adapter may be treated as the office LAN. Matching any Ethernet hands the
+# office SmartDNS fragment, the resolver pins and the table 19 underlay to a tethered phone.
+if ! grep -Fq 'OFFICE_WIRED_MAC="${OFFICE_WIRED_MAC_OVERRIDE:-00:0e:c6:5d:e7:88}"' \
+        scripts/network-reconfigure; then
+    echo 'FAIL network-reconfigure does not identify the office LAN by its registered adapter' >&2
     fail=1
 fi
 if ! grep -Fqx 'ExecStart=/usr/bin/wpa_supplicant -D wired -c /etc/wpa_supplicant/wpa_supplicant-wired.conf -i %I' \

@@ -37,6 +37,15 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 # A namespace that looks enough like the real machine for the script to run:
 # a "physical" link with a gateway, a DHCP-style resolver, and tunnel-owner sentinels.
+OFFICE_RESOLVERS='10.76.9.15 21.7.193.132 21.7.193.156'
+
+office_lease() {
+    printf '   3 router %s\n' "${1:-10.76.76.193}"
+    printf '   6 domain name server 21.7.193.132\n'
+    printf '                        21.7.193.156\n'
+    printf '                        10.76.9.15\n'
+}
+
 setup() {
     ip link add wlan0 type dummy
     ip link set wlan0 up
@@ -46,6 +55,9 @@ setup() {
     ip route add default via 10.36.48.1 dev wlan0
     ip link add enp1s0 type veth peer name wired-peer
     ip link set wired-peer up
+    # Wear the registered office adapter's address: that identity, not the interface name, is what
+    # marks a link as the office LAN.
+    ip link set enp1s0 address 00:0e:c6:5d:e7:88
     ip link set enp1s0 up
     ip addr add 10.76.76.210/26 dev enp1s0
     ip link add tun0 type dummy
@@ -268,6 +280,10 @@ for old, new in [
     ('ROUTEFILE="/home/amos/.routefile"', 'ROUTEFILE="%s/routefile"' % work),
     ('CN_EXCLUDE_FILE="/home/amos/git/serverconfig/network/cn-exclude.conf"',
      'CN_EXCLUDE_FILE="%s/cn-exclude.conf"' % work),
+    # OFFICE_SRC points at a *copy* of the shipped fragment rather than a hand-written stub. The stub
+    # is what let the intranet bootstrap override slip in: it never had those lines, so the assertion
+    # that forbids them passed while the shipped file broke iOA login. The copy is needed because
+    # `unshare -r` runs the namespace as nobody, which cannot read anything under /home/amos.
     ('OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"',
      'OFFICE_SRC="%s/office.conf"' % work),
     ('OFFICE_DST="/etc/smartdns/office.conf"', 'OFFICE_DST="%s/office-dst.conf"' % work),
@@ -295,18 +311,14 @@ EOF
     printf 'route add 10.20.0.0/16 via GATEWAY table cn\n' >> "$WORK/routefile"
     printf 'route add 100.12.34.0/24 via GATEWAY table cn\n' >> "$WORK/routefile"
     printf '# Explicit CN bypasses\n193.112.78.32/32\n' > "$WORK/cn-exclude.conf"
-    cat >"$WORK/office.conf" <<'EOF'
-# office
-server 10.76.3.38 -group ioa -exclude-default-group
-server 10.76.3.39 -group ioa -exclude-default-group
-server 10.14.198.15 -group ioa -exclude-default-group
-EOF
     # The lease is a file so a test can hand out a different resolver, which is
     # what a roam onto another AP actually does. Two servers on a continuation
     # line, because that wrapping is what the awk state machine exists for.
     printf '   6 domain name server 202.152.254.230\n                        202.152.254.65\n 114 captive portal     https://login.hotel.test/api\n' \
         > "$WORK/lease"
-    printf '   3 router 10.76.76.193\n' > "$WORK/wired-lease"
+    # The office resolvers arrive in the wired lease, like they do in the real one, so the office
+    # fragment and its pins follow whichever site the laptop is plugged into.
+    office_lease > "$WORK/wired-lease"
     chmod 644 "$WORK"/*
     chmod 777 "$WORK/tmp"
     chmod 755 "$WORK/nr-under-test"
@@ -399,6 +411,52 @@ main() {
             ok "office DNS leaves bootstrap public: $mapping"
         fi
     done
+    # A pin to main is worthless while main has no route to the resolver: this link deliberately
+    # contributes no default route, so each resolver needs its own way through the wired gateway.
+    for resolver in $OFFICE_RESOLVERS; do
+        if ip -4 route show table main dev enp1s0 | grep -Fq "$resolver via 10.76.76.193"; then
+            ok "office resolver $resolver reaches main through the wired gateway"
+        else
+            bad "office resolver $resolver has no route through the wired gateway"
+        fi
+        if grep -Fqx "server $resolver -group ioa -exclude-default-group" \
+                "$WORK/office-dst.conf"; then
+            ok "office DNS adopts lease resolver $resolver"
+        else
+            bad "office DNS omits lease resolver $resolver"
+        fi
+    done
+    # Another site hands out other resolvers; last site's host routes must not survive the move.
+    printf '   3 router 10.76.76.193\n   6 domain name server 10.76.9.15\n' > "$WORK/wired-lease"
+    run_script 1 >/dev/null
+    if ip -4 route show table main dev enp1s0 | grep -Fq '21.7.193.132 via'; then
+        bad "resolver from the previous site survived the lease change"
+    else
+        ok "resolver from the previous site is withdrawn on a lease change"
+    fi
+    office_lease > "$WORK/wired-lease"
+    run_script 1 >/dev/null
+    # An Ethernet link that is not the registered adapter is an ordinary network — a tethered phone,
+    # a hotel port — and must not inherit the office fragment, its pins, or the underlay.
+    ip link set enp1s0 address 02:00:00:00:00:01
+    run_script 1 >/dev/null
+    if grep -Fq 'Not on the office LAN' "$WORK/office-dst.conf"; then
+        ok "a foreign Ethernet adapter is not treated as the office LAN"
+    else
+        bad "a foreign Ethernet adapter was treated as the office LAN"
+    fi
+    if [ -z "$(ip route show table 19)" ]; then
+        ok "a foreign Ethernet adapter gets no underlay advertisement"
+    else
+        bad "a foreign Ethernet adapter was advertised in table 19: $(ip route show table 19)"
+    fi
+    for resolver in $OFFICE_RESOLVERS; do
+        if band 1000 | grep -Fq "to $resolver lookup main"; then
+            bad "a foreign Ethernet adapter retained office resolver pin $resolver"
+        fi
+    done
+    ip link set enp1s0 address 00:0e:c6:5d:e7:88
+    run_script 1 >/dev/null
     local wired_owner_before
     wired_owner_before=$(snapshot_owner_state)
     ip link set enp1s0 down
@@ -418,7 +476,7 @@ main() {
     else
         ok "wired loss removes office bootstrap DNS mappings"
     fi
-    for resolver in 10.76.3.38 10.76.3.39 10.14.198.15; do
+    for resolver in $OFFICE_RESOLVERS; do
         if band 1000 | grep -Fq "to $resolver lookup main"; then
             bad "wired loss retained office resolver pin $resolver"
         else
@@ -426,7 +484,7 @@ main() {
         fi
     done
     ip link set enp1s0 up
-    printf '   3 router 10.76.76.194\n' > "$WORK/wired-lease"
+    office_lease 10.76.76.194 > "$WORK/wired-lease"
     run_script 1 >/dev/null
     if ip route show table 19 | sed -E 's/[[:space:]]+$//' | grep -Fqx \
             'default via 10.76.76.194 dev enp1s0 onlink'; then
@@ -434,7 +492,7 @@ main() {
     else
         bad "wired gateway change did not converge: $(ip route show table 19)"
     fi
-    printf '   3 router 10.76.76.193\n' > "$WORK/wired-lease"
+    office_lease > "$WORK/wired-lease"
     run_script 1 >/dev/null
 
     route_error=$(route_table invalid-destination 2>&1)
@@ -469,7 +527,7 @@ main() {
     else
         bad "priority 1000 lacks the live connected-route lookup: $(band 1000)"
     fi
-    for resolver in 10.76.3.38 10.76.3.39 10.14.198.15; do
+    for resolver in $OFFICE_RESOLVERS; do
         if [ "$(band 1000 | grep -Fxc "from all to $resolver lookup main")" -eq 1 ]; then
             ok "active office resolver $resolver is pinned to main"
         else
@@ -1224,6 +1282,10 @@ if [ -z "${IN_NETNS:-}" ]; then
     chmod 755 "$WORK"
     build_under_test || { echo "could not build the script under test"; exit 1; }
     [ -s "$WORK/nr-under-test" ] || { echo "the built copy is empty"; exit 1; }
+    # Copied out here, where the repository is still readable, so the namespace exercises the
+    # fragment that actually ships instead of a stub written to match the assertions.
+    cp /home/amos/git/serverconfig/network/smartdns/office.conf "$WORK/office.conf" || exit 1
+    chmod 644 "$WORK/office.conf"
     exec 9</proc/self/ns/net
     export HOST_NETNS_FD=9
     export HOST_NETNS_LINK=$current_netns_link

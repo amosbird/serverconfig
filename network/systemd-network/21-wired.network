@@ -1,0 +1,25 @@
+# Every Ethernet link that is not the registered Tencent adapter: a phone tethered over USB, a hotel
+# desk port, another company's LAN. Such a link is normally the only path to the internet while it is
+# plugged in, so it takes a complete DHCP configuration including the gateway and routes.
+#
+# Withholding the gateway here is what made USB tethering look dead on 2026-09-18. A single profile
+# matched every enp*, inherited the office link's UseGateway=false, and so the phone handed out an
+# address and nothing else: DHCP had in fact succeeded, but with no default route there was no way
+# out. Only the office adapter has a reason to withhold it, and it does that in its own profile.
+[Match]
+Type=ether
+Name=en*
+
+[Network]
+DHCP=yes
+DNS=127.0.0.1
+DNSDefaultRoute=false
+
+[DHCPv4]
+UseDNS=false
+UseNTP=false
+RouteMetric=100
+SendHostname=false
+
+[IPv6AcceptRA]
+UseDNS=false
