@@ -324,6 +324,10 @@ for old, new in [
     ('OFFICE_DST="/etc/smartdns/office.conf"', 'OFFICE_DST="%s/office-dst.conf"' % work),
     ('SMARTDNS_BASE="/etc/smartdns/smartdns.conf"',
      'SMARTDNS_BASE="%s/smartdns-base.conf"' % work),
+    ('IOA_RESOLVERS_DST="/etc/smartdns/ioa-resolvers.conf"',
+     'IOA_RESOLVERS_DST="%s/ioa-resolvers.conf"' % work),
+    ('INTRANET_RESOLVER_CACHE="/var/lib/network-reconfigure/intranet-resolvers"',
+     'INTRANET_RESOLVER_CACHE="%s/intranet-resolvers"' % work),
     ('write_if_changed /etc/smartdns/dhcp-dns.conf ' + '\\' + '\n',
      'write_if_changed %s/dhcp-dns.conf ' % work + '\\' + '\n'),
     ('write_if_changed /etc/smartdns/dhcp-dns.conf "# No captive portal DNS"',
@@ -478,6 +482,24 @@ main() {
     else
         bad "office DNS leaves tunnel-resolver domains unresolvable:${unclaimed:- none found}"
     fi
+    # iOA's own resolver NXDOMAINs every name outside its forward policy, so the group needs a real
+    # intranet resolver. Learn it here, from the lease, while there is a lease to learn it from — but
+    # only the addresses policy routes into the tunnel. This lease also advertises 21.7.x, which lands
+    # on Tailscale off the office LAN and would send intranet DNS out of the exit node.
+    local learned=1
+    if ! grep -Fqx 'server 10.76.9.15 -group ioa -exclude-default-group -interface tun0' \
+            "$WORK/ioa-resolvers.conf" 2>/dev/null; then
+        learned=0
+    fi
+    if grep -Eq '^server 21\.' "$WORK/ioa-resolvers.conf" 2>/dev/null ||
+       grep -Eq '^21\.' "$WORK/intranet-resolvers" 2>/dev/null; then
+        learned=0
+    fi
+    if [ "$learned" -eq 1 ]; then
+        ok "the office lease teaches the IOA group only tunnel-reachable resolvers"
+    else
+        bad "learned resolvers are wrong: $(cat "$WORK/ioa-resolvers.conf" 2>/dev/null)"
+    fi
     local initial_nat
     initial_nat=$(iptables -t nat -S POSTROUTING)
     if grep -Fq -- '-o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$initial_nat" &&
@@ -559,6 +581,16 @@ main() {
             bad "unauthorized wired retained tunnel-resolver override: $domain"
         fi
     done < <(tunnel_resolver_domains)
+    # The learned resolvers are the half that must survive leaving: iOA proxies them through the
+    # tunnel, and they are the only upstream that answers names outside iOA's own forward policy.
+    local kept=1
+    grep -Fqx 'server 10.76.9.15 -group ioa -exclude-default-group -interface tun0' \
+        "$WORK/ioa-resolvers.conf" 2>/dev/null || kept=0
+    if [ "$kept" -eq 1 ]; then
+        ok "learned intranet resolvers stay available off the office LAN"
+    else
+        bad "leaving office discarded the learned intranet resolvers"
+    fi
     local unauthorized_nat
     unauthorized_nat=$(iptables -t nat -S POSTROUTING)
     if grep -Fq -- '-o wlan0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$unauthorized_nat" &&

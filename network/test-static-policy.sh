@@ -45,8 +45,12 @@ else
 fi
 reject 'SmartDNS base config does not include a dynamic IOA fragment' \
     'conf-file[[:space:]]+/etc/smartdns/ioa-dns\.conf' network/smartdns/smartdns.conf
-reject 'production reconciler has no dynamic IOA DNS logic' \
-    'IOA_RESOLVER|ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
+# The retired design rewrote an ioa-dns.conf fragment from tun0's address on every link event and
+# restarted SmartDNS for nothing. The learned intranet resolvers in ioa-resolvers.conf are the
+# opposite: derived from an office DHCP lease, persistent across reboots, and never read from tunnel
+# state — which is why this rejects tunnel-derived IOA DNS specifically, not IOA DNS fragments.
+reject 'production reconciler derives IOA DNS from tunnel state' \
+    'ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
 # iOA installs `from <underlay address> lookup 230` at its own priority, and an unbound socket has
 # already taken that source by the time OUTPUT mangle applies a mark, so the mark-triggered reroute
 # still matches it. Any priority above iOA's therefore makes the IOA band unreachable for the traffic
@@ -141,6 +145,41 @@ while read -r domain; do
         fail=1
     fi
 done < <(sed -n 's|^nameserver /\([^/]*\)/ioa$|\1|p' network/smartdns/smartdns.conf)
+# iOA's resolver NXDOMAINs every name outside its own forward policy, so the group needs an intranet
+# resolver as well or those names have no answer anywhere while logged in off the office LAN. The
+# address is learned from an office lease, never checked in: each site advertises its own.
+if [ "$(grep -Fxc 'conf-file /etc/smartdns/ioa-resolvers.conf' network/smartdns/smartdns.conf)" -ne 1 ]; then
+    echo 'FAIL base SmartDNS config does not include the learned intranet resolvers' >&2
+    fail=1
+fi
+if ! grep -Fq 'remember_intranet_resolvers "$wired_dev"' scripts/network-reconfigure ||
+   ! grep -Fq 'server %s -group ioa -exclude-default-group -interface tun0' \
+        scripts/network-reconfigure; then
+    echo 'FAIL network-reconfigure does not learn intranet resolvers into the IOA group' >&2
+    fail=1
+fi
+# A resolver the tunnel does not carry is worse than none: off the office LAN this site's 21.7.x
+# resolvers route to the Tailscale exit node, so intranet queries would leave there and answer nothing.
+if ! grep -Fq 'tunnel_reachable_resolvers' scripts/network-reconfigure ||
+   ! grep -Fq 'ipv4_in_cidr "$resolver" "$cidr"' scripts/network-reconfigure; then
+    echo 'FAIL learned intranet resolvers are not restricted to tunnel-routed prefixes' >&2
+    fail=1
+fi
+if grep -Eq '^server[[:space:]]+(10|9|21)\.' network/smartdns/smartdns.conf; then
+    echo 'FAIL base SmartDNS config hardcodes an intranet resolver address' >&2
+    fail=1
+fi
+# /run would forget the addresses on every boot, and they do not expire with uptime the way the
+# reassociation stamp does.
+if ! grep -Fq 'INTRANET_RESOLVER_CACHE="/var/lib/network-reconfigure/intranet-resolvers"' \
+        scripts/network-reconfigure; then
+    echo 'FAIL learned intranet resolvers do not survive a reboot' >&2
+    fail=1
+fi
+if ! grep -Fq 'ioa-resolvers.conf' restore.sh; then
+    echo 'FAIL restore.sh does not create the intranet resolver include before deploying SmartDNS' >&2
+    fail=1
+fi
 if ! awk '
     /\[ "\$ioa_environment" = external \].*\$SMARTDNS_CHANGED/ { external_dns = NR }
     /reconcile_mark_masquerade "\$IOA_OWNER_MARK" "\$owner_dev" true false/ { stage_nat = NR }

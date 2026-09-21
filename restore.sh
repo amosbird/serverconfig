@@ -258,6 +258,9 @@ if [[ -n $GUI ]]; then
     sudo mkdir -p /etc/smartdns
     [[ -e /etc/smartdns/office.conf ]] ||
         echo '# Not on the office LAN' | sudo tee /etc/smartdns/office.conf >/dev/null
+    [[ -e /etc/smartdns/ioa-resolvers.conf ]] ||
+        echo '# No intranet resolvers learned yet' |
+            sudo tee /etc/smartdns/ioa-resolvers.conf >/dev/null
     [[ -e /etc/smartdns/dhcp-dns.conf ]] ||
         sudo cp "$DIR"/network/smartdns/dhcp-dns.conf /etc/smartdns/dhcp-dns.conf
     sudo "$DIR"/network/smartdns-deploy.sh "$DIR"/network/smartdns/smartdns.conf

@@ -380,13 +380,30 @@ all failed to resolve from an office desk on 2026-09-21 while `woa.com` worked. 
 mappings stay in the base config untouched, so which resolver answers never changes how the resulting
 addresses are routed.
 
+The tunnel resolver does not cover every domain assigned to its SmartDNS group. While logged in off
+the office LAN on 2026-09-21 it returned `NXDOMAIN` for `es.tencentyun.com`, `oa.tencent.com`,
+`m.tencent.com` and `tco-es.polaris`; an office resolver reached through that same tunnel answered
+them, and the resulting intranet services were reachable. `network-reconfigure` therefore remembers
+the resolvers advertised by an authorized office DHCP lease and adds the subset inside
+`IOA_STATIC_CIDRS` to the `ioa` group. The addresses are learned, not checked in, because every site
+advertises its own. This site's two `21.7.x` resolvers are rejected: outside the office they route to
+Tailscale rather than iOA, while `10.76.9.15` routes through `tun0`.
+
+Each learned upstream is configured with `-interface tun0`. With iOA logged in, SmartGateAgent proxies
+queries to it and rewrites names covered by its forward policy to the same `100.12.0.0/16` fake IPs;
+uncovered names receive the real intranet resolver's answer. With iOA logged out or `tun0` absent,
+SmartDNS returns `SERVFAIL` instead of letting the query fall through to Tailscale or a public
+resolver. The learned addresses persist across reboot in
+`/var/lib/network-reconfigure/intranet-resolvers`.
+
 ## SmartDNS IOA classification
 
-The IOA upstream is permanently declared in the base SmartDNS configuration as
-`server 192.168.255.10 -group ioa -exclude-default-group`. It is not generated from
-`tun0` state: link down/up and address-change events neither rewrite an IOA fragment nor restart
-SmartDNS. SmartDNS caching is disabled globally and on both listeners: every client query reaches
-the selected upstream, expired answers are never served, and no prefetch runs. `rr-ttl-min 0`
+The iOA-owned upstream is permanently declared in the base SmartDNS configuration as
+`server 192.168.255.10 -group ioa -exclude-default-group`; learned intranet upstreams supplement it
+as described above. Neither is generated from `tun0` state: link down/up and address-change events do
+not rewrite the configuration or restart SmartDNS. SmartDNS caching is disabled globally and on both
+listeners: every client query reaches the selected upstream, expired answers are never served, and no
+prefetch runs. `rr-ttl-min 0`
 disables SmartDNS's built-in 600-second TTL floor so clients receive the upstream TTL unchanged.
 When IOA is unavailable, IOA-group names fail closed and may wait for the upstream timeout; they do
 not fall back to a public resolver. Ordinary default-group DNS remains independent and continues
