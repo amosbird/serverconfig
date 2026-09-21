@@ -168,10 +168,16 @@ if ! grep -Fq 'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK look
     fail=1
 fi
 if ! grep -Fq 'IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environment}"' \
-        scripts/network-reconfigure ||
-   ! grep -Fq 'running_under_ngnclient && return 0' scripts/network-reconfigure ||
-   ! grep -Fq 'systemctl --no-block try-restart ngnclient.service' scripts/network-reconfigure; then
-    echo 'FAIL office/external edges do not safely refresh iOA cached network location' >&2
+        scripts/network-reconfigure; then
+    echo 'FAIL office/external edges are not recorded' >&2
+    fail=1
+fi
+# Restarting ngnclient does not refresh iOA, it logs the user out: the service restart stops iOA.bin,
+# SmartGateAgent goes with it, and the tunnel has to be re-established by hand. Unplugging at 17:15 on
+# 2026-09-21 destroyed a tunnel that had already picked up the EXTRA scene one second earlier. iOA
+# refetches its scene every five minutes and on network changes, so the edge needs no help.
+if grep -Eq 'systemctl.*(restart|try-restart).*ngnclient' scripts/network-reconfigure; then
+    echo 'FAIL network-reconfigure restarts ngnclient and forces an interactive iOA login' >&2
     fail=1
 fi
 # The resolvers come from the wired DHCP lease, which differs per site. A checked-in list is stale

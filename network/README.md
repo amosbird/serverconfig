@@ -334,12 +334,19 @@ wired NAT, and only then flushes table 19. Thus neither direction has a zero-NAT
 bootstrap answer routed onto Wi-Fi; priority 401 remains a crash backstop rather than a normal
 transition step.
 
-The root iOA daemon caches its outer/inner mode at startup. It does open new connections to a changed
-DNS answer, but that alone did not clear its once-per-minute `Set outer net timeout` state.
-`network-reconfigure` therefore records `office` or `external` in `/run` after publishing the
-matching routes, NAT, and DNS, then asynchronously `try-restart`s `ngnclient` only when that value
-changes. An invocation running inside `ngnclient.service` records the state but never requests a
-restart, so service startup cannot loop. Repeated link events in the same environment do nothing.
+`network-reconfigure` records `office` or `external` in `/run` after publishing the matching routes,
+NAT, and DNS, and takes no action on that edge. iOA tracks its own location: SmartGateAgent refetches
+the scene from SmartGate every five minutes and on each network-change event, and one agent process is
+observed flipping between `EXTRA` and `INTRA` in place on 2026-09-20, so a stale mode corrects itself
+without help.
+
+An earlier version `try-restart`ed `ngnclient` on that edge. That is not a refresh, it is a logout:
+restarting the service stops `iOA.bin`, SmartGateAgent goes with it, and the session does not survive —
+both restarts on 2026-09-21 were followed by `Need login user name[...]`. Unplugging the wired link at
+17:15 that day destroyed a tunnel whose new agent had already fetched `EXTRA` and bound its DNS server
+one second earlier, and the tunnel only returned after an interactive login. The state that restart was
+written to repair — iOA stuck on `outer net` at an office desk — came from the wired link failing
+802.1X, which the registered MAC in `10-tencent-wired.link` fixes at the source.
 
 The `office` DNS group and `ipset ioa` deliberately have different names and jobs. `office` contains
 only resolvers from the authorized wired lease, so those queries cannot race the tunnel resolver.

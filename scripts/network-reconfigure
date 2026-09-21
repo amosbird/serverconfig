@@ -750,35 +750,24 @@ ngnclient_active() {
     systemctl is-active --quiet ngnclient.service 2>/dev/null
 }
 
-running_under_ngnclient() {
-    if [ -n "${RUNNING_UNDER_NGNCLIENT_OVERRIDE:-}" ]; then
-        [ "$RUNNING_UNDER_NGNCLIENT_OVERRIDE" = 1 ]
-        return
-    fi
-    grep -Fq '/system.slice/ngnclient.service' /proc/self/cgroup 2>/dev/null
-}
-
-# iOA caches its outer/inner network location when the root daemon starts. Changing DNS and routes
-# moves new sockets to the office endpoint, but does not update that cached mode: on 2026-09-20 it
-# kept logging "Set outer net timeout" once a minute until ngnclient restarted, then immediately
-# obtained its ticket from the internal endpoint. Refresh exactly once on each office/external edge.
+# Record the office/external edge and touch nothing else. iOA tracks its own location: SmartGateAgent
+# refetches the scene from SmartGate every five minutes and on each network-change event, and one
+# agent process is observed flipping between EXTRA and INTRA in place, so a stale mode corrects itself
+# within five minutes.
 #
-# Record the edge before queuing the asynchronous restart. The restarted wrapper invokes this script
-# from inside ngnclient.service; that invocation sees the recorded state and, independently, is
-# excluded by running_under_ngnclient, so this cannot become a restart loop.
-refresh_ioa_environment() {
+# This used to `try-restart ngnclient` on the edge. Restarting that service tears down iOA.bin, which
+# stops SmartGateAgent and takes the tunnel with it, and the session does not survive: both restarts
+# on 2026-09-21 were followed by `Need login user name[...]`, and unplugging at 17:15 killed a working
+# tunnel that had already picked up EXTRA and started its DNS server one second earlier. The state it
+# was written to repair — iOA stuck on `outer net` at an office desk — came from the wired link
+# failing 802.1X, which the registered MAC in 10-tencent-wired.link fixes at the source.
+record_ioa_environment() {
     local previous state_dir
     previous=$(cat "$IOA_ENV_STATE" 2>/dev/null || true)
     [ "$previous" != "$ioa_environment" ] || return 0
     state_dir=${IOA_ENV_STATE%/*}
     mkdir -p "$state_dir"
     printf '%s\n' "$ioa_environment" > "$IOA_ENV_STATE"
-    ngnclient_active || return 0
-    running_under_ngnclient && return 0
-    if ! systemctl --no-block try-restart ngnclient.service 2>/dev/null; then
-        rm -f "$IOA_ENV_STATE"
-        warn "cannot refresh ngnclient after network environment changed to $ioa_environment"
-    fi
 }
 
 # Audit iOA SmartGate's underlay policy on every invocation, including runs
@@ -1095,4 +1084,4 @@ done
 if [ "$SMARTDNS_CHANGED" -eq 1 ]; then
     systemctl restart smartdns 2>/dev/null || true
 fi
-refresh_ioa_environment
+record_ioa_environment

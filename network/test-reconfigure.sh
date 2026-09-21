@@ -57,6 +57,13 @@ tunnel_resolver_domains() {
     sed -n 's|^nameserver /\([^/]*\)/ioa$|\1|p' "$WORK/smartdns-base.conf"
 }
 
+# Reading ngnclient's state is fine; changing it is not. A restart stops iOA.bin, takes SmartGateAgent
+# and the tunnel with it, and leaves the user at a login prompt.
+ngnclient_disruptions() {
+    grep -Ec '(^|[[:space:]])(try-restart|restart|start|stop|kill|reload)[[:space:]]+ngnclient' \
+        "$WORK/systemctl-calls" 2>/dev/null || true
+}
+
 write_tool_stubs() {
     cat >"$WORK/wpa_cli" <<'EOF'
 #!/usr/bin/env bash
@@ -233,10 +240,6 @@ networkctl() {
 }
 systemctl()  {
     printf '%s\n' "$*" >> WORKDIR/systemctl-calls
-    if [ "${FAIL_IOA_REFRESH:-0}" = 1 ] &&
-       [ "$*" = "--no-block try-restart ngnclient.service" ]; then
-        return 1
-    fi
     return 0
 }
 tailscale()  { return 1; }
@@ -433,12 +436,13 @@ main() {
     else
         bad "table 19 does not contain the wired DHCP gateway: $(ip route show table 19)"
     fi
+    # Recorded, not acted on. Restarting ngnclient logs the user out of iOA and drops the tunnel, and
+    # iOA refetches its scene by itself every five minutes and on every network change.
     if [ "$(cat "$WORK/ioa-environment")" = office ] &&
-       [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
-            "$WORK/systemctl-calls")" -eq 1 ]; then
-        ok "entering office records the edge before refreshing iOA exactly once"
+       [ "$(ngnclient_disruptions)" -eq 0 ]; then
+        ok "entering office records the edge without touching iOA"
     else
-        bad "office entry did not refresh iOA exactly once"
+        bad "office entry disturbed iOA $(ngnclient_disruptions) times"
     fi
     if [ "$(band 400 | grep -Fxc \
             'from all fwmark 0x1000000 lookup wired_underlay')" -eq 1 ] &&
@@ -524,12 +528,13 @@ main() {
     else
         bad "an unauthorized port was advertised in table 19: $(ip route show table 19)"
     fi
+    # The exit edge is where the restart did real damage: unplugging on 2026-09-21 killed a tunnel that
+    # had already picked up the EXTRA scene, and the session did not survive the service restart.
     if [ "$(cat "$WORK/ioa-environment")" = external ] &&
-       [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
-            "$WORK/systemctl-calls")" -eq 2 ]; then
-        ok "leaving office records the edge and refreshes iOA once"
+       [ "$(ngnclient_disruptions)" -eq 0 ]; then
+        ok "leaving office records the edge without dropping the tunnel"
     else
-        bad "office exit did not refresh iOA exactly once"
+        bad "office exit disturbed iOA $(ngnclient_disruptions) times"
     fi
     if [ "$(band 400 | grep -Fxc 'from all fwmark 0x1000000 lookup main')" -eq 1 ]; then
         ok "unauthorized wired falls back to ordinary owner main and tunnel business policy"
@@ -575,10 +580,9 @@ main() {
     else
         bad "a link with no supplicant was treated as the office LAN"
     fi
-    [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
-        "$WORK/systemctl-calls")" -eq 2 ] \
-        && ok "repeated external state does not restart iOA" \
-        || bad "unchanged external state restarted iOA"
+    [ "$(ngnclient_disruptions)" -eq 0 ] \
+        && ok "no reconciliation so far has disturbed ngnclient" \
+        || bad "reconciliation disturbed ngnclient $(ngnclient_disruptions) times"
 
     head_ "a wired default route has to be earned"
     # Still unauthenticated, and now the gateway answers a public anchor: an ordinary network that is
@@ -628,36 +632,22 @@ main() {
     else
         ok "the authorized office gateway still owns no default route"
     fi
-    local refreshes
-    refreshes=$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
-        "$WORK/systemctl-calls")
-    supplicant_says Unauthorized
-    RUNNING_UNDER_NGNCLIENT_OVERRIDE=1 run_script 1 >/dev/null
-    if [ "$(cat "$WORK/ioa-environment")" = external ] &&
-       [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
-            "$WORK/systemctl-calls")" -eq "$refreshes" ]; then
-        ok "reconciliation launched by ngnclient records an edge without restarting itself"
+    # The recorded environment follows authorization in both directions and never asks systemd for
+    # anything, however many times the edge is crossed.
+    local crossings=0 recorded_correctly=1 want
+    for want in external office external office; do
+        case $want in
+            office)   supplicant_says Authorized ;;
+            external) supplicant_says Unauthorized ;;
+        esac
+        run_script 1 >/dev/null
+        crossings=$((crossings + 1))
+        [ "$(cat "$WORK/ioa-environment")" = "$want" ] || recorded_correctly=0
+    done
+    if [ "$recorded_correctly" -eq 1 ] && [ "$(ngnclient_disruptions)" -eq 0 ]; then
+        ok "$crossings office edges recorded, none of them restarting iOA"
     else
-        bad "ngnclient-owned reconciliation queued a restart loop"
-    fi
-    supplicant_says Authorized
-    run_script 1 >/dev/null
-    refreshes=$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
-        "$WORK/systemctl-calls")
-    supplicant_says Unauthorized
-    FAIL_IOA_REFRESH=1 run_script 1 >/dev/null
-    if [ ! -e "$WORK/ioa-environment" ]; then
-        ok "failed iOA refresh leaves the environment edge retryable"
-    else
-        bad "failed iOA refresh was recorded as complete"
-    fi
-    run_script 1 >/dev/null
-    if [ "$(cat "$WORK/ioa-environment")" = external ] &&
-       [ "$(grep -Fxc -- '--no-block try-restart ngnclient.service' \
-            "$WORK/systemctl-calls")" -eq "$((refreshes + 2))" ]; then
-        ok "the next reconciliation retries a failed iOA refresh"
-    else
-        bad "failed iOA refresh was not retried exactly once"
+        bad "edge recording drifted: state=$(cat "$WORK/ioa-environment") disturbances=$(ngnclient_disruptions)"
     fi
     supplicant_says Authorized
     run_script 1 >/dev/null
