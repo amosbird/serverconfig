@@ -346,6 +346,33 @@ only resolvers from the authorized wired lease, so those queries cannot race the
 The `ioa` ipset classifies the resulting business addresses for priority-1150 tunnel routing. Reusing
 the tunnel's `ioa` resolver group for office DNS would make “wired preferred” nondeterministic.
 
+### The tunnel resolver exists only off the office LAN
+
+`192.168.255.10` is `tun0`'s own address, and the DNS server answering there is iOA's own: its access
+log records SmartDNS querying `192.168.255.10:53` and SmartGateAgent forwarding to intranet resolvers
+such as `10.221.106.95:53` or, for public names, `114.114.114.114:53`.
+
+That server is conditional. SmartGateAgent fetches a scene from SmartGate and starts its DNS only for
+scenes 2 (`EXTRA`) and 3 (`OVERSEA`). On the office LAN the answer is `sceneID:1, sceneName:INTRA`,
+and every network change logs `[DNS] start dns server fail : scene 1 is not supported` followed by
+`toggleDNS to start dnsFail to start Local DNS`. The local switch is on (`Local DNS enable : true`);
+the scene gate is what refuses. Archived agent logs match the laptop's travel exactly: `OVERSEA` and
+`EXTRA` throughout 2026-09-16..19 away from the office with the DNS server running, both scenes on
+2026-09-20 in transit, `INTRA` only for every sample since arriving. So on the intranet iOA expects
+the site resolvers to answer, and a connection refused on `192.168.255.10:53` is correct behaviour
+rather than a fault.
+
+The consequence is that on the office LAN the `ioa` group has no upstream at all, and because it
+carries `-exclude-default-group`, each domain aimed at it resolves nowhere. Every such domain must be
+claimed by the office fragment for as long as the LAN is authorized, so `network-reconfigure` derives
+those `nameserver /<domain>/office` lines from the base config's own `/ioa` mappings instead of
+repeating them in the fragment. The previously hand-kept list had drifted to one domain out of ten,
+which is why `mirrors.tencent.com`, `oa.tencent.com`, `m.tencent.com`, `es.tencentyun.com`,
+`tencentelasticsearch.com`, `mnet2.com`, `mytsearch.com`, `production.polaris` and `tco-es.polaris`
+all failed to resolve from an office desk on 2026-09-21 while `woa.com` worked. The `ipset /<domain>/ioa`
+mappings stay in the base config untouched, so which resolver answers never changes how the resulting
+addresses are routed.
+
 ## SmartDNS IOA classification
 
 The IOA upstream is permanently declared in the base SmartDNS configuration as
@@ -356,7 +383,9 @@ the selected upstream, expired answers are never served, and no prefetch runs. `
 disables SmartDNS's built-in 600-second TTL floor so clients receive the upstream TTL unchanged.
 When IOA is unavailable, IOA-group names fail closed and may wait for the upstream timeout; they do
 not fall back to a public resolver. Ordinary default-group DNS remains independent and continues
-through its default and DHCP upstreams.
+through its default and DHCP upstreams. On the office LAN that upstream is not merely unavailable but
+absent by iOA's own design, which is why the office fragment re-points those domains at the lease
+resolvers — see “The tunnel resolver exists only off the office LAN”.
 
 SmartDNS adds addresses resolved for configured IOA business domains to dynamic `ipset ioa`.
 That set is authoritative for domain-derived IOA classification regardless of the answer's prefix.

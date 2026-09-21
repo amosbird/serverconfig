@@ -51,6 +51,12 @@ office_lease() {
 supplicant_says() { printf 'suppPortStatus=%s\n' "$1" > "$WORK/supp-status"; }
 probe_verdict()   { printf '%s\n' "$1" > "$WORK/probe-verdict"; }
 
+# The domains the shipped base config hands to iOA's tunnel resolver. Read from that config rather
+# than listed, so the assertions cover whatever it says today.
+tunnel_resolver_domains() {
+    sed -n 's|^nameserver /\([^/]*\)/ioa$|\1|p' "$WORK/smartdns-base.conf"
+}
+
 write_tool_stubs() {
     cat >"$WORK/wpa_cli" <<'EOF'
 #!/usr/bin/env bash
@@ -313,6 +319,8 @@ for old, new in [
     ('OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"',
      'OFFICE_SRC="%s/office.conf"' % work),
     ('OFFICE_DST="/etc/smartdns/office.conf"', 'OFFICE_DST="%s/office-dst.conf"' % work),
+    ('SMARTDNS_BASE="/etc/smartdns/smartdns.conf"',
+     'SMARTDNS_BASE="%s/smartdns-base.conf"' % work),
     ('write_if_changed /etc/smartdns/dhcp-dns.conf ' + '\\' + '\n',
      'write_if_changed %s/dhcp-dns.conf ' % work + '\\' + '\n'),
     ('write_if_changed /etc/smartdns/dhcp-dns.conf "# No captive portal DNS"',
@@ -451,6 +459,21 @@ main() {
             bad "office DNS omitted internal bootstrap: $mapping"
         fi
     done
+    # iOA starts its DNS server only in the EXTRA and OVERSEA scenes, so on this LAN the `ioa` group
+    # has no upstream and every domain pointed at it resolves nowhere. The office fragment has to
+    # claim all of them, derived from the base config: a hand-kept list is what left
+    # mirrors.tencent.com and eight others dead from an office desk on 2026-09-21.
+    local domain tunnel_domains=0 unclaimed=''
+    while read -r domain; do
+        tunnel_domains=$((tunnel_domains + 1))
+        grep -Fqx "nameserver /$domain/office" "$WORK/office-dst.conf" ||
+            unclaimed="$unclaimed $domain"
+    done < <(tunnel_resolver_domains)
+    if [ "$tunnel_domains" -gt 0 ] && [ -z "$unclaimed" ]; then
+        ok "office DNS claims all $tunnel_domains base tunnel-resolver domains"
+    else
+        bad "office DNS leaves tunnel-resolver domains unresolvable:${unclaimed:- none found}"
+    fi
     local initial_nat
     initial_nat=$(iptables -t nat -S POSTROUTING)
     if grep -Fq -- '-o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$initial_nat" &&
@@ -523,6 +546,14 @@ main() {
             bad "unauthorized wired retained internal bootstrap: $mapping"
         fi
     done
+    # Off the office LAN those domains belong back on the tunnel resolver, which is exactly where
+    # iOA does run its DNS server. Retaining the overrides would point them at resolvers that the
+    # laptop can no longer reach.
+    while read -r domain; do
+        if grep -Fqx "nameserver /$domain/office" "$WORK/office-dst.conf"; then
+            bad "unauthorized wired retained tunnel-resolver override: $domain"
+        fi
+    done < <(tunnel_resolver_domains)
     local unauthorized_nat
     unauthorized_nat=$(iptables -t nat -S POSTROUTING)
     if grep -Fq -- '-o wlan0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$unauthorized_nat" &&
@@ -1459,6 +1490,10 @@ if [ -z "${IN_NETNS:-}" ]; then
     # fragment that actually ships instead of a stub written to match the assertions.
     cp /home/amos/git/serverconfig/network/smartdns/office.conf "$WORK/office.conf" || exit 1
     chmod 644 "$WORK/office.conf"
+    # The base config for the same reason: the office overrides are derived from its tunnel-resolver
+    # domains, so a stub would only prove the derivation works on whatever the stub happens to list.
+    cp /home/amos/git/serverconfig/network/smartdns/smartdns.conf "$WORK/smartdns-base.conf" || exit 1
+    chmod 644 "$WORK/smartdns-base.conf"
     exec 9</proc/self/ns/net
     export HOST_NETNS_FD=9
     export HOST_NETNS_LINK=$current_netns_link

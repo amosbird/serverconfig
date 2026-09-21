@@ -126,10 +126,21 @@ if ! grep -Fq 'server %s -group office -exclude-default-group' scripts/network-r
     echo 'FAIL office DHCP resolvers are mixed into the tunnel IOA DNS group' >&2
     fail=1
 fi
-if [ "$(grep -Fxc 'nameserver /woa.com/office' network/smartdns/office.conf)" -ne 1 ]; then
-    echo 'FAIL office SmartDNS does not override the base woa.com tunnel resolver group' >&2
+# iOA starts its DNS server only in the EXTRA and OVERSEA scenes, so on the office LAN the `ioa`
+# group has no upstream and every domain aimed at it resolves nowhere. The office fragment must claim
+# all of them, and must do so by deriving the list from the base config: the hand-kept version had
+# drifted to one domain out of ten by 2026-09-21, which is how mirrors.tencent.com went dark.
+if ! grep -Fq 's|^nameserver /\([^/]*\)/ioa$|nameserver /\1/office|p' scripts/network-reconfigure ||
+   ! grep -Fq 'office_tunnel_resolver_overrides' scripts/network-reconfigure; then
+    echo 'FAIL network-reconfigure does not derive office overrides for tunnel-resolver domains' >&2
     fail=1
 fi
+while read -r domain; do
+    if grep -Fqx "nameserver /$domain/office" network/smartdns/office.conf; then
+        echo "FAIL office SmartDNS hand-lists the derived tunnel-resolver domain $domain" >&2
+        fail=1
+    fi
+done < <(sed -n 's|^nameserver /\([^/]*\)/ioa$|\1|p' network/smartdns/smartdns.conf)
 if ! awk '
     /\[ "\$ioa_environment" = external \].*\$SMARTDNS_CHANGED/ { external_dns = NR }
     /reconcile_mark_masquerade "\$IOA_OWNER_MARK" "\$owner_dev" true false/ { stage_nat = NR }

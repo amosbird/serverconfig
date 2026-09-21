@@ -50,6 +50,7 @@ ROUTEFILE="/home/amos/.routefile"
 CN_EXCLUDE_FILE="/home/amos/git/serverconfig/network/cn-exclude.conf"
 OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
 OFFICE_DST="/etc/smartdns/office.conf"
+SMARTDNS_BASE="/etc/smartdns/smartdns.conf"
 IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environment}"
 P_IOA_OWNER=400
 P_IOA_OWNER_STOP=401
@@ -335,6 +336,25 @@ office_dns_servers() {
     dhcp_dns_servers "$1"
 }
 
+# The `ioa` group's only upstream is iOA's own DNS server on the tunnel address, and that server does
+# not always exist. SmartGateAgent asks SmartGate which scene it is in and starts it only for EXTRA
+# and OVERSEA; on the office LAN the answer is `sceneID:1, sceneName:INTRA` and it logs `start dns
+# server fail : scene 1 is not supported` on every network change. That is deliberate — on the
+# intranet the site resolvers are the answer — but the group carries -exclude-default-group, so its
+# domains resolve nowhere at all until something else claims them. Re-point every one of them at the
+# lease resolvers for as long as the office LAN is authorized.
+#
+# Derived from the base config instead of listed in the fragment, because a hand-kept list misses
+# whatever is added to the base later. On 2026-09-21 it had drifted to one domain out of ten, which
+# is why mirrors.tencent.com and eight others were unresolvable from an office desk.
+office_tunnel_resolver_overrides() {
+    [ -r "$SMARTDNS_BASE" ] || {
+        warn "cannot read $SMARTDNS_BASE; office DNS leaves tunnel-resolver domains alone"
+        return 0
+    }
+    sed -n 's|^nameserver /\([^/]*\)/ioa$|nameserver /\1/office|p' "$SMARTDNS_BASE"
+}
+
 # The office resolvers sit off-link behind the wired gateway, and the office link contributes no
 # default route to main, so the priority-1000 pins that send them to main had nothing to resolve them
 # through: all three timed out on 2026-09-20 while the same queries answered in milliseconds once
@@ -499,7 +519,9 @@ elif [ -r "$OFFICE_SRC" ]; then
         "$(cat "$OFFICE_SRC"; \
            printf '\n# Resolvers advertised by the %s DHCP lease\n' "$wired_dev"; \
            printf 'server %s -group office -exclude-default-group\n' \
-               $(office_dns_servers "$wired_dev"))"
+               $(office_dns_servers "$wired_dev"); \
+           printf '\n# Tunnel-resolver domains from the base config; iOA runs no DNS in this scene\n'; \
+           office_tunnel_resolver_overrides)"
 else
     warn "cannot read $OFFICE_SRC; leaving $OFFICE_DST as it is"
 fi
