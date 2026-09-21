@@ -1,4 +1,5 @@
 [Added Associations]
+x-scheme-handler/ioa=ioa-open.desktop;
 x-scheme-handler/tg=org.telegram.desktop.desktop;
 [Default Applications]
 application/pdf=zathura.desktop;
@@ -22,6 +23,7 @@ x-scheme-handler/about=chromium-amos.desktop;
 x-scheme-handler/discord=discord.desktop;
 x-scheme-handler/http=chromium-amos.desktop;
 x-scheme-handler/https=chromium-amos.desktop;
+x-scheme-handler/ioa=ioa-open.desktop;
 x-scheme-handler/terminal=xterm.desktop;
 x-scheme-handler/tg=org.telegram.desktop.desktop;
 x-scheme-handler/unknown=chromium-amos.desktop;

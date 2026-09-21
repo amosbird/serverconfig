@@ -1,0 +1,4 @@
+[portal]
+DBusName=org.freedesktop.impl.portal.desktop.amos
+Interfaces=org.freedesktop.impl.portal.AppChooser;
+UseIn=qtile;i3

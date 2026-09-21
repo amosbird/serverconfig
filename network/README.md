@@ -164,10 +164,24 @@ prefer the office wire.
 
 `scripts/updateroutes` generates `~/.routefile` as a canonical CIDR-per-line data file.
 `network-reconfigure` validates it into the inactive `cn_direct_next` hash:net set and swaps that
-set with `cn_direct` atomically. `NETMODE_IOA` classifies a matching unmarked destination as exact
-mark `0x2` before considering SmartDNS's `ioa` set; priority 1500 reroutes that mark through
-`main`. This makes routefile acceleration authoritative over IOA business classification while
-the file is healthy, including overlaps with static `10/8` or domain-derived addresses.
+set with `cn_direct` atomically. `NETMODE_IOA` consults SmartDNS's `ioa` set first and classifies a
+matching unmarked destination as exact mark `0x1`; priority 1150 sends that mark into table `ioa`.
+Only destinations the business classification does not claim reach the routefile, which classifies
+them as exact mark `0x2`, rerouted through `main` by priority 1500.
+
+Business classification leads despite the routefile being the more specific list, because the two
+are not comparable kinds of evidence. `ioa` is a hand-curated set of the domains and addresses that
+are reachable through the tunnel, while the routefile is thousands of APNIC country prefixes
+regenerated wholesale. A destination can easily be both — work mail resolves to public addresses
+that sit inside CN allocations — and there the curated judgement is the one that is right: the
+service is reachable, and payable, only as an intranet client. Letting the coarse list win sent
+those requests out the physical interface as ordinary Chinese traffic, which the service answered
+with an IP restriction instead of the mailbox.
+
+The ordering cannot cost anything on the intranet itself: `updateroutes` takes only APNIC's CN
+public allocations, so `cn_direct` holds no `10/8` member and never competes with the business set
+there. Its cost is bounded to public addresses that SmartDNS has deliberately claimed for the
+tunnel, which is the one class of destination the routefile should not be deciding.
 
 The routefile is never required for connectivity. Missing, empty, or comment-only input
 atomically disables CN acceleration. Malformed input preserves the last known-good set and

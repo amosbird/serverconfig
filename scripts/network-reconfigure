@@ -72,6 +72,18 @@ P_IOA=1150
 # 2500 held this band until 1200's precedence was understood.
 P_RETIRED_IOA=2500
 P_TAILNET=3000
+# tinyproxy serves tailnet clients on 8888 and opens intranet connections on their behalf.
+# Its egress must look up main: an exit node otherwise captures it into table 52, and the
+# request leaves with a tailnet source the intranet will not recognise. scripts/addroutes
+# carried exactly that as `ip rule add uidrange $tid-$tid lookup main pref 4001`, and it
+# was dropped when that script became network-reconfigure.
+#
+# A uidrange rule restores it, and deliberately not a cgroup fwmark mark. A mark is
+# stashed on the socket and applies to both directions, so it would drag the reply to the
+# tailnet client onto the physical interface, where install_source_guard drops it as a
+# foreign (100.64.0.0/10) source. A uidrange rule decides only the route lookup, which
+# leaves the return path symmetric over tailscale0.
+P_TINYPROXY=4001
 # iOA SmartGate's own policy, installed through scripts/overrides/ip. This
 # script never manages these bands, but it audits their consistency: rule
 # 1200 captures every locally sourced packet, so a stale table 230 default
@@ -723,6 +735,23 @@ for net in "${TAILNET_NETS[@]}"; do
 done
 DESIRED_BANDS[$P_TAILNET]=$(band_of "${tailnet_band[@]}")
 
+# Resolve the proxy's uid at run time so a renamed or reinstalled package cannot leave the
+# rule pinned to a uid that now belongs to something else.
+#
+# Ask the kernel before claiming the band. `ip rule add uidrange` rejects a uid the running
+# namespace does not map — "Invalid uid range" under the test harness's `unshare -r`, which
+# maps only uid 0 — and a desired band that cannot be installed aborts the whole run when
+# reconciliation fails to match it. Probing at a throwaway priority leaves an installable
+# band untouched and yields no band at all where the kernel refuses.
+tinyproxy_spec=''
+tinyproxy_uid=$(id -u tinyproxy 2>/dev/null || true)
+if [ -n "$tinyproxy_uid" ] &&
+   ip rule add uidrange "$tinyproxy_uid-$tinyproxy_uid" lookup main pref 4099 2>/dev/null; then
+    tinyproxy_spec="from all uidrange $tinyproxy_uid-$tinyproxy_uid lookup main"
+fi
+clean_pref 4099
+DESIRED_BANDS[$P_TINYPROXY]="$tinyproxy_spec"
+
 # `awk NF` instead of `grep -v '^$'`: an empty band is normal, but grep exits 1 on no match and
 # pipefail then fires the ERR trap, logging a false "aborted" line that hides real aborts.
 normalise_desired_band() { tr ';' '\n' <<<"$1" | awk 'NF' | sort -u | paste -sd';' -; }
@@ -788,9 +817,9 @@ firewall_fingerprint_ok() {
         expected+="-A $CHAIN -m cgroup --path \"$cgroup\" -j MARK --set-xmark 0x1000000/0xffffffff"$'\n'
     done < <(active_ioa_cgroups)
     expected+="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
-    expected+="-A $CHAIN -m set --match-set $CN_SET dst -j MARK --set-xmark 0x2/0xffffffff"$'\n'
+    expected+="-A $CHAIN -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff"$'\n'
     expected+="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
-    expected+="-A $CHAIN -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff"
+    expected+="-A $CHAIN -m set --match-set $CN_SET dst -j MARK --set-xmark 0x2/0xffffffff"
     actual=$(iptables -t mangle -S "$CHAIN" 2>/dev/null | grep "^-A $CHAIN " || true)
     [ "$actual" = "$expected" ] || return 1
     [ "$(iptables -t nat -S POSTROUTING 2>/dev/null |
@@ -1068,14 +1097,14 @@ while read -r cgroup; do
         -j MARK --set-xmark "$IOA_OWNER_MARK"
 done < <(active_ioa_cgroups)
 iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
-iptables -t mangle -A "$NEXT_CHAIN" \
-    -m set --match-set "$CN_SET" dst \
-    -j MARK --set-xmark "$CN_MARK"
-iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
 ensure_ipset ioa
 iptables -t mangle -A "$NEXT_CHAIN" \
     -m set --match-set ioa dst \
     -j MARK --set-xmark 0x1/0xffffffff
+iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
+iptables -t mangle -A "$NEXT_CHAIN" \
+    -m set --match-set "$CN_SET" dst \
+    -j MARK --set-xmark "$CN_MARK"
 
 # iptables-restore applies one table at COMMIT. Rebuild the stable chain and
 # deduplicate its hook in that transaction; a rejected command changes nothing.

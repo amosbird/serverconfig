@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Terminal=false
+NoDisplay=true
+Exec=/home/amos/scripts/ioa-open %u
+Name=iOA link
+Categories=Network;
+MimeType=x-scheme-handler/ioa;

@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+
+"""Handle the ioa:// URIs that Tencent iOA would handle on Windows and macOS.
+
+Linux iOA implements none of this: its binaries carry no ioa:// handler and no
+QWebChannel bridge, so Chrome's portal request for one ends in the app chooser
+with nothing to offer. The URI names the page iOA was asked to open:
+
+    ioa://message/?id=10101&uri=https://devc.woa.com/open/openEnv?envId=...&ide=VSCode
+
+Handing that page back to the browser is what iOA does *not* mean. devc.woa.com
+emits this URI precisely because it is running in an ordinary browser (its
+ioa.js sets window.isBrowser=true when the bridge is absent), asking iOA to
+reopen the page inside iOA's embedded Qt browser, where the bridge exists and an
+IDE can be launched. Reopening it in Chrome only makes the page ask again,
+forever, so the devc case is answered here instead.
+
+What iOA does for devc is start sshd in the dev environment and install a key it
+registered itself, then open an IDE deep link. The second half needs no iOA on
+Linux: asking devc's own backend to enable ssh both starts sshd and returns the
+deep link ready to use, e.g.
+
+    vscode://vscode-remote/ssh-remote+root@<env>.devcloud.woa.com:36000/data/workspace/
+
+which VSCode's registered vscode:// handler takes from here. That POST is what
+starts sshd, so it is made every time rather than cached. It needs the devc
+session, which is read from the Chrome that raised this URI in the first place.
+Reaching the environment then needs ~/.ssh/config to route *.devcloud.woa.com
+through the corkscrew proxy on port 36000.
+
+The first half cannot be reproduced. devc's backend resolves the key by name out
+of a registry only the iOA client writes to ("publicKey不存在, name:..."), and
+devc itself exposes no way to register one, so a fresh environment trusts no key
+of ours and offers publickey only -- not even a password to copy one in with.
+
+The environment's Web IDE needs none of that, being an ordinary web page, so it
+is the fallback whenever the local IDE cannot be reached: when the environment
+trusts no key of ours yet, and when nothing here opens the IDE's scheme at all
+(only VSCode is installed; CodeBuddy, Cursor, JetBrains Gateway and weterm links
+would otherwise be dropped in silence). Either way a click still lands in an IDE,
+and the clipboard carries what would lift it to the local one.
+"""
+
+import functools
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.parse
+import urllib.request
+
+from websockets.sync.client import connect
+
+BROWSER = "/home/amos/scripts/xdg-open"
+TARGET = re.compile(r"[?&](?:uri|url)=", re.IGNORECASE)
+ENCODED_SCHEME = re.compile(r"https?%3a", re.IGNORECASE)
+OPEN_ENV = re.compile(r"^https://devc\.woa\.com/open/openEnv\?(.*)$", re.IGNORECASE)
+SSH_TARGET = re.compile(r"ssh-remote\+(?:([^@/]+)@)?([^@:/]+)(?::(\d+))?")
+DEVC_API = "https://devc.woa.com/backend_api/"
+WEB_IDE = "https://devc.woa.com/env/webIde?paasEnvId="
+CHROME_CDP = "http://127.0.0.1:9222/json/version"
+PUBKEY = os.path.expanduser("~/.ssh/id_rsa.pub")
+
+
+def embedded_url(uri):
+    """Return the http(s) page inside an ioa:// URI, or None if it carries none.
+
+    iOA does not percent-encode that page: in the sample above the page's own
+    `&ide=VSCode` sits in the outer query string, so splitting the value on `&`
+    would truncate it. The value therefore runs to the end of the URI, unless it
+    does arrive percent-encoded, where the first `&` really does end it.
+    """
+    match = TARGET.search(uri)
+    if not match:
+        return None
+    value = uri[match.end():]
+    if ENCODED_SCHEME.match(value):
+        value = urllib.parse.unquote(value.split("&", 1)[0])
+    # Also keeps an ioa:// nested inside ioa:// from calling this handler again.
+    if not value.lower().startswith(("http://", "https://")):
+        return None
+    return value
+
+
+def open_env_request(url):
+    """Return (envId, ide, version) if the page is a devc IDE launch, else None."""
+    match = OPEN_ENV.match(url)
+    if not match:
+        return None
+    query = urllib.parse.parse_qs(match.group(1), keep_blank_values=True)
+    env_id = query.get("envId", [""])[0]
+    ide = query.get("ide", [""])[0]
+    if not env_id or not ide:
+        return None
+    return env_id, ide, query.get("version", [""])[0]
+
+
+def ssh_target(link):
+    """Return (user, host, port) of a Remote-SSH deep link, or None."""
+    match = SSH_TARGET.search(link)
+    if not match:
+        return None
+    user, host, port = match.groups()
+    return user or "root", host, port or "22"
+
+
+def pubkey_auth_works(user, host, port):
+    return subprocess.run(
+        ["/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+         "-o", "PreferredAuthentications=publickey", "-p", port,
+         f"{user}@{host}", "true"],
+        capture_output=True,
+    ).returncode == 0
+
+
+def install_key_command():
+    with open(PUBKEY) as handle:
+        key = handle.read().strip()
+    return (
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+        f"echo '{key}' >> ~/.ssh/authorized_keys && "
+        "chmod 600 ~/.ssh/authorized_keys"
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def chrome_cookies(host):
+    """Return a Cookie header for host, read out of the running Chrome."""
+    version = json.load(urllib.request.urlopen(CHROME_CDP, timeout=5))
+    with connect(version["webSocketDebuggerUrl"], max_size=None) as ws:
+        ws.send(json.dumps({"id": 1, "method": "Storage.getCookies"}))
+        while True:
+            message = json.loads(ws.recv())
+            if message.get("id") == 1:
+                cookies = message["result"]["cookies"]
+                break
+    return "; ".join(
+        f'{c["name"]}={c["value"]}'
+        for c in cookies
+        if host == c["domain"].lstrip(".") or host.endswith("." + c["domain"].lstrip("."))
+    )
+
+
+def devc_api(path, body=None):
+    request = urllib.request.Request(
+        DEVC_API + path,
+        method="POST" if body is not None else "GET",
+        data=None if body is None else json.dumps(body).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Cookie": chrome_cookies("devc.woa.com"),
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response).get("data")
+
+
+def ide_link(env_id, ide, version):
+    """Start sshd in the environment and return its deep link for ide."""
+    links = devc_api(
+        "env/enableSsh",
+        # keyName is iOA's slot, and naming a key we cannot register only makes
+        # the backend refuse. Empty still starts sshd and yields the links.
+        {"envId": env_id, "keyName": "", "ideName": ide, "ideVersion": version},
+    ) or {}
+    if ide not in links:
+        raise LookupError(f"{ide} not among {', '.join(sorted(links))}")
+    return links[ide]
+
+
+def web_ide_url(env_id):
+    """Start the browser IDE of an environment and return its address."""
+    envs = devc_api("env/UserEnvList?search=&collaborator=true") or []
+    env = next((e for e in envs if e.get("id") == env_id), None)
+    if not env or not env.get("paasEnvId"):
+        raise LookupError(f"no environment {env_id}")
+    devc_api("env/web/ide/start", {"paasEnvId": env["paasEnvId"]})
+    return env.get("webIdeUrl") or WEB_IDE + env["paasEnvId"]
+
+
+def has_handler(link):
+    """Whether anything on this machine opens the link's scheme."""
+    scheme = link.split(":", 1)[0].lower()
+    handlers = subprocess.run(
+        ["gio", "mime", f"x-scheme-handler/{scheme}"],
+        capture_output=True, text=True, check=False,
+    )
+    return "Default application" in handlers.stdout
+
+
+def to_clipboard(text):
+    subprocess.run(
+        ["xclip", "-selection", "clipboard"], input=text, text=True, check=False
+    )
+
+
+def notify(summary, body):
+    subprocess.run(["dunstify", "-u", "critical", summary, body], check=False)
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit(f"usage: {os.path.basename(sys.argv[0])} <ioa-uri>")
+    uri = sys.argv[1]
+    url = embedded_url(uri)
+    if url is None:
+        notify("iOA link carries no web page", uri)
+        sys.exit(f"no http(s) url in {uri}")
+
+    if OPEN_ENV.match(url):
+        request = open_env_request(url)
+        if request is None:
+            # openEnv also carries action=repair, action=ssh and the like, which
+            # only the iOA client can answer. Opening them here would loop.
+            notify("This devc page only works inside the iOA client", url)
+            sys.exit(f"would loop back into the browser: {url}")
+        env_id, ide, _ = request
+        try:
+            link = ide_link(*request)
+            target = ssh_target(link)
+            if not has_handler(link):
+                to_clipboard(link)
+                notify(
+                    f"{ide} is not installed here, opening the Web IDE",
+                    f"Its {link.split(':', 1)[0]}:// link is on the clipboard.",
+                )
+                link = web_ide_url(env_id)
+            elif target and not pubkey_auth_works(*target):
+                to_clipboard(install_key_command())
+                notify(
+                    f"{target[1]} trusts no key of yours yet, opening the Web IDE",
+                    f"To use local {ide} instead, paste the copied command into a "
+                    "terminal there once.",
+                )
+                link = web_ide_url(env_id)
+        except Exception as error:
+            notify(f"Cannot open {ide} for {env_id}", str(error))
+            sys.exit(f"devc refused to hand out a link: {error}")
+        os.execv(BROWSER, [BROWSER, link])
+
+    os.execv(BROWSER, [BROWSER, url])
+
+
+if __name__ == "__main__":
+    main()

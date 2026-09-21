@@ -181,6 +181,12 @@ if [[ -n $GUI ]]; then
         "$HOME/.local/share/rofi-chrome/host/main.py"
     install -Dm644 "$DIR/rofi-chrome/io.github.amosbird.rofi.chrome.json" \
         "$HOME/.config/google-chrome-main/NativeMessagingHosts/io.github.amosbird.rofi.chrome.json"
+    install -Dm644 "$DIR/portal-app-chooser/amos.portal" \
+        "$HOME/.local/share/xdg-desktop-portal/portals/amos.portal"
+    install -Dm644 \
+        "$DIR/portal-app-chooser/org.freedesktop.impl.portal.desktop.amos.service" \
+        "$HOME/.local/share/dbus-1/services/org.freedesktop.impl.portal.desktop.amos.service"
+    systemctl --user restart xdg-desktop-portal.service
     update-desktop-database "$HOME/.local/share/applications"
     sudo cp "$DIR"/xkb/symbols/{us,pc,inet} /usr/share/X11/xkb/symbols/
     sudo install -Dm644 "$DIR"/xorg/30-touchpad.conf \

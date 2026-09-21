@@ -981,13 +981,18 @@ main() {
         && ok "IOA classification has no static prefix intersection" \
         || bad "IOA classification still depends on a static prefix set"
     full_width_fwmark_rule 1150 0x1 ioa \
-        && ok "IOA rule matches the exact full-width mark after CN" \
-        || bad "IOA rule is not exact 0x1/0xffffffff after CN"
+        && ok "IOA rule matches the exact full-width mark before CN" \
+        || bad "IOA rule is not exact 0x1/0xffffffff before CN"
+    # SmartDNS's business classification is the curated one, and it must win over the
+    # routefile's thousands of APNIC prefixes. Work mail is the case that proves it:
+    # exmail's public addresses sit inside 163.177.0.0/16 and 157.255.0.0/16, so a
+    # routefile that ran first would mark them 0x2 and send them out the physical
+    # interface instead of the tunnel.
     cn_line=$(grep -n -- "--match-set cn_direct dst" <<<"$chain" | cut -d: -f1)
     ioa_line=$(grep -n -- "--match-set ioa dst" <<<"$chain" | cut -d: -f1)
-    [ -n "$cn_line" ] && [ -n "$ioa_line" ] && [ "$cn_line" -lt "$ioa_line" ] \
-        && ok "routefile classifier runs before SmartDNS business classification" \
-        || bad "SmartDNS business classifier precedes routefile classification"
+    [ -n "$cn_line" ] && [ -n "$ioa_line" ] && [ "$ioa_line" -lt "$cn_line" ] \
+        && ok "SmartDNS business classification precedes routefile acceleration" \
+        || bad "routefile acceleration precedes SmartDNS business classification"
     [ "$(band 500 | grep -Fxc 'from all fwmark 0x80000/0xff0000 lookup main')" -eq 1 ] \
         && ok "pref 500 contains the complete Tailscale mark rule exactly once" \
         || bad "pref 500 lacks the complete Tailscale mark rule: $(band 500)"

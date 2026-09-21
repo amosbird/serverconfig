@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+
+"""Show the full URI when the desktop portal has no application choices.
+
+All normal app chooser requests are delegated to xdg-desktop-portal-gtk.  The
+only custom UI is the empty state, where GTK's stock dialog ellipsizes the URI
+and offers no way to copy it.
+"""
+
+import re
+
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+import gi
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gdk, GLib, Gtk
+
+
+BUS_NAME = "org.freedesktop.impl.portal.desktop.amos"
+GTK_BUS_NAME = "org.freedesktop.impl.portal.desktop.gtk"
+DESKTOP_PATH = "/org/freedesktop/portal/desktop"
+APP_CHOOSER_IFACE = "org.freedesktop.impl.portal.AppChooser"
+REQUEST_IFACE = "org.freedesktop.impl.portal.Request"
+SCHEME = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*):")
+RESPONSE_CANCELLED = 1
+RESPONSE_OTHER = 2
+COPY_RESPONSE = 10
+
+
+def uri_scheme(uri):
+    match = SCHEME.match(uri)
+    return match.group(1).lower() if match else "unknown"
+
+
+class Request(dbus.service.Object):
+    def __init__(self, backend, path):
+        super().__init__(backend.bus_name, path)
+        self.backend = backend
+        self.path = path
+
+    @dbus.service.method(REQUEST_IFACE)
+    def Close(self):
+        self.backend.close_request(self.path)
+
+
+class Pending:
+    def __init__(self, path, reply, error, app_id, parent_window, choices, options):
+        self.path = path
+        self.reply = reply
+        self.error = error
+        self.app_id = app_id
+        self.parent_window = parent_window
+        self.choices = list(choices)
+        self.options = options
+        self.request = None
+        self.dialog = None
+        self.delegated = False
+        self.done = False
+
+
+class AppChooser(dbus.service.Object):
+    def __init__(self, bus, bus_name, loop):
+        super().__init__(bus_name, DESKTOP_PATH)
+        self.bus = bus
+        self.bus_name = bus_name
+        self.loop = loop
+        self.pending = {}
+        self.gtk_proxy = bus.get_object(GTK_BUS_NAME, DESKTOP_PATH)
+        self.gtk_chooser = dbus.Interface(self.gtk_proxy, APP_CHOOSER_IFACE)
+        GLib.timeout_add_seconds(30, self.quit_when_idle)
+
+    def quit_when_idle(self):
+        if self.pending:
+            return True
+        self.loop.quit()
+        return False
+
+    @dbus.service.method(
+        APP_CHOOSER_IFACE,
+        in_signature="ossasa{sv}",
+        out_signature="ua{sv}",
+        async_callbacks=("reply", "error"),
+    )
+    def ChooseApplication(
+        self,
+        handle,
+        app_id,
+        parent_window,
+        choices,
+        options,
+        reply,
+        error,
+    ):
+        path = str(handle)
+        pending = Pending(
+            path,
+            reply,
+            error,
+            str(app_id),
+            str(parent_window),
+            choices,
+            options,
+        )
+        pending.request = Request(self, path)
+        self.pending[path] = pending
+        if choices:
+            self.delegate(pending)
+        else:
+            self.show_empty_dialog(pending)
+
+    @dbus.service.method(APP_CHOOSER_IFACE, in_signature="oas")
+    def UpdateChoices(self, handle, choices):
+        pending = self.pending.get(str(handle))
+        if not pending or pending.done:
+            return
+        pending.choices = list(choices)
+        if pending.delegated:
+            self.gtk_chooser.UpdateChoices(
+                handle,
+                choices,
+                reply_handler=lambda: None,
+                error_handler=lambda _error: None,
+            )
+        elif choices:
+            if pending.dialog:
+                pending.dialog.destroy()
+                pending.dialog = None
+            self.delegate(pending)
+
+    def delegate(self, pending):
+        pending.delegated = True
+        self.gtk_chooser.ChooseApplication(
+            dbus.ObjectPath(pending.path),
+            pending.app_id,
+            pending.parent_window,
+            dbus.Array(pending.choices, signature="s"),
+            pending.options,
+            reply_handler=lambda response, results: self.finish(
+                pending.path, response, results
+            ),
+            error_handler=lambda error: self.delegate_failed(pending.path, error),
+            timeout=86400,
+        )
+
+    def delegate_failed(self, path, error):
+        pending = self.pending.get(path)
+        if not pending or pending.done:
+            return
+        pending.error(error)
+        self.release(pending)
+
+    def show_empty_dialog(self, pending):
+        uri = str(pending.options.get("uri", ""))
+        scheme = uri_scheme(uri)
+        dialog = Gtk.Dialog(title="No application available")
+        dialog.set_default_size(900, 380)
+        dialog.set_modal(bool(pending.options.get("modal", True)))
+        dialog.add_button("Close", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Copy URI", COPY_RESPONSE)
+        dialog.set_default_response(COPY_RESPONSE)
+
+        box = dialog.get_content_area()
+        box.set_spacing(12)
+        box.set_border_width(18)
+
+        title = Gtk.Label()
+        title.set_xalign(0)
+        title.set_markup(
+            f"<b>No application is registered for "
+            f"{GLib.markup_escape_text(scheme)}://</b>"
+        )
+        box.pack_start(title, False, False, 0)
+
+        hint = Gtk.Label(label="The complete URI is shown below.")
+        hint.set_xalign(0)
+        box.pack_start(hint, False, False, 0)
+
+        view = Gtk.TextView()
+        view.set_editable(False)
+        view.set_cursor_visible(True)
+        view.set_wrap_mode(Gtk.WrapMode.CHAR)
+        view.set_monospace(True)
+        view.set_left_margin(8)
+        view.set_right_margin(8)
+        view.set_top_margin(8)
+        view.set_bottom_margin(8)
+        buffer = view.get_buffer()
+        buffer.set_text(uri)
+        buffer.select_range(buffer.get_start_iter(), buffer.get_end_iter())
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_shadow_type(Gtk.ShadowType.IN)
+        scroller.add(view)
+        box.pack_start(scroller, True, True, 0)
+
+        dialog.connect("response", self.dialog_response, pending.path, uri)
+        dialog.connect("delete-event", self.dialog_deleted, pending.path)
+        pending.dialog = dialog
+        dialog.show_all()
+
+    def dialog_response(self, dialog, response, path, uri):
+        if response == COPY_RESPONSE:
+            Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(uri, -1)
+            return
+        self.finish(
+            path,
+            dbus.UInt32(RESPONSE_CANCELLED),
+            dbus.Dictionary({"choice": dbus.String("")}, signature="sv"),
+        )
+
+    def dialog_deleted(self, _dialog, _event, path):
+        self.finish(
+            path,
+            dbus.UInt32(RESPONSE_CANCELLED),
+            dbus.Dictionary({"choice": dbus.String("")}, signature="sv"),
+        )
+        return True
+
+    def close_request(self, path):
+        pending = self.pending.get(path)
+        if not pending or pending.done:
+            return
+        if pending.delegated:
+            gtk_request = self.bus.get_object(GTK_BUS_NAME, path)
+            dbus.Interface(gtk_request, REQUEST_IFACE).Close(
+                reply_handler=lambda: None,
+                error_handler=lambda _error: None,
+            )
+        self.finish(
+            path,
+            dbus.UInt32(RESPONSE_OTHER),
+            dbus.Dictionary({}, signature="sv"),
+        )
+
+    def finish(self, path, response, results):
+        pending = self.pending.get(path)
+        if not pending or pending.done:
+            return
+        pending.done = True
+        pending.reply(response, results)
+        self.release(pending)
+
+    def release(self, pending):
+        if pending.dialog:
+            pending.dialog.destroy()
+            pending.dialog = None
+        if pending.request:
+            pending.request.remove_from_connection()
+            pending.request = None
+        self.pending.pop(pending.path, None)
+
+
+def main():
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    bus_name = dbus.service.BusName(BUS_NAME, bus, do_not_queue=True)
+    loop = GLib.MainLoop()
+    AppChooser(bus, bus_name, loop)
+    loop.run()
+
+
+if __name__ == "__main__":
+    main()
