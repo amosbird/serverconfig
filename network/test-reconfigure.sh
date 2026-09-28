@@ -75,7 +75,39 @@ EOF
 printf '%s\n' "$*" >> "$(dirname "$0")/probe-calls"
 exit "$(cat "$(dirname "$0")/probe-verdict" 2>/dev/null || echo 1)"
 EOF
-    chmod 755 "$WORK/wpa_cli" "$WORK/probe"
+    # `dig` turns a name in the declared link-local list into an address, and the shipped
+    # stub in the built script returns failure unconditionally. A hotel's own resolver is
+    # the only server that can answer for a link-local name and it is the one the lease
+    # names, so this answers the two portal names and nothing else — an unresolvable entry
+    # must yield no pin rather than a wrong one. The two names take different paths through
+    # the reconciler: portal.hotel.test comes from the declared file, login.hotel.test from
+    # the lease's RFC 8910 option, and neither is reachable through the other.
+    #
+    # `-b` takes an argument, so the parser has to consume it. Treating the bind address as
+    # the queried name made this stub answer nothing at all, which silently turned every
+    # assertion below into a pass for the wrong reason. The call is also logged, because the
+    # binding is what keeps the query off the exit node: without it the same name resolves
+    # to the public placeholder address and the pin lands on the wrong host.
+    cat >"$WORK/dig" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$(dirname "$0")/dig-calls"
+[ -e "$(dirname "$0")/dig-unreachable" ] && exit 9
+host='' skip_next=''
+for arg in "$@"; do
+    if [ -n "$skip_next" ]; then skip_next=''; continue; fi
+    case $arg in
+        -b) skip_next=1 ;;
+        @*|+*|A|AAAA|ANY) ;;
+        *) [ -n "$host" ] || host=$arg ;;
+    esac
+done
+[ -e "$(dirname "$0")/dig-no-answer" ] && exit 0
+case $host in
+    portal.hotel.test) printf '198.51.100.9\n' ;;
+    login.hotel.test)  printf '198.51.100.11\n' ;;
+esac
+EOF
+    chmod 755 "$WORK/wpa_cli" "$WORK/probe" "$WORK/dig"
 }
 
 setup() {
@@ -315,6 +347,11 @@ for old, new in [
     ('ROUTEFILE="/home/amos/.routefile"', 'ROUTEFILE="%s/routefile"' % work),
     ('CN_EXCLUDE_FILE="/home/amos/git/serverconfig/network/cn-exclude.conf"',
      'CN_EXCLUDE_FILE="%s/cn-exclude.conf"' % work),
+    ('DIRECT_FILE="${DIRECT_FILE_OVERRIDE:-/home/amos/git/serverconfig/network/direct.conf}"',
+     'DIRECT_FILE="%s/direct.conf"' % work),
+    ('LINK_LOCAL_CACHE="${LINK_LOCAL_CACHE_OVERRIDE:-/var/lib/network-reconfigure/link-local-resolved}"',
+     'LINK_LOCAL_CACHE="%s/link-local-resolved"' % work),
+    ('DIG="${DIG_OVERRIDE:-dig}"', 'DIG="%s/dig"' % work),
     # OFFICE_SRC points at a *copy* of the shipped fragment rather than a hand-written stub. The stub
     # is what let the intranet bootstrap override slip in: it never had those lines, so the assertion
     # that forbids them passed while the shipped file broke iOA login. The copy is needed because
@@ -352,6 +389,10 @@ EOF
     printf 'route add 10.20.0.0/16 via GATEWAY table cn\n' >> "$WORK/routefile"
     printf 'route add 100.12.34.0/24 via GATEWAY table cn\n' >> "$WORK/routefile"
     printf '# Explicit CN bypasses\n193.112.78.32/32\n' > "$WORK/cn-exclude.conf"
+    # The declared link-local set. Both forms are present because they take different
+    # paths through the reconciler: an address is used as written, a hostname is
+    # resolved through the DHCP-lease resolver.
+    printf '# test direct list\nportal.hotel.test  # the portal\n203.0.113.7\n' > "$WORK/direct.conf"
     # The lease is a file so a test can hand out a different resolver, which is
     # what a roam onto another AP actually does. Two servers on a continuation
     # line, because that wrapping is what the awk state machine exists for.
@@ -760,6 +801,123 @@ main() {
             bad "active office resolver $resolver is not pinned to main"
         fi
     done
+
+    # Declared link-local destinations. The exit node is a default route, so without this
+    # the portal address leaves for the far end of the tunnel and the wrong host answers.
+    head_ "declared link-local destinations reach the physical network"
+    for addr in 198.51.100.9 198.51.100.11 203.0.113.7; do
+        if [ "$(band 1000 | grep -Fxc "from all to $addr lookup main")" -eq 1 ]; then
+            ok "$addr is pinned to main"
+        else
+            bad "$addr is not pinned to main: $(band 1000)"
+        fi
+        if [ "$(route_table "$addr")" = main ]; then
+            ok "$addr resolves through main, not the exit node"
+        else
+            bad "$addr resolved to $(route_table "$addr"), not main"
+        fi
+    done
+    # The RFC 8910 endpoint takes the same path, so a network that does advertise option
+    # 114 needs no entry in the file. Both sources must be live at once: 198.51.100.9 is
+    # declared in the file and 198.51.100.11 comes only from the lease.
+    if [ "$(band 1000 | grep -Fxc 'from all to 198.51.100.11 lookup main')" -eq 1 ]; then
+        ok "RFC 8910 portal endpoint is pinned without a file entry"
+    else
+        bad "RFC 8910 portal endpoint was not pinned"
+    fi
+    # The rules are inert without routes behind them: a match whose main-table lookup
+    # finds nothing continues at the next rule, which is the exit node.
+    # The resolver query has to name the physical address. Unbound, it is routed by the
+    # first lookup — the tailnet's table 52 — and the same name answers with the public
+    # placeholder instead of this link's address.
+    if grep -Fq -- '-b 10.36.48.162' "$WORK/dig-calls"; then
+        ok "the resolver query is bound to the physical address"
+    else
+        bad "the resolver query is not bound to the physical address: $(cat "$WORK/dig-calls" 2>/dev/null)"
+    fi
+    if ip -4 route show table main proto 66 | grep -Fq '203.0.113.7'; then
+        ok "declared address has a route through the physical gateway"
+    else
+        bad "declared address has no route: $(ip -4 route show table main proto 66)"
+    fi
+    if ip -4 route show table main proto 66 | grep -Fq 'via 10.36.48.1 dev wlan0'; then
+        ok "declared routes name the current physical gateway"
+    else
+        bad "declared routes do not use the physical gateway: $(ip -4 route show table main proto 66)"
+    fi
+    run_script 1 >/dev/null
+    [ "$(ip -4 route show table main proto 66 | grep -Fc '203.0.113.7')" -eq 1 ] \
+        && ok "a second run converges declared routes" \
+        || bad "declared routes duplicated on rerun: $(ip -4 route show table main proto 66)"
+
+    # A resolver that cannot be reached is not evidence about a name. Its absence is exactly
+    # what a DHCP renewal looks like, so treating it as "this link has no such name"
+    # withdraws the pin on a transient failure — and the run still exits zero, so nothing
+    # reports it. The pin has to survive that.
+    : >"$WORK/dig-unreachable"
+    run_script 0 >/dev/null
+    if [ "$(ip -4 route show table main proto 66 | grep -Fc '198.51.100.9')" -eq 1 ] &&
+       [ "$(band 1000 | grep -Fxc 'from all to 198.51.100.9 lookup main')" -eq 1 ]; then
+        ok "an unreachable resolver holds the pin instead of withdrawing it"
+    else
+        bad "an unreachable resolver withdrew the pin: $(ip -4 route show table main proto 66)"
+    fi
+    rm -f "$WORK/dig-unreachable"
+
+    # The opposite case must still withdraw, or a pin would outlive the network that
+    # justified it. A resolver that answers without an address is real evidence.
+    : >"$WORK/dig-no-answer"
+    run_script 0 >/dev/null
+    if [ "$(ip -4 route show table main proto 66 | grep -Fc '198.51.100.9')" -eq 0 ]; then
+        ok "a resolver that answers without an address withdraws the pin"
+    else
+        bad "a definitive empty answer left the pin behind: $(ip -4 route show table main proto 66)"
+    fi
+    rm -f "$WORK/dig-no-answer"
+    run_script 0 >/dev/null
+
+    # An entry that stops being declared is withdrawn, which is what makes the file the
+    # authority rather than a one-way append. The RFC 8910 address must survive the
+    # withdrawal, because it comes from the lease and not from the file.
+    printf '# test direct list\n203.0.113.7\n' > "$WORK/direct.conf"
+    run_script 0 >/dev/null
+    if [ "$(band 1000 | grep -Fc 'from all to 198.51.100.9 lookup main')" -eq 0 ] &&
+       ! ip -4 route show table main proto 66 | grep -Fq '198.51.100.9' &&
+       ip -4 route show table main proto 66 | grep -Fq '198.51.100.11'; then
+        ok "removing an entry withdraws its rule and route"
+    else
+        bad "removed entry left policy behind: $(band 1000) / $(ip -4 route show table main proto 66)"
+    fi
+    printf '# test direct list\nportal.hotel.test  # the portal\n203.0.113.7\n' > "$WORK/direct.conf"
+    run_script 0 >/dev/null
+    # An entry the link's resolver cannot answer must produce no pin at all, rather than a
+    # pin on a guessed address. The RFC 8910 endpoint is still advertised by the lease, so
+    # exactly its own address must survive.
+    printf '# test direct list\nunresolvable.hotel.test\n' > "$WORK/direct.conf"
+    run_script 0 >/dev/null
+    if [ "$(ip -4 route show table main proto 66 | wc -l)" -eq 1 ] &&
+       ip -4 route show table main proto 66 | grep -Fq '198.51.100.11'; then
+        ok "an entry the link resolver cannot answer pins nothing"
+    else
+        bad "unresolvable entry left routes: $(ip -4 route show table main proto 66)"
+    fi
+    printf '# test direct list\nportal.hotel.test  # the portal\n203.0.113.7\n' > "$WORK/direct.conf"
+    run_script 0 >/dev/null
+    # A malformed line must be skipped, not acted on and not fatal. Reaching `ip route
+    # replace` with it would abort the run under `set -e` and leave every later band
+    # unbuilt, so this asserts both halves: the bad entry is ignored and the good ones still
+    # land. The mistyped-address case is the one that silently looked like a hostname.
+    printf '# test direct list\nportal.hotel.test\n1.1.1.256\ntrailing.\n203.0.113.0/0\n203.0.113.7\n' \
+        > "$WORK/direct.conf"
+    run_script 0 >/dev/null
+    if [ "$(ip -4 route show table main proto 66 | wc -l)" -eq 3 ] &&
+       ip -4 route show table main proto 66 | grep -Fq '203.0.113.7' &&
+       ! ip -4 route show table main proto 66 | grep -Fq '1.1.1.256' &&
+       ! ip -4 route show table main proto 66 | grep -Fq 'default'; then
+        ok "malformed declared entries are skipped without disturbing the valid ones"
+    else
+        bad "malformed declared entries leaked into policy: $(ip -4 route show table main proto 66)"
+    fi
     run_script 1 >/dev/null
     [ "$(awk '$2 == "cn" || $2 == "cn_stage" {count++} END {print count + 0}' "$WORK/rt_tables")" -eq 0 ] \
         && ok "retired CN routing tables stay unregistered" \

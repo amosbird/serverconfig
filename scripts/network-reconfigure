@@ -48,6 +48,15 @@ TMPDIR="${TMPDIR_OVERRIDE:-/tmp}"
 IOA_TABLE="ioa"
 ROUTEFILE="/home/amos/.routefile"
 CN_EXCLUDE_FILE="/home/amos/git/serverconfig/network/cn-exclude.conf"
+DIRECT_FILE="${DIRECT_FILE_OVERRIDE:-/home/amos/git/serverconfig/network/direct.conf}"
+# Marks the host routes this script owns for declared link-local destinations, so
+# withdrawal can name exactly its own routes. 66 is unassigned in iproute2's table.
+DIRECT_PROTO=66
+# Last known-good resolutions, keyed by the entry as written in the file. A resolver
+# that cannot be reached is not evidence about a name, so it must not be allowed to
+# withdraw a pin; see resolve_through for the distinction.
+LINK_LOCAL_CACHE="${LINK_LOCAL_CACHE_OVERRIDE:-/var/lib/network-reconfigure/link-local-resolved}"
+DIG="${DIG_OVERRIDE:-dig}"
 OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
 OFFICE_DST="/etc/smartdns/office.conf"
 SMARTDNS_BASE="/etc/smartdns/smartdns.conf"
@@ -243,6 +252,202 @@ dhcp_captive_portal_hostname() {
     { networkctl dhcp-lease "$1" 2>/dev/null || true; } |
         awk '$2 == "captive" && $3 == "portal" { print $4; exit }' |
         python3 -c 'import sys, urllib.parse; print(urllib.parse.urlparse(sys.stdin.read().strip()).hostname or "")'
+}
+
+# --- Link-local destinations -------------------------------------------------
+# An exit node is a default route, so a destination that is only meaningful on the
+# current link falls into it and leaves for the far end of the tunnel. Nothing in the
+# address itself says which destinations those are: on 2026-09-24 the JinJiang portal
+# resolved to 1.1.1.5, which is Cloudflare's anycast address everywhere else. The
+# tunnel carried the request to the other side of the world, a genuine Cloudflare host
+# answered without a certificate for the portal name, and the browser reported
+# ERR_SSL_VERSION_OR_CIPHER_MISMATCH — the portal was never contacted at all.
+#
+# The set therefore has to be declared, and there are two sources. The network declares
+# it through RFC 8910 option 114, which this lease does not send; the operator declares
+# it in network/direct.conf. Both are pinned to the current physical gateway here.
+#
+# Names are resolved through the link's own resolver, deliberately. It is the only
+# server that can answer for a link-local name — and on this portal network it is
+# exactly the server being rewritten to hand out the link-local address, since hotels
+# intercept cleartext UDP DNS. The public answer for the same name is a placeholder
+# page, so the intercepted answer is the useful one.
+# An entry is accepted only if it is an address, a prefix, or a plausible hostname. A typo
+# must be skipped with a warning rather than reaching `ip route replace`, where a failure
+# would abort the run under `set -e` and leave the rest of the policy unbuilt.
+#
+# A prefix is additionally required to be narrower than a /8. This is a list of individual
+# destinations that happen to be link-local, and `ip route replace` on anything wider
+# would install a competing default route in `main` — the one thing this policy exists to
+# let Tailscale own.
+direct_ipv4_octets() {
+    local octets octet
+    IFS=. read -r -a octets <<<"$1"
+    [ "${#octets[@]}" -eq 4 ] || return 1
+    for octet in "${octets[@]}"; do
+        [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] && [ "$octet" -le 255 ] || return 1
+    done
+}
+
+direct_hostname() {
+    local label
+    [[ "$1" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
+    # A leading, trailing, or doubled dot is a typo. `read` would silently drop the empty
+    # field, so it would otherwise be accepted and resolved as the trimmed name.
+    [[ "$1" != .* && "$1" != *. && "$1" != *..* ]] || return 1
+    IFS=. read -r -a labels <<<"$1"
+    for label in "${labels[@]}"; do
+        [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+    done
+}
+
+valid_direct_entry() {
+    local entry=$1 address=$1 length
+    if [[ "$entry" == */* ]]; then
+        address=${entry%%/*}
+        length=${entry##*/}
+        [[ "$length" =~ ^([0-9]|[12][0-9]|3[0-2])$ ]] || return 1
+        [ "$length" -ge 8 ] || return 1
+        direct_ipv4_octets "$address"
+        return
+    fi
+    direct_ipv4_octets "$entry" && return 0
+    # A digits-and-dots entry that failed address validation is a mistyped address, not a
+    # hostname. Passing it on would hand it to the resolver, which reports only that the
+    # name does not exist — indistinguishable from a link-local name it cannot answer.
+    [[ "$entry" == *[!0-9.]* ]] || return 1
+    direct_hostname "$entry"
+}
+
+direct_entries() {
+    [ -r "$DIRECT_FILE" ] || return 0
+    sed -e 's/[[:space:]]*#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$DIRECT_FILE" |
+        awk 'NF'
+}
+
+# The physical interface's own address, used to bind the resolver query below.
+physical_address() {
+    local dev=${1:-$(physical_device)}
+    [ -n "$dev" ] || return 0
+    ip -4 -o addr show dev "$dev" scope global 2>/dev/null |
+        awk '{ split($4, a, "/"); print a[1]; exit }'
+}
+
+# Resolve through one specific resolver, bound to the physical address so the query
+# cannot be captured by the exit node.
+#
+# The binding is the whole mechanism, not a detail. An unbound query is routed by the
+# first lookup, which is the tailnet's table 52 whenever an exit node is selected, and
+# the answer that comes back is the public one — for the portal name that is a
+# placeholder page on 106.14.39.79, while the address this link actually needs is 1.1.1.5.
+# Binding to the physical address matches the interface's own source rule, which sends
+# the query out the physical gateway where the network's real answer lives.
+#
+# Returns 0 with the addresses, 1 when the resolver answered and has none for this name,
+# and 2 when it never answered. The last two must not be conflated: a lease that is mid
+# renewal has no resolvers to ask at all, and treating that as "this link has no such
+# name" deletes the pin, silently, on a run that still exits zero.
+resolve_through() {
+    local resolver=$1 host=$2 bind=$3 raw addresses rc=0
+    local scope=()
+    [ -n "$bind" ] && scope=(-b "$bind")
+    # No pipeline here on purpose. In `A | B` the command substitution reports B's exit
+    # status, so filtering dig's output through awk would report awk's success and lose
+    # dig's failure — turning "the resolver never answered" into "the name has no address"
+    # and withdrawing a pin over a transient outage.
+    raw=$("$DIG" +short +time=2 +tries=1 "@$resolver" "${scope[@]}" "$host" A 2>/dev/null) || rc=$?
+    [ "$rc" -eq 0 ] || return 2
+    addresses=$(awk '/^([0-9]{1,3}\.){3}[0-9]{1,3}$/' <<<"$raw")
+    [ -n "$addresses" ] || return 1
+    printf '%s\n' "$addresses"
+}
+
+# Ask every resolver this link advertises. The first answer wins, because the lease
+# order is the network's own preference and a hotel's intercepted resolver is the one
+# that knows the link-local name. Only if none of them answers is the result unknown.
+resolve_link_local() {
+    local host=$1 resolver rc addresses definitive=0
+    [ -n "$link_local_bind" ] || return 2
+    while read -r resolver; do
+        [ -n "$resolver" ] || continue
+        rc=0
+        addresses=$(resolve_through "$resolver" "$host" "$link_local_bind") || rc=$?
+        case $rc in
+            0) printf '%s\n' "$addresses"; return 0 ;;
+            1) definitive=1 ;;
+        esac
+    done < <(printf '%s\n' ${dns:-})
+    [ "$definitive" -eq 1 ] && return 1
+    return 2
+}
+
+cached_link_local() {
+    [ -r "$LINK_LOCAL_CACHE" ] || return 0
+    awk -F'\t' -v entry="$1" '$1 == entry { print $2 }' "$LINK_LOCAL_CACHE"
+}
+
+# Every destination this link must reach directly: the operator's declarations plus the
+# RFC 8910 endpoint when the lease advertises one. Addresses pass through unqueried.
+#
+# A name the link cannot be asked about falls back to its last known answer, so a
+# transient outage holds the pin rather than removing it. A name the link answers
+# definitively without an address is withdrawn, because that is real evidence.
+link_local_addresses() {
+    local entry addresses rc addr cache_dir
+    cache_dir=$(dirname "$LINK_LOCAL_CACHE")
+    [ -d "$cache_dir" ] || cache_dir=''
+    [ -n "$cache_dir" ] && : >"$LINK_LOCAL_CACHE.candidate" 2>/dev/null
+    while read -r entry; do
+        [ -n "$entry" ] || continue
+        if ! valid_direct_entry "$entry"; then
+            warn "ignoring invalid entry in $DIRECT_FILE: $entry"
+            continue
+        fi
+        addresses=''
+        rc=0
+        case $entry in
+            *[!0-9./]*) addresses=$(resolve_link_local "$entry") || rc=$? ;;
+            *) addresses=$entry ;;
+        esac
+        case $rc in
+            0) ;;
+            1) continue ;;
+            2)
+                addresses=$(cached_link_local "$entry")
+                warn "cannot resolve $entry through this link; keeping the last known address"
+                ;;
+        esac
+        while read -r addr; do
+            [ -n "$addr" ] || continue
+            printf '%s\n' "$addr"
+            [ -n "$cache_dir" ] &&
+                printf '%s\t%s\n' "$entry" "$addr" >>"$LINK_LOCAL_CACHE.candidate"
+        done <<<"$addresses"
+    done < <(direct_entries; printf '%s\n' "${portal_hostname:-}") | sort -u
+    return 0
+}
+
+# The rule that names these destinations lives in the pref-1000 band; the route is what
+# the lookup then finds. Both are needed: a rule matching with nothing in main falls
+# through to the exit node, which is the behaviour being corrected. Rows left from a
+# destination that is no longer declared are withdrawn, and a device that goes away
+# takes its own routes with it.
+reconcile_link_local_routes() {
+    local dev=$1 gateway=$2 addr wanted desired=()
+    while read -r addr; do
+        [ -n "$addr" ] || continue
+        desired+=("$addr")
+        ip route replace "$addr" via "$gateway" dev "$dev" proto "$DIRECT_PROTO" ||
+            warn "cannot pin $addr through $gateway on $dev"
+    done < <(printf '%s\n' "$link_local_addrs")
+    while read -r addr; do
+        [ -n "$addr" ] || continue
+        for wanted in ${desired[@]+"${desired[@]}"}; do
+            [ "$wanted" = "$addr" ] && continue 2
+        done
+        ip route del "$addr" dev "$dev" proto "$DIRECT_PROTO" 2>/dev/null || true
+    done < <(ip -4 route show table main dev "$dev" proto "$DIRECT_PROTO" 2>/dev/null |
+        awk '$1 != "default" { print $1 }')
 }
 
 wired_devices() {
@@ -539,6 +744,13 @@ for _ in {1..10}; do
     sleep 1
 done || true
 portal_hostname=$(dhcp_captive_portal_hostname "$IFACE")
+# Resolve before anything builds a band: the pinned names are rule specs at pref 1000 and
+# routes through the physical gateway at the same time, and the state file has to carry
+# the resolved set so a change to it re-triggers reconciliation.
+link_local_bind=$(physical_address "$IFACE")
+mkdir -p "$(dirname "$LINK_LOCAL_CACHE")" 2>/dev/null || true
+link_local_addrs=$(link_local_addresses)
+mv "$LINK_LOCAL_CACHE.candidate" "$LINK_LOCAL_CACHE" 2>/dev/null || true
 # Before anything reads main's default route — the local band, the SmartGate underlay audit — settle
 # whether a wired link deserves to own it.
 reconcile_wired_default_route
@@ -638,6 +850,14 @@ if [ -n "$wired_dev" ] && [ -n "$wired_gateway" ]; then
     reconcile_office_resolver_routes "$wired_dev" "$wired_gateway"
 fi
 
+# Declared link-local destinations belong to whichever link is current, so they hang off
+# the physical default rather than the office half above.
+link_local_dev=$(physical_device)
+link_local_gateway=$(physical_gateway)
+if [ -n "$link_local_dev" ] && [ -n "$link_local_gateway" ]; then
+    reconcile_link_local_routes "$link_local_dev" "$link_local_gateway"
+fi
+
 CACHE_DIR="/var/lib/network-reconfigure"
 STATE_FILE="$CACHE_DIR/last-applied"
 CN_STATE_FILE="$CACHE_DIR/cn-last-applied"
@@ -647,6 +867,7 @@ cn_exclude_state=$(sha256sum "$CN_EXCLUDE_FILE" 2>/dev/null |
     awk '{print $1}' || printf missing)
 current_state="iface=$IFACE gw=$(physical_gateway) dev=$(physical_device) dns=${dns:-}"
 current_state+=" portal=${portal_hostname:-} routefile=$routefile_state exclude=$cn_exclude_state"
+current_state+=" direct=$(paste -sd, <<<"$link_local_addrs")"
 cn_input_state="routefile=$routefile_state exclude=$cn_exclude_state"
 
 cn_set_entries() {
@@ -710,6 +931,10 @@ done < <({ ip route show table main scope link 2>/dev/null || true; })
 for addr in "$(physical_gateway)"; do
     [ -n "$addr" ] && local_band+=("from all to $addr lookup main")
 done
+while read -r addr; do
+    [ -n "$addr" ] || continue
+    local_band+=("from all to $addr lookup main")
+done <<<"$link_local_addrs"
 if [ -n "$portal_hostname" ]; then
     for addr in ${dns:-}; do
         [ -n "$addr" ] && local_band+=("from all to $addr lookup main")

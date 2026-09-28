@@ -62,7 +62,7 @@ the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owne
 | 400 | `fwmark 0x1000000` | `wired_underlay` while office-authorized, otherwise `main` | Prefer the authenticated office wire for iOA control traffic and fall back to the ordinary physical route everywhere else. |
 | 401 | `fwmark 0x1000000` | `prohibit` | Fail closed if no physical route exists; never fall through to Tailscale. |
 | 500 | `fwmark 0x80000/0xff0000` | `main` | Let Tailscale-owned transport packets reach the physical network. |
-| 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, captive-portal resolvers, and the office resolvers from the wired lease | `main` | Keep the actual LAN and its required infrastructure direct. |
+| 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, declared link-local destinations, captive-portal resolvers, and the office resolvers from the wired lease | `main` | Keep the actual LAN and its required infrastructure direct. |
 | 1100 | SmartGateAgent-owned `fwmark 0xa38` | `20` | Send SmartGate control traffic through its current physical underlay. |
 | 1150 | exact `fwmark 0x1`, then unmarked `10.0.0.0/8` | `ioa` | Select DNS-classified IOA payload and retain a literal-address fallback for private Tencent destinations. |
 | 1200 | SmartGateAgent-owned physical source address | `230` | Keep its source-bound sockets on the current physical underlay. |
@@ -87,8 +87,9 @@ Linux evaluates lower numeric priorities first:
    control sockets to `tailscale0` after Tailscale starts.
 2. Tailscale owner-marked packets use `main`.
 3. Any destination that currently has a non-default route in `main` — the connected LAN and the
-   physical gateway — uses `main`, as do the explicitly pinned physical gateway, a DHCP resolver
-   while an RFC 8910 captive portal is advertised, and office DNS servers enabled for the
+   physical gateway — uses `main`, as do the explicitly pinned physical gateway, the link-local
+   destinations declared in `network/direct.conf` or named by the lease's RFC 8910 option, a DHCP
+   resolver while an RFC 8910 captive portal is advertised, and office DNS servers enabled for the
    authenticated wired link.
 4. SmartGateAgent owner-marked packets use owner table `20`.
 5. IOA business payload uses table `ioa`; the tunnel's own underlay uses the authenticated office
@@ -207,6 +208,7 @@ normal unmatched policy. The physical gateway is an explicit priority-1000 excep
 LAN can overlap `10/8`. DHCP resolvers receive an exception only while the lease advertises an
 RFC 8910 captive portal; without that portal SmartDNS does not use them and sending arbitrary
 traffic to their possibly public addresses outside the exit node would violate fail-closed.
+Declared link-local destinations are covered below.
 While an 802.1X-authorized wired link has both an address and a DHCP gateway, `network-reconfigure`
 takes the office resolver addresses from that link's DHCP lease, pins those exact addresses to
 `main`, and gives each one a host route through the wired gateway; it removes all of that with the
@@ -229,6 +231,59 @@ holds an address and a default route while nothing beyond it is reachable, which
 indistinguishable from a dead network. Suppressing prefix length 0 is deliberately not a bypass of
 IOA selection: a `10/8` destination that is not on-link still has no route in `main` other than the
 suppressed default, so it falls through to priority 1150 and table `ioa` as before.
+
+### A link-local destination is not a private one
+
+The selected exit node is a default route, so every destination without a more specific route
+leaves for the far end of the tunnel. Most of the time that is the intent. It is wrong for a
+destination that only means something on the network the machine is attached to, and no property
+of an address distinguishes the two: a hotel can give its portal any public address it owns.
+
+On 2026-09-24 JinJiang's portal on `172.16.16.1` redirected to a login page at
+`portal.linkbroad.com`, which resolved to `1.1.1.5`. Everywhere except that LAN, `1.1.1.5` is
+Cloudflare anycast. The request went to the exit node in Singapore, a real Cloudflare host
+answered, that host had no certificate for the name, and Chrome reported
+`ERR_SSL_VERSION_OR_CIPHER_MISMATCH` — a TLS error describing a routing fault, with the portal
+never contacted at all. The network's own resolver was answering `1.1.1.5` for that name the whole
+time: the interception hotels apply to cleartext UDP DNS was returning the useful answer, while
+the truthful public answer `106.14.39.79` serves an empty placeholder page. This is also why the
+portal name must be resolved by the network, not by a truthful resolver.
+
+Two sources declare the set, and both end up in the priority-1000 band with a host route through
+the current physical gateway:
+
+- `network/direct.conf`, an operator-declared list of addresses, prefixes, and hostnames.
+- The lease's RFC 8910 option 114, when a network advertises one. This hotel network does not,
+  which is why the file exists at all.
+
+A hostname from either source is resolved through the lease's resolver **bound to the physical
+address**, and that binding is the mechanism rather than a detail. An unbound query is settled by
+the first route lookup, which is the tailnet's table 52 whenever an exit node is selected, and it
+returns the public placeholder — so the pin would name the wrong host, which is worse than no pin.
+Binding to the interface's own address matches its source rule and puts the query on the physical
+path, where the network's real answer lives.
+
+"The resolver could not be reached" and "the resolver says this name has no address" are different
+answers, and conflating them is what turns a DHCP renewal into a broken portal. A lease mid-renewal
+has no resolvers to ask, and treating that silence as evidence withdrew the pin on a run that still
+exited zero, so nothing reported it — the failure mode was a portal that stopped working minutes
+after the network wobbled, with no trace of why. Only a resolver that *answered* without an address
+withdraws a pin; an unreachable one holds the last known answer, cached in
+`/var/lib/network-reconfigure/link-local-resolved`, and logs a warning. The cache is keyed by the
+entry as written and is rebuilt every run, so deleting a line from `network/direct.conf` still
+withdraws its pin on the next run — the fallback cannot resurrect a destination the file no longer
+declares.
+
+The rule alone is also not enough. A rule that matches but whose `main` lookup finds nothing
+continues at the next rule, so the route has to exist as well; both are reconciled together, and
+the routes carry protocol `66` so withdrawal names exactly this script's own rows. Entries removed
+from the file are withdrawn on the next run, and reconciliation happens before the no-change early
+exit, so a DHCP renewal that drops the route is repaired by the next `network-reconfigure` instead
+of by hand. That is the whole difference between this and the `/32` a person adds by hand, which
+survives nothing.
+
+Keep the list short. A declared destination outranks the IOA and CN bands, so a wrong entry sends
+traffic that should have been tunnelled onto the local network, where nothing will answer.
 
 ### Which Ethernet link is the office LAN
 

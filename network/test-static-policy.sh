@@ -211,6 +211,41 @@ if ! grep -Fq 'IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure
     echo 'FAIL office/external edges are not recorded' >&2
     fail=1
 fi
+# An exit node is a default route, so a destination that is only meaningful on the current
+# link left for the far end of the tunnel. Nothing in an address says it is link-local: on
+# 2026-09-24 a hotel portal's own address was 1.1.1.5, which is Cloudflare anycast
+# everywhere else, and the wrong host answered the browser. The set has to be declared and
+# pinned to the physical gateway, and the resolver query that builds it has to be bound to
+# the physical address — unbound it is routed by the first lookup, table 52, and the same
+# name answers with the public placeholder instead of this link's address.
+if ! grep -Fq 'DIRECT_FILE="${DIRECT_FILE_OVERRIDE:-/home/amos/git/serverconfig/network/direct.conf}"' \
+        scripts/network-reconfigure; then
+    echo 'FAIL no declared link-local destination list is read' >&2
+    fail=1
+fi
+if ! grep -Fq 'reconcile_link_local_routes "$link_local_dev" "$link_local_gateway"' \
+        scripts/network-reconfigure; then
+    echo 'FAIL declared link-local destinations get no physical route' >&2
+    fail=1
+fi
+if ! grep -Fq 'resolve_through "$resolver" "$host" "$link_local_bind"' \
+        scripts/network-reconfigure; then
+    echo 'FAIL link-local names resolve without being bound to the physical address' >&2
+    fail=1
+fi
+if ! grep -Fq 'local_band+=("from all to $addr lookup main")' scripts/network-reconfigure; then
+    echo 'FAIL declared link-local destinations get no rule ahead of the later bands' >&2
+    fail=1
+fi
+# The declared set is only a policy band if it outranks the bands that would otherwise
+# claim a destination. Pref 1000 precedes iOA at 1150 and CN at 1500 by construction, so
+# the failing state is a later move of this band rather than a missing entry in it.
+p_local=$(awk -F= '$1 == "P_LOCAL" {print $2; exit}' scripts/network-reconfigure)
+if [ -z "$p_local" ] || [ "$p_local" -ge "$p_ioa" ] || [ "$p_local" -ge "$p_cn" ]; then
+    printf 'FAIL link-local band %s does not precede iOA %s and CN %s\n' \
+        "${p_local:-none}" "$p_ioa" "$p_cn" >&2
+    fail=1
+fi
 # Restarting ngnclient does not refresh iOA, it logs the user out: the service restart stops iOA.bin,
 # SmartGateAgent goes with it, and the tunnel has to be re-established by hand. Unplugging at 17:15 on
 # 2026-09-21 destroyed a tunnel that had already picked up the EXTRA scene one second earlier. iOA
