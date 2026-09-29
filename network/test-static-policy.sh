@@ -604,6 +604,25 @@ fi
 reject 'iwd roaming is not suppressed to work around a controller that stops forwarding' \
     '^(DisableRoamingScan|RoamThreshold|RoamThreshold5G|CriticalRoamThreshold|CriticalRoamThreshold5G)=' \
     "$iwd_config"
+# The forwarding witness must be evidence about this segment, and a hardcoded address is not. The
+# static target is Google, this country blocks it, and a segment that was forwarding perfectly well
+# was declared dead for it: the DHCP T1 renewal retriggers the hook, so that was a forced
+# reassociation every hour on the hour, 72 spurious repairs over two days. The lease's own resolvers
+# are the only witness whose failure means anything, so a static target must never be able to deny
+# forwarding on its own, and the two kinds have to stay distinguishable in the target list.
+if ! grep -Fq "printf 'lease %s %s\\n' \"\$resolver\" \"\$LEASE_DNS_PORT\"" \
+        scripts/network-dhcp-refresh; then
+    echo 'FAIL the forwarding witness is not read from the DHCP lease' >&2
+    fail=1
+fi
+if ! grep -Fq '[ "$lease_denied" -eq 1 ] && return 1' scripts/network-dhcp-refresh; then
+    echo 'FAIL a static probe target is allowed to deny forwarding' >&2
+    fail=1
+fi
+if ! grep -Fq 'off_link' scripts/network-dhcp-refresh; then
+    echo 'FAIL a probe target on this segment is not rejected as evidence' >&2
+    fail=1
+fi
 # iwd's exact-BSSID commands need developer mode, which only exists behind a drop-in that replaces
 # ExecStart. That was deployed on 2026-09-18 and took wireless out completely: the accompanying
 # ExecStartPost, needed because developer mode drops autoconnect, exited non-zero, so systemd tore

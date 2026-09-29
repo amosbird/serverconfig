@@ -428,10 +428,17 @@ link_local_addresses() {
 }
 
 # The rule that names these destinations lives in the pref-1000 band; the route is what
-# the lookup then finds. Both are needed: a rule matching with nothing in main falls
-# through to the exit node, which is the behaviour being corrected. Rows left from a
-# destination that is no longer declared are withdrawn, and a device that goes away
-# takes its own routes with it.
+# the lookup then finds. Rows left from a destination that is no longer declared are
+# withdrawn, and a device that goes away takes its own routes with it.
+#
+# Neither half is individually load-bearing, and saying they are would be wrong: measured on
+# 2026-09-29, the destination stays on the physical path with the rule alone (main's default is the
+# physical gateway) and with the route alone (the band's own `suppress_prefixlength 0` entry returns
+# every non-default route in main, and a host route is one). Removing *both* is what breaks it — the
+# suppressed-default lookup then falls through to the exit node at 5270, which is the failure this
+# exists to correct. Both are kept anyway because they fail independently: a DHCP replacement that
+# momentarily empties main leaves the explicit rule, and a lost route leaves `suppress_prefixlength 0`
+# with nothing to find. The pair is robustness, not a requirement of either lookup.
 reconcile_link_local_routes() {
     local dev=$1 gateway=$2 addr wanted desired=()
     while read -r addr; do

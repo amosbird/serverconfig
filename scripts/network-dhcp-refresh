@@ -30,10 +30,16 @@ IW=${IW:-/usr/bin/iw}
 IP=${IP:-/usr/bin/ip}
 ARPING=${ARPING:-/usr/bin/arping}
 PROBE=${PROBE:-/home/amos/scripts/network-probe-tcp}
-# connectivitycheck.gstatic.com, the address the debug captures already use as the underlay liveness
-# target, on the mark reserved for probes that must stay on the physical path.
+# A fallback witness for a link that advertises no resolver of its own: connectivitycheck.gstatic.com,
+# the address the debug captures already use as the underlay liveness target, on the mark reserved
+# for probes that must stay on the physical path. See forwarding_targets for why this is no longer
+# the primary evidence.
 PROBE_TARGET=${PROBE_TARGET:-216.239.32.117}
 PROBE_PORT=${PROBE_PORT:-80}
+# The lease's resolvers answer DNS, so that is the port the probe has to open. It is a plain TCP
+# handshake, not a query: this only asks whether the segment forwards the station, and every
+# resolver that serves clients over TCP is a witness to that.
+LEASE_DNS_PORT=${LEASE_DNS_PORT:-53}
 PROBE_MARK=${PROBE_MARK:-0x80000}
 PROBE_TIMEOUT=${PROBE_TIMEOUT:-3}
 IWCTL=${IWCTL:-/usr/bin/iwctl}
@@ -78,6 +84,51 @@ REASSOCIATE_COOLDOWN=${REASSOCIATE_COOLDOWN:-20}
 
 log() { logger -t network-dhcp-refresh -p "daemon.$1" "$2"; }
 
+# Resolvers advertised by this link's DHCP lease. They are the primary witness below, so this reads
+# the same field network-reconfigure does; the wrapping across continuation lines is why it is an
+# awk state machine rather than a grep.
+lease_dns_servers() {
+    { "$NETWORKCTL" dhcp-lease "$IFACE" 2>/dev/null || true; } |
+        awk '
+            /domain name server/ { infield = 1; for (i = 5; i <= NF; i++) print $i; next }
+            infield && NF == 1 && $1 ~ /^[0-9.]+$/ { print $1; next }
+            { infield = 0 }
+        '
+}
+
+# Candidate witnesses, strongest evidence first, as `source target port`.
+#
+# `lease` marks a witness the network itself handed out; `static` marks one an operator guessed.
+# The distinction decides what a timeout means, because the two are not equally good evidence:
+#
+#   - A resolver the lease advertises is one every client on this segment is told to use, so the
+#     operator needs it working. A handshake to it failing is evidence about this segment.
+#   - A hardcoded address is a guess about the outside world, and on this network that guess was
+#     wrong — 216.239.32.117 is Google, the country blocks it, and so the probe failed on a segment
+#     that was forwarding perfectly well. The station was reassociated for it every hour, on the
+#     hour, because the DHCP T1 renewal retriggers this hook: 72 spurious repairs over two days,
+#     each one a visible drop.
+#
+# So a static target may only ever *confirm* forwarding, never deny it. It stays in the list for a
+# link that advertises no resolver of its own, where it is the only thing left to try.
+forwarding_targets() {
+    local resolver
+    while read -r resolver; do
+        [ -n "$resolver" ] || continue
+        printf 'lease %s %s\n' "$resolver" "$LEASE_DNS_PORT"
+    done < <(lease_dns_servers)
+    printf 'static %s %s\n' "$PROBE_TARGET" "$PROBE_PORT"
+}
+
+# A target on this segment cannot witness forwarding at all: reaching it needs no routing decision,
+# which is the same reason the ARP check above proves so little. It would report a healthy segment
+# while the gateway was dropping everything, so it is skipped rather than counted as evidence.
+# The test is the presence of a next hop, and it has to be asked of the physical interface: the
+# default route on this machine belongs to the exit node.
+off_link() {
+    "$IP" -4 route get "$1" oif "$IFACE" 2>/dev/null | grep -q ' via '
+}
+
 # ARP proves the gateway is on this segment and the lease names the right one, and nothing more. It
 # does NOT prove the station is being forwarded, because the controller answers ARP at layer two while
 # still refusing to route — which is the exact state this hook exists to repair. Trusting ARP alone
@@ -86,25 +137,46 @@ log() { logger -t network-dhcp-refresh -p "daemon.$1" "$2"; }
 # and the station stayed unforwarded for another 78 seconds until tailscaled was stopped by hand.
 #
 # So both have to hold. ARP first because it is cheap and fails fast when the lease is from another
-# VLAN, then one TCP handshake that has to cross the gateway to succeed. ICMP is not an alternative:
+# VLAN, then a TCP handshake that has to cross the gateway to succeed. ICMP is not an alternative:
 # this network drops it outright, to the gateway and beyond.
 forwarding_works() {
-    local source
+    local source origin target port rc=0 lease_denied=0 static_denied=0
     source=$("$IP" -4 -oneline addr show dev "$IFACE" 2>/dev/null |
         awk '{for (i = 1; i <= NF; i++) if ($i == "inet") {split($(i + 1), a, "/"); print a[1]; exit}}')
     [ -n "$source" ] || return 1
-    # The mark, device and source are fixed before connect() by the probe itself; setting a mark on an
-    # already-connected socket would emit the tailnet source address on wlan0 and can get the host
-    # blocked. Exit 2 means the probe never reached the path, so it measured nothing and must not be
-    # read as a verdict either way.
-    "$PROBE" --target "$PROBE_TARGET" --port "$PROBE_PORT" --source "$source" \
-        --interface "$IFACE" --mark "$PROBE_MARK" --timeout "$PROBE_TIMEOUT" >/dev/null 2>&1
-    case $? in
-        0) return 0 ;;
-        2) log warning "forwarding probe could not be placed on $IFACE; treating as inconclusive"
-           return 0 ;;
-        *) return 1 ;;
-    esac
+    while read -r origin target port; do
+        [ -n "$target" ] || continue
+        if ! off_link "$target"; then
+            log warning "probe target $target is on this segment; it cannot witness forwarding"
+            continue
+        fi
+        # The mark, device and source are fixed before connect() by the probe itself; setting a mark on
+        # an already-connected socket would emit the tailnet source address on wlan0 and can get the
+        # host blocked. Exit 2 means the probe never reached the path, so it measured nothing and must
+        # not be read as a verdict either way; exit 1 is a witness that the path did not carry it.
+        rc=0
+        "$PROBE" --target "$target" --port "$port" --source "$source" \
+            --interface "$IFACE" --mark "$PROBE_MARK" --timeout "$PROBE_TIMEOUT" >/dev/null 2>&1 ||
+            rc=$?
+        case $rc in
+            0) return 0 ;;
+            1) case $origin in
+                   lease)  lease_denied=1 ;;
+                   static) static_denied=1 ;;
+               esac ;;
+        esac
+    done < <(forwarding_targets)
+    # Only a witness the network supplied may deny forwarding. Without one, a timeout is also what a
+    # blocked static address looks like, and denying forwarding on that is the spurious repair this
+    # whole function was rewritten to stop. A lease that is mid-renewal advertises no resolver at
+    # all, so that is the ordinary way to reach this branch rather than an exotic one.
+    [ "$lease_denied" -eq 1 ] && return 1
+    if [ "$static_denied" -eq 1 ]; then
+        log warning "only a static probe target denied forwarding on $IFACE; treating as inconclusive"
+    else
+        log warning "no probe could witness forwarding on $IFACE; treating as inconclusive"
+    fi
+    return 0
 }
 
 segment_usable() {

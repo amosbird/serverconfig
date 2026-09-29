@@ -749,18 +749,42 @@ tunnel, timed out against every DERP address, and `open-conn-track` reported `la
 climbing 3s, 12s, 19s, 23s, 31s, 39s, 48s, 58s. ARP answered throughout, so the hook saw a healthy
 segment and stopped escalating in the middle of the outage it was written to fix.
 
-Forwarding is now measured by `scripts/network-probe-tcp`, one TCP handshake that has to cross the
-gateway, against the same `216.239.32.117:80` the debug captures use and on the same `0x80000` probe
-mark. It must stay pinned to the interface, source and mark, and the probe sets all three before
-`connect()`: marking an already-connected socket emits the tailnet source address on `wlan0` and can get
-the host blocked. Exit code 2 means the probe never reached the path and measured nothing, so it is
-treated as inconclusive rather than as failure — otherwise a broken probe would reassociate on every
-association.
+Forwarding is measured by `scripts/network-probe-tcp`, a TCP handshake that has to cross the
+gateway, on the same `0x80000` probe mark. It stays pinned to interface, source and mark, and the
+probe sets all three before `connect()`: marking an already-connected socket emits the tailnet source
+address on `wlan0` and can get the host blocked. Exit code 2 means the probe never reached the path
+and measured nothing, so it is treated as inconclusive rather than as failure — otherwise a broken
+probe would reassociate on every association.
+
+**Which address it dials decides whether the verdict is worth anything, and a hardcoded one is not.**
+The witness is now a resolver the link's own DHCP lease advertises, on port 53, with
+`216.239.32.117:80` demoted to a last-resort fallback. The two are not interchangeable evidence, and
+`forwarding_targets` tags each one so `forwarding_works` can tell them apart:
+
+- A resolver the lease advertises is one every client on the segment is told to use, so the operator
+  needs it working. A handshake to it failing is evidence about *this segment*, and only this kind of
+  witness may return "not forwarding".
+- A hardcoded address is a guess about the outside world. `216.239.32.117` is Google, this country
+  blocks it, and so the probe **failed on a segment that was forwarding perfectly well**. Because the
+  DHCP T1 renewal retriggers this hook, that produced a forced reassociation every hour on the hour:
+  72 spurious repairs over two days, each a visible drop, and the TLS handshake that the portal
+  failure had already made fragile was torn down for a Google address that was never reachable.
+
+So a static target may only ever confirm forwarding, never deny it. When it is the only witness that
+denied, the hook logs `only a static probe target denied forwarding` and returns inconclusive instead
+of repairing. A lease that is mid-renewal advertises no resolver at all, so that is the ordinary way
+to reach the branch, not an exotic one.
+
+A witness on this segment cannot decide anything and is skipped: reaching it needs no routing
+decision, which is the same reason ARP proves so little. `off_link` asks `ip route get <addr> oif
+<iface>` for a next hop, and it has to name the interface explicitly because the default route on
+this machine belongs to the exit node.
 
 ARP is still checked first, because it is cheap and fails fast when the lease belongs to another VLAN,
 and because ICMP is not an alternative for either job: this network drops it outright, to the gateway
-and beyond. `network/test-dhcp-refresh.sh` covers an answering gateway that does not forward, and
-removing the probe fails it rather than passing.
+and beyond. `network/test-dhcp-refresh.sh` covers an answering gateway that does not forward, a
+blocked static witness that must not repair, and a lease witness that still must; removing the probe,
+collapsing the two kinds of witness, or letting a static target deny forwarding each fail it.
 
 `arping` sends a real request rather
 than reading the neighbour cache, so a stale entry cannot vouch for a gateway that is gone, and a

@@ -32,8 +32,18 @@ check() {
 }
 
 mkdir -p "$WORK/bin"
+# Only mutating calls are recorded as actions. `dhcp-lease` is a read of the lease this hook is
+# acting on, so counting it would make every assertion about the repair ladder drift by however
+# many witnesses happened to be consulted.
 cat >"$WORK/bin/networkctl" <<'SH'
 #!/bin/sh
+case "$1" in
+    dhcp-lease)
+        [ -r "$LEASE_FILE" ] || exit 1
+        cat "$LEASE_FILE"
+        exit 0
+        ;;
+esac
 printf '%s\n' "$*" >>"$ACTION_LOG"
 case "$1" in
     renew) [ -z "$RENEW_FAILS" ] || exit 1 ;;
@@ -63,6 +73,15 @@ cat >"$WORK/bin/ip" <<'SH'
 #!/bin/sh
 case "$*" in
     *"route show"*) printf 'default via 10.36.48.1 dev wlan0 proto dhcp src 10.36.55.44 metric 600\n' ;;
+    # Only the off-link witness test asks for a route to a named address. The gateway is the one
+    # address in play that is on this segment, and it is exactly what must be refused.
+    *"route get"*)
+        case "$*" in
+            *"route get 10.36.48.1"*) printf '10.36.48.1 dev wlan0 src 10.36.55.44\n' ;;
+            *) printf '%s via 10.36.48.1 dev wlan0 src 10.36.55.44\n' \
+                   "$(printf '%s' "$*" | awk '{print $4}')" ;;
+        esac
+        ;;
     *) printf '%s' "$ADDR_OUTPUT" ;;
 esac
 SH
@@ -71,17 +90,32 @@ cat >"$WORK/bin/arping" <<'SH'
 [ "$(cat "$ARP_ANSWERS")" = 1 ]
 SH
 # The probe is the only thing that can tell forwarding from a gateway that merely answers ARP.
+# `$FORWARDING` is the verdict for every witness, and `$FORWARDING_STATIC` optionally overrides it
+# for the hardcoded one: a static target is a guess about the outside world and can be blocked on a
+# segment that forwards perfectly well, which is the whole reason the two are told apart.
 cat >"$WORK/bin/probe" <<'SH'
 #!/bin/sh
 printf 'probe %s\n' "$*" >>"$PROBE_LOG"
 [ -z "$PROBE_UNPLACEABLE" ] || exit 2
-[ "$(cat "$FORWARDING")" = 1 ] || exit 1
+verdict=$(cat "$FORWARDING")
+case "$*" in
+    *216.239.32.117*)
+        [ -z "${FORWARDING_STATIC-}" ] || verdict=$(cat "$FORWARDING_STATIC")
+        ;;
+esac
+[ "$verdict" = 1 ] || exit 1
 SH
-# Fixture associations must not reach the system journal, where they would look like real incidents.
-printf '#!/bin/sh\nexit 0\n' >"$WORK/bin/logger"
+# Fixture associations must not reach the system journal, where they would look like real incidents,
+# but the messages are the only place an inconclusive verdict is visible, so they are kept.
+cat >"$WORK/bin/logger" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>"$LOGGER_LOG"
+SH
 chmod 755 "$WORK/bin"/*
 
 ADDRESS='3: wlan0    inet 10.36.55.44/20 scope global wlan0'
+# Two resolvers on a continuation line, the shape the awk state machine exists for.
+LEASE="   6 domain name server 202.152.254.230\n                        202.152.254.65\n"
 RENEW='renew wlan0'
 REASSOCIATE='iwctl station wlan0 disconnect,iwctl station wlan0 connect XLSMART Public'
 RECONFIGURE='reconfigure wlan0'
@@ -93,6 +127,10 @@ associate() {
 disassociate() { rm -f "$WORK/station"; }
 uptime_at() { printf '%s.42 %s.00\n' "$1" "$1" >"$WORK/uptime"; }
 segment() { printf '%s' "$1" >"$WORK/arp"; printf '%s' "$2" >"$WORK/fwd"; }
+lease() { printf '%b' "${1-$LEASE}" >"$WORK/lease"; }
+lease
+printf '   1 subnet mask 255.255.240.0\n   3 router 10.36.48.1\n' >"$WORK/lease-none"
+: >"$WORK/logger"
 
 run() {
     local rc=0
@@ -101,6 +139,8 @@ run() {
         ADDR_OUTPUT="${ADDR_OUTPUT-$ADDRESS}" ACTION_LOG="$WORK/actions" \
         ARP_ANSWERS="$WORK/arp" FORWARDING="$WORK/fwd" PROBE="$WORK/bin/probe" \
         PROBE_LOG="$WORK/probes" PROBE_UNPLACEABLE="${PROBE_UNPLACEABLE-}" \
+        FORWARDING_STATIC="${FORWARDING_STATIC-}" LEASE_FILE="${LEASE_FILE-$WORK/lease}" \
+        LOGGER_LOG="${LOGGER_LOG-$WORK/logger}" \
         FIXED_BY="${FIXED_BY-none}" \
         LINK_SSID="${LINK_SSID-XLSMART Public}" \
         RENEW_FAILS="${RENEW_FAILS-}" RECONFIGURE_FAILS="${RECONFIGURE_FAILS-}" \
@@ -274,6 +314,56 @@ uptime_at 2500
 associate aa:bb:cc:dd:ee:0c 3
 check 'an unplaceable probe does not trigger a repair' 0 "$(PROBE_UNPLACEABLE=1 run)"
 check 'unplaceable probe acts only on the renew' "$RENEW" "$(actions)"
+
+# 2026-09-29: a hardcoded witness cannot deny forwarding. 216.239.32.117 is Google, the country
+# blocks it, and this hook reassociated the station for it every hour on the hour — the DHCP T1
+# renewal retriggers the hook, so 72 spurious repairs accumulated over two days. A static target is
+# an operator's guess about the outside world; the lease's own resolvers are not a guess.
+reset_actions
+segment 1 1
+uptime_at 2700
+associate aa:bb:cc:dd:ee:0f 3
+# The lease advertises nothing, so the blocked static target is the only witness left, and it times
+# out. `segment 1 1` keeps the general verdict healthy so this fails only for the static address.
+printf '0' >"$WORK/fwd-static"
+verdict_log="$WORK/logger-static"
+: >"$verdict_log"
+check 'a blocked static witness does not trigger a repair' 0 \
+    "$(LEASE_FILE=$WORK/lease-none FORWARDING_STATIC=$WORK/fwd-static LOGGER_LOG=$verdict_log run)"
+check 'blocked static witness acts only on the renew' "$RENEW" "$(actions)"
+if grep -q 'only a static probe target denied forwarding' "$verdict_log"; then
+    echo 'OK   an inconclusive verdict is reported rather than acted on'
+else
+    printf 'FAIL an inconclusive verdict was not reported: %s\n' \
+        "$(cat "$verdict_log" 2>/dev/null)" >&2
+    fail=1
+fi
+
+# The other half: a witness the network itself supplied *may* deny forwarding. Without this the
+# change above would be indistinguishable from simply never repairing anything.
+reset_actions
+segment 1 0
+uptime_at 2800
+associate aa:bb:cc:dd:ee:10 3
+check 'a lease witness still detects a real outage' 0 "$(FIXED_BY=reassociate run)"
+check 'lease witness escalates when it should' "$RENEW,$REASSOCIATE" "$(actions)"
+
+# The witness has to be a resolver the lease advertises, on the port a resolver answers on, and it
+# has to be handed to the probe as the target. Matching the address alone would pass for a probe
+# aimed at the wrong port, which would report a working segment as broken.
+if grep -q -- '--target 202.152.254.230 --port 53' "$WORK/probes" &&
+    grep -q -- '--target 202.152.254.65 --port 53' "$WORK/probes"; then
+    echo 'OK   the lease resolvers are probed as witnesses'
+else
+    printf 'FAIL lease resolvers are not probed:\n' >&2
+    sed -n 1,4p "$WORK/probes" >&2
+    fail=1
+fi
+# And they must stay first, so a link that advertises resolvers never depends on the guess.
+if [ "$(sed -n 1p "$WORK/probes")" != "$(sed -n 1p "$WORK/probes" | grep -F '202.152.254.230')" ]; then
+    echo 'FAIL a static target was consulted before a lease witness' >&2
+    fail=1
+fi
 
 # The repair reconnects to the SSID and lets iwd pick the BSS. Aiming it at a chosen BSSID needs
 # iwd's StationDebug interface, which only exists in developer mode; enabling that replaced iwd's
