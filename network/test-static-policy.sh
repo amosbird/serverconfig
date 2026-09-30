@@ -843,7 +843,7 @@ case "$command" in
             '-4 rule show pref 1501') echo '1501: from all fwmark 0x2 prohibit' ;;
             '-4 rule show pref 1150')
                 echo '1150: from all fwmark 0x1 lookup ioa'
-                echo '1150: from all to 10.0.0.0/8 lookup ioa'
+                echo '1150: from all to 10.0.0.0/8 fwmark 0 lookup ioa'
                 ;;
             '-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
         esac
@@ -896,7 +896,8 @@ EOF
                 'ip|-4|rule|show|pref|1501'| \
                 'ip|-4|rule|show|pref|1150'| \
                 'ip|-4|rule|show|pref|3000'| \
-                'curl|-s|-o|/dev/null|-m|8|-w|%{http_code}|--resolve|connectivitycheck.gstatic.com:80:216.239.32.117|http://connectivitycheck.gstatic.com/generate_204'| \
+                'curl|-s|-o|/dev/null|-m|8|-w|%{http_code}|--resolve|connectivitycheck.platform.hicloud.com:80:117.27.249.81|http://connectivitycheck.platform.hicloud.com/generate_204'| \
+                'curl|-s|-o|/dev/null|-m|8|-w|%{http_code}|--resolve|www.qualcomm.cn:80:124.225.84.98|http://www.qualcomm.cn/generate_204'| \
                 'curl|-s|-o|/dev/null|-m|10|-w|%{http_code}|http://ioa.tencent.com'| \
                 'dig|+short|+timeout=2|+tries=1|google.com|@127.0.0.1'| \
                 'tailscale|status|--json'| \
@@ -964,7 +965,7 @@ case "$command|$*" in
     'ip|-4 rule show pref 1501') echo '1501: from all fwmark 0x2 prohibit' ;;
     'ip|-4 route show table ioa') echo '10.0.0.0/8 dev tun0' ;;
     'ip|-4 -o addr show tun0') echo '8: tun0 inet 198.51.100.2/24 scope global tun0' ;;
-    'ip|-4 rule show pref 1150') echo '1150: from all to 10.0.0.0/8 lookup ioa' ;;
+    'ip|-4 rule show pref 1150') echo '1150: from all to 10.0.0.0/8 fwmark 0 lookup ioa' ;;
     'ip|-4 rule show') echo '490: from all fwmark 0xa38 lookup main' ;;
     'ip|-4 route show table 52') echo 'default dev tailscale0' ;;
     'ip|-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;

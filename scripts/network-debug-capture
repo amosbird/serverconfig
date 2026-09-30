@@ -162,6 +162,12 @@ run_snapshot() {
             >"$incident/$phase/probe-gateway-skipped.txt"
         append_manifest "$incident" 0 "gateway probes skipped (no gateway/source)" "$phase"
     fi
+    # The underlay probe pins a Google address to the physical path, which this country blocks, so a
+    # failure here is expected and is NOT evidence that the underlay is down — it is a fixed baseline
+    # recorded so a capture can be diffed against a healthy one. `probe-underlay-icmp-shape` and
+    # `probe-gateway-*` below are the probes that actually vary with link health. Do not read this
+    # one as a verdict, and do not "fix" it by pointing it at a reachable address: a target that can
+    # succeed through the tunnel would stop distinguishing the physical path from the tunnel.
     if [ -n "$physical_source" ]; then
         record_command "$incident" "$phase" probe-underlay-tcp 8 "$TCP_PROBE" \
             --target 216.239.32.117 --port 80 --source "$physical_source" \
@@ -173,6 +179,9 @@ run_snapshot() {
     fi
     record_command "$incident" "$phase" probe-underlay-icmp-shape 8 \
         /usr/bin/ping -n -c 3 -W 1 -m 524288 -I wlan0 1.1.1.1
+    # Unattached, so this follows the default route: through the exit node when one is selected, and
+    # over the physical path when none is. Either way it is gstatic, which is blocked from this
+    # country on the physical path — the capture records which of the two it was reading.
     record_command "$incident" "$phase" probe-exit-http 10 /usr/bin/curl \
         -4 --connect-timeout 5 --max-time 8 -sS -o /dev/null \
         -w 'remote=%{remote_ip} code=%{http_code} connect=%{time_connect} total=%{time_total}\n' \
@@ -287,6 +296,8 @@ sample_link_state() {
         ) >"$probe_dir/gateway-tcp" &
         gateway_pid=$!
         (
+            # Same fixed-baseline probe as `probe-underlay-tcp` above, pinned to a blocked address on
+            # purpose; a non-zero exit here is the expected reading and says nothing about link health.
             if [ -n "$physical_source" ]; then
                 /usr/bin/timeout 3 "$TCP_PROBE" \
                     --target 216.239.32.117 --port 80 --source "$physical_source" \
