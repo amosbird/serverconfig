@@ -260,7 +260,7 @@ if ! grep -Fq 'portal_hostname=$(discover_portal_hostname "$IFACE")' scripts/net
     echo 'FAIL a captive portal that advertises no endpoint is never discovered' >&2
     fail=1
 fi
-if ! grep -Fq -- '--interface "$dev" "$canary"' scripts/network-reconfigure; then
+if ! grep -Fq -- '--interface "$dev" -w' scripts/network-reconfigure; then
     echo 'FAIL the portal probe is not pinned to the physical interface' >&2
     fail=1
 fi
@@ -273,11 +273,19 @@ fi
 # address must never be pinned: an earlier version installed `192.168.64.254 via 192.168.64.254`
 # on the Atour network — a host route whose next hop is itself — while pinning no hostname at all,
 # so the portal stayed unreachable and the TLS error looked unchanged.
-if ! grep -Fq 'portal_hostname_from_gateway "$dev" "$body"' scripts/network-reconfigure; then
+if ! grep -Fq 'host=$(portal_endpoint_from_host "$dev" "$host" http)' scripts/network-reconfigure; then
     echo 'FAIL a portal that redirects to its own gateway is never asked for its hostname' >&2
     fail=1
 fi
-if ! grep -Fq 'off_link "$host" || continue' scripts/network-reconfigure; then
+# The landing URL is read from curl rather than parsed out of a response. Every hand-rolled
+# attempt lost part of it — the port because `:` was missing from the character class, the path
+# because only the authority was kept — and then guessed port 80 and `/` when it went to look
+# at the page. An interceptor may answer on any port and any path.
+if ! grep -Fq -- "-w '%{url_effective}'" scripts/network-reconfigure; then
+    echo 'FAIL the portal probe parses a response instead of asking curl where it landed' >&2
+    fail=1
+fi
+if ! grep -Fq 'off_link "$host" && {' scripts/network-reconfigure; then
     echo 'FAIL an on-link probe target is not rejected, so it would be pinned to itself' >&2
     fail=1
 fi

@@ -281,27 +281,29 @@ dig()        { return 9; }
 # The captive-portal discovery probe. The fixture answers like an open network unless
 # WORKDIR/portal-redirect names a hostname, which is how a gated link is simulated without
 # a real intercepting device.
+# The discovery probe: `curl -L ... -w '%{url_effective}'`. `portal-redirect` holds the URL a gated
+# link lands on; without it the link answers every canary as itself, which is how an open network
+# looks and must produce no pin. `portal-gateway-page` holds the page served at that landing URL,
+# which is where a network whose redirect leads to its own on-link address keeps its hostname.
 curl() {
-    local redirect='WORKDIR/portal-redirect'
+    local redirect='WORKDIR/portal-redirect' url='' landing
     printf '%s\n' "$*" >> WORKDIR/curl-calls
-    # The Atour shape: the interceptor answers a canary with its own on-link address, and the
-    # hostname that has to be routed is only on the page that address serves.
+    case "$*" in
+        *url_effective*)
+            if [ -r "$redirect" ]; then
+                landing=$(cat "$redirect")
+            else
+                # Not gated: land back on the URL that was asked for.
+                for url in "$@"; do
+                    case $url in http*) landing=$url ;; esac
+                done
+            fi
+            printf '%s' "$landing"
+            return 0
+            ;;
+    esac
     if [ -r 'WORKDIR/portal-gateway-page' ]; then
-        case "$*" in
-            *connectivitycheck*|*detectportal*|*captive.apple.com*)
-                printf 'HTTP/1.1 302 Found\r\nLocation: http://%s/login\r\n\r\n' "$(cat "$redirect")"
-                ;;
-            *)
-                printf 'HTTP/1.1 200 OK\r\n\r\n'
-                cat 'WORKDIR/portal-gateway-page'
-                ;;
-        esac
-    elif [ -r "$redirect" ]; then
-        # A real intercepting portal leaves its own endpoint *and* a reference to the canary it
-        # intercepted. The canary's own hostname must be filtered out, or the pin lands on a public
-        # CDN instead of the portal.
-        printf 'HTTP/1.1 302 Found\r\nLocation: https://%s/login\r\n\r\n' "$(cat "$redirect")"
-        printf '<a href="http://connectivitycheck.platform.hicloud.com/generate_204">retry</a>\n'
+        cat 'WORKDIR/portal-gateway-page'
     else
         printf 'HTTP/1.1 204 No Content\r\n\r\n'
     fi
@@ -870,7 +872,7 @@ main() {
         }
     }
     swap_lease no114
-    printf 'portal.atour.test' >"$WORK/portal-redirect"
+    printf 'https://portal.atour.test/login?gw=1' >"$WORK/portal-redirect"
     run_script 0 >/dev/null
     if [ "$(band 1000 | grep -Fxc 'from all to 198.51.100.12 lookup main')" -eq 1 ] &&
        [ "$(ip -4 route show table main proto 66 | grep -Fc '198.51.100.12')" -eq 1 ] &&
@@ -889,7 +891,7 @@ main() {
     else
         bad "an open network pinned a portal anyway: $(band 1000)"
     fi
-    printf 'portal.atour.test' >"$WORK/portal-redirect"
+    printf 'https://portal.atour.test/login?gw=1' >"$WORK/portal-redirect"
     run_script 0 >/dev/null
     swap_lease default
     rm -f "$WORK/portal-redirect"
@@ -900,7 +902,7 @@ main() {
     # hostname at all, so the portal stayed unreachable. The name is only on the page that address
     # serves, so the gateway has to be asked as well.
     swap_lease no114
-    printf '10.36.48.1' >"$WORK/portal-redirect"
+    printf 'http://10.36.48.1:8080/portal' >"$WORK/portal-redirect"
     printf '<script>location.replace("https://portal.atour.test/login");</script>' \
         >"$WORK/portal-gateway-page"
     run_script 0 >/dev/null
