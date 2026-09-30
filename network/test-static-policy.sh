@@ -145,6 +145,23 @@ while read -r domain; do
         fail=1
     fi
 done < <(sed -n 's|^nameserver /\([^/]*\)/ioa$|\1|p' network/smartdns/smartdns.conf)
+# The WeCom mailbox answers `IP 限制` unless the request leaves through the tunnel, and its only
+# ipset rule used to live in office.conf — so off the office LAN the office fragment was empty, the
+# name had no ipset rule at all, and the mailbox went out over the physical path. Measured
+# 2026-09-30: tinyproxy's `CONNECT exmail.qq.com:443` left on wlan0 with the tunnel up. Both halves
+# belong in the base config, and the office fragment's own nameserver line has to remain the one that
+# decides resolution while the office LAN is the one we are on.
+for domain in exmail.qq.com exmail.work.weixin.qq.com; do
+    if [ "$(grep -Fxc "nameserver /$domain/china" network/smartdns/smartdns.conf)" -ne 1 ] ||
+       [ "$(grep -Fxc "ipset /$domain/ioa" network/smartdns/smartdns.conf)" -ne 1 ]; then
+        echo "FAIL base SmartDNS does not resolve $domain publicly and classify it for the tunnel" >&2
+        fail=1
+    fi
+    if [ "$(grep -Fxc "nameserver /$domain/office" network/smartdns/office.conf)" -ne 1 ]; then
+        echo "FAIL office SmartDNS does not prefer its own resolvers for $domain" >&2
+        fail=1
+    fi
+done
 # iOA's resolver NXDOMAINs every name outside its own forward policy, so the group needs an intranet
 # resolver as well or those names have no answer anywhere while logged in off the office LAN. The
 # address is learned from an office lease, never checked in: each site advertises its own.
