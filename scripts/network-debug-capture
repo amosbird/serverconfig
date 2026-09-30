@@ -193,8 +193,12 @@ run_snapshot() {
         http://ioa.tencent.com/
     record_command "$incident" "$phase" probe-dns-local 8 \
         /usr/bin/dig +time=2 +tries=1 +short @127.0.0.1 example.com A
+    # `|| true` because networkctl exits non-zero after printing a usable lease whenever it cannot
+    # parse an option — "Failed to read DHCP option 43: Bad message" on the 2026-10-01 hotspot. The
+    # unguarded assignment aborted the whole snapshot under `set -e`, and only on a network that
+    # advertises option 43, which is why the recorder looked healthy everywhere else.
     dhcp_dns=$(/usr/bin/networkctl dhcp-lease wlan0 2>/dev/null |
-        /usr/bin/awk '$2 == "domain" && $3 == "name" && $4 == "server" {print $5; exit}')
+        /usr/bin/awk '$2 == "domain" && $3 == "name" && $4 == "server" {print $5; exit}' || true)
     if [ -n "$dhcp_dns" ]; then
         record_command "$incident" "$phase" probe-dns-dhcp 8 \
             /usr/bin/dig +time=2 +tries=1 +short "@$dhcp_dns" example.com A

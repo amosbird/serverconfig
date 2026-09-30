@@ -129,6 +129,11 @@ snapshot_command_contract() {
         'record_command "$incident" "$phase" networkctl-wlan 10 /usr/bin/networkctl status wlan0 --no-pager'
         'record_command "$incident" "$phase" iw-station 5 /usr/bin/iw dev wlan0 station dump'
         'record_command "$incident" "$phase" route-get-exit 5 /usr/bin/ip -4 route get 216.239.32.117'
+        # Conditional on the host advertising a DHCP DNS server, so 77dfb6a added it to the
+        # capture script without adding it here, and the contract then failed only on a network
+        # that hands one out. Anchored on the label and limit, which is all that is identical
+        # between the source text this list is checked against and the expanded argv.
+        'record_command "$incident" "$phase" probe-dns-dhcp 8'
         'record_command "$incident" "$phase" route-get-underlay 5'
         'record_command "$incident" "$phase" route-get-ioa 5 /usr/bin/ip -4 route get 10.0.0.1'
         'record_command "$incident" "$phase" ipset-ioa 10 /usr/bin/ipset save ioa'

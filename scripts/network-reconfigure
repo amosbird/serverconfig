@@ -57,6 +57,10 @@ DIRECT_PROTO=66
 # withdraw a pin; see resolve_through for the distinction.
 LINK_LOCAL_CACHE="${LINK_LOCAL_CACHE_OVERRIDE:-/var/lib/network-reconfigure/link-local-resolved}"
 DIG="${DIG_OVERRIDE:-dig}"
+CURL="${CURL_OVERRIDE:-curl}"
+# How long a captive-portal probe may take. The intercepting device is on the LAN, so a link that
+# is gated answers immediately; this only has to outlast a slow but honest network.
+CAPTIVE_PROBE_TIMEOUT=${CAPTIVE_PROBE_TIMEOUT_OVERRIDE:-4}
 OFFICE_SRC="/home/amos/git/serverconfig/network/smartdns/office.conf"
 OFFICE_DST="/etc/smartdns/office.conf"
 SMARTDNS_BASE="/etc/smartdns/smartdns.conf"
@@ -384,6 +388,82 @@ resolve_link_local() {
 cached_link_local() {
     [ -r "$LINK_LOCAL_CACHE" ] || return 0
     awk -F'\t' -v entry="$1" '$1 == entry { print $2 }' "$LINK_LOCAL_CACHE"
+}
+
+# --- Captive portals that announce no endpoint ---------------------------------
+# RFC 8910 option 114 tells us where the portal is, and the operator can declare one in
+# network/direct.conf. Neither worked for the 2026-09-30 JinJiang network, whose portal
+# hostname was hand-written after the fact, nor for the Atour network two days later —
+# option 114 is not commonly sent, and a hand-written list only covers hotels already
+# visited. Both failures cost the same thing: the portal's own hostname resolved to an
+# address that is somebody else's on the public internet, the exit node carried the request
+# to the far end of the tunnel, the wrong host answered, and the browser reported a TLS
+# error (#ERR_SSL_VERSION_OR_CIPHER_MISMATCH) for what was really a routing fault.
+#
+# So ask the network the way every other client does. A captive portal that intercepts
+# cleartext HTTP to a known portal-detection URL leaves its own endpoint in the response —
+# a redirect, or a script that redirects — and that endpoint is the one thing the network
+# is certain about. It is exactly the "canary" RFC 8952 describes as the fallback for
+# networks that will not implement the API, so this does not replace option 114; it covers
+# the networks that never send it.
+#
+# The probe has to go out the physical path, or the tunnel is what answers. `--interface`
+# sets SO_BINDTODEVICE, which is the same mechanism scripts/network-probe-tcp uses.
+portal_endpoint_from_response() {
+    local host candidate=''
+    # Read the whole stream before choosing. An early exit (`head -1`, or a `return` out of the
+    # loop) closes the pipe, SIGPIPEs the upstream `sort`, and `pipefail` then reports failure even
+    # though a hostname was found — the same shape that silently dropped priority 1500 once already.
+    while read -r host; do
+        [ -n "$candidate" ] && continue
+        # The canary endpoints themselves always appear; a redirect *to* one is not a portal, and
+        # treating it as one would pin the canary's own address instead of the hotel's.
+        case ${host,,} in
+            connectivitycheck*|captive.apple.com|www.msftconnecttest.com|detectportal.firefox.com) ;;
+            *)
+                if valid_direct_entry "$host"; then
+                    candidate=$host
+                fi
+                ;;
+        esac
+    # `|| true` covers grep finding nothing: it exits 1, `pipefail` makes that the pipeline's
+    # status, and `set -E` propagates the ERR trap into this process substitution — which would
+    # report a spurious abort for the ordinary case of a link that redirects nothing.
+    done < <(grep -oiE 'https?://[A-Za-z0-9._-]+' |
+        sed -E 's|^[Hh][Tt][Tt][Pp][Ss]?://||' | sort -u || true)
+    printf '%s\n' "$candidate"
+}
+
+# Probe each canary on the physical interface and return the first hostname a network
+# redirects us to. Empty means the link answered a canary as itself, so it is not gated.
+#
+# The loop stops at the first canary that answers the way an open network should, which is what
+# keeps the common case cheap: an ungated link settles on the first one in about a tenth of a
+# second rather than trying all three. A gated link answers with its own redirect instead, and
+# that is what we take.
+#
+# `--max-time` bounds each attempt. The intercepting device is on the LAN, so a gated link
+# answers long before this, and the value only has to outlast a slow but honest network.
+discover_portal_hostname() {
+    local dev=$1 canary body host
+    [ -n "$dev" ] || return 0
+    for canary in \
+        'http://connectivitycheck.platform.hicloud.com/generate_204' \
+        'http://detectportal.firefox.com/success.txt' \
+        'http://captive.apple.com/hotspot-detect.html'
+    do
+        body=$("$CURL" -s -i -m "$CAPTIVE_PROBE_TIMEOUT" --interface "$dev" "$canary" 2>/dev/null || true)
+        [ -n "$body" ] || continue
+        host=$(portal_endpoint_from_response <<<"$body")
+        [ -n "$host" ] && {
+            printf '%s\n' "$host"
+            return 0
+        }
+        # A canary that answered without naming another host is the link answering for itself,
+        # which is the whole question. No need to ask the others.
+        return 0
+    done
+    return 0
 }
 
 # Every destination this link must reach directly: the operator's declarations plus the
@@ -751,6 +831,15 @@ for _ in {1..10}; do
     sleep 1
 done || true
 portal_hostname=$(dhcp_captive_portal_hostname "$IFACE")
+# No RFC 8910 endpoint advertised is the common case, not the exception: neither the JinJiang
+# network nor the Atour one sends option 114. Ask the network directly instead, so a hotel that
+# redirects to its own portal is handled without anyone having to write its hostname down.
+if [ -z "$portal_hostname" ]; then
+    portal_hostname=$(discover_portal_hostname "$IFACE")
+    [ -n "$portal_hostname" ] &&
+        logger -t network-reconfigure -p daemon.info \
+            "captive portal discovered on $IFACE: $portal_hostname"
+fi
 # Resolve before anything builds a band: the pinned names are rule specs at pref 1000 and
 # routes through the physical gateway at the same time, and the state file has to carry
 # the resolved set so a change to it re-triggers reconciliation.

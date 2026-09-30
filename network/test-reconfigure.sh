@@ -105,6 +105,7 @@ done
 case $host in
     portal.hotel.test) printf '198.51.100.9\n' ;;
     login.hotel.test)  printf '198.51.100.11\n' ;;
+    portal.atour.test) printf '198.51.100.12\n' ;;
 esac
 EOF
     chmod 755 "$WORK/wpa_cli" "$WORK/probe" "$WORK/dig"
@@ -277,6 +278,22 @@ systemctl()  {
 tailscale()  { return 1; }
 logger()     { printf '%s\n' "$*" >> WORKDIR/logger; return 0; }
 dig()        { return 9; }
+# The captive-portal discovery probe. The fixture answers like an open network unless
+# WORKDIR/portal-redirect names a hostname, which is how a gated link is simulated without
+# a real intercepting device.
+curl() {
+    local redirect='WORKDIR/portal-redirect'
+    printf '%s\n' "$*" >> WORKDIR/curl-calls
+    if [ -r "$redirect" ]; then
+        # A real intercepting portal leaves its own endpoint *and* a reference to the canary it
+        # intercepted. The canary's own hostname must be filtered out, or the pin lands on a public
+        # CDN instead of the portal.
+        printf 'HTTP/1.1 302 Found\r\nLocation: https://%s/login\r\n\r\n' "$(cat "$redirect")"
+        printf '<a href="http://connectivitycheck.platform.hicloud.com/generate_204">retry</a>\n'
+    else
+        printf 'HTTP/1.1 204 No Content\r\n\r\n'
+    fi
+}
 ip() {
     local batch
     printf '%s\n' "$*" >> WORKDIR/ip-calls
@@ -825,6 +842,46 @@ main() {
     else
         bad "RFC 8910 portal endpoint was not pinned"
     fi
+    # A hotel that sends no RFC 8910 option is the common case, not the exception: neither the
+    # JinJiang network nor the Atour one sends it. The link is asked directly instead, and the
+    # hostname it redirects to has to end up pinned like any other declared destination. This is
+    # the whole repair — before it, the portal's hostname was only covered when somebody had
+    # written it into network/direct.conf by hand.
+    # The fixture lease advertises option 114, so discovery is skipped there; these runs use one
+    # that does not, which is what JinJiang and Atour both send.
+    printf '   6 domain name server 202.152.254.230\n                        202.152.254.65\n' \
+        >"$WORK/lease-no114"
+    no114_lease=$WORK/lease-no114
+    swap_lease() {
+        [ "$1" = no114 ] && cp "$WORK/lease-no114" "$WORK/lease" || {
+            printf '   6 domain name server 202.152.254.230\n                        202.152.254.65\n 114 captive portal     https://login.hotel.test/api\n' >"$WORK/lease"
+        }
+    }
+    swap_lease no114
+    printf 'portal.atour.test' >"$WORK/portal-redirect"
+    run_script 0 >/dev/null
+    if [ "$(band 1000 | grep -Fxc 'from all to 198.51.100.12 lookup main')" -eq 1 ] &&
+       [ "$(ip -4 route show table main proto 66 | grep -Fc '198.51.100.12')" -eq 1 ] &&
+       grep -qF 'portal.atour.test' "$WORK/dig-calls"; then
+        ok "a portal discovered by probing the link is pinned like a declared one"
+    else
+        bad "a discovered portal was not pinned: $(band 1000)"
+    fi
+    # An open network answers the canary as itself, so there is nothing to pin and reconciliation
+    # must not invent one. Without this the discovery could pass while pinning something arbitrary.
+    rm -f "$WORK/portal-redirect"
+    swap_lease no114
+    run_script 0 >/dev/null
+    if [ "$(band 1000 | grep -Fc 'from all to 198.51.100.12 lookup main')" -eq 0 ]; then
+        ok "an open network discovers no portal and pins nothing"
+    else
+        bad "an open network pinned a portal anyway: $(band 1000)"
+    fi
+    printf 'portal.atour.test' >"$WORK/portal-redirect"
+    run_script 0 >/dev/null
+    swap_lease default
+    rm -f "$WORK/portal-redirect"
+
     # The rules are inert without routes behind them: a match whose main-table lookup
     # finds nothing continues at the next rule, which is the exit node.
     # The resolver query has to name the physical address. Unbound, it is routed by the

@@ -250,6 +250,25 @@ if ! grep -Fq 'resolve_through "$resolver" "$host" "$link_local_bind"' \
     echo 'FAIL link-local names resolve without being bound to the physical address' >&2
     fail=1
 fi
+# RFC 8910 option 114 is not commonly sent — neither the JinJiang network nor the Atour one sends
+# it — so a portal that only ever gets pinned by hand leaves every new hotel broken the same way.
+# The link has to be asked directly, on the physical path, with the canary endpoints filtered out of
+# the answer. Each of those three is load-bearing: without the probe nothing is discovered, without
+# --interface the tunnel answers instead of the portal, and without the filter the pin lands on a
+# public CDN that the response merely mentions.
+if ! grep -Fq 'portal_hostname=$(discover_portal_hostname "$IFACE")' scripts/network-reconfigure; then
+    echo 'FAIL a captive portal that advertises no endpoint is never discovered' >&2
+    fail=1
+fi
+if ! grep -Fq -- '--interface "$dev" "$canary"' scripts/network-reconfigure; then
+    echo 'FAIL the portal probe is not pinned to the physical interface' >&2
+    fail=1
+fi
+if ! grep -Fq 'connectivitycheck*|captive.apple.com|www.msftconnecttest.com|detectportal.firefox.com' \
+        scripts/network-reconfigure; then
+    echo 'FAIL the portal probe does not filter the canary endpoints out of its answer' >&2
+    fail=1
+fi
 if ! grep -Fq 'local_band+=("from all to $addr lookup main")' scripts/network-reconfigure; then
     echo 'FAIL declared link-local destinations get no rule ahead of the later bands' >&2
     fail=1
