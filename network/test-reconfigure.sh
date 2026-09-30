@@ -284,7 +284,19 @@ dig()        { return 9; }
 curl() {
     local redirect='WORKDIR/portal-redirect'
     printf '%s\n' "$*" >> WORKDIR/curl-calls
-    if [ -r "$redirect" ]; then
+    # The Atour shape: the interceptor answers a canary with its own on-link address, and the
+    # hostname that has to be routed is only on the page that address serves.
+    if [ -r 'WORKDIR/portal-gateway-page' ]; then
+        case "$*" in
+            *connectivitycheck*|*detectportal*|*captive.apple.com*)
+                printf 'HTTP/1.1 302 Found\r\nLocation: http://%s/login\r\n\r\n' "$(cat "$redirect")"
+                ;;
+            *)
+                printf 'HTTP/1.1 200 OK\r\n\r\n'
+                cat 'WORKDIR/portal-gateway-page'
+                ;;
+        esac
+    elif [ -r "$redirect" ]; then
         # A real intercepting portal leaves its own endpoint *and* a reference to the canary it
         # intercepted. The canary's own hostname must be filtered out, or the pin lands on a public
         # CDN instead of the portal.
@@ -881,6 +893,28 @@ main() {
     run_script 0 >/dev/null
     swap_lease default
     rm -f "$WORK/portal-redirect"
+
+    # The Atour shape, measured 2026-10-01: the interceptor answers the canary with its **own**
+    # address, which is on this segment and must not be pinned — an earlier version installed
+    # `192.168.64.254 via 192.168.64.254`, a host route whose next hop is itself, and pinned no
+    # hostname at all, so the portal stayed unreachable. The name is only on the page that address
+    # serves, so the gateway has to be asked as well.
+    swap_lease no114
+    printf '10.36.48.1' >"$WORK/portal-redirect"
+    printf '<script>location.replace("https://portal.atour.test/login");</script>' \
+        >"$WORK/portal-gateway-page"
+    run_script 0 >/dev/null
+    if [ "$(band 1000 | grep -Fxc 'from all to 198.51.100.12 lookup main')" -eq 1 ] &&
+       [ "$(ip -4 route show table main proto 66 | grep -Fc '198.51.100.12')" -eq 1 ] &&
+       [ "$(ip -4 route show table main proto 66 |
+           grep -Fc "10.36.48.1 via 10.36.48.1 dev wlan0")" -eq 0 ]; then
+        ok "a gateway that redirects to its own address still yields its portal hostname"
+    else
+        bad "the Atour shape was not handled: $(band 1000)"
+    fi
+    rm -f "$WORK/portal-gateway-page" "$WORK/portal-redirect"
+    swap_lease default
+    run_script 0 >/dev/null
 
     # The rules are inert without routes behind them: a match whose main-table lookup
     # finds nothing continues at the next rule, which is the exit node.

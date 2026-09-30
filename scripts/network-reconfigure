@@ -409,29 +409,88 @@ cached_link_local() {
 #
 # The probe has to go out the physical path, or the tunnel is what answers. `--interface`
 # sets SO_BINDTODEVICE, which is the same mechanism scripts/network-probe-tcp uses.
+# Candidate destination the response names, or empty. Two shapes have to be rejected, and both were
+# measured on a live hotel network:
+#
+#   - The canary endpoints themselves. A redirect mentions the URL it intercepted by construction,
+#     and pinning that would land on a public CDN instead of the hotel's portal.
+#   - Anything **on this segment**. A portal that redirects to its own gateway IP — Atour does,
+#     returning `Location: http://192.168.64.254/login` — needs no pin at all, because reaching it
+#     already needs no routing decision. Pinning it is worse than useless: the entry becomes
+#     `192.168.64.254 via 192.168.64.254`, a route whose next hop is itself.
+#
+# Hostnames are preferred over addresses for the same reason the declared file prefers them: a
+# network that names its portal can move the address without warning, and the name is what it
+# advertised.
 portal_endpoint_from_response() {
-    local host candidate=''
+    local dev=$1 encoded host
+    local candidate=''
     # Read the whole stream before choosing. An early exit (`head -1`, or a `return` out of the
     # loop) closes the pipe, SIGPIPEs the upstream `sort`, and `pipefail` then reports failure even
     # though a hostname was found — the same shape that silently dropped priority 1500 once already.
-    while read -r host; do
-        [ -n "$candidate" ] && continue
-        # The canary endpoints themselves always appear; a redirect *to* one is not a portal, and
-        # treating it as one would pin the canary's own address instead of the hotel's.
+    while read -r encoded; do
+        # A portal frequently carries the URL it intercepted as a query parameter. Only the part
+        # that names the destination counts, so cut at the first separator after the authority.
+        host=${encoded%%[/?#]*}
+        # Percent-encoding survives the `Location` header of an interceptor that wraps a URL.
+        host=$(printf '%s' "$host" | sed -E 's|%3[Aa]|:|g; s|%2[Ff]|/|g; s|%25|%|g')
+        host=${host%%[/?#]*}
+        [ -n "$host" ] || continue
         case ${host,,} in
             connectivitycheck*|captive.apple.com|www.msftconnecttest.com|detectportal.firefox.com) ;;
             *)
-                if valid_direct_entry "$host"; then
-                    candidate=$host
-                fi
+                valid_direct_entry "$host" || continue
+                case $host in
+                    # A name is what the network advertised and what survives an address change, so
+                    # it wins outright. The on-link test below needs an address, and resolving one
+                    # here would duplicate the resolver the pin itself uses.
+                    *[!0-9./]*) candidate=$host ;;
+                    *)
+                        # An address on this segment cannot be routed anywhere and needs no pin.
+                        # Pinning one would install a host route whose next hop is itself.
+                        off_link "$host" || continue
+                        [ -n "$candidate" ] || candidate=$host
+                        ;;
+                esac
                 ;;
         esac
     # `|| true` covers grep finding nothing: it exits 1, `pipefail` makes that the pipeline's
     # status, and `set -E` propagates the ERR trap into this process substitution — which would
     # report a spurious abort for the ordinary case of a link that redirects nothing.
-    done < <(grep -oiE 'https?://[A-Za-z0-9._-]+' |
+    done < <(grep -oiE 'https?://[A-Za-z0-9._~%/?&=#-]+' |
         sed -E 's|^[Hh][Tt][Tt][Pp][Ss]?://||' | sort -u || true)
     printf '%s\n' "$candidate"
+}
+
+# A target on this segment cannot be routed anywhere, so it needs no pin and pinning it would
+# install a host route whose next hop is itself. `via` is the test: on-link output names only the
+# device, and off-link output adds the next hop. Asked of the physical interface because the default
+# route on this machine belongs to the exit node.
+off_link() {
+    ip -4 route get "$1" oif "$IFACE" 2>/dev/null | grep -q ' via '
+}
+
+# The hostname of the portal behind a gateway, or empty.
+#
+# This is the step the Atour network needed, measured 2026-10-01: its interceptor answered the
+# canary with `Location: http://192.168.64.254/login` — its own address, on this segment, which the
+# caller correctly refuses to pin — and the hostname that actually had to be routed was only on the
+# page that address serves. The gateway is on-link by definition, so reaching it needs no tunnel and
+# no pin; it is the one endpoint guaranteed to answer while captive.
+#
+# A 30x is followed rather than read, because the same gateway both redirects and serves the page.
+# `--location-trusted` is deliberately not used: the portal is untrusted by definition and nothing
+# here needs credentials forwarded to it.
+portal_hostname_from_gateway() {
+    local dev=$1 body=$2 gateway page
+    gateway=$(ip -4 route get "$(physical_gateway)" oif "$dev" 2>/dev/null |
+        awk '{for (i = 1; i <= NF; i++) if ($i == "via") {print $(i + 1); exit}}')
+    [ -n "$gateway" ] || gateway=$(physical_gateway)
+    [ -n "$gateway" ] || return 0
+    page=$("$CURL" -s -L -i -m "$CAPTIVE_PROBE_TIMEOUT" --interface "$dev" \
+        "http://$gateway/" 2>/dev/null || true)
+    [ -n "$page" ] || return 0
+    portal_endpoint_from_response "$dev" <<<"$page"
 }
 
 # Probe each canary on the physical interface and return the first hostname a network
@@ -454,13 +513,19 @@ discover_portal_hostname() {
     do
         body=$("$CURL" -s -i -m "$CAPTIVE_PROBE_TIMEOUT" --interface "$dev" "$canary" 2>/dev/null || true)
         [ -n "$body" ] || continue
-        host=$(portal_endpoint_from_response <<<"$body")
+        host=$(portal_endpoint_from_response "$dev" <<<"$body")
         [ -n "$host" ] && {
             printf '%s\n' "$host"
             return 0
         }
-        # A canary that answered without naming another host is the link answering for itself,
-        # which is the whole question. No need to ask the others.
+        # A canary that answered without naming a routable destination is the link answering for
+        # itself. The gateway it redirects to may still be worth asking, because the hostname this
+        # exists to find is often only on that page — but an ungated link has nothing to ask.
+        host=$(portal_hostname_from_gateway "$dev" "$body")
+        [ -n "$host" ] && {
+            printf '%s\n' "$host"
+            return 0
+        }
         return 0
     done
     return 0

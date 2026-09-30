@@ -269,6 +269,18 @@ if ! grep -Fq 'connectivitycheck*|captive.apple.com|www.msftconnecttest.com|dete
     echo 'FAIL the portal probe does not filter the canary endpoints out of its answer' >&2
     fail=1
 fi
+# A portal that answers a canary with its own address needs the gateway asked as well, and that
+# address must never be pinned: an earlier version installed `192.168.64.254 via 192.168.64.254`
+# on the Atour network — a host route whose next hop is itself — while pinning no hostname at all,
+# so the portal stayed unreachable and the TLS error looked unchanged.
+if ! grep -Fq 'portal_hostname_from_gateway "$dev" "$body"' scripts/network-reconfigure; then
+    echo 'FAIL a portal that redirects to its own gateway is never asked for its hostname' >&2
+    fail=1
+fi
+if ! grep -Fq 'off_link "$host" || continue' scripts/network-reconfigure; then
+    echo 'FAIL an on-link probe target is not rejected, so it would be pinned to itself' >&2
+    fail=1
+fi
 if ! grep -Fq 'local_band+=("from all to $addr lookup main")' scripts/network-reconfigure; then
     echo 'FAIL declared link-local destinations get no rule ahead of the later bands' >&2
     fail=1
