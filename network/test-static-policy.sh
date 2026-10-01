@@ -857,6 +857,21 @@ fi
 reject 'no exit-node mutation in local tools' \
     'tailscale (set --exit-node=|down|up)|systemctl restart tailscaled' \
     scripts/network-reconfigure scripts/netfix scripts/network-status
+# portal-login opens a URL and nothing else. It must not authenticate, must not touch the exit
+# node, and must not write to the recorded portal URL — that record belongs to the reconciler,
+# which is the only thing that knows whether the link is actually captive.
+if ! grep -Fq 'PORTAL_URL_STATE="${PORTAL_URL_STATE_OVERRIDE:-/run/network-reconfigure/captive-portal-url}"' \
+        scripts/network-reconfigure; then
+    echo 'FAIL the discovered portal URL is not recorded for portal-login to open' >&2
+    fail=1
+fi
+if ! grep -Fq 'record_portal_url "$effective"' scripts/network-reconfigure; then
+    echo 'FAIL the portal redirect URL is discovered but never recorded' >&2
+    fail=1
+fi
+for entry in scripts/portal-login; do
+    [ -x "$entry" ] || { echo "FAIL $entry is not executable" >&2; fail=1; }
+done
 netfix_runtime_contract() {
     local sandbox fakebin log candidate output rc command
     sandbox=$(mktemp -d)

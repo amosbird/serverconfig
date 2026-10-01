@@ -67,6 +67,12 @@ SMARTDNS_BASE="/etc/smartdns/smartdns.conf"
 IOA_RESOLVERS_DST="/etc/smartdns/ioa-resolvers.conf"
 INTRANET_RESOLVER_CACHE="/var/lib/network-reconfigure/intranet-resolvers"
 IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environment}"
+# The URL a captive portal redirected us to, complete with the session token the gateway minted for
+# it. Kept because that token is the whole reason the URL works and the bare hostname does not:
+# `https://wifiportal.yaduo.com/` answers `1` — a health check — while the page that can actually
+# authenticate this station is `.../web/mobile.html?gx_token=...`, and the token is regenerated per
+# association. Under /run because it is only meaningful for the session it was minted in.
+PORTAL_URL_STATE="${PORTAL_URL_STATE_OVERRIDE:-/run/network-reconfigure/captive-portal-url}"
 P_IOA_OWNER=400
 P_IOA_OWNER_STOP=401
 P_TS=500
@@ -494,6 +500,20 @@ portal_endpoint_from_host() {
     return 0
 }
 
+# Remember the URL the portal actually redirected to, token and all.
+#
+# The hostname alone is not enough to log in with. `https://wifiportal.yaduo.com/` answers `1`, a
+# health check; the page that can authenticate this station is
+# `https://wifiportal.yaduo.com/web/mobile.html?gx_token=...`, and the gateway mints that token per
+# association. Recording it here is what lets an operator (or scripts/portal-login) open the page
+# that works instead of the one that looks like a broken response.
+record_portal_url() {
+    local url=$1 dir
+    dir=$(dirname "$PORTAL_URL_STATE")
+    [ -d "$dir" ] || return 0
+    printf '%s\n' "$url" >"$PORTAL_URL_STATE" 2>/dev/null || true
+}
+
 # Probe each canary on the physical interface and name the portal the link redirects to, or empty
 # when the link answered as itself.
 #
@@ -526,22 +546,29 @@ discover_portal_hostname() {
         case $host in
             *[!0-9./]*)
                 # A name is the answer. The port it answered on is not part of it.
+                record_portal_url "$effective"
                 printf '%s\n' "$host"
                 return 0
                 ;;
         esac
         off_link "$host" && {
+            record_portal_url "$effective"
             printf '%s\n' "$host"
             return 0
         }
         # On this segment: pinning it would route it to itself, so ask it for the page instead.
         host=$(portal_endpoint_from_host "$dev" "$host" http)
         [ -n "$host" ] && {
+            record_portal_url "$effective"
             printf '%s\n' "$host"
             return 0
         }
         return 0
     done
+    # Nothing named a portal. The last landing URL is still worth keeping: on a network that
+    # redirects to a bare address the operator may have to open it by hand, and it is the only
+    # record of where the gateway wanted to send us.
+    [ -z "$effective" ] || record_portal_url "$effective"
     return 0
 }
 

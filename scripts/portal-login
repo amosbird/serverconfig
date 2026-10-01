@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# portal-login — open the captive portal this link redirected us to, and say what state it is in.
+#
+#     portal-login            open the portal page
+#     portal-login --print    print the URL instead (for scripts, and for reading aloud)
+#     portal-login --status   say whether this link is captive at all
+#
+# Why this exists rather than just opening the gateway.
+#
+# A captive portal is reached two ways and only one of them works. Typing the gateway address gets a
+# landing page that redirects to the portal, and typing the portal *hostname* gets whatever that host
+# serves to an unauthenticated request — on the JinJiang network a 78-byte empty page, and on the
+# Atour one the single character `1`, which is a health check rather than a login form. Neither is the
+# page that can authenticate the station. The URL that can is the one the gateway itself produced,
+# because it carries a session token that is regenerated per association:
+#
+#     https://wifiportal.yaduo.com/web/mobile.html?gx_token=e774c9d4667c0f80
+#                                        ^^^^^^^^^^^^^^^^ the part that matters
+#
+# `network-reconfigure` records that URL every time it discovers a portal, so this script has nothing
+# to guess. When there is no record — the probe has not run yet on a fresh association — it falls back
+# to asking the gateway directly, which is on-link and answers even while captive.
+#
+# Nothing here authenticates anything. The page is where a phone number, a room number or a WeChat
+# scan is entered, and that is the user's to do.
+
+set -uo pipefail
+
+IFACE=${IFACE:-wlan0}
+PORTAL_URL_STATE=${PORTAL_URL_STATE_OVERRIDE:-/run/network-reconfigure/captive-portal-url}
+OPEN=${OPEN:-/home/amos/scripts/xdg-open}
+CURL=${CURL_OVERRIDE:-curl}
+TIMEOUT=${PORTAL_TIMEOUT:-4}
+
+gateway() {
+    ip -4 route show table main default 2>/dev/null |
+        awk -v want="$IFACE" '$5 == want {print $3; exit}'
+}
+
+# Where the gateway sends an unauthenticated cleartext request. This is the same probe
+# network-reconfigure runs, kept here so the script works on a link the reconciler has not seen yet.
+discover_url() {
+    local canary report code url
+    for canary in \
+        'http://connectivitycheck.platform.hicloud.com/generate_204' \
+        'http://detectportal.firefox.com/success.txt' \
+        'http://captive.apple.com/hotspot-detect.html'
+    do
+        report=$("$CURL" -s -L -o /dev/null -m "$TIMEOUT" --interface "$IFACE" \
+            -w '%{http_code} %{url_effective}' "$canary" 2>/dev/null || true)
+        [ -n "$report" ] || continue
+        code=${report%% *}
+        url=${report#* }
+        # 000 is a request that never completed — a portal commonly blocks what it does not
+        # recognise. No evidence, so try the next rather than concluding the link is open.
+        [ "$code" != "000" ] || continue
+        # Answered on the URL it was asked about: not gated, nothing to open.
+        [ "$url" != "$canary" ] || return 0
+        printf '%s\n' "$url"
+        return 0
+    done
+    return 0
+}
+
+recorded_url() {
+    [ -r "$PORTAL_URL_STATE" ] || return 0
+    head -1 "$PORTAL_URL_STATE" 2>/dev/null
+}
+
+status_line() {
+    local gw
+    gw=$(gateway)
+    if [ -n "$(recorded_url)" ]; then
+        printf 'captive portal: %s\n' "$(recorded_url)"
+        printf 'gateway:        %s\n' "${gw:-none}"
+        return 0
+    fi
+    printf 'captive portal: none recorded for %s\n' "$IFACE"
+    [ -n "$gw" ] && printf 'gateway:        %s\n' "$gw"
+}
+
+main() {
+    local url
+    case ${1:-} in
+        --status)
+            status_line
+            return 0
+            ;;
+        --print)
+            url=$(recorded_url)
+            [ -n "$url" ] || url=$(discover_url)
+            [ -n "$url" ] || {
+                printf 'portal-login: no captive portal on %s\n' "$IFACE" >&2
+                return 1
+            }
+            printf '%s\n' "$url"
+            return 0
+            ;;
+        -h|--help)
+            sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+            return 0
+            ;;
+        '') ;;
+        *)
+            printf 'portal-login: unknown argument %s\n' "$1" >&2
+            return 2
+            ;;
+    esac
+
+    url=$(recorded_url)
+    if [ -n "$url" ]; then
+        printf 'portal-login: opening the URL this link redirected to\n  %s\n' "$url"
+    else
+        url=$(discover_url)
+        if [ -z "$url" ]; then
+            printf 'portal-login: %s is not behind a captive portal\n' "$IFACE" >&2
+            return 1
+        fi
+        printf 'portal-login: opening the URL this link redirects to\n  %s\n' "$url"
+    fi
+    exec "$OPEN" "$url"
+}
+
+main "$@"

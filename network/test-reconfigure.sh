@@ -367,6 +367,10 @@ STATE_FILE_OVERRIDE=WORKDIR/last-applied
 CN_STATE_FILE_OVERRIDE=WORKDIR/cn-last-applied
 CACHE_DIR_OVERRIDE=WORKDIR/cache
 IOA_ENV_STATE_OVERRIDE=WORKDIR/ioa-environment
+# The URL a captive portal redirected to. Recorded so scripts/portal-login can open the page
+# that can actually authenticate this station, rather than the health check its bare host
+# serves.
+PORTAL_URL_STATE_OVERRIDE=WORKDIR/portal-url
 RT_TABLES_OVERRIDE=WORKDIR/rt_tables
 TMPDIR_OVERRIDE=WORKDIR/tmp
 """
@@ -889,6 +893,15 @@ main() {
         ok "a portal discovered by probing the link is pinned like a declared one"
     else
         bad "a discovered portal was not pinned: $(band 1000)"
+    fi
+    # The URL is recorded separately from the host, because they are not interchangeable: the bare
+    # hostname serves a health check on this network while the redirect URL carries the session token
+    # that makes the login page work. scripts/portal-login opens this, and nothing else knows it.
+    if [ "$(cat "$WORK/portal-url" 2>/dev/null)" = \
+            'https://portal.atour.test/login?gw=1' ]; then
+        ok "the portal redirect URL is recorded, token and all"
+    else
+        bad "the portal URL was not recorded: $(cat "$WORK/portal-url" 2>/dev/null)"
     fi
     # An open network answers the canary as itself, so there is nothing to pin and reconciliation
     # must not invent one. Without this the discovery could pass while pinning something arbitrary.

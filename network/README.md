@@ -285,6 +285,47 @@ survives nothing.
 Keep the list short. A declared destination outranks the IOA and CN bands, so a wrong entry sends
 traffic that should have been tunnelled onto the local network, where nothing will answer.
 
+### Finding the portal, and opening the page that can log in
+
+The name of the portal is not the page that authenticates a station, and reaching the wrong one looks
+like a broken network. Two networks, two different symptoms, same cause:
+
+| Network | Bare hostname serves | What can log in |
+|---|---|---|
+| JinJiang | a 78-byte empty page | the same host, at `/reurl.php` |
+| Atour | the single character `1` — a health check | `…/web/mobile.html?gx_token=…` |
+
+The URL that works is the one the gateway itself produced, because it carries a session token minted
+for that association. Nothing can construct it; it has to be observed.
+
+`network-reconfigure` observes it with `curl -L -o /dev/null -w '%{http_code} %{url_effective}'`
+against three well-known cleartext canaries on the **physical** interface, and records the landing URL
+at `/run/network-reconfigure/captive-portal-url` — under `/run`, because the token it carries is only
+meaningful for the association that produced it. Four things about that probe are load-bearing:
+
+- `%{url_effective}` alone is not enough. **A failed request reports the URL it failed to reach**, so a
+  canary that never connected is byte-identical to one the link answered as itself. Comparing only the
+  URL therefore reads "not gated" from a link that has merely not come up yet — which is what made the
+  first version return nothing twenty-two seconds after association and stop, without trying the
+  canary that had come up. The status is what separates them: `000` is no evidence and the next canary
+  is tried, while a real status on the original URL is a verdict that ends the search.
+- The probe must be bound to the physical interface. The tunnel answers otherwise, and an exit node in
+  another country answers a great deal.
+- An address on this segment is never pinned, because reaching it needs no routing decision and pinning
+  one installs a host route whose next hop is itself: Atour produced `192.168.64.254 via
+  192.168.64.254`. When the redirect leads to a bare address, that address is asked for its page
+  instead, which is where such a network keeps the hostname.
+- A hostname from the redirect wins over an address, and a name is what gets pinned.
+
+`scripts/portal-login` opens what was recorded. It prints the URL before launching the browser, so a
+failure to launch still leaves something to paste, and `--print` and `--status` are there for scripts
+and for asking rather than acting. When the reconciler has not run yet — a fresh association, or a link
+whose probe found every canary unreachable — the script repeats the probe itself rather than sending
+the operator to a page that answers `1`.
+
+Nothing in either place authenticates anything. The page is where a phone number, a room number or a
+WeChat scan goes, and that is the user's to do.
+
 ### Which Ethernet link is the office LAN
 
 The office LAN is the link that the office LAN authenticated. `office_wired_authorized` asks the
@@ -1117,6 +1158,7 @@ sudo -n bash network/test-ioa-static-lan-overlap.sh
 sudo -n bash network/test-reconfigure.sh
 bash network/test-static-policy.sh
 bash network/test-dhcp-refresh.sh
+bash network/test-portal-login.sh
 bash network/test-debug-capture.sh
 bash network/test-network-probe-tcp.sh
 bash network/test-probe-source-isolation.sh
