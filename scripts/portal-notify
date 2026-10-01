@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# portal-notify — tell the desktop that this network wants a login, and offer to open it.
+#
+#     portal-notify            notify about the portal recorded for this link, if any
+#     portal-notify --force    notify even when the link already looks authenticated
+#
+# `network-reconfigure` runs as root and writes the portal URL it discovered, but root cannot reach a
+# user's dunst: the session bus authenticates by uid, so a root process that connects to
+# `/run/user/1000/bus` is refused. Dropping to the session owner first works, and this script is how
+# that is expressed in one place.
+#
+# The notification waits for a click and then opens the page. `dunstify -w -A` is what makes the click
+# meaningful: the process blocks until the notification is acted on, dismissed, or times out, and
+# prints which happened. The caller must therefore run this in the background — see the call at the
+# end of network-reconfigure, and the timeout that bounds it.
+#
+# Why a click rather than opening it outright: a captive portal is not always a problem. The exit node
+# may already carry traffic, and being handed a login page while you are working is the interruption
+# this avoids. The notification states the situation; the click is the consent.
+
+set -uo pipefail
+
+PORTAL_URL_STATE=${PORTAL_URL_STATE_OVERRIDE:-/run/network-reconfigure/captive-portal-url}
+OPEN=${OPEN:-/home/amos/scripts/xdg-open}
+NOTIFY=${NOTIFY:-/usr/sbin/dunstify}
+TIMEOUT_MS=${PORTAL_NOTIFY_TIMEOUT_MS:-120000}
+APPNAME=${PORTAL_NOTIFY_APPNAME:-portal}
+
+# The session to notify. Read from the state file's owner rather than assumed, because the repository
+# has no business hard-coding a uid.
+session_uid() {
+    local uid
+    uid=$(stat -c %u "$PORTAL_URL_STATE" 2>/dev/null) || true
+    if [ -z "$uid" ] || [ "$uid" = 0 ]; then
+        # The file is root-owned: fall back to the first human session that has a bus.
+        uid=$(for bus in /run/user/*/bus; do
+            [ -S "$bus" ] || continue
+            printf '%s\n' "$(basename "$(dirname "$bus")")"
+            break
+        done)
+    fi
+    printf '%s\n' "${uid:-}"
+}
+
+recorded_url() {
+    [ -r "$PORTAL_URL_STATE" ] || return 0
+    head -1 "$PORTAL_URL_STATE" 2>/dev/null
+}
+
+# Reach the user's notification daemon with the session's own credentials.
+notify_as_session() {
+    local uid=$1 label=$2 body=$3
+    [ -n "$uid" ] || return 1
+    # One action, not two. `dunstctl action` invokes the notification's *default* action, and with two
+    # registered it resolves to neither and only closes the notification — measured on dunst 1.13.2,
+    # where a single-action notification returns `open` and a two-action one returns nothing. The
+    # alternative is a per-rule `action_name` in dunstrc, which would tie this script to a config file
+    # it does not own.
+    setpriv --reuid="$uid" --regid="$uid" --init-groups \
+        env "XDG_RUNTIME_DIR=/run/user/$uid" \
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" \
+        "$NOTIFY" -t "$TIMEOUT_MS" -a "$APPNAME" -A 'open,Open the portal' \
+            "$label" "$body"
+}
+
+main() {
+    local url uid action
+    url=$(recorded_url)
+    if [ -z "$url" ]; then
+        [ "${1:-}" = --force ] || return 0
+        url=$(/home/amos/scripts/portal-login --print 2>/dev/null) || return 0
+        [ -n "$url" ] || return 0
+    fi
+    [ -x "$NOTIFY" ] || return 0
+    uid=$(session_uid)
+    [ -n "$uid" ] || return 0
+
+    action=$(notify_as_session "$uid" \
+        'Wi-Fi needs a login' \
+        'This network is captive. Click to open the portal page.') || return 0
+    # Dismissing or letting it time out is a decision, not a failure: the notice has been given and
+    # the user can reach `portal-login` whenever they want it.
+    [ "$action" = open ] || return 0
+    # The URL is opened as the session user: a browser started by root lands in the wrong session,
+    # and `HOME` matters as much as the display does — without it xdg-open tries to write its MIME
+    # cache under `/root` and fails before reaching the browser at all.
+    setpriv --reuid="$uid" --regid="$uid" --init-groups \
+        env "HOME=$(getent passwd "$uid" | cut -d: -f6)" \
+            "XDG_RUNTIME_DIR=/run/user/$uid" \
+            "DISPLAY=${DISPLAY:-:0}" \
+        "$OPEN" "$url" >/dev/null 2>&1 || true
+}
+
+main "$@"

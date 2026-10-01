@@ -869,9 +869,26 @@ if ! grep -Fq 'record_portal_url "$effective"' scripts/network-reconfigure; then
     echo 'FAIL the portal redirect URL is discovered but never recorded' >&2
     fail=1
 fi
-for entry in scripts/portal-login; do
+for entry in scripts/portal-login scripts/portal-notify; do
     [ -x "$entry" ] || { echo "FAIL $entry is not executable" >&2; fail=1; }
 done
+# The desktop offer is gated on GUI, and it must be backgrounded: it blocks until the notice is
+# acted on or expires, and reconciliation cannot wait two minutes for a click that may never come.
+if ! grep -Fq 'if [ -n "$PORTAL_NOTIFY_GUI" ] && [ -x "$PORTAL_NOTIFY" ]; then' \
+        scripts/network-reconfigure; then
+    echo 'FAIL the portal offer is not gated on a desktop session' >&2
+    fail=1
+fi
+if ! grep -Fq 'setsid "$PORTAL_NOTIFY" >/dev/null 2>&1 &' scripts/network-reconfigure; then
+    echo 'FAIL the portal offer is not backgrounded, so reconciliation would block on it' >&2
+    fail=1
+fi
+# root cannot reach a user's dunst: the session bus authenticates by uid. Dropping to the session
+# owner first is the whole mechanism, and without it the notification silently goes nowhere.
+if ! grep -Fq 'setpriv --reuid="$uid" --regid="$uid" --init-groups' scripts/portal-notify; then
+    echo 'FAIL the notification is not sent with the session credentials' >&2
+    fail=1
+fi
 netfix_runtime_contract() {
     local sandbox fakebin log candidate output rc command
     sandbox=$(mktemp -d)

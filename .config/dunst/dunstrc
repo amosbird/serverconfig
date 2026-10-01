@@ -14,6 +14,13 @@
     idle_threshold = 120
     monitor = 0
     follow = mouse
+    # dunst's default left click is `close_current`, so clicking a notification dismisses it and
+# never reaches the action it advertises. A notification that says "click to open" has to mean
+# it, which is what mouse bindings are for. `do_action` invokes the action named by the
+# `action_name` rule below, falling back to the first one.
+    mouse_left_click = do_action, close_current
+    mouse_middle_click = close_current
+    mouse_right_click = close_all
     sticky_history = yes
     history_length = 2
     line_height = 0

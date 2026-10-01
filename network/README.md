@@ -323,8 +323,31 @@ and for asking rather than acting. When the reconciler has not run yet — a fre
 whose probe found every canary unreachable — the script repeats the probe itself rather than sending
 the operator to a page that answers `1`.
 
-Nothing in either place authenticates anything. The page is where a phone number, a room number or a
-WeChat scan goes, and that is the user's to do.
+`scripts/portal-notify` offers the same URL as a desktop notification, run from `network-reconfigure`
+when a portal is first discovered. Three details are not optional:
+
+- **It is gated on `GUI`.** A headless session has no notification daemon to reach, and offering one
+  is noise.
+- **It is backgrounded with `setsid`.** The notification blocks until it is acted on or expires, and
+  reconciliation must not wait two minutes for a click that may never come.
+- **It drops privileges before notifying.** root cannot reach a user's dunst — the session bus
+  authenticates by uid, and a root process connecting to `/run/user/1000/bus` is refused with
+  `Error sending credentials`. `setpriv --reuid=… --regid=… --init-groups` with `XDG_RUNTIME_DIR` and
+  `DBUS_SESSION_BUS_ADDRESS` set is what makes it land. Opening the URL needs `HOME` too: without it
+  `xdg-open` writes its MIME cache under `/root` and fails before reaching a browser.
+
+The notice carries **one** action. `dunstctl action` invokes a notification's default action, and
+with two registered it resolves to neither and only closes the notification — measured on dunst
+1.13.2, where one action returns `open` and two return nothing. Dismissing is treated as a decision
+rather than a failure, so nothing is retried and the exit stays clean.
+
+`dunstrc` also had to change. dunst's default left click is `close_current`, so clicking a
+notification dismisses it and never reaches the action it advertises; a notice that says "click to
+open" has to mean it, and `mouse_left_click = do_action, close_current` is what makes the click do
+what it says.
+
+Nothing in any of these places authenticates anything. The page is where a phone number, a room
+number or a WeChat scan goes, and that is the user's to do.
 
 ### Which Ethernet link is the office LAN
 
@@ -1159,6 +1182,7 @@ sudo -n bash network/test-reconfigure.sh
 bash network/test-static-policy.sh
 bash network/test-dhcp-refresh.sh
 bash network/test-portal-login.sh
+bash network/test-portal-notify.sh
 bash network/test-debug-capture.sh
 bash network/test-network-probe-tcp.sh
 bash network/test-probe-source-isolation.sh

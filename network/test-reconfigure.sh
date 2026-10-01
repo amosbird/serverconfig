@@ -108,7 +108,14 @@ case $host in
     portal.atour.test) printf '198.51.100.12\n' ;;
 esac
 EOF
-    chmod 755 "$WORK/wpa_cli" "$WORK/probe" "$WORK/dig"
+    # The desktop notification is a stub that only records being asked. Whether a daemon actually
+    # displays it is dunst's business; what this fixture checks is that reconciliation offers it on a
+    # gated link and stays quiet on an open one.
+    cat >"$WORK/portal-notify" <<'EOF'
+#!/usr/bin/env bash
+printf 'notify\n' >>"$(dirname "$0")/portal-notify-calls"
+EOF
+    chmod 755 "$WORK/wpa_cli" "$WORK/probe" "$WORK/dig" "$WORK/portal-notify"
 }
 
 setup() {
@@ -144,6 +151,7 @@ run_script() {
     FORCE="${1:-0}" NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
         IOA_CGROUP_PATHS_OVERRIDE= \
         WPA_CLI_OVERRIDE="$WORK/wpa_cli" PROBE_OVERRIDE="$WORK/probe" \
+        PORTAL_NOTIFY_OVERRIDE="$WORK/portal-notify" PORTAL_NOTIFY_GUI="${PORTAL_NOTIFY_GUI-}" \
         bash "$SCRIPT" wlan0 2>&1 |
         grep -vE '^\+'
     local rc=${PIPESTATUS[0]}
@@ -371,6 +379,9 @@ IOA_ENV_STATE_OVERRIDE=WORKDIR/ioa-environment
 # that can actually authenticate this station, rather than the health check its bare host
 # serves.
 PORTAL_URL_STATE_OVERRIDE=WORKDIR/portal-url
+# Records whether the desktop notification was offered. A stub binary, so the fixture asserts the
+# call rather than depending on a notification daemon being present.
+PORTAL_NOTIFY_OVERRIDE=WORKDIR/portal-notify
 RT_TABLES_OVERRIDE=WORKDIR/rt_tables
 TMPDIR_OVERRIDE=WORKDIR/tmp
 """
@@ -902,6 +913,23 @@ main() {
         ok "the portal redirect URL is recorded, token and all"
     else
         bad "the portal URL was not recorded: $(cat "$WORK/portal-url" 2>/dev/null)"
+    fi
+    # The desktop offer. A headless session has no notification daemon to reach, so it must be
+    # gated; and it runs in the background, because it blocks until the notice is acted on or
+    # expires and reconciliation cannot wait two minutes for a click that may never come.
+    rm -f "$WORK/portal-notify-calls"
+    PORTAL_NOTIFY_GUI=1 run_script 0 >/dev/null
+    if [ "$(wc -l <"$WORK/portal-notify-calls" 2>/dev/null)" -eq 1 ]; then
+        ok "a discovered portal is offered on the desktop, once"
+    else
+        bad "the portal was not offered exactly once: $(cat "$WORK/portal-notify-calls" 2>/dev/null)"
+    fi
+    rm -f "$WORK/portal-notify-calls"
+    PORTAL_NOTIFY_GUI= run_script 0 >/dev/null
+    if [ ! -e "$WORK/portal-notify-calls" ]; then
+        ok "a headless session is not offered a notification it cannot receive"
+    else
+        bad "a headless session was notified anyway"
     fi
     # An open network answers the canary as itself, so there is nothing to pin and reconciliation
     # must not invent one. Without this the discovery could pass while pinning something arbitrary.

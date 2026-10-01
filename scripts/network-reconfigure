@@ -73,6 +73,10 @@ IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environmen
 # authenticate this station is `.../web/mobile.html?gx_token=...`, and the token is regenerated per
 # association. Under /run because it is only meaningful for the session it was minted in.
 PORTAL_URL_STATE="${PORTAL_URL_STATE_OVERRIDE:-/run/network-reconfigure/captive-portal-url}"
+PORTAL_NOTIFY="${PORTAL_NOTIFY_OVERRIDE:-/home/amos/scripts/portal-notify}"
+# Whether to offer the portal on the desktop. `GUI` is this repository's switch for "a desktop
+# session exists"; the override exists so a test can exercise the offer without one.
+PORTAL_NOTIFY_GUI="${PORTAL_NOTIFY_GUI:-${GUI:-}}"
 P_IOA_OWNER=400
 P_IOA_OWNER_STOP=401
 P_TS=500
@@ -942,9 +946,22 @@ portal_hostname=$(dhcp_captive_portal_hostname "$IFACE")
 # redirects to its own portal is handled without anyone having to write its hostname down.
 if [ -z "$portal_hostname" ]; then
     portal_hostname=$(discover_portal_hostname "$IFACE")
-    [ -n "$portal_hostname" ] &&
+    if [ -n "$portal_hostname" ]; then
         logger -t network-reconfigure -p daemon.info \
             "captive portal discovered on $IFACE: $portal_hostname"
+        # Offer to open the page, on the desktop only, and in the background.
+        #
+        # This script runs as root and cannot reach a user's dunst — the session bus authenticates
+        # by uid — so the notification is a separate script that drops privileges first. It is
+        # backgrounded because it blocks until the notification is acted on or expires, and
+        # reconciliation must not wait two minutes for a click that may never come.
+        #
+        # Gated on GUI because a headless session has no notification daemon to reach, and the
+        # `nohup`-style detach is what keeps it alive past this run's exit.
+        if [ -n "$PORTAL_NOTIFY_GUI" ] && [ -x "$PORTAL_NOTIFY" ]; then
+            setsid "$PORTAL_NOTIFY" >/dev/null 2>&1 &
+        fi
+    fi
 fi
 # Resolve before anything builds a band: the pinned names are rule specs at pref 1000 and
 # routes through the physical gateway at the same time, and the state file has to carry
