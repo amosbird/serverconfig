@@ -409,7 +409,8 @@ cached_link_local() {
 #
 # The probe has to go out the physical path, or the tunnel is what answers. `--interface`
 # sets SO_BINDTODEVICE, which is the same mechanism scripts/network-probe-tcp uses.
-# Where a canary actually ends up, or nothing when the request never completed.
+# Where a canary ended up, and whether the request got anywhere: `<code> <url>`, or nothing when curl
+# produced no report at all.
 #
 # `curl -L` follows the redirect and `%{url_effective}` reports where it landed, which is the whole
 # question and needs no parsing of a response. Every hand-rolled attempt at this got it wrong in a
@@ -418,16 +419,19 @@ cached_link_local() {
 # to look at the page. An interceptor may answer on any port and any path, and curl reports whatever
 # it really was.
 #
-# The caller compares the result against the canary it asked for: landing back on the same URL means
-# the link answered as itself, which is a verdict, while empty means this one told us nothing and the
-# next is worth trying. Collapsing those two into one empty answer would make an open link pay for
-# every canary in the list instead of stopping at the first.
+# The status is reported alongside because `%{url_effective}` alone cannot tell the two outcomes
+# apart. **A failed request reports the URL it failed to reach**, so a canary that timed out is
+# indistinguishable from one the link answered as itself — and on 2026-10-01 that conflation made a
+# portal probe return "not gated" twenty-two seconds after association, when the first canary had
+# simply not come up yet, and then stop instead of trying the others. The code is what separates
+# them: `000` means this one measured nothing and the next is worth trying, while a real status on
+# the original URL means the link answered for itself and there is nothing to look for.
 probe_effective_url() {
-    local dev=$1 canary=$2 effective
-    effective=$("$CURL" -s -L -o /dev/null -m "$CAPTIVE_PROBE_TIMEOUT" \
-        --interface "$dev" -w '%{url_effective}' "$canary" 2>/dev/null || true)
-    [ -n "$effective" ] || return 0
-    printf '%s\n' "$effective"
+    local dev=$1 canary=$2 report
+    report=$("$CURL" -s -L -o /dev/null -m "$CAPTIVE_PROBE_TIMEOUT" \
+        --interface "$dev" -w '%{http_code} %{url_effective}' "$canary" 2>/dev/null || true)
+    [ -n "$report" ] || return 0
+    printf '%s\n' "$report"
 }
 
 # The host part of a URL, or the input unchanged when it is already a bare host.
@@ -498,17 +502,24 @@ portal_endpoint_from_host() {
 # link lands somewhere else instead, and wherever it lands decides what happens next — an address on
 # this segment gets asked for its page, and anything else is the answer.
 discover_portal_hostname() {
-    local dev=$1 canary effective host
+    local dev=$1 canary report code effective host
     [ -n "$dev" ] || return 0
     for canary in \
         'http://connectivitycheck.platform.hicloud.com/generate_204' \
         'http://detectportal.firefox.com/success.txt' \
         'http://captive.apple.com/hotspot-detect.html'
     do
-        effective=$(probe_effective_url "$dev" "$canary")
-        [ -n "$effective" ] || continue
-        # Landed back where it was asked: the link answered for itself, so it is not gated and there
-        # is nothing to pin. Stopping here is what keeps an open link to one round trip.
+        report=$(probe_effective_url "$dev" "$canary")
+        [ -n "$report" ] || continue
+        code=${report%% *}
+        effective=${report#* }
+        # Nothing was measured — a portal commonly blocks every endpoint it does not recognise, and a
+        # link that has only just come up reaches none of them. Either way this canary is no evidence,
+        # so try the next rather than concluding anything from it.
+        [ "$code" != "000" ] || continue
+        # Landed back where it was asked with an answer: the link replied for itself, so it is not
+        # gated and there is nothing to pin. This is a verdict, so it ends the search — which is what
+        # keeps an open link to one round trip.
         [ "$effective" != "$canary" ] || return 0
         host=$(host_of_url "$effective")
         [ -n "$host" ] || return 0

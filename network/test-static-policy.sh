@@ -281,8 +281,16 @@ fi
 # attempt lost part of it — the port because `:` was missing from the character class, the path
 # because only the authority was kept — and then guessed port 80 and `/` when it went to look
 # at the page. An interceptor may answer on any port and any path.
-if ! grep -Fq -- "-w '%{url_effective}'" scripts/network-reconfigure; then
+if ! grep -Fq -- "-w '%{http_code} %{url_effective}'" scripts/network-reconfigure; then
     echo 'FAIL the portal probe parses a response instead of asking curl where it landed' >&2
+    fail=1
+fi
+# `%{url_effective}` reports the URL a request *failed* to reach, so a timed-out canary is
+# indistinguishable from one the link answered as itself. The status is the only thing that
+# separates the two, and conflating them made the probe conclude "not gated" on a link that had
+# only just associated and then stop, without ever trying the endpoints that had come up.
+if ! grep -Fq -- '[ "$code" != "000" ] || continue' scripts/network-reconfigure; then
+    echo 'FAIL an unreachable canary is read as evidence that the link is not gated' >&2
     fail=1
 fi
 if ! grep -Fq 'off_link "$host" && {' scripts/network-reconfigure; then

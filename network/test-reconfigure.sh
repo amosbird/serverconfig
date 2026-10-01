@@ -281,16 +281,25 @@ dig()        { return 9; }
 # The captive-portal discovery probe. The fixture answers like an open network unless
 # WORKDIR/portal-redirect names a hostname, which is how a gated link is simulated without
 # a real intercepting device.
-# The discovery probe: `curl -L ... -w '%{url_effective}'`. `portal-redirect` holds the URL a gated
-# link lands on; without it the link answers every canary as itself, which is how an open network
-# looks and must produce no pin. `portal-gateway-page` holds the page served at that landing URL,
-# which is where a network whose redirect leads to its own on-link address keeps its hostname.
+# The discovery probe: `curl -L ... -w '%{http_code} %{url_effective}'`. `portal-redirect` holds the
+# URL a gated link lands on; without it the link answers every canary as itself, which is how an open
+# network looks and must produce no pin. `portal-gateway-page` holds the page served at that landing
+# URL, which is where a network whose redirect leads to its own on-link address keeps its hostname.
+# `portal-unreachable` makes a canary report `000`, which is what every endpoint looks like before a
+# freshly associated link has come up — and must not be read as "not gated".
 curl() {
-    local redirect='WORKDIR/portal-redirect' url='' landing
+    local redirect='WORKDIR/portal-redirect' url='' landing code=204
     printf '%s\n' "$*" >> WORKDIR/curl-calls
     case "$*" in
         *url_effective*)
-            if [ -r "$redirect" ]; then
+            if [ -r 'WORKDIR/portal-unreachable' ] && case "$*" in *hicloud*) true ;; *) false ;; esac; then
+                # The first canary only: this is what Atour looked like on 2026-10-01, where the
+                # probe that had come up was the second one.
+                code=000
+                for url in "$@"; do
+                    case $url in http*) landing=$url ;; esac
+                done
+            elif [ -r "$redirect" ]; then
                 landing=$(cat "$redirect")
             else
                 # Not gated: land back on the URL that was asked for.
@@ -298,7 +307,7 @@ curl() {
                     case $url in http*) landing=$url ;; esac
                 done
             fi
-            printf '%s' "$landing"
+            printf '%s %s' "$code" "$landing"
             return 0
             ;;
     esac
@@ -895,6 +904,24 @@ main() {
     run_script 0 >/dev/null
     swap_lease default
     rm -f "$WORK/portal-redirect"
+
+    # A link that has only just associated reaches none of the canaries, and %{url_effective} reports
+    # the URL that *failed* — so a timed-out canary looks exactly like one the link answered as
+    # itself. Reading that as "not gated" is what made the probe return nothing on the Atour network
+    # twenty-two seconds after association and then stop, instead of trying the endpoints that had
+    # come up. The status is what separates the two, and an unreachable canary is not evidence.
+    swap_lease no114
+    : >"$WORK/portal-unreachable"
+    printf 'https://portal.atour.test/login?gw=1' >"$WORK/portal-redirect"
+    run_script 0 >/dev/null
+    if [ "$(band 1000 | grep -Fxc 'from all to 198.51.100.12 lookup main')" -eq 1 ]; then
+        ok "a canary that failed to connect is not read as 'not gated'"
+    else
+        bad "an unreachable canary suppressed the portal: $(band 1000)"
+    fi
+    rm -f "$WORK/portal-unreachable" "$WORK/portal-redirect"
+    swap_lease default
+    run_script 0 >/dev/null
 
     # The Atour shape, measured 2026-10-01: the interceptor answers the canary with its **own**
     # address, which is on this segment and must not be pinned — an earlier version installed
