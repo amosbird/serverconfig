@@ -5,6 +5,14 @@
   Register with:
       schtasks /create /tn clientname /xml rdp2tcp-task.xml /f
 
+  The declaration says UTF-16 while the bytes are ASCII, and that is deliberate
+  rather than an oversight. schtasks refuses anything else:
+
+      (1,40)::ERROR: unable to switch the encoding   <- with an ASCII declaration
+
+  The file is kept as plain ASCII so it diffs and edits normally; the declaration
+  is the part schtasks actually cares about.
+
   The task used to be logon-triggered only, which is why rdp2tcp did not come
   back after a reconnect on 2026-10-02. Reconnecting re-attaches to a session
   that already exists (LocalSessionManager event 25), rather than creating a new
