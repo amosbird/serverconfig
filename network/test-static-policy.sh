@@ -88,6 +88,31 @@ if [ -z "$p_cn" ] || [ -z "$p_cn_stop" ] || [ -z "$p_tailnet" ] ||
 else
     echo 'OK   CN direct lookup is immediately fail-closed before Tailscale'
 fi
+# tinyproxy opens connections on behalf of a tailnet client that has already resolved the
+# destination, so domain classification never sees them. Its stable uid owner mark has to
+# exclude tailnet replies and precede the routefile mark; a cgroup path would go stale across a
+# systemd stop/start. Marked traffic must also stop if table ioa has no route.
+p_ioa_stop=$(awk -F= '$1 == "P_IOA_STOP" {print $2; exit}' scripts/network-reconfigure)
+if [ -z "$p_ioa_stop" ] || [ "$p_ioa_stop" -ne "$((p_ioa + 1))" ] ||
+   ! grep -Fq 'DESIRED_BANDS[$P_IOA_STOP]="from all fwmark $IOA_MARK prohibit"' \
+        scripts/network-reconfigure ||
+   grep -Fq 'TINYPROXY_CGROUP=' scripts/network-reconfigure ||
+   ! grep -Fq 'expected+="-A $CHAIN -m owner --uid-owner $tinyproxy_uid -j MARK --set-xmark 0x1/0xffffffff"' \
+        scripts/network-reconfigure ||
+   ! awk '
+        $0 ~ /-d "\$net" -m owner --uid-owner "\$tinyproxy_uid" -j RETURN/ { tailnet = NR }
+        tailnet && NR > tailnet && !owner &&
+            $0 ~ /-m owner --uid-owner "\$tinyproxy_uid"/ { owner = NR }
+        owner && !mark && $0 ~ /set-xmark 0x1\/0xffffffff/ { mark = NR }
+        mark && $0 ~ /match-set "\$CN_SET" dst/ { cn = NR }
+        END { exit !(tailnet && owner && mark && cn &&
+                     tailnet < owner && owner < mark && mark < cn) }
+    ' scripts/network-reconfigure; then
+    echo 'FAIL tinyproxy egress is not stably and fail-closed marked into IOA' >&2
+    fail=1
+else
+    echo 'OK   tinyproxy egress is stably and fail-closed marked into IOA'
+fi
 # A stale ESTABLISHED flow may still retain a no-NAT decision across the failed lookup. Its final
 # source is therefore checked after srcnat, where healthy packets have already been masqueraded.
 if grep -Fq 'hook postrouting priority 110' scripts/network-reconfigure &&

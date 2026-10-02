@@ -1544,13 +1544,15 @@ main() {
     printf 'route add 1.0.1.0/24 via GATEWAY table cn\nroute add 1.0.2.0/23 via GATEWAY table cn\n' > "$WORK/routefile"
     run_script 1 >/dev/null
 
-    head_ "empty IOA table falls through to table 52"
+    head_ "empty IOA table fails closed"
     ip route flush table 400
     ip addr flush dev tun0
     ip route replace default dev owner0 table 52
-    [ "$(route_table 203.0.113.1 'mark 0x1')" = 52 ] \
-        && ok "marked IOA lookup follows the existing fallback when table ioa is absent" \
-        || bad "empty IOA lookup did not fall through to table 52"
+    if ip route get 203.0.113.1 mark 0x1 >"$WORK/empty-ioa-route" 2>&1; then
+        bad "empty IOA lookup leaked to a fallback: $(cat "$WORK/empty-ioa-route")"
+    else
+        ok "marked IOA lookup is prohibited when table ioa is absent"
+    fi
     ip route replace default dev tun0 table 52
     ip addr add 192.168.255.77/24 dev tun0
     ip route add default via 192.168.255.1 dev tun0 table 400

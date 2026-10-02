@@ -101,6 +101,13 @@ Linux evaluates lower numeric priorities first:
 8. `100.64.0.0/10` uses Tailscale table `52`.
 9. Unmatched traffic follows Tailscale's independently managed selected exit node.
 
+tinyproxy is the exception to 7 and 9. Its uid-owned upstream packets are marked `0x1` before the
+routefile mark, so every connection it opens enters table `ioa`, including literal addresses the
+tailnet client already resolved. Replies toward `100.64.0.0/10` are left unmarked: a `0x1` on them
+would match priority 1150 before rule 3000 and pull the client return path into `tun0`. Priority
+1151 prohibits marked packets when table `ioa` has no route, so losing the tunnel cannot leak a
+proxy connection onto the physical network or a Tailscale exit node.
+
 ### The IOA band has to outrank SmartGateAgent's source rule
 
 SmartGateAgent installs `from <physical address> lookup 230` at priority 1200, and table 230 is a

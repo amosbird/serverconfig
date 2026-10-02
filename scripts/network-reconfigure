@@ -92,21 +92,10 @@ P_CN_STOP=1501
 # either direction while every internal address timed out. Still below 1100, so iOA's own fwmark
 # 0xa38 band keeps precedence, and below P_LOCAL, so the on-link protections stay in front.
 P_IOA=1150
+P_IOA_STOP=1151
 # 2500 held this band until 1200's precedence was understood.
 P_RETIRED_IOA=2500
 P_TAILNET=3000
-# tinyproxy serves tailnet clients on 8888 and opens intranet connections on their behalf.
-# Its egress must look up main: an exit node otherwise captures it into table 52, and the
-# request leaves with a tailnet source the intranet will not recognise. scripts/addroutes
-# carried exactly that as `ip rule add uidrange $tid-$tid lookup main pref 4001`, and it
-# was dropped when that script became network-reconfigure.
-#
-# A uidrange rule restores it, and deliberately not a cgroup fwmark mark. A mark is
-# stashed on the socket and applies to both directions, so it would drag the reply to the
-# tailnet client onto the physical interface, where install_source_guard drops it as a
-# foreign (100.64.0.0/10) source. A uidrange rule decides only the route lookup, which
-# leaves the return path symmetric over tailscale0.
-P_TINYPROXY=4001
 # iOA SmartGate's own policy, installed through scripts/overrides/ip. This
 # script never manages these bands, but it audits their consistency: rule
 # 1200 captures every locally sourced packet, so a stale table 230 default
@@ -1172,6 +1161,7 @@ for cidr in "${IOA_STATIC_CIDRS[@]}"; do
     ioa_band+=("from all to $cidr fwmark 0x0/0xffffffff lookup $IOA_TABLE")
 done
 DESIRED_BANDS[$P_IOA]=$(band_of "${ioa_band[@]}")
+DESIRED_BANDS[$P_IOA_STOP]="from all fwmark $IOA_MARK prohibit"
 
 tailnet_band=()
 for net in "${TAILNET_NETS[@]}"; do
@@ -1179,22 +1169,28 @@ for net in "${TAILNET_NETS[@]}"; do
 done
 DESIRED_BANDS[$P_TAILNET]=$(band_of "${tailnet_band[@]}")
 
-# Resolve the proxy's uid at run time so a renamed or reinstalled package cannot leave the
-# rule pinned to a uid that now belongs to something else.
-#
-# Ask the kernel before claiming the band. `ip rule add uidrange` rejects a uid the running
-# namespace does not map — "Invalid uid range" under the test harness's `unshare -r`, which
-# maps only uid 0 — and a desired band that cannot be installed aborts the whole run when
-# reconciliation fails to match it. Probing at a throwaway priority leaves an installable
-# band untouched and yields no band at all where the kernel refuses.
-tinyproxy_spec=''
-tinyproxy_uid=$(id -u tinyproxy 2>/dev/null || true)
-if [ -n "$tinyproxy_uid" ] &&
-   ip rule add uidrange "$tinyproxy_uid-$tinyproxy_uid" lookup main pref 4099 2>/dev/null; then
-    tinyproxy_spec="from all uidrange $tinyproxy_uid-$tinyproxy_uid lookup main"
-fi
-clean_pref 4099
-DESIRED_BANDS[$P_TINYPROXY]="$tinyproxy_spec"
+# tinyproxy opens connections for tailnet clients that have already resolved the destination, so
+# SmartDNS never classifies the address. An owner match, not a cgroup path, marks those packets
+# 0x1: systemd recreates the service cgroup on every restart and a path match would stop matching.
+# Tailnet replies are excluded; marking them would match priority 1150 before rule 3000 and pull
+# the client return path into tun0. The namespace test maps only uid 0, so a rejected owner match
+# leaves the proxy unmarked there instead of aborting reconciliation.
+resolve_tinyproxy_uid() {
+    local candidate probe=$1
+    tinyproxy_uid=''
+    candidate=$(id -u tinyproxy 2>/dev/null || true)
+    [ -n "$candidate" ] || return 0
+    iptables -t mangle -F "$probe" 2>/dev/null || true
+    iptables -t mangle -X "$probe" 2>/dev/null || true
+    iptables -t mangle -N "$probe" 2>/dev/null || return 0
+    if iptables -t mangle -A "$probe" \
+            -m owner --uid-owner "$candidate" -j RETURN 2>/dev/null; then
+        tinyproxy_uid=$candidate
+    fi
+    iptables -t mangle -F "$probe" 2>/dev/null || true
+    iptables -t mangle -X "$probe" 2>/dev/null || true
+}
+resolve_tinyproxy_uid "${NEXT_CHAIN}_OWNER_PROBE"
 
 # `awk NF` instead of `grep -v '^$'`: an empty band is normal, but grep exits 1 on no match and
 # pipefail then fires the ERR trap, logging a false "aborted" line that hides real aborts.
@@ -1261,6 +1257,13 @@ firewall_fingerprint_ok() {
         expected+="-A $CHAIN -m cgroup --path \"$cgroup\" -j MARK --set-xmark 0x1000000/0xffffffff"$'\n'
     done < <(active_ioa_cgroups)
     expected+="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
+    if [ -n "$tinyproxy_uid" ]; then
+        local net
+        for net in "${TAILNET_NETS[@]}"; do
+            expected+="-A $CHAIN -d $net -m owner --uid-owner $tinyproxy_uid -j RETURN"$'\n'
+        done
+        expected+="-A $CHAIN -m owner --uid-owner $tinyproxy_uid -j MARK --set-xmark 0x1/0xffffffff"$'\n'
+    fi
     expected+="-A $CHAIN -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff"$'\n'
     expected+="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
     expected+="-A $CHAIN -m set --match-set $CN_SET dst -j MARK --set-xmark 0x2/0xffffffff"
@@ -1541,6 +1544,15 @@ while read -r cgroup; do
         -j MARK --set-xmark "$IOA_OWNER_MARK"
 done < <(active_ioa_cgroups)
 iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
+if [ -n "$tinyproxy_uid" ]; then
+    for net in "${TAILNET_NETS[@]}"; do
+        iptables -t mangle -A "$NEXT_CHAIN" \
+            -d "$net" -m owner --uid-owner "$tinyproxy_uid" -j RETURN
+    done
+    iptables -t mangle -A "$NEXT_CHAIN" \
+        -m owner --uid-owner "$tinyproxy_uid" \
+        -j MARK --set-xmark 0x1/0xffffffff
+fi
 ensure_ipset ioa
 iptables -t mangle -A "$NEXT_CHAIN" \
     -m set --match-set ioa dst \
@@ -1624,8 +1636,13 @@ else
     reconcile_desired_band "$P_CN"
     reconcile_desired_band "$P_CN_STOP"
 fi
+# Same shape for IOA payload. The prohibit goes in before the lookup, so a crash cannot leave mark
+# 0x1 falling through to a physical default or a Tailscale exit node.
+reconcile_desired_band "$P_IOA_STOP"
+reconcile_desired_band "$P_IOA"
 for band in "${!DESIRED_BANDS[@]}"; do
     [ "$band" = "$P_CN" ] || [ "$band" = "$P_CN_STOP" ] ||
+        [ "$band" = "$P_IOA" ] || [ "$band" = "$P_IOA_STOP" ] ||
         [ "$band" = "$P_IOA_OWNER" ] || [ "$band" = "$P_IOA_OWNER_STOP" ] ||
         reconcile_desired_band "$band"
 done
