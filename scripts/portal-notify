@@ -21,10 +21,18 @@
 set -uo pipefail
 
 PORTAL_URL_STATE=${PORTAL_URL_STATE_OVERRIDE:-/run/network-reconfigure/captive-portal-url}
+PORTAL_IDENTITY_STATE=${PORTAL_IDENTITY_STATE_OVERRIDE:-$(dirname "$PORTAL_URL_STATE")/captive-portal-identity}
+PORTAL_DISMISS_STATE=${PORTAL_DISMISS_STATE_OVERRIDE:-$(dirname "$PORTAL_URL_STATE")/captive-portal-dismissed}
 OPEN=${OPEN:-/home/amos/scripts/xdg-open}
 NOTIFY=${NOTIFY:-/usr/sbin/dunstify}
+DUNSTCTL=${DUNSTCTL:-dunstctl}
+PORTAL_LOGIN=${PORTAL_LOGIN:-/home/amos/scripts/portal-login}
+RECONFIGURE=${RECONFIGURE:-/home/amos/scripts/network-reconfigure}
 TIMEOUT_MS=${PORTAL_NOTIFY_TIMEOUT_MS:-120000}
+RECHECK_INTERVAL=${PORTAL_RECHECK_INTERVAL:-3}
 APPNAME=${PORTAL_NOTIFY_APPNAME:-portal}
+# Same id network-reconfigure closes when the link is released.
+PORTAL_NOTIFY_ID=99114
 
 # The session to notify. Read from the state file's owner rather than assumed, because the repository
 # has no business hard-coding a uid.
@@ -59,28 +67,60 @@ notify_as_session() {
     setpriv --reuid="$uid" --regid="$uid" --init-groups \
         env "XDG_RUNTIME_DIR=/run/user/$uid" \
             "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" \
-        "$NOTIFY" -t "$TIMEOUT_MS" -a "$APPNAME" -A 'open,Open the portal' \
+        "$NOTIFY" -w -t "$TIMEOUT_MS" -r "$PORTAL_NOTIFY_ID" -a "$APPNAME" \
+            -A 'open,Open the portal' \
             "$label" "$body"
 }
 
-main() {
-    local url uid action
-    url=$(recorded_url)
-    if [ -z "$url" ]; then
-        [ "${1:-}" = --force ] || return 0
-        url=$(/home/amos/scripts/portal-login --print 2>/dev/null) || return 0
-        [ -n "$url" ] || return 0
-    fi
-    [ -x "$NOTIFY" ] || return 0
-    uid=$(session_uid)
-    [ -n "$uid" ] || return 0
+# A real dunst waits here, so the probe can be repeated while the notice is up. The fixture's
+# notifier returns immediately and must not start that loop.
+recheck_wanted() {
+    [ "${PORTAL_RECHECK:-}" = 1 ] && return 0
+    [ "${PORTAL_RECHECK:-}" = 0 ] && return 1
+    [ "$NOTIFY" = /usr/sbin/dunstify ]
+}
 
-    action=$(notify_as_session "$uid" \
-        'Wi-Fi needs a login' \
-        'This network is captive. Click to open the portal page.') || return 0
-    # Dismissing or letting it time out is a decision, not a failure: the notice has been given and
-    # the user can reach `portal-login` whenever they want it.
-    [ "$action" = open ] || return 0
+# Remember that this association was dismissed or left to expire. The next reconciliation of the
+# same association stays quiet. A different association, or one that was open in between, has no
+# such file.
+note_dismissed() {
+    local id
+    id=$(head -1 "$PORTAL_IDENTITY_STATE" 2>/dev/null || true)
+    [ -n "$id" ] || return 0
+    printf '%s\n' "$id" >"$PORTAL_DISMISS_STATE" 2>/dev/null || true
+}
+
+# While the notice is up, ask the link again. One confirmed open is handed to the reconciler; if
+# it agrees, the notice is withdrawn and this was not a dismissal. If it still calls the link
+# captive, stop polling and let the click decide — disagreeing every few seconds would rerun
+# reconciliation for as long as the notice lived.
+watch_until_decided() {
+    local uid=$1 pid=$2 action_file=$3 verdict
+    while kill -0 "$pid" 2>/dev/null; do
+        verdict=$("$PORTAL_LOGIN" --verdict 2>/dev/null || true)
+        if [ "$verdict" = open ]; then
+            "$RECONFIGURE" >/dev/null 2>&1 || true
+            if [ ! -s "$PORTAL_URL_STATE" ]; then
+                "$DUNSTCTL" close "$PORTAL_NOTIFY_ID" >/dev/null 2>&1 || true
+                wait "$pid" 2>/dev/null || true
+                return 0
+            fi
+            break
+        fi
+        sleep "$RECHECK_INTERVAL"
+    done
+    wait "$pid" 2>/dev/null || true
+    act_on "$(head -1 "$action_file" 2>/dev/null || true)" "$uid"
+}
+
+act_on() {
+    local action=$1 uid=$2 url
+    # Dismissing or letting it time out is a decision, not a failure. Recording it is what stops
+    # the next roam of this same association from raising the notice again.
+    [ "$action" = open ] || { note_dismissed; return 0; }
+    # Read at click time. The reconciler may have replaced the token while this notice was up.
+    url=$(recorded_url)
+    [ -n "$url" ] || return 0
     # The URL is opened as the session user: a browser started by root lands in the wrong session,
     # and `HOME` matters as much as the display does — without it xdg-open tries to write its MIME
     # cache under `/root` and fails before reaching the browser at all.
@@ -89,6 +129,36 @@ main() {
             "XDG_RUNTIME_DIR=/run/user/$uid" \
             "DISPLAY=${DISPLAY:-:0}" \
         "$OPEN" "$url" >/dev/null 2>&1 || true
+}
+
+main() {
+    local url uid action action_file pid
+    url=$(recorded_url)
+    if [ -z "$url" ]; then
+        [ "${1:-}" = --force ] || return 0
+        url=$("$PORTAL_LOGIN" --print 2>/dev/null) || return 0
+        [ -n "$url" ] || return 0
+    fi
+    [ -x "$NOTIFY" ] || return 0
+    uid=$(session_uid)
+    [ -n "$uid" ] || return 0
+
+    if recheck_wanted; then
+        action_file=$(mktemp "${TMPDIR:-/tmp}/portal-action.XXXXXX")
+        notify_as_session "$uid" \
+            'Wi-Fi needs a login' \
+            'This network is captive. Click to open the portal page.' \
+            >"$action_file" &
+        pid=$!
+        watch_until_decided "$uid" "$pid" "$action_file"
+        rm -f "$action_file"
+        return 0
+    fi
+
+    action=$(notify_as_session "$uid" \
+        'Wi-Fi needs a login' \
+        'This network is captive. Click to open the portal page.') || return 0
+    act_on "$action" "$uid"
 }
 
 main "$@"

@@ -73,10 +73,37 @@ IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environmen
 # authenticate this station is `.../web/mobile.html?gx_token=...`, and the token is regenerated per
 # association. Under /run because it is only meaningful for the session it was minted in.
 PORTAL_URL_STATE="${PORTAL_URL_STATE_OVERRIDE:-/run/network-reconfigure/captive-portal-url}"
+# What this association is, and whether the desktop was already told. A hotel mints a new token on
+# every probe, so the URL cannot be the identity: deduplicating on it would notify again for the
+# same connection. The association is the interface, the AP and the gateway. Dismissing sticks for
+# that association; a later one, or a captivity that returns after the link was actually open,
+# notifies again.
+PORTAL_IDENTITY_STATE="${PORTAL_IDENTITY_STATE_OVERRIDE:-}"
+PORTAL_OFFERED_STATE="${PORTAL_OFFERED_STATE_OVERRIDE:-}"
+PORTAL_DISMISS_STATE="${PORTAL_DISMISS_STATE_OVERRIDE:-}"
+if [ -z "$PORTAL_IDENTITY_STATE" ]; then
+    PORTAL_IDENTITY_STATE=$(dirname "$PORTAL_URL_STATE")/captive-portal-identity
+fi
+if [ -z "$PORTAL_OFFERED_STATE" ]; then
+    PORTAL_OFFERED_STATE=$(dirname "$PORTAL_URL_STATE")/captive-portal-offered
+fi
+if [ -z "$PORTAL_DISMISS_STATE" ]; then
+    PORTAL_DISMISS_STATE=$(dirname "$PORTAL_URL_STATE")/captive-portal-dismissed
+fi
+# Fixed id so a later run can withdraw the notice when the link is no longer captive. dunstify -r
+# replaces whatever is already showing under this id; dunstctl close removes it.
+PORTAL_NOTIFY_ID=99114
+DUNSTCTL="${DUNSTCTL_OVERRIDE:-dunstctl}"
+# open | captive | unknown. Unknown is a timeout or a probe that never completed: it must not
+# notify and must not forget a login URL the previous probe actually observed.
+portal_verdict=unknown
 PORTAL_NOTIFY="${PORTAL_NOTIFY_OVERRIDE:-/home/amos/scripts/portal-notify}"
-# Whether to offer the portal on the desktop. `GUI` is this repository's switch for "a desktop
-# session exists"; the override exists so a test can exercise the offer without one.
-PORTAL_NOTIFY_GUI="${PORTAL_NOTIFY_GUI:-${GUI:-}}"
+# `GUI` is restore.sh's install-time switch. Copy it only when it was actually passed in. Assigning
+# a default — including the empty one — is what made the systemd unit, whose environment contains
+# neither variable, look headless on 2026-10-01 after the portal had already been discovered.
+if [ -z "${PORTAL_NOTIFY_GUI+x}" ] && [ -n "${GUI+x}" ]; then
+    PORTAL_NOTIFY_GUI=$GUI
+fi
 P_IOA_OWNER=400
 P_IOA_OWNER_STOP=401
 P_TS=500
@@ -251,9 +278,13 @@ dhcp_router() {
         awk '$2 == "router" && $3 ~ /^[0-9.]+$/ { print $3; exit }'
 }
 
-dhcp_captive_portal_hostname() {
+dhcp_captive_portal_uri() {
     { networkctl dhcp-lease "$1" 2>/dev/null || true; } |
-        awk '$2 == "captive" && $3 == "portal" { print $4; exit }' |
+        awk '$2 == "captive" && $3 == "portal" { print $4; exit }'
+}
+
+dhcp_captive_portal_hostname() {
+    dhcp_captive_portal_uri "$1" |
         python3 -c 'import sys, urllib.parse; print(urllib.parse.urlparse(sys.stdin.read().strip()).hostname or "")'
 }
 
@@ -426,8 +457,9 @@ cached_link_local() {
 # them: `000` means this one measured nothing and the next is worth trying, while a real status on
 # the original URL means the link answered for itself and there is nothing to look for.
 probe_effective_url() {
-    local dev=$1 canary=$2 report
-    report=$("$CURL" -s -L -o /dev/null -m "$CAPTIVE_PROBE_TIMEOUT" \
+    local dev=$1 canary=$2 body=${3:-} report out=(-o /dev/null)
+    [ -n "$body" ] && out=(-o "$body")
+    report=$("$CURL" -s -L "${out[@]}" -m "$CAPTIVE_PROBE_TIMEOUT" \
         --interface "$dev" -w '%{http_code} %{url_effective}' "$canary" 2>/dev/null || true)
     [ -n "$report" ] || return 0
     printf '%s\n' "$report"
@@ -500,11 +532,147 @@ portal_endpoint_from_host() {
 # `https://wifiportal.yaduo.com/web/mobile.html?gx_token=...`, and the gateway mints that token per
 # association. Recording it here is what lets an operator (or scripts/portal-login) open the page
 # that works instead of the one that looks like a broken response.
+#
+# The directory is created here rather than assumed. It otherwise appears later, and only when the
+# iOA environment changes, so the first discovery after boot wrote nothing and the notification —
+# which reads this file — had nothing to say.
 record_portal_url() {
     local url=$1 dir
     dir=$(dirname "$PORTAL_URL_STATE")
-    [ -d "$dir" ] || return 0
+    mkdir -p "$dir" 2>/dev/null || return 0
     printf '%s\n' "$url" >"$PORTAL_URL_STATE" 2>/dev/null || true
+}
+
+# The link is not captive. Forget the login page and the decision to offer or dismiss it, and take
+# the notification down. The association identity stays: it is what the next probe is compared with.
+clear_portal_url() {
+    rm -f "$PORTAL_URL_STATE" "$PORTAL_OFFERED_STATE" "$PORTAL_DISMISS_STATE" \
+        2>/dev/null || true
+    # The fixture's network namespace still inherits the desktop bus. Closing from in there would
+    # dismiss a real notification on the machine running the test.
+    [ -n "${NSTEST:-}" ] && return 0
+    command -v "$DUNSTCTL" >/dev/null 2>&1 || return 0
+    "$DUNSTCTL" close "$PORTAL_NOTIFY_ID" >/dev/null 2>&1 || true
+}
+
+# interface|SSID|BSSID|gateway. Any one of those changing is a different connection: the previous
+# portal session, including a dismissal, does not apply to it.
+association_identity() {
+    local ssid bssid gw
+    ssid=$(iw dev "$IFACE" link 2>/dev/null | awk -F': ' '/SSID/{print $2; exit}') || true
+    bssid=$(iw dev "$IFACE" link 2>/dev/null | awk '/Connected to/{print $3; exit}') || true
+    gw=$(ip -4 route show table main default dev "$IFACE" 2>/dev/null | awk '{print $3; exit}') || true
+    printf '%s|%s|%s|%s\n' "$IFACE" "${ssid:-}" "${bssid:-}" "${gw:-}"
+}
+
+note_association() {
+    local id prev dir
+    id=$(association_identity)
+    dir=$(dirname "$PORTAL_IDENTITY_STATE")
+    mkdir -p "$dir" 2>/dev/null || true
+    prev=$(head -1 "$PORTAL_IDENTITY_STATE" 2>/dev/null || true)
+    if [ -n "$prev" ] && [ "$prev" != "$id" ]; then
+        clear_portal_url
+    fi
+    printf '%s\n' "$id" >"$PORTAL_IDENTITY_STATE" 2>/dev/null || true
+    portal_identity=$id
+}
+
+# RFC 8908 JSON from the RFC 8910 URI, when the lease actually advertises one.
+# Sets portal_verdict, and api_host when the API says the station is captive and names a page.
+# A definitive answer is authoritative: `captive: false` is open even if a canary would still be
+# intercepted, and a transport failure is unknown so the canary fallback still runs. JinJiang and
+# Atour send no option 114, which is why the canary remains the common path.
+parse_captive_api() {
+    python3 -c 'import json,sys
+try:
+    data=json.load(sys.stdin)
+except Exception:
+    print("unknown")
+    raise SystemExit
+cap=data.get("captive")
+url=data.get("user-portal-url") or ""
+if cap is True:
+    print("captive")
+    print(url)
+elif cap is False:
+    print("open")
+else:
+    print("unknown")'
+}
+
+query_captive_api() {
+    local dev=$1 uri host bind resolver addr body parsed kind login_url port authority
+    uri=$(dhcp_captive_portal_uri "$dev")
+    [ -n "$uri" ] || return 0
+    host=$(host_of_url "$uri")
+    [ -n "$host" ] || return 0
+    port=443
+    case $uri in
+        http://*) port=80 ;;
+    esac
+    authority=${uri#*://}
+    authority=${authority%%[/?#]*}
+    authority=${authority##*@}
+    case $authority in
+        *:*) port=${authority##*:} ;;
+    esac
+    bind=$(physical_address "$dev")
+    addr=''
+    for resolver in ${dns:-}; do
+        [ -n "$resolver" ] || continue
+        addr=$(resolve_through "$resolver" "$host" "$bind") || addr=''
+        addr=${addr%%$'\n'*}
+        [ -n "$addr" ] && break
+    done
+    body=$("$CURL" -s -m "$CAPTIVE_PROBE_TIMEOUT" --interface "$dev" \
+        -H 'Accept: application/captive+json' \
+        ${addr:+--resolve "${host}:${port}:${addr}"} \
+        "$uri" 2>/dev/null || true)
+    parsed=$(printf '%s' "$body" | parse_captive_api)
+    kind=$(printf '%s\n' "$parsed" | head -1)
+    case $kind in
+        open)
+            portal_verdict=open
+            clear_portal_url
+            ;;
+        captive)
+            login_url=$(printf '%s\n' "$parsed" | sed -n '2p')
+            [ -n "$login_url" ] || return 0
+            record_portal_url "$login_url"
+            portal_verdict=captive
+            # A global, not a printed line. This function used to be called in a command
+            # substitution, and the verdict assigned in that subshell never reached the caller:
+            # the URL was recorded and the desktop was not told.
+            api_host=$(host_of_url "$login_url")
+            ;;
+    esac
+    return 0
+}
+
+# A canary answered as itself only counts as open when the document is the one that endpoint
+# publishes. generate_204 is open on 204; the others are open on 200 whose body is the success
+# text, or empty because the test double does not capture a body. A 200 login page at the canary
+# URL is not an open network, and it is not a redirect either: try the next endpoint.
+canary_succeeded() {
+    local canary=$1 code=$2 url=$3 body=$4
+    [ "$url" = "$canary" ] || return 1
+    case $canary in
+        */generate_204)
+            [ "$code" = 204 ]
+            ;;
+        */success.txt)
+            [ "$code" = 200 ] || return 1
+            [ ! -s "$body" ] || grep -q '^success' "$body"
+            ;;
+        */hotspot-detect.html)
+            [ "$code" = 200 ] || return 1
+            [ ! -s "$body" ] || grep -q 'Success' "$body"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 # Probe each canary on the physical interface and name the portal the link redirects to, or empty
@@ -515,14 +683,20 @@ record_portal_url() {
 # link lands somewhere else instead, and wherever it lands decides what happens next — an address on
 # this segment gets asked for its page, and anything else is the answer.
 discover_portal_hostname() {
-    local dev=$1 canary report code effective host
+    local dev=$1 canary report code effective host body
+    # Same constraint as query_captive_api: the verdict and the hostname are globals. Printing
+    # the hostname into a command substitution would discard the verdict with the subshell.
+    portal_verdict=unknown
+    probed_portal=
     [ -n "$dev" ] || return 0
+    body=$(mktemp "${TMPDIR}/captive-body.XXXXXX" 2>/dev/null || true)
     for canary in \
         'http://connectivitycheck.platform.hicloud.com/generate_204' \
         'http://detectportal.firefox.com/success.txt' \
         'http://captive.apple.com/hotspot-detect.html'
     do
-        report=$(probe_effective_url "$dev" "$canary")
+        : >"${body:-/dev/null}" 2>/dev/null || true
+        report=$(probe_effective_url "$dev" "$canary" "$body")
         [ -n "$report" ] || continue
         code=${report%% *}
         effective=${report#* }
@@ -530,39 +704,102 @@ discover_portal_hostname() {
         # link that has only just come up reaches none of them. Either way this canary is no evidence,
         # so try the next rather than concluding anything from it.
         [ "$code" != "000" ] || continue
-        # Landed back where it was asked with an answer: the link replied for itself, so it is not
-        # gated and there is nothing to pin. This is a verdict, so it ends the search — which is what
-        # keeps an open link to one round trip.
-        [ "$effective" != "$canary" ] || return 0
+        # The success document, on the URL that was asked for: the link is open. This ends the
+        # search, which keeps an ungated link to one round trip, and forgets a login URL that
+        # belonged to an earlier association.
+        if canary_succeeded "$canary" "$code" "$effective" "${body:-/dev/null}"; then
+            portal_verdict=open
+            clear_portal_url
+            rm -f "$body"
+            return 0
+        fi
+        # Answered on the canary URL with something else, or with no URL at all. Not open, and
+        # not a redirect: the next endpoint may still be the one this network intercepts.
+        if [ -z "$effective" ] || [ "$effective" = "$canary" ]; then
+            continue
+        fi
         host=$(host_of_url "$effective")
+        portal_verdict=captive
+        record_portal_url "$effective"
+        rm -f "$body"
         [ -n "$host" ] || return 0
         case $host in
             *[!0-9./]*)
                 # A name is the answer. The port it answered on is not part of it.
-                record_portal_url "$effective"
-                printf '%s\n' "$host"
+                probed_portal=$host
                 return 0
                 ;;
         esac
         off_link "$host" && {
-            record_portal_url "$effective"
-            printf '%s\n' "$host"
+            probed_portal=$host
             return 0
         }
         # On this segment: pinning it would route it to itself, so ask it for the page instead.
+        # The redirect is still the page to open when that page names nothing.
         host=$(portal_endpoint_from_host "$dev" "$host" http)
-        [ -n "$host" ] && {
-            record_portal_url "$effective"
-            printf '%s\n' "$host"
-            return 0
-        }
+        probed_portal=$host
         return 0
     done
-    # Nothing named a portal. The last landing URL is still worth keeping: on a network that
-    # redirects to a bare address the operator may have to open it by hand, and it is the only
-    # record of where the gateway wanted to send us.
-    [ -z "$effective" ] || record_portal_url "$effective"
+    rm -f "$body"
+    # Every canary was inconclusive, or answered as itself without the success document and without
+    # a redirect. `%{url_effective}` on a request that never completed is the canary itself, and
+    # recording it is what made the state file hold `http://captive.apple.com/hotspot-detect.html`
+    # on a link that had merely not answered. Leave the previous URL alone.
     return 0
+}
+
+# Tell the desktop about the login page, once per association.
+#
+# Only a captive verdict reaches here. Unknown keeps the previous URL for `portal-login` and stays
+# quiet; open has already withdrawn the notice. A new token on the same association updates the
+# URL file and does not notify again — the click reads the file at the moment it is acted on.
+#
+# The offer used to be gated on `GUI`. That variable is set by `GUI=1 bash restore.sh` and by
+# nothing else; `network-reconfigure.service` has an empty environment, so the gate was closed on
+# the only machine that has a desktop. On 2026-10-01 at 23:50 the probe logged
+# `captive portal discovered on wlan0: wifiportal.yaduo.com` and then did not start the notifier.
+# An explicit empty `PORTAL_NOTIFY_GUI` still means headless — the fixture sets it that way. An
+# unset one means the session bus decides.
+#
+# Launching the notifier is not enough. This unit is Type=oneshot, and the default KillMode kills
+# every process left in its cgroup when the script exits. `setsid` starts a new session and stays
+# in that cgroup, so the waiter was dead before anyone could click, and a notification with an
+# action dies with the client that registered it. A transient scope is a different cgroup. The
+# network namespace the tests run in has no `/run/systemd/private`, and there the direct exec is
+# what the fixture observes; nothing in that namespace reaps it.
+offer_portal_login() {
+    local url offered dismissed bus
+    [ "$portal_verdict" = captive ] || return 0
+    [ -x "$PORTAL_NOTIFY" ] || return 0
+    if [ -z "${PORTAL_NOTIFY_GUI+x}" ]; then
+        bus=''
+        for bus in /run/user/*/bus; do
+            if [ -S "$bus" ]; then
+                break
+            fi
+            bus=''
+        done
+        [ -n "$bus" ] || return 0
+    elif [ -z "$PORTAL_NOTIFY_GUI" ]; then
+        return 0
+    fi
+    [ -r "$PORTAL_URL_STATE" ] || return 0
+    url=$(head -1 "$PORTAL_URL_STATE" 2>/dev/null || true)
+    [ -n "$url" ] || return 0
+    [ -n "${portal_identity:-}" ] || return 0
+    dismissed=$(head -1 "$PORTAL_DISMISS_STATE" 2>/dev/null || true)
+    [ "$portal_identity" != "$dismissed" ] || return 0
+    offered=$(head -1 "$PORTAL_OFFERED_STATE" 2>/dev/null || true)
+    [ "$portal_identity" != "$offered" ] || return 0
+    if [ -S /run/systemd/private ]; then
+        systemd-run --scope --quiet --collect \
+            "$PORTAL_NOTIFY" >/dev/null 2>&1 &
+    else
+        setsid "$PORTAL_NOTIFY" >/dev/null 2>&1 &
+    fi
+    printf '%s\n' "$portal_identity" >"$PORTAL_OFFERED_STATE" 2>/dev/null || true
+    logger -t network-reconfigure -p daemon.info \
+        "offering captive portal login on $IFACE"
 }
 
 # Every destination this link must reach directly: the operator's declarations plus the
@@ -929,29 +1166,34 @@ for _ in {1..10}; do
     [ -n "${dns:-}" ] && break
     sleep 1
 done || true
-portal_hostname=$(dhcp_captive_portal_hostname "$IFACE")
+lease_portal=$(dhcp_captive_portal_hostname "$IFACE")
 # No RFC 8910 endpoint advertised is the common case, not the exception: neither the JinJiang
 # network nor the Atour one sends option 114. Ask the network directly instead, so a hotel that
 # redirects to its own portal is handled without anyone having to write its hostname down.
-if [ -z "$portal_hostname" ]; then
-    portal_hostname=$(discover_portal_hostname "$IFACE")
-    if [ -n "$portal_hostname" ]; then
-        logger -t network-reconfigure -p daemon.info \
-            "captive portal discovered on $IFACE: $portal_hostname"
-        # Offer to open the page, on the desktop only, and in the background.
-        #
-        # This script runs as root and cannot reach a user's dunst — the session bus authenticates
-        # by uid — so the notification is a separate script that drops privileges first. It is
-        # backgrounded because it blocks until the notification is acted on or expires, and
-        # reconciliation must not wait two minutes for a click that may never come.
-        #
-        # Gated on GUI because a headless session has no notification daemon to reach, and the
-        # `nohup`-style detach is what keeps it alive past this run's exit.
-        if [ -n "$PORTAL_NOTIFY_GUI" ] && [ -x "$PORTAL_NOTIFY" ]; then
-            setsid "$PORTAL_NOTIFY" >/dev/null 2>&1 &
-        fi
-    fi
+# When option 114 is present the API answer is authoritative. A transport failure leaves the
+# verdict unknown and the canary still runs; that is the path those two hotels take.
+note_association
+portal_verdict=unknown
+api_host=
+# Not a command substitution. Both functions record the verdict in this shell; a subshell
+# would keep the URL they wrote and throw the verdict away, and the desktop would stay quiet.
+query_captive_api "$IFACE" || true
+probed_portal=
+if [ "$portal_verdict" = unknown ]; then
+    discover_portal_hostname "$IFACE"
+elif [ "$portal_verdict" = captive ]; then
+    probed_portal=$api_host
 fi
+if [ -n "$lease_portal" ]; then
+    portal_hostname=$lease_portal
+else
+    portal_hostname=$probed_portal
+fi
+if [ "$portal_verdict" = captive ] && [ -n "${probed_portal:-}" ]; then
+    logger -t network-reconfigure -p daemon.info \
+        "captive portal discovered on $IFACE: $probed_portal"
+fi
+offer_portal_login
 # Resolve before anything builds a band: the pinned names are rule specs at pref 1000 and
 # routes through the physical gateway at the same time, and the state file has to carry
 # the resolved set so a change to it re-triggers reconciliation.

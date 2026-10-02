@@ -117,6 +117,37 @@ check 'an unreachable canary is skipped, not read as open' \
     'https://wifiportal.other.example/login?t=9' \
     "$(PATH="$WORK/bin:$PATH" PORTAL_URL_STATE_OVERRIDE="$WORK/absent" "$SCRIPT" --print)"
 
+# --verdict is the live probe the notification rechecks. open, captive and unknown are different
+# answers: a timeout is not an open link, and a redirect is not "nothing to open".
+cat >"$WORK/bin/curl" <<'SH'
+#!/bin/sh
+url=
+for arg in "$@"; do
+    case $arg in http*) url=$arg ;; esac
+done
+if [ -r WORKDIR/portal-landing ]; then
+    printf '200 %s' "$(cat WORKDIR/portal-landing)"
+    exit 0
+fi
+case $url in
+    */generate_204) printf '204 %s' "$url" ;;
+    *) printf '200 %s' "$url" ;;
+esac
+SH
+sed -i "s|WORKDIR|$WORK|g" "$WORK/bin/curl"
+rm -f "$WORK/portal-landing"
+check '--verdict on an open link is open' open \
+    "$(PATH="$WORK/bin:$PATH" CURL_OVERRIDE="$WORK/bin/curl" "$SCRIPT" --verdict)"
+printf 'https://wifiportal.other.example/login?t=9\n' >"$WORK/portal-landing"
+check '--verdict names the redirect' 'captive https://wifiportal.other.example/login?t=9' \
+    "$(PATH="$WORK/bin:$PATH" CURL_OVERRIDE="$WORK/bin/curl" "$SCRIPT" --verdict)"
+cat >"$WORK/bin/curl" <<'SH'
+#!/bin/sh
+printf '000 http://connectivitycheck.platform.hicloud.com/generate_204'
+SH
+check '--verdict on a dead link is unknown' unknown \
+    "$(PATH="$WORK/bin:$PATH" CURL_OVERRIDE="$WORK/bin/curl" "$SCRIPT" --verdict)"
+
 # --status is read-only and never opens.
 mv "$WORK/bin/curl" "$WORK/bin/curl.hidden"
 check '--status reports without opening' 0 "$(STATE=$WORK/state run --status)"

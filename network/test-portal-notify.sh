@@ -69,7 +69,7 @@ chmod 755 "$WORK/notify"
 run() {
     local rc=0
     PATH="$WORK/bin:$PATH" PORTAL_URL_STATE_OVERRIDE="$WORK/url" \
-        NOTIFY="$WORK/notify" OPEN="$WORK/bin/xdg-open" \
+        NOTIFY="${NOTIFY:-$WORK/notify}" OPEN="$WORK/bin/xdg-open" \
         "$SCRIPT" "$@" >"$WORK/out" 2>"$WORK/err" || rc=$?
     printf '%s' "$rc"
 }
@@ -108,5 +108,52 @@ check 'dismissing opens nothing' '' "$(cat "$WORK/opened" 2>/dev/null)"
 rm -f "$WORK/url"
 check 'a link with no portal is silent' 0 "$(run)"
 check 'a link with no portal opens nothing' '' "$(cat "$WORK/opened" 2>/dev/null)"
+
+# While the notice is up the link is probed again. A confirmed open is withdrawn; that is not a
+# dismissal, and it must not open the browser on the way out.
+printf 'https://wifiportal.yaduo.com/web/mobile.html?gx_token=abc\n' >"$WORK/url"
+printf 'wlan0|||10.0.0.1\n' >"$WORK/identity"
+cat >"$WORK/bin/portal-login" <<'SH'
+#!/bin/sh
+printf 'open\n'
+SH
+cat >"$WORK/bin/reconfigure" <<'SH'
+#!/bin/sh
+rm -f WORKDIR/url
+SH
+cat >"$WORK/bin/dunstctl" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>WORKDIR/closed
+touch WORKDIR/stop
+SH
+# Not named notify: the setpriv stub answers those itself, and this one has to block until closed.
+cat >"$WORK/bin/waiter" <<'SH'
+#!/bin/sh
+while [ ! -f WORKDIR/stop ]; do sleep 0.05; done
+printf 'dismiss\n'
+SH
+chmod 755 "$WORK/bin/portal-login" "$WORK/bin/reconfigure" "$WORK/bin/dunstctl" "$WORK/bin/waiter"
+sed -i "s|WORKDIR|$WORK|g" "$WORK/bin/reconfigure" "$WORK/bin/dunstctl" "$WORK/bin/waiter"
+rm -f "$WORK/opened" "$WORK/closed" "$WORK/stop"
+check 'an open recheck withdraws the notice' 0 \
+    "$(PORTAL_RECHECK=1 PORTAL_RECHECK_INTERVAL=0 \
+        NOTIFY="$WORK/bin/waiter" \
+        PORTAL_LOGIN="$WORK/bin/portal-login" RECONFIGURE="$WORK/bin/reconfigure" \
+        DUNSTCTL="$WORK/bin/dunstctl" \
+        PORTAL_IDENTITY_STATE_OVERRIDE="$WORK/identity" \
+        run)"
+check 'an open recheck does not open the browser' '' "$(cat "$WORK/opened" 2>/dev/null)"
+if grep -q 'close 99114' "$WORK/closed"; then
+    echo 'OK   an open recheck closes the notification'
+else
+    printf 'FAIL the notification was not closed: %s\n' "$(cat "$WORK/closed" 2>/dev/null)" >&2
+    fail=1
+fi
+if [ ! -e "$WORK/url" ]; then
+    echo 'OK   an open recheck asks the reconciler to drop the login URL'
+else
+    echo 'FAIL the login URL survived an open recheck' >&2
+    fail=1
+fi
 
 exit "$fail"

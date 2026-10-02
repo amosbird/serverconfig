@@ -281,7 +281,8 @@ fi
 # the answer. Each of those three is load-bearing: without the probe nothing is discovered, without
 # --interface the tunnel answers instead of the portal, and without the filter the pin lands on a
 # public CDN that the response merely mentions.
-if ! grep -Fq 'portal_hostname=$(discover_portal_hostname "$IFACE")' scripts/network-reconfigure; then
+if ! grep -Fq 'discover_portal_hostname "$IFACE"' scripts/network-reconfigure ||
+   ! grep -Fq 'portal_hostname=$probed_portal' scripts/network-reconfigure; then
     echo 'FAIL a captive portal that advertises no endpoint is never discovered' >&2
     fail=1
 fi
@@ -897,15 +898,22 @@ fi
 for entry in scripts/portal-login scripts/portal-notify; do
     [ -x "$entry" ] || { echo "FAIL $entry is not executable" >&2; fail=1; }
 done
-# The desktop offer is gated on GUI, and it must be backgrounded: it blocks until the notice is
-# acted on or expires, and reconciliation cannot wait two minutes for a click that may never come.
-if ! grep -Fq 'if [ -n "$PORTAL_NOTIFY_GUI" ] && [ -x "$PORTAL_NOTIFY" ]; then' \
-        scripts/network-reconfigure; then
-    echo 'FAIL the portal offer is not gated on a desktop session' >&2
+# The desktop offer follows the session, not the install-time GUI flag. network-reconfigure.service
+# has an empty environment, so treating an unset GUI as headless never starts the notifier — which
+# is what happened on 2026-10-01 after the portal had already been discovered. An explicit empty
+# GUI remains the fixture's way to say headless. The notifier has to leave this unit's cgroup:
+# Type=oneshot kills everything still in it, and setsid does not leave it.
+if ! grep -Fq 'for bus in /run/user/*/bus' scripts/network-reconfigure ||
+   ! grep -Fq '[ -z "$PORTAL_NOTIFY_GUI" ]' scripts/network-reconfigure; then
+    echo 'FAIL the portal offer does not follow the desktop session' >&2
+    fail=1
+fi
+if ! grep -Fq 'systemd-run --scope --quiet --collect' scripts/network-reconfigure; then
+    echo 'FAIL the portal offer stays in the oneshot cgroup and dies with the script' >&2
     fail=1
 fi
 if ! grep -Fq 'setsid "$PORTAL_NOTIFY" >/dev/null 2>&1 &' scripts/network-reconfigure; then
-    echo 'FAIL the portal offer is not backgrounded, so reconciliation would block on it' >&2
+    echo 'FAIL the portal offer has no fallback where there is no service manager' >&2
     fail=1
 fi
 # root cannot reach a user's dunst: the session bus authenticates by uid. Dropping to the session

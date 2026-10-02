@@ -299,8 +299,17 @@ curl() {
     local redirect='WORKDIR/portal-redirect' url='' landing code=204
     printf '%s\n' "$*" >> WORKDIR/curl-calls
     case "$*" in
+        *captive+json*)
+            if [ -r 'WORKDIR/portal-api-json' ]; then
+                cat 'WORKDIR/portal-api-json'
+            fi
+            return 0
+            ;;
         *url_effective*)
-            if [ -r 'WORKDIR/portal-unreachable' ] && case "$*" in *hicloud*) true ;; *) false ;; esac; then
+            if [ -r 'WORKDIR/portal-unreachable' ] && {
+                    [ -r 'WORKDIR/portal-all-unreachable' ] ||
+                        case "$*" in *hicloud*) true ;; *) false ;; esac
+                }; then
                 # The first canary only: this is what Atour looked like on 2026-10-01, where the
                 # probe that had come up was the second one.
                 code=000
@@ -914,16 +923,45 @@ main() {
     else
         bad "the portal URL was not recorded: $(cat "$WORK/portal-url" 2>/dev/null)"
     fi
-    # The desktop offer. A headless session has no notification daemon to reach, so it must be
-    # gated; and it runs in the background, because it blocks until the notice is acted on or
-    # expires and reconciliation cannot wait two minutes for a click that may never come.
-    rm -f "$WORK/portal-notify-calls"
+    # The desktop offer. A headless session has no notification daemon to reach, so an explicit
+    # empty GUI stays quiet. A desktop run offers the page once per association: the path unit
+    # fires on every roam, and a hotel mints a new token on every probe, so the URL is the wrong
+    # thing to deduplicate on.
+    rm -f "$WORK/portal-notify-calls" "$WORK/captive-portal-offered" \
+        "$WORK/captive-portal-dismissed"
+    PORTAL_NOTIFY_GUI=1 run_script 0 >/dev/null
     PORTAL_NOTIFY_GUI=1 run_script 0 >/dev/null
     if [ "$(wc -l <"$WORK/portal-notify-calls" 2>/dev/null)" -eq 1 ]; then
         ok "a discovered portal is offered on the desktop, once"
     else
         bad "the portal was not offered exactly once: $(cat "$WORK/portal-notify-calls" 2>/dev/null)"
     fi
+    printf 'https://portal.atour.test/login?gw=2\n' >"$WORK/portal-redirect"
+    PORTAL_NOTIFY_GUI=1 run_script 0 >/dev/null
+    if [ "$(wc -l <"$WORK/portal-notify-calls" 2>/dev/null)" -eq 1 ] &&
+       [ "$(cat "$WORK/portal-url" 2>/dev/null)" = 'https://portal.atour.test/login?gw=2' ]; then
+        ok "a new token on the same association updates the page and does not notify again"
+    else
+        bad "a new token notified again or was not recorded: $(cat "$WORK/portal-notify-calls" 2>/dev/null) url=$(cat "$WORK/portal-url" 2>/dev/null)"
+    fi
+    printf '%s\n' "$(cat "$WORK/captive-portal-identity")" >"$WORK/captive-portal-dismissed"
+    rm -f "$WORK/portal-notify-calls" "$WORK/captive-portal-offered"
+    PORTAL_NOTIFY_GUI=1 run_script 0 >/dev/null
+    if [ ! -e "$WORK/portal-notify-calls" ]; then
+        ok "a dismissed association is not offered again"
+    else
+        bad "a dismissed association was offered again"
+    fi
+    printf 'wlan0|other|aa:bb:cc:dd:ee:ff|9.9.9.9\n' >"$WORK/captive-portal-identity"
+    rm -f "$WORK/portal-notify-calls" "$WORK/captive-portal-offered" \
+        "$WORK/captive-portal-dismissed"
+    PORTAL_NOTIFY_GUI=1 run_script 0 >/dev/null
+    if [ "$(wc -l <"$WORK/portal-notify-calls" 2>/dev/null)" -eq 1 ]; then
+        ok "a different association is offered"
+    else
+        bad "a different association was not offered: $(cat "$WORK/portal-notify-calls" 2>/dev/null)"
+    fi
+    printf 'https://portal.atour.test/login?gw=1\n' >"$WORK/portal-redirect"
     rm -f "$WORK/portal-notify-calls"
     PORTAL_NOTIFY_GUI= run_script 0 >/dev/null
     if [ ! -e "$WORK/portal-notify-calls" ]; then
@@ -940,6 +978,11 @@ main() {
         ok "an open network discovers no portal and pins nothing"
     else
         bad "an open network pinned a portal anyway: $(band 1000)"
+    fi
+    if [ ! -s "$WORK/portal-url" ]; then
+        ok "an open network forgets the portal URL"
+    else
+        bad "an open network kept a portal URL: $(cat "$WORK/portal-url" 2>/dev/null)"
     fi
     printf 'https://portal.atour.test/login?gw=1' >"$WORK/portal-redirect"
     run_script 0 >/dev/null
@@ -964,6 +1007,32 @@ main() {
     swap_lease default
     run_script 0 >/dev/null
 
+    # A failed request reports the URL it failed to reach. Recording that is what stored
+    # http://captive.apple.com/hotspot-detect.html for a link that had merely not answered, and
+    # portal-login then opened the canary. An unanswered probe is not a new portal.
+    swap_lease no114
+    printf 'https://portal.atour.test/login?gw=1\n' >"$WORK/portal-url"
+    : >"$WORK/portal-unreachable"
+    : >"$WORK/portal-all-unreachable"
+    rm -f "$WORK/portal-redirect"
+    run_script 0 >/dev/null
+    if [ "$(cat "$WORK/portal-url" 2>/dev/null)" = 'https://portal.atour.test/login?gw=1' ]; then
+        ok "a probe that reached nothing keeps the portal URL it already had"
+    else
+        bad "an unanswered probe replaced the portal URL: $(cat "$WORK/portal-url" 2>/dev/null)"
+    fi
+    rm -f "$WORK/portal-notify-calls" "$WORK/captive-portal-offered" \
+        "$WORK/captive-portal-dismissed"
+    PORTAL_NOTIFY_GUI=1 run_script 0 >/dev/null
+    if [ ! -e "$WORK/portal-notify-calls" ]; then
+        ok "a probe that reached nothing does not notify"
+    else
+        bad "an unanswered probe notified anyway"
+    fi
+    rm -f "$WORK/portal-unreachable" "$WORK/portal-all-unreachable"
+    swap_lease default
+    run_script 0 >/dev/null
+
     # The Atour shape, measured 2026-10-01: the interceptor answers the canary with its **own**
     # address, which is on this segment and must not be pinned — an earlier version installed
     # `192.168.64.254 via 192.168.64.254`, a host route whose next hop is itself, and pinned no
@@ -984,6 +1053,31 @@ main() {
     fi
     rm -f "$WORK/portal-gateway-page" "$WORK/portal-redirect"
     swap_lease default
+    run_script 0 >/dev/null
+
+    # RFC 8908. A definitive API answer is the verdict. The canary is the fallback for a lease that
+    # sends no option 114, or whose API could not be read — not a second opinion that overrides
+    # `captive: false`.
+    printf '%s\n' \
+        '{"captive":true,"user-portal-url":"https://portal.atour.test/login?from=api"}' \
+        >"$WORK/portal-api-json"
+    rm -f "$WORK/portal-url" "$WORK/portal-redirect"
+    run_script 0 >/dev/null
+    if [ "$(cat "$WORK/portal-url" 2>/dev/null)" = \
+            'https://portal.atour.test/login?from=api' ]; then
+        ok "the RFC 8908 user-portal URL is what gets recorded"
+    else
+        bad "the API login URL was not recorded: $(cat "$WORK/portal-url" 2>/dev/null)"
+    fi
+    printf '%s\n' '{"captive":false}' >"$WORK/portal-api-json"
+    printf 'https://portal.atour.test/login?gw=1\n' >"$WORK/portal-redirect"
+    run_script 0 >/dev/null
+    if [ ! -s "$WORK/portal-url" ]; then
+        ok "an API that says the station is free is not overruled by a canary"
+    else
+        bad "a freed API still recorded a canary redirect: $(cat "$WORK/portal-url" 2>/dev/null)"
+    fi
+    rm -f "$WORK/portal-api-json" "$WORK/portal-redirect"
     run_script 0 >/dev/null
 
     # The rules are inert without routes behind them: a match whose main-table lookup

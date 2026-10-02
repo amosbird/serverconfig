@@ -330,13 +330,41 @@ and for asking rather than acting. When the reconciler has not run yet — a fre
 whose probe found every canary unreachable — the script repeats the probe itself rather than sending
 the operator to a page that answers `1`.
 
-`scripts/portal-notify` offers the same URL as a desktop notification, run from `network-reconfigure`
-when a portal is first discovered. Three details are not optional:
+The probe has three answers, and they are not interchangeable:
 
-- **It is gated on `GUI`.** A headless session has no notification daemon to reach, and offering one
-  is noise.
-- **It is backgrounded with `setsid`.** The notification blocks until it is acted on or expires, and
-  reconciliation must not wait two minutes for a click that may never come.
+| Verdict | What was observed | What happens |
+|---|---|---|
+| `open` | the canary's own success document, or RFC 8908 `"captive": false` | forget the login URL and take the notification down |
+| `captive` | a redirect, or RFC 8908 `"captive": true` with `user-portal-url` | record that page and offer it once |
+| `unknown` | timeout, DNS failure, HTTP `000` | leave the previous URL alone and do not notify |
+
+A lease that carries RFC 8910 option 114 is asked for the RFC 8908 JSON first, on the physical
+interface, resolved through that lease's own DNS. A definitive answer is the verdict. JinJiang and
+Atour send no option 114, and an API that cannot be read is the same shape: the canary runs.
+`generate_204` is open only on 204. The other canaries are open only on 200 whose body is their
+success text. A 200 login page at the canary's own URL is not an open network.
+
+`scripts/portal-notify` offers the recorded page as a desktop notification. Five details are not
+optional:
+
+- **It follows the session, not `GUI`.** `GUI` is an argument to `restore.sh`. The systemd unit's
+  environment is empty, and treating that as headless is what dropped the offer on 2026-10-01 after
+  the probe had already logged `wifiportal.yaduo.com`. A session bus under `/run/user` is the signal
+  that someone can see a notification. An explicit empty `PORTAL_NOTIFY_GUI` still means headless.
+- **It is offered once per association, not once per URL.** The association is the interface, the
+  AP and the gateway. A hotel mints a new token on every probe; deduplicating on the URL would
+  notify again for the same connection. The click reads the URL at the moment it is acted on, so
+  the token can still be refreshed underneath a notice that is already up. Dismissing or letting
+  the notice expire sticks for that association. A different association notifies again, and so
+  does captivity that returns after the link was actually open.
+- **It keeps checking while it is up.** Every few seconds `portal-login --verdict` asks the link
+  again. One `open` is handed back to `network-reconfigure`; if the reconciler agrees, it deletes
+  the login URL and `dunstctl close` withdraws notice id `99114`. That withdrawal is not a
+  dismissal. If the reconciler still calls the link captive, polling stops and the click decides.
+- **It runs in a transient scope.** The notification blocks until it is acted on or expires, and
+  reconciliation must not wait two minutes for a click that may never come. `setsid` is not enough
+  to outlive the script: this unit is `Type=oneshot`, and the default `KillMode` kills every process
+  left in its cgroup, session or not. `systemd-run --scope` puts the waiter in a different cgroup.
 - **It drops privileges before notifying.** root cannot reach a user's dunst — the session bus
   authenticates by uid, and a root process connecting to `/run/user/1000/bus` is refused with
   `Error sending credentials`. `setpriv --reuid=… --regid=… --init-groups` with `XDG_RUNTIME_DIR` and
@@ -345,8 +373,8 @@ when a portal is first discovered. Three details are not optional:
 
 The notice carries **one** action. `dunstctl action` invokes a notification's default action, and
 with two registered it resolves to neither and only closes the notification — measured on dunst
-1.13.2, where one action returns `open` and two return nothing. Dismissing is treated as a decision
-rather than a failure, so nothing is retried and the exit stays clean.
+1.13.2, where one action returns `open` and two return nothing. Dismissing is a decision for this
+association, so nothing is retried until the association changes or the link has been open.
 
 `dunstrc` also had to change. dunst's default left click is `close_current`, so clicking a
 notification dismisses it and never reaches the action it advertises; a notice that says "click to
