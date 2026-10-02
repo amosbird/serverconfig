@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  Task definition for "clientname" on TX-PW0FNXY8.
+
+  Register with:
+      schtasks /create /tn clientname /xml rdp2tcp-task.xml /f
+
+  The task used to be logon-triggered only, which is why rdp2tcp did not come
+  back after a reconnect on 2026-10-02. Reconnecting re-attaches to a session
+  that already exists (LocalSessionManager event 25), rather than creating a new
+  one (event 21), so a logon trigger never fires.
+
+  The triggers cover every way the helper can be missing:
+
+    LogonTrigger          a fresh session, event 21
+    RemoteConnect         a reconnect into an existing session, event 25
+    TimeTrigger           everything else, in particular a crash mid-session,
+                          which no session event reports at all
+
+  The repetition is what makes this self-correcting rather than a list of cases
+  someone has to keep complete. Five minutes is chosen against the cost of being
+  wrong: the guard is a short-lived PowerShell process that most of the time
+  looks for a process, finds it, and exits.
+
+  The recurring check is a TimeTrigger rather than a Repetition on the logon
+  trigger, and the difference is not cosmetic. Repetition on a logon trigger
+  only arms once a logon has happened, so a task registered at 13:38 reports
+  Next Run Time: N/A and would not check anything until the next time someone
+  logged in, precisely the window where a crashed helper would go unnoticed.
+  A TimeTrigger with a start boundary in the past is armed from the moment it is
+  registered.
+
+  The guard also refuses to do anything when it is not in a real interactive
+  session, since a TimeTrigger fires whether or not anyone is logged in. Without
+  that check it would start a useless copy in session 0, which has no virtual
+  channel to attach to.
+
+  Runs as the user with InteractiveToken, which is what puts it in the
+  interactive session, the only one whose virtual channel means anything.
+
+  IgnoreNew and a two minute execution limit go together. Two guards must never
+  run at once, so the second is dropped rather than queued, but IgnoreNew alone
+  turns a single hung guard into a task that is silently dead from then on. The
+  limit bounds that: the guard normally exits in well under a second, so two
+  minutes is a hundredfold margin, and AllowHardTerminate lets the scheduler
+  actually enforce it rather than asking a console process to stop itself.
+  Windows releases a process's mutex when it dies, so a terminated guard cannot
+  leave the next one wedged on the lock.
+
+  DisallowStartIfOnBatteries and StopIfGoingOnBatteries are off. This is a
+  laptop and both default to true; leaving them on would mean the helper quietly
+  never starts when the machine is unplugged, which is the same class of silent
+  failure this file exists to fix.
+
+  Note that XML comments may not contain two consecutive hyphens, which is why
+  the above avoids them.
+-->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Date>2023-08-01T10:27:53.1437866</Date>
+    <Author>10_0_24_7\Administrator</Author>
+    <Description>Keep the rdp2tcp virtual-channel helper running in the interactive session.</Description>
+    <URI>\clientname</URI>
+  </RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-21-4198808933-4151079717-884742619-500</UserId>
+      <LogonType>InteractiveToken</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT2M</ExecutionTimeLimit>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <StartWhenAvailable>true</StartWhenAvailable>
+  </Settings>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+    <SessionStateChangeTrigger>
+      <Enabled>true</Enabled>
+      <StateChange>RemoteConnect</StateChange>
+      <Delay>PT5S</Delay>
+      <UserId>S-1-5-21-4198808933-4151079717-884742619-500</UserId>
+    </SessionStateChangeTrigger>
+    <TimeTrigger>
+      <Enabled>true</Enabled>
+      <StartBoundary>2026-10-02T00:00:00</StartBoundary>
+      <Repetition>
+        <Interval>PT5M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </TimeTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\Administrator\Desktop\rdp2tcp-launch.ps1"</Arguments>
+    </Exec>
+  </Actions>
+</Task>
