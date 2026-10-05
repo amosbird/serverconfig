@@ -18,6 +18,16 @@ read_value() {
         "s/.*value:'\"\\([^\"]*\\)\"'.*/\\1/p" | tail -n 1
 }
 
+declare -A values=()
+
+# One metadata read for all keys: each pw-metadata run is a PipeWire client.
+read_all() {
+    local line pattern="key:'([^']*)' value:'\"([^\"]*)\"'"
+    while IFS= read -r line; do
+        [[ $line =~ $pattern ]] && values[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
+    done < <("${metadata[@]}" 0 2>/dev/null)
+}
+
 write_json() {
     "${metadata[@]}" 0 "$1" "\"$2\"" Spa:String:JSON >/dev/null
 }
@@ -50,9 +60,10 @@ retry)
     notify "Bluetooth profile" "Retry requested"
     ;;
 status)
-    mode=$(read_value "$mode_key")
-    state=$(read_value freeclip.session.state)
-    error=$(read_value freeclip.session.error)
+    read_all
+    mode=${values[$mode_key]:-}
+    state=${values[freeclip.session.state]:-}
+    error=${values[freeclip.session.error]:-}
     # An empty state means the session manager is unreachable or the read
     # raced a rewrite; fail instead of reporting a bogus empty state.
     [[ -n $state ]] || exit 1

@@ -96,9 +96,10 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn("os.set_blocking", source)
         self.assertNotIn("stream.readline()", source)
         # One-shot timers (dead pipe respawn, failed-read retry, metadata
-        # watcher recycle debounce) are fine, but there must be no periodic
-        # polling of refresh().
-        self.assertEqual(source.count("timeout_add"), 3)
+        # watcher recycle debounce, refresh coalescing) are fine, but there
+        # must be no periodic polling of refresh().
+        self.assertEqual(source.count("timeout_add"), 4)
+        self.assertNotIn("GLib.idle_add(self.refresh)", source)
         self.assertIn("GLib.timeout_add_seconds(2, self.respawn_event_source", source)
         self.assertIn("GLib.timeout_add_seconds(3, self.retry_refresh)", source)
         self.assertIn("GLib.timeout_add_seconds(10, self.respawn_metadata_watcher)", source)
@@ -121,7 +122,34 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn("if self.adapter_powered and self.output_muted:", source)
         self.assertIn('self.set_icon_state("MUTED")', source)
         self.assertIn("Output muted — Ctrl-F1", source)
-        self.assertIn('elif "sink" in events or "source" in events:', source)
+        self.assertIn('elif facilities & {"sink", "source"}:', source)
+
+    def test_stream_and_client_events_do_not_refresh(self):
+        events = (
+            "Event 'new' on client #1\n"
+            "Event 'change' on sink-input #2\n"
+            "Event 'remove' on source-output #3\n"
+        )
+        self.assertEqual(
+            set(module.PULSE_EVENT.findall(events)), {"client", "sink-input", "source-output"}
+        )
+        self.assertEqual(
+            set(module.PULSE_EVENT.findall("Event 'change' on sink #4\n")), {"sink"}
+        )
+
+    def test_refresh_requests_are_coalesced(self):
+        indicator = module.BluetoothIndicator.__new__(module.BluetoothIndicator)
+        indicator.refresh_pending = False
+        indicator.last_refresh_at = 0.0
+        scheduled = []
+        original = module.GLib.timeout_add
+        module.GLib.timeout_add = lambda delay, callback: scheduled.append(delay)
+        try:
+            for _ in range(50):
+                indicator.request_refresh()
+        finally:
+            module.GLib.timeout_add = original
+        self.assertEqual(len(scheduled), 1)
 
     def test_transport_dead_triggers_rated_reconnect(self):
         # The zombie-eSCO wedge (HCI-proven) has exactly one remedy: an

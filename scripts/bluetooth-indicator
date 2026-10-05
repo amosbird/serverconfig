@@ -22,6 +22,11 @@ import traytooltip
 
 ICON_SIZE = 96
 DESIGN_SIZE = 96
+# Every refresh spawns several PipeWire clients, so event bursts are
+# coalesced and refreshes are rate-limited.
+REFRESH_DELAY = 0.2
+REFRESH_MIN_INTERVAL = 1.0
+PULSE_EVENT = re.compile(r"Event '\w+' on ([a-z-]+) #")
 FREECLIP_ADDRESS = "C0:DA:5E:EC:FB:7F"
 
 # WM_CLASS instance of our own tray icon, which is the script name.
@@ -77,6 +82,8 @@ class BluetoothIndicator:
         self.session_retry_pending = False
         self.event_sources = {}
         self.metadata_kick_pending = False
+        self.refresh_pending = False
+        self.last_refresh_at = 0.0
         self.adapter_powered = False
         self.output_muted = False
         self.last_reconnect_generation = None
@@ -253,8 +260,18 @@ class BluetoothIndicator:
 
     def retry_refresh(self):
         self.session_retry_pending = False
-        self.refresh()
+        return self.request_refresh()
+
+    def request_refresh(self):
+        if not self.refresh_pending:
+            self.refresh_pending = True
+            wait = self.last_refresh_at + REFRESH_MIN_INTERVAL - time.monotonic()
+            GLib.timeout_add(int(max(REFRESH_DELAY, wait) * 1000), self.run_refresh)
         return False
+
+    def run_refresh(self):
+        self.refresh_pending = False
+        return self.refresh()
 
     def managed_profile(self):
         state = self.session.get("state", "")
@@ -411,11 +428,12 @@ class BluetoothIndicator:
             tooltip += "\nOutput muted — Ctrl-F1 / volume mute to unmute"
         self.tooltip = tooltip
         self.tip.set(tooltip)
+        self.last_refresh_at = time.monotonic()
         return False
 
     def on_bluez_changed(self, *_args):
         self.kick_metadata_watcher()
-        GLib.idle_add(self.refresh)
+        self.request_refresh()
 
     @staticmethod
     def drain_events(stream):
@@ -425,13 +443,15 @@ class BluetoothIndicator:
             return ""
 
     def on_pulse_event(self, stream):
-        events = self.drain_events(stream)
-        if "card" in events or "server" in events:
+        # Match the facility exactly: client, sink-input and source-output
+        # events come from app streams and our own refresh commands.
+        facilities = set(PULSE_EVENT.findall(self.drain_events(stream)))
+        if facilities & {"card", "server"}:
             self.kick_metadata_watcher()
-            GLib.idle_add(self.refresh)
-        elif "sink" in events or "source" in events:
+            self.request_refresh()
+        elif facilities & {"sink", "source"}:
             # Volume/mute changes: refresh only, no metadata churn.
-            GLib.idle_add(self.refresh)
+            self.request_refresh()
 
     def on_metadata_event(self, stream):
         events = self.drain_events(stream)
@@ -440,7 +460,7 @@ class BluetoothIndicator:
             if match:
                 self.request_reconnect(match.group(1))
         if "freeclip.session." in events:
-            GLib.idle_add(self.refresh)
+            self.request_refresh()
 
     def request_reconnect(self, generation):
         # The session manager publishes transport-dead when the HCI-proven
@@ -466,7 +486,7 @@ class BluetoothIndicator:
             except (OSError, subprocess.SubprocessError):
                 pass
             time.sleep(2)
-        GLib.idle_add(self.refresh)
+        GLib.idle_add(self.request_refresh)
 
     def set_profile(self, item, address, card_name, profile):
         if not item.get_active():
