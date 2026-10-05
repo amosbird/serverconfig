@@ -7,7 +7,7 @@ fd = "latest"
 fzf = "latest"
 k6 = "latest"
 shfmt = "latest"
-"github:gsamokovarov/jump" = "latest"
+"github:gsamokovarov/jump" = "0.67.0"
 "github:docker/docker-credential-helpers" = { version = "latest", matching = "docker-credential-pass", bin = "docker-credential-pass" }
 atuin = "latest"
 "github:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
