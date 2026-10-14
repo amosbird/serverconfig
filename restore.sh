@@ -196,6 +196,7 @@ if [[ -n $GUI ]]; then
     setxkbmap us
     sudo mkdir -p /etc/pacman.d/hooks
     sudo cp "$DIR"/xkb-restore.hook /etc/pacman.d/hooks/xkb-restore.hook
+    sudo cp "$DIR"/dkms-sigint-fix.hook /etc/pacman.d/hooks/dkms-sigint-fix.hook
 
     # Network stack: iwd + systemd-networkd (see network/README.md).
     # Install config now and enable link owners for the next boot without dropping this connection.
