@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+# Re-apply the DKMS SIGINT fix after the dkms package overwrites /usr/bin/dkms.
+# /usr/bin/dkms and /usr/sbin/dkms are one inode; this updates that file in place.
+
+set -euo pipefail
+
+if (( EUID != 0 )); then
+    echo "dkms-sigint-fix: must run as root" >&2
+    exit 1
+fi
+
+python3 - << 'PY'
+import os
+import subprocess
+import tempfile
+
+path = "/usr/bin/dkms"
+with open(path) as fh:
+    text = fh.read()
+
+slim = '''on_exit()
+{
+    local exitcode_on_exit=$? # must be one line or $? captures rc from `local`
+    local j
+    j="$(jobs -p)"
+
+    # One pid per line; a quoted "$j" is a single kill argument.
+    # shellcheck disable=SC2086
+    [[ $j ]] && kill -- $j 2>/dev/null
+
+    [[ $make_tarball_rm_temp_dir_name ]] && eval "$make_tarball_rm_temp_dir_name"
+    [[ $load_tarball_rm_temp_dir_name ]] && eval "$load_tarball_rm_temp_dir_name"
+
+    exit $exitcode_on_exit
+}
+
+unset make_tarball_rm_temp_dir_name load_tarball_rm_temp_dir_name
+trap on_exit EXIT
+# Without this, bash re-raises SIGINT and skips the EXIT trap. The progress
+# loop ignores SIGINT and would keep the caller's stderr open.
+trap 'exit 130' INT
+'''
+slim_spin = '''        # Do not inherit stderr; a leftover loop must not hold the caller's pipe.
+        while true ; do
+            sleep 3
+            echo -n "."
+        done 2>/dev/null &
+        progresspid=$!
+'''
+upstream = '''on_exit()
+{
+    local exitcode_on_exit=$? # must be one line or $? captures rc from `local`
+    local j
+    j="$(jobs -p)"
+
+    [[ $j ]] && kill "$j" 2>/dev/null
+
+    [[ $make_tarball_rm_temp_dir_name ]] && eval "$make_tarball_rm_temp_dir_name"
+    [[ $load_tarball_rm_temp_dir_name ]] && eval "$load_tarball_rm_temp_dir_name"
+
+    exit $exitcode_on_exit
+}
+
+unset make_tarball_rm_temp_dir_name load_tarball_rm_temp_dir_name
+trap on_exit EXIT
+'''
+upstream_spin = '''        while true ; do
+            sleep 3
+            echo -n "."
+        done &
+        progresspid=$!
+'''
+
+if slim in text and slim_spin in text and "progress_pids" not in text:
+    print("unchanged")
+    raise SystemExit(0)
+
+changed = False
+if upstream in text:
+    text = text.replace(upstream, slim, 1)
+    changed = True
+if upstream_spin in text:
+    text = text.replace(upstream_spin, slim_spin, 1)
+    changed = True
+
+# Shrink the previous local patch down to the same change.
+start = text.find("# Spinner pids.")
+end = text.find("\nCP()\n")
+if start != -1 and end != -1 and "progress_pids" in text[start:end]:
+    text = text[:start] + slim + "\n" + text[end + 1:]
+    changed = True
+fat_spin = '''        # Drop stderr so this loop cannot keep a caller's pipe open.
+        # stdout still prints the progress dots.
+        while true ; do
+            sleep 3
+            echo -n "."
+        done 2>/dev/null &
+        progresspid=$!
+        progress_pids="$progress_pids $progresspid"
+'''
+if fat_spin in text:
+    text = text.replace(fat_spin, slim_spin, 1)
+    changed = True
+
+if not changed or slim not in text or slim_spin not in text or "progress_pids" in text:
+    print("dkms-sigint-fix: pattern not recognized, left /usr/bin/dkms untouched")
+    raise SystemExit(0)
+
+fd, tmp = tempfile.mkstemp(prefix="dkms-sigint-fix.")
+try:
+    with os.fdopen(fd, "w") as out:
+        out.write(text)
+    subprocess.check_call(["bash", "-n", tmp])
+finally:
+    os.unlink(tmp)
+with open(path, "r+") as dst:
+    dst.seek(0)
+    dst.write(text)
+    dst.truncate()
+print("applied")
+PY
+
+bash -n /usr/bin/dkms

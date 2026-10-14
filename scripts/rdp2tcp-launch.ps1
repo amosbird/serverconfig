@@ -29,7 +29,10 @@
 
 $ErrorActionPreference = 'Stop'
 
-$exe     = 'C:\Users\Administrator\Desktop\rdp2tcp.exe'
+# Off the Desktop on purpose. The previous copy lived there and was deleted on
+# 2026-10-02 while the process was still running; the guard could not start a
+# replacement once that process finally exited.
+$exe     = Join-Path $env:LOCALAPPDATA 'rdp2tcp\rdp2tcp.exe'
 $logDir  = Join-Path $env:LOCALAPPDATA 'rdp2tcp'
 $logFile = Join-Path $logDir 'launch.log'
 
@@ -88,8 +91,11 @@ try {
         exit 1
     }
 
-    # -WindowStyle Hidden because this is a console program and the task is
-    # started at logon; without it a console window flashes on every reconnect.
+    # -WindowStyle Hidden, not CREATE_NO_WINDOW. Measured 2026-10-06: with no
+    # console this exe aborts in ucrtbase (0xc0000409, the assert in print.c
+    # once stderr was never opened). Hidden still allocates a console, so the
+    # process lives. The five-minute flash was never this window. It was
+    # powershell.exe itself, which the task no longer starts directly.
     Start-Process -FilePath $exe -WindowStyle Hidden
     Write-Log "started $exe in session $session"
 }

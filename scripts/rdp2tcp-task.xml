@@ -46,6 +46,16 @@
   Runs as the user with InteractiveToken, which is what puts it in the
   interactive session, the only one whose virtual channel means anything.
 
+  The action is rdp2tcp-launch.exe, a Windows-subsystem binary, not
+  powershell.exe. powershell.exe is a console program. The scheduler creates
+  its console before -WindowStyle Hidden is applied, so every five-minute run
+  flashed a window and then hid it. The launcher calls CreateProcess with
+  CREATE_NEW_CONSOLE and SW_HIDE, so the console exists but is never shown.
+  CREATE_NO_WINDOW is not used: rdp2tcp.exe aborts in ucrtbase when the guard
+  that starts it has no console. The helper exe is kept in LocalAppData, not
+  on the Desktop, where the previous copy was deleted out from under a
+  still-running process.
+
   IgnoreNew and a two minute execution limit go together. Two guards must never
   run at once, so the second is dropped rather than queued, but IgnoreNew alone
   turns a single hung guard into a task that is silently dead from then on. The
@@ -109,8 +119,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>powershell.exe</Command>
-      <Arguments>-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\Administrator\Desktop\rdp2tcp-launch.ps1"</Arguments>
+      <Command>C:\Users\Administrator\AppData\Local\rdp2tcp\rdp2tcp-launch.exe</Command>
     </Exec>
   </Actions>
 </Task>

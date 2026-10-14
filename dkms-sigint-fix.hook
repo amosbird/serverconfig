@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = dkms
+
+[Action]
+Description = Keeping DKMS SIGINT cleanup...
+When = PostTransaction
+Exec = /home/amos/scripts/dkms-sigint-fix
