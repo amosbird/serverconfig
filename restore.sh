@@ -117,8 +117,6 @@ if [[ -L "$HOME/.emacs.d" && ! -e "$HOME/.emacs.d" ]]; then
     rm "$HOME/.emacs.d"
 fi
 
-lesskey "$DIR/lesskey"
-
 mkdir -p -m 700 $HOME/.ssh
 cp "$DIR"/id_rsa.pub $HOME/.ssh/
 
