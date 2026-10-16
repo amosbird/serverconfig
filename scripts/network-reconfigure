@@ -10,7 +10,9 @@ abort() {
 }
 trap 'abort $? $LINENO' ERR
 
-IFACE="${1:-wlan0}"
+# Optional override. When unset, resolved after physical_device()/wireless_device() below —
+# never hard-code wlan0: USB adapters and renames show up as wlan1/wlp*.
+IFACE="${1:-}"
 
 if [ -z "${NETWORK_RECONFIGURE_LOCKED:-}" ]; then
     export NETWORK_RECONFIGURE_LOCKED=1
@@ -264,6 +266,36 @@ physical_device() {
         awk '$5 ~ /^(wlan|wlp|enp|eth|eno|ens)/ {print $5; exit}'
 }
 
+# Wi-Fi association, DHCP lease, and captive-portal state are per wireless link. Prefer the
+# wireless device that currently owns main's default; otherwise any UP wireless interface.
+wireless_device() {
+    local dev path
+    dev=$(ip -4 route show table main default 2>/dev/null |
+        awk '$5 ~ /^(wlan|wlp)/ {print $5; exit}')
+    [ -n "$dev" ] && {
+        printf '%s\n' "$dev"
+        return 0
+    }
+    shopt -s nullglob
+    for path in /sys/class/net/wlan* /sys/class/net/wlp*; do
+        dev=${path##*/}
+        case $(cat "$path/operstate" 2>/dev/null || true) in
+            up | unknown)
+                printf '%s\n' "$dev"
+                shopt -u nullglob
+                return 0
+                ;;
+        esac
+    done
+    shopt -u nullglob
+    return 0
+}
+
+if [ -z "$IFACE" ]; then
+    IFACE=$(wireless_device)
+    [ -n "$IFACE" ] || IFACE=$(physical_device)
+fi
+
 dhcp_dns_servers() {
     { networkctl dhcp-lease "$1" 2>/dev/null || true; } |
         awk '
@@ -361,10 +393,12 @@ direct_entries() {
 
 # The physical interface's own address, used to bind the resolver query below.
 physical_address() {
-    local dev=${1:-$(physical_device)}
+    local dev=${1:-$(physical_device)} addrs
     [ -n "$dev" ] || return 0
-    ip -4 -o addr show dev "$dev" scope global 2>/dev/null |
-        awk '{ split($4, a, "/"); print a[1]; exit }'
+    # A missing/renamed device must not trip `set -o pipefail`: `ip` exits 1 and used to abort
+    # the whole reconciler when IFACE still pointed at a stale name (wlan0 after a move to wlan1).
+    addrs=$(ip -4 -o addr show dev "$dev" scope global 2>/dev/null) || return 0
+    awk '{ split($4, a, "/"); print a[1]; exit }' <<<"$addrs"
 }
 
 # Resolve through one specific resolver, bound to the physical address so the query

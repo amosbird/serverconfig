@@ -25,7 +25,9 @@
 
 set -euo pipefail
 
-IFACE=${1:-wlan0}
+# Optional override. When unset, pick the wireless device that owns main's default (or any UP
+# wireless link). Do not hard-code wlan0 — USB NICs rename.
+IFACE=${1:-}
 IW=${IW:-/usr/bin/iw}
 IP=${IP:-/usr/bin/ip}
 ARPING=${ARPING:-/usr/bin/arping}
@@ -66,6 +68,26 @@ if [ -z "${NETWORK_DHCP_REFRESH_LOCKED:-}" ]; then
     export NETWORK_DHCP_REFRESH_LOCKED=1
     exec "$FLOCK" -w 60 "$RECONFIGURE_LOCK" "$0" "$@"
 fi
+
+if [ -z "$IFACE" ]; then
+    IFACE=$("$IP" -4 route show table main default 2>/dev/null |
+        awk '$5 ~ /^(wlan|wlp)/ {print $5; exit}')
+fi
+if [ -z "$IFACE" ]; then
+    shopt -s nullglob
+    for path in /sys/class/net/wlan* /sys/class/net/wlp*; do
+        case $(cat "$path/operstate" 2>/dev/null || true) in
+            up | unknown)
+                IFACE=${path##*/}
+                break
+                ;;
+        esac
+    done
+    shopt -u nullglob
+fi
+# No wireless link yet (or wired-only boot): nothing to renew.
+[ -n "$IFACE" ] || exit 0
+
 # `connected time` has one-second resolution, so the derived association start jitters by a second in
 # either direction. A real reassociation moves it by the whole length of the previous session.
 TOLERANCE=3

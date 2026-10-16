@@ -9,4 +9,4 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
-ExecStart=/home/amos/scripts/network-dhcp-refresh wlan0
+ExecStart=/home/amos/scripts/network-dhcp-refresh

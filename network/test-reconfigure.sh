@@ -394,7 +394,7 @@ PORTAL_NOTIFY_OVERRIDE=WORKDIR/portal-notify
 RT_TABLES_OVERRIDE=WORKDIR/rt_tables
 TMPDIR_OVERRIDE=WORKDIR/tmp
 """
-marker = 'IFACE="${1:-wlan0}"'
+marker = 'IFACE="${1:-}"'
 if src.count(marker) != 1:
     raise SystemExit("expected exactly one stub insertion marker, found %d" % src.count(marker))
 i = src.index(marker)
