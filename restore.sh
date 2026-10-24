@@ -245,11 +245,8 @@ if [[ -n $GUI ]]; then
     sudo systemctl disable --now network-debug-pcap.service 2>/dev/null || true
     sudo rm -f /etc/systemd/system/network-debug-pcap.service
     sudo rm -rf /var/log/network-debug/ring
-    # Restore every vendor file atomically from the authoritative 1.0.3.62 package, delete every
-    # stale version, and verify the result byte-for-byte before installing the two documented
-    # serverconfig wrappers. Keep iOA_upgrade byte-identical too; its name does not justify
-    # replacing it with a policy shim. Address-change handling is a thread in the iOA processes.
-    sudo "$DIR"/network/install-ioa-62
+    # The two documented serverconfig wrappers over the vendor entry points. The vendor files
+    # themselves are installed by hand from the vendor package, not by this script.
     sudo cp "$DIR"/network/iOA /usr/lib/iOA/bin/iOA
     sudo cp "$DIR"/network/SmartGateAgent /usr/lib/iOA/bin/SmartGateAgent
     sudo chmod 755 /usr/lib/iOA/bin/SmartGateAgent
@@ -306,6 +303,17 @@ if [[ -n $GUI ]]; then
     # `systemctl --user restart ioagui.service`; the unit must exist.
     install -Dm644 "$DIR/systemd/ioagui.service" \
         "$HOME/.config/systemd/user/ioagui.service"
+    # A GUI whose session channel to the local agent is gone stays that way, so ioa-health watches
+    # for it. The daemon brings the GUI back itself whenever it restarts; that half is a drop-in on
+    # the system unit, while the watchdog is a unit of this session.
+    sudo install -Dm644 "$DIR/systemd/ngnclient.service.d/gui-bounce.conf" \
+        /etc/systemd/system/ngnclient.service.d/gui-bounce.conf
+    install -Dm644 "$DIR/systemd/ioa-health.service" \
+        "$HOME/.config/systemd/user/ioa-health.service"
+    install -Dm644 "$DIR/systemd/ioa-health.timer" \
+        "$HOME/.config/systemd/user/ioa-health.timer"
+    systemctl --user daemon-reload
+    systemctl --user enable --now ioa-health.timer
     # Seed the FreeClip session intent on first install so a fresh machine
     # brings the headset up in HFP out of the box (StateMetadata state file,
     # owned and rewritten by WirePlumber afterwards).
