@@ -50,7 +50,7 @@ chmod 755 "$WORK/ss"
 run() {
     local rc=0
     SS_OVERRIDE="$WORK/ss" SYSTEMCTL_OVERRIDE="$WORK/systemctl" \
-        STATE_DIR_OVERRIDE="$WORK/state" NOW_EPOCH_OVERRIDE="${NOW_EPOCH-1000}" \
+        STATE_DIR_OVERRIDE="$WORK/state" NOW_EPOCH_OVERRIDE="${CLOCK-${NOW_EPOCH-1000}}" \
         DAEMON_STATE="$WORK/daemon" GUI_STATE="$WORK/gui-state" RESTART_LOG="$WORK/restarts" \
         LINK="$WORK/link" bash "$SCRIPT" >"$WORK/out" 2>&1 || rc=$?
     printf 'rc=%s' "$rc"
@@ -72,8 +72,6 @@ exit 0
 SH
     chmod 755 "$WORK/ss"
 }
-
-held_count() { grep -c . "$WORK/state"/*count* 2>/dev/null || echo 0; }
 
 # --- healthy -----------------------------------------------------------------------------
 # The machine spends its life here. Nothing may happen, and the only state written is the health
@@ -149,9 +147,24 @@ check 'a stopped GUI is left stopped' 0 "$(restarts)"
 
 # With the daemon down there is nothing to connect to, and systemd already owns that recovery;
 # restarting the GUI would only begin a second ladder against a dead agent.
-reset; printf 'no\n' >"$WORK/link"; printf 'failed\n' >"$WORK/daemon"
-run_at 30000; run_at 30700
+#
+# The clock is also cleared while it is down. Leaving it to run would mean the first tick after the
+# daemon returns sees a mark that aged through the whole outage and restarts a GUI that has had no
+# chance to reconnect yet.
+reset; printf 'no\n' >"$WORK/link"
+run_at 30000
+check 'the clock runs while both are up' 30000 "$(cat "$WORK/state/held-since" 2>/dev/null)"
+printf 'failed\n' >"$WORK/daemon"
+run_at 30700
 check 'a dead daemon is not this scripts repair' 0 "$(restarts)"
+[ -r "$WORK/state/held-since" ] && check 'the clock is cleared while it is down' cleared kept ||
+    check 'the clock is cleared while it is down' cleared cleared
+printf 'active\n' >"$WORK/daemon"
+check 'the returned daemon gets a fresh grace' 'rc=0' "$(NOW_EPOCH=31000 run)"
+check 'a fresh clock is started' 31000 "$(cat "$WORK/state/held-since" 2>/dev/null)"
+check 'the returned daemon is not restarted at once' 0 "$(restarts)"
+run_at 40000
+check 'a full grace after the return does restart it' 1 "$(restarts)"
 
 # --- what the channel test must not accept -----------------------------------------------
 # The command channel alone is not a session. An earlier version accepted either port and was
@@ -185,6 +198,34 @@ chmod 755 "$WORK/ss"
 check 'a v6 loopback link counts as connected' 'rc=0' "$(NOW_EPOCH=60000 run)"
 check 'a v6 loopback link is not restarted' 0 "$(restarts)"
 
+# A restart that the unit manager refuses must not be retried every tick: the cooldown is written
+# before the command runs, precisely so a failing manager cannot turn this into a loop.
+reset; printf 'no\n' >"$WORK/link"
+cat >"$WORK/systemctl" <<'SH'
+#!/bin/sh
+case "$*" in
+    "--system is-active ngnclient.service") cat "$DAEMON_STATE" ;;
+    "--user is-active ioagui.service") cat "$GUI_STATE" ;;
+    "--user restart ioagui.service") printf 'attempt\n' >>"$RESTART_LOG"; exit 1 ;;
+    *) echo "unexpected: $*" >&2; exit 2 ;;
+esac
+SH
+chmod 755 "$WORK/systemctl"
+run_at 60000
+check 'a refused restart is reported' 'rc=1' "$(NOW_EPOCH=61000 run)"
+check 'a refused restart is not counted' none "$(counted)"
+check 'the failed attempt is on record' 1 "$(restarts)"
+check 'a refused restart is not retried' 'rc=0' "$(NOW_EPOCH=61500 run)"
+run_at 62500
+check 'nor on the ticks after it' 1 "$(restarts)"
+
+# --- a broken environment is not a verdict either -----------------------------------------
+# No clock means the thresholds cannot be evaluated at all. Failing is right; what must not happen
+# is arithmetic on an empty string, which under `set -u` aborts with a message about an unbound
+# variable rather than about the real fault.
+reset
+check 'an unusable clock is reported' 'rc=1' "$(CLOCK=not-a-clock run)"
+
 # --- measuring nothing is not a verdict --------------------------------------------------
 # If `ss` cannot run, the script must not conclude that the channel is gone: that would restart the
 # GUI every minute for the duration of an unrelated fault.
@@ -198,9 +239,13 @@ check 'an unreadable table is reported' 'rc=1' "$(NOW_EPOCH=70000 run)"
 run_at 71000
 check 'an unreadable table never restarts' 0 "$(restarts)"
 
-# A state directory that cannot be written must fail loudly. The alternative — swallowing the write
+# A state directory that cannot be created must fail loudly. The alternative — swallowing the write
 # and comparing against a clock that resets every tick — is a unit that runs, reports success, and
 # never fires. That was the first version of this script.
+#
+# A path under an ordinary file rather than a mode-500 directory: the permission bit does not stop
+# root, so a fixture using it would pass when run by hand and fail under `sudo`, which is exactly
+# how that bug survived the first time.
 reset
 cat >"$WORK/ss" <<'SH'
 #!/bin/sh
@@ -208,16 +253,14 @@ printf '0 0 127.0.0.1:54596 127.0.0.1:56100\n'
 exit 0
 SH
 chmod 755 "$WORK/ss"
-mkdir -p "$WORK/readonly"
-chmod 500 "$WORK/readonly"
-check 'an unwritable state directory fails' 'rc=1' "$(
+: >"$WORK/not-a-directory"
+check 'an unusable state directory fails' 'rc=1' "$(
     NOW_EPOCH=80000 SS_OVERRIDE="$WORK/ss" SYSTEMCTL_OVERRIDE="$WORK/systemctl" \
-        STATE_DIR_OVERRIDE="$WORK/readonly/state" RESTART_LOG="$WORK/restarts" \
+        STATE_DIR_OVERRIDE="$WORK/not-a-directory/state" RESTART_LOG="$WORK/restarts" \
         DAEMON_STATE="$WORK/daemon" GUI_STATE="$WORK/gui-state" LINK="$WORK/link" \
         bash "$SCRIPT" >/dev/null 2>&1; echo "rc=$?"
 )"
-check 'an unwritable state directory never restarts' 0 "$(restarts)"
-chmod 700 "$WORK/readonly"
+check 'an unusable state directory never restarts' 0 "$(restarts)"
 
 if [ "$fail" -ne 0 ]; then
     echo 'FAIL ioa-health' >&2

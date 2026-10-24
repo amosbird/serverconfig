@@ -12,9 +12,11 @@
 # restarted, and by retry chatter.
 #
 # The threshold comes from the whole log history rather than from taste. Across 340 ECONNREFUSED
-# episodes in clientGui.log*, recovery took p50 7s, p99 180s, and the longest that recovered by
-# itself 213s. The two that never did ran 1248s and 1360s. GRACE sits in the empty band between
-# them, with roughly a factor of three of margin on each side.
+# episodes in clientGui.log*, the time until the next working connection was p50 7s, p99 180s, and
+# 213s at the longest apart from two outliers of about 21 minutes. Anything from 300s to 1200s
+# misjudges the same two episodes, so the choice inside that window is made on the other side: 600s
+# is nearly three times the longest ordinary recovery, and still repairs a stuck window in about ten
+# minutes rather than leaving it for twenty.
 #
 # What it deliberately does not do: touch the daemon. Restarting ngnclient tears down the tunnel and
 # every session with it, so it may only happen for a fault that is provably the daemon's. Nothing
@@ -40,7 +42,10 @@ GIVE_UP=${GIVE_UP_OVERRIDE:-2}
 # questions (how soon may this be retried, versus when is the incident over), and tying them
 # together would silently make a shorter cooldown also forgive sooner.
 FORGIVE=${FORGIVE_OVERRIDE:-3600}
+# Named, so a broken environment fails at the top rather than producing arithmetic on an empty
+# string later. The clock is the only thing here that cannot be reconstructed from state on disk.
 NOW_EPOCH=${NOW_EPOCH_OVERRIDE:-$(date +%s)}
+[[ "$NOW_EPOCH" =~ ^[0-9]+$ ]] || { echo "ioa-health: no usable clock" >&2; exit 1; }
 
 held_stamp=$STATE_DIR/held-since
 healthy_stamp=$STATE_DIR/healthy-since
@@ -70,8 +75,6 @@ agent_link() {
         awk -v pattern=":$AGENT_PORT\$" '$4 ~ pattern { found = 1 } END { exit !found }'
 }
 
-# Both scopes are named. `systemctl` resolves to the system manager no matter who invokes it, so a
-# bare `is-active ioagui.service` asks the wrong manager and reports a running GUI as inactive.
 daemon_up() { [ "$("$SYSTEMCTL" --system is-active ngnclient.service 2>/dev/null)" = active ]; }
 gui_up() { [ "$("$SYSTEMCTL" --user is-active ioagui.service 2>/dev/null)" = active ]; }
 
@@ -90,6 +93,10 @@ allow() {
 stamp() {
     mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$NOW_EPOCH" >"$1"
 }
+
+# Both scopes are named because `systemctl` resolves to the system manager no matter who invokes it,
+# so a bare `is-active ioagui.service` asks the wrong manager and reports a running GUI as inactive.
+both_up() { gui_up && daemon_up; }
 
 agent_link
 case $? in
@@ -113,14 +120,21 @@ esac
 # Unhealthy: the health clock restarts, so the forgiveness timer only ever counts continuous health.
 rm -f "$healthy_stamp" 2>/dev/null || true
 
-gui_up || exit 0
-# With the daemon down there is nothing for the GUI to connect to, and systemd already owns that
-# recovery; restarting the GUI here would only begin a second ladder against a dead agent.
-daemon_up || exit 0
+# Absence of the channel is only evidence while both processes are up to hold it. With either of
+# them down the channel could not exist no matter how healthy the machine is, so the clock is cleared
+# rather than left running: otherwise the first tick after the daemon returns would see a mark that
+# aged for the whole outage and restart the GUI before it had a chance to reconnect.
+#
+# Cleared only when something is actually down. Doing it unconditionally would erase the clock on
+# every tick and leave this restarting the GUI never.
+if ! both_up; then
+    rm -f "$held_stamp" 2>/dev/null || true
+    exit 0
+fi
 
 # The absence has to persist, not merely be observed once: every roam takes this channel away for a
-# few seconds, which is the whole reason the threshold exists.
-mkdir -p "$STATE_DIR" 2>/dev/null || { log "cannot use $STATE_DIR"; exit 1; }
+# few seconds, which is the whole reason the threshold exists. `stamp` is what creates the directory,
+# so a state path that cannot be used surfaces there rather than needing a check of its own.
 held=$(head -1 "$held_stamp" 2>/dev/null)
 if ! [[ "$held" =~ ^[0-9]+$ ]]; then
     held=$NOW_EPOCH
@@ -131,13 +145,15 @@ fi
 allow || exit 0
 
 log "no session channel for $((NOW_EPOCH - held))s; restarting ioagui.service"
-# Reset the clock first, so the replacement GUI gets a full GRACE to open its channel rather than
-# inheriting a mark that already looks stuck.
-stamp "$held_stamp" || true
+# The restart is both the start of the cooldown and a fresh clock for the replacement GUI. The
+# cooldown is written first so a replacement gets a full GRACE even if this process dies mid-restart;
+# the two stay separate files because they are forgotten at different times — the clock on the next
+# healthy sample, the cooldown only after FORGIVE.
+stamp "$last_stamp" || true
 if "$SYSTEMCTL" --user restart ioagui.service; then
+    stamp "$held_stamp" || true
     count=$(head -1 "$count_file" 2>/dev/null)
     [[ "$count" =~ ^[0-9]+$ ]] || count=0
-    stamp "$last_stamp" || true
     printf '%s\n' "$((count + 1))" >"$count_file" 2>/dev/null || true
 else
     # Not charged against the allowance: nothing was repaired, and charging for it would spend the
