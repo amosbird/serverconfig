@@ -1,0 +1,14 @@
+[Unit]
+Description=Check whether the iOA GUI still holds its local agent connection
+
+[Timer]
+# A minute is the natural granularity: the condition being watched has to hold for GRACE anyway, so
+# a finer tick would only re-read the same state. Polling rather than watching because the decision
+# is about a connection table, not a file change.
+OnUnitActiveSec=60
+OnBootSec=4min
+AccuracySec=10s
+Unit=ioa-health.service
+
+[Install]
+WantedBy=timers.target

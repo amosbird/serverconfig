@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart the iOA GUI when its session has come apart
+
+[Service]
+Type=oneshot
+ExecStart=/home/amos/scripts/ioa-health

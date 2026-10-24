@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# ioa-health — restart the iOA GUI once its session channel to the local agent is gone
+#
+# The GUI talks to the daemon over a loopback channel the daemon serves on :56101. While that
+# channel is open the GUI works. When the connect is refused it logs `tcpagent OnClose:2,111` —
+# 111 is ECONNREFUSED — retries three times about two seconds apart, and then stops with the window
+# left on the reconnect icon. Nothing wakes it afterwards: the only inputs it reacts to are a
+# netlink address event and a socket error, and a quiet network produces neither.
+#
+# So the test is the channel, not the log. A log line is the record of an attempt; whether a usable
+# connection exists is the thing itself, and it is unaffected by log rotation, by the writer being
+# restarted, and by retry chatter.
+#
+# The threshold comes from the whole log history rather than from taste. Across 340 ECONNREFUSED
+# episodes in clientGui.log*, recovery took p50 7s, p99 180s, and the longest that recovered by
+# itself 213s. The two that never did ran 1248s and 1360s. GRACE sits in the empty band between
+# them, with roughly a factor of three of margin on each side.
+#
+# What it deliberately does not do: touch the daemon. Restarting ngnclient tears down the tunnel and
+# every session with it, so it may only happen for a fault that is provably the daemon's. Nothing
+# here can establish that, and one earlier version of this script restarted the daemon on a refused
+# ticket (`get ticket result:-2`) while the agent was forwarding intranet traffic normally.
+
+set -u
+
+SYSTEMCTL=${SYSTEMCTL_OVERRIDE:-systemctl}
+SS=${SS_OVERRIDE:-ss}
+# Under the session runtime directory, because this runs as the session user and cannot write /run.
+STATE_DIR=${STATE_DIR_OVERRIDE:-${XDG_RUNTIME_DIR:-/tmp}/ioa-health}
+# The agent's session channel. :56100 is the command channel, connected only for the seconds a login
+# handshake takes, so an idle logged-in GUI holds only :56101. Accepting either would miss exactly
+# the case this exists for: the session channel gone while the handshake socket is still open.
+AGENT_PORT=${AGENT_PORT_OVERRIDE:-56101}
+GRACE=${GRACE_OVERRIDE:-600}
+COOLDOWN=${COOLDOWN_OVERRIDE:-1800}
+GIVE_UP=${GIVE_UP_OVERRIDE:-2}
+# Health must last this long before the allowance is forgiven. One healthy sample between two
+# failures is a pause, not a repair, and forgiving on it would let a flapping GUI restart forever.
+# An hour is deliberately longer than COOLDOWN and independent of it: the two answer different
+# questions (how soon may this be retried, versus when is the incident over), and tying them
+# together would silently make a shorter cooldown also forgive sooner.
+FORGIVE=${FORGIVE_OVERRIDE:-3600}
+NOW_EPOCH=${NOW_EPOCH_OVERRIDE:-$(date +%s)}
+
+held_stamp=$STATE_DIR/held-since
+healthy_stamp=$STATE_DIR/healthy-since
+last_stamp=$STATE_DIR/last-restart
+count_file=$STATE_DIR/restarts
+
+log() { printf 'ioa-health: %s\n' "$*"; }
+
+# Does the GUI hold its session channel?
+#
+# `ss -Htn state established` prints `Recv-Q Send-Q Local Peer` with no header, so the peer is the
+# fourth field. Matching the peer port finds the GUI's own row; the row the daemon contributes has
+# that address in the third field instead.
+#
+# A connection another process might make to the same port would match too, and that is the safe
+# direction to be wrong in: it would look healthy and leave the GUI alone. Requiring a particular
+# local port instead would turn any change in how the client allocates one into a restart loop.
+#
+# `ss` failing is not the same answer as `ss` reporting no connection, and the two must not be
+# conflated: the first means this script measured nothing.
+agent_link() {
+    local table
+    table=$("$SS" -Htn state established 2>/dev/null) || return 2
+    # No `grep -q` at the end: it exits on its first match and sends awk a SIGPIPE, which shows up as
+    # a broken-pipe diagnostic on a question already answered. Reading the whole table is quiet.
+    printf '%s\n' "$table" |
+        awk -v pattern=":$AGENT_PORT\$" '$4 ~ pattern { found = 1 } END { exit !found }'
+}
+
+# Both scopes are named. `systemctl` resolves to the system manager no matter who invokes it, so a
+# bare `is-active ioagui.service` asks the wrong manager and reports a running GUI as inactive.
+daemon_up() { [ "$("$SYSTEMCTL" --system is-active ngnclient.service 2>/dev/null)" = active ]; }
+gui_up() { [ "$("$SYSTEMCTL" --user is-active ioagui.service 2>/dev/null)" = active ]; }
+
+allow() {
+    local count last
+    count=$(head -1 "$count_file" 2>/dev/null)
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    [ "$count" -lt "$GIVE_UP" ] || return 1
+    last=$(head -1 "$last_stamp" 2>/dev/null)
+    [[ "$last" =~ ^[0-9]+$ ]] || return 0
+    [ "$((NOW_EPOCH - last))" -ge "$COOLDOWN" ]
+}
+
+# Record NOW into a stamp file, and say so if it cannot be written: a stamp that silently does not
+# persist would leave this restarting the GUI every tick.
+stamp() {
+    mkdir -p "$STATE_DIR" 2>/dev/null && printf '%s\n' "$NOW_EPOCH" >"$1"
+}
+
+agent_link
+case $? in
+    0)
+        rm -f "$held_stamp" 2>/dev/null || true
+        healthy=$(head -1 "$healthy_stamp" 2>/dev/null)
+        if ! [[ "$healthy" =~ ^[0-9]+$ ]]; then
+            stamp "$healthy_stamp" || { log "cannot record $healthy_stamp"; exit 1; }
+        elif [ "$((NOW_EPOCH - healthy))" -ge "$FORGIVE" ]; then
+            rm -f "$count_file" "$last_stamp" 2>/dev/null || true
+        fi
+        exit 0
+        ;;
+    1) ;;
+    *)
+        log "cannot read the connection table; measured nothing, leaving the GUI alone"
+        exit 1
+        ;;
+esac
+
+# Unhealthy: the health clock restarts, so the forgiveness timer only ever counts continuous health.
+rm -f "$healthy_stamp" 2>/dev/null || true
+
+gui_up || exit 0
+# With the daemon down there is nothing for the GUI to connect to, and systemd already owns that
+# recovery; restarting the GUI here would only begin a second ladder against a dead agent.
+daemon_up || exit 0
+
+# The absence has to persist, not merely be observed once: every roam takes this channel away for a
+# few seconds, which is the whole reason the threshold exists.
+mkdir -p "$STATE_DIR" 2>/dev/null || { log "cannot use $STATE_DIR"; exit 1; }
+held=$(head -1 "$held_stamp" 2>/dev/null)
+if ! [[ "$held" =~ ^[0-9]+$ ]]; then
+    held=$NOW_EPOCH
+    stamp "$held_stamp" || { log "cannot record $held_stamp"; exit 1; }
+fi
+[ "$((NOW_EPOCH - held))" -ge "$GRACE" ] || exit 0
+
+allow || exit 0
+
+log "no session channel for $((NOW_EPOCH - held))s; restarting ioagui.service"
+# Reset the clock first, so the replacement GUI gets a full GRACE to open its channel rather than
+# inheriting a mark that already looks stuck.
+stamp "$held_stamp" || true
+if "$SYSTEMCTL" --user restart ioagui.service; then
+    count=$(head -1 "$count_file" 2>/dev/null)
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    stamp "$last_stamp" || true
+    printf '%s\n' "$((count + 1))" >"$count_file" 2>/dev/null || true
+else
+    # Not charged against the allowance: nothing was repaired, and charging for it would spend the
+    # allowance on a fault the unit manager owns.
+    log "failed to restart ioagui.service"
+    exit 1
+fi
