@@ -1,0 +1,2 @@
+SUBSYSTEM=="power_supply", KERNEL=="AC", ACTION=="change", \
+    RUN+="/usr/bin/systemctl --no-block start gpu-power.service"

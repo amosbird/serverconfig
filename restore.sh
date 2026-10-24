@@ -191,6 +191,7 @@ if [[ -n $GUI ]]; then
         /etc/X11/xorg.conf.d/30-touchpad.conf
     sudo install -Dm644 "$DIR"/modprobe.d/psmouse.conf /etc/modprobe.d/psmouse.conf
     sudo install -Dm644 "$DIR"/tlp/tlp.conf /etc/tlp.conf
+    sudo tlp start >/dev/null
     setxkbmap us
     sudo mkdir -p /etc/pacman.d/hooks
     sudo cp "$DIR"/xkb-restore.hook /etc/pacman.d/hooks/xkb-restore.hook
@@ -275,9 +276,12 @@ if [[ -n $GUI ]]; then
     systemctl --user enable --now gcr-ssh-agent.socket
 
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
+    sudo cp "$DIR"/gpu-switch/gpu-power.{service,timer} /etc/systemd/system/
+    sudo cp "$DIR"/gpu-switch/99-gpu-power.rules /etc/udev/rules.d/
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
+    sudo systemctl enable --now gpu-power.timer
     paru -S --needed --noconfirm bzmenu-bin pavucontrol
     sudo systemctl disable --now libinput-gestures.service 2>/dev/null || true
     sudo install -Dm644 "$DIR/systemd/touchegg.service.d/override.conf" \

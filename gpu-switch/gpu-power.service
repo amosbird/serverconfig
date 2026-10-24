@@ -1,0 +1,8 @@
+[Unit]
+Description=Unload idle nvidia driver on battery so the dGPU can enter D3cold
+
+[Service]
+Type=oneshot
+ExecStart=/home/amos/git/serverconfig/gpu-switch/gpu-power.sh
+# Runs every minute: drop systemd's Starting/Finished lines, keep the script's <5> unload notice.
+LogLevelMax=notice
