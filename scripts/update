@@ -37,8 +37,41 @@ vcs_remotes=(
 
 rebuild_packages=()
 
+# The DKMS build runs from a pacman hook and prints nothing but a dot every
+# three seconds, which is indistinguishable from a hang. Echo the tail of its
+# make.log while the wrapped command runs.
+dkms_watch_logs() {
+    local root="${DKMS_LOG_ROOT:-/var/lib/dkms}"
+    local start last="" log stamp
+    local -a parts
+    start=$(date +%s)
+    while :; do
+        sleep 5
+        log=$(find "$root" -name make.log -printf '%T@ %p\n' 2>/dev/null |
+            sort -nr | head -1 | cut -d' ' -f2-)
+        [[ -n "$log" ]] || continue
+        stamp=$(stat -c %Y "$log" 2>/dev/null) || continue
+        (( stamp >= start )) || continue
+        [[ "$stamp" == "$last" ]] && continue
+        last="$stamp"
+        IFS=/ read -r -a parts <<< "${log#"$root"/}"
+        printf '  [dkms %s/%s %s] %s\n' "${parts[0]}" "${parts[1]}" \
+            "$(date -d "@$stamp" +%H:%M:%S)" "$(tail -n 1 "$log" | cut -c1-100)"
+    done
+}
+
+run_watched() {
+    local watcher rc=0
+    dkms_watch_logs &
+    watcher=$!
+    "$@" || rc=$?
+    kill "$watcher" 2>/dev/null || true
+    wait "$watcher" 2>/dev/null || true
+    return "$rc"
+}
+
 paru -Sy --noconfirm archlinux-keyring
-paru -Syu --noconfirm
+run_watched paru -Syu --noconfirm
 
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -78,7 +111,13 @@ for i in "${!vcs_packages[@]}"; do
 done
 
 if ((${#rebuild_packages[@]} > 0)); then
-    paru -S --noconfirm --rebuild "${rebuild_packages[@]}"
+    run_watched paru -S --noconfirm --rebuild "${rebuild_packages[@]}"
+fi
+
+# A hook that fails only warns, leaving the module stuck at "added"/"built".
+stuck=$(dkms status 2>/dev/null | grep -v ': installed$' || true)
+if [[ -n "$stuck" ]]; then
+    printf '警告：以下 DKMS 模块未安装成功：\n%s\n' "$stuck" >&2
 fi
 
 "$HOME/scripts/update-mambatools"
