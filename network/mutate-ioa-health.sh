@@ -55,6 +55,11 @@ flip 'daemon not required'           'both_up() { gui_up && daemon_up; }' 'both_
 flip 'gui not required'              'both_up() { gui_up && daemon_up; }' 'both_up() { daemon_up; }'
 flip 'write guard removed'           'stamp "$held_stamp" || { log "cannot record $held_stamp"; exit 1; }' 'stamp "$held_stamp" || true'
 
+echo 'the forgiveness timer'
+flip 'health clock not cleared by a failure' 'rm -f "$healthy_stamp" 2>/dev/null || true' ': # not cleared'
+flip 'forgive compared with GRACE' '"$((NOW_EPOCH - healthy))" -ge "$FORGIVE"' '"$((NOW_EPOCH - healthy))" -ge "$GRACE"'
+flip 'count never incremented' 'printf '"'"'%s\n'"'"' "$((count + 1))" >"$count_file"' ': # not counted'
+
 echo 'the cooldown ordering'
 flip 'clock guard removed' '[[ "$NOW_EPOCH" =~ ^[0-9]+$ ]] || { echo "ioa-health: no usable clock" >&2; exit 1; }' ': # no guard'
 flip 'cooldown written only on success' 'stamp "$last_stamp" || true

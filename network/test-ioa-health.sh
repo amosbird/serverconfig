@@ -127,11 +127,27 @@ check 'the allowance stops further bounces' 2 "$(restarts)"
 printf 'yes\n' >"$WORK/link"
 run_at() { NOW_EPOCH=$1 run >/dev/null; }
 run_at 5600
+# The first healthy tick only starts the health clock; forgiveness is judged from the next one.
+run_at 5650
 check 'a brief recovery keeps the allowance' 2 "$(counted)"
+
+# A failure inside the healthy stretch restarts the forgiveness timer. Without that, an old
+# healthy-since would survive the failure and forgive on the next good sample — the allowance would
+# come back after one tick rather than after an hour, and a flapping GUI would never run out.
+printf 'no\n' >"$WORK/link"
 run_at 8000
-check 'a brief recovery still keeps it' 2 "$(counted)"
-run_at 9200
-check 'an hour of health forgives it' none "$(counted)"
+[ -r "$WORK/state/healthy-since" ] &&
+    check 'a failure clears the health clock' cleared kept ||
+    check 'a failure clears the health clock' cleared cleared
+printf 'yes\n' >"$WORK/link"
+run_at 8100
+check 'a single good sample does not forgive' 2 "$(counted)"
+# Longer than GRACE, far shorter than FORGIVE: the two thresholds must not be interchangeable, so
+# the check sits past where GRACE would have fired and well before where FORGIVE does.
+run_at 8800
+check 'health past GRACE does not forgive' 2 "$(counted)"
+run_at 12000
+check 'an hour of continuous health forgives it' none "$(counted)"
 
 # With the allowance restored, the next incident gets a full one.
 printf 'no\n' >"$WORK/link"
