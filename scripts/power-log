@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""power-log: continuous power accounting (whole system, components, per process).
+
+  power-log daemon          sample every 30s into /var/lib/power-log/power.db (runs as root)
+  power-log report [HOURS]  summary of the last HOURS (default 24), battery samples only
+  power-log now             one 5s live sample, no DB
+
+Whole system = battery discharge rate (only meaningful on battery). Components = Intel RAPL
+(package/core/uncore/dram/psys). Per process = package power split by CPU time share -- an
+estimate, same approach as powertop/Scaphandre/Kepler. GPU = dGPU PCI power state; nvidia-smi
+is never called because it would load the driver and wake the card.
+"""
+import os
+import sqlite3
+import sys
+import time
+
+DB = "/var/lib/power-log/power.db"
+INTERVAL = 30
+TOP = 10
+BAT = "/sys/class/power_supply/BAT0"
+AC = "/sys/class/power_supply/AC/online"
+DGPU = "/sys/bus/pci/devices/0000:01:00.0"
+RAPL = {"package": "intel-rapl:0", "core": "intel-rapl:0:0", "uncore": "intel-rapl:0:1",
+        "dram": "intel-rapl:0:2", "psys": "intel-rapl:1"}
+HZ = os.sysconf("SC_CLK_TCK")
+
+
+def read(path, default=None):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def rapl():
+    out = {}
+    for k, d in RAPL.items():
+        base = f"/sys/class/powercap/{d}"
+        e = read(f"{base}/energy_uj")
+        if e is not None:
+            out[k] = (int(e), int(read(f"{base}/max_energy_range_uj", "0")))
+    return out
+
+
+def procs():
+    """(pid, comm) -> utime+stime ticks (threads are already summed per process)."""
+    out = {}
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        s = read(f"/proc/{pid}/stat")
+        if not s:
+            continue
+        r = s.rfind(")")
+        name = s[s.find("(") + 1:r]
+        f = s[r + 2:].split()
+        out[(pid, name)] = int(f[11]) + int(f[12])
+    return out
+
+
+def snapshot():
+    # BOOTTIME keeps counting through suspend, so a delta spanning a suspend is detectable
+    return time.clock_gettime(time.CLOCK_BOOTTIME), rapl(), procs()
+
+
+def delta(a, b):
+    (t0, r0, p0), (t1, r1, p1) = a, b
+    dt = t1 - t0
+    watts = {}
+    for k in r1:
+        if k in r0:
+            d = r1[k][0] - r0[k][0]
+            if d < 0:
+                d += r1[k][1]
+            watts[k] = d / dt / 1e6
+    by_name = {}
+    for key, ticks in p1.items():
+        d = ticks - p0.get(key, ticks)  # new processes: count from next sample
+        if d > 0:
+            by_name[key[1]] = by_name.get(key[1], 0) + d
+    total = sum(by_name.values()) or 1
+    pkg = watts.get("package", 0.0)
+    top = sorted(by_name.items(), key=lambda x: -x[1])[:TOP]
+    # cpu% is of one core; watts = package share by CPU time (estimate)
+    top = [(n, d / HZ / dt * 100, pkg * d / total) for n, d in top]
+    return dt, watts, top
+
+
+def system():
+    bat = read(f"{BAT}/power_now")
+    return {
+        "ac": int(read(AC, "0")),
+        "bat_w": int(bat) / 1e6 if bat else None,
+        "bat_pct": int(read(f"{BAT}/capacity", "0")),
+        "gpu": read(f"{DGPU}/power_state", "-"),
+        "nvidia": int(os.path.isdir("/sys/module/nvidia")),
+        "bright": int(read("/sys/class/backlight/intel_backlight/brightness", "0")),
+    }
+
+
+SCHEMA = """
+create table if not exists sample(id integer primary key, ts integer, ac int, bat_w real,
+    bat_pct int, package real, core real, uncore real, dram real, psys real, gpu text,
+    nvidia int, bright int);
+create table if not exists proc(sample int, name text, cpu real, watts real);
+create index if not exists proc_sample on proc(sample);
+create index if not exists sample_ts on sample(ts);
+"""
+
+
+def daemon():
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
+    db = sqlite3.connect(DB)
+    db.executescript(SCHEMA)
+    os.chmod(DB, 0o644)
+    prev = snapshot()
+    while True:
+        time.sleep(INTERVAL)
+        cur = snapshot()
+        dt, w, top = delta(prev, cur)
+        prev = cur
+        if dt > 2 * INTERVAL:  # spanned a suspend: averages would be meaningless
+            continue
+        s = system()
+        c = db.execute(
+            "insert into sample(ts,ac,bat_w,bat_pct,package,core,uncore,dram,psys,gpu,nvidia,"
+            "bright) values(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (int(time.time()), s["ac"], s["bat_w"], s["bat_pct"], w.get("package"),
+             w.get("core"), w.get("uncore"), w.get("dram"), w.get("psys"), s["gpu"],
+             s["nvidia"], s["bright"]))
+        db.executemany("insert into proc values(?,?,?,?)",
+                       [(c.lastrowid, n, round(cpu, 1), round(wt, 3)) for n, cpu, wt in top])
+        db.execute("delete from proc where sample in (select id from sample where ts < ?)",
+                   (int(time.time()) - 90 * 86400,))
+        db.execute("delete from sample where ts < ?", (int(time.time()) - 90 * 86400,))
+        db.commit()
+
+
+def now():
+    a = snapshot()
+    time.sleep(5)
+    _, w, top = delta(a, snapshot())
+    s = system()
+    print(f"AC={s['ac']}  battery={s['bat_w'] or 0:.1f}W ({s['bat_pct']}%)  "
+          f"dGPU={s['gpu']} nvidia_loaded={s['nvidia']}")
+    print("RAPL: " + "  ".join(f"{k}={v:.1f}W" for k, v in w.items()) if w else
+          "RAPL: (needs root -- run with sudo for watts)")
+    print(f"\n{'process':<24}{'cpu%':>8}{'~W':>8}")
+    for n, cpu, wt in top:
+        print(f"{n:<24}{cpu:>8.1f}{wt:>8.2f}")
+
+
+def report(hours):
+    db = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+    since = int(time.time() - hours * 3600)
+    q = lambda sql, *a: db.execute(sql, (since, *a)).fetchall()
+    n, bat, pkg, psys, d0 = q(
+        "select count(*), avg(bat_w), avg(package), avg(psys), "
+        "avg(gpu='D0') from sample where ts>=? and ac=0")[0]
+    if not n:
+        print(f"no battery samples in the last {hours}h")
+        return
+    print(f"last {hours}h on battery: {n * INTERVAL / 3600:.1f}h sampled")
+    print(f"  avg system {bat or 0:.1f}W   package {pkg or 0:.1f}W   psys {psys or 0:.1f}W   "
+          f"dGPU awake {100 * (d0 or 0):.0f}% of time")
+    print(f"\n{'process':<24}{'avg ~W':>8}{'avg cpu%':>10}")
+    for name, w, cpu in q(
+            "select name, sum(watts)/(select count(*) from sample where ts>=? and ac=0), "
+            "sum(cpu)/(select count(*) from sample where ts>=? and ac=0) "
+            "from proc join sample on sample.id=proc.sample where ts>=? and ac=0 "
+            "group by name order by 2 desc limit 15", since, since):
+        print(f"{name:<24}{w:>8.2f}{cpu:>10.1f}")
+    print(f"\n{'hour':<18}{'system W':>10}{'package W':>11}{'dGPU D0':>9}")
+    for h, b, p, g in q(
+            "select strftime('%m-%d %H:00', ts, 'unixepoch', 'localtime'), avg(bat_w), "
+            "avg(package), avg(gpu='D0') from sample where ts>=? and ac=0 group by 1 order by 1"):
+        print(f"{h:<18}{b or 0:>10.1f}{p or 0:>11.1f}{100 * g:>8.0f}%")
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "report"
+    if cmd == "daemon":
+        daemon()
+    elif cmd == "now":
+        now()
+    elif cmd == "report":
+        report(float(sys.argv[2]) if len(sys.argv) > 2 else 24)
+    else:
+        print(__doc__)

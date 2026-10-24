@@ -1,0 +1,12 @@
+[Unit]
+Description=Continuous power accounting (battery, RAPL, per-process estimate)
+
+[Service]
+ExecStart=/home/amos/git/serverconfig/scripts/power-log daemon
+Nice=19
+IOSchedulingClass=idle
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

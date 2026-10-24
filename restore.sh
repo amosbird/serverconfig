@@ -278,10 +278,11 @@ if [[ -n $GUI ]]; then
     sudo cp "$DIR"/gpu-switch/gpu-switch.service /etc/systemd/system/
     sudo cp "$DIR"/gpu-switch/gpu-power.{service,timer} /etc/systemd/system/
     sudo cp "$DIR"/gpu-switch/99-gpu-power.rules /etc/udev/rules.d/
+    sudo cp "$DIR"/systemd/power-log.service /etc/systemd/system/
     sudo udevadm control --reload-rules
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
-    sudo systemctl enable --now gpu-power.timer
+    sudo systemctl enable --now gpu-power.timer power-log.service
     paru -S --needed --noconfirm bzmenu-bin pavucontrol
     sudo systemctl disable --now libinput-gestures.service 2>/dev/null || true
     sudo install -Dm644 "$DIR/systemd/touchegg.service.d/override.conf" \
