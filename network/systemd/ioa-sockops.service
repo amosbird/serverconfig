@@ -1,0 +1,21 @@
+# Load and pin the sock_ops program ngnclient.service attaches with BPFProgram=.
+#
+# systemd only attaches a program that is already pinned when the unit starts; it cannot load an
+# object file itself. A missing pin is logged ("bpf-foreign: ... does not exist, skipping") and the
+# daemon starts without the bound, so failure here degrades to the old behaviour rather than to no
+# tunnel. See network/ioa-sockops.bpf.c and network/README.md.
+[Unit]
+Description=Pin the iOA TCP user-timeout sock_ops program
+Before=ngnclient.service
+ConditionPathExists=/usr/local/lib/ioa/ioa-sockops.bpf.o
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Replacing the pin is safe: a cgroup that already holds the old program keeps its own reference.
+ExecStartPre=/usr/bin/rm -f /sys/fs/bpf/ioa-user-timeout
+ExecStart=/usr/bin/bpftool prog load /usr/local/lib/ioa/ioa-sockops.bpf.o /sys/fs/bpf/ioa-user-timeout type sockops
+ExecStop=/usr/bin/rm -f /sys/fs/bpf/ioa-user-timeout
+
+[Install]
+WantedBy=multi-user.target

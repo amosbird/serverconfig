@@ -677,6 +677,31 @@ Other failures stay within ownership boundaries:
 - a reconciliation failure must not change SmartGateAgent tables `20`, `230`, or `ioa`, or
   Tailscale table `52`, preferences, and recovery state.
 
+### A dead control connection blocks TGT renewal for 10-15 minutes
+
+After a suspend, a roam, or a network change, the GUI shows logged in while every intranet request
+is refused. `client.log` shows `ParseBusHead error code:103009` and `get ticket result:-2` for every
+ST request, with no `handle:type:10003` (the ngn heartbeat that renews the TGT). The heartbeat keeps
+writing into a connection that the suspend killed. The peer sends nothing back, not even an RST, so
+the stock `tcp_retries2=15` budget keeps the socket alive until `close:N,2,110|104|113`. Across
+9/27-10/24 seven outages lasted more than five minutes, and five of those came with no address
+change. So reacting to address changes cannot fix it.
+
+Live on 2026-10-26 18:05: four `iOA.bin` connections had `backoff:9..11`, `rto:120000` and
+unacknowledged Send-Q, and tcpdump showed correctly NATed retransmissions leaving `wlan0` without
+any answer. `ss -K` on just those four brought `type:10003` back within 36s and ST within 52s.
+
+The fix is `TCP_USER_TIMEOUT=30s` on every non-loopback connection the ngnclient cgroup opens.
+`network/ioa-sockops.bpf.c` sets it from a cgroup `sock_ops` program, `ioa-sockops.service`
+pins it, and `ngnclient.service.d/user-timeout.conf` attaches it with `BPFProgram=`. Nothing is
+injected into the vendor process, and SmartGateAgent (statically linked) is covered as well. The
+drop-in only `Wants=` the loader: systemd skips a missing pin with a warning, so a failed load
+falls back to the old behaviour and never stops the tunnel. The option only affects new
+connections, so it applies after the next ngnclient start.
+
+A dead connection is not the only cause of 103009. The TGT also expires after 24 hours
+(`Current ticket expired, time = 86400`). Only logging in again in the GUI fixes that.
+
 ## Wi-Fi roaming and MAC identity
 
 The generic `25-wireless.network` applies `IgnoreCarrierLoss=3s` to every WLAN. A carrier gap shorter
@@ -1207,6 +1232,7 @@ Run the network checks:
 bash network/test-ip-override.sh
 bash network/test-smartgate-underlay.sh
 bash network/test-ioa-wrapper.sh
+bash network/test-ioa-user-timeout.sh
 bash network/test-tun-underlay.sh
 sudo -n bash network/test-nft-direct-routing.sh
 bash network/test-smartdns-no-cache.sh

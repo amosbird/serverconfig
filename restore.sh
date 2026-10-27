@@ -313,6 +313,23 @@ if [[ -n $GUI ]]; then
     # the system unit, while the watchdog is a unit of this session.
     sudo install -Dm644 "$DIR/systemd/ngnclient.service.d/gui-bounce.conf" \
         /etc/systemd/system/ngnclient.service.d/gui-bounce.conf
+    # A connection killed by a suspend or a network change otherwise keeps iOA's TGT renewal stuck
+    # for 10-15 minutes while the GUI shows logged in. The sock_ops program bounds unacknowledged
+    # data on iOA's connections to 30s; the loader pins it and the drop-in attaches it. It only
+    # applies to connections opened after ngnclient next starts. See network/README.md.
+    paru -S --needed --noconfirm bpf libbpf clang
+    clang -O2 -target bpf -Wall -Werror -c "$DIR/network/ioa-sockops.bpf.c" \
+        -o /tmp/ioa-sockops.bpf.o
+    sudo install -Dm644 /tmp/ioa-sockops.bpf.o /usr/local/lib/ioa/ioa-sockops.bpf.o
+    rm -f /tmp/ioa-sockops.bpf.o
+    sudo install -Dm644 "$DIR/network/systemd/ioa-sockops.service" \
+        /etc/systemd/system/ioa-sockops.service
+    sudo install -Dm644 "$DIR/systemd/ngnclient.service.d/user-timeout.conf" \
+        /etc/systemd/system/ngnclient.service.d/user-timeout.conf
+    sudo systemctl daemon-reload
+    sudo systemctl enable ioa-sockops.service
+    # restart, not start: a rebuilt object must replace the pinned one.
+    sudo systemctl restart ioa-sockops.service
     install -Dm644 "$DIR/systemd/ioa-health.service" \
         "$HOME/.config/systemd/user/ioa-health.service"
     install -Dm644 "$DIR/systemd/ioa-health.timer" \
