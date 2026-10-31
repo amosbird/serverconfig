@@ -699,8 +699,14 @@ drop-in only `Wants=` the loader: systemd skips a missing pin with a warning, so
 falls back to the old behaviour and never stops the tunnel. The option only affects new
 connections, so it applies after the next ngnclient start.
 
-A dead connection is not the only cause of 103009. The TGT also expires after 24 hours
-(`Current ticket expired, time = 86400`). Only logging in again in the GUI fixes that.
+A dead connection is not the only cause of 103009. `Current ticket expired, time = 86400` means the
+server has expired the TGT, and only logging in again in the GUI fixes it. While iOA.bin keeps
+running it keeps using the ticket it holds. A running daemon held one for 66h on 2026-10-27..30;
+others expired after 23.9h and 36.5h, so there is no fixed lifetime. Every restart of iOA.bin
+(its own SIGSEGV, about once a day, or a manual `systemctl restart ngnclient`) re-validates the
+TGT within a minute. If that fails, iOA goes offline, stops SmartGateAgent and waits for a QR-code
+login. Deployments therefore never restart ngnclient: the BPF bound applies to connections opened
+after the next natural restart.
 
 ## Wi-Fi roaming and MAC identity
 

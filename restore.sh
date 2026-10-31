@@ -316,7 +316,8 @@ if [[ -n $GUI ]]; then
     # A connection killed by a suspend or a network change otherwise keeps iOA's TGT renewal stuck
     # for 10-15 minutes while the GUI shows logged in. The sock_ops program bounds unacknowledged
     # data on iOA's connections to 30s; the loader pins it and the drop-in attaches it. It only
-    # applies to connections opened after ngnclient next starts. See network/README.md.
+    # applies to connections opened after ngnclient next starts; never restart it to get there,
+    # because a restart forces a TGT re-validation that can log the session out.
     paru -S --needed --noconfirm bpf libbpf clang
     clang -O2 -target bpf -Wall -Werror -c "$DIR/network/ioa-sockops.bpf.c" \
         -o /tmp/ioa-sockops.bpf.o
