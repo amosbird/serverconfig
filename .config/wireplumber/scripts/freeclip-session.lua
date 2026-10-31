@@ -18,6 +18,11 @@ local HFP_TRANSPORT_WAIT_STEPS = 20
 local PARK_MS = 500
 local RELEASE_MS = 1200
 local RECOVERY_COOLDOWN_MS = 10000
+-- How long HFP_RECONNECTING may wait for the desktop agent's ACL reconnect
+-- before settling for local audio. The agent may defer a request up to 60s
+-- (its rate limit) and its disconnect+connect can take another ~45s, so
+-- anything shorter would give up on a reconnect that is still in flight.
+local RECONNECT_TIMEOUT_MS = 120000
 -- HCI-proven trigger: rapid profile switches race BlueZ's connect state
 -- machine (it aborts with Create_Connection_Cancel on a live link, then
 -- fails to adopt the eSCO it just created -> zombie handle, only an ACL
@@ -319,6 +324,10 @@ transport_dead = function ()
   park ()
   publish ("transport-dead", generation)
   set_state ("HFP_RECONNECTING")
+  -- The reconnect is out of our hands; never wait on it forever.
+  later (RECONNECT_TIMEOUT_MS, function ()
+    fallback ("headset did not reconnect")
+  end)
 end
 
 local function wait_for_nodes (mode, remaining, callback)
