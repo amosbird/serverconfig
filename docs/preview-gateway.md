@@ -21,7 +21,7 @@ SSH master。当前占有本机 `17890` 的那个 `gremote2` 主 session 关闭�
 
 ## 使用
 
-远端启动开发服务器和前台租约：
+远端启动开发服务器并持久暴露 24 小时：
 
 ```bash
 python3 -m http.server 4173 --bind 127.0.0.1
@@ -34,9 +34,9 @@ preview expose 4173 data-ingress data-ingress-alt
 curl http://data-ingress.localhost:17890/
 ```
 
-名称必须是小写 DNS label，只允许字母、数字和中划线，最长 63 字节。一个租约可原子注册
-最多 32 个名称。同名注册会失败；`Ctrl-C`、进程退出或控制 socket EOF 会立即删除全部
-路由并关闭该租约的活跃 HTTP/WebSocket 连接。
+名称必须是小写 DNS label，只允许字母、数字和中划线，最长 63 字节。一次命令可原子
+注册最多 32 个名称并立即退出。路由默认保留 24 小时；再次 `expose` 同名路由会原子覆盖、
+续期 24 小时，并关闭旧 generation 的活跃 HTTP/WebSocket 连接。
 
 管理命令：
 
@@ -46,14 +46,26 @@ preview gateway ensure --quiet --print-http-socket
 preview gateway status
 preview gateway stop
 preview list
+preview remove data-ingress data-ingress-alt
+preview clear
 ```
+
+`list` 输出 `NAME`、`TARGET`、`EXPIRES`，不探测上游健康。`remove` 原子删除指定名称，
+`clear` 原子删除全部名称；两者都会关闭被删除 generation 的活跃连接。
 
 `ensure` 使用 `flock` 和 readiness pipe 并发安全地 double-fork daemon。默认 runtime base
 是 `$XDG_RUNTIME_DIR`；未设置时只尝试 `/run/user/$(id -u)`。base 必须已存在、归当前 uid
 所有且不可被 group/other 写入。`preview-gateway` 子目录为 `0700`，socket 为 `0600`，连接
 还通过 Linux `SO_PEERCRED` 验证同 uid。安全校验失败不会回退到 `/tmp`。日志写入
 `$XDG_STATE_HOME/preview-gateway/gateway.log`，默认位置为
-`~/.local/state/preview-gateway/gateway.log`。
+`~/.local/state/preview-gateway/gateway.log`。持久路由写入同目录的 `routes.json`：每条
+包含 `name`、`port`、`generation`、`created_at`、`updated_at` 和 `expires_at`。写入使用
+`0600` 临时文件、`flush`/`fsync`、`os.replace` 和目录 `fsync`。状态整体损坏时 Gateway
+fail-close，并将原文件改名为 `routes.json.corrupt-*` 留作诊断，不做部分恢复。
+
+过期 GC 只比较绝对 `expires_at`，不检查端口或访问情况；Gateway 启动、每次
+`expose`/`list`/`remove`/`clear`、HTTP 命中前和后台每小时都会触发。`gateway stop` 不删除
+配置，重启恢复尚未过期的路由，过期路由会被删除并关闭对应 generation 的活跃连接。
 
 ## HTTP 行为
 

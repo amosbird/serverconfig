@@ -19,7 +19,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-VERSION = 1
+VERSION = 2
+ROUTE_TTL = 24 * 60 * 60
+GC_INTERVAL = 60 * 60
 MAX_CONTROL = 8192
 MAX_LINE = 8192
 MAX_HEADERS = 65536
@@ -51,11 +53,28 @@ class ProtocolError(Exception):
         self.message = message
 
 
-@dataclass
-class Lease:
-    lease_id: str
-    names: tuple
+@dataclass(frozen=True)
+class Route:
+    name: str
     port: int
+    generation: str
+    created_at: float
+    updated_at: float
+    expires_at: float
+
+    def as_dict(self):
+        return {
+            "name": self.name,
+            "port": self.port,
+            "generation": self.generation,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "expires_at": self.expires_at,
+        }
+
+
+@dataclass
+class ConnectionGroup:
     tasks: set = field(default_factory=set)
     writers: set = field(default_factory=set)
 
@@ -109,11 +128,14 @@ def runtime_dir(create=True):
 def state_dir():
     root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
     path = root / "preview-gateway"
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        path.mkdir(mode=0o700, parents=True)
+    except FileExistsError:
+        pass
     info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or info.st_uid != os.getuid():
+    if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+            or info.st_uid != os.getuid() or info.st_mode & 0o077):
         raise RuntimeError(f"unsafe state directory: {path}")
-    os.chmod(path, 0o700)
     return path
 
 
@@ -125,6 +147,7 @@ def paths():
         "http": root / "http.sock",
         "lock": root / "gateway.lock",
         "pid": root / "gateway.pid",
+        "state": state_dir() / "routes.json",
     }
 
 
@@ -414,18 +437,148 @@ async def close_writer(writer):
 
 
 class Gateway:
-    def __init__(self, control_path, http_path, clean_stale=False):
+    def __init__(self, control_path, http_path, state_path=None, clean_stale=False, clock=time.time):
         self.control_path = Path(control_path)
         self.http_path = Path(http_path)
+        self.state_path = Path(state_path) if state_path else self.control_path.parent / "routes.json"
         self.clean_stale = clean_stale
+        self.clock = clock
         self.routes = {}
-        self.leases = {}
+        self.connections = {}
+        self.lock = asyncio.Lock()
         self.control_server = None
         self.http_server = None
         self.socket_ids = {}
         self.stopping = asyncio.Event()
+        self.gc_task = None
+
+    def _validate_route(self, value):
+        if not isinstance(value, dict) or set(value) != {
+                "name", "port", "generation", "created_at", "updated_at", "expires_at"}:
+            raise ValueError("invalid route fields")
+        name = value["name"]
+        port = value["port"]
+        generation = value["generation"]
+        timestamps = (value["created_at"], value["updated_at"], value["expires_at"])
+        if (not isinstance(name, str) or not NAME_RE.fullmatch(name)
+                or not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535
+                or not isinstance(generation, str) or not re.fullmatch(r"[0-9a-f]{32}", generation)
+                or any(not isinstance(item, (int, float)) or isinstance(item, bool) for item in timestamps)
+                or not timestamps[0] <= timestamps[1] < timestamps[2]):
+            raise ValueError("invalid route value")
+        return Route(name, port, generation, *map(float, timestamps))
+
+    def _load_state(self):
+        try:
+            info = self.state_path.lstat()
+        except FileNotFoundError:
+            return
+        if (not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600):
+            raise RuntimeError(f"unsafe route state file: {self.state_path}")
+        try:
+            value = json.loads(self.state_path.read_text())
+            if not isinstance(value, dict) or set(value) != {"version", "routes"} or value["version"] != VERSION:
+                raise ValueError("invalid state envelope")
+            routes = [self._validate_route(item) for item in value["routes"]]
+            if len({route.name for route in routes}) != len(routes):
+                raise ValueError("duplicate route name")
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError) as error:
+            corrupt = self.state_path.with_name(
+                f"routes.json.corrupt-{int(self.clock())}-{secrets.token_hex(4)}")
+            try:
+                os.replace(self.state_path, corrupt)
+                directory_fd = os.open(self.state_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError as rename_error:
+                raise RuntimeError(f"corrupt route state (could not preserve it): {rename_error}") from error
+            raise RuntimeError(f"corrupt route state preserved as {corrupt}") from error
+        self.routes = {route.name: route for route in routes if route.expires_at > self.clock()}
+
+    def _persist_locked(self):
+        self.state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = self.state_path.parent.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or info.st_uid != os.getuid() or info.st_mode & 0o077):
+            raise RuntimeError(f"unsafe state directory: {self.state_path.parent}")
+        temporary = self.state_path.with_name(f".routes.json.{os.getpid()}.{secrets.token_hex(4)}")
+        data = json.dumps({"version": VERSION, "routes": [
+            route.as_dict() for route in sorted(self.routes.values(), key=lambda item: item.name)
+        ]}, separators=(",", ":"), sort_keys=True).encode() + b"\n"
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(fd, "wb", closefd=False) as output:
+                output.write(data)
+                output.flush()
+                os.fsync(output.fileno())
+            os.close(fd)
+            fd = -1
+            os.replace(temporary, self.state_path)
+            os.chmod(self.state_path, 0o600)
+            directory_fd = os.open(self.state_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            with contextlib.suppress(FileNotFoundError):
+                temporary.unlink()
+
+    async def _close_generations(self, generations):
+        groups = [self.connections.pop(generation, None) for generation in generations]
+        groups = [group for group in groups if group]
+        writers = [writer for group in groups for writer in list(group.writers)]
+        for writer in writers:
+            writer.close()
+        current = asyncio.current_task()
+        tasks = [task for group in groups for task in list(group.tasks)
+                 if task is not current and not task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), CLOSE_TIMEOUT)
+        await asyncio.gather(*(close_writer(writer) for writer in writers), return_exceptions=True)
+
+    async def _gc_locked(self):
+        now = self.clock()
+        expired = [route for route in self.routes.values() if route.expires_at <= now]
+        if not expired:
+            return set()
+        previous_routes = self.routes.copy()
+        for route in expired:
+            self.routes.pop(route.name, None)
+        try:
+            self._persist_locked()
+        except BaseException:
+            self.routes = previous_routes
+            raise
+        return {route.generation for route in expired}
+
+    async def gc(self):
+        async with self.lock:
+            generations = await self._gc_locked()
+        await self._close_generations(generations)
+
+    async def _gc_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(GC_INTERVAL)
+                await self.gc()
+        except asyncio.CancelledError:
+            pass
 
     async def start(self):
+        self._load_state()
+        async with self.lock:
+            expired = await self._gc_locked()
+            self._persist_locked()
+        await self._close_generations(expired)
         for path in (self.control_path, self.http_path):
             try:
                 info = path.lstat()
@@ -448,6 +601,7 @@ class Gateway:
         os.chmod(self.http_path, 0o600)
         info = self.http_path.lstat()
         self.socket_ids[self.http_path] = (info.st_dev, info.st_ino)
+        self.gc_task = asyncio.create_task(self._gc_loop())
 
     def _unlink_owned(self, path):
         identity = self.socket_ids.get(path)
@@ -461,40 +615,29 @@ class Gateway:
             pass
 
     async def close(self):
+        if self.gc_task:
+            self.gc_task.cancel()
+            await asyncio.gather(self.gc_task, return_exceptions=True)
         for server in (self.control_server, self.http_server):
             if server:
                 server.close()
         await asyncio.gather(*(
             server.wait_closed() for server in (self.control_server, self.http_server) if server))
-        for lease in list(self.leases.values()):
-            await self.release(lease)
+        await self._close_generations(set(self.connections))
         for path in (self.control_path, self.http_path):
             self._unlink_owned(path)
-
-    async def release(self, lease):
-        if self.leases.pop(lease.lease_id, None) is None:
-            return
-        for name in lease.names:
-            if self.routes.get(name) is lease:
-                del self.routes[name]
-        writers = list(lease.writers)
-        for writer in writers:
-            writer.close()
-        current = asyncio.current_task()
-        tasks = [task for task in lease.tasks if task is not current and not task.done()]
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), CLOSE_TIMEOUT)
-        await asyncio.gather(*(close_writer(writer) for writer in writers), return_exceptions=True)
 
     async def send_json(self, writer, value):
         writer.write(json.dumps(value, separators=(",", ":")).encode() + b"\n")
         await writer.drain()
 
+    @staticmethod
+    def _valid_names(names):
+        return (isinstance(names, list) and names and len(names) <= MAX_NAMES
+                and all(isinstance(name, str) and NAME_RE.fullmatch(name) for name in names)
+                and len(set(names)) == len(names))
+
     async def handle_control(self, reader, writer):
-        lease = None
         try:
             if peer_uid(writer) != os.getuid():
                 return
@@ -511,45 +654,80 @@ class Gateway:
             if op == "ping":
                 await self.send_json(writer, {"ok": True, "version": VERSION})
                 return
-            if op == "list":
-                entries = [{"name": name, "port": item.port, "lease_id": item.lease_id}
-                           for name, item in sorted(self.routes.items())]
-                await self.send_json(writer, {"ok": True, "routes": entries})
-                return
             if op in ("stop", "force_stop"):
                 await self.send_json(writer, {"ok": True})
                 self.stopping.set()
                 return
-            if op != "register" or set(request) != {"version", "op", "names", "port"}:
-                return
-            names = request.get("names")
-            port = request.get("port")
-            if (not isinstance(names, list) or not names or len(names) > MAX_NAMES
-                    or any(not isinstance(name, str) or not NAME_RE.fullmatch(name) for name in names)
-                    or len(set(names)) != len(names)):
-                await self.send_json(writer, {"ok": False, "code": "invalid_name",
-                                              "message": "invalid or duplicate route name"})
-                return
-            if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
-                await self.send_json(writer, {"ok": False, "code": "invalid_port",
-                                              "message": "port must be in 1..65535"})
-                return
-            conflict = next((name for name in names if name in self.routes), None)
-            if conflict:
-                await self.send_json(writer, {"ok": False, "code": "name_in_use",
-                                              "message": f"{conflict} is already exposed"})
-                return
-            lease = Lease(secrets.token_hex(16), tuple(names), port)
-            self.leases[lease.lease_id] = lease
-            for name in names:
-                self.routes[name] = lease
-            await self.send_json(writer, {"ok": True, "lease_id": lease.lease_id})
-            await reader.read()
-        except (json.JSONDecodeError, UnicodeDecodeError, ConnectionError, OSError):
+            generations = set()
+            response = None
+            async with self.lock:
+                generations |= await self._gc_locked()
+                if op == "list" and set(request) == {"version", "op"}:
+                    response = {"ok": True, "routes": [route.as_dict() for route in
+                                sorted(self.routes.values(), key=lambda item: item.name)]}
+                elif op == "expose" and set(request) == {"version", "op", "names", "port"}:
+                    names = request.get("names")
+                    port = request.get("port")
+                    if not self._valid_names(names):
+                        response = {"ok": False, "code": "invalid_name",
+                                    "message": "invalid or duplicate route name"}
+                    elif (not isinstance(port, int) or isinstance(port, bool)
+                          or not 1 <= port <= 65535):
+                        response = {"ok": False, "code": "invalid_port",
+                                    "message": "port must be in 1..65535"}
+                    else:
+                        now = self.clock()
+                        generations_by_name = {
+                            name: secrets.token_hex(16) for name in names}
+                        old = [self.routes.get(name) for name in names]
+                        previous_routes = self.routes.copy()
+                        try:
+                            for name, previous in zip(names, old):
+                                created = previous.created_at if previous else now
+                                self.routes[name] = Route(
+                                    name, port, generations_by_name[name], created, now,
+                                    now + ROUTE_TTL)
+                            self._persist_locked()
+                        except BaseException:
+                            self.routes = previous_routes
+                            raise
+                        generations |= {route.generation for route in old if route}
+                        response = {"ok": True, "generations": generations_by_name,
+                                    "expires_at": now + ROUTE_TTL}
+                elif op == "remove" and set(request) == {"version", "op", "names"}:
+                    names = request.get("names")
+                    if not self._valid_names(names):
+                        response = {"ok": False, "code": "invalid_name",
+                                    "message": "invalid or duplicate route name"}
+                    else:
+                        previous_routes = self.routes.copy()
+                        removed = [self.routes.pop(name) for name in names if name in self.routes]
+                        try:
+                            self._persist_locked()
+                        except BaseException:
+                            self.routes = previous_routes
+                            raise
+                        generations |= {route.generation for route in removed}
+                        response = {"ok": True, "removed": len(removed)}
+                elif op == "clear" and set(request) == {"version", "op"}:
+                    previous_routes = self.routes.copy()
+                    generations |= {route.generation for route in self.routes.values()}
+                    count = len(self.routes)
+                    self.routes.clear()
+                    try:
+                        self._persist_locked()
+                    except BaseException:
+                        self.routes = previous_routes
+                        raise
+                    response = {"ok": True, "removed": count}
+                else:
+                    response = {"ok": False, "code": "invalid_request",
+                                "message": "invalid control request"}
+            await self._close_generations(generations)
+            await self.send_json(writer, response)
+        except (json.JSONDecodeError, UnicodeDecodeError, ConnectionError, OSError, RuntimeError):
             pass
         finally:
-            if lease:
-                await self.release(lease)
             await close_writer(writer)
 
     @staticmethod
@@ -574,7 +752,8 @@ class Gateway:
 
     async def handle_http(self, reader, writer):
         backend_writer = None
-        lease = None
+        route = None
+        group = None
         task = asyncio.current_task()
         response_started = False
         try:
@@ -593,19 +772,25 @@ class Gateway:
             if request.upgrade_protocol and (request.chunked or request.body_length):
                 raise ProtocolError()
             name = self.route_name(request)
-            lease = self.routes.get(name)
-            if not lease:
+            generations = set()
+            async with self.lock:
+                generations |= await self._gc_locked()
+                route = self.routes.get(name)
+                if route:
+                    group = self.connections.setdefault(route.generation, ConnectionGroup())
+                    group.tasks.add(task)
+                    group.writers.add(writer)
+            await self._close_generations(generations)
+            if not route:
                 await self.error(writer, 404, "Not Found")
                 return
-            lease.tasks.add(task)
-            lease.writers.add(writer)
             try:
                 backend_reader, backend_writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", lease.port), 5)
+                    asyncio.open_connection("127.0.0.1", route.port), 5)
             except (OSError, asyncio.TimeoutError):
                 await self.error(writer, 502, "Bad Gateway")
                 return
-            lease.writers.add(backend_writer)
+            group.writers.add(backend_writer)
             backend_writer.write(forwarded_upgrade(request) if request.upgrade_protocol
                                  else forwarded_request(request))
             await backend_writer.drain()
@@ -621,7 +806,8 @@ class Gateway:
                 response = parse_message(response_lines, request=False, request_method=method)
                 status = response.status
                 if status == 101:
-                    if (not request.upgrade_protocol or response.upgrade_protocol != request.upgrade_protocol
+                    if (not request.upgrade_protocol
+                            or response.upgrade_protocol != request.upgrade_protocol
                             or b"upgrade" not in connection_tokens(response)):
                         raise ProtocolError(502, "Bad Gateway")
                     writer.write(_forwarded_headers(response, response=True, upgrade=True))
@@ -639,9 +825,6 @@ class Gateway:
                     await writer.drain()
                     response_started = True
                     continue
-                if request.upgrade_protocol:
-                    # A rejected upgrade is an ordinary final HTTP response.
-                    pass
                 writer.write(forwarded_response(response))
                 await writer.drain()
                 response_started = True
@@ -660,16 +843,18 @@ class Gateway:
         except (EOFError, ConnectionError, OSError, asyncio.CancelledError):
             pass
         finally:
-            if lease:
-                lease.tasks.discard(task)
-                lease.writers.discard(writer)
+            if group:
+                group.tasks.discard(task)
+                group.writers.discard(writer)
                 if backend_writer:
-                    lease.writers.discard(backend_writer)
+                    group.writers.discard(backend_writer)
+                if not group.tasks and not group.writers:
+                    self.connections.pop(route.generation, None)
             await close_writer(backend_writer)
             await close_writer(writer)
 
 
-async def control_request(path, request, keep=False):
+async def control_request(path, request):
     reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(path), 3)
     writer.write(json.dumps(request, separators=(",", ":")).encode() + b"\n")
     await writer.drain()
@@ -681,14 +866,12 @@ async def control_request(path, request, keep=False):
         await close_writer(writer)
         raise RuntimeError("oversized gateway response")
     response = json.loads(line)
-    if keep:
-        return response, reader, writer
     await close_writer(writer)
     return response
 
 
-async def run_gateway(control, http, ready_fd=None, lock_fd=None, pid_path=None):
-    gateway = Gateway(control, http, clean_stale=True)
+async def run_gateway(control, http, state_path, ready_fd=None, lock_fd=None, pid_path=None):
+    gateway = Gateway(control, http, state_path=state_path, clean_stale=True)
     try:
         await gateway.start()
         if pid_path:
@@ -735,8 +918,8 @@ def daemonize(lock_fd, location):
             os.dup2(null, 0)
             os.dup2(log, 1)
             os.dup2(log, 2)
-            asyncio.run(run_gateway(location["control"], location["http"], write_fd,
-                                    lock_fd, location["pid"]))
+            asyncio.run(run_gateway(location["control"], location["http"], location["state"],
+                                    write_fd, lock_fd, location["pid"]))
         except BaseException:
             with contextlib.suppress(Exception):
                 os.write(write_fd, b"ERROR daemon startup failed\n")
@@ -800,28 +983,19 @@ def ensure(quiet=False, print_socket=False):
 
 def command_expose(args):
     ensure(quiet=True)
+    location = paths()
+    response = asyncio.run(control_request(
+        location["control"], {"version": VERSION, "op": "expose",
+                              "names": args.names, "port": args.port}))
+    if not response.get("ok"):
+        raise RuntimeError(f"{response.get('code', 'error')}: {response.get('message', '')}")
+    urls = ", ".join(f"http://{name}.localhost:17890" for name in args.names)
+    print(f"exposing 127.0.0.1:{args.port} at {urls} until "
+          f"{format_timestamp(response['expires_at'])}")
 
-    async def expose():
-        location = paths()
-        response, reader, writer = await control_request(
-            location["control"], {"version": VERSION, "op": "register",
-                                  "names": args.names, "port": args.port}, keep=True)
-        if not response.get("ok"):
-            await close_writer(writer)
-            raise RuntimeError(f"{response.get('code', 'error')}: {response.get('message', '')}")
-        urls = ", ".join(f"http://{name}.localhost:17890" for name in args.names)
-        print(f"exposing 127.0.0.1:{args.port} at {urls}; press Ctrl-C to stop")
-        try:
-            data = await reader.read()
-            if data == b"":
-                raise RuntimeError("preview gateway stopped")
-        finally:
-            await close_writer(writer)
 
-    try:
-        asyncio.run(expose())
-    except KeyboardInterrupt:
-        return
+def format_timestamp(value):
+    return time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(value))
 
 
 def wait_stopped(location, timeout=5):
@@ -839,18 +1013,23 @@ def wait_stopped(location, timeout=5):
         os.close(lock_fd)
 
 
-def command_simple(op):
+def command_simple(op, names=None):
     location = paths()
     if not ping(location):
         raise RuntimeError("preview gateway is not running")
-    response = asyncio.run(control_request(location["control"], {"version": VERSION, "op": op}))
+    request = {"version": VERSION, "op": op}
+    if names is not None:
+        request["names"] = names
+    response = asyncio.run(control_request(location["control"], request))
     if not response.get("ok"):
         raise RuntimeError(response.get("message", "gateway request failed"))
     if op in ("stop", "force_stop"):
         wait_stopped(location)
     elif op == "list":
+        print(f"{'NAME':<30} {'TARGET':<22} EXPIRES")
         for route in response["routes"]:
-            print(f"{route['name']}.localhost:17890 -> 127.0.0.1:{route['port']}")
+            print(f"{route['name']:<30} {'127.0.0.1:' + str(route['port']):<22} "
+                  f"{format_timestamp(route['expires_at'])}")
     elif op == "ping":
         print(f"running (protocol {response['version']})")
 
@@ -866,11 +1045,14 @@ def main(argv=None):
     gateway_commands.add_parser("status")
     stop = gateway_commands.add_parser("stop")
     stop.add_argument("--force", action="store_true",
-                      help="release all leases and stop through the healthy control socket")
+                      help="stop through the healthy control socket")
     expose = commands.add_parser("expose")
     expose.add_argument("port", type=int)
     expose.add_argument("names", nargs="+")
     commands.add_parser("list")
+    remove = commands.add_parser("remove")
+    remove.add_argument("names", nargs="+")
+    commands.add_parser("clear")
     args = parser.parse_args(argv)
     try:
         if args.command == "gateway":
@@ -882,6 +1064,12 @@ def main(argv=None):
                 command_simple("force_stop" if args.force else "stop")
         elif args.command == "expose":
             command_expose(args)
+        elif args.command == "remove":
+            ensure(quiet=True)
+            command_simple("remove", args.names)
+        elif args.command == "clear":
+            ensure(quiet=True)
+            command_simple("clear")
         else:
             ensure(quiet=True)
             command_simple("list")

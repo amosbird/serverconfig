@@ -26,19 +26,16 @@ class PreviewGatewayTests(unittest.IsolatedAsyncioTestCase):
         os.chmod(self.root, 0o700)
         self.control = self.root / "control.sock"
         self.http = self.root / "http.sock"
-        self.gateway = preview.Gateway(self.control, self.http)
+        self.now = 1_700_000_000.0
+        self.gateway = preview.Gateway(
+            self.control, self.http, self.root / "routes.json", clock=lambda: self.now)
         await self.gateway.start()
         self.backend = await asyncio.start_server(self.handle_backend, "127.0.0.1", 0)
         self.port = self.backend.sockets[0].getsockname()[1]
-        self.lease_reader = None
-        self.lease_writer = None
         self.backend_requests = []
         self.backend_connections = 0
 
     async def asyncTearDown(self):
-        if self.lease_writer:
-            self.lease_writer.close()
-            await self.lease_writer.wait_closed()
         self.backend.close()
         await self.backend.wait_closed()
         await self.gateway.close()
@@ -104,11 +101,12 @@ class PreviewGatewayTests(unittest.IsolatedAsyncioTestCase):
             writer.close()
             await writer.wait_closed()
 
-    async def register(self, names=("app",)):
-        response, self.lease_reader, self.lease_writer = await preview.control_request(
-            self.control, {"version": 1, "op": "register", "names": list(names),
-                           "port": self.port}, keep=True)
+    async def register(self, names=("app",), port=None):
+        response = await preview.control_request(
+            self.control, {"version": preview.VERSION, "op": "expose", "names": list(names),
+                           "port": port or self.port})
         self.assertTrue(response["ok"])
+        return response
 
     async def request(self, data):
         reader, writer = await asyncio.open_unix_connection(self.http)
@@ -119,23 +117,29 @@ class PreviewGatewayTests(unittest.IsolatedAsyncioTestCase):
         await writer.wait_closed()
         return result
 
-    async def test_control_lease_conflict_and_release(self):
-        await self.register(("app", "alternate"))
-        response = await preview.control_request(
-            self.control, {"version": 1, "op": "register", "names": ["app", "unused"],
-                           "port": self.port})
-        self.assertEqual(response["code"], "name_in_use")
-        listing = await preview.control_request(self.control, {"version": 1, "op": "list"})
+    async def test_atomic_expose_overwrite_remove_and_clear(self):
+        first = await self.register(("app", "alternate"))
+        listing = await preview.control_request(
+            self.control, {"version": preview.VERSION, "op": "list"})
         self.assertEqual([x["name"] for x in listing["routes"]], ["alternate", "app"])
-        self.lease_writer.close()
-        await self.lease_writer.wait_closed()
-        self.lease_writer = None
-        for _ in range(20):
-            if not self.gateway.routes:
-                break
-            await asyncio.sleep(0.01)
-        result = await self.request(b"GET / HTTP/1.1\r\nHost: app.localhost:17890\r\n\r\n")
-        self.assertTrue(result.startswith(b"HTTP/1.1 404"))
+        self.assertEqual(
+            {x["generation"] for x in listing["routes"]},
+            set(first["generations"].values()))
+        self.now += 10
+        second = await self.register(("app", "unused"))
+        self.assertNotEqual(first["generations"]["app"], second["generations"]["app"])
+        self.assertEqual(self.gateway.routes["app"].port, self.port)
+        self.assertEqual(
+            self.gateway.routes["alternate"].generation, first["generations"]["alternate"])
+        response = await preview.control_request(
+            self.control, {"version": preview.VERSION, "op": "remove",
+                           "names": ["app", "unused"]})
+        self.assertEqual(response["removed"], 2)
+        self.assertEqual(set(self.gateway.routes), {"alternate"})
+        response = await preview.control_request(
+            self.control, {"version": preview.VERSION, "op": "clear"})
+        self.assertEqual(response["removed"], 1)
+        self.assertFalse(self.gateway.routes)
 
     async def test_get_post_and_chunked(self):
         await self.register()
@@ -199,7 +203,7 @@ class PreviewGatewayTests(unittest.IsolatedAsyncioTestCase):
             result = await self.request(request)
             self.assertTrue(result.startswith(b"HTTP/1.1 400"))
 
-    async def test_websocket_raw_relay_and_lease_close(self):
+    async def test_websocket_raw_relay_and_overwrite_close(self):
         await self.register()
         reader, writer = await asyncio.open_unix_connection(self.http)
         writer.write(b"GET /socket HTTP/1.1\r\nHost: app.localhost\r\n"
@@ -219,9 +223,7 @@ class PreviewGatewayTests(unittest.IsolatedAsyncioTestCase):
         writer.write(payload)
         await writer.drain()
         self.assertEqual(await reader.readexactly(len(payload)), payload)
-        self.lease_writer.close()
-        await self.lease_writer.wait_closed()
-        self.lease_writer = None
+        await self.register()
         self.assertEqual(await asyncio.wait_for(reader.read(), 1), b"")
         writer.close()
         await writer.wait_closed()
@@ -236,6 +238,47 @@ class PreviewGatewayTests(unittest.IsolatedAsyncioTestCase):
             b"HTTP/1.1 101 Switching Protocols", b"Connection: Upgrade", b"Upgrade: other"],
             request=False, request_method=b"GET")
         self.assertEqual(response.upgrade_protocol, b"other")
+
+    async def test_expiry_closes_connection_and_persists_removal(self):
+        await self.register()
+        reader, writer = await asyncio.open_unix_connection(self.http)
+        writer.write(b"GET /socket HTTP/1.1\r\nHost: app.localhost\r\n"
+                     b"Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+        await writer.drain()
+        self.assertIn(b"101 Switching Protocols", await read_headers(reader))
+        self.now += preview.ROUTE_TTL
+        await self.gateway.gc()
+        self.assertEqual(await asyncio.wait_for(reader.read(), 1), b"")
+        self.assertFalse(self.gateway.routes)
+        state = __import__("json").loads((self.root / "routes.json").read_text())
+        self.assertEqual(state["routes"], [])
+        writer.close()
+        await writer.wait_closed()
+
+    async def test_restart_restores_unexpired_and_drops_expired(self):
+        await self.register(("fresh", "expired"))
+        state_path = self.root / "routes.json"
+        value = __import__("json").loads(state_path.read_text())
+        self.now += 1
+        value["routes"][0]["expires_at"] = self.now
+        state_path.write_text(__import__("json").dumps(value))
+        os.chmod(state_path, 0o600)
+        await self.gateway.close()
+        self.gateway = preview.Gateway(
+            self.control, self.http, state_path, clock=lambda: self.now, clean_stale=True)
+        await self.gateway.start()
+        self.assertEqual(set(self.gateway.routes), {"fresh"})
+
+    async def test_corrupt_state_fails_closed_and_is_preserved(self):
+        await self.gateway.close()
+        state_path = self.root / "routes.json"
+        state_path.write_text("not json")
+        os.chmod(state_path, 0o600)
+        self.gateway = preview.Gateway(self.control, self.http, state_path, clean_stale=True)
+        with self.assertRaisesRegex(RuntimeError, "corrupt route state preserved"):
+            await self.gateway.start()
+        self.assertFalse(state_path.exists())
+        self.assertEqual(len(list(self.root.glob("routes.json.corrupt-*"))), 1)
 
     async def test_bad_framing_and_backend_unavailable(self):
         await self.register()
@@ -295,29 +338,26 @@ class DaemonLifecycleTests(unittest.TestCase):
         self.assertFalse((self.runtime / "preview-gateway" / "control.sock").exists())
         self.run_preview("gateway", "ensure", "--quiet")
 
-    def test_expose_ctrl_c_releases_lease_and_stale_pid_is_never_killed(self):
-        self.run_preview("gateway", "ensure", "--quiet")
-        process = subprocess.Popen(
-            self.command + ["expose", "65535", "ctrl-c"], env=self.env,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        for _ in range(100):
-            listing = self.run_preview("list")
-            if "ctrl-c.localhost" in listing.stdout:
-                break
-            time.sleep(0.02)
-        else:
-            self.fail("expose lease did not appear")
-        process.send_signal(signal.SIGINT)
-        stdout, stderr = process.communicate(timeout=5)
-        self.assertEqual(process.returncode, 0, (stdout, stderr))
-        for _ in range(100):
-            if "ctrl-c.localhost" not in self.run_preview("list").stdout:
-                break
-            time.sleep(0.02)
-        else:
-            self.fail("Ctrl-C did not release expose lease")
+    def test_expose_returns_immediately_persists_and_management_commands(self):
+        result = self.run_preview("expose", "65535", "persistent", "alias")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("until", result.stdout)
+        listing = self.run_preview("list")
+        self.assertIn("NAME", listing.stdout)
+        self.assertIn("persistent", listing.stdout)
+        self.assertIn("alias", listing.stdout)
+        state_path = self.state / "preview-gateway" / "routes.json"
+        self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
         self.run_preview("gateway", "stop")
+        self.run_preview("gateway", "ensure", "--quiet")
+        self.assertIn("persistent", self.run_preview("list").stdout)
+        self.run_preview("remove", "persistent", "alias")
+        self.assertNotIn("persistent", self.run_preview("list").stdout)
+        self.run_preview("expose", "65535", "clear-me")
+        self.run_preview("clear")
+        self.assertNotIn("clear-me", self.run_preview("list").stdout)
         pid_path = self.runtime / "preview-gateway" / "gateway.pid"
+        self.run_preview("gateway", "stop")
         pid_path.write_text(str(os.getpid()) + "\n")
         result = self.run_preview("gateway", "stop", "--force", check=False)
         self.assertNotEqual(result.returncode, 0)
@@ -350,7 +390,8 @@ class RuntimeSecurityTests(unittest.TestCase):
         async def check():
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                gateway = preview.Gateway(root / "control", root / "http")
+                gateway = preview.Gateway(
+                    root / "control", root / "http", root / "routes.json")
                 await gateway.start()
                 try:
                     self.assertEqual(stat.S_IMODE((root / "control").stat().st_mode), 0o600)
