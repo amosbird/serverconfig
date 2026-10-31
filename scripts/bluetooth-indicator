@@ -88,6 +88,7 @@ class BluetoothIndicator:
         self.output_muted = False
         self.last_reconnect_generation = None
         self.last_reconnect_at = 0.0
+        self.reconnect_deferred = False
         self.icon = None
         self.icon_state = "OFF"
         self.tooltip = ""
@@ -469,14 +470,40 @@ class BluetoothIndicator:
         # permanently wedged link cannot loop.
         if generation == self.last_reconnect_generation:
             return
-        if time.monotonic() - self.last_reconnect_at < 60:
+        wait = self.last_reconnect_at + 60 - time.monotonic()
+        if wait > 0:
+            # Defer, never drop: the session manager sits in HFP_RECONNECTING
+            # until the headset reappears, so a dropped request wedges it.
+            if not self.reconnect_deferred:
+                self.reconnect_deferred = True
+                GLib.timeout_add_seconds(int(wait) + 1, self.deferred_reconnect, generation)
             return
         self.last_reconnect_generation = generation
         self.last_reconnect_at = time.monotonic()
         print(f"transport dead (generation {generation}), reconnecting headset", flush=True)
         threading.Thread(target=self.reconnect_headset, daemon=True).start()
 
+    def deferred_reconnect(self, generation):
+        self.reconnect_deferred = False
+        self.request_reconnect(generation)
+        return False
+
     def reconnect_headset(self):
+        # pw-metadata replays every current key when respawned, including a
+        # stale transport-dead: only act while the session still waits on it.
+        try:
+            result = subprocess.run(
+                [BLUETOOTH_PROFILE, "status", "--json"],
+                capture_output=True, text=True, timeout=5,
+            )
+            session = json.loads(result.stdout)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            session = {}
+        if session.get("desired_mode") != "hfp" or session.get("state") not in (
+            "HFP_RECONNECTING", "LOCAL_FALLBACK",
+        ):
+            print(f"skipping reconnect, session is {session.get('state')}", flush=True)
+            return
         for command in (
             ["bluetoothctl", "disconnect", FREECLIP_ADDRESS],
             ["bluetoothctl", "connect", FREECLIP_ADDRESS],

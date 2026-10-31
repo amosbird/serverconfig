@@ -96,9 +96,9 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn("os.set_blocking", source)
         self.assertNotIn("stream.readline()", source)
         # One-shot timers (dead pipe respawn, failed-read retry, metadata
-        # watcher recycle debounce, refresh coalescing) are fine, but there
-        # must be no periodic polling of refresh().
-        self.assertEqual(source.count("timeout_add"), 4)
+        # watcher recycle debounce, refresh coalescing, deferred reconnect)
+        # are fine, but there must be no periodic polling of refresh().
+        self.assertEqual(source.count("timeout_add"), 5)
         self.assertNotIn("GLib.idle_add(self.refresh)", source)
         self.assertIn("GLib.timeout_add_seconds(2, self.respawn_event_source", source)
         self.assertIn("GLib.timeout_add_seconds(3, self.retry_refresh)", source)
@@ -161,7 +161,11 @@ class BluetoothIndicatorTest(unittest.TestCase):
         self.assertIn('["bluetoothctl", "disconnect", FREECLIP_ADDRESS]', source)
         self.assertIn('["bluetoothctl", "connect", FREECLIP_ADDRESS]', source)
         self.assertIn("self.last_reconnect_generation", source)
-        self.assertIn("time.monotonic() - self.last_reconnect_at < 60", source)
+        self.assertIn("self.last_reconnect_at + 60 - time.monotonic()", source)
+        # Rate-limited requests are deferred, not dropped, and a replayed
+        # stale transport-dead must not tear down a healthy link.
+        self.assertIn("self.deferred_reconnect", source)
+        self.assertIn('"HFP_RECONNECTING", "LOCAL_FALLBACK"', source)
 
     def test_failed_status_read_keeps_last_known_state(self):
         source = INDICATOR.read_text()
