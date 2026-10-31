@@ -1,7 +1,6 @@
 [user]
 	email = amosbird@gmail.com
 	name = Amos Bird
-	signingkey = 80D430DCBECFEDB4
 [pull]
 	rebase = true
 [color]
@@ -11,8 +10,6 @@
 	untrackedcache = true
 [github]
 	user = amosbird
-[commit]
-	gpgsign = true
 [url "git@github.com:amosbird"]
 	insteadOf = https://github.com/amosbird
 [url "git@git.woa.com:"]

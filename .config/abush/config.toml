@@ -11,6 +11,14 @@ disabled = true
 [mcp.iWiki.headers]
 Authorization = "$IWIKI_MCP_TOKEN"
 
+[mcp.tchouse_kb]
+type = "http"
+url = "https://tchousec-okr-demo.mcp.woa.com/mcp"
+disabled = true
+
+[mcp.tchouse_kb.headers]
+Authorization = "$IWIKI_MCP_TOKEN"
+
 [mcp.gongfeng]
 type = "http"
 url = "$GONGFENG_MCP_URL"
