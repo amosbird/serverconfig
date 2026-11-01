@@ -4,12 +4,13 @@ usage() {
     cat >&2 <<'EOF'
 usage:
   tstart.sh workspace local
-  tstart.sh workspace remote --display DISPLAY --ssh-control PATH (--abush-web-forward-port PORT | --without-abush)
+  tstart.sh workspace remote --display DISPLAY --ssh-control PATH [--ssh-port PORT] (--abush-web-forward-port PORT | --without-abush)
   tstart.sh app emacs|htop|lvim|crush
   tstart.sh app abush (--local | --remote-web-port PORT)
   tstart.sh android
 
-Legacy aliases for local and app names remain supported. The legacy remote form is:
+Legacy aliases for local and app names remain supported. The legacy remote forms are:
+  tstart.sh remote DISPLAY SSH_CONTROL
   tstart.sh remote DISPLAY SSH_CONTROL ABUSH_WEB_FORWARD_PORT
 EOF
 }
@@ -66,13 +67,17 @@ local)
     set -- local "$@"
     ;;
 remote)
-    if [[ $# -ne 3 ]]; then
-        printf 'tstart.sh: legacy remote requires DISPLAY SSH_CONTROL ABUSH_WEB_FORWARD_PORT\n' >&2
+    if [[ $# -ne 2 && $# -ne 3 ]]; then
+        printf 'tstart.sh: legacy remote requires DISPLAY SSH_CONTROL [ABUSH_WEB_FORWARD_PORT]\n' >&2
         usage
         exit 1
     fi
     command_name=workspace
-    set -- remote --display "$1" --ssh-control "$2" --abush-web-forward-port "$3"
+    if [[ $# -eq 2 ]]; then
+        set -- remote --display "$1" --ssh-control "$2" --without-abush
+    else
+        set -- remote --display "$1" --ssh-control "$2" --abush-web-forward-port "$3"
+    fi
     ;;
 emacs|htop|lvim|crush|abush)
     set -- "$command_name" "$@"
@@ -104,6 +109,7 @@ workspace)
     remote)
         display=
         ssh_control=
+        ssh_port=
         abush_web_forward_port=
         without_abush=false
         while [[ $# -gt 0 ]]; do
@@ -118,6 +124,12 @@ workspace)
                 require_value "$@"
                 [[ -z $ssh_control ]] || { printf 'tstart.sh: --ssh-control specified more than once\n' >&2; exit 1; }
                 ssh_control=$2
+                shift 2
+                ;;
+            --ssh-port)
+                require_value "$@"
+                [[ -z $ssh_port ]] || { printf 'tstart.sh: --ssh-port specified more than once\n' >&2; exit 1; }
+                ssh_port=$2
                 shift 2
                 ;;
             --abush-web-forward-port)
@@ -152,8 +164,15 @@ workspace)
             printf 'tstart.sh: workspace remote requires one of --abush-web-forward-port and --without-abush\n' >&2
             exit 1
         fi
+        if [[ -n $ssh_port ]]; then
+            validate_port "$ssh_port"
+        fi
         if [[ -n $abush_web_forward_port ]]; then
             validate_port "$abush_web_forward_port"
+        fi
+        ssh_args=(-S "$ssh_control")
+        if [[ -n $ssh_port ]]; then
+            ssh_args+=(-p "$ssh_port")
         fi
         for app in "${apps[@]}"; do
             if [[ $app == abush && $without_abush == true ]]; then
@@ -165,7 +184,7 @@ workspace)
             fi
             printf -v remote_app_command '%q ' "${remote_app_args[@]}"
             kitten @ launch --allow-remote-control --keep-focus \
-                ssh -S "$ssh_control" -tt "$display" "$remote_app_command"
+                ssh "${ssh_args[@]}" -tt "$display" "$remote_app_command"
         done
         ;;
     *)

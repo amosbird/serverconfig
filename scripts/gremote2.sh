@@ -20,7 +20,7 @@ if [[ "$1" =~ $pattern ]]; then
     if [ -n "$port" ]; then
         ssh_options=(-p "$port")
     fi
-    remote_display="$ssh_target${port:+:$port}"
+    remote_display=$ssh_target
 
     {
         read -r remote_home
@@ -93,10 +93,15 @@ PY
     if [ -n "$a" ]; then
         kitty_args+=("$a")
     fi
+    tstart_ssh_port_arg=()
+    if [[ -n $port ]]; then
+        tstart_ssh_port_arg=(--ssh-port "$port")
+    fi
     printf -v remote_command '%q ' \
         "$remote_home/scripts/tstart.sh" workspace remote \
         --display "$remote_display" \
         --ssh-control "$SSH_MASTER_CTRL" \
+        "${tstart_ssh_port_arg[@]}" \
         "${abush_workspace_arg[@]}"
 
     kitty "${kitty_args[@]}" -o allow_remote_control=yes --listen-on "unix:$KITTY_SOCK" \
