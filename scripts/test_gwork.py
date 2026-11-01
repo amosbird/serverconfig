@@ -32,15 +32,25 @@ class GworkTest(unittest.TestCase):
             subprocess.run([SCRIPT], check=True, env=env)
             return log.read_text().splitlines()
 
+    def assert_remote_interface(self, command, host):
+        self.assertIn(
+            f"/home/amos/scripts/tstart.sh workspace remote --display {host} "
+            "--ssh-control /tmp/ssh-master.test-uuid --without-abush",
+            command,
+        )
+        self.assertNotIn("tstart.sh remote ", command)
+
     def test_abx_connects_to_qtw(self):
-        commands = self.run_gwork("abx1gen3-1")
+        commands = self.run_gwork("abx1gen3")
         self.assertTrue(commands[0].startswith("ssh 100.91.94.87 "))
         self.assertIn(" ssh -t 100.91.94.87 ", commands[1])
+        self.assert_remote_interface(commands[1], "100.91.94.87")
 
     def test_qtw_connects_to_abx(self):
         commands = self.run_gwork("qtw-1")
         self.assertTrue(commands[0].startswith("ssh 100.88.203.53 "))
         self.assertIn(" ssh -t 100.88.203.53 ", commands[1])
+        self.assert_remote_interface(commands[1], "100.88.203.53")
 
 
 if __name__ == "__main__":

@@ -26,8 +26,24 @@ if [[ "$1" =~ $pattern ]]; then
         read -r remote_home
         read -r sock
         read -r remote_abush_web_socket
+        read -r remote_abush_web_socket_status
     } < <(
-        ssh "${ssh_options[@]}" "$ssh_target" 'read sock < <($HOME/scripts/prelogin); rm "$sock"; rm -f /tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}; printf "%s\n" "$HOME" "$sock" "$XDG_RUNTIME_DIR/abush/web-ingress.sock"'
+        ssh "${ssh_options[@]}" "$ssh_target" '
+            read sock < <($HOME/scripts/prelogin)
+            rm "$sock"
+            rm -f /tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}
+            abush_web_socket=$XDG_RUNTIME_DIR/abush/web-ingress.sock
+            if [[ ! -e $abush_web_socket ]]; then
+                abush_web_socket_status=missing
+            elif [[ ! -S $abush_web_socket ]]; then
+                abush_web_socket_status=not-a-socket
+            elif [[ $(stat -c %u -- "$abush_web_socket") != $(id -u) ]]; then
+                abush_web_socket_status=wrong-owner
+            else
+                abush_web_socket_status=ready
+            fi
+            printf "%s\n" "$HOME" "$sock" "$abush_web_socket" "$abush_web_socket_status"
+        '
     )
     # NOTE: make sure remote should not have gpg-agent, and gpg-connect-agent should show: connection to the agent is in restricted mode
 
@@ -36,13 +52,39 @@ if [[ "$1" =~ $pattern ]]; then
     # TODO: dbus requires same UID
     # DBUS_SESSION_BUS_ADDRESS
 
-    if [[ ! $remote_abush_web_socket =~ ^/[A-Za-z0-9._/-]+$ ]]; then
-        printf 'gremote2: remote Abush web socket has an unsafe path: %s\n' "$remote_abush_web_socket" >&2
-        exit 1
-    fi
-
     readonly ABUSH_WEB_FORWARD_PORT=17890
-    abush_web_forward=(-L "127.0.0.1:${ABUSH_WEB_FORWARD_PORT}:${remote_abush_web_socket}")
+    abush_web_forward=()
+    abush_workspace_arg=(--without-abush)
+    preview_error=
+    if [[ ! $remote_abush_web_socket =~ ^/[A-Za-z0-9._/-]+$ ]]; then
+        preview_error="remote Abush ingress socket has an unsafe path: $remote_abush_web_socket"
+    elif [[ $remote_abush_web_socket_status != ready ]]; then
+        preview_error="remote Abush ingress socket $remote_abush_web_socket is $remote_abush_web_socket_status; start Abush on the remote host and verify the socket is user-owned"
+    elif ! python3 - "$ABUSH_WEB_FORWARD_PORT" <<'PY'
+import socket
+import sys
+
+sock = socket.socket()
+try:
+    sock.bind(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    sock.close()
+PY
+    then
+        preview_error="local port $ABUSH_WEB_FORWARD_PORT is already in use; stop its owner or choose a different Abush forward port"
+    else
+        abush_web_forward=(-L "127.0.0.1:${ABUSH_WEB_FORWARD_PORT}:${remote_abush_web_socket}")
+        abush_workspace_arg=(--abush-web-forward-port "$ABUSH_WEB_FORWARD_PORT")
+    fi
+    if [[ -n $preview_error ]]; then
+        printf 'gremote2: Abush preview unavailable for %s: %s\n' "$remote_display" "$preview_error" >&2
+        if [[ ${GREMOTE_REQUIRE_PREVIEW:-0} == 1 ]]; then
+            exit 1
+        fi
+        printf 'gremote2: continuing without the remote Abush TUI (set GREMOTE_REQUIRE_PREVIEW=1 to require it)\n' >&2
+    fi
 
     UUID=$(uuidgen)
     SSH_MASTER_CTRL=/tmp/ssh-master.$UUID
@@ -55,10 +97,10 @@ if [[ "$1" =~ $pattern ]]; then
         "$remote_home/scripts/tstart.sh" workspace remote \
         --display "$remote_display" \
         --ssh-control "$SSH_MASTER_CTRL" \
-        --abush-web-forward-port "$ABUSH_WEB_FORWARD_PORT"
+        "${abush_workspace_arg[@]}"
 
     kitty "${kitty_args[@]}" -o allow_remote_control=yes --listen-on "unix:$KITTY_SOCK" \
-        -T remote ssh -t "${ssh_options[@]}" -M -S "$SSH_MASTER_CTRL" \
+        -T remote ssh -t "${ssh_options[@]}" -o ExitOnForwardFailure=yes -M -S "$SSH_MASTER_CTRL" \
         "${abush_web_forward[@]}" \
         -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:57201:127.0.0.1:57201 -L 127.0.0.1:8040:127.0.0.1:8040 \
         -L 127.0.0.1:8030:127.0.0.1:8030 -L 127.0.0.1:8929:127.0.0.1:8929 -L 127.0.0.1:9200:127.0.0.1:9200 \

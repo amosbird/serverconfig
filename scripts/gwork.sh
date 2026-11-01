@@ -15,6 +15,6 @@ kitty -o allow_remote_control=yes --listen-on unix:$KITTY_SOCK -T work ssh -t $H
 	-R /tmp/remote-clipservice.sock:/tmp/clipservice.sock \
 	-R /tmp/kitty_sock:$KITTY_SOCK \
 	-R /tmp/dbus_sock:/run/user/1000/bus \
-	"/home/amos/scripts/tstart.sh remote $HOST $SSH_MASTER_CTRL" &
+	"/home/amos/scripts/tstart.sh workspace remote --display $HOST --ssh-control $SSH_MASTER_CTRL --without-abush" &
 disown
 qtile cmd-obj -o group v -f toscreen
