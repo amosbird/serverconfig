@@ -1,5 +1,19 @@
 #!/usr/bin/env bash
 
+usage() {
+    cat >&2 <<'EOF'
+usage:
+  tstart.sh workspace local
+  tstart.sh workspace remote --display DISPLAY --ssh-control PATH --abush-web-forward-port PORT
+  tstart.sh app emacs|htop|lvim|crush
+  tstart.sh app abush (--local | --remote-web-port PORT)
+  tstart.sh android
+
+Legacy aliases for local and app names remain supported. The legacy remote form is:
+  tstart.sh remote DISPLAY SSH_CONTROL ABUSH_WEB_FORWARD_PORT
+EOF
+}
+
 has_active_x11_session() {
     local session type active
 
@@ -11,6 +25,21 @@ has_active_x11_session() {
         [[ $type == x11 && $active == yes ]] && return 0
     done < <(loginctl list-sessions --no-legend --no-pager 2>/dev/null)
     return 1
+}
+
+require_value() {
+    if [[ $# -lt 2 || -z $2 ]]; then
+        printf 'tstart.sh: %s requires a value\n' "$1" >&2
+        usage
+        exit 1
+    fi
+}
+
+validate_port() {
+    if [[ ! $1 =~ ^[0-9]+$ ]] || (( $1 < 1 || $1 > 65535 )); then
+        printf 'tstart.sh: invalid port: %s\n' "$1" >&2
+        exit 1
+    fi
 }
 
 if [[ ${GUI:-} != t ]]; then
@@ -25,48 +54,152 @@ if [[ ${GUI:-} != t ]]; then
     fi
 fi
 
-mode=${1:-}
-SSH_SERVER=${2:-${SSH_SERVER:-}}
-SSH_MASTER_CTRL=${3:-${SSH_MASTER_CTRL:-}}
+command_name=${1:-}
+shift || true
 apps=(emacs htop crush abush)
 
-case "$mode" in
+# Compatibility with the old top-level modes. New callers should use the
+# explicit workspace/app scopes above.
+case "$command_name" in
+local)
+    command_name=workspace
+    set -- local "$@"
+    ;;
+remote)
+    if [[ $# -ne 3 ]]; then
+        printf 'tstart.sh: legacy remote requires DISPLAY SSH_CONTROL ABUSH_WEB_FORWARD_PORT\n' >&2
+        usage
+        exit 1
+    fi
+    command_name=workspace
+    set -- remote --display "$1" --ssh-control "$2" --abush-web-forward-port "$3"
+    ;;
+emacs|htop|lvim|crush|abush)
+    set -- "$command_name" "$@"
+    command_name=app
+    ;;
+esac
+
+case "$command_name" in
 android)
+    [[ $# -eq 0 ]] || { usage; exit 1; }
     # shellcheck source=/dev/null
     source "$HOME/.config/path.sh" android
     exec tmux -u new-session -A -s amos
     ;;
-local)
-    for app in "${apps[@]}"; do
-        kitten @ launch --allow-remote-control --keep-focus "$0" "$app"
-    done
-    ;;
-remote)
-    if [[ -z $SSH_SERVER || -z $SSH_MASTER_CTRL ]]; then
-        echo "tstart.sh remote requires SSH_SERVER and SSH_MASTER_CTRL" >&2
+workspace)
+    workspace_mode=${1:-}
+    shift || true
+    case "$workspace_mode" in
+    local)
+        [[ $# -eq 0 ]] || { usage; exit 1; }
+        for app in "${apps[@]}"; do
+            app_args=(app "$app")
+            if [[ $app == abush ]]; then
+                app_args+=(--local)
+            fi
+            kitten @ launch --allow-remote-control --keep-focus "$0" "${app_args[@]}"
+        done
+        ;;
+    remote)
+        display=
+        ssh_control=
+        abush_web_forward_port=
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+            --display)
+                require_value "$@"
+                display=$2
+                shift 2
+                ;;
+            --ssh-control)
+                require_value "$@"
+                ssh_control=$2
+                shift 2
+                ;;
+            --abush-web-forward-port)
+                require_value "$@"
+                abush_web_forward_port=$2
+                shift 2
+                ;;
+            *)
+                printf 'tstart.sh: unknown workspace remote option: %s\n' "$1" >&2
+                usage
+                exit 1
+                ;;
+            esac
+        done
+        if [[ -z $display || -z $ssh_control || -z $abush_web_forward_port ]]; then
+            printf 'tstart.sh: workspace remote requires --display, --ssh-control, and --abush-web-forward-port\n' >&2
+            exit 1
+        fi
+        validate_port "$abush_web_forward_port"
+        for app in "${apps[@]}"; do
+            remote_app_args=("$0" app "$app")
+            if [[ $app == abush ]]; then
+                remote_app_args+=(--remote-web-port "$abush_web_forward_port")
+            fi
+            printf -v remote_app_command '%q ' "${remote_app_args[@]}"
+            kitten @ launch --allow-remote-control --keep-focus \
+                ssh -S "$ssh_control" -tt "$display" "$remote_app_command"
+        done
+        ;;
+    *)
+        usage
         exit 1
-    fi
-    for app in "${apps[@]}"; do
-        kitten @ launch --allow-remote-control --keep-focus ssh -S "$SSH_MASTER_CTRL" -tt "$SSH_SERVER" "$0" "$app"
-    done
+        ;;
+    esac
     ;;
-emacs)
-    exec startemacs
-    ;;
-htop)
-    exec starthtop
-    ;;
-lvim)
-    exec startlvim
-    ;;
-crush)
-    exec startcrush-tmux
-    ;;
-abush)
-    exec startabush
+app)
+    app=${1:-}
+    shift || true
+    case "$app" in
+    emacs)
+        [[ $# -eq 0 ]] || { usage; exit 1; }
+        exec startemacs
+        ;;
+    htop)
+        [[ $# -eq 0 ]] || { usage; exit 1; }
+        exec starthtop
+        ;;
+    lvim)
+        [[ $# -eq 0 ]] || { usage; exit 1; }
+        exec startlvim
+        ;;
+    crush)
+        [[ $# -eq 0 ]] || { usage; exit 1; }
+        exec startcrush-tmux
+        ;;
+    abush)
+        case "${1:-}" in
+        --local)
+            [[ $# -eq 1 ]] || { usage; exit 1; }
+            exec startabush --local
+            ;;
+        --remote-web-port)
+            require_value "$@"
+            [[ $# -eq 2 ]] || { usage; exit 1; }
+            validate_port "$2"
+            exec startabush --remote-web-port "$2"
+            ;;
+        '')
+            # Preserve the old direct `tstart.sh abush` behavior as a local launch.
+            exec startabush --local
+            ;;
+        *)
+            usage
+            exit 1
+            ;;
+        esac
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+    esac
     ;;
 *)
-    echo "usage: tstart.sh android|local|remote|emacs|htop|lvim|crush|abush [ssh_server ssh_master_ctrl]" >&2
+    usage
     exit 1
     ;;
 esac
