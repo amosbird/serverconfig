@@ -33,6 +33,9 @@ if [[ "$1" =~ $pattern ]]; then
             rm "$sock"
             rm -f /tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}
             abush_web_socket=$XDG_RUNTIME_DIR/abush/web-ingress.sock
+            if [[ ! -S $abush_web_socket ]]; then
+                "$HOME/git/abush/target/release/abush" </dev/null >/dev/null 2>&1 || true
+            fi
             if [[ ! -e $abush_web_socket ]]; then
                 abush_web_socket_status=missing
             elif [[ ! -S $abush_web_socket ]]; then
