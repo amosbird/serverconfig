@@ -1,6 +1,10 @@
 [Unit]
 Description=Reconfigure network (IOA routing, Tailscale LAN, DHCP DNS, SmartDNS)
 After=network-online.target ipset.service tailscaled.service
+# Both path units fire on the same link change. Ordering after the lease repair means a roam's repair
+# is never queued behind that roam's own reconciliation, and the reconciliation then builds policy
+# against the repaired link instead of the broken one.
+After=network-dhcp-refresh.service
 Wants=network-online.target ipset.service
 # A roam every ten to twenty-five seconds triggers this well above the default five-starts-in-ten-
 # seconds allowance, and exceeding it fails the triggering path unit, which silently stops all policy

@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
 # Behavioural fixture for the per-association lease reassertion.
 #
-# Two failure shapes were recorded on XLSMART and they need different repairs, which is why the stubs
-# below take the repair that works as a parameter:
-#
-#   - A roam leaves the station associated but unforwarded. The lease is correct and the DHCP server
-#     answers immediately, so DHCP cannot help; only rebuilding the association does. This is the
-#     common case while walking, so it has to be tried first.
-#   - A reassociation inside the carrier grace keeps a lease from another VLAN (the 2026-09-18 resume).
-#     Reassociating does not replace the lease, so a full DHCP is still needed.
-#
-# The third property is structural: acting is recorded before it happens, because every repair changes
-# link state and retriggers the hook.
+# The stubs take the repair that works as a parameter (FIXED_BY), because different segments need
+# different repairs: usually a full DHCP, occasionally only a reassociation. The ladder is renew, full
+# DHCP, then reassociate followed by another full DHCP. Acting is recorded before it happens, because
+# every repair changes link state and retriggers the hook.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -50,6 +43,9 @@ case "$1" in
     reconfigure)
         [ -z "$RECONFIGURE_FAILS" ] || exit 1
         [ "$FIXED_BY" != reconfigure ] || { printf 1 >"$ARP_ANSWERS"; printf 1 >"$FORWARDING"; }
+        # reconfigure2: only a lease taken after a reassociation works.
+        [ "$FIXED_BY" != reconfigure2 ] || [ ! -e "$REASSOCIATED_MARK" ] ||
+            { printf 1 >"$ARP_ANSWERS"; printf 1 >"$FORWARDING"; }
         ;;
 esac
 SH
@@ -57,6 +53,7 @@ cat >"$WORK/bin/iwctl" <<'SH'
 #!/bin/sh
 printf 'iwctl %s\n' "$*" >>"$ACTION_LOG"
 [ -z "$IWCTL_FAILS" ] || exit 1
+[ "$3" != connect ] || : >"$REASSOCIATED_MARK"
 [ "$3" != connect ] || [ "$FIXED_BY" != reassociate ] || { printf 1 >"$ARP_ANSWERS"; printf 1 >"$FORWARDING"; }
 SH
 cat >"$WORK/bin/iw" <<'SH'
@@ -97,6 +94,9 @@ cat >"$WORK/bin/probe" <<'SH'
 #!/bin/sh
 printf 'probe %s\n' "$*" >>"$PROBE_LOG"
 [ -z "$PROBE_UNPLACEABLE" ] || exit 2
+# PROBE_HANG names a target that never answers: the probe sleeps far past its timeout, so only an
+# early verdict from another witness can keep the run fast.
+case "$*" in *"--target ${PROBE_HANG:-none} "*) echo $$ >>"$PROBE_PIDS"; sleep 30; exit 1 ;; esac
 verdict=$(cat "$FORWARDING")
 case "$*" in
     *216.239.32.117*)
@@ -117,7 +117,7 @@ ADDRESS='3: wlan0    inet 10.36.55.44/20 scope global wlan0'
 # Two resolvers on a continuation line, the shape the awk state machine exists for.
 LEASE="   6 domain name server 202.152.254.230\n                        202.152.254.65\n"
 RENEW='renew wlan0'
-REASSOCIATE='iwctl station wlan0 disconnect,iwctl station wlan0 connect XLSMART Public'
+REASSOCIATE='iwctl station wlan0 disconnect,iwctl station wlan0 connect Example WLAN'
 RECONFIGURE='reconfigure wlan0'
 
 associate() {
@@ -139,14 +139,16 @@ run() {
         ADDR_OUTPUT="${ADDR_OUTPUT-$ADDRESS}" ACTION_LOG="$WORK/actions" \
         ARP_ANSWERS="$WORK/arp" FORWARDING="$WORK/fwd" PROBE="$WORK/bin/probe" \
         PROBE_LOG="$WORK/probes" PROBE_UNPLACEABLE="${PROBE_UNPLACEABLE-}" \
+        PROBE_HANG="${PROBE_HANG-}" PROBE_PIDS="$WORK/probe-pids" \
         FORWARDING_STATIC="${FORWARDING_STATIC-}" LEASE_FILE="${LEASE_FILE-$WORK/lease}" \
         LOGGER_LOG="${LOGGER_LOG-$WORK/logger}" \
-        FIXED_BY="${FIXED_BY-none}" \
-        LINK_SSID="${LINK_SSID-XLSMART Public}" \
+        FIXED_BY="${FIXED_BY-none}" REASSOCIATED_MARK="$WORK/reassociated-mark" \
+        LINK_SSID="${LINK_SSID-Example WLAN}" \
         RENEW_FAILS="${RENEW_FAILS-}" RECONFIGURE_FAILS="${RECONFIGURE_FAILS-}" \
         IWCTL_FAILS="${IWCTL_FAILS-}" REASSOCIATE_COOLDOWN="${REASSOCIATE_COOLDOWN-20}" \
         RECONFIGURE_LOCK="${RECONFIGURE_LOCK-$WORK/reconfigure.lock}" \
-        RENEW_SETTLE=1 REASSOCIATE_SETTLE=1 RECONFIGURE_SETTLE=1 PATH="$WORK/bin:$PATH" \
+        RENEW_SETTLE="${RENEW_SETTLE-1}" REASSOCIATE_SETTLE="${REASSOCIATE_SETTLE-1}" \
+        RECONFIGURE_SETTLE="${RECONFIGURE_SETTLE-1}" POLL_INTERVAL=0.1 PATH="$WORK/bin:$PATH" \
         UPTIME_FILE_OVERRIDE="$WORK/uptime" STATE_DIR_OVERRIDE="$WORK/state" \
         "$SCRIPT" wlan0 >/dev/null 2>&1 || rc=$?
     printf '%s' "$rc"
@@ -155,7 +157,7 @@ actions() {
     [ -r "$WORK/actions" ] || { printf ''; return; }
     paste -sd, <"$WORK/actions"
 }
-reset_actions() { rm -f "$WORK/actions"; }
+reset_actions() { rm -f "$WORK/actions" "$WORK/reassociated-mark"; }
 
 # A lease that works on this segment needs the renew and nothing else.
 segment 1 1
@@ -172,33 +174,42 @@ associate aa:bb:cc:dd:ee:01 104
 check 'unchanged association is a no-op' 0 "$(run)"
 check 'unchanged association acts on nothing' '' "$(actions)"
 
-# The roam shape: forwarding is withheld, and only rebuilding the association restores it. It must be
-# tried before DHCP, because walking produced a roam every ten to twenty-five seconds and a repair
-# that spends twelve seconds on DHCP first never lands.
+# The common shape: forwarding is withheld until the controller relearns the address, which a full
+# DHCP provides. It is tried before any reassociation, so the usual repair costs no link drop.
+reset_actions
+segment 0 0
+uptime_at 1100
+associate aa:bb:cc:dd:ee:11 2
+check 'withheld forwarding is repaired by a full DHCP' 0 "$(FIXED_BY=reconfigure run)"
+check 'full DHCP is tried before reassociating' "$RENEW,$RECONFIGURE" "$(actions)"
+
+# The rarer shape: only rebuilding the association restores forwarding. The ladder reaches it after
+# the full DHCP fails.
 reset_actions
 segment 0 0
 uptime_at 1200
 associate aa:bb:cc:dd:ee:02 2
 check 'withheld forwarding is repaired' 0 "$(FIXED_BY=reassociate run)"
-check 'reassociation is tried before DHCP' "$RENEW,$REASSOCIATE" "$(actions)"
+check 'reassociation follows a failed DHCP' "$RENEW,$RECONFIGURE,$REASSOCIATE" "$(actions)"
 
 # Reassociating creates a new association, which retriggers this hook. The cooldown is the only thing
-# between that and a reassociation loop, so an attempt inside it must fall through to DHCP.
+# between that and a reassociation loop, so an attempt inside it must be refused.
 reset_actions
 segment 0 0
 uptime_at 1205
 associate aa:bb:cc:dd:ee:05 3
-check 'a second reassociation inside the cooldown is refused' 0 "$(FIXED_BY=reconfigure run)"
-check 'cooldown skips straight to DHCP' "$RENEW,$RECONFIGURE" "$(actions)"
+check 'a second reassociation inside the cooldown is refused' 1 "$(FIXED_BY=reassociate run)"
+check 'cooldown stops the ladder after DHCP' "$RENEW,$RECONFIGURE" "$(actions)"
 
-# The resume shape: the lease belongs to another VLAN, so reassociating cannot help and the ladder has
-# to carry on to a full DHCP.
+# A segment that only works after both a reassociation and a fresh lease: the ladder ends with a
+# second full DHCP after the reassociation.
 reset_actions
 segment 0 0
 uptime_at 1400
 associate aa:bb:cc:dd:ee:03 2
-check 'lease from another segment is repaired' 0 "$(FIXED_BY=reconfigure run)"
-check 'ladder continues to a full DHCP' "$RENEW,$REASSOCIATE,$RECONFIGURE" "$(actions)"
+check 'reassociation plus a fresh lease is repaired' 0 "$(FIXED_BY=reconfigure2 run)"
+check 'ladder ends with a full DHCP after reassociating' \
+    "$RENEW,$RECONFIGURE,$REASSOCIATE,$RECONFIGURE" "$(actions)"
 
 # A reassociation to the same BSSID resets connected time. The controller dropped the client context,
 # so this is a new association even though the BSSID did not change.
@@ -234,7 +245,7 @@ segment 0 0
 uptime_at 1800
 associate aa:bb:cc:dd:ee:06 3
 check 'reassociation is available past the cooldown' 0 "$(FIXED_BY=reassociate run)"
-check 'ladder reassociates again past the cooldown' "$RENEW,$REASSOCIATE" "$(actions)"
+check 'ladder reassociates again past the cooldown' "$RENEW,$RECONFIGURE,$REASSOCIATE" "$(actions)"
 # One attempt per association: retrying here would loop, because every step changes link state.
 reset_actions
 uptime_at 1802
@@ -252,7 +263,7 @@ uptime_at 1900
 printf '99999\n' >"$WORK/state/reassociated"
 associate aa:bb:cc:dd:ee:0e 3
 check 'a stamp from a previous boot is not a cooldown' 0 "$(FIXED_BY=reassociate run)"
-check 'stale stamp still reassociates' "$RENEW,$REASSOCIATE" "$(actions)"
+check 'stale stamp still reassociates' "$RENEW,$RECONFIGURE,$REASSOCIATE" "$(actions)"
 
 # When nothing recovers the segment, that must be reported rather than reported as success.
 reset_actions
@@ -260,16 +271,16 @@ segment 0 0
 uptime_at 2000
 associate aa:bb:cc:dd:ee:07 3
 check 'unrecoverable segment reports failure' 1 "$(run)"
-check 'unrecoverable segment tried the whole ladder' "$RENEW,$REASSOCIATE,$RECONFIGURE" "$(actions)"
+check 'unrecoverable segment tried the whole ladder' \
+    "$RENEW,$RECONFIGURE,$REASSOCIATE,$RECONFIGURE" "$(actions)"
 
-# iwd being undrivable must not stop the ladder; DHCP is the only step left.
+# iwd being undrivable must not matter when DHCP alone repairs the segment.
 reset_actions
 segment 0 0
 uptime_at 2100
 associate aa:bb:cc:dd:ee:08 3
-check 'unusable iwd still reaches DHCP' 0 "$(IWCTL_FAILS=1 FIXED_BY=reconfigure run)"
-check 'ladder skips a dead iwd' \
-    "$RENEW,iwctl station wlan0 disconnect,$RECONFIGURE" "$(actions)"
+check 'unusable iwd does not block a DHCP repair' 0 "$(IWCTL_FAILS=1 FIXED_BY=reconfigure run)"
+check 'a DHCP repair never touches iwd' "$RENEW,$RECONFIGURE" "$(actions)"
 
 # A renew that cannot be delivered must not stop the escalation either.
 reset_actions
@@ -277,7 +288,7 @@ segment 0 0
 uptime_at 2200
 associate aa:bb:cc:dd:ee:09 3
 check 'undeliverable renew still escalates' 0 "$(RENEW_FAILS=1 FIXED_BY=reassociate run)"
-check 'escalation follows a failed renew' "$RENEW,$REASSOCIATE" "$(actions)"
+check 'escalation follows a failed renew' "$RENEW,$RECONFIGURE,$REASSOCIATE" "$(actions)"
 
 # The shape that made this hook report success in the middle of the 2026-09-18 13:20:17 outage: the
 # controller answers ARP at layer two while refusing to route, so a gateway that replies proves only
@@ -287,7 +298,7 @@ segment 1 0
 uptime_at 2400
 associate aa:bb:cc:dd:ee:0b 3
 check 'an answering gateway that does not forward is repaired' 0 "$(FIXED_BY=reassociate run)"
-check 'forwarding failure escalates despite ARP' "$RENEW,$REASSOCIATE" "$(actions)"
+check 'forwarding failure escalates despite ARP' "$RENEW,$RECONFIGURE,$REASSOCIATE" "$(actions)"
 
 # The probe must actually be consulted, otherwise the above passes for the wrong reason.
 if [ -s "$WORK/probes" ]; then
@@ -346,7 +357,7 @@ segment 1 0
 uptime_at 2800
 associate aa:bb:cc:dd:ee:10 3
 check 'a lease witness still detects a real outage' 0 "$(FIXED_BY=reassociate run)"
-check 'lease witness escalates when it should' "$RENEW,$REASSOCIATE" "$(actions)"
+check 'lease witness escalates when it should' "$RENEW,$RECONFIGURE,$REASSOCIATE" "$(actions)"
 
 # The witness has to be a resolver the lease advertises, on the port a resolver answers on, and it
 # has to be handed to the probe as the target. Matching the address alone would pass for a probe
@@ -373,7 +384,7 @@ segment 1 0
 uptime_at 2600
 associate aa:bb:cc:dd:ee:0d 3
 check 'a blackholed association is repaired by reassociating' 0 "$(FIXED_BY=reassociate run)"
-check 'repair never addresses a BSSID directly' "$RENEW,$REASSOCIATE" "$(actions)"
+check 'repair never addresses a BSSID directly' "$RENEW,$RECONFIGURE,$REASSOCIATE" "$(actions)"
 
 # A repair must not interleave with a policy reconciliation. Both are started by the same change to
 # /run/systemd/netif/links, and reassociating here tears down the link that reconciliation is building
@@ -402,5 +413,93 @@ else
     fail=1
 fi
 check 'repair still acts once the lock is free' "$RENEW" "$(actions)"
+
+# Witnesses are probed in parallel and the first handshake decides. A witness that never answers must
+# not hold the verdict: one hung resolver plus one answering resolver is still an immediate "forwards",
+# and the hung probe is killed rather than left behind.
+reset_actions
+segment 1 1
+uptime_at 3000
+associate aa:bb:cc:dd:ee:20 3
+: >"$WORK/probe-pids"
+before=$EPOCHREALTIME
+check 'a hung witness does not block the verdict' 0 "$(PROBE_HANG=202.152.254.230 run)"
+took=$(awk -v a="$before" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }')
+check 'a hung witness still needs only the renew' "$RENEW" "$(actions)"
+if awk -v t="$took" 'BEGIN { exit !(t < 3) }'; then
+    printf 'OK   verdict arrived in %ss despite a 30s witness\n' "$took"
+else
+    printf 'FAIL verdict waited on the hung witness (%ss)\n' "$took" >&2
+    fail=1
+fi
+sleep 0.2
+leaked=0
+while read -r pid; do
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && leaked=$((leaked + 1))
+done <"$WORK/probe-pids"
+if [ -s "$WORK/probe-pids" ] && [ "$leaked" -eq 0 ]; then
+    echo 'OK   the losing probe is killed, not leaked'
+else
+    printf 'FAIL %s probe(s) left running after the verdict (pids: %s)\n' "$leaked" \
+        "$(paste -sd' ' "$WORK/probe-pids")" >&2
+    fail=1
+fi
+
+# Every step reports its elapsed time, so an outage can be timed from the journal alone.
+reset_actions
+segment 0 0
+uptime_at 3100
+associate aa:bb:cc:dd:ee:21 3
+timing_log="$WORK/logger-timing"
+: >"$timing_log"
+check 'a timed repair succeeds' 0 "$(FIXED_BY=reconfigure LOGGER_LOG=$timing_log run)"
+if grep -Eq 'not forwarding after renew \(\+[0-9]+\.[0-9]s\)' "$timing_log" &&
+    grep -Eq 'full DHCP restored forwarding \(\+[0-9]+\.[0-9]s\)' "$timing_log"; then
+    echo 'OK   each step is logged with its elapsed time'
+else
+    printf 'FAIL steps are not timed:\n%s\n' "$(cat "$timing_log")" >&2
+    fail=1
+fi
+
+# A step is confirmed the moment it takes effect, not at the end of its settle window. With a 5s
+# window and forwarding restored by the DHCP itself, the whole run must stay far below 5s.
+reset_actions
+segment 0 0
+uptime_at 3200
+associate aa:bb:cc:dd:ee:22 3
+before=$EPOCHREALTIME
+check 'a fast repair succeeds' 0 "$(FIXED_BY=reconfigure RECONFIGURE_SETTLE=5 run)"
+took=$(awk -v a="$before" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }')
+if awk -v t="$took" 'BEGIN { exit !(t < 3) }'; then
+    printf 'OK   a repair is confirmed as soon as it lands (%ss)\n' "$took"
+else
+    printf 'FAIL the repair waited out its settle window (%ss)\n' "$took" >&2
+    fail=1
+fi
+
+# ARP is a precondition, not decoration: a gateway that does not answer ARP means the lease names a
+# gateway that is not on this segment, and a probe that happens to connect must not overrule that.
+reset_actions
+segment 0 1
+uptime_at 3300
+associate aa:bb:cc:dd:ee:23 3
+check 'a silent gateway escalates even if a probe connects' 0 "$(FIXED_BY=reconfigure run)"
+check 'silent gateway is not accepted on the probe alone' "$RENEW,$RECONFIGURE" "$(actions)"
+
+# A healthy association is confirmed on the first poll. With a 5s renew window the run must still
+# return at once; waiting out the window would delay every roam's policy reconciliation.
+reset_actions
+segment 1 1
+uptime_at 3400
+associate aa:bb:cc:dd:ee:24 3
+before=$EPOCHREALTIME
+check 'a healthy association is confirmed' 0 "$(RENEW_SETTLE=5 run)"
+took=$(awk -v a="$before" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.1f", b - a }')
+if awk -v t="$took" 'BEGIN { exit !(t < 2) }'; then
+    printf 'OK   a healthy association returns at once (%ss)\n' "$took"
+else
+    printf 'FAIL a healthy association waited out its window (%ss)\n' "$took" >&2
+    fail=1
+fi
 
 exit "$fail"

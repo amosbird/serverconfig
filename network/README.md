@@ -738,11 +738,11 @@ apply it during an active remote session. Validate the MAC and routing on the ne
 
 ### The carrier grace can keep a lease that does not belong to the attached segment
 
-XLSMART access points sit on different VLANs. `f8:c6:50:59:08:0b` leases `10.36.43.23/21` via
-`10.36.40.1`; `f8:c6:50:58:b8:0b` leases `10.36.55.44/20` via `10.36.48.1`. A reassociation inside the
-grace period keeps the current lease and sends no DHCP, and nothing else checks whether that lease is
-valid behind the new access point. When it is not, the machine holds an address and a gateway from a
-segment it is no longer on, which is a total blackhole that looks exactly like a physical fault.
+Access points of one SSID can sit on different VLANs, each leasing its own subnet and gateway. A
+reassociation inside the grace period keeps the current lease and sends no DHCP, and nothing else
+checks whether that lease is valid behind the new access point. When it is not, the machine holds an
+address and a gateway from a segment it is no longer on, which is a total blackhole that looks
+exactly like a physical fault.
 
 Resume is the reliable way to hit this. The kernel deauthenticates with reason 3 before suspending,
 networkd processes that carrier loss only after resume, and iwd reassociates within the same second.
@@ -753,39 +753,47 @@ worked only because that reconnect outlasted the grace and forced a full DHCP, w
 points in different VLANs is the same failure without the suspend.
 
 `scripts/network-dhcp-refresh` closes this: on every new association it renews, then confirms the
-gateway named by the lease answers ARP on this segment, and replaces the lease with a full DHCP
-(`networkctl reconfigure`) when it does not. A forced reassociation on 2026-09-18 at 12:34:41
-reproduced the kept-lease state and the hook repaired it in eight seconds unattended.
+gateway named by the lease answers ARP and that the segment forwards, and replaces the lease with a
+full DHCP (`networkctl reconfigure`) when it does not. A forced reassociation on 2026-09-18 at
+12:34:41 reproduced the kept-lease state and the hook repaired it in eight seconds unattended.
 
-### Roaming leaves the station unforwarded, and only reassociating rebuilds it
+### Roaming leaves the station unforwarded, and the repair is timed to the second
 
-A valid lease is not sufficient. On 2026-09-18 the roams at 12:41:04, 12:41:35, and 12:42:08 each kept
-a valid lease, and the full DHCP the hook ran after each one was answered immediately with the same
-`10.36.55.44/20` via `10.36.48.1`. The gateway nonetheless stayed silent to ARP for about 100 seconds.
-DHCP is precisely the traffic the controller still relays while it withholds forwarding, so no amount
-of it recovers this state. What did recover it was iwd going `connected → disconnecting →
-disconnected → connecting → connected` at 12:42:40: the gateway answered seven seconds later, and the
-roam at 12:42:52 was immediately healthy. The controller's per-station authorisation is what has to be
-rebuilt, and a roam does not rebuild it.
+A valid lease is not sufficient. After a roam the controller can keep relaying DHCP while it refuses
+to forward anything else, so the gateway answers neither ARP nor routed traffic. Two different things
+have restored forwarding:
 
-The hook therefore repairs this with a forced reassociation through `iwctl`, measured at two seconds to
-a working gateway. `iwctl station disconnect` also clears iwd's autoconnect, so the reconnect is
-explicit and uses the SSID read from the current link.
+- **A full DHCP** (`networkctl reconfigure`). From 2026-10-01 to 2026-11-02 every one of 33 repairs
+  was a full DHCP; the reassociation tried before it never helped once. The controller appears to
+  need to relearn the station's address from a fresh DORA.
+- **A reassociation** through `iwctl`, which rebuilt the controller's per-station authorisation on
+  2026-09-18 when DHCP alone did not.
 
-Reassociating comes before DHCP in the ladder, which is the opposite of the obvious order and is
-deliberate. Roaming is the common case while walking and DHCP provably cannot repair it, so the twelve
-seconds an earlier revision spent on DHCP first were twelve seconds of downtime in the case that
-happens most. DHCP stays in the ladder because it is the only thing that replaces a lease from another
-VLAN, which reassociating inside the carrier grace does not.
+The ladder per association is therefore: renew, confirm; full DHCP, confirm; reassociate, confirm;
+full DHCP again, confirm. Each step is attempted at most once, and every step logs its elapsed time,
+for example `not forwarding after renew (+3.1s); running a full DHCP` and
+`full DHCP restored forwarding (+4.4s)`, so an outage can be timed straight from the journal.
 
-The full ladder per association, at most once each: renew, confirm; reassociate, confirm; full DHCP,
-confirm. The effective repair now lands around five seconds, with a worst case near nineteen.
+Confirmation is built to answer as soon as forwarding returns:
+
+- every witness is probed in parallel, the first handshake decides, and the losing probes are killed;
+- each probe times out after one second, and a step is re-polled every half second until its settle
+  window (3s after a renew, 6s after a DHCP or reassociation) ends;
+- `network-reconfigure.service` is ordered `After=network-dhcp-refresh.service`. Both path units fire
+  on the same link change, and without the ordering the reconciliation usually took the shared lock
+  first, so the repair waited behind it.
+
+On 2026-11-02 at 16:39:19 the old ladder took 32 seconds: 17 waiting behind the reconciliation, then
+renew, a futile reassociation and 8 seconds of settle before the full DHCP that fixed it. The same
+sequence now reaches the full DHCP after the renew window, about three seconds after the roam.
+
+`iwctl station disconnect` also clears iwd's autoconnect, so the reconnect is explicit and uses the
+SSID read from the current link.
 
 `REASSOCIATE_COOLDOWN` defaults to 20 seconds and is the only thing preventing a reassociation loop: a
-forced reassociation produces a new association, which retriggers the hook. The floor is deliberately
-short, because walking through the building produced a roam every ten to twenty-five seconds and a
-repair rate-limited below the roam rate never catches up. One reassociation costs two seconds, so a
-20-second floor bounds it under a tenth of the time even in the worst case.
+forced reassociation produces a new association, which retriggers the hook. Walking through a
+building produced a roam every ten to twenty-five seconds, so the floor stays short; inside it the
+ladder stops after the full DHCP and reports failure.
 
 ### Do not try to stop iwd from roaming
 

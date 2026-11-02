@@ -684,13 +684,13 @@ if [ "$(grep -Fxc 'AddressRandomization=network' "$iwd_config")" -ne 1 ]; then
 else
     echo 'OK   iwd uses stable per-network MAC addresses'
 fi
-# Roaming on XLSMART leaves the station associated but unforwarded, and the tempting response is to
+# Roaming can leave the station associated but unforwarded, and the tempting response is to
 # stop iwd from roaming. It is the wrong response and was tried on 2026-09-18: the eleven roams that
 # day were the low-signal path working correctly, one `roam-info` per `roam-scan` with no beacon or
 # packet loss, which is what a station walking through a building is supposed to do. Suppressing it
 # holds a dying access point instead of moving, and moving the RSSI thresholds does not even change the
 # behaviour, because the roams happened above the -76 dBm default. The repair belongs in
-# scripts/network-dhcp-refresh, which reassociates to rebuild the controller's authorisation.
+# scripts/network-dhcp-refresh, which renews, runs a full DHCP and only then reassociates.
 reject 'iwd roaming is not suppressed to work around a controller that stops forwarding' \
     '^(DisableRoamingScan|RoamThreshold|RoamThreshold5G|CriticalRoamThreshold|CriticalRoamThreshold5G)=' \
     "$iwd_config"
@@ -763,6 +763,11 @@ if grep -Eq '^IgnoreCarrierLoss=' "$wireless_config"; then
     # being torn down underneath policy that is being built against it.
     grep -Fq '/run/lock/network-reconfigure.lock' scripts/network-dhcp-refresh ||
         dhcp_refresh_missing+=('network-dhcp-refresh can reassociate during a policy reconciliation')
+    # The same link change starts both units. Without this ordering systemd starts them together and
+    # the reconciliation usually wins the lock, so a roam's repair waits behind it; on 2026-11-02 that
+    # was 17 of the 32 seconds a roam was unforwarded.
+    grep -Fxq 'After=network-dhcp-refresh.service' network/systemd/network-reconfigure.service ||
+        dhcp_refresh_missing+=('a lease repair can be queued behind its own policy reconciliation')
     # The controller answers ARP while refusing to route, so an ARP reply proves the lease names the
     # right segment and nothing else. On 2026-09-18 at 13:20:17 that made the hook report success while
     # the station was unforwarded, and the outage ran another 78 seconds. Forwarding has to be measured
