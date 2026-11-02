@@ -29,6 +29,8 @@ if [[ "$1" =~ $pattern ]]; then
         read -r remote_abush_web_socket_status
     } < <(
         ssh "${ssh_options[@]}" "$ssh_target" '
+            source "$HOME/.config/environment.sh"
+            source "$HOME/.config/path.sh" remote
             read sock < <($HOME/scripts/prelogin)
             rm "$sock"
             rm -f /tmp/{clipservice.sock,ssh_auth_sock,dbus_sock,kitty_sock}
