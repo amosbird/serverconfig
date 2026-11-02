@@ -2,13 +2,21 @@
 
 # Wrapper around the versioned SmartGateAgent ELF.
 #
-# Two constraints from the vendor binary / ngnclient watchdog:
-# 1. Config and assets are resolved from cwd / argv0, so we must run with
-#    cwd=/usr/lib/iOA/bin and argv0=SmartGateAgent (no directory component).
-# 2. ngnclient probes liveness with `killall SmartGateAgent`, which matches
+# The agent must look exactly as the vendor launches it
+# (`/usr/lib/iOA/bin/SmartGateAgent -logpath=...` from iOA.bin), because two
+# processes look for it, and each looks in a different place:
+# 1. iOA.bin probes liveness with `killall SmartGateAgent`, which matches
 #    /proc/*/comm. comm is the executable basename truncated to 15 chars, so
 #    exec'ing SmartGateAgent.bin yields comm=SmartGateAgent. and killall never
 #    finds it. Exec a same-FS hardlink whose basename is exactly SmartGateAgent.
+# 2. iOALinux (the GUI, since 1.0.3.88) scans /proc/*/cmdline and only counts
+#    the agent when argv[0] is that full launch path. With a bare
+#    argv[0]=SmartGateAgent it logged `No SmartGateAgent Runing` every 5s and
+#    re-sent the agent3 mode each time. That made the agent tear down and rebuild
+#    tables 20/230 and the tun0 default 17k times a day.
+# The agent resolves conf.yaml from cwd, which is why the cwd is the bin dir.
+# Assets such as error.html and root.crt resolve from the executable's real
+# directory, .real, where they have never existed under any argv[0].
 
 export PATH=/home/amos/scripts/overrides:$PATH
 
@@ -19,6 +27,7 @@ lock=${SMARTGATE_LOCK_FILE:-/run/smartgateagent-wrapper.lock}
 bindir=${SMARTGATE_BINDIR:-/usr/lib/iOA/bin}
 realdir=${SMARTGATE_REALDIR:-$bindir/.real}
 real=$realdir/SmartGateAgent
+argv0=${SMARTGATE_ARGV0:-/usr/lib/iOA/bin/SmartGateAgent}
 
 exec 9>"$lock"
 flock -n 9 || exit 0
@@ -33,4 +42,4 @@ target=$(readlink -f "$agent")
 ln -f "$target" "$real"
 
 cd "$bindir" || exit 1
-exec -a SmartGateAgent "$real" "$@"
+exec -a "$argv0" "$real" "$@"

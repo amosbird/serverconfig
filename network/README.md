@@ -1239,6 +1239,7 @@ bash network/test-ip-override.sh
 bash network/test-smartgate-underlay.sh
 bash network/test-ioa-wrapper.sh
 bash network/test-ioa-user-timeout.sh
+bash network/test-smartgate-argv0.sh
 bash network/test-tun-underlay.sh
 sudo -n bash network/test-nft-direct-routing.sh
 bash network/test-smartdns-no-cache.sh
