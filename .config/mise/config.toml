@@ -10,7 +10,7 @@ shfmt = "latest"
 "github:gsamokovarov/jump" = "0.67.0"
 "github:docker/docker-credential-helpers" = { version = "latest", matching = "docker-credential-pass", bin = "docker-credential-pass" }
 atuin = "latest"
-"github:fish-shell/fish-shell" = { version = "latest", exe = "fish" }
+"github:fish-shell/fish-shell" = "latest"
 "github:kovidgoyal/kitty" = { version = "latest", matching = "kitten-", bin = "kitten" }
 sqlc = "latest"
 "github:amosbird/clipserver" = "latest"
@@ -20,8 +20,11 @@ micromamba = "latest"
 gopass = "latest"
 uv = "latest"
 gh = "latest"
-"github:git-lfs/git-lfs" = { version = "latest", exe = "git-lfs" }
+"github:git-lfs/git-lfs" = { version = "latest", filter_bins = "git-lfs" }
 
 [settings]
 experimental = true
 libc = "musl"
+# ~/.local/bin links straight into install dirs; only scripts/mise-sync may remove
+# versions, because it relinks right after.
+upgrade.auto_prune = false

@@ -122,17 +122,4 @@ fi
 
 "$HOME/scripts/update-mambatools"
 
-if [[ -x "$HOME/.local/bin/mise" ]]; then
-    export GITHUB_TOKEN=${GITHUB_TOKEN:-$(pass show github/api-token 2>/dev/null)}
-    "$HOME/.local/bin/mise" self-update -y
-    "$HOME/.local/bin/mise" upgrade -y
-    "$HOME/.local/bin/mise" prune -y
-    "$HOME/.local/bin/mise" bin-paths | while IFS= read -r bin; do
-        [[ -d "$bin" ]] || continue
-        for f in "$bin"/*; do
-            if [[ -f "$f" && -x "$f" ]]; then
-                ln -sf "$f" "$HOME/.local/bin/"
-            fi
-        done
-    done
-fi
+"$HOME/scripts/mise-sync"

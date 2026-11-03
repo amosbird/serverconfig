@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+# Bring mise tools to their configured versions and expose them in ~/.local/bin.
+#
+# The binaries are linked directly (bypassing shims) and the link targets embed
+# versioned paths, so a link breaks whenever the version it points at is removed.
+# Removal only happens here (`upgrade.auto_prune = false` in the mise config), and
+# only after the links have been moved to the new versions.
+#
+# The script must stay correct if it is killed at any point (SIGKILL, power loss),
+# when no trap runs:
+# - an interrupted install is marked incomplete by mise and redone on the next run;
+# - old versions still exist until `prune`, and links already point past them by then;
+# - each link is replaced atomically via rename, and stale links are removed only
+#   after all new ones are in place, so every link is always old-or-new, never missing.
+# The EXIT trap only covers ordinary failures, so a failed install still relinks.
+
+set -euo pipefail
+
+MISE_BIN="$HOME/.local/bin/mise"
+BIN_DIR="$HOME/.local/bin"
+
+# Point $2 at $1 by renaming a temporary link over it.
+link_atomic() {
+    local tmp
+    tmp="$(dirname "$2")/.$(basename "$2").mise-sync-tmp"
+    ln -sfn "$1" "$tmp"
+    mv -Tf "$tmp" "$2"
+}
+
+link_bins() {
+    local -A wanted=()
+    local bins bin f
+    # Temporary links left behind by a run that was killed mid-rename.
+    rm -f "$BIN_DIR"/.*.mise-sync-tmp
+    # Without a valid list, keep the existing links rather than deleting them all.
+    bins=$("$MISE_BIN" bin-paths) || return
+    while IFS= read -r bin; do
+        [[ -d "$bin" ]] || continue
+        # Resolve aliases such as `latest`: `mise upgrade` repoints them at once,
+        # while the concrete version directory survives until `prune`.
+        bin=$(realpath "$bin")
+        for f in "$bin"/*; do
+            if [[ -f "$f" && -x "$f" ]]; then
+                link_atomic "$f" "$BIN_DIR/${f##*/}"
+                wanted[${f##*/}]=1
+            fi
+        done
+    done <<< "$bins"
+    (( ${#wanted[@]} )) || return
+    for f in "$BIN_DIR"/*; do
+        if [[ -L "$f" && -z "${wanted[${f##*/}]:-}" && "$(readlink "$f")" == */.local/share/mise/installs/* ]]; then
+            rm -f "$f"
+        fi
+    done
+    link_atomic gopass "$BIN_DIR/pass"
+}
+
+export GITHUB_TOKEN=${GITHUB_TOKEN:-$(pass show github/api-token 2>/dev/null || true)}
+
+if [[ -x "$MISE_BIN" ]]; then
+    "$MISE_BIN" self-update -y
+else
+    mkdir -p "$BIN_DIR"
+    curl -fsSL https://mise.run | MISE_INSTALL_PATH="$MISE_BIN" sh
+fi
+
+trap link_bins EXIT
+"$MISE_BIN" install -y
+"$MISE_BIN" upgrade -y
+link_bins
+"$MISE_BIN" prune -y

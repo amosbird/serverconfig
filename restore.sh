@@ -133,37 +133,7 @@ if [[ $# == 0 ]]; then
     echo -e "5\ny\n" | gpg --command-fd 0 --expert --edit-key C3BFA922206F41DA trust
 fi
 
-MISE_BIN="$HOME/.local/bin/mise"
-export GITHUB_TOKEN=${GITHUB_TOKEN:-$(pass show github/api-token 2>/dev/null)}
-if [[ -x "$MISE_BIN" ]]; then
-    "$MISE_BIN" self-update -y
-else
-    mkdir -p "$HOME/.local/bin"
-    curl -fsSL https://mise.run | MISE_INSTALL_PATH="$MISE_BIN" sh
-fi
-"$MISE_BIN" install -y
-"$MISE_BIN" upgrade -y
-"$MISE_BIN" prune -y
-
-# Remove links left behind by pruned mise versions or an old home prefix.
-for f in "$HOME/.local/bin"/*; do
-    if [[ -L "$f" && ! -e "$f" ]]; then
-        target=$(readlink "$f")
-        if [[ "$target" == */.local/share/mise/installs/* ]]; then
-            rm -f "$f"
-        fi
-    fi
-done
-
-# Link mise-installed binaries directly to ~/.local/bin (bypass shims)
-"$MISE_BIN" bin-paths | while read -r bin; do
-    for f in "$bin"/*; do
-        if [[ -f "$f" && -x "$f" ]]; then
-            ln -sf "$f" "$HOME/.local/bin/"
-        fi
-    done
-done
-ln -sf gopass "$HOME/.local/bin/pass"
+"$HOME/scripts/mise-sync"
 
 "$HOME/scripts/update-mambatools"
 
