@@ -57,7 +57,9 @@ fi
 
 command_name=${1:-}
 shift || true
-apps=(emacs htop crush abush)
+# Launch order is the kitty OS-window id: 1 is the amos window that falls
+# through below, then emacs, htop, abush. alt+0/+/=/+9 follow that order.
+apps=(emacs htop abush)
 
 # Compatibility with the old top-level modes. New callers should use the
 # explicit workspace/app scopes above.

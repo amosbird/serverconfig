@@ -47,9 +47,13 @@ assert_fails() {
     --ssh-port 2222 \
     --abush-web-forward-port 34567
 
-[[ $(wc -l < "$TEST_LOG") -eq 4 ]]
+[[ $(wc -l < "$TEST_LOG") -eq 3 ]]
 grep -Fq -- 'ssh -S /tmp/control\ path -p 2222 -tt user@host' "$TEST_LOG"
 grep -Fq -- '--remote-web-port\ 34567' "$TEST_LOG"
+if grep -Fq -- 'app crush' "$TEST_LOG"; then
+    echo 'workspace remote unexpectedly launched crush' >&2
+    exit 1
+fi
 
 : > "$TEST_LOG"
 "$ROOT/scripts/tstart.sh" app abush --remote-web-port 45678
@@ -64,7 +68,7 @@ grep -Fq -- 'app abush --local' "$TEST_LOG"
     --display host \
     --ssh-control /tmp/control \
     --without-abush
-[[ $(wc -l < "$TEST_LOG") -eq 3 ]]
+[[ $(wc -l < "$TEST_LOG") -eq 2 ]]
 if grep -Fq -- 'app abush' "$TEST_LOG"; then
     echo 'workspace --without-abush unexpectedly launched Abush' >&2
     exit 1
@@ -72,7 +76,7 @@ fi
 
 : > "$TEST_LOG"
 "$ROOT/scripts/tstart.sh" remote legacy-host '/tmp/legacy control'
-[[ $(wc -l < "$TEST_LOG") -eq 3 ]]
+[[ $(wc -l < "$TEST_LOG") -eq 2 ]]
 grep -Fq -- 'ssh -S /tmp/legacy\ control -tt legacy-host' "$TEST_LOG"
 if grep -Fq -- 'app abush' "$TEST_LOG"; then
     echo 'legacy two-argument remote unexpectedly launched Abush' >&2
@@ -81,7 +85,7 @@ fi
 
 : > "$TEST_LOG"
 "$ROOT/scripts/tstart.sh" remote legacy-host /tmp/legacy-control 23456
-[[ $(wc -l < "$TEST_LOG") -eq 4 ]]
+[[ $(wc -l < "$TEST_LOG") -eq 3 ]]
 grep -Fq -- 'app\ abush\ --remote-web-port\ 23456' "$TEST_LOG"
 
 assert_fails 'invalid port: 0' app abush --remote-web-port 0
