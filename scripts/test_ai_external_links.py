@@ -118,7 +118,7 @@ for (const [page, link, expected] of cases) {{
         self.assertNotIn("scripting", manifest["permissions"])
         self.assertNotIn("activeTab", manifest["permissions"])
         self.assertIn("chrome.commands.onCommand", background)
-        self.assertIn('sendNativeRequest({', background)
+        self.assertIn('sendNativeRequest("external_links", "scroll", {', background)
         self.assertIn("connectNative", background)
         self.assertIn("url: tab?.url", background)
         self.assertIn("scrollQueues", background)
@@ -155,6 +155,47 @@ for (const [page, link, expected] of cases) {{
         self.assertNotIn("downloads", manifest["permissions"])
         self.assertNotIn("offscreen", manifest["permissions"])
         self.assertNotIn('message.get("command") == "key"', HOST.read_text())
+    def test_native_dispatcher_correlates_out_of_order_responses(self):
+        background = CONTENT.with_name("background.js")
+        script = f"""
+const {{NativeDispatcher}} = require({json.dumps(str(background))});
+global.crypto = require('crypto').webcrypto;
+class Signal {{ constructor() {{ this.listeners = []; }} addListener(f) {{ this.listeners.push(f); }} }}
+const port = {{onMessage: new Signal(), onDisconnect: new Signal(), sent: [],
+    postMessage(message) {{ this.sent.push(message); }}}};
+const dispatcher = new NativeDispatcher(() => port, 1000);
+const first = dispatcher.request('test', 'first', {{}});
+const second = dispatcher.request('test', 'second', {{}});
+port.onMessage.listeners[0]({{version: 1, reply_to: port.sent[1].id, ok: true,
+    payload: {{value: 2}}}});
+port.onMessage.listeners[0]({{version: 1, reply_to: port.sent[0].id, ok: true,
+    payload: {{value: 1}}}});
+Promise.all([first, second]).then(values => {{
+    if (JSON.stringify(values) !== JSON.stringify([{{value: 1}}, {{value: 2}}])) process.exit(1);
+    if (dispatcher.pending.size !== 0) process.exit(2);
+}}).catch(() => process.exit(3));
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_native_dispatcher_rejects_all_once_on_disconnect(self):
+        background = CONTENT.with_name("background.js")
+        script = f"""
+const {{NativeDispatcher}} = require({json.dumps(str(background))});
+global.crypto = require('crypto').webcrypto;
+class Signal {{ constructor() {{ this.listeners = []; }} addListener(f) {{ this.listeners.push(f); }} }}
+const port = {{onMessage: new Signal(), onDisconnect: new Signal(),
+    postMessage() {{}}}};
+const dispatcher = new NativeDispatcher(() => port, 1000);
+let rejected = 0;
+const requests = [dispatcher.request('test', 'a', {{}}), dispatcher.request('test', 'b', {{}})]
+    .map(request => request.catch(() => rejected++));
+port.onDisconnect.listeners[0]();
+port.onDisconnect.listeners[0]();
+Promise.all(requests).then(() => {{
+    if (rejected !== 2 || dispatcher.pending.size !== 0) process.exit(1);
+}});
+"""
+        subprocess.run(["node", "-e", script], check=True)
 
 
 class NativeHostTest(unittest.TestCase):
@@ -163,6 +204,23 @@ class NativeHostTest(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("ai_external_links_host", HOST)
         cls.host = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.host)
+
+    def test_envelope_validation_and_correlation(self):
+        request = {
+            "version": 1,
+            "id": "request-1",
+            "service": "abush_browser",
+            "operation": "list_remotes",
+            "payload": {},
+        }
+        self.assertEqual(self.host.validate_request(request), request)
+        self.assertEqual(
+            self.host.response("request-1", payload={"value": 1}),
+            {"version": 1, "reply_to": "request-1", "ok": True,
+             "payload": {"value": 1}},
+        )
+        with self.assertRaises(self.host.EnvelopeError):
+            self.host.validate_request({**request, "extra": True})
 
     @mock.patch("subprocess.Popen")
     def test_authentication_urls_stay_in_the_calling_browser(self, popen):
