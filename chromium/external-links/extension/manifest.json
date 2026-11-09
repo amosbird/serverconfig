@@ -8,8 +8,12 @@
         "nativeMessaging",
         "notifications",
         "tabs",
+        "debugger",
         "declarativeNetRequest"
     ],
+    "action": {
+        "default_title": "Open Abush browser workspace"
+    },
     "background": {
         "service_worker": "background.js"
     },

@@ -114,15 +114,15 @@ for (const [page, link, expected] of cases) {{
             manifest["commands"]["scrollToBottom"]["suggested_key"]["default"],
             "Alt+Shift+End",
         )
-        self.assertNotIn("debugger", manifest["permissions"])
-        self.assertNotIn("scripting", manifest["permissions"])
-        self.assertNotIn("activeTab", manifest["permissions"])
+        self.assertIn("debugger", manifest["permissions"])
+        for dangerous in ("scripting", "activeTab", "downloads", "offscreen", "clipboardWrite"):
+            self.assertNotIn(dangerous, manifest["permissions"])
         self.assertIn("chrome.commands.onCommand", background)
         self.assertIn('sendNativeRequest("external_links", "scroll", {', background)
         self.assertIn("connectNative", background)
         self.assertIn("url: tab?.url", background)
         self.assertIn("scrollQueues", background)
-        self.assertNotIn("chrome.debugger", background)
+        self.assertIn("chrome.debugger", background)
         self.assertIn('"Input.dispatchKeyEvent"', HOST.read_text())
         self.assertIn('"ScrollToBeginningOfDocument"', HOST.read_text())
         self.assertIn('"ScrollToEndOfDocument"', HOST.read_text())

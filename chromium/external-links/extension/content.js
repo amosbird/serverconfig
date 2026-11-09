@@ -23,9 +23,14 @@ function shouldRouteLink(pageUrl, linkUrl) {
     }
 }
 
+let ownedWorkspace = false;
+
 if (typeof document !== "undefined") {
+    chrome.runtime.sendMessage({query: "abush_owned_window"}, response => {
+        ownedWorkspace = response?.owned === true;
+    });
     document.addEventListener("click", event => {
-        if (event.defaultPrevented || event.button !== 0) return;
+        if (ownedWorkspace || event.defaultPrevented || event.button !== 0) return;
         const link = event.target.closest("a[href]");
         if (!link || !shouldRouteLink(location.href, link.href)) return;
         event.preventDefault();

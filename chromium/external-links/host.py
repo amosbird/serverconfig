@@ -30,7 +30,7 @@ except ImportError:
 
 MAX_MESSAGE_SIZE = 1024 * 1024
 NATIVE_ENVELOPE_VERSION = 1
-PEER_PROTOCOL_VERSION = 1
+PEER_PROTOCOL_VERSION = 2
 REMOTE_KEY_RE = re.compile(r"r_[A-Za-z0-9]{8,64}\Z")
 CONNECTION_ID_RE = re.compile(r"c_[A-Za-z0-9]{8,64}\Z")
 REMOTE_SOCKET_SUFFIX = "/abush/browser-peer.sock"
@@ -605,8 +605,10 @@ class RemotePeer:
         self.connected = False
         self.principal_id = None
         self.executor_fence = None
+        self.default_window = None
         self.capabilities = {}
         self.pending = {}
+        self.topology_pending = {}
         self.reader = None
 
     @property
@@ -622,6 +624,8 @@ class RemotePeer:
         }
         if self.principal_id is not None:
             state["principal_id"] = self.principal_id
+        if self.default_window is not None:
+            state["default_window"] = self.default_window
         return state
 
     def connect(self, timeout=1.0):
@@ -656,24 +660,129 @@ class RemotePeer:
             self.close(emit=False)
             return False
 
+    @staticmethod
+    def _exact_fields(value, fields):
+        return isinstance(value, dict) and set(value) == set(fields)
+
     def _accept_hello(self, message):
-        if message.get("type") != "hello_accepted":
+        if not self._exact_fields(message, {
+            "type", "request_id", "principal_id", "executor_fence", "default_window"
+        }) or message.get("type") != "hello_accepted":
             raise ValueError("peer rejected hello")
         request_id = message.get("request_id")
         principal_id = message.get("principal_id")
         fence = message.get("executor_fence")
+        default_window = message.get("default_window")
         if not isinstance(request_id, str) or not request_id:
             raise ValueError("invalid hello request id")
         if not isinstance(principal_id, str) or not principal_id:
             raise ValueError("invalid principal id")
-        if not isinstance(fence, (str, int)) or isinstance(fence, bool):
+        if not self._valid_executor_fence(fence):
             raise ValueError("invalid executor fence")
-        capabilities = message.get("capabilities", {})
-        if not isinstance(capabilities, dict):
-            raise ValueError("invalid peer capabilities")
+        if not self._valid_window_ref(default_window):
+            raise ValueError("invalid default window")
         self.principal_id = principal_id
         self.executor_fence = fence
-        self.capabilities = capabilities
+        self.default_window = default_window
+
+    @staticmethod
+    def _valid_executor_fence(value):
+        return isinstance(value, dict) and set(value) == {"executor_id", "epoch"} and \
+            isinstance(value["executor_id"], str) and value["executor_id"] and \
+            isinstance(value["epoch"], int) and not isinstance(value["epoch"], bool) and \
+            value["epoch"] > 0
+
+    @staticmethod
+    def _valid_window_ref(value):
+        return isinstance(value, dict) and set(value) == {
+            "workspace_id", "window_id", "generation"
+        } and all(isinstance(value[key], str) and value[key]
+                  for key in ("workspace_id", "window_id")) and \
+            isinstance(value["generation"], int) and not isinstance(value["generation"], bool)
+
+    @classmethod
+    def _valid_page_ref(cls, value):
+        return isinstance(value, dict) and set(value) == {"window", "page_id", "generation"} and \
+            cls._valid_window_ref(value["window"]) and \
+            isinstance(value["page_id"], str) and value["page_id"] and \
+            isinstance(value["generation"], int) and not isinstance(value["generation"], bool)
+
+    def _handle_topology_response(self, message):
+        if not self._exact_fields(message, {"type", "request_id", "result"}):
+            raise ValueError("invalid topology response")
+        request_id = message.get("request_id")
+        pending = self.topology_pending.get(request_id)
+        if pending is None:
+            raise ValueError("uncorrelated topology response")
+        result = message.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("invalid topology response")
+        outcome = result.get("outcome")
+        expected = {
+            "page_created": {"outcome", "page"},
+            "page_moved_outside": {"outcome"},
+            "rejected": {"outcome", "code"},
+        }.get(outcome)
+        if expected is None or set(result) != expected or \
+                outcome == "page_created" and not self._valid_page_ref(result.get("page")) or \
+                outcome == "rejected" and not isinstance(result.get("code"), str):
+            raise ValueError("invalid topology response")
+        pending["result"] = result
+        pending["event"].set()
+
+    def topology_request(self, message, timeout=3.0):
+        request_id = message["request_id"]
+        if request_id in self.topology_pending:
+            raise ValueError("duplicate topology request")
+        pending = {"event": threading.Event()}
+        self.topology_pending[request_id] = pending
+        try:
+            self.send(message)
+            if not pending["event"].wait(timeout):
+                raise TimeoutError("topology response timed out")
+            return pending["result"]
+        finally:
+            self.topology_pending.pop(request_id, None)
+
+    def register_page(self, window, page_id):
+        if window != self.default_window or not isinstance(page_id, str) or not page_id:
+            raise ValueError("invalid managed page registration")
+        result = self.topology_request({
+            "type": "managed_page_created",
+            "request_id": uuid.uuid4().hex,
+            "executor_fence": self.executor_fence,
+            "window": window,
+            "page_id": page_id,
+        })
+        if result.get("outcome") != "page_created" or not self._valid_page_ref(result.get("page")):
+            raise ValueError(f"page registration rejected: {result.get('outcome')}")
+        return result["page"]
+
+    def moved_outside(self, page):
+        if not self._valid_page_ref(page):
+            raise ValueError("invalid page ref")
+        result = self.topology_request({
+            "type": "managed_page_moved_outside",
+            "request_id": uuid.uuid4().hex,
+            "executor_fence": self.executor_fence,
+            "page": page,
+        })
+        if result.get("outcome") != "page_moved_outside":
+            raise ValueError(f"move rejected: {result.get('outcome')}")
+
+    def complete(self, request_id, effect_id, fence, completion):
+        if fence != self.executor_fence or completion not in {"applied", "not_applied", "unknown"}:
+            raise ValueError("invalid executor completion")
+        pending = self.pending.pop(effect_id, None)
+        if pending is None or pending["request_id"] != request_id:
+            raise ValueError("uncorrelated executor completion")
+        self.send({
+            "type": "completion",
+            "request_id": request_id,
+            "effect_id": effect_id,
+            "executor_fence": fence,
+            "completion": completion,
+        })
 
     def send(self, message):
         data = encode_peer_message(message)
@@ -701,12 +810,16 @@ class RemotePeer:
         message_type = message.get("type")
         normalized_type = message_type.lower() if isinstance(message_type, str) else None
         if normalized_type == "ping":
-            request_id = message.get("request_id")
-            if not isinstance(request_id, str):
+            if not self._exact_fields(message, {"type", "request_id", "ping_id"}):
                 raise ValueError("invalid ping")
-            pong = {"type": self._wire_type(message, "pong"), "request_id": request_id}
-            if "timestamp" in message:
-                pong["timestamp"] = message["timestamp"]
+            request_id = message.get("request_id")
+            if not isinstance(request_id, str) or not request_id:
+                raise ValueError("invalid ping")
+            pong = {"type": "pong", "request_id": request_id}
+            ping_id = message.get("ping_id")
+            if not isinstance(ping_id, str) or not ping_id:
+                raise ValueError("invalid ping id")
+            pong["ping_id"] = ping_id
             self.send(pong)
             return
         if normalized_type == "execute":
@@ -715,51 +828,80 @@ class RemotePeer:
         if normalized_type == "cancel":
             self._handle_cancel(message)
             return
+        if normalized_type == "topology_response":
+            self._handle_topology_response(message)
+            return
         raise ValueError("unknown peer message")
 
-    def _correlation(self, message):
+    @classmethod
+    def _valid_command(cls, command):
+        if not isinstance(command, dict):
+            return False
+        kind = command.get("command")
+        if kind == "navigate":
+            return set(command) == {"command", "page", "url"} and \
+                cls._valid_page_ref(command["page"]) and \
+                isinstance(command["url"], str) and command["url"]
+        if kind == "close_page":
+            return set(command) == {"command", "page"} and cls._valid_page_ref(command["page"])
+        if kind == "close_window":
+            return set(command) == {"command", "window"} and \
+                cls._valid_window_ref(command["window"])
+        return False
+
+    def _correlation(self, message, expected_fields):
+        if not self._exact_fields(message, expected_fields):
+            raise ValueError("invalid peer correlation")
         request_id = message.get("request_id")
-        effect = message.get("effect")
-        fence = message.get("executor_fence", message.get("fence"))
-        if not isinstance(request_id, str) or not request_id or effect is None or fence is None:
+        effect_id = message.get("effect_id")
+        fence = message.get("executor_fence")
+        if not isinstance(request_id, str) or not request_id or \
+                not isinstance(effect_id, str) or not effect_id or \
+                not self._valid_executor_fence(fence):
             raise ValueError("invalid peer correlation")
         if fence != self.executor_fence:
             raise ValueError("stale executor fence")
-        return request_id, effect, fence
-
-    @staticmethod
-    def _wire_type(message, default):
-        value = message.get("type", "")
-        return default[:1].upper() + default[1:] if value[:1].isupper() else default
-
-    @staticmethod
-    def _fence_field(message):
-        return "fence" if "fence" in message and "executor_fence" not in message else \
-            "executor_fence"
-
-    def _completion(self, request_id, effect, fence, message):
-        completion = {
-            "type": self._wire_type(message, "completion"),
-            "request_id": request_id,
-            "effect": effect,
-            self._fence_field(message): fence,
-            "outcome": "Unknown" if message.get("type", "")[:1].isupper() else "unknown",
-        }
-        self.send(completion)
+        return request_id, effect_id, fence
 
     def _handle_execute(self, message):
-        request_id, effect, fence = self._correlation(message)
-        if request_id in self.pending:
-            raise ValueError("duplicate execute request")
-        self.pending[request_id] = (effect, fence)
-        self._completion(request_id, effect, fence, message)
-        self.pending.pop(request_id, None)
+        request_id, effect_id, fence = self._correlation(message, {
+            "type", "request_id", "effect_id", "executor_fence", "command"
+        })
+        command = message.get("command")
+        if not self._valid_command(command):
+            raise ValueError("invalid browser command")
+        if effect_id in self.pending:
+            raise ValueError("duplicate execute effect")
+        self.pending[effect_id] = {"request_id": request_id, "fence": fence}
+        self.broker.outbound.put(event("abush_browser.execute", "abush_browser", {
+            "remote_key": self.metadata["remote_key"],
+            "connection_id": self.metadata["connection_id"],
+            "request_id": request_id,
+            "effect_id": effect_id,
+            "executor_fence": fence,
+            "command": command,
+        }))
 
     def _handle_cancel(self, message):
-        request_id, effect, fence = self._correlation(message)
-        pending = self.pending.pop(request_id, None)
-        if pending is not None:
-            self._completion(request_id, pending[0], pending[1], message)
+        request_id, effect_id, fence = self._correlation(message, {
+            "type", "request_id", "effect_id", "executor_fence"
+        })
+        if effect_id not in self.pending:
+            self.send({
+                "type": "completion",
+                "request_id": request_id,
+                "effect_id": effect_id,
+                "executor_fence": fence,
+                "completion": "unknown",
+            })
+            return
+        self.broker.outbound.put(event("abush_browser.cancel", "abush_browser", {
+            "remote_key": self.metadata["remote_key"],
+            "connection_id": self.metadata["connection_id"],
+            "request_id": request_id,
+            "effect_id": effect_id,
+            "executor_fence": fence,
+        }))
 
     def close(self, emit=False, from_reader=False):
         was_connected = self.connected
@@ -829,6 +971,14 @@ class BrowserBroker:
         for peer in peers:
             peer.close()
 
+    def peer(self, payload):
+        key = (payload.get("remote_key"), payload.get("connection_id"))
+        with self.lock:
+            peer = self.peers.get(key)
+        if peer is None or not peer.connected:
+            raise ValueError("remote is unavailable")
+        return peer
+
     def handle_request(self, message):
         request = validate_request(message)
         service = request["service"]
@@ -848,6 +998,28 @@ class BrowserBroker:
             return {"remotes": self.list_remotes()}
         if service == "abush_browser" and operation == "refresh_remotes":
             return {"remotes": self.refresh()}
+        if service == "abush_browser" and operation in {"open_workspace", "get_workspace_bootstrap"}:
+            peer = self.peer(payload)
+            return {
+                **peer.logical_state(),
+                "executor_fence": peer.executor_fence,
+                "default_window": peer.default_window,
+            }
+        if service == "abush_browser" and operation == "register_managed_page":
+            peer = self.peer(payload)
+            return {"page": peer.register_page(payload.get("window"), payload.get("page_id"))}
+        if service == "abush_browser" and operation == "moved_outside":
+            self.peer(payload).moved_outside(payload.get("page"))
+            return {}
+        if service == "abush_browser" and operation == "executor_completion":
+            self.peer(payload).complete(
+                payload.get("request_id"), payload.get("effect_id"),
+                payload.get("executor_fence"), payload.get("completion"),
+            )
+            return {}
+        if service == "abush_browser" and operation == "bind_x11_window":
+            from x11_binding import bind_workspace_window
+            return bind_workspace_window(payload)
         raise ValueError("unsupported native operation")
 
 
