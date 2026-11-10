@@ -2,13 +2,30 @@
 
 set -euo pipefail
 
-root=/home/amos/git/serverconfig/chromium/external-links
+root=${EXTERNAL_LINKS_ROOT:-/home/amos/git/serverconfig/chromium/external-links}
 extension="$root/extension"
 output="$root/package"
 state="$output/build-state.json"
 key=$(mktemp)
 work=$(mktemp -d)
-trap 'rm -f "$key"; rm -rf "$work"' EXIT
+install_crx=
+install_state=
+external_json=
+trap 'rm -f "$key" "$install_crx" "$install_state" "$external_json"; rm -rf "$work"' EXIT
+
+resolve_chrome() {
+    local candidate path
+    for candidate in "$@"; do
+        [[ -n $candidate ]] || continue
+        if [[ $candidate == */* ]]; then
+            [[ -x $candidate ]] && printf '%s\n' "$candidate" && return
+        else
+            path=$(command -v -- "$candidate" 2>/dev/null || true)
+            [[ -n $path && -x $path ]] && printf '%s\n' "$path" && return
+        fi
+    done
+    return 1
+}
 
 mkdir -p "$output"
 source_hash=$(
@@ -27,7 +44,19 @@ else
     previous_version=
 fi
 
-if [[ $source_hash != "$previous_hash" || ! -f $output/extension.crx ]]; then
+if [[ $source_hash != "$previous_hash" || ! -s $output/extension.crx ]]; then
+    if [[ -n ${CHROME_BIN:-} ]]; then
+        chrome=$(resolve_chrome "$CHROME_BIN") || {
+            printf 'Chrome binary from CHROME_BIN is not executable: %s\n' "$CHROME_BIN" >&2
+            exit 1
+        }
+    else
+        chrome=$(resolve_chrome /usr/bin/google-chrome-stable google-chrome-stable chromium) || {
+            echo 'No Chrome binary found; set CHROME_BIN to an executable Chrome or Chromium.' >&2
+            exit 1
+        }
+    fi
+
     version=$(python3 - "$previous_version" <<'PY'
 import datetime
 import sys
@@ -55,28 +84,72 @@ import subprocess
 import sys
 
 expected = "ahonjbfnmpjgjgaabbppofphidfomgcj"
-public_key = subprocess.check_output([
-    "openssl", "pkey", "-in", sys.argv[1], "-pubout", "-outform", "DER",
-])
+try:
+    public_key = subprocess.run([
+        "openssl", "pkey", "-in", sys.argv[1], "-pubout", "-outform", "DER",
+    ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+except subprocess.CalledProcessError:
+    raise SystemExit("Unable to validate External Links signing key") from None
 manifest_key = base64.b64decode(json.loads(pathlib.Path(sys.argv[2]).read_text())["key"])
 digest = hashlib.sha256(public_key).hexdigest()[:32]
 extension_id = "".join(chr(ord("a") + int(nibble, 16)) for nibble in digest)
 if public_key != manifest_key or extension_id != expected:
     raise SystemExit(f"External Links signing identity mismatch: {extension_id}")
 PY
-    /usr/bin/google-chrome-stable \
+
+    pack_log="$work/chrome-pack.log"
+    if ! "$chrome" \
+        --headless=new \
+        --no-first-run \
+        --no-default-browser-check \
+        --user-data-dir="$work/chrome-profile" \
         --pack-extension="$work/extension" \
-        --pack-extension-key="$key"
-    mv "$work/extension.crx" "$output/extension.crx"
+        --pack-extension-key="$key" \
+        2> "$pack_log"; then
+        echo 'Chrome failed to pack External Links extension.' >&2
+        sed "s|$key|<signing-key>|g; s|$work|<temporary-work>|g" "$pack_log" >&2
+        exit 1
+    fi
+
+    python3 - "$work/extension.crx" <<'PY'
+import pathlib
+import struct
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    header = path.read_bytes()[:8]
+except OSError as error:
+    raise SystemExit(f"Chrome did not create a readable extension.crx: {error}")
+if len(header) != 8 or header[:4] != b"Cr24":
+    raise SystemExit("Chrome created an invalid extension.crx (missing CRX magic)")
+version = struct.unpack("<I", header[4:])[0]
+if version != 3:
+    raise SystemExit(f"Chrome created unsupported CRX version {version}; expected CRX3")
+if path.stat().st_size <= 8:
+    raise SystemExit("Chrome created an empty CRX3 package")
+PY
+
+    install_state=$(mktemp "$output/.build-state.json.XXXXXX")
     jq -n --arg source_hash "$source_hash" --arg version "$version" \
-        '{source_hash: $source_hash, version: $version}' > "$state"
+        '{source_hash: $source_hash, version: $version}' > "$install_state"
+
+    install_crx=$(mktemp "$output/.extension.crx.XXXXXX")
+    mv "$work/extension.crx" "$install_crx"
+    mv "$install_crx" "$output/extension.crx"
+    install_crx=
+    mv "$install_state" "$state"
+    install_state=
 else
     version=$previous_version
 fi
 
-cat > "$output/external-extension.json" <<EOF
+external_json=$(mktemp "$output/.external-extension.json.XXXXXX")
+cat > "$external_json" <<EOF
 {
     "external_crx": "$output/extension.crx",
     "external_version": "$version"
 }
 EOF
+mv "$external_json" "$output/external-extension.json"
+external_json=
