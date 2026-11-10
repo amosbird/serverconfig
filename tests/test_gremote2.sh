@@ -4,9 +4,11 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 TEST_TMP="$ROOT/.tmp/test-gremote2.$$"
-trap 'rm -rf "$TEST_TMP"' EXIT
-mkdir -p "$TEST_TMP/bin" "$TEST_TMP/runtime"
-chmod 0700 "$TEST_TMP/runtime"
+# Keep the fake runtime short: pathname UNIX sockets must fit in sun_path.
+RUNTIME_DIR="/tmp/gremote2-rt.$$"
+trap 'rm -rf "$TEST_TMP" "$RUNTIME_DIR"' EXIT
+mkdir -p "$TEST_TMP/bin"
+mkdir -m 0700 "$RUNTIME_DIR"
 
 cat > "$TEST_TMP/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
@@ -81,7 +83,7 @@ export SSH_LOG="$TEST_TMP/ssh.log"
 export KITTY_LOG="$TEST_TMP/kitty.log"
 export UUID_COUNT="$TEST_TMP/uuid-count"
 export CAPTURE_DIR="$TEST_TMP/captures"
-export XDG_RUNTIME_DIR="$TEST_TMP/runtime"
+export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 export SSH_AUTH_SOCK=/tmp/local-agent.sock
 mkdir -p "$CAPTURE_DIR"
 
@@ -106,6 +108,8 @@ with open(metadata_path, encoding="utf-8") as source:
 assert data["schema_version"] == 1
 assert data["remote_key"].startswith("r_")
 assert data["connection_id"].startswith("c_")
+assert len(data["remote_key"]) == 10  # r_ + 8 hex
+assert len(data["connection_id"]) == 10  # c_ + 8 hex
 assert data["display_name"] == "testuser@example.test:2222"
 assert data["canonical_user"] == "testuser"
 assert data["canonical_host"] == "canonical-example.test"
@@ -115,6 +119,10 @@ assert pathlib.Path(data["browser_socket"]).is_relative_to(runtime)
 assert pathlib.Path(data["ssh_control"]).is_relative_to(runtime)
 assert pathlib.Path(data["browser_socket"]).parent.name == data["connection_id"]
 assert pathlib.Path(data["browser_socket"]).parent.parent.name == data["remote_key"]
+# Linux sun_path is 108 bytes including NUL; OpenSSH appends a ~17-char temp
+# suffix when binding unix sockets, so keep paths well under the limit.
+for key in ("browser_socket", "ssh_control"):
+    assert len(data[key]) <= 90, (key, len(data[key]), data[key])
 PY
 
 browser_socket=$(python3 -c \
@@ -167,7 +175,7 @@ if XDG_RUNTIME_DIR="$unsafe_runtime" KITTY_RUN=unsafe \
     exit 1
 fi
 
-ln -s "$TEST_TMP/runtime" "$TEST_TMP/runtime-link"
+ln -s "$RUNTIME_DIR" "$TEST_TMP/runtime-link"
 if XDG_RUNTIME_DIR="$TEST_TMP/runtime-link" KITTY_RUN=symlink \
     "$ROOT/scripts/gremote2.sh" example.test >/dev/null 2>&1; then
     echo 'gremote2 accepted a symlink XDG_RUNTIME_DIR' >&2

@@ -45,7 +45,9 @@ if [[ "$1" =~ $pattern ]]; then
         printf 'gremote2: could not hash the SSH connection identity\n' >&2
         exit 1
     fi
-    remote_key="r_${remote_hash:0:24}"
+    # Keep IDs short: Linux sockaddr_un.sun_path is only 108 bytes (incl. NUL),
+    # and OpenSSH appends a ~17-char temp suffix when binding unix sockets.
+    remote_key="r_${remote_hash:0:8}"
 
     {
         read -r remote_home
@@ -88,19 +90,35 @@ if [[ "$1" =~ $pattern ]]; then
 
     UUID=$(uuidgen) || exit 1
     uuid_hex=${UUID//-/}
-    if [[ ! $uuid_hex =~ ^[A-Za-z0-9]{8,64}$ ]]; then
+    if [[ ! $uuid_hex =~ ^[A-Za-z0-9]{32,64}$ ]]; then
         printf 'gremote2: uuidgen returned an unsafe value\n' >&2
         exit 1
     fi
-    connection_id="c_$uuid_hex"
+    # Use the trailing hex so sequential uuidgen values stay unique when truncated.
+    connection_id="c_${uuid_hex:24:8}"
+    if [[ ! $connection_id =~ ^c_[A-Za-z0-9]{8}$ ]]; then
+        printf 'gremote2: could not derive a short connection id\n' >&2
+        exit 1
+    fi
     connection_nonce=$UUID
     browser_remotes_dir="$XDG_RUNTIME_DIR/abush/browser-remotes"
     remote_dir="$browser_remotes_dir/$remote_key"
     connection_dir="$remote_dir/$connection_id"
     browser_socket="$connection_dir/browser-peer.sock"
-    SSH_MASTER_CTRL="$connection_dir/ssh-control.sock"
-    KITTY_SOCK="$connection_dir/kitty.sock"
+    SSH_MASTER_CTRL="$connection_dir/s.ctl"
+    KITTY_SOCK="$connection_dir/k.ctl"
     metadata="$connection_dir/connection.json"
+
+    # Pathname UNIX sockets must fit in sun_path (108 bytes including NUL).
+    # OpenSSH appends a ~17-char temp suffix when binding, so reserve margin.
+    readonly UNIX_SOCK_PATH_MAX=90
+    for sock_path in "$browser_socket" "$SSH_MASTER_CTRL" "$KITTY_SOCK"; do
+        if ((${#sock_path} > UNIX_SOCK_PATH_MAX)); then
+            printf 'gremote2: UNIX socket path is too long (%d > %d): %s\n' \
+                "${#sock_path}" "$UNIX_SOCK_PATH_MAX" "$sock_path" >&2
+            exit 1
+        fi
+    done
 
     python3 - "$XDG_RUNTIME_DIR" "$connection_dir" <<'PY'
 import os
