@@ -17,7 +17,36 @@ ABUSH_BIN="$HOME/git/abush/target/release/abush"
 # Always log to a known file so post-hoc debugging doesn't depend on
 # the user having set ABUSH_LOG / RUST_LOG before launch.
 export ABUSH_LOG="${ABUSH_LOG:-/tmp/abush.log}"
-# export ABUSH_DEBUG_BUFFER=/tmp/abush-buf.log
+
+local_mode=false
+skip_value=false
+for argument in "$@"; do
+    if [[ $skip_value == true ]]; then
+        skip_value=false
+        continue
+    fi
+    case $argument in
+        --local)
+            local_mode=true
+            ;;
+        --remote-web-port)
+            skip_value=true
+            ;;
+        --*)
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+if [[ $local_mode == true ]]; then
+    "$HOME/scripts/abush-browser-local.py" >>"$ABUSH_LOG" 2>&1 &
+    if ! "$HOME/scripts/abush-browser-local.py" --wait-ready 3 >>"$ABUSH_LOG" 2>&1; then
+        printf 'startabush: local browser transport failed to become ready\n' >&2
+        exit 1
+    fi
+fi
+
 export RUST_LOG="${RUST_LOG:-abush_tui=info,abush_bus=info,abush_copilot=info,abush_store=warn}"
 
 # TEMP perf diagnostic: log slow frames (>2ms) + slow keystroke/

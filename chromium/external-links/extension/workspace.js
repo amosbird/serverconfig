@@ -14,8 +14,8 @@ class WorkspaceExecutor {
         this.operations = new Map();
     }
 
-    key(remoteKey, connectionId) {
-        return `${remoteKey}\0${connectionId}`;
+    key(remoteKey) {
+        return remoteKey;
     }
 
     async persist() {
@@ -45,7 +45,7 @@ class WorkspaceExecutor {
     }
 
     install(record) {
-        const key = this.key(record.remoteKey, record.connectionId);
+        const key = this.key(record.remoteKey);
         this.workspaces.set(key, record);
         this.windowOwners.set(record.windowId, key);
         for (const [, value] of record.pages) this.tabOwners.set(value.tabId, key);
@@ -72,15 +72,32 @@ class WorkspaceExecutor {
     }
 
     async open(remoteKey, connectionId) {
-        const key = this.key(remoteKey, connectionId);
+        const key = this.key(remoteKey);
         const existing = this.workspaces.get(key);
-        if (existing) {
-            await this.bind(existing);
-            return existing;
-        }
         const bootstrap = await this.nativeRequest("abush_browser", "open_workspace", {
             remote_key: remoteKey, connection_id: connectionId,
         });
+        if (existing) {
+            if (existing.connectionId !== connectionId ||
+                    !sameRef(existing.executorFence, bootstrap.executor_fence)) {
+                const pages = new Map();
+                for (const value of existing.pages.values()) {
+                    const registered = await this.nativeRequest(
+                        "abush_browser", "register_managed_page", {
+                            remote_key: remoteKey, connection_id: connectionId,
+                            window: bootstrap.default_window, page_id: value.page.page_id,
+                        });
+                    pages.set(registered.page.page_id, {...value, page: registered.page});
+                }
+                existing.connectionId = connectionId;
+                existing.executorFence = bootstrap.executor_fence;
+                existing.defaultWindow = bootstrap.default_window;
+                existing.pages = pages;
+                await this.persist();
+            }
+            await this.bind(existing);
+            return existing;
+        }
         const nonce = crypto.randomUUID().replaceAll("-", "");
         const statusUrl = this.chrome.runtime.getURL(`status.html#${nonce}`);
         const created = await this.chrome.windows.create({url: statusUrl, focused: false, type: "normal"});
@@ -105,7 +122,7 @@ class WorkspaceExecutor {
     }
 
     async validate(payload, command) {
-        const record = this.workspaces.get(this.key(payload.remote_key, payload.connection_id));
+        const record = this.workspaces.get(this.key(payload.remote_key));
         if (!record || !sameRef(payload.executor_fence, record.executorFence)) throw new Error("stale executor");
         if (command.command === "close_window") {
             if (!sameRef(command.window, record.defaultWindow)) throw new Error("stale window");
@@ -182,7 +199,7 @@ class WorkspaceExecutor {
     }
 
     forget(record) {
-        const key = this.key(record.remoteKey, record.connectionId);
+        const key = this.key(record.remoteKey);
         this.workspaces.delete(key);
         this.windowOwners.delete(record.windowId);
         for (const value of record.pages.values()) this.tabOwners.delete(value.tabId);

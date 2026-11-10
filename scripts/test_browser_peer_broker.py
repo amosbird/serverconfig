@@ -157,22 +157,25 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             host.validate_remote_metadata(path, self.root)
 
-    def test_two_peers_handshake_list_ping_and_execute_unknown(self):
+    def test_distinct_remotes_handshake_list_ping_and_execute_unknown(self):
         first = self.peer("r_12345678", "c_12345678", "principal-one", 11)
-        second = self.peer("r_12345678", "c_abcdefgh", "principal-two", 22)
+        second = self.peer("r_abcdefgh", "c_abcdefgh", "principal-two", 22)
+        local_peer = self.peer("r_local000", "c_local000", "principal-local", 33)
         broker = host.BrowserBroker(self.root)
         try:
             remotes = broker.refresh()
-            self.assertEqual(len(remotes), 2)
+            self.assertEqual(len(remotes), 3)
             self.assertTrue(all(remote["connected"] for remote in remotes))
             self.assertEqual({remote["principal_id"] for remote in remotes},
-                             {"principal-one", "principal-two"})
-            for server in (first, second):
+                             {"principal-one", "principal-two", "principal-local"})
+            for server in (first, second, local_peer):
                 hello = server.received[0]
                 self.assertEqual(hello, {
                     "type": "hello",
                     "version": 2,
-                    "executor_id": broker.executor_id({"connection_id": server.path.parent.name}),
+                    "executor_id": broker.executor_id({
+                        "remote_key": server.path.parent.parent.name,
+                    }),
                     "nonce": hello["nonce"],
                     "capabilities": {"cancellation": True},
                 })
@@ -198,7 +201,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "event": "abush_browser.execute",
                 "service": "abush_browser",
                 "payload": {
-                    "remote_key": "r_12345678", "connection_id": "c_abcdefgh",
+                    "remote_key": "r_abcdefgh", "connection_id": "c_abcdefgh",
                     "request_id": "execute-1", "effect_id": "effect-1",
                     "executor_fence": second.fence,
                     "command": {"command": "navigate", "page": {
@@ -209,7 +212,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             broker.handle_request({
                 "version": 1, "id": "complete", "service": "abush_browser",
                 "operation": "executor_completion", "payload": {
-                    "remote_key": "r_12345678", "connection_id": "c_abcdefgh",
+                    "remote_key": "r_abcdefgh", "connection_id": "c_abcdefgh",
                     "request_id": "execute-1", "effect_id": "effect-1",
                     "executor_fence": second.fence, "completion": "applied",
                 },
@@ -218,6 +221,61 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "type": "completion", "request_id": "execute-1", "effect_id": "effect-1",
                 "executor_fence": second.fence, "completion": "applied",
             })
+        finally:
+            broker.close()
+
+    def test_same_remote_has_one_active_peer_and_fails_over(self):
+        first = self.peer("r_12345678", "c_12345678", "principal-one", 11)
+        second = self.peer("r_12345678", "c_abcdefgh", "principal-two", 22)
+        first_metadata = self.root / "r_12345678" / "c_12345678" / "connection.json"
+        second_metadata = self.root / "r_12345678" / "c_abcdefgh" / "connection.json"
+        first_metadata.touch()
+        broker = host.BrowserBroker(self.root)
+        try:
+            remotes = broker.refresh()
+            self.assertEqual(len(remotes), 1)
+            self.assertEqual(remotes[0]["connection_id"], "c_12345678")
+            self.assertTrue(first.connected.wait(2))
+            self.assertFalse(second.connected.is_set())
+
+            first_metadata.unlink()
+            remotes = broker.refresh()
+            self.assertEqual(len(remotes), 1)
+            self.assertEqual(remotes[0]["connection_id"], "c_abcdefgh")
+            self.assertTrue(second.connected.wait(2))
+            self.assertEqual(remotes[0]["principal_id"], "principal-two")
+            self.assertNotEqual(first.fence, second.fence)
+            self.assertTrue(second_metadata.exists())
+            events = []
+            while not broker.outbound.empty():
+                item = broker.outbound.get_nowait()
+                if item.get("event") == "abush_browser.remote_state":
+                    events.append(item["payload"])
+            self.assertTrue(events)
+            self.assertTrue(all(item["connected"] for item in events))
+            self.assertEqual(events[-1]["connection_id"], "c_abcdefgh")
+        finally:
+            broker.close()
+
+    def test_live_disconnect_fails_over_without_disconnected_event(self):
+        first = self.peer("r_12345678", "c_12345678", "principal-one", 11)
+        second = self.peer("r_12345678", "c_abcdefgh", "principal-two", 22)
+        first_metadata = self.root / "r_12345678" / "c_12345678" / "connection.json"
+        first_metadata.touch()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            self.assertTrue(first.connected.wait(2))
+            while not broker.outbound.empty():
+                broker.outbound.get_nowait()
+            first.client.shutdown(socket.SHUT_RDWR)
+            first.client.close()
+            self.assertTrue(second.connected.wait(2))
+            state = broker.outbound.get(timeout=2)
+            self.assertEqual(state["event"], "abush_browser.remote_state")
+            self.assertTrue(state["payload"]["connected"])
+            self.assertEqual(state["payload"]["connection_id"], "c_abcdefgh")
+            self.assertTrue(broker.outbound.empty())
         finally:
             broker.close()
 

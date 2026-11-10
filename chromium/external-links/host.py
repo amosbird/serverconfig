@@ -514,7 +514,7 @@ def validate_remote_metadata(path, root=None, uid=None):
     _secure_stat(root, "directory", 0o700, uid)
     _secure_stat(remote_dir, "directory", 0o700, uid)
     _secure_stat(connection_dir, "directory", 0o700, uid)
-    _secure_stat(path, "file", 0o600, uid)
+    info = _secure_stat(path, "file", 0o600, uid)
     with path.open(encoding="utf-8") as source:
         metadata = json.load(source)
     if metadata.get("schema_version") != 1:
@@ -537,6 +537,7 @@ def validate_remote_metadata(path, root=None, uid=None):
         "connection_id": connection_id,
         "display_name": display_name,
         "browser_socket": str(browser_socket),
+        "metadata_mtime_ns": info.st_mtime_ns,
     }
 
 
@@ -650,15 +651,18 @@ class RemotePeer:
             self._accept_hello(accepted)
             sock.settimeout(0.5)
             self.connected = True
-            self.reader = threading.Thread(target=self._read_loop, daemon=True)
-            self.reader.start()
-            self.broker.remote_changed(self)
             return True
         except (OSError, EOFError, ValueError, json.JSONDecodeError) as error:
             logging.info("browser peer connect failed remote=%s connection=%s error=%s",
                          self.metadata["remote_key"], self.metadata["connection_id"], error)
             self.close(emit=False)
             return False
+
+    def activate(self):
+        if not self.connected or self.reader is not None:
+            return
+        self.reader = threading.Thread(target=self._read_loop, daemon=True)
+        self.reader.start()
 
     @staticmethod
     def _exact_fields(value, fields):
@@ -917,7 +921,7 @@ class RemotePeer:
         if self.reader and not from_reader and self.reader is not threading.current_thread():
             self.reader.join(timeout=1)
         if emit and was_connected:
-            self.broker.remote_changed(self)
+            self.broker.remote_disconnected(self)
 
 
 class BrowserBroker:
@@ -925,57 +929,113 @@ class BrowserBroker:
         self.remote_root = pathlib.Path(remote_root) if remote_root else None
         self.outbound = outbound or queue.Queue()
         self.peers = {}
+        self.candidates = {}
         self.lock = threading.RLock()
         install = f"{pathlib.Path(__file__).resolve()}:{os.getuid()}".encode()
         self.install_id = hashlib.sha256(install).hexdigest()[:24]
 
     def executor_id(self, metadata):
-        return f"browser-router-{self.install_id}-{metadata['connection_id']}"
+        return f"browser-router-{self.install_id}-{metadata['remote_key']}"
 
     def remote_changed(self, peer):
         self.outbound.put(event(
             "abush_browser.remote_state", "abush_browser", peer.logical_state()
         ))
 
-    def refresh(self):
-        discovered = {(
-            item["remote_key"], item["connection_id"]
-        ): item for item in discover_remotes(self.remote_root)}
+    def remote_disconnected(self, peer):
         with self.lock:
-            for key in list(self.peers):
-                if key not in discovered:
-                    self.peers.pop(key).close(emit=True)
-            for key, metadata in discovered.items():
-                peer = self.peers.get(key)
-                if peer and peer.metadata["browser_socket"] != metadata["browser_socket"]:
-                    peer.close(emit=True)
-                    peer = None
-                if peer is None:
-                    peer = RemotePeer(self, metadata)
-                    self.peers[key] = peer
-                else:
-                    peer.metadata = metadata
-                if not peer.connected:
-                    peer.stop_event.clear()
-                    peer.connect()
+            if self.peers.get(peer.metadata["remote_key"]) is not peer:
+                return
+            remote_key = peer.metadata["remote_key"]
+            self.peers.pop(remote_key, None)
+            replacement = self._select(remote_key, exclude={peer.key}, publish=False)
+            self.remote_changed(replacement or peer)
+
+    def _select_candidate(self, remote_key, exclude=frozenset()):
+        for metadata in self.candidates.get(remote_key, []):
+            key = (remote_key, metadata["connection_id"])
+            if key in exclude:
+                continue
+            peer = RemotePeer(self, metadata)
+            logging.info("browser peer candidate selected remote=%s connection=%s",
+                         remote_key, metadata["connection_id"])
+            if peer.connect():
+                return peer
+            logging.info("browser peer candidate failed remote=%s connection=%s",
+                         remote_key, metadata["connection_id"])
+        return None
+
+    def _select(self, remote_key, exclude=frozenset(), publish=True):
+        current = self.peers.get(remote_key)
+        if current and current.connected:
+            return current
+        peer = self._select_candidate(remote_key, exclude)
+        if peer:
+            self.peers[remote_key] = peer
+            peer.activate()
+            if publish:
+                self.remote_changed(peer)
+        return peer
+
+    def refresh(self):
+        grouped = {}
+        for item in discover_remotes(self.remote_root):
+            grouped.setdefault(item["remote_key"], []).append(item)
+        for values in grouped.values():
+            values.sort(key=lambda item: (-item["metadata_mtime_ns"], item["connection_id"]))
+        with self.lock:
+            self.candidates = grouped
+            for remote_key, peer in list(self.peers.items()):
+                keys = {(item["remote_key"], item["connection_id"])
+                        for item in grouped.get(remote_key, [])}
+                if peer.key not in keys:
+                    logging.info("browser peer active candidate disappeared remote=%s connection=%s",
+                                 remote_key, peer.metadata["connection_id"])
+                    replacement = self._select_candidate(remote_key, exclude={peer.key})
+                    if replacement:
+                        self.peers[remote_key] = replacement
+                        replacement.activate()
+                        peer.close(emit=False)
+                        self.remote_changed(replacement)
+                    else:
+                        self.peers.pop(remote_key, None)
+                        peer.close(emit=False)
+                        self.remote_changed(peer)
+            for remote_key in sorted(grouped):
+                self._select(remote_key)
         return self.list_remotes()
 
     def list_remotes(self):
         with self.lock:
-            return [self.peers[key].logical_state() for key in sorted(self.peers)]
+            states = []
+            for remote_key in sorted(self.candidates):
+                peer = self.peers.get(remote_key)
+                if peer:
+                    states.append(peer.logical_state())
+                else:
+                    newest = self.candidates[remote_key][0]
+                    states.append({
+                        "remote_key": remote_key,
+                        "connection_id": newest["connection_id"],
+                        "display_name": newest["display_name"],
+                        "connected": False,
+                    })
+            return states
 
     def close(self):
         with self.lock:
             peers = list(self.peers.values())
             self.peers.clear()
+            self.candidates.clear()
         for peer in peers:
             peer.close()
 
     def peer(self, payload):
-        key = (payload.get("remote_key"), payload.get("connection_id"))
+        remote_key = payload.get("remote_key")
+        connection_id = payload.get("connection_id")
         with self.lock:
-            peer = self.peers.get(key)
-        if peer is None or not peer.connected:
+            peer = self.peers.get(remote_key)
+        if peer is None or not peer.connected or peer.metadata["connection_id"] != connection_id:
             raise ValueError("remote is unavailable")
         return peer
 
@@ -1019,7 +1079,12 @@ class BrowserBroker:
             return {}
         if service == "abush_browser" and operation == "bind_x11_window":
             from x11_binding import bind_workspace_window
-            return bind_workspace_window(payload)
+            try:
+                return bind_workspace_window(payload)
+            except Exception as error:
+                logging.info("browser X11 bind failed remote=%s workspace=%s error=%s",
+                             payload.get("remote_key"), payload.get("workspace_id"), error)
+                raise
         raise ValueError("unsupported native operation")
 
 
