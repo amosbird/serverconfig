@@ -12,6 +12,7 @@ function fixture(tabWindow = 10) {
     const chrome = {
         tabs: {
             get: async id => ({id, windowId: tabWindow}),
+            update: async (id, properties) => calls.push(["update", id, properties]),
             remove: async id => calls.push(["remove", id]),
         },
         windows: {remove: async id => calls.push(["removeWindow", id])},
@@ -26,6 +27,7 @@ function fixture(tabWindow = 10) {
     const record = {
         remoteKey: "r_12345678", connectionId: "c_12345678",
         defaultWindow: windowRef, executorFence: fence, windowId: 10,
+        statusTabId: 19, nonce: "0123456789abcdef0123456789abcdef", controlState: "remote",
         pages: new Map([["page", {page: pageRef, tabId: 20}]]),
     };
     executor.install(record);
@@ -71,6 +73,21 @@ function payload(command, overrides = {}) {
         assert(!calls.some(call => call[0] === "remove"));
         assert.equal(calls.find(call => call[0] === "executor_completion")[1].completion,
             "not_applied");
+    }
+    {
+        const {executor, calls, record} = fixture();
+        const reopened = await executor.open(record.remoteKey, record.connectionId);
+        assert.strictEqual(reopened, record);
+        assert.deepEqual(calls.map(call => call[0]), ["update", "bind_x11_window", "update"]);
+        assert.deepEqual(calls[0], ["update", 19, {active: true}]);
+        assert.deepEqual(calls[1][1], {
+            nonce: "0123456789abcdef0123456789abcdef",
+            remote_key: "r_12345678",
+            workspace_id: "workspace",
+            generation: 1,
+            control_state: "remote",
+        });
+        assert.deepEqual(calls[2], ["update", 20, {active: true}]);
     }
     console.log("workspace executor tests passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

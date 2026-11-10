@@ -51,10 +51,33 @@ class WorkspaceExecutor {
         for (const [, value] of record.pages) this.tabOwners.set(value.tabId, key);
     }
 
+    bindingPayload(record) {
+        return {
+            nonce: record.nonce,
+            remote_key: record.remoteKey,
+            workspace_id: record.defaultWindow.workspace_id,
+            generation: record.defaultWindow.generation,
+            control_state: record.controlState,
+        };
+    }
+
+    async bind(record) {
+        await this.chrome.tabs.update(record.statusTabId, {active: true});
+        try {
+            await this.nativeRequest("abush_browser", "bind_x11_window", this.bindingPayload(record));
+        } finally {
+            const business = [...record.pages.values()][0];
+            if (business) await this.chrome.tabs.update(business.tabId, {active: true});
+        }
+    }
+
     async open(remoteKey, connectionId) {
         const key = this.key(remoteKey, connectionId);
         const existing = this.workspaces.get(key);
-        if (existing) return existing;
+        if (existing) {
+            await this.bind(existing);
+            return existing;
+        }
         const bootstrap = await this.nativeRequest("abush_browser", "open_workspace", {
             remote_key: remoteKey, connection_id: connectionId,
         });
@@ -77,12 +100,7 @@ class WorkspaceExecutor {
         };
         this.install(record);
         await this.persist();
-        await this.nativeRequest("abush_browser", "bind_x11_window", {
-            nonce, remote_key: remoteKey,
-            workspace_id: bootstrap.default_window.workspace_id,
-            generation: bootstrap.default_window.generation,
-            control_state: "remote",
-        });
+        await this.bind(record);
         return record;
     }
 
