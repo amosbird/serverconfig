@@ -576,20 +576,33 @@ groups = [
     ),
     Group("h"),
     Group("2", layout="max"),
+    Group(
+        "c",
+        layouts=[
+            layout.TreeTab(
+                panel_width=320,
+                sections=["Abush Browser"],
+                previous_on_rm=True,
+            )
+        ],
+    ),
 ]
 
 keys.append(Key([ctrl, alt, shift], "2", lazy.window.togroup("2")))
 
-for i in ["w", "e", "d", "f", "v", "n", "i", "o", "c"]:
+for i in ["w", "e", "d", "f", "v", "n", "i", "o"]:
     groups.append(Group(i))
     keys.append(Key([ctrl, alt], i, lazy.group[i].toscreen()))
     keys.append(Key([ctrl, alt, shift], i, lazy.window.togroup(i)))
 
+keys.append(Key([ctrl, alt], "c", lazy.group["c"].toscreen()))
+keys.append(Key([ctrl, alt, shift], "c", lazy.window.togroup("c")))
+
 dgroups_app_rules = [
+    Rule(Match(role="abush-browser"), group="c"),
     Rule(Match(wm_class="kitty", title="local"), group="e"),
     Rule(Match(wm_class="kitty", title="work"), group="v"),
     Rule(Match(wm_class="kitty", title="remote"), group="i"),
-    Rule(Match(wm_class="kitty", title="weechat"), group="c"),
     Rule(Match(wm_class="wemeetapp"), group="2"),
     Rule(Match(wm_class="xfreerdp"), group="w"),
     Rule(Match(wm_class="Google-chrome"), group="f"),
@@ -612,6 +625,25 @@ layouts = [
 ]
 
 screens = [Screen()]
+
+
+def is_abush_browser(window):
+    return window.get_wm_role() == "abush-browser"
+
+
+def place_abush_browser(window):
+    if not is_abush_browser(window):
+        return False
+    if window.group is not None and window.group.name == "c":
+        return False
+    window.togroup("c", switch_group=False)
+    return True
+
+
+@hook.subscribe.startup
+def recover_abush_browsers():
+    for window in qtile.windows_map.values():
+        place_abush_browser(window)
 
 
 @hook.subscribe.startup

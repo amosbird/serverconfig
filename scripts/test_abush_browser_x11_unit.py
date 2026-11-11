@@ -49,6 +49,11 @@ class FakeAdapter:
 
 
 class X11BindingTest(unittest.TestCase):
+    def setUp(self):
+        self.qtile_patch = mock.patch.object(binding, "notify_qtile", return_value=False)
+        self.qtile_patch.start()
+        self.addCleanup(self.qtile_patch.stop)
+
     def test_exact_nonce_chrome_match_and_metadata(self):
         adapter = FakeAdapter()
         result = binding.bind_workspace_window({

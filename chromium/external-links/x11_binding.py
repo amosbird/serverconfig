@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 import time
 
 NONCE_RE = re.compile(r"[0-9a-f]{32}\Z")
@@ -97,7 +98,44 @@ def browser_process(pid):
         return False
 
 
-def bind_workspace_window(payload, adapter=None, attempts=100, interval=0.05):
+def qtile_move_command(window):
+    return [
+        "qtile",
+        "cmd-obj",
+        "--object",
+        "window",
+        str(window),
+        "--function",
+        "togroup",
+        "--args",
+        "c",
+        "--kwargs",
+        "switch_group=False",
+    ]
+
+
+def notify_qtile(window, run=None):
+    run = run or subprocess.run
+    try:
+        result = run(
+            qtile_move_command(window),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def bind_workspace_window(
+    payload,
+    adapter=None,
+    attempts=100,
+    interval=0.05,
+    qtile_notifier=None,
+):
     required = {"nonce", "remote_key", "workspace_id", "generation", "control_state"}
     if not isinstance(payload, dict) or not required.issubset(payload):
         raise ValueError("missing X11 binding metadata")
@@ -149,10 +187,16 @@ def bind_workspace_window(payload, adapter=None, attempts=100, interval=0.05):
     }
     if observed != expected_observed:
         raise X11Unavailable(f"X11 binding verification failed: {observed}")
+    qtile_moved = (qtile_notifier or notify_qtile)(window)
     try:
         adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
         adapter.set_text(window, "_NET_WM_NAME", f"Abush Browser — {payload['workspace_id']}")
         adapter.finish()
     except Exception:
         pass
-    return {"available": True, "xid": window, "observed": observed}
+    return {
+        "available": True,
+        "xid": window,
+        "observed": observed,
+        "qtile_moved": qtile_moved,
+    }
