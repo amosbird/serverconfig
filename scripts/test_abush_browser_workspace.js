@@ -214,15 +214,17 @@ function fixture(saved = []) {
         };
         const {executor, calls} = fixture([record]);
         await executor.restore();
-        await assert.rejects(executor.ensure(ensurePayload({
+        const restored = await executor.ensure(ensurePayload({
             connection_id: "c_12345678", executor_fence: {...fence, epoch: 2},
             expected_page: null,
-        })), /requires an expected page/);
+        }));
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
-            "restored state without an expected page must not be adopted ambiguously");
-        assert.equal(record.workspaceId, "workspace-before-restart");
-        assert.equal(record.connectionId, "c_old00000");
-        assert.equal(record.executorFence.epoch, 1);
+            "a daemon restart with empty topology must adopt the live restored workspace");
+        assert.equal(restored.logicalWindowId, logicalWindowId);
+        assert.equal(restored.logicalPageId, logicalPageId);
+        assert.equal(record.workspaceId, "workspace-authoritative");
+        assert.equal(record.connectionId, "c_12345678");
+        assert.equal(record.executorFence.epoch, 2);
     }
     {
         const record = {
@@ -308,7 +310,7 @@ function fixture(saved = []) {
         const {executor, calls} = fixture([legacy]);
         await executor.restore();
         assert.equal(executor.workspaces.size, 0);
-        assert.deepEqual(calls.find(call => call[0] === "persist")[1], {abushWorkspaces: []});
+        assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, []);
         assert(!calls.some(call => call[0] === "createWindow"), "restore must not create windows");
     }
     {
@@ -595,7 +597,7 @@ function fixture(saved = []) {
         await executor.restore();
         assert.equal(executor.workspaces.size, 0,
             "restore must require exactly one status tab and one business tab");
-        assert.deepEqual(calls.find(call => call[0] === "persist")[1], {abushWorkspaces: []});
+        assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, []);
     }
     {
         const {executor, calls} = fixture();
@@ -609,6 +611,45 @@ function fixture(saved = []) {
         assert.equal(executor.windowOwners.size, 0);
         assert.equal(executor.tabOwners.size, 0);
         assert(calls.some(call => call[0] === "removeWindow"));
+    }
+    {
+        const {executor, calls} = fixture();
+        const gates = [deferred(), deferred()];
+        const persisted = [];
+        let write = 0;
+        executor.chrome.storage.session.set = async value => {
+            const index = write++;
+            calls.push(["persist-start", value]);
+            await gates[index].promise;
+            persisted.push(value);
+        };
+        const firstRecord = {remoteKey: "r_one", principalId: "principal-one"};
+        executor.workspaces.set("one", firstRecord);
+        const first = executor.persist();
+        await Promise.resolve();
+        const secondRecord = {remoteKey: "r_two", principalId: "principal-two"};
+        executor.workspaces.set("two", secondRecord);
+        const second = executor.persist();
+        await Promise.resolve();
+        assert.equal(write, 1, "persist writes must be serialized");
+        gates[0].resolve();
+        await first;
+        await Promise.resolve();
+        assert.equal(write, 2);
+        gates[1].resolve();
+        await second;
+        assert.deepEqual(persisted.map(value => value.revision), [1, 2]);
+        assert.deepEqual(persisted.at(-1).abushWorkspaces.map(record => record.remoteKey),
+            ["r_one", "r_two"], "newer whole-map state must win after reversed pressure");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        await executor.tabMoved(record.pageTabId, {windowId: 999});
+        const report = calls.find(call => call[0] === "managed_page_moved_outside");
+        assert(report, "moving a managed page must report topology before forgetting it");
+        assert.deepEqual(report[1].page, executor.pageRef(record));
+        assert.equal(executor.workspaces.size, 0);
     }
     {
         const {executor, calls} = fixture();

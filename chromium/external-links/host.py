@@ -30,7 +30,7 @@ except ImportError:
 
 MAX_MESSAGE_SIZE = 1024 * 1024
 NATIVE_ENVELOPE_VERSION = 1
-PEER_PROTOCOL_VERSION = 3
+PEER_PROTOCOL_VERSION = 4
 BROWSER_ERROR_CODES = {
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -615,6 +615,7 @@ class RemotePeer:
         self.capabilities = {}
         self.pending = {}
         self.ensure_pending = {}
+        self.topology_pending = {}
         self.reader = None
 
     @property
@@ -672,10 +673,18 @@ class RemotePeer:
         return isinstance(value, dict) and set(value) == set(fields)
 
     def _accept_hello(self, message):
+        if message.get("type") == "hello_rejected":
+            if not self._exact_fields(message, {"type", "request_id", "reason"}) or \
+                    not isinstance(message.get("request_id"), str) or \
+                    not message.get("request_id") or message.get("reason") not in {
+                        "unsupported_version", "invalid_hello", "principal_unavailable"
+                    }:
+                raise ValueError("invalid hello rejection")
+            raise ValueError(f"peer rejected hello: {message['reason']}")
         if not self._exact_fields(message, {
             "type", "request_id", "principal_id", "executor_fence"
         }) or message.get("type") != "hello_accepted":
-            raise ValueError("peer rejected hello")
+            raise ValueError("invalid hello response")
         request_id = message.get("request_id")
         principal_id = message.get("principal_id")
         fence = message.get("executor_fence")
@@ -701,14 +710,16 @@ class RemotePeer:
             "workspace_id", "window_id", "generation"
         } and all(isinstance(value[key], str) and value[key]
                   for key in ("workspace_id", "window_id")) and \
-            isinstance(value["generation"], int) and not isinstance(value["generation"], bool)
+            isinstance(value["generation"], int) and not isinstance(value["generation"], bool) and \
+            value["generation"] > 0
 
     @classmethod
     def _valid_page_ref(cls, value):
         return isinstance(value, dict) and set(value) == {"window", "page_id", "generation"} and \
             cls._valid_window_ref(value["window"]) and \
             isinstance(value["page_id"], str) and value["page_id"] and \
-            isinstance(value["generation"], int) and not isinstance(value["generation"], bool)
+            isinstance(value["generation"], int) and not isinstance(value["generation"], bool) and \
+            value["generation"] > 0
 
     def _handle_ensure_managed_page(self, message):
         if not self._exact_fields(message, {
@@ -807,9 +818,10 @@ class RemotePeer:
     def complete(self, request_id, effect_id, fence, completion):
         if fence != self.executor_fence or completion not in {"applied", "not_applied", "unknown"}:
             raise ValueError("invalid executor completion")
-        pending = self.pending.pop(effect_id, None)
+        pending = self.pending.get(effect_id)
         if pending is None or pending["request_id"] != request_id:
             raise ValueError("uncorrelated executor completion")
+        self.pending.pop(effect_id)
         self.send({
             "type": "completion",
             "request_id": request_id,
@@ -868,7 +880,35 @@ class RemotePeer:
         if normalized_type == "cancel_ensure_managed_page":
             self._handle_cancel_ensure_managed_page(message)
             return
+        if normalized_type == "topology_response":
+            self._handle_topology_response(message)
+            return
         raise ValueError("unknown peer message")
+
+    def report_managed_page_moved_outside(self, request_id, fence, page):
+        if not isinstance(request_id, str) or not request_id or \
+                fence != self.executor_fence or not self._valid_page_ref(page):
+            raise ValueError("invalid managed page moved outside report")
+        if request_id in self.topology_pending:
+            raise ValueError("duplicate topology request")
+        self.topology_pending[request_id] = {"kind": "page_moved_outside", "page": page}
+        self.send({
+            "type": "managed_page_moved_outside",
+            "request_id": request_id,
+            "executor_fence": fence,
+            "page": page,
+        })
+
+    def _handle_topology_response(self, message):
+        if not self._exact_fields(message, {"type", "request_id", "result"}):
+            raise ValueError("invalid topology response")
+        request_id = message.get("request_id")
+        pending = self.topology_pending.get(request_id)
+        result = message.get("result")
+        if pending is None or pending["kind"] != "page_moved_outside" or \
+                result != {"outcome": "page_moved_outside"}:
+            raise ValueError("uncorrelated topology response")
+        self.topology_pending.pop(request_id)
 
     @classmethod
     def _valid_command(cls, command):
@@ -959,6 +999,7 @@ class BrowserBroker:
         self.remote_root = pathlib.Path(remote_root) if remote_root else None
         self.outbound = outbound or queue.Queue()
         self.peers = {}
+        self.principals = {}
         self.candidates = {}
         self.lock = threading.RLock()
         install = f"{pathlib.Path(__file__).resolve()}:{os.getuid()}".encode()
@@ -990,7 +1031,17 @@ class BrowserBroker:
             logging.info("browser peer candidate selected remote=%s connection=%s",
                          remote_key, metadata["connection_id"])
             if peer.connect():
-                return peer
+                pinned = self.principals.get(remote_key)
+                if pinned is None:
+                    self.principals[remote_key] = peer.principal_id
+                    return peer
+                if peer.principal_id == pinned:
+                    return peer
+                logging.warning(
+                    "browser peer principal replacement rejected remote=%s connection=%s "
+                    "expected=%s actual=%s", remote_key, metadata["connection_id"], pinned,
+                    peer.principal_id)
+                peer.close(emit=False)
             logging.info("browser peer candidate failed remote=%s connection=%s",
                          remote_key, metadata["connection_id"])
         return None
@@ -1094,7 +1145,7 @@ class BrowserBroker:
         if service == "abush_browser" and operation == "ensure_managed_page_completion":
             if set(payload) != {
                 "remote_key", "connection_id", "principal_id", "workspace_id", "request_id",
-                "ensure_id", "executor_fence", "expected_page", "completion",
+                "ensure_id", "executor_fence", "completion",
             }:
                 raise ValueError("invalid ensure managed page completion payload")
             peer = self.peer(payload)
@@ -1103,6 +1154,15 @@ class BrowserBroker:
                 payload.get("request_id"), payload.get("ensure_id"),
                 payload.get("executor_fence"), payload.get("completion"),
             )
+            return {}
+        if service == "abush_browser" and operation == "managed_page_moved_outside":
+            if set(payload) != {
+                "remote_key", "connection_id", "principal_id", "request_id",
+                "executor_fence", "page",
+            }:
+                raise ValueError("invalid managed page moved outside payload")
+            self.peer(payload).report_managed_page_moved_outside(
+                payload.get("request_id"), payload.get("executor_fence"), payload.get("page"))
             return {}
         if service == "abush_browser" and operation == "executor_completion":
             if set(payload) != {

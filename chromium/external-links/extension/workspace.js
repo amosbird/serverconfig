@@ -41,6 +41,7 @@ class WorkspaceExecutor {
         this.ensureFlights = new Map();
         this.ensureWaiters = new Map();
         this.persistTail = Promise.resolve();
+        this.persistRevision = 0;
         this.ready = Promise.resolve();
     }
 
@@ -64,8 +65,9 @@ class WorkspaceExecutor {
 
     async persistRecords(records) {
         if (!this.chrome.storage?.session) return;
+        const revision = ++this.persistRevision;
         const write = this.persistTail.catch(() => {}).then(() =>
-            this.chrome.storage.session.set({abushWorkspaces: records}));
+            this.chrome.storage.session.set({abushWorkspaces: records, revision}));
         this.persistTail = write;
         await write;
     }
@@ -93,7 +95,9 @@ class WorkspaceExecutor {
 
     async restore() {
         if (!this.chrome.storage?.session) return;
-        const {abushWorkspaces = []} = await this.chrome.storage.session.get("abushWorkspaces");
+        const {abushWorkspaces = [], revision = 0} =
+            await this.chrome.storage.session.get(["abushWorkspaces", "revision"]);
+        if (Number.isInteger(revision) && revision >= 0) this.persistRevision = revision;
         let removed = false;
         for (const saved of abushWorkspaces) {
             if (!saved || typeof saved.remoteKey !== "string" ||
@@ -277,10 +281,8 @@ class WorkspaceExecutor {
             existing = null;
         }
         if (existing) {
-            if (payload.expected_page === null) {
-                this.fail("stale_page", "restored workspace requires an expected page");
-            }
-            if (!sameRef(payload.expected_page, this.pageRef(existing))) {
+            if (payload.expected_page !== null &&
+                    !sameRef(payload.expected_page, this.pageRef(existing))) {
                 this.fail("stale_page", "restored workspace does not match expected page");
             }
             this.ensureActive(flight);
@@ -590,6 +592,14 @@ class WorkspaceExecutor {
         if (!key) return;
         const record = this.workspaces.get(key);
         if (!record || moveInfo.windowId === record.windowId) return;
+        await this.nativeRequest("abush_browser", "managed_page_moved_outside", {
+            remote_key: record.remoteKey,
+            connection_id: record.connectionId,
+            principal_id: record.principalId,
+            request_id: crypto.randomUUID(),
+            executor_fence: record.executorFence,
+            page: this.pageRef(record),
+        });
         await this.detach(tabId);
         this.forget(record);
         await this.persist();

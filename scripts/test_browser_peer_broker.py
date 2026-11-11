@@ -71,8 +71,9 @@ class FakePeer:
 
 class BrowserPeerBrokerTest(unittest.TestCase):
     def setUp(self):
-        (ROOT / ".tmp").mkdir(exist_ok=True)
-        self.temporary = TemporaryDirectory(dir=ROOT / ".tmp")
+        temporary_root = ROOT.parent.parent / ".tmp"
+        temporary_root.mkdir(exist_ok=True)
+        self.temporary = TemporaryDirectory(dir=temporary_root)
         self.root = pathlib.Path(self.temporary.name) / "browser-remotes"
         self.root.mkdir(mode=0o700)
         self.servers = []
@@ -114,19 +115,24 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             if message.get("event") == event_name:
                 return message
 
+    def completion_payload(self, forwarded, completion):
+        payload = {key: value for key, value in forwarded.items() if key != "expected_page"}
+        payload["completion"] = completion
+        return payload
+
     def request(self, operation, payload):
         return {
             "version": 1, "id": operation, "service": "abush_browser",
             "operation": operation, "payload": payload,
         }
 
-    def test_v3_handshake_and_ensure_completion_are_strictly_correlated(self):
+    def test_v4_handshake_and_ensure_completion_are_strictly_correlated(self):
         server = self.peer()
         broker = host.BrowserBroker(self.root)
         try:
             broker.refresh()
             hello = server.received[0]
-            self.assertEqual(hello["version"], 3)
+            self.assertEqual(hello["version"], 4)
             self.assertEqual(set(hello), {
                 "type", "version", "executor_id", "nonce", "capabilities",
             })
@@ -149,9 +155,11 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "executor_fence": server.fence,
                 "expected_page": None,
             })
-            payload = {**forwarded["payload"], "completion": {
+            payload = {key: value for key, value in forwarded["payload"].items()
+                       if key != "expected_page"}
+            payload["completion"] = {
                 "outcome": "created", "window_id": "10", "page_id": "20",
-            }}
+            }
             broker.handle_request(self.request("ensure_managed_page_completion", payload))
             self.assertEqual(server.wait_for("ensure_managed_page_completed"), {
                 "type": "ensure_managed_page_completed",
@@ -206,11 +214,10 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "type": "cancel_ensure_managed_page", "request_id": "old-request",
                 "ensure_id": "ensure-one", "executor_fence": server.fence,
             })
-            broker.handle_request(self.request("ensure_managed_page_completion", {
-                **payload, "completion": {
-                    "outcome": "created", "window_id": "window", "page_id": "page",
-                },
-            }))
+            broker.handle_request(self.request("ensure_managed_page_completion",
+                                               self.completion_payload(payload, {
+                "outcome": "created", "window_id": "window", "page_id": "page",
+            })))
             self.assertEqual(server.wait_for("ensure_managed_page_completed")["request_id"],
                              "new-request")
             self.assertFalse(server.done.is_set())
@@ -238,12 +245,12 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 {"extra": True},
             ):
                 with self.subTest(change=change), self.assertRaises(ValueError):
-                    broker.handle_request(self.request("ensure_managed_page_completion", {
-                        **payload, **change, "completion": completion,
-                    }))
-            broker.handle_request(self.request("ensure_managed_page_completion", {
-                **payload, "completion": completion,
-            }))
+                    completion_payload = self.completion_payload(payload, completion)
+                    completion_payload.update(change)
+                    broker.handle_request(self.request(
+                        "ensure_managed_page_completion", completion_payload))
+            broker.handle_request(self.request("ensure_managed_page_completion",
+                                               self.completion_payload(payload, completion)))
         finally:
             broker.close()
 
@@ -343,9 +350,10 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 })
                 payload = self.next_event(
                     broker, "abush_browser.ensure_managed_page")["payload"]
-                broker.handle_request(self.request("ensure_managed_page_completion", {
-                    **payload, "completion": {"outcome": "rejected", "code": code},
-                }))
+                broker.handle_request(self.request("ensure_managed_page_completion",
+                                                   self.completion_payload(payload, {
+                    "outcome": "rejected", "code": code,
+                })))
             server.send({
                 "type": "ensure_managed_page", "request_id": "invalid-request",
                 "ensure_id": "invalid-ensure", "workspace_id": "workspace-invalid",
@@ -353,11 +361,101 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             })
             payload = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
             with self.assertRaises(ValueError):
-                broker.handle_request(self.request("ensure_managed_page_completion", {
-                    **payload, "completion": {
-                        "outcome": "rejected", "code": "workspace_unavailable",
-                    },
-                }))
+                broker.handle_request(self.request("ensure_managed_page_completion",
+                                                   self.completion_payload(payload, {
+                    "outcome": "rejected", "code": "workspace_unavailable",
+                })))
+        finally:
+            broker.close()
+
+    def test_workspace_executor_completion_shape_is_accepted_directly(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            server.send({
+                "type": "ensure_managed_page", "request_id": "request-one",
+                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
+                "expected_page": None, "executor_fence": server.fence,
+            })
+            forwarded = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
+            extension_payload = {
+                key: value for key, value in forwarded.items() if key != "expected_page"
+            }
+            extension_payload["completion"] = {
+                "outcome": "created", "window_id": "window", "page_id": "page",
+            }
+            broker.handle_request(self.request(
+                "ensure_managed_page_completion", extension_payload))
+            self.assertEqual(server.wait_for("ensure_managed_page_completed")["completion"],
+                             extension_payload["completion"])
+        finally:
+            broker.close()
+
+    def test_uncorrelated_completion_does_not_consume_pending_effect(self):
+        peer = host.RemotePeer(None, {})
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        peer.pending["effect"] = {"request_id": "right", "fence": peer.executor_fence}
+        with self.assertRaises(ValueError):
+            peer.complete("wrong", "effect", peer.executor_fence, "applied")
+        self.assertIn("effect", peer.pending)
+
+    def test_positive_generations_and_typed_hello_rejection(self):
+        peer = host.RemotePeer(None, {})
+        page = {"window": {"workspace_id": "w", "window_id": "x", "generation": 1},
+                "page_id": "p", "generation": 1}
+        self.assertTrue(peer._valid_page_ref(page))
+        for path in ("window", "page"):
+            invalid = json.loads(json.dumps(page))
+            if path == "window":
+                invalid["window"]["generation"] = 0
+            else:
+                invalid["generation"] = 0
+            self.assertFalse(peer._valid_page_ref(invalid))
+        with self.assertRaisesRegex(ValueError, "unsupported_version"):
+            peer._accept_hello({"type": "hello_rejected", "request_id": "hello",
+                                "reason": "unsupported_version"})
+        with self.assertRaisesRegex(ValueError, "invalid hello rejection"):
+            peer._accept_hello({"type": "hello_rejected", "request_id": "hello",
+                                "reason": "free form"})
+
+    def test_failover_cannot_switch_pinned_principal(self):
+        first = self.peer(connection_id="c_11111111", principal="principal-one")
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            self.assertEqual(broker.principals["r_12345678"], "principal-one")
+            second = self.peer(connection_id="c_22222222", principal="principal-two")
+            broker.refresh()
+            broker.peers["r_12345678"].close(emit=True)
+            self.assertNotIn("r_12345678", broker.peers)
+            self.assertTrue(second.done.wait(2))
+            self.assertEqual(broker.principals["r_12345678"], "principal-one")
+        finally:
+            broker.close()
+
+    def test_managed_page_moved_outside_round_trip_is_correlated(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        page = {"window": {"workspace_id": "workspace", "window_id": "window",
+                           "generation": 1}, "page_id": "page", "generation": 1}
+        try:
+            broker.refresh()
+            payload = {"remote_key": "r_12345678", "connection_id": "c_12345678",
+                       "principal_id": "principal-one", "request_id": "topology-one",
+                       "executor_fence": server.fence, "page": page}
+            broker.handle_request(self.request("managed_page_moved_outside", payload))
+            self.assertEqual(server.wait_for("managed_page_moved_outside"), {
+                "type": "managed_page_moved_outside", "request_id": "topology-one",
+                "executor_fence": server.fence, "page": page,
+            })
+            server.send({"type": "topology_response", "request_id": "topology-one",
+                         "result": {"outcome": "page_moved_outside"}})
+            for _ in range(100):
+                if "topology-one" not in broker.peers["r_12345678"].topology_pending:
+                    break
+                threading.Event().wait(0.01)
+            self.assertNotIn("topology-one", broker.peers["r_12345678"].topology_pending)
         finally:
             broker.close()
 

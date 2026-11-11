@@ -63,6 +63,13 @@ class XcffibAdapter:
     def wm_class(self, window):
         return self.property(window, "WM_CLASS", "STRING").split("\0")
 
+    def pid(self, window):
+        value = self.property(window, "_NET_WM_PID", "CARDINAL")
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
     def set_text(self, window, name, value, property_type="UTF8_STRING"):
         encoded = str(value).encode()
         self.core.ChangeProperty(self.xproto.PropMode.Replace, window, self.atom(name),
@@ -76,6 +83,16 @@ def binding_title_matches(title, expected):
     return title == expected or any(title == expected + suffix for suffix in CHROME_TITLE_SUFFIXES)
 
 
+def browser_process(pid):
+    if pid is None:
+        return False
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as process:
+            return b"chrom" in process.read().lower()
+    except OSError:
+        return False
+
+
 def bind_workspace_window(payload, adapter=None, attempts=100, interval=0.05):
     required = {"nonce", "remote_key", "workspace_id", "generation", "control_state"}
     if not isinstance(payload, dict) or not required.issubset(payload):
@@ -86,16 +103,26 @@ def bind_workspace_window(payload, adapter=None, attempts=100, interval=0.05):
     for key in required - {"nonce", "generation"}:
         if not isinstance(payload[key], str) or not payload[key] or len(payload[key]) > 256:
             raise ValueError(f"invalid {key}")
-    if not isinstance(payload["generation"], int) or isinstance(payload["generation"], bool):
+    if not isinstance(payload["generation"], int) or isinstance(payload["generation"], bool) or \
+            payload["generation"] <= 0:
         raise ValueError("invalid generation")
     adapter = adapter or XcffibAdapter()
     expected = f"__ABUSH_BIND__:{nonce}"
     matches = []
     for attempt in range(attempts):
-        matches = [window for window in adapter.windows()
-                   if binding_title_matches(adapter.title(window), expected) and
-                   any("chrom" in value.lower() for value in adapter.wm_class(window))]
+        existing = [window for window in adapter.windows()
+                    if adapter.property(window, "WM_WINDOW_ROLE", "STRING") == "abush-browser" and
+                    all(adapter.property(window, prop) == str(payload[field])
+                        for prop, field in TEXT_FIELDS.items())]
+        fresh = [window for window in adapter.windows()
+                 if binding_title_matches(adapter.title(window), expected) and
+                 any("chrom" in value.lower() for value in adapter.wm_class(window))]
+        matches = existing or fresh
         if len(matches) == 1:
+            window = matches[0]
+            pid = getattr(adapter, "pid", lambda _window: None)(window)
+            if pid is not None and not browser_process(pid):
+                raise ValueError("X11 binding candidate is not a Chrome process")
             break
         if len(matches) > 1:
             raise ValueError("ambiguous X11 binding nonce")

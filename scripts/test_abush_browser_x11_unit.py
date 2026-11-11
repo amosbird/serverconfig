@@ -66,6 +66,27 @@ class X11BindingTest(unittest.TestCase):
         self.assertEqual(adapter.values[(11, "_NET_WM_NAME")], "ordinary")
         self.assertTrue(adapter.finished)
 
+    def test_bind_twice_uses_stable_abush_identity(self):
+        adapter = FakeAdapter()
+        payload = {
+            "nonce": "0123456789abcdef0123456789abcdef",
+            "remote_key": "r_12345678", "workspace_id": "workspace",
+            "generation": 7, "control_state": "remote",
+        }
+        first = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
+        second = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
+        self.assertEqual(first["xid"], second["xid"])
+        self.assertEqual(second["xid"], 22)
+
+    def test_rejects_non_positive_generation(self):
+        for generation in (0, -1):
+            with self.subTest(generation=generation), self.assertRaises(ValueError):
+                binding.bind_workspace_window({
+                    "nonce": "0123456789abcdef0123456789abcdef",
+                    "remote_key": "r_12345678", "workspace_id": "workspace",
+                    "generation": generation, "control_state": "remote",
+                }, adapter=FakeAdapter(), attempts=1)
+
     def test_title_matching_accepts_chrome_suffix_only(self):
         expected = "__ABUSH_BIND__:0123456789abcdef0123456789abcdef"
         self.assertTrue(binding.binding_title_matches(expected, expected))
