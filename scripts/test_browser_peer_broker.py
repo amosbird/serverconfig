@@ -16,11 +16,11 @@ spec.loader.exec_module(host)
 
 
 class FakePeer:
-    def __init__(self, path, principal, fence):
+    def __init__(self, path, principal, fence, owner_display=None):
         self.path = pathlib.Path(path)
         self.principal = principal
         self.fence = fence
-        self.owner_display = {
+        self.owner_display = owner_display or {
             "daemon_instance_id": "daemon-instance",
             "daemon_boot_id": "daemon-boot",
             "workbench_name": "workbench",
@@ -116,11 +116,11 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         return path, socket_path
 
     def peer(self, remote_key="r_12345678", connection_id="c_12345678",
-             principal="principal-one", epoch=11):
+             principal="principal-one", epoch=11, owner_display=None):
         _, socket_path = self.connection(remote_key, connection_id)
         server = FakePeer(socket_path, principal, {
             "executor_id": f"executor-{connection_id}", "epoch": epoch,
-        })
+        }, owner_display)
         self.servers.append(server)
         return server
 
@@ -554,6 +554,53 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid hello rejection"):
             peer._accept_hello({"type": "hello_rejected", "request_id": "hello",
                                 "reason": "free form"})
+
+    def test_same_principal_new_boot_failover_updates_pinned_owner(self):
+        first = self.peer(connection_id="c_11111111")
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            replacement_owner = {
+                "daemon_instance_id": "daemon-instance",
+                "daemon_boot_id": "daemon-boot-two",
+                "workbench_name": "renamed-workbench",
+            }
+            second = self.peer(connection_id="c_22222222", owner_display=replacement_owner)
+            broker.refresh()
+            self.next_event(broker, "abush_browser.remote_state")
+            self.assertEqual(broker.principals["r_12345678"],
+                             ("principal-one", first.owner_display))
+
+            broker.peers["r_12345678"].close(emit=True)
+
+            replacement = broker.peers["r_12345678"]
+            self.assertEqual(replacement.owner_display, replacement_owner)
+            self.assertEqual(broker.principals["r_12345678"],
+                             ("principal-one", replacement_owner))
+            state = self.next_event(broker, "abush_browser.remote_state")["payload"]
+            self.assertEqual(state["owner_display"], replacement_owner)
+            self.assertTrue(second.connected.wait(2))
+        finally:
+            broker.close()
+
+    def test_failover_cannot_switch_pinned_daemon_instance(self):
+        first = self.peer(connection_id="c_11111111")
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            pinned = ("principal-one", first.owner_display)
+            second = self.peer(connection_id="c_22222222", owner_display={
+                "daemon_instance_id": "other-instance",
+                "daemon_boot_id": "daemon-boot-two",
+                "workbench_name": "workbench",
+            })
+            broker.refresh()
+            broker.peers["r_12345678"].close(emit=True)
+            self.assertNotIn("r_12345678", broker.peers)
+            self.assertTrue(second.done.wait(2))
+            self.assertEqual(broker.principals["r_12345678"], pinned)
+        finally:
+            broker.close()
 
     def test_failover_cannot_switch_pinned_principal(self):
         first = self.peer(connection_id="c_11111111", principal="principal-one")

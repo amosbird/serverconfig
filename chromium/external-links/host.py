@@ -1131,6 +1131,13 @@ class BrowserBroker:
             replacement = self._select(remote_key, exclude={peer.key}, publish=False)
             self.remote_changed(replacement or peer)
 
+    @staticmethod
+    def _same_principal_instance(pinned, candidate):
+        pinned_principal, pinned_owner = pinned
+        candidate_principal, candidate_owner = candidate
+        return pinned_principal == candidate_principal and \
+            pinned_owner["daemon_instance_id"] == candidate_owner["daemon_instance_id"]
+
     def _select_candidate(self, remote_key, exclude=frozenset()):
         for metadata in self.candidates.get(remote_key, []):
             key = (remote_key, metadata["connection_id"])
@@ -1145,7 +1152,8 @@ class BrowserBroker:
                 if pinned is None:
                     self.principals[remote_key] = identity
                     return peer
-                if identity == pinned:
+                if self._same_principal_instance(pinned, identity):
+                    self.principals[remote_key] = identity
                     return peer
                 logging.warning(
                     "browser peer principal replacement rejected remote=%s connection=%s "
