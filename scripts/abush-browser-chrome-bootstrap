@@ -12,7 +12,7 @@ exec "${ABUSH_CHROME_BIN:-/usr/bin/google-chrome-stable}" \
     --user-data-dir="$profile" \
     --no-default-browser-check \
     --silent-debugger-extension-api \
-    --restore-last-session \
+    --no-startup-window \
     --hide-crash-restore-bubble \
     --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation \
     --disable-smooth-scrolling
