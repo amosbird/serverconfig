@@ -179,8 +179,18 @@ if (typeof chrome !== "undefined") {
     });
     dispatcher().onEvent(message => {
         if (message.service !== "abush_browser") return;
+        if (message.event === "abush_browser.ensure_managed_page") {
+            workspaceReady.then(() => workspaces.ensure(message.payload))
+                .catch(error => notifyFailure(
+                    error.message || "Unable to ensure Abush browser workspace"));
+        }
+        if (message.event === "abush_browser.cancel_ensure_managed_page") {
+            workspaceReady.then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});
+        }
         if (message.event === "abush_browser.execute") {
-            workspaceReady.then(() => workspaces.execute(message.payload)).catch(() => {});
+            workspaceReady.then(() => workspaces.execute(message.payload))
+                .catch(error => notifyFailure(
+                    error.message || "Unable to complete Abush browser command"));
         }
         if (message.event === "abush_browser.cancel") workspaces.cancel(message.payload);
     });
@@ -192,20 +202,6 @@ if (typeof chrome !== "undefined") {
             workspaceReady.then(() => workspaces.debuggerDetached(source.tabId)).catch(() => {});
         }
     });
-    chrome.action.onClicked.addListener(async () => {
-        try {
-            await workspaceReady;
-            const {remotes} = await sendNativeRequest("abush_browser", "refresh_remotes", {});
-            const connected = remotes.filter(item => item.connected);
-            if (!connected.length) return notifyFailure("No active Abush browser remote");
-            for (const remote of connected) {
-                await workspaces.open(remote.remote_key, remote.connection_id);
-            }
-        } catch (error) {
-            notifyFailure(error.message);
-        }
-    });
-
     chrome.commands.onCommand.addListener((command, tab) => {
         if (command === "scrollToTop" || command === "scrollToBottom") {
             handleScrollCommand(command, tab);

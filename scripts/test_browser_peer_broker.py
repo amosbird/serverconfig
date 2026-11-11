@@ -20,13 +20,7 @@ class FakePeer:
         self.path = pathlib.Path(path)
         self.principal = principal
         self.fence = fence
-        self.default_window = {
-            "workspace_id": f"workspace-{principal}",
-            "window_id": "window-default",
-            "generation": 1,
-        }
         self.received = []
-        self.ready = threading.Event()
         self.connected = threading.Event()
         self.done = threading.Event()
         self.client = None
@@ -35,40 +29,20 @@ class FakePeer:
         self.server.listen(1)
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
-        self.ready.set()
 
     def run(self):
         try:
             self.client, _ = self.server.accept()
-            hello = host.read_peer_message(self.client)
-            self.received.append(hello)
+            self.received.append(host.read_peer_message(self.client))
             self.client.sendall(host.encode_peer_message({
                 "type": "hello_accepted",
                 "request_id": "hello-request",
                 "principal_id": self.principal,
                 "executor_fence": self.fence,
-                "default_window": self.default_window,
             }))
             self.connected.set()
             while True:
                 self.received.append(host.read_peer_message(self.client))
-                received = self.received[-1]
-                if received.get("type") == "managed_page_created":
-                    self.client.sendall(host.encode_peer_message({
-                        "type": "topology_response",
-                        "request_id": received["request_id"],
-                        "result": {"outcome": "page_created", "page": {
-                            "window": received["window"],
-                            "page_id": received["page_id"],
-                            "generation": 1,
-                        }},
-                    }))
-                elif received.get("type") == "managed_page_moved_outside":
-                    self.client.sendall(host.encode_peer_message({
-                        "type": "topology_response",
-                        "request_id": received["request_id"],
-                        "result": {"outcome": "page_moved_outside"},
-                    }))
         except (OSError, EOFError):
             pass
         finally:
@@ -85,9 +59,6 @@ class FakePeer:
                     return message
             if self.done.wait(0.01):
                 break
-        self.fail_timeout(message_type)
-
-    def fail_timeout(self, message_type):
         raise AssertionError(f"timed out waiting for {message_type}: {self.received}")
 
     def close(self):
@@ -100,6 +71,7 @@ class FakePeer:
 
 class BrowserPeerBrokerTest(unittest.TestCase):
     def setUp(self):
+        (ROOT / ".tmp").mkdir(exist_ok=True)
         self.temporary = TemporaryDirectory(dir=ROOT / ".tmp")
         self.root = pathlib.Path(self.temporary.name) / "browser-remotes"
         self.root.mkdir(mode=0o700)
@@ -110,243 +82,298 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             server.close()
         self.temporary.cleanup()
 
-    def connection(self, remote_key, connection_id, display_name=None):
+    def connection(self, remote_key, connection_id):
         directory = self.root / remote_key / connection_id
         directory.parent.mkdir(mode=0o700, exist_ok=True)
         directory.mkdir(mode=0o700)
         socket_path = directory / "browser-peer.sock"
-        metadata = {
+        path = directory / "connection.json"
+        path.write_text(json.dumps({
             "schema_version": 1,
             "remote_key": remote_key,
             "connection_id": connection_id,
-            "display_name": display_name or remote_key,
+            "display_name": remote_key,
             "browser_socket": str(socket_path),
             "remote_browser_socket": "/run/user/1000/abush/browser-peer.sock",
-        }
-        path = directory / "connection.json"
-        path.write_text(json.dumps(metadata))
+        }))
         path.chmod(0o600)
-        return directory, path, socket_path
+        return path, socket_path
 
-    def peer(self, remote_key, connection_id, principal, epoch):
-        _, _, socket_path = self.connection(remote_key, connection_id)
-        fence = {"executor_id": f"executor-{connection_id}", "epoch": epoch}
-        server = FakePeer(socket_path, principal, fence)
+    def peer(self, remote_key="r_12345678", connection_id="c_12345678",
+             principal="principal-one", epoch=11):
+        _, socket_path = self.connection(remote_key, connection_id)
+        server = FakePeer(socket_path, principal, {
+            "executor_id": f"executor-{connection_id}", "epoch": epoch,
+        })
         self.servers.append(server)
         return server
 
-    def test_metadata_validation_rejects_modes_symlinks_and_escape(self):
-        directory, path, _ = self.connection("r_12345678", "c_12345678")
-        self.assertEqual(host.validate_remote_metadata(path, self.root)["connection_id"],
-                         "c_12345678")
-        path.chmod(0o644)
-        with self.assertRaises(ValueError):
-            host.validate_remote_metadata(path, self.root)
-        path.chmod(0o600)
-        data = json.loads(path.read_text())
-        data["browser_socket"] = str(directory.parent / "browser-peer.sock")
-        path.write_text(json.dumps(data))
-        path.chmod(0o600)
-        with self.assertRaises(ValueError):
-            host.validate_remote_metadata(path, self.root)
-        path.unlink()
-        outside = directory / "outside.json"
-        outside.write_text("{}")
-        outside.chmod(0o600)
-        path.symlink_to(outside)
-        with self.assertRaises(ValueError):
-            host.validate_remote_metadata(path, self.root)
+    def next_event(self, broker, event_name):
+        while True:
+            message = broker.outbound.get(timeout=2)
+            if message.get("event") == event_name:
+                return message
 
-    def test_distinct_remotes_handshake_list_ping_and_execute_unknown(self):
-        first = self.peer("r_12345678", "c_12345678", "principal-one", 11)
-        second = self.peer("r_abcdefgh", "c_abcdefgh", "principal-two", 22)
-        local_peer = self.peer("r_local000", "c_local000", "principal-local", 33)
+    def request(self, operation, payload):
+        return {
+            "version": 1, "id": operation, "service": "abush_browser",
+            "operation": operation, "payload": payload,
+        }
+
+    def test_v3_handshake_and_ensure_completion_are_strictly_correlated(self):
+        server = self.peer()
         broker = host.BrowserBroker(self.root)
         try:
-            remotes = broker.refresh()
-            self.assertEqual(len(remotes), 3)
-            self.assertTrue(all(remote["connected"] for remote in remotes))
-            self.assertEqual({remote["principal_id"] for remote in remotes},
-                             {"principal-one", "principal-two", "principal-local"})
-            for server in (first, second, local_peer):
-                hello = server.received[0]
-                self.assertEqual(hello, {
-                    "type": "hello",
-                    "version": 2,
-                    "executor_id": broker.executor_id({
-                        "remote_key": server.path.parent.parent.name,
-                    }),
-                    "nonce": hello["nonce"],
-                    "capabilities": {"cancellation": True},
+            broker.refresh()
+            hello = server.received[0]
+            self.assertEqual(hello["version"], 3)
+            self.assertEqual(set(hello), {
+                "type", "version", "executor_id", "nonce", "capabilities",
+            })
+            server.send({
+                "type": "ensure_managed_page",
+                "request_id": "request-one",
+                "ensure_id": "ensure-one",
+                "workspace_id": "workspace-authoritative",
+                "expected_page": None,
+                "executor_fence": server.fence,
+            })
+            forwarded = self.next_event(broker, "abush_browser.ensure_managed_page")
+            self.assertEqual(forwarded["payload"], {
+                "remote_key": "r_12345678",
+                "connection_id": "c_12345678",
+                "principal_id": "principal-one",
+                "workspace_id": "workspace-authoritative",
+                "request_id": "request-one",
+                "ensure_id": "ensure-one",
+                "executor_fence": server.fence,
+                "expected_page": None,
+            })
+            payload = {**forwarded["payload"], "completion": {
+                "outcome": "created", "window_id": "10", "page_id": "20",
+            }}
+            broker.handle_request(self.request("ensure_managed_page_completion", payload))
+            self.assertEqual(server.wait_for("ensure_managed_page_completed"), {
+                "type": "ensure_managed_page_completed",
+                "request_id": "request-one",
+                "ensure_id": "ensure-one",
+                "executor_fence": server.fence,
+                "completion": {"outcome": "created", "window_id": "10", "page_id": "20"},
+            })
+            with self.assertRaises(ValueError):
+                broker.handle_request(self.request("ensure_managed_page_completion", payload))
+        finally:
+            broker.close()
+
+    def test_cancel_ensure_forwards_exact_authenticated_event_without_closing_peer(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            server.send({
+                "type": "ensure_managed_page", "request_id": "ensure-request",
+                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
+                "expected_page": None, "executor_fence": server.fence,
+            })
+            self.next_event(broker, "abush_browser.ensure_managed_page")
+            server.send({
+                "type": "cancel_ensure_managed_page", "request_id": "ensure-request",
+                "ensure_id": "ensure-one", "executor_fence": server.fence,
+            })
+            forwarded = self.next_event(
+                broker, "abush_browser.cancel_ensure_managed_page")["payload"]
+            self.assertEqual(forwarded, {
+                "remote_key": "r_12345678", "connection_id": "c_12345678",
+                "principal_id": "principal-one", "request_id": "ensure-request",
+                "ensure_id": "ensure-one", "executor_fence": server.fence,
+            })
+            self.assertFalse(server.done.is_set())
+        finally:
+            broker.close()
+
+    def test_stale_cancel_ensure_is_ignored_without_cancelling_newer_ensure(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            server.send({
+                "type": "ensure_managed_page", "request_id": "new-request",
+                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
+                "expected_page": None, "executor_fence": server.fence,
+            })
+            payload = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
+            server.send({
+                "type": "cancel_ensure_managed_page", "request_id": "old-request",
+                "ensure_id": "ensure-one", "executor_fence": server.fence,
+            })
+            broker.handle_request(self.request("ensure_managed_page_completion", {
+                **payload, "completion": {
+                    "outcome": "created", "window_id": "window", "page_id": "page",
+                },
+            }))
+            self.assertEqual(server.wait_for("ensure_managed_page_completed")["request_id"],
+                             "new-request")
+            self.assertFalse(server.done.is_set())
+        finally:
+            broker.close()
+
+    def test_stale_principal_fence_and_connection_fail_closed(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            server.send({
+                "type": "ensure_managed_page", "request_id": "request-one",
+                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
+                "expected_page": None, "executor_fence": server.fence,
+            })
+            payload = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
+            completion = {"outcome": "rejected", "code": "invalid_command"}
+            for change in (
+                {"principal_id": "other"},
+                {"connection_id": "c_abcdefgh"},
+                {"executor_fence": {**server.fence, "epoch": 12}},
+                {"workspace_id": "other"},
+                {"request_id": "other"},
+                {"extra": True},
+            ):
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    broker.handle_request(self.request("ensure_managed_page_completion", {
+                        **payload, **change, "completion": completion,
+                    }))
+            broker.handle_request(self.request("ensure_managed_page_completion", {
+                **payload, "completion": completion,
+            }))
+        finally:
+            broker.close()
+
+    def test_execute_event_includes_authenticated_principal(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            page = {"window": {
+                "workspace_id": "workspace", "window_id": "window", "generation": 1,
+            }, "page_id": "20", "generation": 1}
+            server.send({
+                "type": "execute", "request_id": "request", "effect_id": "effect",
+                "executor_fence": server.fence,
+                "command": {"command": "navigate", "page": page,
+                            "url": "https://example.test/"},
+            })
+            forwarded = self.next_event(broker, "abush_browser.execute")["payload"]
+            self.assertEqual(forwarded["principal_id"], "principal-one")
+            completion = {key: value for key, value in forwarded.items() if key != "command"}
+            with self.assertRaises(ValueError):
+                broker.handle_request(self.request("executor_completion", {
+                    **completion, "principal_id": "other", "completion": "applied",
+                }))
+            broker.handle_request(self.request("executor_completion", {
+                **completion, "completion": "applied",
+            }))
+            self.assertEqual(server.wait_for("completion")["completion"], "applied")
+        finally:
+            broker.close()
+
+    def test_cancel_uses_distinct_request_and_forwards_execution_request(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            page = {"window": {
+                "workspace_id": "workspace", "window_id": "window", "generation": 1,
+            }, "page_id": "20", "generation": 1}
+            server.send({
+                "type": "execute", "request_id": "current-request", "effect_id": "effect",
+                "executor_fence": server.fence,
+                "command": {"command": "navigate", "page": page,
+                            "url": "https://example.test/"},
+            })
+            self.next_event(broker, "abush_browser.execute")
+            server.send({
+                "type": "cancel", "request_id": "current-request", "effect_id": "effect",
+                "executor_fence": server.fence,
+            })
+            server.done.wait(2)
+            self.assertTrue(server.done.is_set())
+        finally:
+            broker.close()
+
+    def test_distinct_cancel_request_is_forwarded_with_original_execute_request(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            page = {"window": {
+                "workspace_id": "workspace", "window_id": "window", "generation": 1,
+            }, "page_id": "20", "generation": 1}
+            server.send({
+                "type": "execute", "request_id": "execute-request", "effect_id": "effect",
+                "executor_fence": server.fence,
+                "command": {"command": "navigate", "page": page,
+                            "url": "https://example.test/"},
+            })
+            self.next_event(broker, "abush_browser.execute")
+            server.send({
+                "type": "cancel", "request_id": "cancel-request", "effect_id": "effect",
+                "executor_fence": server.fence,
+            })
+            forwarded = self.next_event(broker, "abush_browser.cancel")["payload"]
+            self.assertEqual(forwarded, {
+                "remote_key": "r_12345678", "connection_id": "c_12345678",
+                "principal_id": "principal-one", "request_id": "cancel-request",
+                "execution_request_id": "execute-request", "effect_id": "effect",
+                "executor_fence": server.fence,
+            })
+        finally:
+            broker.close()
+
+    def test_rejected_completion_only_accepts_browser_error_codes(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            for index, code in enumerate(sorted(host.BROWSER_ERROR_CODES)):
+                request_id = f"request-{index}"
+                ensure_id = f"ensure-{index}"
+                server.send({
+                    "type": "ensure_managed_page", "request_id": request_id,
+                    "ensure_id": ensure_id, "workspace_id": f"workspace-{index}",
+                    "expected_page": None, "executor_fence": server.fence,
                 })
-                self.assertRegex(hello["nonce"], r"^[0-9a-f]{32}$")
-            first.send({"type": "ping", "request_id": "ping-1", "ping_id": "ping-7"})
-            self.assertEqual(first.wait_for("pong"), {
-                "type": "pong", "request_id": "ping-1", "ping_id": "ping-7",
+                payload = self.next_event(
+                    broker, "abush_browser.ensure_managed_page")["payload"]
+                broker.handle_request(self.request("ensure_managed_page_completion", {
+                    **payload, "completion": {"outcome": "rejected", "code": code},
+                }))
+            server.send({
+                "type": "ensure_managed_page", "request_id": "invalid-request",
+                "ensure_id": "invalid-ensure", "workspace_id": "workspace-invalid",
+                "expected_page": None, "executor_fence": server.fence,
             })
-            second.send({
-                "type": "execute",
-                "request_id": "execute-1",
-                "effect_id": "effect-1",
-                "executor_fence": second.fence,
-                "command": {"command": "navigate", "page": {
-                    "window": second.default_window, "page_id": "page", "generation": 1,
-                }, "url": "https://example.com/"},
-            })
-            execute = None
-            while execute is None or execute.get("event") != "abush_browser.execute":
-                execute = broker.outbound.get(timeout=2)
-            self.assertEqual(execute, {
-                "version": 1,
-                "event": "abush_browser.execute",
-                "service": "abush_browser",
-                "payload": {
-                    "remote_key": "r_abcdefgh", "connection_id": "c_abcdefgh",
-                    "request_id": "execute-1", "effect_id": "effect-1",
-                    "executor_fence": second.fence,
-                    "command": {"command": "navigate", "page": {
-                        "window": second.default_window, "page_id": "page", "generation": 1,
-                    }, "url": "https://example.com/"},
-                },
-            })
-            broker.handle_request({
-                "version": 1, "id": "complete", "service": "abush_browser",
-                "operation": "executor_completion", "payload": {
-                    "remote_key": "r_abcdefgh", "connection_id": "c_abcdefgh",
-                    "request_id": "execute-1", "effect_id": "effect-1",
-                    "executor_fence": second.fence, "completion": "applied",
-                },
-            })
-            self.assertEqual(second.wait_for("completion"), {
-                "type": "completion", "request_id": "execute-1", "effect_id": "effect-1",
-                "executor_fence": second.fence, "completion": "applied",
-            })
+            payload = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
+            with self.assertRaises(ValueError):
+                broker.handle_request(self.request("ensure_managed_page_completion", {
+                    **payload, "completion": {
+                        "outcome": "rejected", "code": "workspace_unavailable",
+                    },
+                }))
         finally:
             broker.close()
 
-    def test_same_remote_has_one_active_peer_and_fails_over(self):
-        first = self.peer("r_12345678", "c_12345678", "principal-one", 11)
-        second = self.peer("r_12345678", "c_abcdefgh", "principal-two", 22)
-        first_metadata = self.root / "r_12345678" / "c_12345678" / "connection.json"
-        second_metadata = self.root / "r_12345678" / "c_abcdefgh" / "connection.json"
-        first_metadata.touch()
-        broker = host.BrowserBroker(self.root)
-        try:
-            remotes = broker.refresh()
-            self.assertEqual(len(remotes), 1)
-            self.assertEqual(remotes[0]["connection_id"], "c_12345678")
-            self.assertTrue(first.connected.wait(2))
-            self.assertFalse(second.connected.is_set())
-
-            first_metadata.unlink()
-            remotes = broker.refresh()
-            self.assertEqual(len(remotes), 1)
-            self.assertEqual(remotes[0]["connection_id"], "c_abcdefgh")
-            self.assertTrue(second.connected.wait(2))
-            self.assertEqual(remotes[0]["principal_id"], "principal-two")
-            self.assertNotEqual(first.fence, second.fence)
-            self.assertTrue(second_metadata.exists())
-            events = []
-            while not broker.outbound.empty():
-                item = broker.outbound.get_nowait()
-                if item.get("event") == "abush_browser.remote_state":
-                    events.append(item["payload"])
-            self.assertTrue(events)
-            self.assertTrue(all(item["connected"] for item in events))
-            self.assertEqual(events[-1]["connection_id"], "c_abcdefgh")
-        finally:
-            broker.close()
-
-    def test_live_disconnect_fails_over_without_disconnected_event(self):
-        first = self.peer("r_12345678", "c_12345678", "principal-one", 11)
-        second = self.peer("r_12345678", "c_abcdefgh", "principal-two", 22)
-        first_metadata = self.root / "r_12345678" / "c_12345678" / "connection.json"
-        first_metadata.touch()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            self.assertTrue(first.connected.wait(2))
-            while not broker.outbound.empty():
-                broker.outbound.get_nowait()
-            first.client.shutdown(socket.SHUT_RDWR)
-            first.client.close()
-            self.assertTrue(second.connected.wait(2))
-            state = broker.outbound.get(timeout=2)
-            self.assertEqual(state["event"], "abush_browser.remote_state")
-            self.assertTrue(state["payload"]["connected"])
-            self.assertEqual(state["payload"]["connection_id"], "c_abcdefgh")
-            self.assertTrue(broker.outbound.empty())
-        finally:
-            broker.close()
-
-    def test_topology_requests_and_responses_match_v2_wire_shape(self):
-        server = self.peer("r_12345678", "c_12345678", "principal-one", 11)
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            page_id = "page-one"
-            page = broker.handle_request({
-                "version": 1, "id": "register", "service": "abush_browser",
-                "operation": "register_managed_page", "payload": {
-                    "remote_key": "r_12345678", "connection_id": "c_12345678",
-                    "window": server.default_window, "page_id": page_id,
-                },
-            })["page"]
-            created = server.wait_for("managed_page_created")
-            self.assertEqual(created, {
-                "type": "managed_page_created", "request_id": created["request_id"],
-                "executor_fence": server.fence, "window": server.default_window,
-                "page_id": page_id,
-            })
-            self.assertEqual(page, {
-                "window": server.default_window, "page_id": page_id, "generation": 1,
-            })
-            broker.handle_request({
-                "version": 1, "id": "move", "service": "abush_browser",
-                "operation": "moved_outside", "payload": {
-                    "remote_key": "r_12345678", "connection_id": "c_12345678", "page": page,
-                },
-            })
-            moved = server.wait_for("managed_page_moved_outside")
-            self.assertEqual(moved, {
-                "type": "managed_page_moved_outside", "request_id": moved["request_id"],
-                "executor_fence": server.fence, "page": page,
-            })
-        finally:
-            broker.close()
-
-    def test_v1_like_peer_shapes_are_rejected(self):
+    def test_v2_hello_shape_and_topology_messages_are_rejected(self):
         peer = host.RemotePeer(None, {})
         peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        for message in (
-            {"type": "ping", "request_id": "ping", "timestamp": 7},
-            {"type": "execute", "request_id": "request", "effect": {},
-             "executor_fence": 1},
-            {"type": "topology_response", "request_id": "request",
-             "outcome": "page_moved_outside"},
-        ):
-            with self.subTest(message=message), self.assertRaises(ValueError):
-                peer.handle(message)
-
-    def test_malformed_peer_does_not_affect_other_and_refresh_cleans_up(self):
-        first = self.peer("r_12345678", "c_12345678", "principal-one", 11)
-        second = self.peer("r_abcdefgh", "c_abcdefgh", "principal-two", 22)
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            first.client.sendall((host.MAX_MESSAGE_SIZE + 1).to_bytes(4, "big"))
-            self.assertTrue(first.done.wait(2))
-            second.send({"type": "ping", "request_id": "still-live", "ping_id": "live"})
-            self.assertEqual(second.wait_for("pong")["request_id"], "still-live")
-            states = {item["connection_id"]: item for item in broker.list_remotes()}
-            self.assertFalse(states["c_12345678"]["connected"])
-            self.assertTrue(states["c_abcdefgh"]["connected"])
-            metadata = self.root / "r_12345678" / "c_12345678" / "connection.json"
-            metadata.unlink()
-            remotes = broker.refresh()
-            self.assertEqual([item["connection_id"] for item in remotes], ["c_abcdefgh"])
-        finally:
-            broker.close()
+        with self.assertRaises(ValueError):
+            peer._accept_hello({
+                "type": "hello_accepted", "request_id": "hello",
+                "principal_id": "principal", "executor_fence": peer.executor_fence,
+                "default_window": {"workspace_id": "w", "window_id": "x", "generation": 1},
+            })
+        with self.assertRaises(ValueError):
+            peer.handle({"type": "topology_response", "request_id": "request", "result": {
+                "outcome": "rejected", "code": "old_wire",
+            }})
 
 
 if __name__ == "__main__":

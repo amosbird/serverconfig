@@ -135,6 +135,13 @@ for (const [page, link, expected] of cases) {{
         self.assertIn("chrome.runtime.onMessage.addListener", background)
         self.assertIn("chrome.notifications.create", background)
 
+    def test_background_routes_ensure_and_action_is_peer_lifecycle_noop(self):
+        background = CONTENT.with_name("background.js").read_text()
+        self.assertIn('message.event === "abush_browser.ensure_managed_page"', background)
+        self.assertIn("workspaces.ensure(message.payload)", background)
+        self.assertNotIn("chrome.action.onClicked", background)
+        self.assertNotIn("Browser workspaces are managed automatically.", background)
+
     def test_site_languages_are_managed_by_independent_config(self):
         manifest = json.loads(MANIFEST.read_text())
         config = json.loads(MANIFEST.with_name("site-languages.json").read_text())
