@@ -13,7 +13,6 @@ CRASH_LOG="$HOME/.abush/logs/crash.log"
 mkdir -p "$(dirname "$CRASH_LOG")"
 
 ABUSH_BIN="$HOME/git/abush/target/release/abush"
-export ABUSH_BROWSER_LAUNCHER="${ABUSH_BROWSER_LAUNCHER:-[\"$HOME/scripts/abush-browser-chrome-bootstrap\"]}"
 
 # Always log to a known file so post-hoc debugging doesn't depend on
 # the user having set ABUSH_LOG / RUST_LOG before launch.
