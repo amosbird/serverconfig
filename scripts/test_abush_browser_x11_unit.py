@@ -24,7 +24,7 @@ class FakeAdapter:
         self.values = {
             (11, "_NET_WM_NAME"): "ordinary",
             (11, "WM_CLASS"): "chromium\0Chromium",
-            (22, "_NET_WM_NAME"): "__ABUSH_BIND__:0123456789abcdef0123456789abcdef",
+            (22, "_NET_WM_NAME"): "__ABUSH_BIND__:0123456789abcdef0123456789abcdef - Google Chrome",
             (22, "WM_CLASS"): "chromium\0Chromium",
         }
         self.finished = False
@@ -61,8 +61,35 @@ class X11BindingTest(unittest.TestCase):
         self.assertEqual(result["xid"], 22)
         self.assertEqual(result["observed"]["_ABUSH_REMOTE_ID"], "r_12345678")
         self.assertEqual(result["observed"]["_ABUSH_WINDOW_GENERATION"], "7")
+        self.assertEqual(result["observed"]["WM_WINDOW_ROLE"], "abush-browser")
+        self.assertEqual(adapter.values[(22, "WM_CLASS")], "abush-browser\0AbushBrowser\0")
         self.assertEqual(adapter.values[(11, "_NET_WM_NAME")], "ordinary")
         self.assertTrue(adapter.finished)
+
+    def test_title_matching_accepts_chrome_suffix_only(self):
+        expected = "__ABUSH_BIND__:0123456789abcdef0123456789abcdef"
+        self.assertTrue(binding.binding_title_matches(expected, expected))
+        self.assertTrue(binding.binding_title_matches(expected + " - Google Chrome", expected))
+        self.assertTrue(binding.binding_title_matches(expected + " - Chromium", expected))
+        self.assertFalse(binding.binding_title_matches(expected + " - Firefox", expected))
+        self.assertFalse(binding.binding_title_matches("prefix " + expected, expected))
+
+    def test_verifies_required_properties_after_flushing(self):
+        adapter = FakeAdapter()
+        original = adapter.property
+
+        def missing_role(window, name, property_type="UTF8_STRING"):
+            if name == "WM_WINDOW_ROLE":
+                return ""
+            return original(window, name, property_type)
+
+        adapter.property = missing_role
+        with self.assertRaisesRegex(binding.X11Unavailable, "verification failed"):
+            binding.bind_workspace_window({
+                "nonce": "0123456789abcdef0123456789abcdef",
+                "remote_key": "r_12345678", "workspace_id": "workspace",
+                "generation": 7, "control_state": "remote",
+            }, adapter=adapter, attempts=1)
 
     def test_rejects_bad_nonce(self):
         with self.assertRaises(ValueError):
@@ -75,7 +102,7 @@ class X11BindingTest(unittest.TestCase):
 
 class AcceptanceOutputTest(unittest.TestCase):
     def test_parses_explicit_xprop_fields(self):
-        raw = '''WM_WINDOW_ROLE(STRING) = "abush-browser-workspace"
+        raw = '''WM_WINDOW_ROLE(STRING) = "abush-browser"
 _ABUSH_REMOTE_ID(UTF8_STRING) = "r_12345678"
 _ABUSH_WORKSPACE_ID(UTF8_STRING) = "workspace"
 _ABUSH_WINDOW_GENERATION(UTF8_STRING) = "7"
@@ -84,7 +111,7 @@ WM_CLASS(STRING) = "chromium", "Chromium"
 _NET_WM_NAME(UTF8_STRING) = "Managed page"
 '''
         self.assertEqual(acceptance.parse_properties(raw), {
-            "wm_role": "abush-browser-workspace", "remote_id": "r_12345678",
+            "wm_role": "abush-browser", "remote_id": "r_12345678",
             "workspace_id": "workspace", "generation": "7", "control_state": "remote",
             "wm_class": ["chromium", "Chromium"], "title": "Managed page",
         })

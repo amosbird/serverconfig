@@ -162,6 +162,19 @@ class LocalBrowserPublisherTest(unittest.TestCase):
             upstream.close()
         self.assertEqual(pathlib.Path.cwd(), original)
 
+    def test_target_liveness_waits_for_first_socket_and_bounds_cleanup(self):
+        missing = self.runtime / "missing.sock"
+        seen, since, expired = local.update_target_liveness(missing, False, None, 100)
+        self.assertEqual((seen, since, expired), (False, None, False))
+        seen, since, expired = local.update_target_liveness(missing, seen, since, 1000)
+        self.assertEqual((seen, since, expired), (False, None, False))
+
+        seen, since, expired = local.update_target_liveness(missing, True, None, 1000)
+        self.assertEqual((seen, since, expired), (True, 1000, False))
+        seen, since, expired = local.update_target_liveness(
+            missing, seen, since, 1000 + local.TARGET_MISSING_GRACE + 0.1)
+        self.assertEqual((seen, since, expired), (True, 1000, True))
+
     def test_wait_ready_requires_live_owner_and_exact_registration(self):
         process = self.start()
         connection = self.abush / "browser-remotes" / local.REMOTE_KEY / local.CONNECTION_ID

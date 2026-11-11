@@ -5,6 +5,7 @@ import re
 import time
 
 NONCE_RE = re.compile(r"[0-9a-f]{32}\Z")
+CHROME_TITLE_SUFFIXES = (" - Google Chrome", " - Chromium")
 TEXT_FIELDS = {
     "_ABUSH_REMOTE_ID": "remote_key",
     "_ABUSH_WORKSPACE_ID": "workspace_id",
@@ -43,7 +44,18 @@ class XcffibAdapter:
         return bytes(reply.value.buf()).rstrip(b"\0").decode(errors="replace")
 
     def windows(self):
-        return list(self.core.QueryTree(self.root).reply().children)
+        pending = list(self.core.QueryTree(self.root).reply().children)
+        seen = set()
+        while pending:
+            window = pending.pop()
+            if window in seen:
+                continue
+            seen.add(window)
+            yield window
+            try:
+                pending.extend(self.core.QueryTree(window).reply().children)
+            except self.xcffib.ConnectionException:
+                pass
 
     def title(self, window):
         return self.property(window, "_NET_WM_NAME") or self.property(window, "WM_NAME", "STRING")
@@ -60,7 +72,11 @@ class XcffibAdapter:
         self.connection.flush()
 
 
-def bind_workspace_window(payload, adapter=None, attempts=20, interval=0.05):
+def binding_title_matches(title, expected):
+    return title == expected or any(title == expected + suffix for suffix in CHROME_TITLE_SUFFIXES)
+
+
+def bind_workspace_window(payload, adapter=None, attempts=100, interval=0.05):
     required = {"nonce", "remote_key", "workspace_id", "generation", "control_state"}
     if not isinstance(payload, dict) or not required.issubset(payload):
         raise ValueError("missing X11 binding metadata")
@@ -77,7 +93,7 @@ def bind_workspace_window(payload, adapter=None, attempts=20, interval=0.05):
     matches = []
     for attempt in range(attempts):
         matches = [window for window in adapter.windows()
-                   if adapter.title(window) == expected and
+                   if binding_title_matches(adapter.title(window), expected) and
                    any("chrom" in value.lower() for value in adapter.wm_class(window))]
         if len(matches) == 1:
             break
@@ -91,12 +107,19 @@ def bind_workspace_window(payload, adapter=None, attempts=20, interval=0.05):
     adapter.set_text(window, "WM_WINDOW_ROLE", "abush-browser", "STRING")
     for prop, field in TEXT_FIELDS.items():
         adapter.set_text(window, prop, payload[field])
+    adapter.finish()
     observed = {prop: adapter.property(window, prop) for prop in TEXT_FIELDS}
     observed["WM_WINDOW_ROLE"] = adapter.property(window, "WM_WINDOW_ROLE", "STRING")
+    expected_observed = {
+        "WM_WINDOW_ROLE": "abush-browser",
+        **{prop: str(payload[field]) for prop, field in TEXT_FIELDS.items()},
+    }
+    if observed != expected_observed:
+        raise X11Unavailable(f"X11 binding verification failed: {observed}")
     try:
         adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
         adapter.set_text(window, "_NET_WM_NAME", f"Abush Browser — {payload['workspace_id']}")
+        adapter.finish()
     except Exception:
         pass
-    adapter.finish()
     return {"available": True, "xid": window, "observed": observed}

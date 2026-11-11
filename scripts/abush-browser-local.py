@@ -52,6 +52,17 @@ def connect_socket(sock, path):
 
 
 RELAY_BUFFER_LIMIT = 1024 * 1024
+TARGET_MISSING_GRACE = 30
+
+
+def update_target_liveness(target, target_seen, missing_since, now):
+    if target.exists():
+        return True, None, False
+    if not target_seen:
+        return False, None, False
+    if missing_since is None:
+        return True, now, False
+    return True, missing_since, now - missing_since > TARGET_MISSING_GRACE
 
 
 def relay(client, target_path):
@@ -238,17 +249,16 @@ def main():
             pass
         raise
 
+    target_seen = target.exists()
     missing_since = None
     try:
         while True:
             try:
                 client, _ = server.accept()
             except socket.timeout:
-                if target.exists():
-                    missing_since = None
-                elif missing_since is None:
-                    missing_since = time.monotonic()
-                elif time.monotonic() - missing_since > 30:
+                target_seen, missing_since, expired = update_target_liveness(
+                    target, target_seen, missing_since, time.monotonic())
+                if expired:
                     return
                 continue
             try:

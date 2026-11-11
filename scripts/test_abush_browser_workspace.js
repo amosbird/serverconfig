@@ -12,9 +12,14 @@ function fixture(tabWindow = 10) {
     const chrome = {
         tabs: {
             get: async id => ({id, windowId: tabWindow}),
+            query: async ({windowId}) => [{
+                id: 19, windowId,
+                url: "chrome-extension://id/status.html#0123456789abcdef0123456789abcdef",
+            }],
             update: async (id, properties) => calls.push(["update", id, properties]),
             remove: async id => calls.push(["remove", id]),
         },
+        runtime: {getURL: path => `chrome-extension://id/${path}`},
         windows: {remove: async id => calls.push(["removeWindow", id])},
         debugger: {
             attach: async target => calls.push(["attach", target]),
@@ -152,6 +157,85 @@ function payload(command, overrides = {}) {
         assert.strictEqual(record.pages, original.pages);
         assert.deepEqual([...record.pages.keys()], ["page", "page-two"]);
         assert(!calls.some(call => call[0] === "bind_x11_window"));
+    }
+    {
+        const {executor, calls, record} = fixture();
+        executor.chrome.tabs.query = async () => [];
+        executor.chrome.windows.create = async properties => {
+            calls.push(["createWindow", properties]);
+            return {id: 30, tabs: [{id: 31}]};
+        };
+        executor.chrome.tabs.create = async properties => {
+            calls.push(["createTab", properties]);
+            return {id: 32};
+        };
+        executor.chrome.tabs.update = async (id, properties) => calls.push(["update", id, properties]);
+        executor.nativeRequest = async (service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "open_workspace") return {
+                default_window: windowRef, executor_fence: fence,
+            };
+            if (operation === "register_managed_page") return {
+                page: {...pageRef, page_id: payload.page_id},
+            };
+            return {};
+        };
+        const reopened = await executor.open(record.remoteKey, record.connectionId);
+        assert.notStrictEqual(reopened, record);
+        assert.equal(reopened.windowId, 30);
+        assert.equal(executor.workspaces.size, 1);
+        assert.equal(executor.windowOwners.has(10), false);
+        assert.equal(executor.tabOwners.has(20), false);
+        assert(calls.some(call => call[0] === "createWindow"));
+    }
+    {
+        let release;
+        const statusUrl = "chrome-extension://id/status.html#0123456789abcdef0123456789abcdef";
+        const saved = {
+            remoteKey: "r_12345678", connectionId: "c_12345678",
+            defaultWindow: windowRef, executorFence: fence, windowId: 10,
+            statusTabId: 19, nonce: "0123456789abcdef0123456789abcdef",
+            controlState: "remote", pages: [["page", {page: pageRef, tabId: 20}]],
+        };
+        const writes = [];
+        const chrome = {
+            runtime: {getURL: path => `chrome-extension://id/${path}`},
+            tabs: {query: async () => new Promise(resolve => { release = resolve; })},
+            storage: {session: {
+                get: async () => ({abushWorkspaces: [saved]}),
+                set: async value => writes.push(value),
+            }},
+        };
+        const executor = new WorkspaceExecutor(chrome, async () => ({}));
+        const ready = executor.restoreWhenReady();
+        let observed = false;
+        executor.whenReady().then(() => { observed = executor.workspaces.has(saved.remoteKey); });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(observed, false);
+        release([{id: 19, url: statusUrl}]);
+        await ready;
+        assert.equal(observed, true);
+        assert.equal(executor.workspaces.get(saved.remoteKey).pages.get("page").tabId, 20);
+        assert.equal(writes.length, 0);
+    }
+    {
+        const writes = [];
+        const chrome = {
+            runtime: {getURL: path => `chrome-extension://id/${path}`},
+            tabs: {query: async () => { throw new Error("No window with id: 10"); }},
+            storage: {session: {
+                get: async () => ({abushWorkspaces: [{remoteKey: "r_12345678",
+                    windowId: 10, statusTabId: 19, nonce: "0".repeat(32), pages: []}]}),
+                set: async value => writes.push(value),
+            }},
+        };
+        const executor = new WorkspaceExecutor(chrome, async () => ({}));
+        await executor.restore();
+        assert.equal(executor.workspaces.size, 0);
+        assert.equal(writes.length, 1);
+        assert.deepEqual(writes[0], {abushWorkspaces: []});
+        chrome.tabs.query = async () => { throw new Error("query failed"); };
+        await assert.rejects(executor.restore(), /query failed/);
     }
     console.log("workspace executor tests passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

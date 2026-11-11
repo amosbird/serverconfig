@@ -172,22 +172,35 @@ async function configureSiteLanguages() {
 if (typeof chrome !== "undefined") {
     configureSiteLanguages();
     dispatcher().ensurePort();
-    workspace().restore();
+    const workspaces = workspace();
+    const workspaceReady = workspaces.restoreWhenReady().catch(error => {
+        notifyFailure(error.message || "Unable to restore Abush browser workspaces");
+        throw error;
+    });
     dispatcher().onEvent(message => {
         if (message.service !== "abush_browser") return;
-        if (message.event === "abush_browser.execute") workspace().execute(message.payload);
-        if (message.event === "abush_browser.cancel") workspace().cancel(message.payload);
+        if (message.event === "abush_browser.execute") {
+            workspaceReady.then(() => workspaces.execute(message.payload)).catch(() => {});
+        }
+        if (message.event === "abush_browser.cancel") workspaces.cancel(message.payload);
     });
-    chrome.tabs.onAttached.addListener((tabId, info) => workspace().tabMoved(tabId, info));
+    chrome.tabs.onAttached.addListener((tabId, info) => {
+        workspaceReady.then(() => workspaces.tabMoved(tabId, info)).catch(() => {});
+    });
     chrome.debugger.onDetach.addListener(source => {
-        if (source.tabId) workspace().debuggerDetached(source.tabId).catch(() => {});
+        if (source.tabId) {
+            workspaceReady.then(() => workspaces.debuggerDetached(source.tabId)).catch(() => {});
+        }
     });
     chrome.action.onClicked.addListener(async () => {
         try {
+            await workspaceReady;
             const {remotes} = await sendNativeRequest("abush_browser", "refresh_remotes", {});
-            const remote = remotes.find(item => item.connected);
-            if (!remote) return notifyFailure("No active Abush browser remote");
-            await workspace().open(remote.remote_key, remote.connection_id);
+            const connected = remotes.filter(item => item.connected);
+            if (!connected.length) return notifyFailure("No active Abush browser remote");
+            for (const remote of connected) {
+                await workspaces.open(remote.remote_key, remote.connection_id);
+            }
         } catch (error) {
             notifyFailure(error.message);
         }

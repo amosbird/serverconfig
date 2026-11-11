@@ -12,6 +12,16 @@ class WorkspaceExecutor {
         this.windowOwners = new Map();
         this.tabOwners = new Map();
         this.operations = new Map();
+        this.ready = Promise.resolve();
+    }
+
+    restoreWhenReady() {
+        this.ready = this.restore();
+        return this.ready;
+    }
+
+    whenReady() {
+        return this.ready;
     }
 
     key(remoteKey) {
@@ -27,21 +37,48 @@ class WorkspaceExecutor {
         await this.chrome.storage.session.set({abushWorkspaces: records});
     }
 
+    statusUrl(record) {
+        return this.chrome.runtime.getURL(`status.html#${record.nonce}`);
+    }
+
+    async isLive(record) {
+        try {
+            const tabs = await this.chrome.tabs.query({windowId: record.windowId});
+            return tabs.some(tab => tab.id === record.statusTabId &&
+                tab.url === this.statusUrl(record));
+        } catch (_) {
+            return false;
+        }
+    }
+
     async restore() {
         if (!this.chrome.storage?.session) return;
         const {abushWorkspaces = []} = await this.chrome.storage.session.get("abushWorkspaces");
+        let removed = false;
         for (const saved of abushWorkspaces) {
-            try {
-                const tabs = await this.chrome.tabs.query({windowId: saved.windowId});
-                const status = tabs.find(tab => tab.url === this.chrome.runtime.getURL(
-                    `status.html#${saved.nonce}`));
-                if (!status || saved.statusTabId !== status.id) continue;
-                const record = {...saved, pages: new Map(saved.pages)};
-                this.install(record);
-            } catch (_) {
-                // A missing nonce-marked status tab means the record is not safe to restore.
+            if (!saved || typeof saved.remoteKey !== "string" ||
+                    typeof saved.windowId !== "number" || typeof saved.statusTabId !== "number" ||
+                    typeof saved.nonce !== "string" || !Array.isArray(saved.pages)) {
+                removed = true;
+                continue;
             }
+            let tabs;
+            try {
+                tabs = await this.chrome.tabs.query({windowId: saved.windowId});
+            } catch (error) {
+                if (!String(error?.message || error).includes("No window with id")) throw error;
+                removed = true;
+                continue;
+            }
+            const status = tabs.find(tab => tab.url === this.statusUrl(saved));
+            if (!status || saved.statusTabId !== status.id) {
+                removed = true;
+                continue;
+            }
+            const record = {...saved, pages: new Map(saved.pages)};
+            this.install(record);
         }
+        if (removed) await this.persist();
     }
 
     install(record) {
@@ -73,7 +110,12 @@ class WorkspaceExecutor {
 
     async open(remoteKey, connectionId) {
         const key = this.key(remoteKey);
-        const existing = this.workspaces.get(key);
+        let existing = this.workspaces.get(key);
+        if (existing && !await this.isLive(existing)) {
+            this.forget(existing);
+            await this.persist();
+            existing = null;
+        }
         const bootstrap = await this.nativeRequest("abush_browser", "open_workspace", {
             remote_key: remoteKey, connection_id: connectionId,
         });
