@@ -21,12 +21,8 @@ function validFence(value) {
         Number.isInteger(value.epoch) && value.epoch > 0;
 }
 
-function displayTitle(connectionDisplayName, ownerDisplay) {
-    const clean = value => String(value).replace(/[\x00-\x1f\x7f]/g, " ")
-        .replace(/\s+/g, " ").trim();
-    const connection = clean(connectionDisplayName);
-    const workbench = clean(ownerDisplay.workbench_name);
-    return `Abush Browser — ${connection} · ${workbench}`.slice(0, 160).trimEnd();
+function displayTitle(connectionDisplayName, remoteKey) {
+    return connectionDisplayName === "local" ? "local" : remoteKey;
 }
 
 function validPageRef(value) {
@@ -162,7 +158,7 @@ class WorkspaceExecutor {
             workspace_id: record.workspaceId,
             generation: 1,
             control_state: "remote",
-            display_title: displayTitle(record.connectionDisplayName, record.ownerDisplay),
+            display_title: displayTitle(record.connectionDisplayName, record.remoteKey),
         };
     }
 

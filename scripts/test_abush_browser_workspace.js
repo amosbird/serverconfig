@@ -102,10 +102,9 @@ function fixture(saved = []) {
 }
 
 (async () => {
-    assert.equal(displayTitle("local", ensurePayload().owner_display),
-        "Abush Browser — local · workbench");
-    assert.equal(displayTitle("remote\nname", {...ensurePayload().owner_display,
-        workbench_name: "work\tbench"}), "Abush Browser — remote name · work bench");
+    assert.equal(displayTitle("local", "r_local000"), "local");
+    assert.equal(displayTitle("remote\nname", "r_12345678"), "r_12345678");
+    assert.equal(displayTitle("remote", "remote key\nraw"), "remote key\nraw");
     {
         const {executor, calls} = fixture();
         const expectedPage = {
@@ -160,6 +159,8 @@ function fixture(saved = []) {
         });
         assert.equal(calls.filter(call => call[0] === "createTab").length, 1);
         assert.equal(calls.filter(call => call[0] === "bind_x11_window").length, 1);
+        assert.equal(calls.find(call => call[0] === "bind_x11_window")[1].display_title,
+            "local");
         const completions = calls.filter(call => call[0] === "ensure_managed_page_completion");
         assert.equal(completions.length, 2);
         assert.deepEqual(completions.map(call => call[1].completion), [
