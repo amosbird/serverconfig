@@ -94,14 +94,14 @@ class QtileConfigTest(unittest.TestCase):
         )
         self.assertEqual(literal_keyword(task_list, "highlight_method"), "block")
         self.assertEqual(literal_keyword(task_list, "font"), "Ubuntu Mono")
-        self.assertEqual(literal_keyword(task_list, "fontsize"), 28)
+        self.assertEqual(literal_keyword(task_list, "fontsize"), 32)
         self.assertEqual(literal_keyword(task_list, "padding_y"), 2)
         bar_call = next(
             node
             for node in ast.walk(self.tree)
             if isinstance(node, ast.Call) and call_name(node.func) == "bar.Bar"
         )
-        self.assertEqual(ast.literal_eval(bar_call.args[1]), 40)
+        self.assertEqual(ast.literal_eval(bar_call.args[1]), 44)
         self.assertIn('@hook.subscribe.startup\ndef initialize_browser_tabs()', self.source)
         self.assertIn('screen.top.show(screen.group.name == "c")', self.source)
         self.assertIn('lazy.group["c"].toscreen()', self.source)

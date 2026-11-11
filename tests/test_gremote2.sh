@@ -110,7 +110,7 @@ assert data["remote_key"].startswith("r_")
 assert data["connection_id"].startswith("c_")
 assert len(data["remote_key"]) == 10  # r_ + 8 hex
 assert len(data["connection_id"]) == 10  # c_ + 8 hex
-assert data["display_name"] == "testuser@example.test:2222"
+assert data["display_name"] == "canonical-example.test"
 assert data["canonical_user"] == "testuser"
 assert data["canonical_host"] == "canonical-example.test"
 assert data["canonical_port"] == 2222

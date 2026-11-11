@@ -157,7 +157,7 @@ PY
     fi
 
     created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || exit 1
-    python3 - "$metadata" "$remote_key" "$connection_id" "$destination" \
+    python3 - "$metadata" "$remote_key" "$connection_id" "$canonical_host" \
         "$canonical_user" "$canonical_host" "$canonical_port" "$browser_socket" \
         "$REMOTE_BROWSER_SOCKET" "$SSH_MASTER_CTRL" "$connection_nonce" "$$" \
         "$created_at" <<'PY'

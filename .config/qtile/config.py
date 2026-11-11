@@ -622,14 +622,14 @@ screens = [
                 widget.TaskList(
                     borderwidth=0,
                     font="Ubuntu Mono",
-                    fontsize=28,
+                    fontsize=32,
                     highlight_method="block",
                     padding_x=8,
                     padding_y=2,
                     rounded=False,
                 ),
             ],
-            40,
+            44,
         )
     )
 ]

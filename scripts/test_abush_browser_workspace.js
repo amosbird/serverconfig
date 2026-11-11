@@ -102,9 +102,9 @@ function fixture(saved = []) {
 }
 
 (async () => {
-    assert.equal(displayTitle("local", "r_local000"), "local");
-    assert.equal(displayTitle("remote\nname", "r_12345678"), "r_12345678");
-    assert.equal(displayTitle("remote", "remote key\nraw"), "remote key\nraw");
+    assert.equal(displayTitle("local"), "local");
+    assert.equal(displayTitle("dev.example.com"), "dev.example.com");
+    assert.equal(displayTitle("prod-alias"), "prod-alias");
     {
         const {executor, calls} = fixture();
         const expectedPage = {

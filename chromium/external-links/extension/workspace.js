@@ -21,8 +21,8 @@ function validFence(value) {
         Number.isInteger(value.epoch) && value.epoch > 0;
 }
 
-function displayTitle(connectionDisplayName, remoteKey) {
-    return connectionDisplayName === "local" ? "local" : remoteKey;
+function displayTitle(connectionDisplayName) {
+    return connectionDisplayName;
 }
 
 function validPageRef(value) {
@@ -158,7 +158,7 @@ class WorkspaceExecutor {
             workspace_id: record.workspaceId,
             generation: 1,
             control_state: "remote",
-            display_title: displayTitle(record.connectionDisplayName, record.remoteKey),
+            display_title: displayTitle(record.connectionDisplayName),
         };
     }
 
