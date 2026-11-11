@@ -632,6 +632,18 @@ screens = [
 ]
 
 
+@hook.subscribe.setgroup
+def show_browser_tabs():
+    for screen in qtile.screens:
+        if screen.top is not None:
+            screen.top.show(screen.group.name == "c")
+
+
+@hook.subscribe.startup_complete
+def initialize_browser_tabs():
+    show_browser_tabs()
+
+
 def is_abush_browser(window):
     return window.get_wm_role() == "abush-browser"
 

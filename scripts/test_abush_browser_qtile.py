@@ -76,7 +76,7 @@ class QtileConfigTest(unittest.TestCase):
         cls.source = CONFIG_PATH.read_text()
         cls.tree = ast.parse(cls.source)
 
-    def test_group_c_uses_dedicated_tree_tab(self):
+    def test_group_c_uses_max_with_native_top_tabs(self):
         group_c = next(
             node
             for node in ast.walk(self.tree)
@@ -86,11 +86,14 @@ class QtileConfigTest(unittest.TestCase):
             and ast.literal_eval(node.args[0]) == "c"
         )
         layouts = next(keyword.value for keyword in group_c.keywords if keyword.arg == "layouts")
-        tree_tab = layouts.elts[0]
-        self.assertEqual(call_name(tree_tab.func), "layout.TreeTab")
-        self.assertEqual(literal_keyword(tree_tab, "panel_width"), 320)
-        self.assertEqual(literal_keyword(tree_tab, "sections"), ["Abush Browser"])
-        self.assertTrue(literal_keyword(tree_tab, "previous_on_rm"))
+        self.assertEqual(call_name(layouts.elts[0].func), "layout.Max")
+        task_list = next(
+            node
+            for node in ast.walk(self.tree)
+            if isinstance(node, ast.Call) and call_name(node.func) == "widget.TaskList"
+        )
+        self.assertEqual(literal_keyword(task_list, "highlight_method"), "block")
+        self.assertIn('screen.top.show(screen.group.name == "c")', self.source)
         self.assertIn('lazy.group["c"].toscreen()', self.source)
         self.assertIn('lazy.window.togroup("c")', self.source)
 
@@ -165,6 +168,11 @@ class BinderQtileNotificationTest(unittest.TestCase):
             adapter.property(22, "_ABUSH_DISPLAY_TITLE"),
             "Abush Browser — local · workbench",
         )
+        self.assertEqual(
+            adapter.property(22, "_NET_WM_VISIBLE_NAME"),
+            "Abush Browser — local · workbench",
+        )
+        self.assertNotIn("_NET_WM_VISIBLE_NAME", result["observed"])
         self.assertTrue(result["qtile_moved"])
 
     def test_qtile_notification_failures_are_safe(self):

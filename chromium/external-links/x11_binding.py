@@ -13,7 +13,6 @@ TEXT_FIELDS = {
     "_ABUSH_WINDOW_GENERATION": "generation",
     "_ABUSH_CONTROL_STATE": "control_state",
     "_ABUSH_DISPLAY_TITLE": "display_title",
-    "_NET_WM_VISIBLE_NAME": "display_title",
 }
 STABLE_FIELDS = {
     "_ABUSH_BINDING_NONCE": "nonce",
@@ -194,6 +193,7 @@ def bind_workspace_window(
     try:
         adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
         adapter.set_text(window, "_NET_WM_NAME", payload["display_title"])
+        adapter.set_text(window, "_NET_WM_VISIBLE_NAME", payload["display_title"])
         adapter.finish()
     except Exception:
         pass
