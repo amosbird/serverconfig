@@ -72,11 +72,32 @@ class BatteryIndicatorTest(unittest.TestCase):
         indicator.warn_if_low()
         self.assertEqual(indicator.warned, set())
 
+    def test_absent_battery_is_not_treated_as_empty(self):
+        indicator = module.BatteryIndicator.__new__(module.BatteryIndicator)
+        indicator.upower_properties = lambda: {
+            "IsPresent": False,
+            "Percentage": 0.0,
+            "State": 0,
+            "EnergyRate": 0.0,
+            "TimeToEmpty": 0,
+            "TimeToFull": 0,
+        }
+        indicator.load()
+        self.assertIsNone(indicator.percentage)
+        self.assertEqual(indicator.tooltip(), "Battery unavailable")
+        self.assertEqual(module.level_color(indicator.percentage, False), module.UNKNOWN_COLOR)
+        indicator.warned = set()
+        fired = []
+        indicator.notify = fired.append
+        indicator.warn_if_low()
+        self.assertEqual(fired, [])
+
     def test_indicator_is_event_driven_with_a_sysfs_fallback(self):
         source = INDICATOR.read_text()
         self.assertIn("signal_subscribe", source)
         self.assertIn('"PropertiesChanged"', source)
         self.assertIn("DISPLAY_DEVICE", source)
+        self.assertIn('properties.get("IsPresent", False)', source)
         # UPower going away must not blank the icon.
         self.assertIn('capacity = read_sysfs("capacity")', source)
         self.assertIn('status = read_sysfs("status")', source)

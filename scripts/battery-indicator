@@ -123,9 +123,22 @@ class BatteryIndicator:
         except GLib.Error:
             return {}
 
+    def clear(self):
+        self.percentage = None
+        self.charging = False
+        self.state = 0
+        self.rate = 0.0
+        self.remaining = 0
+
     def load(self):
         properties = self.upower_properties()
         if properties:
+            # DisplayDevice always exists. A desktop with no battery still
+            # reports Percentage=0 and battery-missing, which must not read
+            # as an empty pack or fire the low-battery warnings.
+            if not properties.get("IsPresent", False):
+                self.clear()
+                return
             self.percentage = properties.get("Percentage")
             self.state = int(properties.get("State", 0))
             self.charging = self.state in STATE_CHARGING
@@ -140,6 +153,9 @@ class BatteryIndicator:
         # which is exactly what the icon shows.
         capacity = read_sysfs("capacity")
         status = read_sysfs("status")
+        if not capacity:
+            self.clear()
+            return
         self.percentage = float(capacity) if capacity.isdigit() else None
         self.charging = status in ("Charging", "Full")
         self.state = STATE_FULL if status == "Full" else 1 if self.charging else 2
@@ -254,11 +270,9 @@ class BatteryIndicator:
         return True
 
     def tooltip(self):
-        lines = [
-            "Battery unavailable"
-            if self.percentage is None
-            else f"Battery  {round(self.percentage)}%"
-        ]
+        if self.percentage is None:
+            return "Battery unavailable"
+        lines = [f"Battery  {round(self.percentage)}%"]
         state = self.state_label()
         if self.rate:
             state += f"  ·  {self.rate:.1f} W"
