@@ -791,10 +791,12 @@ class RemotePeer:
         ensure_id = message.get("ensure_id")
         fence = message.get("executor_fence")
         pending = self.ensure_cancellations.get(ensure_id)
-        if pending is None or pending["request_id"] != request_id or pending["fence"] != fence or \
+        if not isinstance(request_id, str) or not request_id or pending is None or \
+                pending["fence"] != fence or pending.get("retire_request_id") is not None or \
                 not all(isinstance(message.get(field), str) and message.get(field)
                         for field in ("window_id", "page_id")):
             raise ValueError("uncorrelated retire managed page")
+        pending["retire_request_id"] = request_id
         self.broker.outbound.put(event("abush_browser.retire_managed_page", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
             "connection_id": self.metadata["connection_id"],
@@ -838,7 +840,10 @@ class RemotePeer:
         if principal_id != self.principal_id or fence != self.executor_fence:
             raise ValueError("stale ensure cancellation completion")
         pending = self.ensure_cancellations.get(ensure_id)
-        if pending is None or pending["request_id"] != request_id or pending["fence"] != fence:
+        expected_request_id = pending.get("retire_request_id") if pending else None
+        if expected_request_id is None and pending is not None:
+            expected_request_id = pending["request_id"]
+        if pending is None or expected_request_id != request_id or pending["fence"] != fence:
             raise ValueError("uncorrelated ensure cancellation completion")
         self.ensure_cancellations.pop(ensure_id)
         self.send({

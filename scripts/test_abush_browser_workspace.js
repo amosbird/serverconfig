@@ -169,8 +169,9 @@ function fixture(saved = []) {
         const ensuring = executor.ensure(payload);
         await Promise.resolve();
         const cancel = executor.ensureIdentity(payload);
-        assert.equal(await executor.cancelEnsure(cancel), true);
+        const cancelling = executor.cancelEnsure(cancel);
         created.resolve({id: 10, tabs: [{id: 110}]});
+        assert.equal(await cancelling, true);
         assert.equal(await ensuring, undefined);
         assert(calls.some(call => call[0] === "removeWindow" && call[1] === 10),
             "sole cancelled ensure must clean up its uncommitted window");
@@ -541,6 +542,55 @@ function fixture(saved = []) {
         await executing;
         assert.equal(calls.filter(call => call[0] === "executor_completion").at(-1)[1].completion,
             "unknown", "cancellation after navigate resolves must suppress success");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        calls.length = 0;
+        const persisted = deferred();
+        executor.chrome.storage.session.set = async value => {
+            calls.push(["persist", value]);
+            await persisted.promise;
+        };
+        const payload = {...executePayload(), effect_id: "cancel-persist", command: {
+            command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
+        }};
+        const executing = executor.execute(payload);
+        while (!calls.some(call => call[0] === "persist")) await Promise.resolve();
+        assert(calls.some(call => call[0] === "command"),
+            "navigate must commit before the persistence barrier");
+        const cancelling = executor.cancel({...executor.operationIdentity(payload),
+            request_id: "cancel-request", execution_request_id: payload.request_id});
+        await Promise.resolve();
+        assert.equal(calls.filter(call => call[0] === "executor_completion").length, 0,
+            "executor completion must remain unpublished while persistence is blocked");
+        assert.equal(calls.filter(call => call[0] === "cancellation_completion").length, 0,
+            "cancellation acknowledgement must wait for executor completion publication");
+        persisted.resolve();
+        await Promise.all([executing, cancelling]);
+        assert.deepEqual(calls.filter(call => call[0] === "executor_completion")
+            .map(call => call[1].completion), ["unknown"],
+        "late cancellation must produce exactly one executor completion");
+        assert.equal(calls.filter(call => call[0] === "cancellation_completion").at(-1)[1]
+            .completion, "unknown",
+        "cancellation after navigate commit must never acknowledge not_applied");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        calls.length = 0;
+        const payload = {...executePayload(), effect_id: "cancel-terminal", command: {
+            command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
+        }};
+        await executor.execute(payload);
+        await executor.cancel({...executor.operationIdentity(payload),
+            request_id: "cancel-request", execution_request_id: payload.request_id});
+        assert.deepEqual(calls.filter(call => call[0] === "executor_completion")
+            .map(call => call[1].completion), ["applied"],
+        "late cancellation must not duplicate executor completion");
+        assert.equal(calls.filter(call => call[0] === "cancellation_completion").at(-1)[1]
+            .completion, "unknown",
+        "terminal applied completion must remain visible to a late cancellation");
     }
     {
         const {executor, calls} = fixture();

@@ -38,6 +38,7 @@ class WorkspaceExecutor {
         this.windowOwners = new Map();
         this.tabOwners = new Map();
         this.operations = new Map();
+        this.completedOperations = new Map();
         this.ensureFlights = new Map();
         this.ensureWaiters = new Map();
         this.persistTail = Promise.resolve();
@@ -476,6 +477,14 @@ class WorkspaceExecutor {
         return JSON.stringify(this.operationIdentity(payload));
     }
 
+    rememberCompletedOperation(operationKey, operation) {
+        this.completedOperations.delete(operationKey);
+        this.completedOperations.set(operationKey, operation);
+        if (this.completedOperations.size > 256) {
+            this.completedOperations.delete(this.completedOperations.keys().next().value);
+        }
+    }
+
     async execute(payload) {
         let resolveDone;
         const done = new Promise(resolve => { resolveDone = resolve; });
@@ -491,10 +500,7 @@ class WorkspaceExecutor {
         };
         const operationKey = this.operationKey(payload);
         const existing = this.operations.get(operationKey);
-        if (existing) {
-            await this.completion(payload, "not_applied");
-            return;
-        }
+        if (existing || this.completedOperations.has(operationKey)) return;
         this.operations.set(operationKey, operation);
         let completion = "unknown";
         try {
@@ -542,19 +548,25 @@ class WorkspaceExecutor {
             completion = operation.mutationStarted || operation.committed || operation.uncertain ?
                 "unknown" : "not_applied";
         } finally {
+            try {
+                await this.persist();
+            } catch (_) {
+                if (operation.mutationStarted || operation.committed) operation.uncertain = true;
+            }
             if (operation.cancelled) {
                 completion = operation.mutationStarted || operation.committed || operation.uncertain ?
                     "unknown" : "not_applied";
             }
-            if (this.operations.get(operationKey) === operation) {
-                this.operations.delete(operationKey);
-            }
+            operation.completion = completion;
             try {
-                await this.persist();
+                await this.completion(payload, completion);
             } finally {
+                this.rememberCompletedOperation(operationKey, operation);
+                if (this.operations.get(operationKey) === operation) {
+                    this.operations.delete(operationKey);
+                }
                 operation.resolveDone();
             }
-            await this.completion(payload, completion);
         }
     }
 
@@ -580,14 +592,17 @@ class WorkspaceExecutor {
                 !validFence(payload.executor_fence)) return;
         const execution = {...payload, request_id: payload.execution_request_id};
         delete execution.execution_request_id;
-        const operation = this.operations.get(this.operationKey(execution));
-        if (operation) {
+        const operationKey = this.operationKey(execution);
+        const operation = this.operations.get(operationKey) ||
+            this.completedOperations.get(operationKey);
+        if (operation && this.operations.get(operationKey) === operation) {
             operation.cancelled = true;
             if (operation.mutationStarted) operation.uncertain = true;
             try { await operation.done; } catch (_) {}
         }
         const completion = operation &&
-            (operation.mutationStarted || operation.committed || operation.uncertain) ?
+            (operation.mutationStarted || operation.committed || operation.uncertain ||
+                operation.completion === "applied" || operation.completion === "unknown") ?
             "unknown" : "not_applied";
         await this.cancellationCompletion(payload, completion);
     }

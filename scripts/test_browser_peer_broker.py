@@ -58,11 +58,12 @@ class FakePeer:
     def send(self, message):
         self.client.sendall(host.encode_peer_message(message))
 
-    def wait_for(self, message_type, timeout=2):
+    def wait_for(self, message_type, timeout=2, request_id=None):
         attempts = max(1, int(timeout / 0.01))
         for _ in range(attempts):
             for message in self.received:
-                if message.get("type") == message_type:
+                if message.get("type") == message_type and \
+                        (request_id is None or message.get("request_id") == request_id):
                     return message
             if self.done.wait(0.01):
                 break
@@ -244,14 +245,14 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             })
             self.next_event(broker, "abush_browser.cancel_ensure_managed_page")
             server.send({
-                "type": "retire_managed_page", "request_id": "retire-request",
+                "type": "retire_managed_page", "request_id": "retire-cleanup-request",
                 "ensure_id": "ensure-retire", "executor_fence": server.fence,
                 "window_id": "window", "page_id": "page",
             })
             retire = self.next_event(broker, "abush_browser.retire_managed_page")["payload"]
             self.assertEqual(retire, {
                 "remote_key": "r_12345678", "connection_id": "c_12345678",
-                "principal_id": "principal-one", "request_id": "retire-request",
+                "principal_id": "principal-one", "request_id": "retire-cleanup-request",
                 "ensure_id": "ensure-retire", "executor_fence": server.fence,
                 "window_id": "window", "page_id": "page",
             })
@@ -260,6 +261,10 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                     key: value for key, value in retire.items()
                     if key not in {"window_id", "page_id"}
                 }))
+            self.assertEqual(
+                server.wait_for("ensure_managed_page_cancellation_completed",
+                                request_id="retire-cleanup-request")["request_id"],
+                "retire-cleanup-request")
         finally:
             broker.close()
 
