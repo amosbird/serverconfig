@@ -36,6 +36,7 @@ class ChromeBootstrapTest(unittest.TestCase):
         result, argv, _ = self.run_bootstrap(True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(any(argument.startswith("--user-data-dir=") for argument in argv))
+        self.assertIn("--silent-debugger-extension-api", argv)
         self.assertFalse(any("remote-debugging-port" in argument for argument in argv))
         self.assertFalse(any("SingletonCookie" in argument for argument in argv))
         self.assertFalse(any(argument.startswith("http") for argument in argv))

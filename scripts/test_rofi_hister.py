@@ -429,6 +429,7 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
         self.assertIn('PROFILE = Path.home() / ".config/google-chrome-main"', remote)
         self.assertIn("--user-data-dir=\"$profile\"", launcher)
+        self.assertIn("--silent-debugger-extension-api", launcher)
         self.assertIn('"/usr/bin/google-chrome-stable"', remote)
         self.assertIn('Match(wm_class="Google-chrome")', qtile_config)
         self.assertIn(".config/google-chrome-main/NativeMessagingHosts", restore)

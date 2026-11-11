@@ -28,6 +28,7 @@ fi
 exec /usr/bin/google-chrome-stable \
     --user-data-dir="$profile" \
     --no-default-browser-check \
+    --silent-debugger-extension-api \
     --remote-debugging-port=9222 \
     --restore-last-session \
     --hide-crash-restore-bubble \
