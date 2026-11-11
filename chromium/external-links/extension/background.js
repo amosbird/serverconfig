@@ -20,6 +20,7 @@ class NativeDispatcher {
         port.onDisconnect.addListener(() => {
             if (this.port !== port) return;
             this.port = null;
+            this.emitLifecycle("disconnect");
             this.rejectAll(new Error("native host disconnected"));
         });
         return port;
@@ -30,6 +31,7 @@ class NativeDispatcher {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 if (!this.pending.delete(id)) return;
+                this.emitLifecycle("timeout", {service, operation});
                 reject(new Error("native request timed out"));
             }, this.timeoutMs);
             this.pending.set(id, {resolve, reject, timer});
@@ -84,6 +86,15 @@ class NativeDispatcher {
 
     rejectAll(error) {
         for (const id of [...this.pending.keys()]) this.finish(id, false, error);
+    }
+
+    emitLifecycle(event, payload = {}) {
+        this.eventListeners.forEach(listener => listener({
+            version: ENVELOPE_VERSION,
+            service: "native_host",
+            event,
+            payload,
+        }));
     }
 
     onEvent(listener) {
@@ -178,7 +189,15 @@ if (typeof chrome !== "undefined") {
         throw error;
     });
     dispatcher().onEvent(message => {
+        if (message.service === "native_host") {
+            workspaceReady.then(() => workspaces.invalidateRemote()).catch(() => {});
+            return;
+        }
         if (message.service !== "abush_browser") return;
+        if (message.event === "abush_browser.remote_state") {
+            workspaceReady.then(() => workspaces.remoteState(message.payload)).catch(() => {});
+            return;
+        }
         if (message.event === "abush_browser.ensure_managed_page") {
             workspaceReady.then(() => workspaces.ensure(message.payload))
                 .catch(error => notifyFailure(

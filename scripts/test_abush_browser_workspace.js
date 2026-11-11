@@ -3,6 +3,7 @@
 const assert = require("assert");
 const {WorkspaceExecutor, BROWSER_ERROR_CODES} = require(
     "../chromium/external-links/extension/workspace.js");
+const {NativeDispatcher} = require("../chromium/external-links/extension/background.js");
 
 const fence = {executor_id: "executor", epoch: 1};
 const logicalWindowId = "11111111-1111-4111-8111-111111111111";
@@ -213,20 +214,15 @@ function fixture(saved = []) {
         };
         const {executor, calls} = fixture([record]);
         await executor.restore();
-        const restored = await executor.ensure(ensurePayload({
+        await assert.rejects(executor.ensure(ensurePayload({
             connection_id: "c_12345678", executor_fence: {...fence, epoch: 2},
             expected_page: null,
-        }));
+        })), /requires an expected page/);
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
-            "a daemon restart with empty topology must adopt the live restored workspace");
-        assert.equal(restored.logicalWindowId, logicalWindowId);
-        assert.equal(restored.logicalPageId, logicalPageId);
-        assert.equal(record.workspaceId, "workspace-authoritative");
-        assert.equal(record.connectionId, "c_12345678");
-        assert.equal(record.executorFence.epoch, 2);
-        assert.deepEqual(calls.find(call => call[0] === "ensure_managed_page_completion")[1]
-            .completion, {outcome: "created", window_id: logicalWindowId,
-            page_id: logicalPageId});
+            "restored state without an expected page must not be adopted ambiguously");
+        assert.equal(record.workspaceId, "workspace-before-restart");
+        assert.equal(record.connectionId, "c_old00000");
+        assert.equal(record.executorFence.epoch, 1);
     }
     {
         const record = {
@@ -265,7 +261,12 @@ function fixture(saved = []) {
         await executor.restore();
         executor.nativeRequest = async (_service, operation, payload) => {
             calls.push([operation, payload]);
-            if (operation === "bind_x11_window") throw new Error("bind failed");
+            if (operation === "bind_x11_window") {
+                assert.equal(record.workspaceId, "workspace-authoritative",
+                    "bind must not expose the candidate workspace before commit");
+                assert.equal(payload.workspace_id, "workspace-authoritative");
+                throw new Error("bind failed");
+            }
             return {};
         };
         await assert.rejects(executor.ensure(ensurePayload({
@@ -457,6 +458,144 @@ function fixture(saved = []) {
         assert.equal(first.uncertain, true);
         assert.equal(otherPrincipal.uncertain, undefined);
         assert.equal(otherTab.uncertain, undefined);
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        const navigate = deferred();
+        executor.chrome.debugger.sendCommand = async (...args) => {
+            calls.push(["command", ...args]);
+            return navigate.promise;
+        };
+        const payload = {...executePayload(), effect_id: "cancel-during", command: {
+            command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
+        }};
+        const executing = executor.execute(payload);
+        while (!calls.some(call => call[0] === "command")) await Promise.resolve();
+        executor.cancel({...executor.operationIdentity(payload), request_id: "cancel-request",
+            execution_request_id: payload.request_id});
+        navigate.resolve();
+        await executing;
+        assert.equal(calls.filter(call => call[0] === "executor_completion").at(-1)[1].completion,
+            "unknown", "cancellation after mutation send must not report not_applied or success");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        const attach = deferred();
+        executor.chrome.debugger.attach = async target => {
+            calls.push(["attach", target]);
+            await attach.promise;
+        };
+        const payload = {...executePayload(), effect_id: "cancel-before", command: {
+            command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
+        }};
+        const executing = executor.execute(payload);
+        while (!calls.some(call => call[0] === "attach")) await Promise.resolve();
+        executor.cancel({...executor.operationIdentity(payload), request_id: "cancel-request",
+            execution_request_id: payload.request_id});
+        attach.resolve();
+        await executing;
+        assert(!calls.some(call => call[0] === "command"));
+        assert.equal(calls.filter(call => call[0] === "executor_completion").at(-1)[1].completion,
+            "not_applied");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        const navigate = deferred();
+        executor.chrome.debugger.sendCommand = async (...args) => {
+            calls.push(["command", ...args]);
+            return navigate.promise;
+        };
+        const payload = {...executePayload(), effect_id: "disconnect", command: {
+            command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
+        }};
+        const executing = executor.execute(payload);
+        while (!calls.some(call => call[0] === "command")) await Promise.resolve();
+        await executor.remoteState({remote_key: payload.remote_key,
+            connection_id: payload.connection_id, connected: false});
+        navigate.resolve();
+        await executing;
+        assert.equal(calls.filter(call => call[0] === "executor_completion").at(-1)[1].completion,
+            "unknown");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        const navigate = deferred();
+        executor.chrome.debugger.sendCommand = async (...args) => {
+            calls.push(["command", ...args]);
+            return navigate.promise;
+        };
+        const payload = {...executePayload(), effect_id: "cancel-after", command: {
+            command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
+        }};
+        const executing = executor.execute(payload);
+        while (!calls.some(call => call[0] === "command")) await Promise.resolve();
+        navigate.resolve();
+        executor.cancel({...executor.operationIdentity(payload), request_id: "cancel-request",
+            execution_request_id: payload.request_id});
+        await executing;
+        assert.equal(calls.filter(call => call[0] === "executor_completion").at(-1)[1].completion,
+            "unknown", "cancellation after navigate resolves must suppress success");
+    }
+    {
+        const {executor, calls} = fixture();
+        const firstWrite = deferred();
+        let writes = 0;
+        executor.chrome.storage.session.set = async value => {
+            calls.push(["persist", value]);
+            if (writes++ === 0) await firstWrite.promise;
+        };
+        const first = executor.persistRecords([{workspaceId: "older"}]);
+        await Promise.resolve();
+        const second = executor.persistRecords([{workspaceId: "newer"}]);
+        await Promise.resolve();
+        await Promise.resolve();
+        assert.equal(calls.filter(call => call[0] === "persist").length, 1,
+            "later persistence must wait for the earlier write");
+        firstWrite.resolve();
+        await Promise.all([first, second]);
+        assert.deepEqual(calls.filter(call => call[0] === "persist").map(call =>
+            call[1].abushWorkspaces[0].workspaceId), ["older", "newer"]);
+    }
+    {
+        const listeners = {message: null, disconnect: null};
+        const sent = [];
+        const port = {
+            onMessage: {addListener: listener => { listeners.message = listener; }},
+            onDisconnect: {addListener: listener => { listeners.disconnect = listener; }},
+            postMessage: message => sent.push(message),
+        };
+        const dispatcher = new NativeDispatcher(() => port, 5);
+        const events = [];
+        dispatcher.onEvent(message => events.push(message.event));
+        await assert.rejects(dispatcher.request("abush_browser", "execute", {}), /timed out/);
+        assert.deepEqual(events, ["timeout"]);
+        const pending = dispatcher.request("abush_browser", "execute", {});
+        listeners.disconnect();
+        await assert.rejects(pending, /disconnected/);
+        assert.deepEqual(events, ["timeout", "disconnect"]);
+        assert.equal(sent.length, 2);
+    }
+    {
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+        };
+        const {executor, calls} = fixture([record]);
+        executor.chrome.tabs.query = async () => [
+            {id: 110, url: executor.statusUrl(record)},
+            {id: 210, url: "about:blank"},
+            {id: 211, url: "https://unexpected.test/"},
+        ];
+        await executor.restore();
+        assert.equal(executor.workspaces.size, 0,
+            "restore must require exactly one status tab and one business tab");
+        assert.deepEqual(calls.find(call => call[0] === "persist")[1], {abushWorkspaces: []});
     }
     {
         const {executor, calls} = fixture();

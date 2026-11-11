@@ -40,6 +40,7 @@ class WorkspaceExecutor {
         this.operations = new Map();
         this.ensureFlights = new Map();
         this.ensureWaiters = new Map();
+        this.persistTail = Promise.resolve();
         this.ready = Promise.resolve();
     }
 
@@ -56,10 +57,22 @@ class WorkspaceExecutor {
         return `${remoteKey}\0${principalId}`;
     }
 
-    async persist() {
+    persistedRecord(record) {
+        const {debuggerAttached, ...persisted} = record;
+        return {...persisted};
+    }
+
+    async persistRecords(records) {
         if (!this.chrome.storage?.session) return;
-        const records = [...this.workspaces.values()].map(({debuggerAttached, ...record}) => record);
-        await this.chrome.storage.session.set({abushWorkspaces: records});
+        const write = this.persistTail.catch(() => {}).then(() =>
+            this.chrome.storage.session.set({abushWorkspaces: records}));
+        this.persistTail = write;
+        await write;
+    }
+
+    async persist() {
+        const records = [...this.workspaces.values()].map(record => this.persistedRecord(record));
+        await this.persistRecords(records);
     }
 
     statusUrl(record) {
@@ -69,8 +82,10 @@ class WorkspaceExecutor {
     async isLive(record) {
         try {
             const tabs = await this.chrome.tabs.query({windowId: record.windowId});
-            return tabs.some(tab => tab.id === record.statusTabId &&
-                tab.url === this.statusUrl(record)) && tabs.some(tab => tab.id === record.pageTabId);
+            return tabs.length === 2 && tabs.filter(tab => tab.id === record.statusTabId &&
+                tab.url === this.statusUrl(record)).length === 1 &&
+                tabs.filter(tab => tab.id === record.pageTabId).length === 1 &&
+                record.statusTabId !== record.pageTabId;
         } catch (_) {
             return false;
         }
@@ -122,10 +137,11 @@ class WorkspaceExecutor {
         };
     }
 
-    async bind(record) {
+    async bind(record, workspaceId = record.workspaceId) {
         await this.chrome.tabs.update(record.statusTabId, {active: true});
         try {
-            await this.nativeRequest("abush_browser", "bind_x11_window", this.bindingPayload(record));
+            await this.nativeRequest("abush_browser", "bind_x11_window",
+                this.bindingPayload({...record, workspaceId}));
         } finally {
             await this.chrome.tabs.update(record.pageTabId, {active: true});
         }
@@ -261,36 +277,27 @@ class WorkspaceExecutor {
             existing = null;
         }
         if (existing) {
-            if (payload.expected_page !== null &&
-                    !sameRef(payload.expected_page, this.pageRef(existing))) {
+            if (payload.expected_page === null) {
+                this.fail("stale_page", "restored workspace requires an expected page");
+            }
+            if (!sameRef(payload.expected_page, this.pageRef(existing))) {
                 this.fail("stale_page", "restored workspace does not match expected page");
             }
-            const previousWorkspaceId = existing.workspaceId;
-            existing.workspaceId = payload.workspace_id;
-            try {
-                this.ensureActive(flight);
-                await this.bind(existing);
-                this.ensureActive(flight);
-                if (!await this.isLive(existing)) throw new Error("workspace changed during bind");
-                this.ensureActive(flight);
-            } catch (error) {
-                existing.workspaceId = previousWorkspaceId;
-                throw error;
-            }
-            const previousConnectionId = existing.connectionId;
-            const previousExecutorFence = existing.executorFence;
-            existing.connectionId = payload.connection_id;
-            existing.executorFence = payload.executor_fence;
-            try {
-                await this.persist();
-                this.ensureActive(flight);
-            } catch (error) {
-                existing.workspaceId = previousWorkspaceId;
-                existing.connectionId = previousConnectionId;
-                existing.executorFence = previousExecutorFence;
-                try { await this.persist(); } catch (_) {}
-                throw error;
-            }
+            this.ensureActive(flight);
+            await this.bind(existing, payload.workspace_id);
+            this.ensureActive(flight);
+            if (!await this.isLive(existing)) throw new Error("workspace changed during bind");
+            this.ensureActive(flight);
+            const candidate = {
+                ...existing,
+                workspaceId: payload.workspace_id,
+                connectionId: payload.connection_id,
+                executorFence: payload.executor_fence,
+            };
+            const records = [...this.workspaces.values()].map(record =>
+                this.persistedRecord(record === existing ? candidate : record));
+            await this.persistRecords(records);
+            Object.assign(existing, candidate);
             return existing;
         }
         const nonce = crypto.randomUUID().replaceAll("-", "");
@@ -341,9 +348,11 @@ class WorkspaceExecutor {
             this.ensureActive(flight);
             if (!await this.isLive(record)) throw new Error("workspace changed during bind");
             this.ensureActive(flight);
+            await this.persistRecords([
+                ...[...this.workspaces.values()].map(saved => this.persistedRecord(saved)),
+                this.persistedRecord(record),
+            ]);
             this.install(record);
-            await this.persist();
-            this.ensureActive(flight);
             flight.committed = true;
             return record;
         } catch (error) {
@@ -438,6 +447,7 @@ class WorkspaceExecutor {
         const operation = {
             ...this.operationIdentity(payload),
             cancelled: false,
+            mutationStarted: false,
             committed: false,
             workspaceKey: null,
             tabId: null,
@@ -464,33 +474,41 @@ class WorkspaceExecutor {
                 }
                 if (operation.cancelled) completion = "not_applied";
                 else {
+                    operation.mutationStarted = true;
                     await this.chrome.debugger.sendCommand(
                         {tabId: record.pageTabId}, "Page.navigate", {url: url.href});
                     operation.committed = true;
-                    completion = "applied";
+                    completion = operation.cancelled ? "unknown" : "applied";
                 }
             } else if (payload.command.command === "close_page") {
                 await this.detach(record.pageTabId);
                 if (operation.cancelled) completion = "not_applied";
                 else {
+                    operation.mutationStarted = true;
                     await this.chrome.tabs.remove(record.pageTabId);
                     operation.committed = true;
                     this.forget(record);
-                    completion = "applied";
+                    completion = operation.cancelled ? "unknown" : "applied";
                 }
             } else if (payload.command.command === "close_window") {
                 await this.detach(record.pageTabId);
                 if (operation.cancelled) completion = "not_applied";
                 else {
+                    operation.mutationStarted = true;
                     await this.chrome.windows.remove(record.windowId);
                     operation.committed = true;
                     this.forget(record);
-                    completion = "applied";
+                    completion = operation.cancelled ? "unknown" : "applied";
                 }
             }
         } catch (_) {
-            completion = operation.committed || operation.uncertain ? "unknown" : "not_applied";
+            completion = operation.mutationStarted || operation.committed || operation.uncertain ?
+                "unknown" : "not_applied";
         } finally {
+            if (operation.cancelled) {
+                completion = operation.mutationStarted || operation.committed || operation.uncertain ?
+                    "unknown" : "not_applied";
+            }
             if (this.operations.get(operationKey) === operation) {
                 this.operations.delete(operationKey);
             }
@@ -510,7 +528,38 @@ class WorkspaceExecutor {
         const execution = {...payload, request_id: payload.execution_request_id};
         delete execution.execution_request_id;
         const operation = this.operations.get(this.operationKey(execution));
-        if (operation) operation.cancelled = true;
+        if (operation) {
+            operation.cancelled = true;
+            if (operation.mutationStarted) operation.uncertain = true;
+        }
+    }
+
+    cancelMatching(matches) {
+        const cancels = [];
+        for (const waiter of this.ensureWaiters.values()) {
+            if (matches(waiter.payload)) cancels.push(this.cancelEnsure(this.ensureIdentity(waiter.payload)));
+        }
+        for (const operation of this.operations.values()) {
+            if (!matches(operation)) continue;
+            operation.cancelled = true;
+            if (operation.mutationStarted) operation.uncertain = true;
+        }
+        return Promise.all(cancels);
+    }
+
+    async remoteState(state) {
+        if (!state || typeof state.remote_key !== "string") return;
+        const disconnected = state.connected === false;
+        await this.cancelMatching(identity => identity.remote_key === state.remote_key &&
+            (disconnected || (typeof state.connection_id === "string" &&
+                identity.connection_id !== state.connection_id)));
+    }
+
+    async invalidateRemote(state = null) {
+        await this.cancelMatching(identity => !state ||
+            (identity.remote_key === state.remote_key &&
+                (!state.connection_id || identity.connection_id === state.connection_id) &&
+                (!state.principal_id || identity.principal_id === state.principal_id)));
     }
 
     async detach(tabId) {
