@@ -93,6 +93,7 @@ class QtileConfigTest(unittest.TestCase):
             if isinstance(node, ast.Call) and call_name(node.func) == "widget.TaskList"
         )
         self.assertEqual(literal_keyword(task_list, "highlight_method"), "block")
+        self.assertIn('@hook.subscribe.startup\ndef initialize_browser_tabs()', self.source)
         self.assertIn('screen.top.show(screen.group.name == "c")', self.source)
         self.assertIn('lazy.group["c"].toscreen()', self.source)
         self.assertIn('lazy.window.togroup("c")', self.source)

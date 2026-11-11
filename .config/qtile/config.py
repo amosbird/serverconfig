@@ -639,7 +639,7 @@ def show_browser_tabs():
             screen.top.show(screen.group.name == "c")
 
 
-@hook.subscribe.startup_complete
+@hook.subscribe.startup
 def initialize_browser_tabs():
     show_browser_tabs()
 
