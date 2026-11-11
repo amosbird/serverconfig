@@ -493,30 +493,6 @@ scratchpad_matches = {
 }
 
 
-class AbushTreeTab(layout.TreeTab):
-    @staticmethod
-    def window_label(window):
-        try:
-            stable = window.window.get_property(
-                "_ABUSH_DISPLAY_TITLE", "UTF8_STRING", unpack=str
-            )
-        except Exception:
-            return window.name
-        if isinstance(stable, bytes):
-            stable = stable.rstrip(b"\0").decode(errors="replace")
-        return stable or window.name
-
-    def draw_panel(self, *args):
-        names = {window: window.name for window in self._nodes}
-        try:
-            for window in self._nodes:
-                window.name = self.window_label(window)
-            super().draw_panel(*args)
-        finally:
-            for window, name in names.items():
-                window.name = name
-
-
 groups = [
     ScratchPad(
         "scratchpad",
@@ -603,7 +579,7 @@ groups = [
     Group(
         "c",
         layouts=[
-            AbushTreeTab(
+            layout.TreeTab(
                 panel_width=320,
                 sections=["Abush Browser"],
                 previous_on_rm=True,
