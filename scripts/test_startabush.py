@@ -66,6 +66,12 @@ printf started > {self.marker}
         self.run_startabush("--local", environment={"ABUSH_LOG": str(log)})
         self.assertEqual(self.abush_environment.read_text().strip(), str(log))
 
+    def test_browser_launcher_defaults_to_background_bootstrap(self):
+        script = SCRIPT.read_text()
+        self.assertIn('export ABUSH_BROWSER_LAUNCHER=', script)
+        self.assertIn('$HOME/scripts/abush-browser-chrome-bootstrap', script)
+        self.assertNotIn('scripts/chromium\"]}', script)
+
     def test_publisher_readiness_failure_blocks_abush(self):
         self._script(self.home / "scripts/abush-browser-local.py", '''case "${1:-}" in
 --wait-ready) exit 1 ;;
