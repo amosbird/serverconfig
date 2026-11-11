@@ -514,10 +514,6 @@ class AbushTreeTab(layout.TreeTab):
             for window, name in names.items():
                 window.name = name
 
-    def _create_panel(self, screen_rect):
-        super()._create_panel(screen_rect)
-        hook.subscribe.client_property_updated(self.draw_panel)
-
 
 groups = [
     ScratchPad(
