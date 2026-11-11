@@ -12,6 +12,7 @@ TEXT_FIELDS = {
     "_ABUSH_WORKSPACE_ID": "workspace_id",
     "_ABUSH_WINDOW_GENERATION": "generation",
     "_ABUSH_CONTROL_STATE": "control_state",
+    "_ABUSH_DISPLAY_TITLE": "display_title",
 }
 STABLE_FIELDS = {
     "_ABUSH_BINDING_NONCE": "nonce",
@@ -136,8 +137,9 @@ def bind_workspace_window(
     interval=0.05,
     qtile_notifier=None,
 ):
-    required = {"nonce", "remote_key", "workspace_id", "generation", "control_state"}
-    if not isinstance(payload, dict) or not required.issubset(payload):
+    required = {"nonce", "remote_key", "workspace_id", "generation", "control_state",
+                "display_title"}
+    if not isinstance(payload, dict) or set(payload) != required:
         raise ValueError("missing X11 binding metadata")
     nonce = payload["nonce"]
     if not isinstance(nonce, str) or not NONCE_RE.fullmatch(nonce):
@@ -190,7 +192,7 @@ def bind_workspace_window(
     qtile_moved = (qtile_notifier or notify_qtile)(window)
     try:
         adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
-        adapter.set_text(window, "_NET_WM_NAME", f"Abush Browser — {payload['workspace_id']}")
+        adapter.set_text(window, "_NET_WM_NAME", payload["display_title"])
         adapter.finish()
     except Exception:
         pass

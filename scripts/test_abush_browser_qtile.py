@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import ast
+import copy
 import importlib.util
 import pathlib
 import subprocess
@@ -87,12 +88,28 @@ class QtileConfigTest(unittest.TestCase):
         )
         layouts = next(keyword.value for keyword in group_c.keywords if keyword.arg == "layouts")
         tree_tab = layouts.elts[0]
-        self.assertEqual(call_name(tree_tab.func), "layout.TreeTab")
+        self.assertEqual(call_name(tree_tab.func), "AbushTreeTab")
         self.assertEqual(literal_keyword(tree_tab, "panel_width"), 320)
         self.assertEqual(literal_keyword(tree_tab, "sections"), ["Abush Browser"])
         self.assertTrue(literal_keyword(tree_tab, "previous_on_rm"))
         self.assertIn('lazy.group["c"].toscreen()', self.source)
         self.assertIn('lazy.window.togroup("c")', self.source)
+
+    def test_tree_tab_label_prefers_stable_x11_property(self):
+        tree_tab = next(node for node in self.tree.body
+                        if isinstance(node, ast.ClassDef) and node.name == "AbushTreeTab")
+        helper = copy.deepcopy(next(node for node in tree_tab.body
+                                    if isinstance(node, ast.FunctionDef)
+                                    and node.name == "window_label"))
+        helper.decorator_list = []
+        namespace = {}
+        exec(compile(ast.Module([helper], []), str(CONFIG_PATH), "exec"), namespace)
+        window = mock.Mock(name="window")
+        window.name = "Web page"
+        window.window.get_property.return_value = b"Abush Browser \xe2\x80\x94 local\0"
+        self.assertEqual(namespace["window_label"](window), "Abush Browser — local")
+        window.window.get_property.return_value = b""
+        self.assertEqual(namespace["window_label"](window), "Web page")
 
     def test_abush_role_rule_precedes_chrome_rule_and_weechat_is_removed(self):
         rules = [
@@ -143,6 +160,7 @@ class BinderQtileNotificationTest(unittest.TestCase):
             "workspace_id": "workspace",
             "generation": 7,
             "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
         }
 
     def test_qtile_command_targets_exact_xid_without_switching(self):
@@ -160,7 +178,10 @@ class BinderQtileNotificationTest(unittest.TestCase):
             self.payload(), adapter=adapter, attempts=1, qtile_notifier=notifier
         )
         notifier.assert_called_once_with(22)
-        self.assertEqual(adapter.property(22, "WM_WINDOW_ROLE", "STRING"), "abush-browser")
+        self.assertEqual(
+            adapter.property(22, "_ABUSH_DISPLAY_TITLE"),
+            "Abush Browser — local · workbench",
+        )
         self.assertTrue(result["qtile_moved"])
 
     def test_qtile_notification_failures_are_safe(self):

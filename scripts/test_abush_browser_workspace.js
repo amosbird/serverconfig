@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const assert = require("assert");
-const {WorkspaceExecutor, BROWSER_ERROR_CODES} = require(
+const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle} = require(
     "../chromium/external-links/extension/workspace.js");
 const {NativeDispatcher} = require("../chromium/external-links/extension/background.js");
 
@@ -18,6 +18,12 @@ function ensurePayload(overrides = {}) {
         request_id: "request-one",
         ensure_id: "ensure-one",
         executor_fence: fence,
+        owner_display: {
+            daemon_instance_id: "daemon-instance",
+            daemon_boot_id: "daemon-boot",
+            workbench_name: "workbench",
+        },
+        connection_display_name: "local",
         expected_page: null,
         ...overrides,
     };
@@ -28,6 +34,8 @@ function executePayload(overrides = {}) {
     delete payload.ensure_id;
     delete payload.workspace_id;
     delete payload.expected_page;
+    delete payload.owner_display;
+    delete payload.connection_display_name;
     return payload;
 }
 
@@ -94,6 +102,10 @@ function fixture(saved = []) {
 }
 
 (async () => {
+    assert.equal(displayTitle("local", ensurePayload().owner_display),
+        "Abush Browser — local · workbench");
+    assert.equal(displayTitle("remote\nname", {...ensurePayload().owner_display,
+        workbench_name: "work\tbench"}), "Abush Browser — remote name · work bench");
     {
         const {executor, calls} = fixture();
         const expectedPage = {

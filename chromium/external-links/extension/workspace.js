@@ -21,6 +21,14 @@ function validFence(value) {
         Number.isInteger(value.epoch) && value.epoch > 0;
 }
 
+function displayTitle(connectionDisplayName, ownerDisplay) {
+    const clean = value => String(value).replace(/[\x00-\x1f\x7f]/g, " ")
+        .replace(/\s+/g, " ").trim();
+    const connection = clean(connectionDisplayName);
+    const workbench = clean(ownerDisplay.workbench_name);
+    return `Abush Browser — ${connection} · ${workbench}`.slice(0, 160).trimEnd();
+}
+
 function validPageRef(value) {
     return exactFields(value, ["window", "page_id", "generation"]) &&
         exactFields(value.window, ["workspace_id", "window_id", "generation"]) &&
@@ -154,6 +162,7 @@ class WorkspaceExecutor {
             workspace_id: record.workspaceId,
             generation: 1,
             control_state: "remote",
+            display_title: displayTitle(record.connectionDisplayName, record.ownerDisplay),
         };
     }
 
@@ -175,14 +184,21 @@ class WorkspaceExecutor {
 
     validateEnsurePayload(payload) {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "workspace_id",
-            "request_id", "ensure_id", "executor_fence", "expected_page"]) ||
+            "request_id", "ensure_id", "executor_fence", "owner_display",
+            "connection_display_name", "expected_page"]) ||
                 ![payload.remote_key, payload.connection_id, payload.principal_id,
                     payload.workspace_id, payload.request_id, payload.ensure_id].every(value =>
                     typeof value === "string" && value) ||
                 (payload.expected_page !== null && !validPageRef(payload.expected_page)) ||
                 (payload.expected_page !== null &&
                     payload.expected_page.window.workspace_id !== payload.workspace_id) ||
-                !validFence(payload.executor_fence)) {
+                !validFence(payload.executor_fence) ||
+                !exactFields(payload.owner_display,
+                    ["daemon_instance_id", "daemon_boot_id", "workbench_name"]) ||
+                !Object.values(payload.owner_display).every(value =>
+                    typeof value === "string" && value && value.length <= 256) ||
+                typeof payload.connection_display_name !== "string" ||
+                !payload.connection_display_name || payload.connection_display_name.length > 256) {
             throw new Error("invalid ensure payload");
         }
     }
@@ -325,16 +341,18 @@ class WorkspaceExecutor {
                 this.fail("stale_page", "restored workspace does not match expected page");
             }
             this.ensureActive(flight);
-            await this.bind(existing, payload.workspace_id);
-            this.ensureActive(flight);
-            if (!await this.isLive(existing)) throw new Error("workspace changed during bind");
-            this.ensureActive(flight);
             const candidate = {
                 ...existing,
                 workspaceId: payload.workspace_id,
                 connectionId: payload.connection_id,
                 executorFence: payload.executor_fence,
+                ownerDisplay: payload.owner_display,
+                connectionDisplayName: payload.connection_display_name,
             };
+            await this.bind(candidate, payload.workspace_id);
+            this.ensureActive(flight);
+            if (!await this.isLive(existing)) throw new Error("workspace changed during bind");
+            this.ensureActive(flight);
             await this.commitRecord(candidate, existing);
             return existing;
         }
@@ -370,6 +388,8 @@ class WorkspaceExecutor {
             workspaceId: payload.workspace_id,
             connectionId: payload.connection_id,
             executorFence: payload.executor_fence,
+            ownerDisplay: payload.owner_display,
+            connectionDisplayName: payload.connection_display_name,
             logicalWindowId,
             logicalPageId,
             windowGeneration,
@@ -687,5 +707,6 @@ class WorkspaceExecutor {
 }
 
 if (typeof module !== "undefined") {
-    module.exports = {WorkspaceExecutor, sameRef, STATUS_PREFIX, BROWSER_ERROR_CODES};
+    module.exports = {WorkspaceExecutor, sameRef, displayTitle, STATUS_PREFIX,
+        BROWSER_ERROR_CODES};
 }

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -u
+
+profile="$HOME/.config/google-chrome-main"
+if [[ ! -d $profile ]]; then
+    printf 'Abush browser bootstrap: profile does not exist: %s\n' "$profile" >&2
+    exit 1
+fi
+
+exec "${ABUSH_CHROME_BIN:-/usr/bin/google-chrome-stable}" \
+    --user-data-dir="$profile" \
+    --no-default-browser-check \
+    --restore-last-session \
+    --hide-crash-restore-bubble \
+    --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation \
+    --disable-smooth-scrolling

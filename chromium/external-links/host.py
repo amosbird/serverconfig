@@ -30,7 +30,7 @@ except ImportError:
 
 MAX_MESSAGE_SIZE = 1024 * 1024
 NATIVE_ENVELOPE_VERSION = 1
-PEER_PROTOCOL_VERSION = 5
+PEER_PROTOCOL_VERSION = 6
 BROWSER_ERROR_CODES = {
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -611,6 +611,7 @@ class RemotePeer:
         self.stop_event = threading.Event()
         self.connected = False
         self.principal_id = None
+        self.owner_display = None
         self.executor_fence = None
         self.capabilities = {}
         self.pending = {}
@@ -633,6 +634,8 @@ class RemotePeer:
         }
         if self.principal_id is not None:
             state["principal_id"] = self.principal_id
+        if self.owner_display is not None:
+            state["owner_display"] = self.owner_display
         return state
 
     def connect(self, timeout=1.0):
@@ -683,17 +686,20 @@ class RemotePeer:
 
     def _accept_prepared(self, message):
         if not self._exact_fields(message, {
-            "type", "request_id", "principal_id", "executor_fence"
+            "type", "request_id", "principal_id", "executor_fence", "owner_display"
         }) or message.get("type") != "hello_prepared":
             raise ValueError("invalid prepared hello response")
         request_id = message.get("request_id")
         principal_id = message.get("principal_id")
         fence = message.get("executor_fence")
+        owner_display = message.get("owner_display")
         if not isinstance(request_id, str) or not request_id or \
                 not isinstance(principal_id, str) or not principal_id or \
-                not self._valid_executor_fence(fence):
+                not self._valid_executor_fence(fence) or \
+                not self._valid_owner_display(owner_display):
             raise ValueError("invalid prepared hello response")
         self.principal_id = principal_id
+        self.owner_display = owner_display
         self.executor_fence = fence
 
     def _accept_hello(self, message):
@@ -706,21 +712,33 @@ class RemotePeer:
                 raise ValueError("invalid hello rejection")
             raise ValueError(f"peer rejected hello: {message['reason']}")
         if not self._exact_fields(message, {
-            "type", "request_id", "principal_id", "executor_fence"
+            "type", "request_id", "principal_id", "executor_fence", "owner_display"
         }) or message.get("type") != "hello_accepted":
             raise ValueError("invalid hello response")
         request_id = message.get("request_id")
         principal_id = message.get("principal_id")
         fence = message.get("executor_fence")
+        owner_display = message.get("owner_display")
         if not isinstance(request_id, str) or not request_id:
             raise ValueError("invalid hello request id")
         if not isinstance(principal_id, str) or not principal_id:
             raise ValueError("invalid principal id")
         if not self._valid_executor_fence(fence):
             raise ValueError("invalid executor fence")
-        if principal_id != self.principal_id or fence != self.executor_fence:
+        if not self._valid_owner_display(owner_display):
+            raise ValueError("invalid owner display")
+        if principal_id != self.principal_id or fence != self.executor_fence or \
+                owner_display != self.owner_display:
             raise ValueError("hello acceptance changed prepared identity")
         self.principal_id = principal_id
+
+    @staticmethod
+    def _valid_owner_display(value):
+        fields = {"daemon_instance_id", "daemon_boot_id", "workbench_name"}
+        return isinstance(value, dict) and set(value) == fields and all(
+            isinstance(value[field], str) and value[field] and len(value[field]) <= 256
+            for field in fields
+        )
 
     @staticmethod
     def _valid_executor_fence(value):
@@ -779,6 +797,8 @@ class RemotePeer:
             "request_id": request_id,
             "ensure_id": ensure_id,
             "executor_fence": fence,
+            "owner_display": self.owner_display,
+            "connection_display_name": self.metadata["display_name"],
             "expected_page": expected_page,
         }))
 
@@ -1120,16 +1140,17 @@ class BrowserBroker:
             logging.info("browser peer candidate selected remote=%s connection=%s",
                          remote_key, metadata["connection_id"])
             if peer.connect():
+                identity = (peer.principal_id, peer.owner_display)
                 pinned = self.principals.get(remote_key)
                 if pinned is None:
-                    self.principals[remote_key] = peer.principal_id
+                    self.principals[remote_key] = identity
                     return peer
-                if peer.principal_id == pinned:
+                if identity == pinned:
                     return peer
                 logging.warning(
                     "browser peer principal replacement rejected remote=%s connection=%s "
                     "expected=%s actual=%s", remote_key, metadata["connection_id"], pinned,
-                    peer.principal_id)
+                    identity)
                 peer.close(emit=False)
             logging.info("browser peer candidate failed remote=%s connection=%s",
                          remote_key, metadata["connection_id"])

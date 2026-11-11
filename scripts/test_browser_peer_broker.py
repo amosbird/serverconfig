@@ -20,6 +20,11 @@ class FakePeer:
         self.path = pathlib.Path(path)
         self.principal = principal
         self.fence = fence
+        self.owner_display = {
+            "daemon_instance_id": "daemon-instance",
+            "daemon_boot_id": "daemon-boot",
+            "workbench_name": "workbench",
+        }
         self.received = []
         self.connected = threading.Event()
         self.done = threading.Event()
@@ -39,6 +44,7 @@ class FakePeer:
                 "request_id": "hello-request",
                 "principal_id": self.principal,
                 "executor_fence": self.fence,
+                "owner_display": self.owner_display,
             }))
             self.received.append(host.read_peer_message(self.client))
             self.client.sendall(host.encode_peer_message({
@@ -46,6 +52,7 @@ class FakePeer:
                 "request_id": "hello-request",
                 "principal_id": self.principal,
                 "executor_fence": self.fence,
+                "owner_display": self.owner_display,
             }))
             self.connected.set()
             while True:
@@ -124,7 +131,8 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 return message
 
     def completion_payload(self, forwarded, completion):
-        payload = {key: value for key, value in forwarded.items() if key != "expected_page"}
+        payload = {key: value for key, value in forwarded.items()
+                   if key not in {"expected_page", "owner_display", "connection_display_name"}}
         payload["completion"] = completion
         return payload
 
@@ -134,13 +142,13 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             "operation": operation, "payload": payload,
         }
 
-    def test_v4_handshake_and_ensure_completion_are_strictly_correlated(self):
+    def test_v6_handshake_and_ensure_completion_are_strictly_correlated(self):
         server = self.peer()
         broker = host.BrowserBroker(self.root)
         try:
             broker.refresh()
             hello = server.received[0]
-            self.assertEqual(hello["version"], 5)
+            self.assertEqual(hello["version"], 6)
             self.assertEqual(server.received[1], {
                 "type": "hello_ready", "request_id": "hello-request",
                 "executor_fence": server.fence,
@@ -162,10 +170,13 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "request_id": "request-one",
                 "ensure_id": "ensure-one",
                 "executor_fence": server.fence,
+                "owner_display": server.owner_display,
+                "connection_display_name": "r_12345678",
                 "expected_page": None,
             })
             payload = {key: value for key, value in forwarded["payload"].items()
-                       if key != "expected_page"}
+                       if key not in {"expected_page", "owner_display",
+                                      "connection_display_name"}}
             payload["completion"] = {
                 "outcome": "created", "window_id": "10", "page_id": "20",
             }
@@ -481,7 +492,8 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             })
             forwarded = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
             extension_payload = {
-                key: value for key, value in forwarded.items() if key != "expected_page"
+                key: value for key, value in forwarded.items()
+                if key not in {"expected_page", "owner_display", "connection_display_name"}
             }
             extension_payload["completion"] = {
                 "outcome": "created", "window_id": "window", "page_id": "page",
@@ -500,6 +512,29 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             peer.complete("wrong", "effect", peer.executor_fence, "applied")
         self.assertIn("effect", peer.pending)
+
+    def test_owner_display_requires_exact_fields_and_matches_acceptance(self):
+        peer = host.RemotePeer(None, {})
+        prepared = {
+            "type": "hello_prepared", "request_id": "request",
+            "principal_id": "principal", "executor_fence": {
+                "executor_id": "executor", "epoch": 1,
+            },
+            "owner_display": {
+                "daemon_instance_id": "instance", "daemon_boot_id": "boot",
+                "workbench_name": "workbench",
+            },
+        }
+        peer._accept_prepared(prepared)
+        peer._accept_hello({**prepared, "type": "hello_accepted"})
+        with self.assertRaises(ValueError):
+            peer._accept_hello({**prepared, "type": "hello_accepted", "owner_display": {
+                **prepared["owner_display"], "workbench_name": "other",
+            }})
+        with self.assertRaises(ValueError):
+            peer._accept_prepared({**prepared, "owner_display": {
+                **prepared["owner_display"], "extra": "rejected",
+            }})
 
     def test_positive_generations_and_typed_hello_rejection(self):
         peer = host.RemotePeer(None, {})
@@ -525,13 +560,14 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         broker = host.BrowserBroker(self.root)
         try:
             broker.refresh()
-            self.assertEqual(broker.principals["r_12345678"], "principal-one")
+            pinned = ("principal-one", first.owner_display)
+            self.assertEqual(broker.principals["r_12345678"], pinned)
             second = self.peer(connection_id="c_22222222", principal="principal-two")
             broker.refresh()
             broker.peers["r_12345678"].close(emit=True)
             self.assertNotIn("r_12345678", broker.peers)
             self.assertTrue(second.done.wait(2))
-            self.assertEqual(broker.principals["r_12345678"], "principal-one")
+            self.assertEqual(broker.principals["r_12345678"], pinned)
         finally:
             broker.close()
 

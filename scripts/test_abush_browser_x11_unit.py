@@ -62,6 +62,7 @@ class X11BindingTest(unittest.TestCase):
             "workspace_id": "workspace",
             "generation": 7,
             "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
         }, adapter=adapter, attempts=1)
         self.assertEqual(result["xid"], 22)
         self.assertEqual(result["observed"]["_ABUSH_REMOTE_ID"], "r_12345678")
@@ -77,6 +78,7 @@ class X11BindingTest(unittest.TestCase):
             "nonce": "0123456789abcdef0123456789abcdef",
             "remote_key": "r_12345678", "workspace_id": "workspace",
             "generation": 7, "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
         }
         first = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
         second = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
@@ -89,12 +91,13 @@ class X11BindingTest(unittest.TestCase):
             "nonce": "0123456789abcdef0123456789abcdef",
             "remote_key": "r_12345678", "workspace_id": "workspace-old",
             "generation": 7, "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
         }
         new = {**old, "workspace_id": "workspace-new", "generation": 8}
         first = binding.bind_workspace_window(old, adapter=adapter, attempts=1)
         self.assertEqual(adapter.values[(22, "WM_CLASS")], "abush-browser\0AbushBrowser\0")
         self.assertEqual(adapter.values[(22, "_NET_WM_NAME")],
-                         "Abush Browser — workspace-old")
+                         "Abush Browser — local · workbench")
         second = binding.bind_workspace_window(new, adapter=adapter, attempts=1)
         self.assertEqual(first["xid"], second["xid"])
         self.assertEqual(second["xid"], 22)
@@ -108,6 +111,7 @@ class X11BindingTest(unittest.TestCase):
             "nonce": "0123456789abcdef0123456789abcdef",
             "remote_key": "r_12345678", "workspace_id": "workspace-old",
             "generation": 7, "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
         }
         binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
         adapter.pid = lambda _window: 4242
@@ -123,6 +127,7 @@ class X11BindingTest(unittest.TestCase):
                     "nonce": "0123456789abcdef0123456789abcdef",
                     "remote_key": "r_12345678", "workspace_id": "workspace",
                     "generation": generation, "control_state": "remote",
+                    "display_title": "Abush Browser — local · workbench",
                 }, adapter=FakeAdapter(), attempts=1)
 
     def test_title_matching_accepts_chrome_suffix_only(self):
@@ -148,6 +153,7 @@ class X11BindingTest(unittest.TestCase):
                 "nonce": "0123456789abcdef0123456789abcdef",
                 "remote_key": "r_12345678", "workspace_id": "workspace",
                 "generation": 7, "control_state": "remote",
+                "display_title": "Abush Browser — local · workbench",
             }, adapter=adapter, attempts=1)
 
     def test_rejects_bad_nonce(self):
@@ -156,6 +162,7 @@ class X11BindingTest(unittest.TestCase):
                 "nonce": "guessable", "remote_key": "r_12345678",
                 "workspace_id": "workspace", "generation": 1,
                 "control_state": "remote",
+                "display_title": "Abush Browser — local · workbench",
             }, adapter=FakeAdapter(), attempts=1)
 
 
