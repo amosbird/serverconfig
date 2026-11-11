@@ -108,6 +108,9 @@ class QtileConfigTest(unittest.TestCase):
         window.name = "Web page"
         window.window.get_property.return_value = b"Abush Browser \xe2\x80\x94 local\0"
         self.assertEqual(namespace["window_label"](window), "Abush Browser — local")
+        window.window.get_property.assert_called_once_with(
+            "_ABUSH_DISPLAY_TITLE", "UTF8_STRING", unpack=str
+        )
         window.window.get_property.return_value = b""
         self.assertEqual(namespace["window_label"](window), "Web page")
 

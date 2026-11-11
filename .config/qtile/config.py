@@ -497,7 +497,9 @@ class AbushTreeTab(layout.TreeTab):
     @staticmethod
     def window_label(window):
         try:
-            stable = window.window.get_property("_ABUSH_DISPLAY_TITLE", "UTF8_STRING")
+            stable = window.window.get_property(
+                "_ABUSH_DISPLAY_TITLE", "UTF8_STRING", unpack=str
+            )
         except Exception:
             return window.name
         if isinstance(stable, bytes):
