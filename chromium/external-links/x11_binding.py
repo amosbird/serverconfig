@@ -13,6 +13,7 @@ TEXT_FIELDS = {
     "_ABUSH_WINDOW_GENERATION": "generation",
     "_ABUSH_CONTROL_STATE": "control_state",
     "_ABUSH_DISPLAY_TITLE": "display_title",
+    "_NET_WM_VISIBLE_NAME": "display_title",
 }
 STABLE_FIELDS = {
     "_ABUSH_BINDING_NONCE": "nonce",

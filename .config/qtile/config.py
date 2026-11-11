@@ -3,7 +3,7 @@ import subprocess
 from threading import Lock
 
 import xcffib.xproto
-from libqtile import hook, layout, qtile
+from libqtile import bar, hook, layout, qtile, widget
 from libqtile.config import (
     Click,
     Drag,
@@ -576,16 +576,7 @@ groups = [
     ),
     Group("h"),
     Group("2", layout="max"),
-    Group(
-        "c",
-        layouts=[
-            layout.TreeTab(
-                panel_width=320,
-                sections=["Abush Browser"],
-                previous_on_rm=True,
-            )
-        ],
-    ),
+    Group("c", layouts=[layout.Max()]),
 ]
 
 keys.append(Key([ctrl, alt, shift], "2", lazy.window.togroup("2")))
@@ -624,7 +615,21 @@ layouts = [
     layout.Max(),
 ]
 
-screens = [Screen()]
+screens = [
+    Screen(
+        top=bar.Bar(
+            [
+                widget.TaskList(
+                    borderwidth=0,
+                    highlight_method="block",
+                    padding=8,
+                    rounded=False,
+                ),
+            ],
+            28,
+        )
+    )
+]
 
 
 def is_abush_browser(window):
