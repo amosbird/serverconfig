@@ -66,15 +66,30 @@ class WorkspaceExecutor {
     async persistRecords(records) {
         if (!this.chrome.storage?.session) return;
         const revision = ++this.persistRevision;
-        const write = this.persistTail.catch(() => {}).then(() =>
-            this.chrome.storage.session.set({abushWorkspaces: records, revision}));
+        await this.chrome.storage.session.set({abushWorkspaces: records, revision});
+    }
+
+    async persist() {
+        const write = this.persistTail.catch(() => {}).then(() => {
+            const records = [...this.workspaces.values()]
+                .map(record => this.persistedRecord(record));
+            return this.persistRecords(records);
+        });
         this.persistTail = write;
         await write;
     }
 
-    async persist() {
-        const records = [...this.workspaces.values()].map(record => this.persistedRecord(record));
-        await this.persistRecords(records);
+    async commitRecord(record, previous = null) {
+        const write = this.persistTail.catch(() => {}).then(async () => {
+            const records = [...this.workspaces.values()].map(saved =>
+                this.persistedRecord(saved === previous ? record : saved));
+            if (previous === null) records.push(this.persistedRecord(record));
+            await this.persistRecords(records);
+            if (previous === null) this.install(record);
+            else Object.assign(previous, record);
+        });
+        this.persistTail = write;
+        await write;
     }
 
     statusUrl(record) {
@@ -239,6 +254,27 @@ class WorkspaceExecutor {
         }
     }
 
+    async ensureCancellationCompleted(payload) {
+        await this.nativeRequest("abush_browser", "ensure_managed_page_cancellation_completion",
+            this.ensureIdentity(payload));
+    }
+
+    async retireManagedPage(payload) {
+        if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
+            "ensure_id", "executor_fence", "window_id", "page_id"])) return false;
+        const record = this.workspaces.get(this.key(payload.remote_key, payload.principal_id));
+        if (record && record.connectionId === payload.connection_id &&
+                sameRef(record.executorFence, payload.executor_fence) &&
+                record.logicalWindowId === payload.window_id && record.logicalPageId === payload.page_id) {
+            await this.detach(record.pageTabId);
+            try { await this.chrome.windows.remove(record.windowId); } catch (_) {}
+            this.forget(record);
+            await this.persist();
+        }
+        await this.ensureCancellationCompleted(payload);
+        return true;
+    }
+
     async cancelEnsure(payload) {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
             "ensure_id", "executor_fence"]) ||
@@ -255,7 +291,9 @@ class WorkspaceExecutor {
             if (flight.createdWindowId !== null && !flight.committed) {
                 await this.cleanupFlightWindow(flight);
             }
+            try { await flight.promise; } catch (_) {}
         }
+        await this.ensureCancellationCompleted(payload);
         return true;
     }
 
@@ -296,10 +334,7 @@ class WorkspaceExecutor {
                 connectionId: payload.connection_id,
                 executorFence: payload.executor_fence,
             };
-            const records = [...this.workspaces.values()].map(record =>
-                this.persistedRecord(record === existing ? candidate : record));
-            await this.persistRecords(records);
-            Object.assign(existing, candidate);
+            await this.commitRecord(candidate, existing);
             return existing;
         }
         const nonce = crypto.randomUUID().replaceAll("-", "");
@@ -350,11 +385,7 @@ class WorkspaceExecutor {
             this.ensureActive(flight);
             if (!await this.isLive(record)) throw new Error("workspace changed during bind");
             this.ensureActive(flight);
-            await this.persistRecords([
-                ...[...this.workspaces.values()].map(saved => this.persistedRecord(saved)),
-                this.persistedRecord(record),
-            ]);
-            this.install(record);
+            await this.commitRecord(record);
             flight.committed = true;
             return record;
         } catch (error) {
@@ -446,6 +477,8 @@ class WorkspaceExecutor {
     }
 
     async execute(payload) {
+        let resolveDone;
+        const done = new Promise(resolve => { resolveDone = resolve; });
         const operation = {
             ...this.operationIdentity(payload),
             cancelled: false,
@@ -453,6 +486,8 @@ class WorkspaceExecutor {
             committed: false,
             workspaceKey: null,
             tabId: null,
+            done,
+            resolveDone,
         };
         const operationKey = this.operationKey(payload);
         const existing = this.operations.get(operationKey);
@@ -514,12 +549,28 @@ class WorkspaceExecutor {
             if (this.operations.get(operationKey) === operation) {
                 this.operations.delete(operationKey);
             }
+            try {
+                await this.persist();
+            } finally {
+                operation.resolveDone();
+            }
             await this.completion(payload, completion);
-            await this.persist();
         }
     }
 
-    cancel(payload) {
+    async cancellationCompletion(payload, completion) {
+        await this.nativeRequest("abush_browser", "cancellation_completion", {
+            remote_key: payload.remote_key,
+            connection_id: payload.connection_id,
+            principal_id: payload.principal_id,
+            request_id: payload.request_id,
+            effect_id: payload.effect_id,
+            executor_fence: payload.executor_fence,
+            completion,
+        });
+    }
+
+    async cancel(payload) {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
             "execution_request_id", "effect_id", "executor_fence"]) ||
                 ![payload.remote_key, payload.connection_id, payload.principal_id,
@@ -533,7 +584,12 @@ class WorkspaceExecutor {
         if (operation) {
             operation.cancelled = true;
             if (operation.mutationStarted) operation.uncertain = true;
+            try { await operation.done; } catch (_) {}
         }
+        const completion = operation &&
+            (operation.mutationStarted || operation.committed || operation.uncertain) ?
+            "unknown" : "not_applied";
+        await this.cancellationCompletion(payload, completion);
     }
 
     cancelMatching(matches) {

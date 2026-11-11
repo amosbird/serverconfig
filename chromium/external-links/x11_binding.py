@@ -12,6 +12,10 @@ TEXT_FIELDS = {
     "_ABUSH_WINDOW_GENERATION": "generation",
     "_ABUSH_CONTROL_STATE": "control_state",
 }
+STABLE_FIELDS = {
+    "_ABUSH_BINDING_NONCE": "nonce",
+    "_ABUSH_REMOTE_ID": "remote_key",
+}
 
 
 class X11Unavailable(RuntimeError):
@@ -113,7 +117,7 @@ def bind_workspace_window(payload, adapter=None, attempts=100, interval=0.05):
         existing = [window for window in adapter.windows()
                     if adapter.property(window, "WM_WINDOW_ROLE", "STRING") == "abush-browser" and
                     all(adapter.property(window, prop) == str(payload[field])
-                        for prop, field in TEXT_FIELDS.items())]
+                        for prop, field in STABLE_FIELDS.items())]
         fresh = [window for window in adapter.windows()
                  if binding_title_matches(adapter.title(window), expected) and
                  any("chrom" in value.lower() for value in adapter.wm_class(window))]
@@ -132,13 +136,15 @@ def bind_workspace_window(payload, adapter=None, attempts=100, interval=0.05):
         raise X11Unavailable("matching Chrome X11 window was not found")
     window = matches[0]
     adapter.set_text(window, "WM_WINDOW_ROLE", "abush-browser", "STRING")
-    for prop, field in TEXT_FIELDS.items():
+    for prop, field in {**STABLE_FIELDS, **TEXT_FIELDS}.items():
         adapter.set_text(window, prop, payload[field])
     adapter.finish()
     observed = {prop: adapter.property(window, prop) for prop in TEXT_FIELDS}
+    observed["_ABUSH_BINDING_NONCE"] = adapter.property(window, "_ABUSH_BINDING_NONCE")
     observed["WM_WINDOW_ROLE"] = adapter.property(window, "WM_WINDOW_ROLE", "STRING")
     expected_observed = {
         "WM_WINDOW_ROLE": "abush-browser",
+        "_ABUSH_BINDING_NONCE": nonce,
         **{prop: str(payload[field]) for prop, field in TEXT_FIELDS.items()},
     }
     if observed != expected_observed:

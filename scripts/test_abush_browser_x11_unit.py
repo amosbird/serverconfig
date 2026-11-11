@@ -78,6 +78,39 @@ class X11BindingTest(unittest.TestCase):
         self.assertEqual(first["xid"], second["xid"])
         self.assertEqual(second["xid"], 22)
 
+    def test_bind_same_xid_from_old_to_new_workspace(self):
+        adapter = FakeAdapter()
+        old = {
+            "nonce": "0123456789abcdef0123456789abcdef",
+            "remote_key": "r_12345678", "workspace_id": "workspace-old",
+            "generation": 7, "control_state": "remote",
+        }
+        new = {**old, "workspace_id": "workspace-new", "generation": 8}
+        first = binding.bind_workspace_window(old, adapter=adapter, attempts=1)
+        self.assertEqual(adapter.values[(22, "WM_CLASS")], "abush-browser\0AbushBrowser\0")
+        self.assertEqual(adapter.values[(22, "_NET_WM_NAME")],
+                         "Abush Browser — workspace-old")
+        second = binding.bind_workspace_window(new, adapter=adapter, attempts=1)
+        self.assertEqual(first["xid"], second["xid"])
+        self.assertEqual(second["xid"], 22)
+        self.assertEqual(second["observed"]["_ABUSH_BINDING_NONCE"], old["nonce"])
+        self.assertEqual(second["observed"]["_ABUSH_WORKSPACE_ID"], "workspace-new")
+        self.assertEqual(second["observed"]["_ABUSH_WINDOW_GENERATION"], "8")
+
+    def test_rebind_preserves_pid_spoof_protection(self):
+        adapter = FakeAdapter()
+        payload = {
+            "nonce": "0123456789abcdef0123456789abcdef",
+            "remote_key": "r_12345678", "workspace_id": "workspace-old",
+            "generation": 7, "control_state": "remote",
+        }
+        binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
+        adapter.pid = lambda _window: 4242
+        with mock.patch.object(binding, "browser_process", return_value=False), \
+                self.assertRaisesRegex(ValueError, "not a Chrome process"):
+            binding.bind_workspace_window({**payload, "workspace_id": "workspace-new"},
+                                          adapter=adapter, attempts=1)
+
     def test_rejects_non_positive_generation(self):
         for generation in (0, -1):
             with self.subTest(generation=generation), self.assertRaises(ValueError):

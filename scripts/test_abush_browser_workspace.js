@@ -547,20 +547,36 @@ function fixture(saved = []) {
         const firstWrite = deferred();
         let writes = 0;
         executor.chrome.storage.session.set = async value => {
-            calls.push(["persist", value]);
+            calls.push(["persist", structuredClone(value)]);
             if (writes++ === 0) await firstWrite.promise;
         };
-        const first = executor.persistRecords([{workspaceId: "older"}]);
-        await Promise.resolve();
-        const second = executor.persistRecords([{workspaceId: "newer"}]);
-        await Promise.resolve();
-        await Promise.resolve();
-        assert.equal(calls.filter(call => call[0] === "persist").length, 1,
-            "later persistence must wait for the earlier write");
+        const recordA = {
+            remoteKey: "r_aaaaaaaa", principalId: "principal-a", workspaceId: "workspace-a",
+            connectionId: "c_aaaaaaaa", executorFence: fence, logicalWindowId: "window-a",
+            logicalPageId: "page-a", windowGeneration: 1, pageGeneration: 1, windowId: 10,
+            statusTabId: 11, pageTabId: 12, nonce: "a".repeat(32), debuggerAttached: false,
+        };
+        const recordB = {
+            remoteKey: "r_bbbbbbbb", principalId: "principal-b", workspaceId: "workspace-b",
+            connectionId: "c_bbbbbbbb", executorFence: fence, logicalWindowId: "window-b",
+            logicalPageId: "page-b", windowGeneration: 1, pageGeneration: 1, windowId: 20,
+            statusTabId: 21, pageTabId: 22, nonce: "b".repeat(32), debuggerAttached: false,
+        };
+        executor.install(recordA);
+        const writeA = executor.persist();
+        while (!calls.some(call => call[0] === "persist")) await Promise.resolve();
+        executor.install(recordB);
+        const writeB = executor.persist();
         firstWrite.resolve();
-        await Promise.all([first, second]);
-        assert.deepEqual(calls.filter(call => call[0] === "persist").map(call =>
-            call[1].abushWorkspaces[0].workspaceId), ["older", "newer"]);
+        await Promise.all([writeA, writeB]);
+        const snapshots = calls.filter(call => call[0] === "persist")
+            .map(call => call[1].abushWorkspaces.map(record => record.principalId));
+        assert.deepEqual(snapshots, [["principal-a"], ["principal-a", "principal-b"]],
+            "queued writes [A],[B] must snapshot in execution order");
+        assert.deepEqual(calls.filter(call => call[0] === "persist").at(-1)[1]
+            .abushWorkspaces.map(record => record.principalId),
+        [...executor.workspaces.values()].map(record => record.principalId),
+        "final durable state must equal the final workspace map");
     }
     {
         const listeners = {message: null, disconnect: null};

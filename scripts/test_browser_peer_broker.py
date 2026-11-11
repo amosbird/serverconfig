@@ -35,6 +35,13 @@ class FakePeer:
             self.client, _ = self.server.accept()
             self.received.append(host.read_peer_message(self.client))
             self.client.sendall(host.encode_peer_message({
+                "type": "hello_prepared",
+                "request_id": "hello-request",
+                "principal_id": self.principal,
+                "executor_fence": self.fence,
+            }))
+            self.received.append(host.read_peer_message(self.client))
+            self.client.sendall(host.encode_peer_message({
                 "type": "hello_accepted",
                 "request_id": "hello-request",
                 "principal_id": self.principal,
@@ -132,9 +139,10 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         try:
             broker.refresh()
             hello = server.received[0]
-            self.assertEqual(hello["version"], 4)
-            self.assertEqual(set(hello), {
-                "type", "version", "executor_id", "nonce", "capabilities",
+            self.assertEqual(hello["version"], 5)
+            self.assertEqual(server.received[1], {
+                "type": "hello_ready", "request_id": "hello-request",
+                "executor_fence": server.fence,
             })
             server.send({
                 "type": "ensure_managed_page",
@@ -196,6 +204,62 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "ensure_id": "ensure-one", "executor_fence": server.fence,
             })
             self.assertFalse(server.done.is_set())
+        finally:
+            broker.close()
+
+    def test_cancel_ensure_waits_for_cleanup_ack_and_retire_forwards_exact_identity(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            server.send({
+                "type": "ensure_managed_page", "request_id": "ensure-request",
+                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
+                "expected_page": None, "executor_fence": server.fence,
+            })
+            self.next_event(broker, "abush_browser.ensure_managed_page")
+            server.send({
+                "type": "cancel_ensure_managed_page", "request_id": "ensure-request",
+                "ensure_id": "ensure-one", "executor_fence": server.fence,
+            })
+            cancel = self.next_event(
+                broker, "abush_browser.cancel_ensure_managed_page")["payload"]
+            broker.handle_request(self.request(
+                "ensure_managed_page_cancellation_completion", cancel))
+            self.assertEqual(server.wait_for("ensure_managed_page_cancellation_completed"), {
+                "type": "ensure_managed_page_cancellation_completed",
+                "request_id": "ensure-request", "ensure_id": "ensure-one",
+                "executor_fence": server.fence,
+            })
+
+            server.send({
+                "type": "ensure_managed_page", "request_id": "retire-request",
+                "ensure_id": "ensure-retire", "workspace_id": "workspace-authoritative",
+                "expected_page": None, "executor_fence": server.fence,
+            })
+            self.next_event(broker, "abush_browser.ensure_managed_page")
+            server.send({
+                "type": "cancel_ensure_managed_page", "request_id": "retire-request",
+                "ensure_id": "ensure-retire", "executor_fence": server.fence,
+            })
+            self.next_event(broker, "abush_browser.cancel_ensure_managed_page")
+            server.send({
+                "type": "retire_managed_page", "request_id": "retire-request",
+                "ensure_id": "ensure-retire", "executor_fence": server.fence,
+                "window_id": "window", "page_id": "page",
+            })
+            retire = self.next_event(broker, "abush_browser.retire_managed_page")["payload"]
+            self.assertEqual(retire, {
+                "remote_key": "r_12345678", "connection_id": "c_12345678",
+                "principal_id": "principal-one", "request_id": "retire-request",
+                "ensure_id": "ensure-retire", "executor_fence": server.fence,
+                "window_id": "window", "page_id": "page",
+            })
+            broker.handle_request(self.request(
+                "ensure_managed_page_cancellation_completion", {
+                    key: value for key, value in retire.items()
+                    if key not in {"window_id", "page_id"}
+                }))
         finally:
             broker.close()
 
@@ -331,6 +395,38 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "principal_id": "principal-one", "request_id": "cancel-request",
                 "execution_request_id": "execute-request", "effect_id": "effect",
                 "executor_fence": server.fence,
+            })
+        finally:
+            broker.close()
+
+    def test_cancel_completion_ack_is_sent_only_after_extension_convergence(self):
+        server = self.peer()
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            page = {"window": {
+                "workspace_id": "workspace", "window_id": "window", "generation": 1,
+            }, "page_id": "20", "generation": 1}
+            server.send({
+                "type": "execute", "request_id": "execute-request", "effect_id": "effect",
+                "executor_fence": server.fence,
+                "command": {"command": "navigate", "page": page,
+                            "url": "https://example.test/"},
+            })
+            self.next_event(broker, "abush_browser.execute")
+            server.send({
+                "type": "cancel", "request_id": "cancel-request", "effect_id": "effect",
+                "executor_fence": server.fence,
+            })
+            cancel = self.next_event(broker, "abush_browser.cancel")["payload"]
+            self.assertEqual(cancel["execution_request_id"], "execute-request")
+            broker.handle_request(self.request("cancellation_completion", {
+                key: value for key, value in cancel.items() if key != "execution_request_id"
+            } | {"completion": "unknown"}))
+            self.assertEqual(server.wait_for("cancellation_completed"), {
+                "type": "cancellation_completed", "request_id": "cancel-request",
+                "effect_id": "effect", "executor_fence": server.fence,
+                "completion": "unknown",
             })
         finally:
             broker.close()

@@ -30,7 +30,7 @@ except ImportError:
 
 MAX_MESSAGE_SIZE = 1024 * 1024
 NATIVE_ENVELOPE_VERSION = 1
-PEER_PROTOCOL_VERSION = 4
+PEER_PROTOCOL_VERSION = 5
 BROWSER_ERROR_CODES = {
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -615,6 +615,8 @@ class RemotePeer:
         self.capabilities = {}
         self.pending = {}
         self.ensure_pending = {}
+        self.ensure_cancellations = {}
+        self.pending_cancellations = {}
         self.topology_pending = {}
         self.reader = None
 
@@ -651,6 +653,13 @@ class RemotePeer:
                 "nonce": nonce,
                 "capabilities": {"cancellation": True},
             })
+            prepared = read_peer_message(sock)
+            self._accept_prepared(prepared)
+            self.send({
+                "type": "hello_ready",
+                "request_id": prepared["request_id"],
+                "executor_fence": prepared["executor_fence"],
+            })
             accepted = read_peer_message(sock)
             self._accept_hello(accepted)
             sock.settimeout(0.5)
@@ -671,6 +680,21 @@ class RemotePeer:
     @staticmethod
     def _exact_fields(value, fields):
         return isinstance(value, dict) and set(value) == set(fields)
+
+    def _accept_prepared(self, message):
+        if not self._exact_fields(message, {
+            "type", "request_id", "principal_id", "executor_fence"
+        }) or message.get("type") != "hello_prepared":
+            raise ValueError("invalid prepared hello response")
+        request_id = message.get("request_id")
+        principal_id = message.get("principal_id")
+        fence = message.get("executor_fence")
+        if not isinstance(request_id, str) or not request_id or \
+                not isinstance(principal_id, str) or not principal_id or \
+                not self._valid_executor_fence(fence):
+            raise ValueError("invalid prepared hello response")
+        self.principal_id = principal_id
+        self.executor_fence = fence
 
     def _accept_hello(self, message):
         if message.get("type") == "hello_rejected":
@@ -694,8 +718,9 @@ class RemotePeer:
             raise ValueError("invalid principal id")
         if not self._valid_executor_fence(fence):
             raise ValueError("invalid executor fence")
+        if principal_id != self.principal_id or fence != self.executor_fence:
+            raise ValueError("hello acceptance changed prepared identity")
         self.principal_id = principal_id
-        self.executor_fence = fence
 
     @staticmethod
     def _valid_executor_fence(value):
@@ -757,6 +782,30 @@ class RemotePeer:
             "expected_page": expected_page,
         }))
 
+    def _handle_retire_managed_page(self, message):
+        if not self._exact_fields(message, {
+            "type", "request_id", "ensure_id", "executor_fence", "window_id", "page_id"
+        }):
+            raise ValueError("invalid retire managed page")
+        request_id = message.get("request_id")
+        ensure_id = message.get("ensure_id")
+        fence = message.get("executor_fence")
+        pending = self.ensure_cancellations.get(ensure_id)
+        if pending is None or pending["request_id"] != request_id or pending["fence"] != fence or \
+                not all(isinstance(message.get(field), str) and message.get(field)
+                        for field in ("window_id", "page_id")):
+            raise ValueError("uncorrelated retire managed page")
+        self.broker.outbound.put(event("abush_browser.retire_managed_page", "abush_browser", {
+            "remote_key": self.metadata["remote_key"],
+            "connection_id": self.metadata["connection_id"],
+            "principal_id": self.principal_id,
+            "request_id": request_id,
+            "ensure_id": ensure_id,
+            "executor_fence": fence,
+            "window_id": message["window_id"],
+            "page_id": message["page_id"],
+        }))
+
     def _handle_cancel_ensure_managed_page(self, message):
         if not self._exact_fields(message, {
             "type", "request_id", "ensure_id", "executor_fence"
@@ -774,6 +823,7 @@ class RemotePeer:
                 pending["fence"] != fence:
             return
         self.ensure_pending.pop(ensure_id)
+        self.ensure_cancellations[ensure_id] = pending
         self.broker.outbound.put(event(
             "abush_browser.cancel_ensure_managed_page", "abush_browser", {
                 "remote_key": self.metadata["remote_key"],
@@ -783,6 +833,20 @@ class RemotePeer:
                 "ensure_id": ensure_id,
                 "executor_fence": fence,
             }))
+
+    def complete_ensure_cancellation(self, principal_id, request_id, ensure_id, fence):
+        if principal_id != self.principal_id or fence != self.executor_fence:
+            raise ValueError("stale ensure cancellation completion")
+        pending = self.ensure_cancellations.get(ensure_id)
+        if pending is None or pending["request_id"] != request_id or pending["fence"] != fence:
+            raise ValueError("uncorrelated ensure cancellation completion")
+        self.ensure_cancellations.pop(ensure_id)
+        self.send({
+            "type": "ensure_managed_page_cancellation_completed",
+            "request_id": request_id,
+            "ensure_id": ensure_id,
+            "executor_fence": fence,
+        })
 
     def complete_ensure(self, principal_id, workspace_id, request_id, ensure_id, fence, completion):
         if principal_id != self.principal_id or fence != self.executor_fence:
@@ -811,6 +875,22 @@ class RemotePeer:
             "type": "ensure_managed_page_completed",
             "request_id": request_id,
             "ensure_id": ensure_id,
+            "executor_fence": fence,
+            "completion": completion,
+        })
+
+    def complete_cancellation(self, request_id, effect_id, fence, completion):
+        if fence != self.executor_fence or completion not in {"not_applied", "unknown"}:
+            raise ValueError("invalid cancellation completion")
+        pending = self.pending_cancellations.get(effect_id)
+        if pending is None or pending["request_id"] != request_id or pending["fence"] != fence:
+            raise ValueError("uncorrelated cancellation completion")
+        self.pending_cancellations.pop(effect_id)
+        self.pending.pop(effect_id, None)
+        self.send({
+            "type": "cancellation_completed",
+            "request_id": request_id,
+            "effect_id": effect_id,
             "executor_fence": fence,
             "completion": completion,
         })
@@ -876,6 +956,9 @@ class RemotePeer:
             return
         if normalized_type == "ensure_managed_page":
             self._handle_ensure_managed_page(message)
+            return
+        if normalized_type == "retire_managed_page":
+            self._handle_retire_managed_page(message)
             return
         if normalized_type == "cancel_ensure_managed_page":
             self._handle_cancel_ensure_managed_page(message)
@@ -967,6 +1050,7 @@ class RemotePeer:
         pending = self.pending.get(effect_id)
         if pending is None or pending["fence"] != fence or request_id == pending["request_id"]:
             raise ValueError("invalid cancel correlation")
+        self.pending_cancellations[effect_id] = {"request_id": request_id, "fence": fence}
         self.broker.outbound.put(event("abush_browser.cancel", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
             "connection_id": self.metadata["connection_id"],
@@ -1155,6 +1239,16 @@ class BrowserBroker:
                 payload.get("executor_fence"), payload.get("completion"),
             )
             return {}
+        if service == "abush_browser" and operation == "ensure_managed_page_cancellation_completion":
+            if set(payload) != {
+                "remote_key", "connection_id", "principal_id", "request_id", "ensure_id",
+                "executor_fence",
+            }:
+                raise ValueError("invalid ensure cancellation completion payload")
+            self.peer(payload).complete_ensure_cancellation(
+                payload.get("principal_id"), payload.get("request_id"), payload.get("ensure_id"),
+                payload.get("executor_fence"))
+            return {}
         if service == "abush_browser" and operation == "managed_page_moved_outside":
             if set(payload) != {
                 "remote_key", "connection_id", "principal_id", "request_id",
@@ -1174,6 +1268,16 @@ class BrowserBroker:
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"),
             )
+            return {}
+        if service == "abush_browser" and operation == "cancellation_completion":
+            if set(payload) != {
+                "remote_key", "connection_id", "principal_id", "request_id", "effect_id",
+                "executor_fence", "completion",
+            }:
+                raise ValueError("invalid cancellation completion payload")
+            self.peer(payload).complete_cancellation(
+                payload.get("request_id"), payload.get("effect_id"),
+                payload.get("executor_fence"), payload.get("completion"))
             return {}
         if service == "abush_browser" and operation == "bind_x11_window":
             from x11_binding import bind_workspace_window

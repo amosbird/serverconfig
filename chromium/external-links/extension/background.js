@@ -203,6 +203,9 @@ if (typeof chrome !== "undefined") {
                 .catch(error => notifyFailure(
                     error.message || "Unable to ensure Abush browser workspace"));
         }
+        if (message.event === "abush_browser.retire_managed_page") {
+            workspaceReady.then(() => workspaces.retireManagedPage(message.payload)).catch(() => {});
+        }
         if (message.event === "abush_browser.cancel_ensure_managed_page") {
             workspaceReady.then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});
         }
@@ -211,7 +214,9 @@ if (typeof chrome !== "undefined") {
                 .catch(error => notifyFailure(
                     error.message || "Unable to complete Abush browser command"));
         }
-        if (message.event === "abush_browser.cancel") workspaces.cancel(message.payload);
+        if (message.event === "abush_browser.cancel") {
+            workspaceReady.then(() => workspaces.cancel(message.payload)).catch(() => {});
+        }
     });
     chrome.tabs.onAttached.addListener((tabId, info) => {
         workspaceReady.then(() => workspaces.tabMoved(tabId, info)).catch(() => {});
