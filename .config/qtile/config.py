@@ -621,6 +621,8 @@ screens = [
             [
                 widget.TaskList(
                     borderwidth=0,
+                    font="Ubuntu Mono",
+                    fontsize=14,
                     highlight_method="block",
                     padding=8,
                     rounded=False,
