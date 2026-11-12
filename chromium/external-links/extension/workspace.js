@@ -1,4 +1,5 @@
 const STATUS_PREFIX = "__ABUSH_BIND__:";
+const STATUS_NONCE_RE = /^[0-9a-f]{32}$/;
 const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -101,6 +102,31 @@ class WorkspaceExecutor {
         return this.chrome.runtime.getURL(`status.html#${record.nonce}`);
     }
 
+    statusNonce(url) {
+        const prefix = this.chrome.runtime.getURL("status.html#");
+        if (typeof url !== "string" || !url.startsWith(prefix)) return null;
+        const nonce = url.slice(prefix.length);
+        return STATUS_NONCE_RE.test(nonce) ? nonce : null;
+    }
+
+    async waitForStatusTitle(tabId, nonce) {
+        const expected = `${STATUS_PREFIX}${nonce}`;
+        for (let attempt = 0; attempt < 100; attempt++) {
+            const tab = await this.chrome.tabs.get(tabId);
+            if (tab.title === expected) return;
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        throw new Error("status tab title was not ready");
+    }
+
+    async closeOrphanedStatusWindows(liveWindowIds) {
+        const tabs = await this.chrome.tabs.query({});
+        for (const tab of tabs) {
+            if (this.statusNonce(tab.url) === null || liveWindowIds.has(tab.windowId)) continue;
+            try { await this.chrome.tabs.remove(tab.id); } catch (_) {}
+        }
+    }
+
     async isLive(record) {
         try {
             const tabs = await this.chrome.tabs.query({windowId: record.windowId});
@@ -119,6 +145,7 @@ class WorkspaceExecutor {
             await this.chrome.storage.session.get(["abushWorkspaces", "revision"]);
         if (Number.isInteger(revision) && revision >= 0) this.persistRevision = revision;
         let removed = false;
+        const liveWindowIds = new Set();
         for (const saved of abushWorkspaces) {
             if (!saved || typeof saved.remoteKey !== "string" ||
                     typeof saved.principalId !== "string" || !saved.principalId ||
@@ -140,7 +167,9 @@ class WorkspaceExecutor {
             }
             saved.debuggerAttached = false;
             this.install(saved);
+            liveWindowIds.add(saved.windowId);
         }
+        await this.closeOrphanedStatusWindows(liveWindowIds);
         if (removed) await this.persist();
     }
 
@@ -354,7 +383,17 @@ class WorkspaceExecutor {
         }
         const nonce = crypto.randomUUID().replaceAll("-", "");
         const statusUrl = this.chrome.runtime.getURL(`status.html#${nonce}`);
-        const created = await this.chrome.windows.create({url: statusUrl, focused: false, type: "normal"});
+        const statusTab = await this.chrome.tabs.create({url: statusUrl, active: false});
+        let created;
+        try {
+            await this.waitForStatusTitle(statusTab.id, nonce);
+            created = await this.chrome.windows.create({
+                tabId: statusTab.id, focused: false, type: "normal",
+            });
+        } catch (error) {
+            try { await this.chrome.tabs.remove(statusTab.id); } catch (_) {}
+            throw error;
+        }
         flight.createdWindowId = created.id;
         try {
             this.ensureActive(flight);
@@ -362,7 +401,6 @@ class WorkspaceExecutor {
             await this.cleanupFlightWindow(flight);
             throw error;
         }
-        const statusTab = created.tabs[0];
         await this.chrome.tabs.update(statusTab.id, {pinned: true});
         const business = await this.chrome.tabs.create({
             windowId: created.id, url: "about:blank", active: true,

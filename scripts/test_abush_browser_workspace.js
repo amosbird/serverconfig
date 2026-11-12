@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const assert = require("assert");
-const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle} = require(
+const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX} = require(
     "../chromium/external-links/extension/workspace.js");
 const {NativeDispatcher} = require("../chromium/external-links/extension/background.js");
 
@@ -49,13 +49,26 @@ function deferred() {
     return {promise, resolve, reject};
 }
 
-function fixture(saved = []) {
+function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
+                 orphanPage = false) {
     const calls = [];
     let nextWindow = 10;
-    const windows = new Map(saved.map(record => [record.windowId, [
-        {id: record.statusTabId, url: `chrome-extension://id/status.html#${record.nonce}`},
-        {id: record.pageTabId, url: "about:blank"},
-    ]]));
+    let nextTab = 1000;
+    const orphaned = orphanStatusNonces.map((nonce, index) => [500 + index, [{
+        id: 1500 + index,
+        windowId: 500 + index,
+        url: `chrome-extension://id/status.html#${nonce}`,
+        title: `${STATUS_PREFIX}${nonce}`,
+    }, ...(orphanPage ? [{id: 1600 + index, windowId: 500 + index,
+        url: "about:blank"}] : [])]]);
+    const windows = new Map([[1, Array.from({length: ordinaryTabCount}, (_, index) => ({
+        id: 2000 + index, windowId: 1, url: `https://ordinary-${index}.test/`,
+    }))], ...orphaned, ...saved.map(record => [record.windowId, [
+        {id: record.statusTabId, windowId: record.windowId,
+            url: `chrome-extension://id/status.html#${record.nonce}`,
+            title: `${STATUS_PREFIX}${record.nonce}`},
+        {id: record.pageTabId, windowId: record.windowId, url: "about:blank"},
+    ]])]);
     const chrome = {
         runtime: {getURL: path => `chrome-extension://id/${path}`},
         storage: {session: {
@@ -66,27 +79,46 @@ function fixture(saved = []) {
             create: async properties => {
                 calls.push(["createWindow", properties]);
                 const id = nextWindow++;
-                windows.set(id, [{id: id + 100, url: properties.url}]);
-                return {id, tabs: [{id: id + 100}]};
+                const source = [...windows.values()].find(tabs =>
+                    tabs.some(tab => tab.id === properties.tabId));
+                const tab = source.splice(source.findIndex(item => item.id === properties.tabId), 1)[0];
+                tab.windowId = id;
+                windows.set(id, [tab]);
+                return {id, tabs: [tab]};
             },
-            remove: async id => calls.push(["removeWindow", id]),
+            remove: async id => {
+                calls.push(["removeWindow", id]);
+                windows.delete(id);
+            },
         },
         tabs: {
-            query: async ({windowId}) => windows.get(windowId) || [],
+            query: async query => query.windowId === undefined ?
+                [...windows.values()].flat() : windows.get(query.windowId) || [],
             create: async properties => {
                 calls.push(["createTab", properties]);
-                const tab = {id: properties.windowId + 200, url: properties.url};
-                windows.get(properties.windowId).push(tab);
+                const windowId = properties.windowId ?? 1;
+                const tab = {id: nextTab++, windowId, url: properties.url};
+                if (properties.url?.includes("status.html#")) {
+                    tab.title = `${STATUS_PREFIX}${properties.url.split("#")[1]}`;
+                }
+                windows.get(windowId).push(tab);
                 return tab;
             },
             update: async (id, properties) => calls.push(["update", id, properties]),
             get: async id => {
                 for (const [windowId, tabs] of windows) {
-                    if (tabs.some(tab => tab.id === id)) return {id, windowId};
+                    const tab = tabs.find(item => item.id === id);
+                    if (tab) return {...tab, windowId};
                 }
                 throw new Error("missing tab");
             },
-            remove: async id => calls.push(["remove", id]),
+            remove: async id => {
+                calls.push(["remove", id]);
+                for (const tabs of windows.values()) {
+                    const index = tabs.findIndex(tab => tab.id === id);
+                    if (index !== -1) tabs.splice(index, 1);
+                }
+            },
         },
         debugger: {
             attach: async target => calls.push(["attach", target]),
@@ -105,6 +137,35 @@ function fixture(saved = []) {
     assert.equal(displayTitle("local"), "local");
     assert.equal(displayTitle("dev.example.com"), "dev.example.com");
     assert.equal(displayTitle("prod-alias"), "prod-alias");
+    {
+        const orphanNonce = "f".repeat(32);
+        const {executor, calls} = fixture([], [orphanNonce]);
+        await executor.restore();
+        assert.deepEqual(calls.filter(call => call[0] === "remove"),
+            [["remove", 1500]], "a marker tab in an ordinary window must not close that window");
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0);
+    }
+    {
+        const orphanNonce = "f".repeat(32);
+        const {executor, calls} = fixture([], [orphanNonce], 1, true);
+        await executor.restore();
+        assert.deepEqual(calls.filter(call => call[0] === "remove"),
+            [["remove", 1500]], "orphan cleanup must remove only the marker tab");
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0,
+            "orphan cleanup must never destroy a window containing user tabs");
+    }
+    {
+        const {executor, calls} = fixture([], [], 1);
+        executor.chrome.windows.create = async () => {
+            throw new Error("window creation failed");
+        };
+        await assert.rejects(executor.ensure(ensurePayload()), /window creation failed/);
+        const statusCreate = calls.find(call => call[0] === "createTab" &&
+            call[1].url.includes("status.html#"));
+        assert(statusCreate);
+        assert(calls.some(call => call[0] === "remove"),
+            "failed window creation must remove the temporary marker tab");
+    }
     {
         const {executor, calls} = fixture();
         const expectedPage = {
@@ -153,11 +214,12 @@ function fixture(saved = []) {
         assert.notEqual(first.logicalPageId, String(first.pageTabId));
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 1);
         assert.deepEqual(calls.find(call => call[0] === "createWindow")[1], {
-            url: calls.find(call => call[0] === "createWindow")[1].url,
+            tabId: first.statusTabId,
             focused: false,
             type: "normal",
         });
-        assert.equal(calls.filter(call => call[0] === "createTab").length, 1);
+        assert.equal(calls.filter(call => call[0] === "createTab").length, 2);
+        assert.equal(calls.find(call => call[0] === "createTab")[1].active, false);
         assert.equal(calls.filter(call => call[0] === "bind_x11_window").length, 1);
         assert.equal(calls.find(call => call[0] === "bind_x11_window")[1].display_title,
             "local");
