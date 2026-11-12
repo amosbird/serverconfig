@@ -2,6 +2,7 @@ const STATUS_PREFIX = "__ABUSH_BIND__:";
 const STATUS_NONCE_RE = /^[0-9a-f]{32}$/;
 const MARKER_IDS = ["a", "b"];
 const OWNED_MARKERS_KEY = "abushOwnedMarkers";
+const RESTORE_HOST_KEY = "abushRestoreHost";
 const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -172,6 +173,19 @@ class WorkspaceExecutor {
         throw new Error("status tab title was not ready");
     }
 
+    async restoreHost() {
+        if (!this.chrome.storage?.local) return;
+        const local = await this.chrome.storage.local.get([RESTORE_HOST_KEY]);
+        if (local[RESTORE_HOST_KEY] !== true) return;
+        await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: false});
+        await this.chrome.windows.create({url: "about:blank", focused: false, type: "normal"});
+    }
+
+    async markRestoreHost() {
+        if (!this.chrome.storage?.local) return;
+        await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: true});
+    }
+
     async closeOrphanedStatusWindows(liveWindowIds) {
         const tabs = await this.chrome.tabs.query({});
         const local = this.chrome.storage?.local ?
@@ -251,6 +265,7 @@ class WorkspaceExecutor {
     }
 
     async restore() {
+        await this.restoreHost();
         const liveWindowIds = new Set();
         let removed = false;
         const seenKeys = new Set();
@@ -868,6 +883,7 @@ class WorkspaceExecutor {
         if (normalWindows.length === 0 || normalWindows.some(window =>
             !this.windowOwners.has(window.id))) return;
         await this.closeManagedWindowSet(normalWindows);
+        await this.markRestoreHost();
         await this.chrome.windows.create({url: "about:blank", focused: false, type: "normal"});
     }
 

@@ -318,6 +318,21 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(calls.filter(call => call[0] === "remove"), [["remove", 1730]]);
     }
     {
+        const localState = {abushRestoreHost: true};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        await executor.restore();
+        assert.equal(localState.abushRestoreHost, false,
+            "restore intent must be consumed before opening a neutral host");
+        assert.deepEqual(calls.filter(call => call[0] === "createWindow").map(call => call[1]), [
+            {url: "about:blank", focused: false, type: "normal"},
+        ]);
+        const clearIndex = calls.findIndex(call => call[0] === "persistLocal" &&
+            call[1].abushRestoreHost === false);
+        const createIndex = calls.findIndex(call => call[0] === "createWindow");
+        assert(clearIndex >= 0 && createIndex > clearIndex,
+            "intent must clear before host creation to avoid duplicate recovery after a crash");
+    }
+    {
         const gate = deferred();
         const order = [];
         const workspaces = {
@@ -661,6 +676,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const createIndex = calls.findIndex(call => call[0] === "createWindow");
         assert(createIndex > closeIndex,
             "neutral host creation must follow managed cleanup so Chrome keeps running");
+        const intentIndex = calls.findIndex(call => call[0] === "persistLocal" &&
+            call[1].abushRestoreHost === true);
+        assert(intentIndex > closeIndex && createIndex > intentIndex,
+            "next-start host intent must commit after managed cleanup and before host creation");
     }
     {
         const record = {
