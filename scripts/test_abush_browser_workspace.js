@@ -2655,11 +2655,24 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             principal_id: identity.principal_id, executor_fence: replayFence,
             connected: true,
         });
+        assert.equal(localState.abushRetireLedger[0].phase, "ack_received",
+            "stale ACK delivery must remain durable after fence rotation");
+        assert.equal(calls.some(call => call[0] ===
+            "retire_managed_page_ack_consumed"), false,
+            "old-fence ACK must not be consumed on the new authority");
+        const replayed = {
+            remote_key: identity.remote_key, connection_id: "c_new00000",
+            principal_id: identity.principal_id, request_id: "retire-replay-delivery",
+            retire_id: identity.retire_id, executor_fence: replayFence,
+            response_delivery_id: oldAck.response_delivery_id,
+            origin_executor_fence: fence, completion,
+        };
+        assert.equal(await executor.retireManagedPageAck(replayed), true);
         assert.deepEqual(localState.abushRetireLedger, [],
-            "ACK replay must consume durable retire state after fence rotation");
+            "current-fence ACK replay must consume durable retire state");
         const consumed = calls.find(call => call[0] ===
             "retire_managed_page_ack_consumed")[1];
-        assert.notEqual(consumed.request_id, identity.request_id);
+        assert.equal(consumed.request_id, replayed.request_id);
         assert.equal(consumed.response_delivery_id, oldAck.response_delivery_id);
         assert.deepEqual(consumed.executor_fence, replayFence);
     }

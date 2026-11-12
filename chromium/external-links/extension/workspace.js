@@ -2468,30 +2468,27 @@ class WorkspaceExecutor {
 
     async consumeRetireAck(entry) {
         const state = this.remoteAuthorities.get(entry.identity.remote_key);
-        if (!state || state.principal_id !== entry.identity.principal_id) {
+        if (!state || state.principal_id !== entry.identity.principal_id ||
+                state.connection_id !== entry.delivery.connection_id ||
+                !sameRef(state.executor_fence, entry.ack.executor_fence)) {
             throw new Error("retire acknowledgement has no current peer authority");
         }
-        const ack = {
-            ...entry.ack,
-            request_id: crypto.randomUUID(),
-            executor_fence: state.executor_fence,
-        };
         const confirmation = await this.nativeRequest(
             "abush_browser", "retire_managed_page_ack_consumed", {
                 remote_key: entry.identity.remote_key,
-                connection_id: state.connection_id,
+                connection_id: entry.delivery.connection_id,
                 principal_id: entry.identity.principal_id,
-                request_id: ack.request_id,
-                retire_id: ack.retire_id,
-                executor_fence: ack.executor_fence,
-                response_delivery_id: ack.response_delivery_id,
+                request_id: entry.ack.request_id,
+                retire_id: entry.ack.retire_id,
+                executor_fence: entry.ack.executor_fence,
+                response_delivery_id: entry.ack.response_delivery_id,
             });
         if (!exactFields(confirmation,
             ["accepted", "request_id", "retire_id", "response_delivery_id"]) ||
                 confirmation.accepted !== true ||
-                confirmation.request_id !== ack.request_id ||
-                confirmation.retire_id !== ack.retire_id ||
-                confirmation.response_delivery_id !== ack.response_delivery_id) {
+                confirmation.request_id !== entry.ack.request_id ||
+                confirmation.retire_id !== entry.ack.retire_id ||
+                confirmation.response_delivery_id !== entry.ack.response_delivery_id) {
             throw new Error("retire acknowledgement consumption was not confirmed");
         }
         this.retireAckReceived.delete(entry.identity.retire_id);
@@ -2502,14 +2499,6 @@ class WorkspaceExecutor {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
             "retire_id", "executor_fence", "response_delivery_id", "origin_executor_fence",
             "completion"])) return false;
-        const entry = this.retireCompleted.get(payload.retire_id) ||
-            this.retireAckReceived.get(payload.retire_id);
-        if (!entry || payload.remote_key !== entry.identity.remote_key ||
-                payload.principal_id !== entry.identity.principal_id ||
-                !this.validRetireAck(payload, entry, false)) return false;
-        const state = this.remoteAuthorities.get(payload.remote_key);
-        if (!state || state.connection_id !== payload.connection_id ||
-                !sameRef(state.executor_fence, payload.executor_fence)) return false;
         const ack = {
             request_id: payload.request_id,
             retire_id: payload.retire_id,
@@ -2518,7 +2507,27 @@ class WorkspaceExecutor {
             origin_executor_fence: payload.origin_executor_fence,
             completion: payload.completion,
         };
-        const received = {...entry, ack};
+        const entry = this.retireCompleted.get(ack.retire_id) ||
+            this.retireAckReceived.get(ack.retire_id);
+        if (!entry || payload.remote_key !== entry.identity.remote_key ||
+                payload.principal_id !== entry.identity.principal_id ||
+                !this.validRetireAck(ack, entry, false) ||
+                (entry.ack && entry.ack.response_delivery_id !== ack.response_delivery_id)) {
+            return false;
+        }
+        const state = this.remoteAuthorities.get(payload.remote_key);
+        if (!state || state.connection_id !== payload.connection_id ||
+                !sameRef(state.executor_fence, payload.executor_fence)) return false;
+        const received = {
+            ...entry,
+            delivery: {
+                ...entry.delivery,
+                connection_id: payload.connection_id,
+                request_id: payload.request_id,
+                executor_fence: payload.executor_fence,
+            },
+            ack,
+        };
         this.retireCompleted.delete(ack.retire_id);
         this.retireAckReceived.set(ack.retire_id, received);
         await this.persistRetireLedger();
