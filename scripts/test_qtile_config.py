@@ -20,6 +20,12 @@ class QtileConfigTest(unittest.TestCase):
         self.assertIn('Key([ctrl, alt], "9", toggle_scratchpad("webchat"))', config)
         self.assertIn("from libqtile.backend.base import Window as QtileWindow", config)
         self.assertIn("if isinstance(window, QtileWindow) and match.compare(window)", config)
+        self.assertIn(
+            "def register_scratchpad_window(window, hide=True):\n"
+            "    if not isinstance(window, QtileWindow):\n"
+            "        return",
+            config,
+        )
 
 
 if __name__ == "__main__":

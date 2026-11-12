@@ -653,7 +653,7 @@ def initialize_browser_tabs():
 
 
 ABUSH_BINDING_TITLE = re.compile(
-    r"^__ABUSH_BIND__:[0-9a-f]{32}(?: - (?:Google Chrome|Chromium))?$"
+    r"^__ABUSH_BIND__:[0-9a-f]{32}:[ab](?: - (?:Google Chrome|Chromium))?$"
 )
 
 
@@ -694,6 +694,8 @@ def recover_scratchpad_dropdowns():
 
 
 def register_scratchpad_window(window, hide=True):
+    if not isinstance(window, QtileWindow):
+        return
     scratchpad = qtile.groups_map["scratchpad"]
     if any(dropdown.window is window for dropdown in scratchpad.dropdowns.values()):
         return
