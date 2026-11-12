@@ -863,11 +863,12 @@ class WorkspaceExecutor {
             .filter(window => window.type === "normal" && window.id !== removedWindowId);
     }
 
-    async closeManagedWindowsWithoutHost(removedWindowId) {
+    async replaceClosedHostWindow(removedWindowId) {
         const normalWindows = await this.visibleNormalWindows(removedWindowId);
         if (normalWindows.length === 0 || normalWindows.some(window =>
             !this.windowOwners.has(window.id))) return;
         await this.closeManagedWindowSet(normalWindows);
+        await this.chrome.windows.create({url: "about:blank", focused: false, type: "normal"});
     }
 
     async closeManagedWindowSet(normalWindows) {
@@ -892,7 +893,7 @@ class WorkspaceExecutor {
     async windowRemoved(windowId) {
         const key = this.windowOwners.get(windowId);
         if (!key) {
-            await this.closeManagedWindowsWithoutHost(windowId);
+            await this.replaceClosedHostWindow(windowId);
             return;
         }
         const record = this.workspaces.get(key);

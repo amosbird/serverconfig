@@ -132,8 +132,11 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                     const tabs = urls.map((url, index) => {
                         const tab = {id: nextTab++, windowId: id,
                             windowType: properties.type, url, index, pinned: false};
-                        const params = new URLSearchParams(url.split("#")[1]);
-                        tab.title = `${STATUS_PREFIX}${params.get("nonce")}:${params.get("marker")}`;
+                        const fragment = url.split("#")[1];
+                        if (fragment) {
+                            const params = new URLSearchParams(fragment);
+                            tab.title = `${STATUS_PREFIX}${params.get("nonce")}:${params.get("marker")}`;
+                        }
                         return tab;
                     });
                     windows.set(id, tabs);
@@ -646,12 +649,18 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await executor.windowRemoved(1);
         assert.equal(executor.workspaces.size, 0,
             "closing the ordinary host first must retire the last managed window");
+        assert.deepEqual(calls.filter(call => call[0] === "createWindow").map(call => call[1]), [
+            {url: "about:blank", focused: false, type: "normal"},
+        ], "a neutral host must replace the closed ordinary window before managed cleanup");
         assert(calls.some(call => call[0] === "removeWindow" && call[1] === record.windowId),
             "the extension must close the last managed window before Chrome records it as last session");
         const persistIndex = calls.findIndex(call => call[0] === "persist");
         const closeIndex = calls.findIndex(call => call[0] === "removeWindow");
         assert(persistIndex >= 0 && closeIndex > persistIndex,
             "durable ownership removal must precede closing the last managed window");
+        const createIndex = calls.findIndex(call => call[0] === "createWindow");
+        assert(createIndex > closeIndex,
+            "neutral host creation must follow managed cleanup so Chrome keeps running");
     }
     {
         const record = {
