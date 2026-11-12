@@ -369,6 +369,20 @@ def activate_ordinary_window(payload, adapter=None, run=None, verify=None):
     return {"xid": window, "nonce": nonce}
 
 
+def verify_workspace_window(payload, adapter=None):
+    required = {"xid", "nonce", "remote_key", "workspace_id", "generation",
+                "control_state", "display_title"}
+    if not isinstance(payload, dict) or set(payload) != required or \
+            not isinstance(payload["xid"], int) or isinstance(payload["xid"], bool) or \
+            payload["xid"] <= 0:
+        raise ValueError("invalid X11 verification payload")
+    adapter = adapter or XcffibAdapter()
+    return {
+        "verified": managed_metadata(adapter, payload["xid"]) == expected_managed_metadata(payload),
+        "xid": payload["xid"],
+    }
+
+
 def clear_workspace_window(payload, adapter=None, run=None):
     required = {"xid", "nonce", "remote_key", "workspace_id", "generation",
                 "control_state", "display_title"}

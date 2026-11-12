@@ -44,6 +44,7 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
             "operation": "ordinary_open",
             "url": "https://example.test/path",
             "focus": True,
+            "deadline_ms": 2_000_000_000_000,
         }
 
     def connect(self, request):
@@ -56,18 +57,38 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
     def test_exact_request_correlation_and_permissions(self):
         client = self.connect(self.request())
         event = self.outbound.get(timeout=1)
-        self.assertEqual(event, {
-            "version": 1,
-            "event": "ordinary_open",
-            "service": "ordinary_open",
-            "payload": self.request(),
-        })
+        self.assertEqual(event["payload"]["request_id"], "request-one")
+        self.assertEqual(event["payload"], self.request())
         completion = host.ordinary_open_response("request-one", "applied")
         self.server.complete(completion)
         self.assertEqual(host.read_ordinary_open_message(client), completion)
         client.close()
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_strict_deadline_is_required_for_native_ordinary_mutations(self):
+        broker = host.BrowserBroker(outbound=queue.Queue())
+        binding = mock.Mock()
+        binding.prepare_ordinary_window.return_value = {"xid": 42, "nonce": "a" * 32}
+        broker.x11_binding = mock.Mock(return_value=binding)
+        envelope = {
+            "version": 1,
+            "id": "deadline-native",
+            "service": "ordinary_open",
+            "operation": "prepare",
+            "payload": {"nonce": "a" * 32},
+        }
+        with self.assertRaisesRegex(ValueError, "payload"):
+            broker.handle_request(envelope)
+        with self.assertRaisesRegex(TimeoutError, "deadline"):
+            broker.handle_request({**envelope, "payload": {
+                "nonce": "a" * 32, "deadline_ms": int(time.time() * 1000) - 1,
+            }})
+        deadline = int(time.time() * 1000) + 30_000
+        self.assertEqual(broker.handle_request({**envelope, "payload": {
+            "nonce": "a" * 32, "deadline_ms": deadline,
+        }}), {"xid": 42, "nonce": "a" * 32})
+        binding.prepare_ordinary_window.assert_called_once_with({"nonce": "a" * 32})
 
     def test_validate_request_rejects_non_web_and_non_file_schemes(self):
         request = self.request("scheme-check")
@@ -108,6 +129,35 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         self.assertEqual(host.read_ordinary_open_message(first), completion)
         first.close()
         second.close()
+
+    def test_deadline_timeout_publishes_typed_cancel_and_never_extends(self):
+        request = {**self.request("deadline"),
+                   "deadline_ms": int(time.time() * 1000) + 120}
+        client = self.connect(request)
+        opened = self.outbound.get(timeout=1)
+        self.assertEqual(opened["payload"]["deadline_ms"], request["deadline_ms"])
+        cancel = self.outbound.get(timeout=1)
+        self.assertEqual(cancel, {
+            "version": 1,
+            "event": "ordinary_open_cancel",
+            "service": "ordinary_open",
+            "payload": {
+                "version": 1,
+                "request_id": "deadline",
+                "operation": "ordinary_open_cancel",
+            },
+        })
+        with self.assertRaises((EOFError, ConnectionResetError, socket.timeout)):
+            host.read_ordinary_open_message(client)
+        client.close()
+
+    def test_client_disconnect_publishes_typed_cancel(self):
+        client = self.connect(self.request("disconnect"))
+        self.assertEqual(self.outbound.get(timeout=1)["event"], "ordinary_open")
+        client.close()
+        cancel = self.outbound.get(timeout=1)
+        self.assertEqual(cancel["event"], "ordinary_open_cancel")
+        self.assertEqual(cancel["payload"]["request_id"], "disconnect")
 
     def test_internal_submit_waits_for_terminal_completion(self):
         result = queue.Queue()

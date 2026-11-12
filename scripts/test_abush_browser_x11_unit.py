@@ -299,6 +299,28 @@ class X11BindingTest(unittest.TestCase):
                 "display_title": "Abush Browser — local · workbench",
             }, adapter=adapter, attempts=1)
 
+    def test_verify_workspace_window_requires_full_exact_identity(self):
+        adapter = FakeAdapter()
+        payload = {
+            "xid": 22,
+            "nonce": "0123456789abcdef0123456789abcdef",
+            "remote_key": "r_12345678",
+            "workspace_id": "workspace",
+            "generation": 7,
+            "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
+        }
+        binding.bind_workspace_window(
+            {key: value for key, value in payload.items() if key != "xid"},
+            adapter=adapter,
+            attempts=1,
+        )
+        self.assertEqual(binding.verify_workspace_window(payload, adapter=adapter),
+                         {"verified": True, "xid": 22})
+        self.assertEqual(binding.verify_workspace_window(
+            {**payload, "workspace_id": "reused"}, adapter=adapter),
+            {"verified": False, "xid": 22})
+
     def test_clear_workspace_window_requires_exact_identity_and_verifies_cleanup(self):
         adapter = FakeAdapter()
         payload = {

@@ -9,6 +9,8 @@ const RETIRE_LEDGER_KEY = "abushRetireLedger";
 const RESTORE_HOST_KEY = "abushRestoreHost";
 const PENDING_TRANSACTIONS_KEY = "abushPendingTransactions";
 const PENDING_OPERATIONS_KEY = "abushPendingOperations";
+const EXECUTION_LEDGER_KEY = "abushExecutionLedger";
+const REPLACEMENT_LEDGER_KEY = "abushReplacementLedger";
 const TRANSACTION_WAIT_MS = 5000;
 const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
@@ -56,6 +58,9 @@ class WorkspaceExecutor {
         this.statusTabOwners = new Map();
         this.operations = new Map();
         this.completedOperations = new Map();
+        this.executionLedger = new Map();
+        this.executionFlushTail = Promise.resolve();
+        this.executionRegistrationTail = Promise.resolve();
         this.pendingOperationCancels = new Map();
         this.ordinaryOperations = new Map();
         this.completedOrdinaryOperations = new Map();
@@ -75,6 +80,7 @@ class WorkspaceExecutor {
         this.topologyOutbox = new Map();
         this.outboxTail = Promise.resolve();
         this.retirePending = new Map();
+        this.retireEffectStarted = new Map();
         this.retireCompleted = new Map();
         this.retireAckReceived = new Map();
         this.retireLegacyCleanup = new Map();
@@ -153,8 +159,10 @@ class WorkspaceExecutor {
         if (!this.chrome.storage?.local) {
             return Promise.reject(new Error("local extension storage is unavailable"));
         }
-        const value = structuredClone(snapshot);
-        return this.enqueueLocalState(() => this.chrome.storage.local.set({[key]: value}));
+        return this.enqueueLocalState(async () => {
+            const current = typeof snapshot === "function" ? await snapshot() : snapshot;
+            await this.chrome.storage.local.set({[key]: structuredClone(current)});
+        });
     }
 
     async localStateUpdate(key, update, fallback) {
@@ -191,7 +199,8 @@ class WorkspaceExecutor {
     }
 
     async persistPendingTransactions() {
-        await this.localStateWrite(PENDING_TRANSACTIONS_KEY, this.pendingTransactionSnapshot());
+        await this.localStateWrite(PENDING_TRANSACTIONS_KEY,
+            () => this.pendingTransactionSnapshot());
     }
 
     async beginEnsureTransaction(payload, nonce) {
@@ -303,6 +312,21 @@ class WorkspaceExecutor {
     }
 
     transactionAllowsBenignEvent(transaction, type, payload) {
+        if (type === "tabCreated") {
+            const tab = payload?.tab;
+            const planned = transaction.plannedEffect;
+            if (!Number.isInteger(tab?.id) || !planned ||
+                    !["tabs.create.marker", "tabs.create.business"].includes(planned.kind) ||
+                    tab.windowId !== planned.window_id) return false;
+            planned.tab_id = tab.id;
+            if (typeof tab.url !== "string") return true;
+            if (planned.kind === "tabs.create.marker") {
+                const marker = this.parseStatusUrl(tab.url);
+                return marker?.nonce === transaction.nonce && marker.marker === planned.marker;
+            }
+            return tab.url === "about:blank";
+        }
+        if (type === "windowCreated") return false;
         if (type !== "tabUpdated") return false;
         const tabId = payload?.tabId ?? payload?.tab?.id;
         if (!Number.isInteger(tabId)) return false;
@@ -311,7 +335,7 @@ class WorkspaceExecutor {
         if (!transactionTab) return false;
         const fields = Object.keys(payload?.changeInfo || {});
         if (!fields.every(field => ["status", "title", "favIconUrl", "audible",
-            "discarded", "autoDiscardable", "mutedInfo", "groupId", "url", "pinned"]
+            "discarded", "autoDiscardable", "mutedInfo", "groupId", "url", "pinned", "index"]
             .includes(field))) return false;
         const change = payload.changeInfo || {};
         if ("url" in change) {
@@ -320,8 +344,24 @@ class WorkspaceExecutor {
                 change.url === "about:blank";
             if (!(parsed?.nonce === transaction.nonce || plannedBusiness)) return false;
         }
-        if ("pinned" in change && change.pinned === false &&
-                transaction.statusTabIds.includes(tabId)) return false;
+        if ("pinned" in change) {
+            const plannedPin = transaction.plannedEffect?.kind === "tabs.pin" &&
+                transaction.plannedEffect.tab_id === tabId && change.pinned === true;
+            const expectedPinned = transaction.statusTabIds.includes(tabId);
+            if (!plannedPin && change.pinned !== expectedPinned) return false;
+        }
+        if ("index" in change) {
+            const expectedIndex = transaction.statusTabIds.indexOf(tabId);
+            if (expectedIndex < 0 || change.index !== expectedIndex) return false;
+        }
+        if (Number.isInteger(payload?.tab?.index)) {
+            const expectedIndex = transaction.statusTabIds.indexOf(tabId);
+            const businessPlanned = transaction.plannedEffect?.kind === "tabs.create.business" &&
+                transaction.pageTabId === tabId && payload.tab.index === 2;
+            if (!businessPlanned && expectedIndex >= 0 && payload.tab.index !== expectedIndex) {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -467,28 +507,10 @@ class WorkspaceExecutor {
     }
 
     async retryPendingTransaction(transaction) {
+        await this.reconcileTransactionTopology(transaction);
         const record = this.transactionCleanupRecord(transaction);
-        const errors = [];
-        let windowGone = record.windowId === null || await this.windowIsMissing(record.windowId);
-        if (!windowGone) {
-            try {
-                await this.chrome.windows.remove(record.windowId);
-            } catch (error) {
-                if (!await this.windowIsMissing(record.windowId)) errors.push(error);
-            }
-            windowGone = await this.windowIsMissing(record.windowId);
-        }
-        for (const tabId of record.statusTabIds) {
-            await this.removeKnownTab(tabId, errors);
-        }
-        if (Number.isInteger(record.pageTabId)) {
-            await this.removeKnownTab(record.pageTabId, errors);
-        }
-        if (!windowGone) await this.clearManagedX11(record, errors);
-        await this.appendCleanupError(errors, () => this.disownMarker(record.nonce));
-        if (errors.length > 0) {
-            throw new AggregateError(errors, "managed transaction cleanup remains pending");
-        }
+        const tombstone = this.cleanupTombstone(record, []);
+        await this.retryCleanupTombstone(tombstone);
     }
 
     async restorePendingTransactions() {
@@ -506,10 +528,31 @@ class WorkspaceExecutor {
         for (const persisted of saved) {
             if (!this.validPendingTransaction(persisted)) continue;
             const transaction = this.transactionFromPersisted(persisted);
-            if (records.some(record => this.transactionMatchesRecord(transaction, record))) {
+            this.pendingTransactions.set(transaction.id, transaction);
+            this.eventTransactions.set(transaction.id, transaction);
+            let match = null;
+            try {
+                match = await this.reconcileTransactionTopology(transaction);
+            } catch (error) {
+                failures.push(error);
                 continue;
             }
-            this.pendingTransactions.set(transaction.id, transaction);
+            const committed = records.find(record =>
+                this.transactionMatchesRecord(transaction, record));
+            if (committed && match && await this.isLive(committed)) {
+                try {
+                    const ownership = await this.currentOwnedMarker(committed.nonce);
+                    if (!this.savedOwnershipMatches(ownership, committed)) {
+                        await this.claimMarker(committed);
+                    }
+                    this.pendingTransactions.delete(transaction.id);
+                    this.eventTransactions.delete(transaction.id);
+                    continue;
+                } catch (error) {
+                    failures.push(error);
+                    continue;
+                }
+            }
             try {
                 await this.retryPendingTransaction(transaction);
                 this.pendingTransactions.delete(transaction.id);
@@ -617,7 +660,7 @@ class WorkspaceExecutor {
 
     async persistTopologyOutbox() {
         await this.localStateWrite(TOPOLOGY_OUTBOX_KEY,
-            [...this.topologyOutbox.values()]);
+            () => [...this.topologyOutbox.values()]);
     }
 
     async queueTopologyReport(report) {
@@ -904,6 +947,24 @@ class WorkspaceExecutor {
         return errors.filter(error => !this.notifiedAdvisoryErrors.has(error));
     }
 
+    cleanupOwnership(record) {
+        return {
+            version: 2,
+            nonce: record.nonce ?? null,
+            window_id: record.windowId ?? null,
+            status_tab_ids: Array.isArray(record.statusTabIds) ? [...record.statusTabIds] : [],
+            page_tab_id: record.pageTabId ?? null,
+            xid: record.x11WindowId ?? null,
+            logical_window_id: record.logicalWindowId ?? null,
+            logical_page_id: record.logicalPageId ?? null,
+            window_generation: record.windowGeneration ?? record.generation ?? null,
+            page_generation: record.pageGeneration ?? record.generation ?? null,
+            binding: record.remoteKey && record.workspaceId &&
+                Number.isInteger(record.windowGeneration ?? record.generation) ?
+                this.bindingPayload(record) : null,
+        };
+    }
+
     cleanupTombstone(record, errors) {
         return {
             version: 1,
@@ -915,6 +976,8 @@ class WorkspaceExecutor {
             binding: record.remoteKey && record.workspaceId &&
                 Number.isInteger(record.windowGeneration ?? record.generation) ?
                 this.bindingPayload(record) : null,
+            ownership: record.nonce && record.windowId !== undefined ?
+                this.cleanupOwnership(record) : null,
             errors: errors.map(error => error?.message || String(error)),
         };
     }
@@ -935,6 +998,7 @@ class WorkspaceExecutor {
             page_tab_id: Number.isInteger(tombstone.page_tab_id) ?
                 tombstone.page_tab_id : null,
             binding: tombstone.binding || null,
+            ownership: tombstone.ownership || null,
             legacy_proof: {
                 version: 0,
                 nonce: tombstone.nonce,
@@ -965,7 +1029,7 @@ class WorkspaceExecutor {
 
     validCleanupTombstone(tombstone) {
         const allowed = new Set(["version", "nonce", "window_id", "xid", "status_tab_ids",
-            "page_tab_id", "binding", "errors", "legacy_proof"]);
+            "page_tab_id", "binding", "ownership", "errors", "legacy_proof"]);
         return tombstone && tombstone.version === 1 &&
             Object.keys(tombstone).every(key => allowed.has(key)) &&
             (tombstone.nonce === null || typeof tombstone.nonce === "string") &&
@@ -976,14 +1040,109 @@ class WorkspaceExecutor {
             (tombstone.page_tab_id === null || Number.isInteger(tombstone.page_tab_id)) &&
             (tombstone.binding === null || exactFields(tombstone.binding,
                 ["nonce", "remote_key", "workspace_id", "generation", "control_state",
-                    "display_title"]));
+                    "display_title"])) &&
+            (tombstone.ownership === undefined || tombstone.ownership === null ||
+                tombstone.ownership.version === 2) &&
+            (tombstone.legacy_proof === undefined || tombstone.legacy_proof === null ||
+                tombstone.legacy_proof.version === 0);
+    }
+
+    async cleanupWindowFingerprint(proof) {
+        if (!proof || typeof proof.nonce !== "string" ||
+                !Array.isArray(proof.status_tab_ids) || proof.status_tab_ids.length !== 2 ||
+                !proof.status_tab_ids.every(Number.isInteger) ||
+                !Number.isInteger(proof.page_tab_id) || !Number.isInteger(proof.window_id)) {
+            return null;
+        }
+        let window;
+        let tabs;
+        try {
+            [window, tabs] = await Promise.all([
+                this.chrome.windows.get(proof.window_id),
+                this.chrome.tabs.query({windowId: proof.window_id}),
+            ]);
+        } catch (_) {
+            return null;
+        }
+        if (window.type !== "normal" || tabs.length !== 3) return null;
+        const markers = MARKER_IDS.map((marker, index) => tabs.find(tab =>
+            tab.id === proof.status_tab_ids[index] && tab.windowId === proof.window_id &&
+            tab.url === this.statusUrl({nonce: proof.nonce}, marker) &&
+            tab.title === `${STATUS_PREFIX}${proof.nonce}:${marker}` &&
+            tab.pinned === true && tab.index === index));
+        const page = tabs.find(tab => tab.id === proof.page_tab_id &&
+            tab.windowId === proof.window_id && tab.pinned !== true && tab.index === 2);
+        return markers.every(Boolean) && page ? {window, tabs, markers, page} : null;
+    }
+
+    async currentOwnedMarker(nonce) {
+        if (!this.chrome.storage?.local || !nonce) return null;
+        const local = await this.chrome.storage.local.get([OWNED_MARKERS_KEY]);
+        return local[OWNED_MARKERS_KEY]?.[nonce] || null;
+    }
+
+    cleanupOwnershipProof(tombstone, current) {
+        if (tombstone.ownership && sameRef(tombstone.ownership, current)) {
+            return tombstone.ownership;
+        }
+        if (tombstone.ownership?.version === 2 && current?.version === 1 &&
+                current.pending === true && current.nonce === tombstone.nonce &&
+                tombstone.ownership.nonce === tombstone.nonce) {
+            return tombstone.ownership;
+        }
+        const legacy = tombstone.legacy_proof;
+        if (legacy?.version === 0 && legacy.nonce === tombstone.nonce &&
+                legacy.window_id === tombstone.window_id &&
+                sameRef(legacy.status_tab_ids, tombstone.status_tab_ids) &&
+                legacy.page_tab_id === tombstone.page_tab_id &&
+                (current === true || current?.nonce === tombstone.nonce)) {
+            return legacy;
+        }
+        return null;
+    }
+
+    async verifyCleanupX11(tombstone) {
+        if (tombstone.xid === null) return true;
+        if (!tombstone.binding) return false;
+        const result = await this.nativeRequest("abush_browser", "verify_x11_window", {
+            xid: tombstone.xid,
+            ...tombstone.binding,
+        });
+        return exactFields(result, ["verified", "xid"]) && result.verified === true &&
+            result.xid === tombstone.xid;
+    }
+
+    async exactMarkerTabs(tombstone) {
+        const tabs = await this.chrome.tabs.query({});
+        return tabs.filter(tab => {
+            const marker = this.parseStatusUrl(tab.url);
+            return marker?.nonce === tombstone.nonce && tab.pinned === true &&
+                tab.title === `${STATUS_PREFIX}${tombstone.nonce}:${marker.marker}` &&
+                MARKER_IDS.includes(marker.marker) && tab.index === MARKER_IDS.indexOf(marker.marker);
+        });
     }
 
     async retryCleanupTombstone(tombstone) {
         const errors = [];
+        const currentOwnership = await this.currentOwnedMarker(tombstone.nonce);
+        const ownershipProof = this.cleanupOwnershipProof(tombstone, currentOwnership);
+        const topology = ownershipProof ? await this.cleanupWindowFingerprint({
+            nonce: tombstone.nonce,
+            window_id: tombstone.window_id,
+            status_tab_ids: tombstone.status_tab_ids,
+            page_tab_id: tombstone.page_tab_id,
+        }) : null;
+        let x11Verified = tombstone.xid === null;
+        if (!x11Verified && ownershipProof) {
+            try {
+                x11Verified = await this.verifyCleanupX11(tombstone);
+            } catch (error) {
+                errors.push(error);
+            }
+        }
         let windowGone = tombstone.window_id === null ||
             await this.windowIsMissing(tombstone.window_id);
-        if (!windowGone && tombstone.window_id !== null) {
+        if (!windowGone && topology && x11Verified) {
             try {
                 await this.chrome.windows.remove(tombstone.window_id);
             } catch (error) {
@@ -991,11 +1150,17 @@ class WorkspaceExecutor {
             }
             windowGone = await this.windowIsMissing(tombstone.window_id);
         }
-        for (const tabId of tombstone.status_tab_ids) {
-            await this.removeKnownTab(tabId, errors);
+        if (!windowGone) {
+            let markers = [];
+            try {
+                markers = await this.exactMarkerTabs(tombstone);
+            } catch (error) {
+                errors.push(error);
+            }
+            for (const tab of markers) await this.removeKnownTab(tab.id, errors);
         }
         let x11Cleared = tombstone.xid === null || windowGone;
-        if (!x11Cleared && tombstone.binding) {
+        if (!x11Cleared && x11Verified && tombstone.binding) {
             const record = {
                 nonce: tombstone.nonce,
                 x11WindowId: tombstone.xid,
@@ -1008,19 +1173,21 @@ class WorkspaceExecutor {
             await this.clearManagedX11(record, errors);
             x11Cleared = errors.length === before;
         }
-        if (!windowGone && tombstone.xid !== null && !tombstone.binding) {
-            errors.push(new Error("cleanup tombstone has no X11 binding proof"));
-        }
         let markerCleared = tombstone.nonce === null;
-        if (tombstone.nonce) {
+        if (tombstone.nonce && ownershipProof) {
             try {
                 await this.disownMarker(tombstone.nonce);
                 markerCleared = true;
             } catch (error) {
                 errors.push(error);
             }
+        } else if (tombstone.nonce && (currentOwnership === null ||
+                currentOwnership?.version === 1 && currentOwnership.pending === true)) {
+            await this.disownMarker(tombstone.nonce);
+            markerCleared = true;
         }
-        if ((!windowGone && !x11Cleared) || !markerCleared || errors.length > 0) {
+        if ((!windowGone && tombstone.xid !== null && !x11Cleared) ||
+                !markerCleared || errors.length > 0) {
             throw new AggregateError(errors.length > 0 ? errors :
                 [new Error("cleanup identity remains present")],
             "managed cleanup tombstone remains pending");
@@ -1044,7 +1211,7 @@ class WorkspaceExecutor {
                 failures.push(error);
             }
         }
-        await this.localStateWrite(CLEANUP_TOMBSTONES_KEY, pending);
+        await this.localStateWrite(CLEANUP_TOMBSTONES_KEY, () => pending);
         if (failures.length > 0) {
             this.reportAdvisoryError(new AggregateError(
                 failures, "managed cleanup tombstones remain pending"));
@@ -1169,10 +1336,9 @@ class WorkspaceExecutor {
                 payload.version !== 1 || payload.operation !== "ordinary_open" ||
                 payload.focus !== true || typeof payload.request_id !== "string" ||
                 !payload.request_id || typeof payload.url !== "string" || !payload.url ||
-                !Number.isFinite(payload.deadline_ms) || payload.deadline_ms <= 0) {
+                !Number.isSafeInteger(payload.deadline_ms) || payload.deadline_ms <= 0) {
             throw new Error("invalid ordinary-open payload");
         }
-        if (Date.now() >= payload.deadline_ms) throw new Error("ordinary-open deadline expired");
         const url = new URL(payload.url);
         if (!["http:", "https:", "file:"].includes(url.protocol)) {
             throw new Error("invalid ordinary-open URL");
@@ -1280,12 +1446,6 @@ class WorkspaceExecutor {
                 throw new Error("conflicting duplicate ordinary-open request");
             }
             return existing.operation;
-        }
-        if (Date.now() >= payload.deadline_ms) {
-            const completion = "not_applied";
-            this.rememberOrdinaryCompletion(payload, completion);
-            await this.ordinaryCompletion(payload, completion);
-            return completion;
         }
         const operation = this.ordinaryTail.catch(() => {})
             .then(() => this.performOrdinaryOpen(payload));
@@ -1478,12 +1638,13 @@ class WorkspaceExecutor {
             if (staging.windowId !== context.windowId || staging.active !== true) {
                 throw new Error("ordinary staging tab is not active in its exact window");
             }
-            await this.waitForOrdinaryTitle(context.stagingTabId, nonce);
+            await this.waitForOrdinaryTitle(context.stagingTabId, nonce, payload.deadline_ms);
             await this.verifyOrdinaryStaging(context, nonce);
             if (isCancelled() || Date.now() >= payload.deadline_ms) {
                 throw new Error("ordinary-open deadline expired or cancelled");
             }
-            const prepared = await this.nativeRequest("ordinary_open", "prepare", {nonce});
+            const prepared = await this.nativeRequest("ordinary_open", "prepare",
+                {nonce, deadline_ms: payload.deadline_ms});
             if (!exactFields(prepared, ["xid", "nonce"]) || prepared.nonce !== nonce ||
                     !Number.isInteger(prepared.xid) || prepared.xid <= 0) {
                 throw new Error("invalid ordinary prepare response");
@@ -1493,18 +1654,19 @@ class WorkspaceExecutor {
             }
             navigationRequested = true;
             if (new URL(url).protocol === "file:") {
+                const navigationPayload = {nonce, xid: prepared.xid, url,
+                    deadline_ms: payload.deadline_ms};
                 let navigated;
                 try {
                     navigated = await this.nativeRequest(
-                        "ordinary_open", "ordinary_file_navigate",
-                        {nonce, xid: prepared.xid, url});
+                        "ordinary_open", "ordinary_file_navigate", navigationPayload);
                 } catch (error) {
                     if (error?.nativeDispatch === "not_sent") navigationRequested = false;
                     throw error;
                 }
-                if (!exactFields(navigated, ["nonce", "xid", "url", "completion"]) ||
-                        navigated.nonce !== nonce || navigated.xid !== prepared.xid ||
-                        navigated.url !== url ||
+                if (!exactFields(navigated, ["nonce", "xid", "url", "deadline_ms",
+                    "completion"]) || navigated.nonce !== nonce || navigated.xid !== prepared.xid ||
+                        navigated.url !== url || navigated.deadline_ms !== payload.deadline_ms ||
                         !["applied", "not_applied", "unknown"].includes(
                             navigated.completion)) {
                     throw new Error("invalid ordinary file navigation response");
@@ -1523,17 +1685,19 @@ class WorkspaceExecutor {
                     throw new Error("ordinary navigation completion is unknown");
                 }
             }
-            if (Date.now() >= payload.deadline_ms) {
-                completion = navigationRequested ? "unknown" : "not_applied";
-                throw new Error("ordinary-open deadline expired");
+            if (isCancelled() || Date.now() >= payload.deadline_ms) {
+                completion = "unknown";
+                throw new Error("ordinary-open deadline expired or cancelled");
             }
             try {
-                await this.nativeRequest("ordinary_open", "activate", prepared);
-                this.rememberOrdinaryWindow(context.windowId);
+                await this.nativeRequest("ordinary_open", "activate",
+                    {...prepared, deadline_ms: payload.deadline_ms});
                 completion = "applied";
             } catch (_) {
                 completion = "unknown";
             }
+            if (isCancelled() || Date.now() >= payload.deadline_ms) completion = "unknown";
+            if (completion === "applied") this.rememberOrdinaryWindow(context.windowId);
         } catch (_) {
             if (navigationRequested) {
                 completion = "unknown";
@@ -1548,22 +1712,25 @@ class WorkspaceExecutor {
         return completion;
     }
 
-    async waitForOrdinaryTitle(tabId, nonce) {
+    async waitForOrdinaryTitle(tabId, nonce, deadlineMs = Date.now() + 1000) {
         const expected = `${ORDINARY_PREFIX}${nonce}`;
-        for (let attempt = 0; attempt < 100; attempt++) {
+        while (Date.now() < deadlineMs) {
             const tab = await this.chrome.tabs.get(tabId);
             if (tab.active === true && tab.title === expected) return;
-            await new Promise(resolve => setTimeout(resolve, 10));
+            await new Promise(resolve => setTimeout(resolve, Math.min(10,
+                Math.max(0, deadlineMs - Date.now()))));
         }
         throw new Error("ordinary staging title was not ready");
     }
 
-    async waitForStatusTitle(tabId, nonce, marker) {
+    async waitForStatusTitle(tabId, nonce, marker, timeoutMs = 1000) {
         const expected = `${STATUS_PREFIX}${nonce}:${marker}`;
-        for (let attempt = 0; attempt < 100; attempt++) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
             const tab = await this.chrome.tabs.get(tabId);
             if (tab.title === expected) return;
-            await new Promise(resolve => setTimeout(resolve, 10));
+            await new Promise(resolve => setTimeout(resolve, Math.min(10,
+                Math.max(0, deadline - Date.now()))));
         }
         throw new Error("status tab title was not ready");
     }
@@ -1594,6 +1761,10 @@ class WorkspaceExecutor {
 
     async restoreHost() {
         if (!this.chrome.storage?.local) return;
+        return this.enqueueLocalState(() => this.restoreHostLocked());
+    }
+
+    async restoreHostLocked() {
         const local = await this.chrome.storage.local.get([RESTORE_HOST_KEY]);
         let intent = local[RESTORE_HOST_KEY];
         const exact = Boolean(intent && typeof intent === "object" && intent.version === 1 &&
@@ -1606,18 +1777,51 @@ class WorkspaceExecutor {
                 sessionId: exact ? intent.sessionId : null,
                 snapshot: exact ? intent.snapshot : null,
             };
-            await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: intent});
+            await this.localStateWriteLocked(RESTORE_HOST_KEY, intent);
         }
-        if (!["prepared", "inflight", "verified", "consumed"].includes(intent.phase)) return;
+        if (![
+            "prepared", "inflight", "verified", "consumed", "unknown",
+        ].includes(intent.phase)) return;
+        if (intent.phase === "unknown") {
+            if (await this.restoreHostAlreadyLive(intent)) await this.consumeRestoreHost(intent);
+            return;
+        }
         if (intent.phase === "consumed") {
-            await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: false});
+            await this.localStateWriteLocked(RESTORE_HOST_KEY, false);
+            return;
+        }
+        const sessions = this.chrome.sessions;
+        if (intent.phase === "inflight") {
+            for (let attempt = 0; attempt < 20; attempt++) {
+                if (await this.restoreHostAlreadyLive(intent)) {
+                    await this.consumeRestoreHost(intent);
+                    return;
+                }
+                if (attempt + 1 < 20) await new Promise(resolve => setTimeout(resolve, 25));
+            }
+            const entries = sessions?.getRecentlyClosed ?
+                await sessions.getRecentlyClosed({maxResults: 25}) : null;
+            const exactSession = (entries || []).filter(entry =>
+                this.sessionEntryId(entry) === intent.sessionId &&
+                (!intent.snapshot || this.sessionMatchesSnapshot(entry, intent.snapshot)));
+            if (exactSession.length > 1) {
+                throw new Error("ambiguous inflight ordinary restore snapshot");
+            }
+            if (entries !== null && exactSession.length === 0) {
+                const unknown = {...intent, phase: "unknown"};
+                await this.localStateWriteLocked(RESTORE_HOST_KEY, unknown);
+                this.reportAdvisoryError(new Error(
+                    "ordinary host restore was accepted but is not yet visible"));
+                return;
+            }
+            if (entries === null) return;
+            await this.consumeRestoreHost(intent);
             return;
         }
         if (await this.restoreHostAlreadyLive(intent)) {
             await this.consumeRestoreHost(intent);
             return;
         }
-        const sessions = this.chrome.sessions;
         let sessionId = intent.sessionId;
         if (!sessionId && sessions?.getRecentlyClosed) {
             const entries = await sessions.getRecentlyClosed({maxResults: 25});
@@ -1641,7 +1845,7 @@ class WorkspaceExecutor {
             return;
         }
         intent = {...intent, phase: "inflight", sessionId};
-        await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: intent});
+        await this.localStateWriteLocked(RESTORE_HOST_KEY, intent);
         let restored;
         try {
             restored = await sessions.restore(sessionId);
@@ -1655,7 +1859,7 @@ class WorkspaceExecutor {
             }
             sessionId = this.sessionEntryId(matches[0]);
             intent = {...intent, phase: "inflight", sessionId};
-            await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: intent});
+            await this.localStateWriteLocked(RESTORE_HOST_KEY, intent);
             restored = await sessions.restore(sessionId);
         }
         const resultVerified = intent.snapshot ?
@@ -1682,11 +1886,14 @@ class WorkspaceExecutor {
 
     async consumeRestoreHost(intent) {
         const verified = {...intent, phase: "verified"};
-        await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: verified});
-        await this.chrome.storage.local.set({
-            [RESTORE_HOST_KEY]: {...verified, phase: "consumed"},
-        });
-        await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: false});
+        await this.localStateWriteLocked(RESTORE_HOST_KEY, verified);
+        await this.localStateWriteLocked(RESTORE_HOST_KEY,
+            {...verified, phase: "consumed"});
+        await this.localStateWriteLocked(RESTORE_HOST_KEY, false);
+    }
+
+    async localStateWriteLocked(key, value) {
+        await this.chrome.storage.local.set({[key]: structuredClone(value)});
     }
 
     async markRestoreHost(intent) {
@@ -1699,7 +1906,7 @@ class WorkspaceExecutor {
             sessionId: intent?.sessionId || null,
             snapshot: intent?.snapshot || null,
         };
-        await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: ledger});
+        await this.localStateWrite(RESTORE_HOST_KEY, () => ledger);
     }
 
     rememberWindowSnapshot(windowId) {
@@ -1770,6 +1977,7 @@ class WorkspaceExecutor {
         }
         for (const [windowId, windowTabs] of windows) {
             if (liveWindowIds.has(windowId)) continue;
+            const windowErrorStart = cleanupErrors.length;
             const parsed = windowTabs.map(tab => ({tab, marker: this.parseStatusUrl(tab.url)}));
             const markers = parsed.filter(item => item.marker !== null);
             const legacyMarkers = markers.filter(item => item.marker.marker === "legacy");
@@ -1777,14 +1985,29 @@ class WorkspaceExecutor {
             const nonces = new Set(markers.map(item => item.marker.nonce));
             const ownership = nonces.size === 1 ?
                 ownedMarkers[markers[0]?.marker.nonce] : null;
+            const orderedMarkerTabIds = MARKER_IDS.map(marker =>
+                markers.find(item => item.marker.marker === marker)?.tab.id);
+            const ownedPage = windowTabs.find(tab => tab.id === ownership?.page_tab_id &&
+                tab.pinned !== true && tab.index === 2);
             const exactOwnedFingerprint = Boolean(ownership && ownership.version === 2 &&
                 Array.isArray(ownership.status_tab_ids) &&
                 ownership.nonce === markers[0]?.marker.nonce &&
                 ownership.window_id === windowId &&
-                sameRef([...ownership.status_tab_ids].sort((left, right) => left - right),
-                    markers.map(({tab}) => tab.id).sort((left, right) => left - right)) &&
-                windowTabs.some(tab => tab.id === ownership.page_tab_id));
-            const ownedWindow = exactOwnedFingerprint && windowTypes.get(windowId) === "normal" &&
+                sameRef(ownership.status_tab_ids, orderedMarkerTabIds) && ownedPage);
+            let x11Verified = false;
+            if (ownership?.version === 2 && Number.isInteger(ownership.xid) &&
+                    ownership.xid > 0 && ownership.binding) {
+                try {
+                    x11Verified = await this.verifyCleanupX11({
+                        xid: ownership.xid,
+                        binding: ownership.binding,
+                    });
+                } catch (error) {
+                    cleanupErrors.push(error);
+                }
+            }
+            const ownedWindow = exactOwnedFingerprint && x11Verified &&
+                windowTypes.get(windowId) === "normal" &&
                 windowTabs.length === 3 && markers.length === 2 &&
                 legacyMarkers.length === 0 && markerIds.size === 2 && nonces.size === 1 &&
                 markers.every(({tab, marker}) => tab.pinned &&
@@ -1812,7 +2035,10 @@ class WorkspaceExecutor {
                             pageTabId: ownership.page_tab_id,
                             remoteKey: ownership.binding?.remote_key,
                             workspaceId: ownership.binding?.workspace_id,
-                            windowGeneration: ownership.binding?.generation,
+                            logicalWindowId: ownership.logical_window_id,
+                            logicalPageId: ownership.logical_page_id,
+                            windowGeneration: ownership.window_generation,
+                            pageGeneration: ownership.page_generation,
                             connectionDisplayName: ownership.binding?.display_title,
                         }, cleanupErrors);
                     } catch (error) {
@@ -1820,10 +2046,9 @@ class WorkspaceExecutor {
                     }
                 }
             } else {
-                const before = cleanupErrors.length;
                 for (const {tab} of markers) await this.removeKnownTab(tab.id, cleanupErrors);
                 if (ownership?.version === 2 && Number.isInteger(ownership.xid) &&
-                        ownership.xid > 0) {
+                        ownership.xid > 0 && x11Verified) {
                     const record = {
                         remoteKey: ownership.binding?.remote_key,
                         workspaceId: ownership.binding?.workspace_id,
@@ -1838,9 +2063,9 @@ class WorkspaceExecutor {
                     }
                 }
                 if (markers.length > 0 && nonces.size === 1 &&
-                        cleanupErrors.length === before) {
+                        cleanupErrors.length === windowErrorStart) {
                     delete ownedMarkers[markers[0].marker.nonce];
-                } else if (ownership && cleanupErrors.length > before) {
+                } else if (ownership && cleanupErrors.length > windowErrorStart) {
                     try {
                         await this.recordCleanupTombstone({
                             nonce: ownership.nonce,
@@ -1850,16 +2075,19 @@ class WorkspaceExecutor {
                             pageTabId: ownership.page_tab_id,
                             remoteKey: ownership.binding?.remote_key,
                             workspaceId: ownership.binding?.workspace_id,
-                            windowGeneration: ownership.binding?.generation,
+                            logicalWindowId: ownership.logical_window_id,
+                            logicalPageId: ownership.logical_page_id,
+                            windowGeneration: ownership.window_generation,
+                            pageGeneration: ownership.page_generation,
                             connectionDisplayName: ownership.binding?.display_title,
-                        }, cleanupErrors.slice(before));
+                        }, cleanupErrors.slice(windowErrorStart));
                     } catch (error) {
                         cleanupErrors.push(error);
                     }
                 }
             }
         }
-        await this.localStateWrite(OWNED_MARKERS_KEY, ownedMarkers);
+        await this.localStateWrite(OWNED_MARKERS_KEY, () => ownedMarkers);
         if (cleanupErrors.length > 0) {
             this.reportAdvisoryError(new AggregateError(
                 cleanupErrors, "orphan X11 cleanup was incomplete"));
@@ -1938,7 +2166,41 @@ class WorkspaceExecutor {
         }
     }
 
+    async queueInvalidRecordCleanup(saved) {
+        if (!saved || typeof saved !== "object" || typeof saved.remoteKey !== "string" ||
+                !saved.remoteKey || typeof saved.principalId !== "string" || !saved.principalId ||
+                typeof saved.workspaceId !== "string" || !saved.workspaceId ||
+                typeof saved.logicalWindowId !== "string" || !saved.logicalWindowId ||
+                typeof saved.logicalPageId !== "string" || !saved.logicalPageId) return false;
+        const windowGeneration = saved.windowGeneration ?? saved.generation;
+        const pageGeneration = saved.pageGeneration ?? saved.generation;
+        if (!Number.isInteger(windowGeneration) || windowGeneration < 1 ||
+                !Number.isInteger(pageGeneration) || pageGeneration < 1) return false;
+        const stable = {
+            ...saved,
+            windowGeneration,
+            pageGeneration,
+            connectionId: typeof saved.connectionId === "string" ? saved.connectionId : "unknown",
+            executorFence: validFence(saved.executorFence) ? saved.executorFence :
+                {executor_id: "recovery", epoch: 1},
+            ownerDisplay: saved.ownerDisplay || null,
+            nonce: typeof saved.nonce === "string" ? saved.nonce : null,
+            statusTabIds: Array.isArray(saved.statusTabIds) ? saved.statusTabIds : [],
+            pageTabId: Number.isInteger(saved.pageTabId) ? saved.pageTabId : null,
+            windowId: Number.isInteger(saved.windowId) ? saved.windowId : null,
+            x11WindowId: Number.isInteger(saved.x11WindowId) ? saved.x11WindowId : null,
+        };
+        const report = this.topologyReport(stable, this.pageRef(stable));
+        report.cleanup.phase = "queued";
+        await this.queueTopologyReport(report);
+        await this.recordCleanupTombstone(stable,
+            [new Error("invalid durable workspace record requires exact recovery cleanup")]);
+        return true;
+    }
+
     async restore() {
+        await this.restoreReplacementLedger();
+        await this.restoreExecutionLedger();
         await this.restoreOperationCancels();
         await this.restorePendingTransactions();
         await this.restoreCleanupTombstones();
@@ -1977,17 +2239,20 @@ class WorkspaceExecutor {
                         !Array.isArray(saved.statusTabIds) || saved.statusTabIds.length !== 2 ||
                         !saved.statusTabIds.every(id => typeof id === "number") ||
                         typeof saved.pageTabId !== "number" || typeof saved.nonce !== "string") {
+                    await this.queueInvalidRecordCleanup(saved);
                     removed = true;
                     continue;
                 }
                 if (!await this.isLive(saved) ||
                         !this.savedOwnershipMatches(ownedMarkers[saved.nonce], saved)) {
+                    await this.queueInvalidRecordCleanup(saved);
                     removed = true;
                     continue;
                 }
                 const key = this.key(saved.remoteKey, saved.principalId);
                 const physical = [saved.windowId, saved.pageTabId, ...saved.statusTabIds];
                 if (seenKeys.has(key) || physical.some(id => seenPhysical.has(id))) {
+                    await this.queueInvalidRecordCleanup(saved);
                     removed = true;
                     continue;
                 }
@@ -1998,6 +2263,7 @@ class WorkspaceExecutor {
                 liveWindowIds.add(saved.windowId);
             }
         }
+        await this.restoreReplacementLedger({consume: true});
         await this.closeOrphanedStatusWindows(liveWindowIds, ownedMarkers);
         if (removed) await this.persist();
         await this.convergeRestoredTopologyOutbox();
@@ -2005,6 +2271,7 @@ class WorkspaceExecutor {
         await Promise.all(normalWindows.map(window => this.rememberWindowSnapshot(window.id)));
         await this.primeRecentlyClosedSessions();
         await this.initializeOrdinaryMru();
+        await this.flushExecutionLedger();
     }
 
     install(record) {
@@ -2221,10 +2488,13 @@ class WorkspaceExecutor {
         };
     }
 
-    async persistRetireLedger() {
+    retireLedgerSnapshot() {
         const snapshot = [];
         for (const identity of this.retirePending.values()) {
             snapshot.push({version: 7, phase: "accepted", identity});
+        }
+        for (const entry of this.retireEffectStarted.values()) {
+            snapshot.push({version: 7, phase: "effect_started", ...entry});
         }
         for (const entry of this.retireCompleted.values()) {
             snapshot.push({version: 7, phase: "completed", ...entry});
@@ -2235,7 +2505,11 @@ class WorkspaceExecutor {
         for (const [key, identity] of this.retireLegacyCleanup) {
             snapshot.push({version: 7, phase: "legacy_cleanup", key, identity});
         }
-        await this.localStateWrite(RETIRE_LEDGER_KEY, snapshot);
+        return snapshot;
+    }
+
+    async persistRetireLedger() {
+        await this.localStateWrite(RETIRE_LEDGER_KEY, () => this.retireLedgerSnapshot());
     }
 
     legacyRetireKey(identity) {
@@ -2304,6 +2578,9 @@ class WorkspaceExecutor {
             }
             if (entry.phase === "accepted") {
                 this.retirePending.set(identity.retire_id, identity);
+            } else if (entry.phase === "effect_started" &&
+                    this.validRetireIdentity(entry.delivery)) {
+                this.retireEffectStarted.set(identity.retire_id, entry);
             } else if (entry.phase === "completed" &&
                     this.validRetireIdentity(entry.delivery) &&
                     this.validRetireCompletion(entry.completion)) {
@@ -2343,6 +2620,25 @@ class WorkspaceExecutor {
                     "legacy retire cleanup remains pending"));
             }
         }
+        for (const entry of [...this.retireEffectStarted.values()]) {
+            if (entry.identity.remote_key !== this.retireRecoveryState.remote_key ||
+                    entry.identity.principal_id !== this.retireRecoveryState.principal_id) continue;
+            const record = this.workspaces.get(this.key(
+                entry.identity.remote_key, entry.identity.principal_id));
+            if (record && record.logicalWindowId === entry.identity.window_id &&
+                    record.logicalPageId === entry.identity.page_id) {
+                this.reportAdvisoryError(new Error(
+                    "retire effect started but physical topology remains; completion is withheld"));
+                continue;
+            }
+            this.retireEffectStarted.delete(entry.identity.retire_id);
+            this.retireCompleted.set(entry.identity.retire_id, {
+                identity: entry.identity,
+                delivery: this.retireDelivery(entry.identity, this.retireRecoveryState),
+                completion: {outcome: "retired"},
+            });
+            await this.persistRetireLedger();
+        }
         for (const identity of [...this.retirePending.values()]) {
             if (identity.remote_key !== this.retireRecoveryState.remote_key ||
                     identity.principal_id !== this.retireRecoveryState.principal_id) continue;
@@ -2377,6 +2673,7 @@ class WorkspaceExecutor {
         this.remoteAuthorities.set(identity.remote_key,
             structuredClone(this.retireRecoveryState));
         const known = this.retirePending.get(identity.retire_id) ||
+            this.retireEffectStarted.get(identity.retire_id)?.identity ||
             this.retireCompleted.get(identity.retire_id)?.identity ||
             this.retireAckReceived.get(identity.retire_id)?.identity;
         if (known && !this.stableRetireMatches(known, identity)) {
@@ -2388,6 +2685,11 @@ class WorkspaceExecutor {
         }
         if (this.retireAckReceived.has(identity.retire_id)) {
             await this.consumeRetireAck(this.retireAckReceived.get(identity.retire_id));
+            return true;
+        }
+        if (this.retireEffectStarted.has(identity.retire_id)) {
+            await this.recoverRetireLedger();
+            await this.flushRetireLedger();
             return true;
         }
         if (this.retireCompleted.has(identity.retire_id)) {
@@ -2404,7 +2706,15 @@ class WorkspaceExecutor {
         let completion = {outcome: "already_retired"};
         if (record && record.logicalWindowId === identity.window_id &&
                 record.logicalPageId === identity.page_id) {
+            const state = this.retireRecoveryState;
+            if (!state || state.remote_key !== identity.remote_key ||
+                    state.principal_id !== identity.principal_id) return;
+            const delivery = this.retireDelivery(identity, state);
+            this.retirePending.delete(identity.retire_id);
+            this.retireEffectStarted.set(identity.retire_id, {identity, delivery});
+            await this.persistRetireLedger();
             await this.convergeManagedTopology(record, {closeWindow: true, report: false});
+            this.retireEffectStarted.delete(identity.retire_id);
             completion = {outcome: "retired"};
         }
         const state = this.retireRecoveryState;
@@ -2634,7 +2944,13 @@ class WorkspaceExecutor {
         try {
             result = await effect();
         } catch (error) {
-            await this.reconcileTransactionTopology(transaction);
+            try {
+                await this.reconcileTransactionTopology(transaction);
+                await this.persistPendingTransactions();
+            } catch (reconcileError) {
+                throw new AggregateError([error, reconcileError],
+                    "managed effect failed and WAL reconciliation is uncertain");
+            }
             throw error;
         }
         const observation = {
@@ -3006,6 +3322,22 @@ class WorkspaceExecutor {
         };
     }
 
+    operationEffectIdentity(payload) {
+        return {
+            ...this.operationIdentity(payload),
+            command: structuredClone(payload.command),
+        };
+    }
+
+    operationEffectKey(payload) {
+        return JSON.stringify([
+            payload.remote_key,
+            payload.principal_id,
+            payload.effect_id,
+            payload.executor_fence,
+        ]);
+    }
+
     operationKey(payload) {
         return JSON.stringify(this.operationIdentity(payload));
     }
@@ -3024,6 +3356,110 @@ class WorkspaceExecutor {
         return execution;
     }
 
+    operationLedgerSnapshot() {
+        return [...this.executionLedger.values()].map(entry => structuredClone(entry));
+    }
+
+    async persistExecutionLedger() {
+        await this.localStateWrite(EXECUTION_LEDGER_KEY, () => this.operationLedgerSnapshot());
+    }
+
+    validExecutionLedgerEntry(entry) {
+        return entry?.version === 1 && ["accepted", "effect_started", "terminal_pending_ack",
+            "acked"].includes(entry.phase) && entry.identity &&
+            typeof entry.completion !== "undefined" &&
+            exactFields(entry.identity, ["remote_key", "connection_id", "principal_id",
+                "request_id", "effect_id", "executor_fence", "command"]) &&
+            validFence(entry.identity.executor_fence);
+    }
+
+    async restoreExecutionLedger() {
+        if (!this.chrome.storage?.local) return;
+        const local = await this.chrome.storage.local.get([EXECUTION_LEDGER_KEY]);
+        const saved = Array.isArray(local[EXECUTION_LEDGER_KEY]) ? local[EXECUTION_LEDGER_KEY] : [];
+        let dirty = false;
+        for (const entry of saved) {
+            if (!this.validExecutionLedgerEntry(entry)) {
+                dirty = true;
+                continue;
+            }
+            const key = this.operationEffectKey(entry.identity);
+            const existing = this.executionLedger.get(key);
+            if (existing && !sameRef(existing.identity, entry.identity)) {
+                dirty = true;
+                continue;
+            }
+            const restored = entry.phase === "accepted" ? {
+                ...entry, phase: "terminal_pending_ack", completion: "unknown",
+            } : entry.phase === "effect_started" ? {
+                ...entry, phase: "terminal_pending_ack", completion: "unknown",
+            } : entry;
+            this.executionLedger.set(key, restored);
+            if (!sameRef(restored, entry)) dirty = true;
+        }
+        if (dirty) await this.persistExecutionLedger();
+    }
+
+    async flushExecutionLedger() {
+        const flush = this.executionFlushTail.catch(() => {})
+            .then(() => this.flushExecutionLedgerSerialized());
+        this.executionFlushTail = flush;
+        return flush;
+    }
+
+    async flushExecutionLedgerSerialized() {
+        for (const [effectKey, original] of [...this.executionLedger]) {
+            let entry = original;
+            if (entry.phase === "terminal_pending_ack") {
+                try {
+                    await this.completion(entry.identity, entry.completion);
+                    if (this.executionLedger.get(effectKey) !== entry) continue;
+                    entry = {...entry, phase: "acked"};
+                    this.executionLedger.set(effectKey, entry);
+                    await this.persistExecutionLedger();
+                } catch (error) {
+                    this.reportAdvisoryError(new AggregateError([error],
+                        "executor completion remains pending acknowledgement"));
+                    continue;
+                }
+            }
+            if (entry.phase !== "acked") continue;
+            const operationKey = this.operationKey(entry.identity);
+            let cancellations = this.pendingOperationCancels.get(operationKey) || [];
+            while (cancellations.length > 0) {
+                const [payload, ...remaining] = cancellations;
+                const completion = entry.completion === "not_applied" ?
+                    "not_applied" : "unknown";
+                try {
+                    await this.cancellationCompletion(payload, completion);
+                } catch (error) {
+                    this.reportAdvisoryError(new AggregateError([error],
+                        "cancellation completion remains pending acknowledgement"));
+                    break;
+                }
+                if (remaining.length > 0) {
+                    this.pendingOperationCancels.set(operationKey, remaining);
+                } else {
+                    this.pendingOperationCancels.delete(operationKey);
+                }
+                await this.persistOperationCancels();
+                cancellations = remaining;
+            }
+            if (cancellations.length > 0) continue;
+            if (this.executionLedger.get(effectKey) !== entry) continue;
+            this.executionLedger.delete(effectKey);
+            await this.persistExecutionLedger();
+            this.rememberCompletedOperation(operationKey, {
+                ...entry.identity,
+                payload: entry.identity,
+                mutationStarted: entry.completion !== "not_applied",
+                committed: entry.completion === "applied",
+                uncertain: entry.completion === "unknown",
+                completion: entry.completion,
+            });
+        }
+    }
+
     operationCancelSnapshot() {
         const pending = [];
         for (const payloads of this.pendingOperationCancels.values()) {
@@ -3037,7 +3473,7 @@ class WorkspaceExecutor {
     }
 
     async persistOperationCancels() {
-        await this.localStateWrite(PENDING_OPERATIONS_KEY, this.operationCancelSnapshot());
+        await this.localStateWrite(PENDING_OPERATIONS_KEY, () => this.operationCancelSnapshot());
     }
 
     async restoreOperationCancels() {
@@ -3061,6 +3497,7 @@ class WorkspaceExecutor {
         const done = new Promise(resolve => { resolveDone = resolve; });
         return {
             ...this.operationIdentity(payload),
+            effectKey: this.operationEffectKey(payload),
             payload: structuredClone(payload),
             cancelled: false,
             mutationStarted: false,
@@ -3073,16 +3510,49 @@ class WorkspaceExecutor {
     }
 
     registerOperation(payload) {
+        const registration = this.executionRegistrationTail.catch(() => {})
+            .then(() => this.registerOperationSerialized(payload));
+        this.executionRegistrationTail = registration;
+        return registration;
+    }
+
+    async registerOperationSerialized(payload) {
+        if (!payload || !exactFields(payload, ["remote_key", "connection_id", "principal_id",
+            "request_id", "effect_id", "executor_fence", "command"]) ||
+                !validFence(payload.executor_fence)) {
+            throw new Error("invalid execute payload");
+        }
         const operationKey = this.operationKey(payload);
+        const effectKey = this.operationEffectKey(payload);
+        const knownEffect = this.executionLedger.get(effectKey);
+        const identity = this.operationEffectIdentity(payload);
+        if (knownEffect) {
+            if (!sameRef(knownEffect.identity, identity)) {
+                throw new Error("conflicting duplicate execute effect");
+            }
+            await this.flushExecutionLedger();
+            return false;
+        }
         if (this.operations.has(operationKey) || this.completedOperations.has(operationKey)) {
+            const known = this.operations.get(operationKey)?.payload ||
+                this.completedOperations.get(operationKey)?.payload;
+            if (known && !sameRef(known, payload)) {
+                throw new Error("conflicting duplicate execute request");
+            }
             return false;
         }
         const operation = this.createOperation(payload);
+        this.executionLedger.set(effectKey, {
+            version: 1,
+            phase: "accepted",
+            identity,
+            completion: null,
+        });
+        await this.persistExecutionLedger();
         const pending = this.pendingOperationCancels.get(operationKey);
         if (pending) {
             operation.cancelled = true;
             operation.cancellationPayloads = pending;
-            operation.orphanedCancels = true;
             this.pendingOperationCancels.delete(operationKey);
         }
         this.operations.set(operationKey, operation);
@@ -3090,13 +3560,24 @@ class WorkspaceExecutor {
     }
 
     async execute(payload) {
-        if (!this.registerOperation(payload)) return;
+        if (!await this.registerOperation(payload)) return;
         return this.executeRegistered(payload);
     }
 
     async executeRegistered(payload) {
         await this.persistOperationCancels();
         return this.enqueueLifecycle(() => this.executeSerialized(payload));
+    }
+
+    async markOperationEffectStarted(operation) {
+        const entry = this.executionLedger.get(operation.effectKey);
+        if (!entry || !sameRef(entry.identity, this.operationEffectIdentity(operation.payload))) {
+            throw new Error("execute ledger identity was lost");
+        }
+        const started = {...entry, phase: "effect_started", completion: null};
+        this.executionLedger.set(operation.effectKey, started);
+        await this.persistExecutionLedger();
+        operation.mutationStarted = true;
     }
 
     async executeSerialized(payload) {
@@ -3119,7 +3600,7 @@ class WorkspaceExecutor {
                 }
                 if (operation.cancelled) completion = "not_applied";
                 else {
-                    operation.mutationStarted = true;
+                    await this.markOperationEffectStarted(operation);
                     await this.chrome.debugger.sendCommand(
                         {tabId: record.pageTabId}, "Page.navigate", {url: url.href});
                     operation.committed = true;
@@ -3129,7 +3610,7 @@ class WorkspaceExecutor {
                 await this.detach(record.pageTabId);
                 if (operation.cancelled) completion = "not_applied";
                 else {
-                    operation.mutationStarted = true;
+                    await this.markOperationEffectStarted(operation);
                     await this.closeOwnedWindow(record);
                     operation.committed = true;
                     completion = operation.cancelled ? "unknown" : "applied";
@@ -3138,7 +3619,7 @@ class WorkspaceExecutor {
                 await this.detach(record.pageTabId);
                 if (operation.cancelled) completion = "not_applied";
                 else {
-                    operation.mutationStarted = true;
+                    await this.markOperationEffectStarted(operation);
                     await this.closeOwnedWindow(record);
                     operation.committed = true;
                     completion = operation.cancelled ? "unknown" : "applied";
@@ -3158,29 +3639,25 @@ class WorkspaceExecutor {
                     operation.uncertain ? "unknown" : "not_applied";
             }
             operation.completion = completion;
-            try {
-                await this.completion(payload, completion);
-            } finally {
-                this.rememberCompletedOperation(operationKey, operation);
-                if (this.operations.get(operationKey) === operation) {
-                    this.operations.delete(operationKey);
-                }
-                operation.resolveDone();
-                const pendingCancels = operation.orphanedCancels ?
-                    operation.cancellationPayloads || [] : [];
-                for (const cancelPayload of pendingCancels) {
-                    const cancelCompletion = operation.mutationStarted || operation.committed ||
-                        operation.uncertain || operation.completion === "applied" ||
-                        operation.completion === "unknown" ? "unknown" : "not_applied";
-                    try {
-                        await this.cancellationCompletion(cancelPayload, cancelCompletion);
-                    } catch (error) {
-                        this.reportAdvisoryError(error);
-                    }
-                }
-                operation.cancellationPayloads = [];
+            const cancellations = operation.cancellationPayloads || [];
+            if (cancellations.length > 0) {
+                this.pendingOperationCancels.set(operationKey,
+                    cancellations.map(payload => structuredClone(payload)));
                 await this.persistOperationCancels();
             }
+            const terminal = {
+                version: 1,
+                phase: "terminal_pending_ack",
+                identity: this.operationEffectIdentity(payload),
+                completion,
+            };
+            this.executionLedger.set(operation.effectKey, terminal);
+            await this.persistExecutionLedger();
+            if (this.operations.get(operationKey) === operation) {
+                this.operations.delete(operationKey);
+            }
+            operation.resolveDone();
+            await this.flushExecutionLedger();
         }
     }
 
@@ -3196,6 +3673,22 @@ class WorkspaceExecutor {
         });
     }
 
+    async waitForOperationDone(operation) {
+        let timer;
+        try {
+            await Promise.race([
+                operation.done,
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => reject(
+                        new Error("browser operation did not terminate after cancellation")),
+                    TRANSACTION_WAIT_MS);
+                }),
+            ]);
+        } finally {
+            if (timer !== undefined) clearTimeout(timer);
+        }
+    }
+
     async cancel(payload) {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
             "execution_request_id", "effect_id", "executor_fence"]) ||
@@ -3208,6 +3701,18 @@ class WorkspaceExecutor {
         const operationKey = this.operationKey(execution);
         const operation = this.operations.get(operationKey) ||
             this.completedOperations.get(operationKey);
+        const ledger = this.executionLedger.get(this.operationEffectKey(execution));
+        if (!operation && ledger) {
+            const identity = {...this.operationIdentity(execution),
+                command: ledger.identity.command};
+            if (!sameRef(ledger.identity, identity)) return;
+            const pending = this.pendingOperationCancels.get(operationKey) || [];
+            if (!pending.some(saved => sameRef(saved, payload))) pending.push(structuredClone(payload));
+            this.pendingOperationCancels.set(operationKey, pending);
+            await this.persistOperationCancels();
+            await this.flushExecutionLedger();
+            return;
+        }
         if (!operation) {
             const pending = this.pendingOperationCancels.get(operationKey) || [];
             if (!pending.some(saved => sameRef(saved, payload))) pending.push(structuredClone(payload));
@@ -3221,20 +3726,31 @@ class WorkspaceExecutor {
             if (!operation.cancellationPayloads.some(saved => sameRef(saved, payload))) {
                 operation.cancellationPayloads.push(structuredClone(payload));
             }
+            const pending = this.pendingOperationCancels.get(operationKey) || [];
+            if (!pending.some(saved => sameRef(saved, payload))) pending.push(structuredClone(payload));
+            this.pendingOperationCancels.set(operationKey, pending);
             if (operation.mutationStarted) operation.uncertain = true;
             await this.persistOperationCancels();
-            try { await operation.done; } catch (_) {}
+            await this.waitForOperationDone(operation);
+            await this.flushExecutionLedger();
+            return;
         }
         const completion = operation &&
             (operation.mutationStarted || operation.committed || operation.uncertain ||
                 operation.completion === "applied" || operation.completion === "unknown") ?
             "unknown" : "not_applied";
         await this.cancellationCompletion(payload, completion);
+        const pending = this.pendingOperationCancels.get(operationKey);
+        if (pending) {
+            const remaining = pending.filter(saved => !sameRef(saved, payload));
+            if (remaining.length > 0) this.pendingOperationCancels.set(operationKey, remaining);
+            else this.pendingOperationCancels.delete(operationKey);
+        }
         if (operation?.cancellationPayloads) {
             operation.cancellationPayloads = operation.cancellationPayloads
                 .filter(saved => !sameRef(saved, payload));
-            await this.persistOperationCancels();
         }
+        await this.persistOperationCancels();
     }
 
     cancelMatching(matches) {
@@ -3490,6 +4006,57 @@ class WorkspaceExecutor {
         return this.reconcileManagedTab(tabId, moveInfo);
     }
 
+    async persistReplacementLedger(entries) {
+        const snapshot = structuredClone(entries);
+        await this.localStateWrite(REPLACEMENT_LEDGER_KEY, () => snapshot);
+    }
+
+    validReplacementEntry(entry) {
+        return entry?.version === 1 && ["planned", "session_candidate", "marker_candidate",
+            "installed"].includes(entry.phase) && typeof entry.remote_key === "string" &&
+            typeof entry.principal_id === "string" && Number.isInteger(entry.old_tab_id) &&
+            Number.isInteger(entry.new_tab_id) && entry.record;
+    }
+
+    async restoreReplacementLedger({consume = false} = {}) {
+        if (!this.chrome.storage?.local) return;
+        const local = await this.chrome.storage.local.get([REPLACEMENT_LEDGER_KEY]);
+        const entries = Array.isArray(local[REPLACEMENT_LEDGER_KEY]) ?
+            local[REPLACEMENT_LEDGER_KEY] : [];
+        const pending = [];
+        for (const entry of entries) {
+            if (!this.validReplacementEntry(entry)) continue;
+            const key = this.key(entry.remote_key, entry.principal_id);
+            let records = [];
+            if (this.chrome.storage?.session) {
+                const stored = await this.chrome.storage.session.get(["abushWorkspaces"]);
+                records = Array.isArray(stored.abushWorkspaces) ? stored.abushWorkspaces : [];
+            }
+            const candidate = records.find(record => this.key(record.remoteKey,
+                record.principalId) === key && record.pageTabId === entry.new_tab_id);
+            let replacement;
+            try {
+                replacement = await this.chrome.tabs.get(entry.new_tab_id);
+            } catch (_) {
+                replacement = null;
+            }
+            const marker = await this.currentOwnedMarker(entry.record.nonce);
+            if (candidate && replacement && replacement.windowId === candidate.windowId &&
+                    replacement.pinned !== true && replacement.index === 2 &&
+                    await this.isLive(candidate)) {
+                if (!this.savedOwnershipMatches(marker, candidate)) await this.claimMarker(candidate);
+                const installed = this.workspaces.get(key);
+                if (consume && installed && installed.pageTabId === entry.new_tab_id &&
+                        await this.isLive(installed)) continue;
+                pending.push({...entry, phase: "marker_candidate"});
+                continue;
+            }
+            if (entry.phase === "planned" && consume) continue;
+            pending.push(entry);
+        }
+        await this.persistReplacementLedger(pending);
+    }
+
     async tabReplaced(addedTabId, removedTabId) {
         const key = this.tabOwners.get(removedTabId) ||
             this.statusTabOwners.get(removedTabId);
@@ -3511,17 +4078,37 @@ class WorkspaceExecutor {
             const candidate = {...record, statusTabIds: [...record.statusTabIds],
                 pageTabId: addedTabId};
             if (await this.isLive(candidate)) {
+                let replacementEntry = {
+                    version: 1,
+                    phase: "planned",
+                    remote_key: record.remoteKey,
+                    principal_id: record.principalId,
+                    old_tab_id: previousTabId,
+                    new_tab_id: addedTabId,
+                    record: this.persistedRecord(candidate),
+                };
+                await this.persistReplacementLedger([replacementEntry]);
                 const write = this.persistTail.catch(() => {}).then(async () => {
                     const records = [...this.workspaces.values()].map(saved =>
                         this.persistedRecord(saved === record ? candidate : saved));
                     await this.persistRecords(records);
+                    replacementEntry = {...replacementEntry, phase: "session_candidate"};
+                    await this.persistReplacementLedger([replacementEntry]);
+                    const ownership = this.markerOwnership(candidate);
+                    await this.updateOwnedMarkers(markers => {
+                        markers[candidate.nonce] = ownership;
+                    });
+                    replacementEntry = {...replacementEntry, phase: "marker_candidate"};
+                    await this.persistReplacementLedger([replacementEntry]);
                     this.tabOwners.delete(previousTabId);
                     record.pageTabId = addedTabId;
                     this.tabOwners.set(addedTabId, key);
+                    replacementEntry = {...replacementEntry, phase: "installed"};
+                    await this.persistReplacementLedger([replacementEntry]);
                 });
                 this.persistTail = write;
                 await write;
-                await this.claimMarker(record);
+                await this.persistReplacementLedger([]);
                 return true;
             }
         }

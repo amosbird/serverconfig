@@ -7,6 +7,7 @@ import os
 import pathlib
 import queue
 import re
+import select
 import socket
 import stat
 import struct
@@ -32,6 +33,7 @@ MAX_MESSAGE_SIZE = 1024 * 1024
 ORDINARY_OPEN_MAX_MESSAGE_SIZE = 64 * 1024
 ORDINARY_OPEN_VERSION = 1
 ORDINARY_OPEN_COMPLETIONS = {"applied", "not_applied", "unknown"}
+ORDINARY_OPEN_DEADLINE_MS = 30_000
 NATIVE_ENVELOPE_VERSION = 1
 PEER_PROTOCOL_VERSION = 7
 BROWSER_ERROR_CODES = {
@@ -726,16 +728,47 @@ def ordinary_open_response(request_id, completion):
     }
 
 
+def ordinary_open_request(url, request_id=None, deadline_ms=None):
+    if deadline_ms is None:
+        deadline_ms = int(time.time() * 1000) + ORDINARY_OPEN_DEADLINE_MS
+    return validate_ordinary_open_request({
+        "version": ORDINARY_OPEN_VERSION,
+        "request_id": request_id or uuid.uuid4().hex,
+        "operation": "ordinary_open",
+        "url": url,
+        "focus": True,
+        "deadline_ms": deadline_ms,
+    })
+
+
+def _ordinary_deadline(payload, required):
+    fields = set(required) | {"deadline_ms"}
+    if not isinstance(payload, dict) or set(payload) != fields:
+        raise ValueError("invalid ordinary-open payload")
+    deadline_ms = payload.get("deadline_ms")
+    if not isinstance(deadline_ms, int) or isinstance(deadline_ms, bool) or deadline_ms <= 0:
+        raise ValueError("invalid ordinary-open deadline")
+    if time.time() * 1000 >= deadline_ms:
+        raise TimeoutError("ordinary-open deadline expired")
+    return deadline_ms
+
+
+def _without_deadline(payload):
+    return {key: value for key, value in payload.items() if key != "deadline_ms"}
+
+
 def validate_ordinary_open_request(message):
-    fields = {"version", "request_id", "operation", "url", "focus"}
+    fields = {"version", "request_id", "operation", "url", "focus", "deadline_ms"}
     if not isinstance(message, dict) or set(message) != fields or \
             message.get("version") != ORDINARY_OPEN_VERSION or \
             message.get("operation") != "ordinary_open" or message.get("focus") is not True:
         raise ValueError("invalid ordinary-open request")
     request_id = message.get("request_id")
     url = message.get("url")
+    deadline_ms = message.get("deadline_ms")
     if not isinstance(request_id, str) or not request_id or len(request_id) > 128 or \
-            not isinstance(url, str) or not url or len(url.encode()) > 32768:
+            not isinstance(url, str) or not url or len(url.encode()) > 32768 or \
+            not isinstance(deadline_ms, int) or isinstance(deadline_ms, bool) or deadline_ms <= 0:
         raise ValueError("invalid ordinary-open request")
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https", "file"} or \
@@ -763,7 +796,7 @@ def read_ordinary_open_message(sock):
 
 
 class OrdinaryOpenServer:
-    def __init__(self, outbound, path=None, uid=None, timeout=15):
+    def __init__(self, outbound, path=None, uid=None, timeout=30):
         self.outbound = outbound
         self.path = pathlib.Path(path) if path else ordinary_open_socket_path()
         self.uid = os.getuid() if uid is None else uid
@@ -826,7 +859,52 @@ class OrdinaryOpenServer:
                 self.workers.add(worker)
             worker.start()
 
+    def _cancel(self, state):
+        with self.lock:
+            if state["response"] is not None or state["cancelled"]:
+                return
+            state["cancelled"] = True
+            self.outbound.put(event("ordinary_open_cancel", "ordinary_open", {
+                "version": ORDINARY_OPEN_VERSION,
+                "request_id": state["request"]["request_id"],
+                "operation": "ordinary_open_cancel",
+            }))
+
+    def _wait(self, state, client=None):
+        while not state["done"].wait(0.05):
+            if self.stopping.is_set():
+                self._cancel(state)
+                raise TimeoutError("ordinary-open broker stopped")
+            if time.time() * 1000 >= state["request"]["deadline_ms"]:
+                self._cancel(state)
+                raise TimeoutError("ordinary-open completion timed out")
+            if client is not None:
+                try:
+                    readable, _, _ = select.select([client], [], [], 0)
+                    if readable and client.recv(1, socket.MSG_PEEK) == b"":
+                        self._cancel(state)
+                        raise EOFError("ordinary-open client disconnected")
+                except BlockingIOError:
+                    pass
+        if state["response"] is None:
+            self._cancel(state)
+            raise TimeoutError("ordinary-open broker stopped")
+        return state["response"]
+
+    def _register(self, request):
+        with self.lock:
+            state = self.requests.get(request["request_id"])
+            if state is None:
+                state = {"request": request, "done": threading.Event(), "response": None,
+                         "cancelled": False}
+                self.requests[request["request_id"]] = state
+                self.outbound.put(event("ordinary_open", "ordinary_open", request))
+            elif state["request"] != request:
+                raise ValueError("conflicting duplicate ordinary-open request")
+            return state
+
     def _handle(self, client):
+        state = None
         try:
             client.settimeout(self.timeout)
             credentials = client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
@@ -835,53 +913,25 @@ class OrdinaryOpenServer:
             if uid != self.uid:
                 return
             request = validate_ordinary_open_request(read_ordinary_open_message(client))
-            with self.lock:
-                state = self.requests.get(request["request_id"])
-                if state is None:
-                    state = {"request": request, "done": threading.Event(), "response": None}
-                    self.requests[request["request_id"]] = state
-                    self.outbound.put(event("ordinary_open", "ordinary_open", request))
-                elif state["request"] != request:
-                    raise ValueError("conflicting duplicate ordinary-open request")
-            deadline = time.monotonic() + self.timeout
-            while not state["done"].wait(min(0.1, max(0, deadline - time.monotonic()))):
-                if self.stopping.is_set() or time.monotonic() >= deadline:
-                    raise TimeoutError("ordinary-open completion timed out")
-            if state["response"] is None:
-                raise TimeoutError("ordinary-open broker stopped")
-            client.sendall(encode_ordinary_open_message(state["response"]))
+            state = self._register(request)
+            response = self._wait(state, client)
+            client.sendall(encode_ordinary_open_message(response))
         except (EOFError, OSError, TimeoutError, ValueError, json.JSONDecodeError):
-            return
+            if state is not None and not state["done"].is_set():
+                self._cancel(state)
         finally:
             client.close()
             with self.lock:
                 self.workers.discard(threading.current_thread())
 
     def submit(self, url, request_id=None, timeout=None):
-        request = validate_ordinary_open_request({
-            "version": ORDINARY_OPEN_VERSION,
-            "request_id": request_id or uuid.uuid4().hex,
-            "operation": "ordinary_open",
-            "url": url,
-            "focus": True,
-        })
-        with self.lock:
-            state = self.requests.get(request["request_id"])
-            if state is None:
-                state = {
-                    "request": request, "done": threading.Event(), "response": None,
-                }
-                self.requests[request["request_id"]] = state
-                self.outbound.put(event("ordinary_open", "ordinary_open", request))
-            elif state["request"] != request:
-                raise ValueError("conflicting duplicate internally submitted ordinary-open request")
-        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
-        while not state["done"].wait(min(0.1, max(0, deadline - time.monotonic()))):
-            if self.stopping.is_set() or time.monotonic() >= deadline:
-                raise TimeoutError("ordinary-open completion timed out")
-        if state["response"] is None:
-            raise TimeoutError("ordinary-open broker stopped")
-        return state["response"]["completion"]
+        timeout = self.timeout if timeout is None else timeout
+        request = ordinary_open_request(
+            url, request_id=request_id,
+            deadline_ms=int(time.time() * 1000 + timeout * 1000),
+        )
+        state = self._register(request)
+        return self._wait(state)["completion"]
 
     def complete(self, payload):
         fields = {"version", "request_id", "operation", "completion"}
@@ -929,14 +979,11 @@ class OrdinaryOpenServer:
             pass
 
 
-def submit_ordinary_open(url, socket_path=None, timeout=15, request_id=None):
-    request = {
-        "version": ORDINARY_OPEN_VERSION,
-        "request_id": request_id or uuid.uuid4().hex,
-        "operation": "ordinary_open",
-        "url": url,
-        "focus": True,
-    }
+def submit_ordinary_open(url, socket_path=None, timeout=30, request_id=None):
+    request = ordinary_open_request(
+        url, request_id=request_id,
+        deadline_ms=int(time.time() * 1000 + timeout * 1000),
+    )
     path = pathlib.Path(socket_path) if socket_path else ordinary_open_socket_path()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(timeout)
@@ -1933,15 +1980,19 @@ class BrowserBroker:
         operation = request["operation"]
         payload = request["payload"]
         if service == "ordinary_open" and operation == "prepare":
-            return self.x11_binding().prepare_ordinary_window(payload)
+            _ordinary_deadline(payload, {"nonce"})
+            return self.x11_binding().prepare_ordinary_window(_without_deadline(payload))
         if service == "ordinary_open" and operation == "ordinary_file_navigate":
+            deadline_ms = _ordinary_deadline(payload, {"nonce", "xid", "url"})
             binding = self.x11_binding()
-            return navigate_ordinary_file(
-                payload,
+            result = navigate_ordinary_file(
+                _without_deadline(payload),
                 lambda identity: binding.verify_prepared_ordinary_window(identity),
             )
+            return {**result, "deadline_ms": deadline_ms}
         if service == "ordinary_open" and operation == "activate":
-            return self.x11_binding().activate_ordinary_window(payload)
+            _ordinary_deadline(payload, {"nonce", "xid"})
+            return self.x11_binding().activate_ordinary_window(_without_deadline(payload))
         if service == "ordinary_open" and operation == "ordinary_open_completion":
             if self.ordinary_open is None:
                 raise ValueError("ordinary-open broker is unavailable")
@@ -2044,6 +2095,8 @@ class BrowserBroker:
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"))
             return {}
+        if service == "abush_browser" and operation == "verify_x11_window":
+            return self.x11_binding().verify_workspace_window(payload)
         if service == "abush_browser" and operation == "clear_x11_window":
             try:
                 return self.x11_binding().clear_workspace_window(payload)

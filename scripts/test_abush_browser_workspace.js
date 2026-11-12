@@ -50,7 +50,9 @@ function beginCase() {
     const caller = new Error().stack.split("\n")[2]?.trim() || "unknown location";
     activeCase = caller.replace(/^at\s+/, "");
     caseNumber += 1;
-    console.error(`[workspace-test] ${caseNumber}: ${activeCase}`);
+    if (process.env.ABUSH_TEST_TRACE === "1") {
+        console.error(`[workspace-test] ${caseNumber}: ${activeCase}`);
+    }
 }
 
 function timeoutError(label) {
@@ -319,6 +321,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 observed_group: "c",
             };
         }
+        if (operation === "verify_x11_window") {
+            return {verified: true, xid: payload.xid};
+        }
         if (operation === "clear_x11_window") {
             return {cleared: true, xid: payload.xid, reclassified_group: "f"};
         }
@@ -490,6 +495,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const navigate = calls.find(call => call[0] === "ordinary_file_navigate");
         assert.equal(navigate[1].url, "file:///home/amos/private.txt");
         assert.equal(navigate[1].xid, 42);
+        assert(Number.isSafeInteger(navigate[1].deadline_ms));
         assert.equal(typeof navigate[1].nonce, "string");
         assert.equal(calls.filter(call => call[0] === "update" && call[2]?.url).length, 0,
             "file navigation must never use extension tabs.update");
@@ -629,6 +635,59 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const {executor, calls} = fixture([], [], 1);
+        const expired = {
+            version: 1,
+            request_id: "ordinary-expired-queued",
+            operation: "ordinary_open",
+            deadline_ms: Date.now() - 1,
+            url: "https://expired.test/",
+            focus: true,
+        };
+        assert.equal(await executor.ordinaryOpen(expired), "not_applied");
+        assert.equal(calls.some(call => call[0] === "createTab" || call[0] === "createWindow"),
+            false, "expired queued ordinary open must cause zero late navigation effects");
+        assert.equal(calls.find(call => call[0] === "ordinary_open_completion")[1].completion,
+            "not_applied");
+    }
+    {
+        beginCase();
+        const {executor, calls} = fixture([], [], 1);
+        const navigate = deferred("ordinary navigation completion");
+        const originalUpdate = executor.chrome.tabs.update;
+        executor.chrome.tabs.update = async (id, properties) => {
+            const result = await originalUpdate(id, properties);
+            if (properties.url === "https://cancel-after-navigation.test/") {
+                await navigate.promise;
+            }
+            return result;
+        };
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
+            return {};
+        };
+        const payload = {
+            version: 1,
+            request_id: "ordinary-cancel-after-navigation",
+            operation: "ordinary_open",
+            deadline_ms: Date.now() + 30000,
+            url: "https://cancel-after-navigation.test/",
+            focus: true,
+        };
+        const opening = executor.ordinaryOpen(payload);
+        await waitFor(() => calls.some(call => call[0] === "update" &&
+            call[2]?.url === payload.url), "ordinary navigation dispatch");
+        await executor.cancelOrdinaryOpen({version: 1, request_id: payload.request_id,
+            operation: "ordinary_open_cancel"});
+        assert.equal(calls.find(call => call[0] === "prepare")[1].deadline_ms,
+            payload.deadline_ms);
+        navigate.resolve();
+        assert.equal(await opening, "unknown",
+            "cancel after navigation dispatch must never report applied or not_applied");
+    }
+    {
+        beginCase();
         const {executor} = fixture([], [], 2);
         const selected = await executor.selectOrdinaryWindow();
         assert.equal(selected.windowId, 1);
@@ -738,6 +797,36 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const nonce = "8".repeat(32);
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, x11WindowId: 42, statusTabIds: [110, 111], pageTabId: 210,
+            nonce, connectionDisplayName: "local",
+        };
+        const localState = {};
+        const first = fixture([record], [], 0, false, null, localState);
+        await first.executor.restore();
+        first.executor.chrome.windows.remove = async () => {
+            throw new Error("cleanup interrupted");
+        };
+        await assert.rejects(first.executor.convergeManagedTopology(record,
+            {closeWindow: true, report: false}), /cleanup was incomplete/);
+        const reused = fixture([], [], 1, false, null, localState);
+        reused.executor.chrome.windows.get = async id => ({id, type: "normal", focused: true});
+        reused.executor.chrome.tabs.query = async query => query.windowId === 10 ? [{
+            id: 110, windowId: 10, index: 0, pinned: false,
+            url: "https://ordinary-reused.test/", title: "ordinary",
+        }] : [];
+        await reused.executor.restoreCleanupTombstones();
+        assert.equal(reused.calls.some(call => call[0] === "removeWindow" && call[1] === 10), false,
+            "reused numeric window ID must never remove an ordinary window");
+        assert.equal(reused.calls.some(call => call[0] === "remove" && call[1] === 110), false,
+            "reused numeric tab ID must never remove a non-marker tab");
+    }
+    {
+        beginCase();
         const nonce = "3".repeat(32);
         const tombstone = {
             version: 1, nonce, window_id: 999, xid: null,
@@ -814,8 +903,62 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         }}};
         const {executor, calls} = fixture([], [], 0, false, restoredPopup, localState);
         await executor.restore();
+        const verifyIndex = calls.findIndex(call => call[0] === "verify_x11_window" &&
+            call[1].xid === 7000);
+        const removeIndex = calls.findIndex(call => call[0] === "removeWindow" &&
+            call[1] === 700);
+        assert(verifyIndex >= 0 && removeIndex > verifyIndex,
+            "orphan whole-window cleanup must verify exact X11 ownership before removal");
         assert.deepEqual(calls.filter(call => call[0] === "removeWindow"),
             [["removeWindow", 700]], "restored owned popup must be removed before ensures");
+    }
+    {
+        beginCase();
+        const nonce = "4".repeat(32);
+        const restoredPopup = {
+            windowId: 705,
+            tabIds: [1750, 1751, 1752],
+            nonce,
+            businessUrl: "https://x11-mismatch.test/",
+        };
+        const localState = {abushOwnedMarkers: {[nonce]: {
+            version: 2,
+            nonce,
+            window_id: 705,
+            status_tab_ids: [1750, 1751],
+            page_tab_id: 1752,
+            xid: 7050,
+            logical_window_id: logicalWindowId,
+            logical_page_id: logicalPageId,
+            window_generation: 1,
+            page_generation: 1,
+            binding: {
+                nonce,
+                remote_key: "r_12345678",
+                workspace_id: "workspace",
+                generation: 1,
+                control_state: "remote",
+                display_title: "local",
+            },
+        }}};
+        const {executor, calls} = fixture([], [], 0, false, restoredPopup, localState);
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "verify_x11_window") {
+                return {verified: false, xid: payload.xid};
+            }
+            if (operation === "clear_x11_window") {
+                throw new Error("unverified X11 identity must not be cleared");
+            }
+            return {};
+        };
+        await executor.restore();
+        assert.equal(calls.some(call => call[0] === "removeWindow" && call[1] === 705), false,
+            "X11 mismatch must prevent whole-window removal despite matching Chrome IDs");
+        assert.deepEqual(calls.filter(call => call[0] === "remove").map(call => call[1]),
+            [1750, 1751], "X11 mismatch may remove only exact marker tabs");
+        assert.equal(calls.some(call => call[0] === "clear_x11_window"), false,
+            "X11 mismatch must not clear metadata on a reused XID");
     }
     {
         beginCase();
@@ -1011,6 +1154,27 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const localState = {abushRestoreHost: {
+            version: 2, phase: "inflight", sessionId: "consumed-session",
+            snapshot: {tabCount: 1, urls: ["https://accepted-not-visible.test/"]},
+        }};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        executor.chrome.sessions = {
+            getRecentlyClosed: async () => [],
+            restore: async sessionId => {
+                calls.push(["restoreSession", sessionId]);
+                throw new Error("must not replay a consumed inflight session ID");
+            },
+        };
+        await executor.restoreHost();
+        assert.equal(calls.some(call => call[0] === "restoreSession"), false);
+        assert.equal(calls.some(call => call[0] === "createWindow"), false,
+            "accepted-not-visible restore must never create a blank fallback");
+        assert.equal(localState.abushRestoreHost.phase, "unknown",
+            "consumed but unconfirmed inflight restore remains durable unknown");
+    }
+    {
+        beginCase();
         const snapshot = {tabCount: 2, urls: ["https://work.test/", "https://docs.test/"]};
         const localState = {abushRestoreHost: {
             version: 1, sessionId: "expired-session", snapshot,
@@ -1162,6 +1326,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 moved.push(["replaced", added, removedId]);
             },
             rememberWindowSnapshot: async id => { snapshots.push(id); },
+            observeWindowCreated: async window => {
+                moved.push(["observed-window", window.id]);
+                return true;
+            },
         };
         registerWorkspaceWindowListeners(chromeApi, workspaceMethods,
             ready.promise, error => failures.push(error));
@@ -1176,7 +1344,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         listeners.tabAttached(24, {windowId: 7, newWindowId: 7});
         await Promise.resolve();
         assert.deepEqual(removed, []);
-        assert.deepEqual(moved, []);
+        assert.deepEqual(moved, [["observed-window", 42]]);
         assert.equal(typeof listeners.tabReplaced, "function",
             "tabs.onReplaced must be registered");
         ready.resolve();
@@ -1186,15 +1354,16 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(removed, [42]);
         const normalizedMoved = moved.map(value => JSON.stringify(value)).sort();
         assert.deepEqual(normalizedMoved, [
-            ["created", null], ["created", 24], ["detached", 24, {oldWindowId: 42}],
+            ["created", 24], ["detached", 24, {oldWindowId: 42}],
+            ["observed-window", 42],
             ["focus", 42], ["moved", 24, {windowId: 42, fromIndex: 0, toIndex: 1}],
             ["removed", 24, {windowId: 42}],
             ["attached", 24, {windowId: 7, newWindowId: 7}],
             ["updated", 24, {title: "changed"}],
         ].map(value => JSON.stringify(value)).sort());
         assert.deepEqual([...snapshots].sort((left, right) => left - right),
-            [7, 42, 42, 42, 42, 42, 42]);
-        assert.equal(lifecycle.filter(value => value === "start").length, 9,
+            [7, 42, 42, 42, 42, 42]);
+        assert.equal(lifecycle.filter(value => value === "start").length, 8,
             "all lifecycle-sensitive Chrome events must enter the serialized tail");
         listeners.tabReplaced(90, 80);
         await Promise.resolve();
@@ -2113,6 +2282,120 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const localState = {};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        const execution = {...executePayload(), effect_id: "cancel-ack-sequence", command: {}};
+        const identity = executor.operationEffectIdentity(execution);
+        const operationKey = executor.operationKey(execution);
+        const effectKey = executor.operationEffectKey(execution);
+        const firstCancel = {...executor.operationIdentity(execution),
+            request_id: "cancel-ack-one", execution_request_id: execution.request_id};
+        const secondCancel = {...executor.operationIdentity(execution),
+            request_id: "cancel-ack-two", execution_request_id: execution.request_id};
+        executor.executionLedger.set(effectKey, {
+            version: 1, phase: "acked", identity, completion: "unknown",
+        });
+        executor.pendingOperationCancels.set(operationKey, [firstCancel, secondCancel]);
+        await executor.persistExecutionLedger();
+        await executor.persistOperationCancels();
+        let failSecond = true;
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "cancellation_completion" &&
+                    payload.request_id === secondCancel.request_id && failSecond) {
+                failSecond = false;
+                throw new Error("second cancellation ACK unavailable");
+            }
+            return {};
+        };
+        await executor.flushExecutionLedger();
+        assert.deepEqual(calls.filter(call => call[0] === "cancellation_completion")
+            .map(call => call[1].request_id), [firstCancel.request_id, secondCancel.request_id]);
+        assert.deepEqual(localState.abushPendingOperations, [secondCancel],
+            "each successful cancellation ACK must be durably consumed before the next send");
+        calls.length = 0;
+        await executor.flushExecutionLedger();
+        assert.deepEqual(calls.filter(call => call[0] === "cancellation_completion")
+            .map(call => call[1].request_id), [secondCancel.request_id],
+        "retry must not duplicate a cancellation whose ACK was already accepted");
+        assert.deepEqual(localState.abushPendingOperations, []);
+        assert.deepEqual(localState.abushExecutionLedger, []);
+    }
+    {
+        beginCase();
+        const localState = {};
+        const first = fixture([], [], 0, false, null, localState);
+        const record = await first.executor.ensure(ensurePayload());
+        first.calls.length = 0;
+        const payload = {...executePayload(), effect_id: "durable-effect-start", command: {
+            command: "navigate", page: first.executor.pageRef(record),
+            url: "https://durable-effect.test/",
+        }};
+        const originalCommand = first.executor.chrome.debugger.sendCommand;
+        first.executor.chrome.debugger.sendCommand = async (...args) => {
+            await originalCommand(...args);
+            throw new Error("crash after physical mutation");
+        };
+        first.executor.nativeRequest = async (_service, operation, value) => {
+            first.calls.push([operation, value]);
+            if (operation === "executor_completion") throw new Error("native ACK unavailable");
+            return {};
+        };
+        await first.executor.execute(payload);
+        assert.equal(localState.abushExecutionLedger[0].phase, "terminal_pending_ack");
+        assert.equal(localState.abushExecutionLedger[0].completion, "unknown");
+        const second = fixture([record], [], 0, false, null, localState);
+        await second.executor.restoreExecutionLedger();
+        await second.executor.flushExecutionLedger();
+        assert.equal(second.calls.some(call => call[0] === "command"), false,
+            "restart must never re-execute a started durable effect");
+        const ledgerWrites = second.calls.filter(call => call[0] === "persistLocal" &&
+            Array.isArray(call[1].abushExecutionLedger));
+        const ackedIndex = ledgerWrites.findIndex(call =>
+            call[1].abushExecutionLedger[0]?.phase === "acked");
+        const clearIndex = ledgerWrites.findIndex(call => call[1].abushExecutionLedger.length === 0);
+        assert(ackedIndex >= 0 && clearIndex > ackedIndex,
+            "native ACK must become durable before the execution ledger is cleared");
+        assert.deepEqual(localState.abushExecutionLedger, [],
+            "ledger clears only after native executor completion ACK succeeds");
+    }
+    {
+        beginCase();
+        const localState = {};
+        const {executor} = fixture([], [], 0, false, null, localState);
+        const firstWrite = deferred("first execute registration persistence");
+        let writes = 0;
+        const originalSet = executor.chrome.storage.local.set;
+        executor.chrome.storage.local.set = async value => {
+            if (Array.isArray(value.abushExecutionLedger) && writes++ === 0) {
+                await firstWrite.promise;
+            }
+            await originalSet(value);
+        };
+        const first = {...executePayload(), effect_id: "registration-one", command: {command: "x"}};
+        const second = {...executePayload({request_id: "request-two"}),
+            effect_id: "registration-two", command: {command: "y"}};
+        const firstRegistration = executor.registerOperation(first);
+        await waitFor(() => writes === 1, "first execute registration write");
+        const secondRegistration = executor.registerOperation(second);
+        firstWrite.resolve();
+        assert.deepEqual(await Promise.all([firstRegistration, secondRegistration]), [true, true]);
+        assert.deepEqual(localState.abushExecutionLedger.map(entry => entry.identity.effect_id),
+            [first.effect_id, second.effect_id],
+        "serialized execute registration must preserve every durable accepted effect");
+    }
+    {
+        beginCase();
+        const localState = {};
+        const {executor} = fixture([], [], 0, false, null, localState);
+        const first = {...executePayload(), effect_id: "same-effect-id", command: {command: "x"}};
+        await executor.registerOperation(first);
+        await assert.rejects(executor.registerOperation({...first,
+            request_id: "different-request", command: {command: "y"}}),
+        /conflicting duplicate execute effect/);
+    }
+    {
+        beginCase();
         const {executor, calls} = fixture();
         const firstWrite = deferred();
         let writes = 0;
@@ -2192,6 +2475,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await executor.restore();
         assert.equal(executor.workspaces.size, 0,
             "restore must require exactly two marker tabs and one business tab");
+        const queued = calls.find(call => call[0] === "persistLocal" &&
+            call[1].abushTopologyOutbox?.length === 1);
+        assert(queued && queued[1].abushTopologyOutbox[0].page.page_id === logicalPageId,
+            "invalid durable record must queue its stable page topology before removal");
         assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, []);
     }
     {
@@ -2555,7 +2842,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             if (operation === "retire_managed_page_completion") {
                 throw new Error("retire ACK lost");
             }
-            return {};
+            return first.executor.nativeRequest(_service, operation, value);
         };
         await second.executor.remoteState({
             remote_key: payload.remote_key,
@@ -2606,6 +2893,40 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             JSON.stringify(call[1].executor_fence) ===
                 JSON.stringify(rotated.executor_fence)),
         "completed retire identity must reauthorize its ACK on a new fence");
+    }
+    {
+        beginCase();
+        const localState = {};
+        const first = fixture([], [], 0, false, null, localState);
+        const record = await first.executor.ensure(ensurePayload());
+        const payload = {
+            ...first.executor.ensureIdentity(ensurePayload()),
+            retire_id: "retire-rotation-before-effect",
+            origin_executor_fence: fence,
+            window_id: record.logicalWindowId,
+            page_id: record.logicalPageId,
+        };
+        first.executor.retirePending.set(payload.retire_id,
+            first.executor.retireIdentity(payload));
+        await first.executor.persistRetireLedger();
+        const rotatedFence = {executor_id: "executor-rotated", epoch: 2};
+        const second = fixture([record], [], 0, false, null, localState);
+        await second.executor.restore();
+        await second.executor.remoteState({
+            remote_key: payload.remote_key,
+            connection_id: "c_rotated0",
+            principal_id: payload.principal_id,
+            executor_fence: rotatedFence,
+            connected: true,
+        });
+        assert.equal(second.executor.workspaces.size, 0,
+            "accepted retire must physically converge after authority rotation");
+        const completion = second.calls.find(call =>
+            call[0] === "retire_managed_page_completion")[1];
+        assert.equal(completion.connection_id, "c_rotated0");
+        assert.deepEqual(completion.executor_fence, rotatedFence);
+        assert.equal(completion.completion.outcome, "retired",
+            "recovered effect may complete only after physical convergence");
     }
     {
         beginCase();
@@ -2908,14 +3229,42 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 emitted.push(executor.observeChromeEvent("tabUpdated", {
                     tabId, changeInfo: {pinned: true}, tab: await executor.chrome.tabs.get(tabId),
                 }));
+                const tab = await executor.chrome.tabs.get(tabId);
+                emitted.push(executor.observeChromeEvent("tabUpdated", {
+                    tabId, changeInfo: {status: "loading", title: tab.title}, tab,
+                }));
+                emitted.push(executor.observeChromeEvent("tabUpdated", {
+                    tabId, changeInfo: {status: "complete"}, tab,
+                }));
             }
             return updated;
         };
         const record = await executor.ensure(ensurePayload({
             request_id: "real-events", ensure_id: "real-events",
         }));
-        assert(record && emitted.length >= 8 && emitted.every(Boolean),
-            "real create/attach/detach/pin events must be owned and reconciled by the transaction");
+        assert(record && emitted.length >= 12 && emitted.every(Boolean),
+            "real listener create/attach/detach/pin/loading/title/complete events must stay owned");
+    }
+    {
+        beginCase();
+        const {executor} = fixture([], [], 1);
+        const transaction = await executor.beginEnsureTransaction(
+            ensurePayload({request_id: "external-conflict", ensure_id: "external-conflict"}),
+            "e".repeat(32));
+        transaction.windowId = 10;
+        transaction.statusTabIds = [110, 111];
+        transaction.plannedEffect = {kind: "tabs.pin", tab_id: 110, window_id: 10};
+        assert.equal(executor.observeChromeEvent("tabUpdated", {
+            tabId: 110, changeInfo: {status: "loading", title: "loading"},
+            tab: {id: 110, windowId: 10, index: 0},
+        }), true);
+        assert.equal(transaction.invalid, false);
+        assert.equal(executor.observeChromeEvent("tabUpdated", {
+            tabId: 110, changeInfo: {pinned: false},
+            tab: {id: 110, windowId: 10, index: 0, pinned: false},
+        }), false);
+        assert.equal(transaction.invalid, true,
+            "external URL/pin/index conflicts must invalidate the active transaction");
     }
     {
         beginCase();
@@ -2939,6 +3288,34 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         "write-ahead transaction must accumulate exact physical and X11 identities");
         assert.deepEqual(localState.abushPendingTransactions, [],
             "committed transaction must be consumed after durable workspace commit");
+    }
+    {
+        beginCase();
+        const localState = {};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        await executor.restore();
+        calls.length = 0;
+        const writes = [];
+        let blockedResolve;
+        let blockFirst = true;
+        const originalSet = executor.chrome.storage.local.set;
+        executor.chrome.storage.local.set = async value => {
+            if (blockFirst) {
+                blockFirst = false;
+                await new Promise(resolve => { blockedResolve = resolve; });
+            }
+            writes.push(structuredClone(value));
+            await originalSet(value);
+        };
+        executor.topologyOutbox.set("first", {report_id: "first"});
+        const firstWrite = executor.persistTopologyOutbox();
+        await waitFor(() => blockedResolve !== undefined, "first local-state write start");
+        executor.topologyOutbox.set("second", {report_id: "second"});
+        const secondWrite = executor.persistTopologyOutbox();
+        blockedResolve();
+        await Promise.all([firstWrite, secondWrite]);
+        assert.deepEqual(writes.at(-1).abushTopologyOutbox.map(entry => entry.report_id),
+            ["first", "second"], "local writes must snapshot at serialized execution time");
     }
     {
         beginCase();
@@ -2992,6 +3369,30 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(executor.tabOwners.has(oldPageTabId), false);
         assert.equal(executor.tabOwners.get(replacement.id),
             executor.key(record.remoteKey, record.principalId));
+    }
+    {
+        beginCase();
+        const localState = {};
+        const first = fixture([], [], 0, false, null, localState);
+        const record = await first.executor.ensure(ensurePayload());
+        const oldPageTabId = record.pageTabId;
+        const tabs = await first.executor.chrome.tabs.query({windowId: record.windowId});
+        const oldPage = tabs.find(tab => tab.id === oldPageTabId);
+        tabs.splice(tabs.indexOf(oldPage), 1);
+        const replacement = {...oldPage, id: 9877, index: 2, pinned: false};
+        tabs.push(replacement);
+        const writes = [];
+        const originalLocalSet = first.executor.chrome.storage.local.set;
+        first.executor.chrome.storage.local.set = async value => {
+            await originalLocalSet(value);
+            if (value.abushReplacementLedger?.[0]) {
+                writes.push(value.abushReplacementLedger[0].phase);
+            }
+        };
+        await first.executor.tabReplaced(replacement.id, oldPageTabId);
+        assert.deepEqual(writes, ["planned", "session_candidate", "marker_candidate", "installed"]);
+        assert.deepEqual(localState.abushReplacementLedger, [],
+            "replacement WAL clears only after session, marker and in-memory install converge");
     }
     {
         beginCase();

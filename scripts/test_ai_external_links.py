@@ -358,6 +358,7 @@ class NativeHostTest(unittest.TestCase):
         }
         binding.clear_workspace_window.return_value = {
             "cleared": True, "xid": 42, "reclassified_group": "f"}
+        binding.verify_workspace_window.return_value = {"verified": True, "xid": 42}
         payload = {
             "nonce": "a" * 32,
             "remote_key": "r_12345678",
@@ -378,10 +379,15 @@ class NativeHostTest(unittest.TestCase):
                              binding.bind_workspace_window.return_value)
             cleanup = {"xid": 42, **payload}
             self.assertEqual(broker.handle_request({
+                **request, "id": "verify", "operation": "verify_x11_window",
+                "payload": cleanup,
+            }), {"verified": True, "xid": 42})
+            self.assertEqual(broker.handle_request({
                 **request, "id": "clear", "operation": "clear_x11_window",
                 "payload": cleanup,
             }), {"cleared": True, "xid": 42, "reclassified_group": "f"})
         binding.bind_workspace_window.assert_called_once_with(payload)
+        binding.verify_workspace_window.assert_called_once_with(cleanup)
         binding.clear_workspace_window.assert_called_once_with(cleanup)
 
     def test_external_link_open_waits_for_terminal_ordinary_completion(self):

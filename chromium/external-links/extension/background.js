@@ -4,7 +4,9 @@ const NATIVE_HOST = "io.github.amosbird.browser_router";
 const ENVELOPE_VERSION = 1;
 
 const NATIVE_TIMEOUTS_MS = Object.freeze({
+    external_links_open: 30000,
     bind_x11_window: 15000,
+    verify_x11_window: 8000,
     clear_x11_window: 8000,
     managed_page_moved_outside: 20000,
     topology_response_consumed: 20000,
@@ -12,7 +14,8 @@ const NATIVE_TIMEOUTS_MS = Object.freeze({
     retire_managed_page_ack_consumed: 20000,
 });
 const SERIAL_NATIVE_OPERATIONS = new Set([
-    "bind_x11_window", "clear_x11_window", "managed_page_moved_outside",
+    "bind_x11_window", "verify_x11_window", "clear_x11_window",
+    "managed_page_moved_outside",
     "topology_response_consumed", "retire_managed_page_completion",
     "retire_managed_page_ack_consumed",
 ]);
@@ -81,7 +84,13 @@ class NativeDispatcher {
 
     dispatchRequest(service, operation, payload = {}) {
         const id = crypto.randomUUID();
-        const timeoutMs = Math.max(this.timeoutMs, NATIVE_TIMEOUTS_MS[operation] || 0);
+        let timeoutMs = Math.max(this.timeoutMs, NATIVE_TIMEOUTS_MS[operation] || 0);
+        if (service === "external_links" && operation === "open") {
+            timeoutMs = NATIVE_TIMEOUTS_MS.external_links_open;
+        }
+        if (service === "ordinary_open" && Number.isSafeInteger(payload.deadline_ms)) {
+            timeoutMs = Math.max(1, payload.deadline_ms - Date.now());
+        }
         return new Promise((resolve, reject) => {
             const timer = this.setTimeout(() => {
                 if (!this.pending.delete(id)) return;
@@ -444,16 +453,11 @@ if (typeof chrome !== "undefined") {
             return;
         }
         if (message.event === "abush_browser.execute") {
-            let registered = false;
-            try {
-                registered = workspaces.registerOperation(message.payload);
-            } catch (error) {
-                notifyFailure(error.message || "Unable to register Abush browser command");
-            }
-            if (!registered) return;
-            workspaceReady.then(() => workspaces.executeRegistered(message.payload))
-                .catch(error => notifyFailure(
-                    error.message || "Unable to complete Abush browser command"));
+            workspaceReady.then(async () => {
+                if (!await workspaces.registerOperation(message.payload)) return;
+                await workspaces.executeRegistered(message.payload);
+            }).catch(error => notifyFailure(
+                error.message || "Unable to complete Abush browser command"));
             return;
         }
         if (message.event === "abush_browser.cancel") {

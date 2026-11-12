@@ -85,19 +85,22 @@ def main():
             (parsed.scheme in {"http", "https"} and not parsed.hostname) or \
             (parsed.scheme == "file" and (not url.startswith("file:///") or parsed.netloc)):
         raise RuntimeError("unsupported ordinary-open URL")
+    timeout = float(os.environ.get("ABUSH_ORDINARY_OPEN_TIMEOUT", "30"))
+    if timeout <= 0:
+        raise RuntimeError("ABUSH_ORDINARY_OPEN_TIMEOUT must be positive")
+    deadline_ms = int(time.time() * 1000 + timeout * 1000)
     request = {
         "version": 1,
         "request_id": uuid.uuid4().hex,
         "operation": "ordinary_open",
         "url": url,
         "focus": True,
+        "deadline_ms": deadline_ms,
     }
-    timeout = float(os.environ.get("ABUSH_ORDINARY_OPEN_TIMEOUT", "10"))
-    if timeout <= 0:
-        raise RuntimeError("ABUSH_ORDINARY_OPEN_TIMEOUT must be positive")
     path = socket_path()
     with connect(path, timeout) as client:
         client.sendall(encode(request))
+        client.settimeout(max(0.01, (deadline_ms - int(time.time() * 1000)) / 1000))
         completion = receive(client)
     expected = {"version", "request_id", "operation", "completion"}
     if set(completion) != expected or completion.get("version") != 1 or \
