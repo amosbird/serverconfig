@@ -1095,6 +1095,7 @@ class RemotePeer:
         }
         if self.principal_id is not None:
             state["principal_id"] = self.principal_id
+            state["executor_fence"] = self.executor_fence
         if self.owner_display is not None:
             state["owner_display"] = self.owner_display
         return state
@@ -1490,11 +1491,14 @@ class RemotePeer:
             return
         raise ValueError("unknown peer message")
 
-    def report_managed_page_moved_outside(self, request_id, fence, page, timeout=None):
+    def report_managed_page_moved_outside(self, request_id, fence, page, timeout=None,
+                                          stable_fence=None):
         if not isinstance(request_id, str) or not request_id or \
                 fence != self.executor_fence or not self._valid_page_ref(page):
             raise ValueError("invalid managed page moved outside report")
-        identity = {"kind": "page_moved_outside", "page": page, "fence": fence}
+        stable_fence = stable_fence or fence
+        identity = {"kind": "page_moved_outside", "page": page,
+                    "stable_fence": stable_fence}
         with self.topology_lock:
             completed = self.topology_completed.get(request_id)
             if completed is not None:
@@ -1848,13 +1852,15 @@ class BrowserBroker:
             return {}
         if service == "abush_browser" and operation == "managed_page_moved_outside":
             if set(payload) != {
-                "remote_key", "connection_id", "principal_id", "request_id",
-                "executor_fence", "page",
+                "remote_key", "connection_id", "principal_id", "request_id", "report_id",
+                "executor_fence", "original_executor_fence", "page",
             }:
                 raise ValueError("invalid managed page moved outside payload")
             result = self.peer(payload).report_managed_page_moved_outside(
-                payload.get("request_id"), payload.get("executor_fence"), payload.get("page"))
-            return {"acknowledged": True, "result": result, "request_id": payload["request_id"]}
+                payload.get("report_id"), payload.get("executor_fence"), payload.get("page"),
+                stable_fence=payload.get("original_executor_fence"))
+            return {"acknowledged": True, "result": result,
+                    "request_id": payload["request_id"], "report_id": payload["report_id"]}
         if service == "abush_browser" and operation == "executor_completion":
             if set(payload) != {
                 "remote_key", "connection_id", "principal_id", "request_id", "effect_id",
@@ -1904,10 +1910,25 @@ class NativeBrokerHost:
             self.ordinary_open = ordinary_open_factory(self.outbound)
         self.broker = BrowserBroker(remote_root=remote_root, outbound=self.outbound,
                                     ordinary_open=self.ordinary_open)
+        self.refresh_stop = threading.Event()
+        self.refresh_wakeup = threading.Event()
+        self.refresh_interval = 1.0
+        self.refresh_started = threading.Event()
+        self.refresh_thread = threading.Thread(target=self._refresh_loop, daemon=True)
         self.writer_error = None
         self.writer = threading.Thread(target=self._write_loop, daemon=True)
         self.request_workers = set()
         self.request_workers_lock = threading.Lock()
+
+    def _refresh_loop(self):
+        self.refresh_started.set()
+        while not self.refresh_stop.is_set():
+            try:
+                self.broker.refresh()
+            except (OSError, ValueError) as error:
+                logging.info("browser remote refresh failed error=%s", error)
+            self.refresh_wakeup.wait(self.refresh_interval)
+            self.refresh_wakeup.clear()
 
     def _write_loop(self):
         try:
@@ -1953,6 +1974,7 @@ class NativeBrokerHost:
         if self.ordinary_open is not None:
             self.ordinary_open.start()
         self.broker.refresh()
+        self.refresh_thread.start()
         try:
             while self.writer_error is None:
                 message = read_message(self.input)
@@ -1960,6 +1982,9 @@ class NativeBrokerHost:
                     return
                 self._dispatch(message)
         finally:
+            self.refresh_stop.set()
+            self.refresh_wakeup.set()
+            self.refresh_thread.join(timeout=2)
             if self.ordinary_open is not None:
                 self.ordinary_open.close()
             with self.request_workers_lock:

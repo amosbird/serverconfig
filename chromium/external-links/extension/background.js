@@ -292,12 +292,16 @@ function connectWorkspaceAfterRestore(workspaces, connect) {
 
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
     const run = task => ready.then(() => workspaces.enqueueLifecycle(task)).catch(onFailure);
+    const observe = (type, payload) => workspaces.observeChromeEvent?.(type, payload) === true;
     chromeApi.windows.onCreated.addListener(window => {
         if (window.type !== "normal") return;
-        run(async () => {
-            await workspaces.tabCreated({id: null, windowId: window.id});
-            await workspaces.rememberWindowSnapshot(window.id);
-        });
+        Promise.resolve(workspaces.observeWindowCreated?.(window)).then(owned => {
+            if (owned || observe("windowCreated", {window})) return;
+            run(async () => {
+                await workspaces.tabCreated({id: null, windowId: window.id});
+                await workspaces.rememberWindowSnapshot(window.id);
+            });
+        }).catch(onFailure);
     });
     chromeApi.windows.onFocusChanged.addListener(windowId => {
         run(() => workspaces.recordOrdinaryFocus(windowId));
@@ -306,41 +310,53 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
         run(() => workspaces.windowRemoved(windowId));
     });
     chromeApi.tabs.onCreated.addListener(tab => {
+        if (observe("tabCreated", {tab})) return;
         run(async () => {
             await workspaces.tabCreated(tab);
             await workspaces.rememberWindowSnapshot(tab.windowId);
         });
     });
     chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+        if (observe("tabUpdated", {tabId, changeInfo, tab})) return;
         run(async () => {
             await workspaces.tabUpdated(tabId, changeInfo, tab);
             await workspaces.rememberWindowSnapshot(tab.windowId);
         });
     });
     chromeApi.tabs.onMoved.addListener((tabId, info) => {
+        if (observe("tabMoved", {tabId, ...info})) return;
         run(async () => {
             await workspaces.tabMoved(tabId, info);
             await workspaces.rememberWindowSnapshot(info.windowId);
         });
     });
     chromeApi.tabs.onRemoved.addListener((tabId, info) => {
+        if (observe("tabRemoved", {tabId, ...info})) return;
         run(async () => {
             await workspaces.tabRemoved(tabId, info);
             await workspaces.rememberWindowSnapshot(info.windowId);
         });
     });
     chromeApi.tabs.onAttached.addListener((tabId, info) => {
+        if (observe("tabAttached", {tabId, ...info})) return;
         run(async () => {
             await workspaces.tabAttached(tabId, info);
             await workspaces.rememberWindowSnapshot(info.newWindowId);
         });
     });
     chromeApi.tabs.onDetached.addListener((tabId, info) => {
+        if (observe("tabDetached", {tabId, ...info})) return;
         run(async () => {
             await workspaces.tabDetached(tabId, info);
             await workspaces.rememberWindowSnapshot(info.oldWindowId);
         });
     });
+    if (chromeApi.tabs.onReplaced?.addListener) {
+        chromeApi.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
+            if (observe("tabReplaced", {addedTabId, removedTabId})) return;
+            run(() => workspaces.tabReplaced(addedTabId, removedTabId));
+        });
+    }
 }
 
 if (typeof chrome !== "undefined") {

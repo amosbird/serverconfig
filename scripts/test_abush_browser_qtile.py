@@ -442,6 +442,37 @@ class QtileConfigTest(unittest.TestCase):
             namespace["place_abush_browser_window"](
                 manager, 22, json.dumps({**expected, "generation": 8}))
 
+    def test_restore_helper_rejects_invalid_group_and_preserves_focus(self):
+        namespace = {"QtileWindow": FakeWindow}
+        function_names = {
+            "qtile_window_by_xid", "passive_window_move", "restore_abush_browser_window",
+        }
+        functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name in function_names]
+        module = ast.Module(functions, [])
+        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        window = FakeWindow("abush-browser", group="c")
+        current = FakeWindow("browser", group="e")
+        current.wid = 99
+        screen = mock.Mock(group=FakeGroup("e"))
+        manager = mock.Mock(windows_map={22: window}, groups_map={"c": FakeGroup("c"),
+                            "f": FakeGroup("f")}, current_screen=screen,
+                            current_window=current)
+
+        restored = namespace["restore_abush_browser_window"](manager, 22, "f")
+        self.assertEqual(restored["id"], 22)
+        self.assertEqual(restored["group"], "f")
+        self.assertEqual(restored["current_group_before"], "e")
+        self.assertEqual(restored["current_group_after"], "e")
+        self.assertEqual(restored["active_xid_before"], 99)
+        self.assertEqual(restored["active_xid_after"], 99)
+        window.togroup.assert_called_once_with("f", switch_group=False)
+        window.focus.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "unknown rollback group"):
+            namespace["restore_abush_browser_window"](manager, 22, "missing")
+        with self.assertRaisesRegex(ValueError, "unknown X11"):
+            namespace["restore_abush_browser_window"](manager, 23, "f")
+
 
 class BinderQtileNotificationTest(unittest.TestCase):
     def setUp(self):

@@ -87,6 +87,33 @@ class FakePeer:
 
 
 class BrowserPeerBrokerTest(unittest.TestCase):
+    def test_native_host_refresh_loop_discovers_metadata_after_empty_startup(self):
+        native = host.NativeBrokerHost(
+            input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
+            ordinary_open_factory=None)
+        native.refresh_interval = 60
+        native.refresh_thread.start()
+        try:
+            self.assertTrue(native.refresh_started.wait(1))
+            server = self.peer()
+            native.refresh_wakeup.set()
+            self.assertTrue(server.connected.wait(2))
+            self.assertEqual(native.broker.list_remotes(), [{
+                "remote_key": "r_12345678",
+                "connection_id": "c_12345678",
+                "display_name": "r_12345678",
+                "connected": True,
+                "principal_id": "principal-one",
+                "executor_fence": server.fence,
+                "owner_display": server.owner_display,
+            }])
+        finally:
+            native.refresh_stop.set()
+            native.refresh_wakeup.set()
+            native.refresh_thread.join(timeout=1)
+            native.broker.close()
+        self.assertFalse(native.refresh_thread.is_alive())
+
     def setUp(self):
         temporary_root = ROOT.parent.parent / ".tmp"
         temporary_root.mkdir(exist_ok=True)
@@ -714,7 +741,9 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             broker.refresh()
             payload = {"remote_key": "r_12345678", "connection_id": "c_12345678",
                        "principal_id": "principal-one", "request_id": "topology-one",
-                       "executor_fence": server.fence, "page": page}
+                       "report_id": "stable-topology-one",
+                       "executor_fence": server.fence,
+                       "original_executor_fence": server.fence, "page": page}
             result = {}
             failure = []
 
@@ -728,12 +757,12 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             first = threading.Thread(target=report)
             first.start()
             self.assertEqual(server.wait_for("managed_page_moved_outside"), {
-                "type": "managed_page_moved_outside", "request_id": "topology-one",
+                "type": "managed_page_moved_outside", "request_id": "stable-topology-one",
                 "executor_fence": server.fence, "page": page,
             })
             duplicate = threading.Thread(target=report)
             duplicate.start()
-            server.send({"type": "topology_response", "request_id": "topology-one",
+            server.send({"type": "topology_response", "request_id": "stable-topology-one",
                          "result": {"outcome": "page_moved_outside"}})
             first.join(timeout=2)
             duplicate.join(timeout=2)
@@ -741,12 +770,73 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             self.assertFalse(duplicate.is_alive())
             self.assertEqual(failure, [])
             self.assertEqual(result, {"acknowledged": True, "request_id": "topology-one",
+                                      "report_id": "stable-topology-one",
                                       "result": {"outcome": "page_moved_outside"}})
             with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
                 broker.handle_request(self.request("managed_page_moved_outside", {
                     **payload, "page": {**page, "page_id": "other"},
                 }))
-            self.assertNotIn("topology-one", broker.peers["r_12345678"].topology_pending)
+            self.assertNotIn("stable-topology-one",
+                             broker.peers["r_12345678"].topology_pending)
+        finally:
+            broker.close()
+
+    def test_topology_report_reauthorizes_rotated_fence_with_stable_identity(self):
+        old = self.peer(connection_id="c_old00000", epoch=1)
+        broker = host.BrowserBroker(self.root)
+        page = {"window": {"workspace_id": "workspace", "window_id": "window",
+                           "generation": 1}, "page_id": "page", "generation": 1}
+        try:
+            broker.refresh()
+            broker.peers["r_12345678"].topology_timeout = 0.02
+            original = {
+                "remote_key": "r_12345678", "connection_id": "c_old00000",
+                "principal_id": "principal-one", "request_id": "delivery-old",
+                "report_id": "stable-report", "executor_fence": old.fence,
+                "original_executor_fence": old.fence, "page": page,
+            }
+            with self.assertRaises(TimeoutError):
+                broker.handle_request(self.request("managed_page_moved_outside", original))
+            self.assertEqual(old.wait_for("managed_page_moved_outside"), {
+                "type": "managed_page_moved_outside", "request_id": "stable-report",
+                "executor_fence": old.fence, "page": page,
+            })
+
+            replacement = self.peer(connection_id="c_new00000", epoch=2,
+                                    owner_display=old.owner_display)
+            (self.root / "r_12345678" / "c_old00000" / "connection.json").unlink()
+            broker.refresh()
+            self.assertTrue(replacement.connected.wait(1))
+            current = {
+                **original,
+                "connection_id": "c_new00000",
+                "request_id": "delivery-new",
+                "executor_fence": replacement.fence,
+            }
+            result = {}
+
+            def report():
+                result.update(broker.handle_request(
+                    self.request("managed_page_moved_outside", current)))
+
+            worker = threading.Thread(target=report)
+            worker.start()
+            self.assertEqual(replacement.wait_for("managed_page_moved_outside"), {
+                "type": "managed_page_moved_outside", "request_id": "stable-report",
+                "executor_fence": replacement.fence, "page": page,
+            })
+            replacement.send({
+                "type": "topology_response", "request_id": "stable-report",
+                "result": {"outcome": "page_moved_outside"},
+            })
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(result, {
+                "acknowledged": True,
+                "request_id": "delivery-new",
+                "report_id": "stable-report",
+                "result": {"outcome": "page_moved_outside"},
+            })
         finally:
             broker.close()
 
