@@ -647,13 +647,27 @@ def initialize_browser_tabs():
     show_browser_tabs()
 
 
+ABUSH_BINDING_TITLE = re.compile(
+    r"^__ABUSH_BIND__:[0-9a-f]{32}(?: - (?:Google Chrome|Chromium))?$"
+)
+
+
 def is_abush_browser(window):
     return window.get_wm_role() == "abush-browser"
 
 
+def is_abush_browser_candidate(window):
+    wm_class = window.get_wm_class() or []
+    return is_abush_browser(window) or (
+        any("chrom" in value.lower() for value in wm_class)
+        and bool(ABUSH_BINDING_TITLE.fullmatch(window.name or ""))
+    )
+
+
 def place_abush_browser(window):
-    if not is_abush_browser(window):
+    if not is_abush_browser_candidate(window):
         return False
+    window.can_steal_focus = False
     if window.group is not None and window.group.name == "c":
         return False
     window.togroup("c", switch_group=False)
@@ -713,6 +727,8 @@ qtile.show_scratchpad = show_scratchpad
 
 @hook.subscribe.client_new
 def before_window_created(client):
+    if place_abush_browser(client):
+        return
     if "copyq" in client.get_wm_class():
         client.enable_floating()
         client.set_size_floating(2000, 1200)

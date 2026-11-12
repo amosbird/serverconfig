@@ -3,6 +3,7 @@
 import ast
 import importlib.util
 import pathlib
+import re
 import subprocess
 import unittest
 from unittest import mock
@@ -61,13 +62,19 @@ class FakeGroup:
 
 
 class FakeWindow:
-    def __init__(self, role, group="f"):
+    def __init__(self, role, group="f", name="", wm_class=None):
         self.role = role
         self.group = FakeGroup(group)
+        self.name = name
+        self.wm_class = wm_class or ["google-chrome", "Google-chrome"]
+        self.can_steal_focus = True
         self.togroup = mock.Mock()
 
     def get_wm_role(self):
         return self.role
+
+    def get_wm_class(self):
+        return self.wm_class
 
 
 class QtileConfigTest(unittest.TestCase):
@@ -130,21 +137,48 @@ class QtileConfigTest(unittest.TestCase):
         self.assertFalse((ROOT / "scripts/kitty-notify").exists())
 
     def test_place_helper_moves_without_switching_or_focusing(self):
-        namespace = {}
+        namespace = {"re": re}
         functions = {
             node.name: node
             for node in self.tree.body
             if isinstance(node, ast.FunctionDef)
-            and node.name in {"is_abush_browser", "place_abush_browser"}
+            and node.name in {
+                "is_abush_browser",
+                "is_abush_browser_candidate",
+                "place_abush_browser",
+            }
         }
-        exec(compile(ast.Module(list(functions.values()), []), str(CONFIG_PATH), "exec"), namespace)
+        binding_title = next(
+            node.value
+            for node in self.tree.body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
+                    for target in node.targets)
+        )
+        module = ast.Module(
+            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title),
+             *functions.values()],
+            [],
+        )
+        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
         window = FakeWindow("abush-browser")
         self.assertTrue(namespace["place_abush_browser"](window))
+        self.assertFalse(window.can_steal_focus)
         window.togroup.assert_called_once_with("c", switch_group=False)
         self.assertFalse(hasattr(window, "focus"))
         self.assertFalse(hasattr(window.group, "toscreen"))
-        other = FakeWindow("pop-up")
+        candidate = FakeWindow(None, name="__ABUSH_BIND__:" + "a" * 32 + " - Google Chrome")
+        self.assertTrue(namespace["place_abush_browser"](candidate))
+        self.assertFalse(candidate.can_steal_focus)
+        candidate.togroup.assert_called_once_with("c", switch_group=False)
+        impostor = FakeWindow(None, name="__ABUSH_BIND__:" + "b" * 32,
+                              wm_class=["kitty", "kitty"])
+        self.assertFalse(namespace["place_abush_browser"](impostor))
+        self.assertTrue(impostor.can_steal_focus)
+        impostor.togroup.assert_not_called()
+        other = FakeWindow("pop-up", name="Example Domain - Google Chrome")
         self.assertFalse(namespace["place_abush_browser"](other))
+        self.assertTrue(other.can_steal_focus)
         other.togroup.assert_not_called()
 
 
