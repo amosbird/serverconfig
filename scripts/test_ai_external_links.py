@@ -115,6 +115,7 @@ for (const [page, link, expected] of cases) {{
             "Alt+Shift+End",
         )
         self.assertIn("debugger", manifest["permissions"])
+        self.assertIn("storage", manifest["permissions"])
         for dangerous in ("scripting", "activeTab", "downloads", "offscreen", "clipboardWrite"):
             self.assertNotIn(dangerous, manifest["permissions"])
         self.assertIn("chrome.commands.onCommand", background)

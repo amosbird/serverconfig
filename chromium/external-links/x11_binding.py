@@ -151,7 +151,7 @@ def bind_workspace_window(
             payload["generation"] <= 0:
         raise ValueError("invalid generation")
     adapter = adapter or XcffibAdapter()
-    expected = f"__ABUSH_BIND__:{nonce}"
+    expected = f"__ABUSH_BIND__:{nonce}:a"
     matches = []
     for attempt in range(attempts):
         existing = [window for window in adapter.windows()

@@ -24,7 +24,7 @@ class FakeAdapter:
         self.values = {
             (11, "_NET_WM_NAME"): "ordinary",
             (11, "WM_CLASS"): "chromium\0Chromium",
-            (22, "_NET_WM_NAME"): "__ABUSH_BIND__:0123456789abcdef0123456789abcdef - Google Chrome",
+            (22, "_NET_WM_NAME"): "__ABUSH_BIND__:0123456789abcdef0123456789abcdef:a - Google Chrome",
             (22, "WM_CLASS"): "chromium\0Chromium",
         }
         self.finished = False
@@ -131,7 +131,7 @@ class X11BindingTest(unittest.TestCase):
                 }, adapter=FakeAdapter(), attempts=1)
 
     def test_title_matching_accepts_chrome_suffix_only(self):
-        expected = "__ABUSH_BIND__:0123456789abcdef0123456789abcdef"
+        expected = "__ABUSH_BIND__:0123456789abcdef0123456789abcdef:a"
         self.assertTrue(binding.binding_title_matches(expected, expected))
         self.assertTrue(binding.binding_title_matches(expected + " - Google Chrome", expected))
         self.assertTrue(binding.binding_title_matches(expected + " - Chromium", expected))

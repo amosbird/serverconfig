@@ -1,5 +1,7 @@
 const STATUS_PREFIX = "__ABUSH_BIND__:";
 const STATUS_NONCE_RE = /^[0-9a-f]{32}$/;
+const MARKER_IDS = ["a", "b"];
+const OWNED_MARKERS_KEY = "abushOwnedMarkers";
 const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -42,12 +44,14 @@ class WorkspaceExecutor {
         this.workspaces = new Map();
         this.windowOwners = new Map();
         this.tabOwners = new Map();
+        this.statusTabOwners = new Map();
         this.operations = new Map();
         this.completedOperations = new Map();
         this.ensureFlights = new Map();
         this.ensureWaiters = new Map();
         this.persistTail = Promise.resolve();
         this.persistRevision = 0;
+        this.markerTail = Promise.resolve();
         this.ready = Promise.resolve();
     }
 
@@ -85,6 +89,30 @@ class WorkspaceExecutor {
         await write;
     }
 
+    async updateOwnedMarkers(update) {
+        if (!this.chrome.storage?.local) throw new Error("local extension storage is unavailable");
+        const write = this.markerTail.catch(() => {}).then(async () => {
+            const stored = await this.chrome.storage.local.get([OWNED_MARKERS_KEY]);
+            const markers = stored[OWNED_MARKERS_KEY] || {};
+            update(markers);
+            await this.chrome.storage.local.set({[OWNED_MARKERS_KEY]: markers});
+        });
+        this.markerTail = write;
+        await write;
+    }
+
+    async ownMarker(nonce) {
+        await this.updateOwnedMarkers(markers => {
+            markers[nonce] = true;
+        });
+    }
+
+    async disownMarker(nonce) {
+        await this.updateOwnedMarkers(markers => {
+            delete markers[nonce];
+        });
+    }
+
     async commitRecord(record, previous = null) {
         const write = this.persistTail.catch(() => {}).then(async () => {
             const records = [...this.workspaces.values()].map(saved =>
@@ -98,19 +126,23 @@ class WorkspaceExecutor {
         await write;
     }
 
-    statusUrl(record) {
-        return this.chrome.runtime.getURL(`status.html#${record.nonce}`);
+    statusUrl(record, marker) {
+        return this.chrome.runtime.getURL(
+            `status.html#nonce=${record.nonce}&marker=${marker}`
+        );
     }
 
-    statusNonce(url) {
+    parseStatusUrl(url) {
         const prefix = this.chrome.runtime.getURL("status.html#");
         if (typeof url !== "string" || !url.startsWith(prefix)) return null;
-        const nonce = url.slice(prefix.length);
-        return STATUS_NONCE_RE.test(nonce) ? nonce : null;
+        const fragment = url.slice(prefix.length);
+        if (STATUS_NONCE_RE.test(fragment)) return {nonce: fragment, marker: "legacy"};
+        const match = /^nonce=([0-9a-f]{32})&marker=([ab])$/.exec(fragment);
+        return match ? {nonce: match[1], marker: match[2]} : null;
     }
 
-    async waitForStatusTitle(tabId, nonce) {
-        const expected = `${STATUS_PREFIX}${nonce}`;
+    async waitForStatusTitle(tabId, nonce, marker) {
+        const expected = `${STATUS_PREFIX}${nonce}:${marker}`;
         for (let attempt = 0; attempt < 100; attempt++) {
             const tab = await this.chrome.tabs.get(tabId);
             if (tab.title === expected) return;
@@ -121,53 +153,117 @@ class WorkspaceExecutor {
 
     async closeOrphanedStatusWindows(liveWindowIds) {
         const tabs = await this.chrome.tabs.query({});
+        const local = this.chrome.storage?.local ?
+            await this.chrome.storage.local.get([OWNED_MARKERS_KEY]) : {};
+        const ownedMarkers = local[OWNED_MARKERS_KEY] || {};
+        const windowTypes = new Map((await this.chrome.windows.getAll()).map(window =>
+            [window.id, window.type]));
+        const windows = new Map();
         for (const tab of tabs) {
-            if (this.statusNonce(tab.url) === null || liveWindowIds.has(tab.windowId)) continue;
-            try { await this.chrome.tabs.remove(tab.id); } catch (_) {}
+            if (!windows.has(tab.windowId)) windows.set(tab.windowId, []);
+            windows.get(tab.windowId).push(tab);
         }
+        for (const [windowId, windowTabs] of windows) {
+            if (liveWindowIds.has(windowId)) continue;
+            const parsed = windowTabs.map(tab => ({tab, marker: this.parseStatusUrl(tab.url)}));
+            const markers = parsed.filter(item => item.marker !== null);
+            const legacyMarkers = markers.filter(item => item.marker.marker === "legacy");
+            const markerIds = new Set(markers.map(item => item.marker.marker));
+            const nonces = new Set(markers.map(item => item.marker.nonce));
+            const ownedWindow = windowTypes.get(windowId) === "normal" &&
+                windowTabs.length === 3 && markers.length === 2 &&
+                legacyMarkers.length === 0 && markerIds.size === 2 && nonces.size === 1 &&
+                ownedMarkers[markers[0].marker.nonce] === true &&
+                markers.every(({tab, marker}) => tab.pinned &&
+                    tab.title === `${STATUS_PREFIX}${marker.nonce}:${marker.marker}`) &&
+                markers.map(({tab}) => tab.index).sort().join(",") === "0,1" &&
+                windowTabs.filter(tab => !tab.pinned && tab.index === 2).length === 1;
+            if (ownedWindow) {
+                await this.chrome.windows.remove(windowId);
+                delete ownedMarkers[markers[0].marker.nonce];
+            } else {
+                for (const {tab} of markers) await this.chrome.tabs.remove(tab.id);
+            }
+        }
+        if (this.chrome.storage?.local) {
+            await this.chrome.storage.local.set({[OWNED_MARKERS_KEY]: ownedMarkers});
+        }
+    }
+
+    async normalWindowId() {
+        const windows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
+        const normal = windows.filter(window => window.type === "normal");
+        if (normal.length === 0) throw new Error("main Chrome has no normal window");
+        return normal.find(window => window.focused)?.id ?? normal[0].id;
+    }
+
+    async windowType(windowId) {
+        const window = await this.chrome.windows.get(windowId);
+        return window.type;
     }
 
     async isLive(record) {
         try {
+            if (await this.windowType(record.windowId) !== "normal") return false;
             const tabs = await this.chrome.tabs.query({windowId: record.windowId});
-            return tabs.length === 2 && tabs.filter(tab => tab.id === record.statusTabId &&
-                tab.url === this.statusUrl(record)).length === 1 &&
-                tabs.filter(tab => tab.id === record.pageTabId).length === 1 &&
-                record.statusTabId !== record.pageTabId;
+            return tabs.length === 3 && STATUS_NONCE_RE.test(record.nonce) &&
+                MARKER_IDS.every((marker, index) =>
+                    tabs.some(tab => tab.id === record.statusTabIds[index] &&
+                        tab.url === this.statusUrl(record, marker) &&
+                        tab.title === `${STATUS_PREFIX}${record.nonce}:${marker}` &&
+                        tab.pinned && tab.index === index)) &&
+                tabs.filter(tab => tab.id === record.pageTabId && !tab.pinned &&
+                    tab.index === 2).length === 1 &&
+                !record.statusTabIds.includes(record.pageTabId);
         } catch (_) {
             return false;
         }
     }
 
     async restore() {
-        if (!this.chrome.storage?.session) return;
-        const {abushWorkspaces = [], revision = 0} =
-            await this.chrome.storage.session.get(["abushWorkspaces", "revision"]);
-        if (Number.isInteger(revision) && revision >= 0) this.persistRevision = revision;
-        let removed = false;
         const liveWindowIds = new Set();
-        for (const saved of abushWorkspaces) {
-            if (!saved || typeof saved.remoteKey !== "string" ||
-                    typeof saved.principalId !== "string" || !saved.principalId ||
-                    typeof saved.workspaceId !== "string" || !saved.workspaceId ||
-                    typeof saved.logicalWindowId !== "string" || !saved.logicalWindowId ||
-                    typeof saved.logicalPageId !== "string" || !saved.logicalPageId ||
-                    !Number.isInteger(saved.windowGeneration ?? saved.generation) ||
-                    (saved.windowGeneration ?? saved.generation) < 1 ||
-                    !Number.isInteger(saved.pageGeneration ?? saved.generation) ||
-                    (saved.pageGeneration ?? saved.generation) < 1 ||
-                    typeof saved.windowId !== "number" || typeof saved.statusTabId !== "number" ||
-                    typeof saved.pageTabId !== "number" || typeof saved.nonce !== "string") {
-                removed = true;
-                continue;
+        let removed = false;
+        const seenKeys = new Set();
+        const seenPhysical = new Set();
+        const ownedMarkers = this.chrome.storage?.local ?
+            (await this.chrome.storage.local.get([OWNED_MARKERS_KEY]))[OWNED_MARKERS_KEY] || {} : {};
+        if (this.chrome.storage?.session) {
+            const {abushWorkspaces = [], revision = 0} =
+                await this.chrome.storage.session.get(["abushWorkspaces", "revision"]);
+            if (Number.isInteger(revision) && revision >= 0) this.persistRevision = revision;
+            for (const saved of abushWorkspaces) {
+                if (!saved || typeof saved.remoteKey !== "string" ||
+                        typeof saved.principalId !== "string" || !saved.principalId ||
+                        typeof saved.workspaceId !== "string" || !saved.workspaceId ||
+                        typeof saved.logicalWindowId !== "string" || !saved.logicalWindowId ||
+                        typeof saved.logicalPageId !== "string" || !saved.logicalPageId ||
+                        !Number.isInteger(saved.windowGeneration ?? saved.generation) ||
+                        (saved.windowGeneration ?? saved.generation) < 1 ||
+                        !Number.isInteger(saved.pageGeneration ?? saved.generation) ||
+                        (saved.pageGeneration ?? saved.generation) < 1 ||
+                        typeof saved.windowId !== "number" ||
+                        !Array.isArray(saved.statusTabIds) || saved.statusTabIds.length !== 2 ||
+                        !saved.statusTabIds.every(id => typeof id === "number") ||
+                        typeof saved.pageTabId !== "number" || typeof saved.nonce !== "string") {
+                    removed = true;
+                    continue;
+                }
+                if (!await this.isLive(saved) || ownedMarkers[saved.nonce] !== true) {
+                    removed = true;
+                    continue;
+                }
+                const key = this.key(saved.remoteKey, saved.principalId);
+                const physical = [saved.windowId, saved.pageTabId, ...saved.statusTabIds];
+                if (seenKeys.has(key) || physical.some(id => seenPhysical.has(id))) {
+                    removed = true;
+                    continue;
+                }
+                seenKeys.add(key);
+                physical.forEach(id => seenPhysical.add(id));
+                saved.debuggerAttached = false;
+                this.install(saved);
+                liveWindowIds.add(saved.windowId);
             }
-            if (!await this.isLive(saved)) {
-                removed = true;
-                continue;
-            }
-            saved.debuggerAttached = false;
-            this.install(saved);
-            liveWindowIds.add(saved.windowId);
         }
         await this.closeOrphanedStatusWindows(liveWindowIds);
         if (removed) await this.persist();
@@ -178,6 +274,7 @@ class WorkspaceExecutor {
         this.workspaces.set(key, record);
         this.windowOwners.set(record.windowId, key);
         this.tabOwners.set(record.pageTabId, key);
+        for (const tabId of record.statusTabIds) this.statusTabOwners.set(tabId, key);
     }
 
     bindingPayload(record) {
@@ -192,7 +289,7 @@ class WorkspaceExecutor {
     }
 
     async bind(record, workspaceId = record.workspaceId) {
-        await this.chrome.tabs.update(record.statusTabId, {active: true});
+        await this.chrome.tabs.update(record.statusTabIds[0], {active: true});
         try {
             await this.nativeRequest("abush_browser", "bind_x11_window",
                 this.bindingPayload({...record, workspaceId}));
@@ -309,7 +406,9 @@ class WorkspaceExecutor {
                 sameRef(record.executorFence, payload.executor_fence) &&
                 record.logicalWindowId === payload.window_id && record.logicalPageId === payload.page_id) {
             await this.detach(record.pageTabId);
-            try { await this.chrome.windows.remove(record.windowId); } catch (_) {}
+            if (!await this.isLive(record)) return false;
+            await this.chrome.windows.remove(record.windowId);
+            await this.disownMarker(record.nonce);
             this.forget(record);
             await this.persist();
         }
@@ -382,71 +481,94 @@ class WorkspaceExecutor {
             return existing;
         }
         const nonce = crypto.randomUUID().replaceAll("-", "");
-        const statusUrl = this.chrome.runtime.getURL(`status.html#${nonce}`);
-        const statusTab = await this.chrome.tabs.create({url: statusUrl, active: false});
+        await this.ownMarker(nonce);
+        const hostWindowId = await this.normalWindowId();
+        const statusTabs = [];
         let created;
         try {
-            await this.waitForStatusTitle(statusTab.id, nonce);
+            for (const marker of MARKER_IDS) {
+                const tab = await this.chrome.tabs.create({
+                    windowId: hostWindowId,
+                    url: this.statusUrl({nonce}, marker),
+                    active: false,
+                });
+                await this.waitForStatusTitle(tab.id, nonce, marker);
+                statusTabs.push(tab);
+            }
             created = await this.chrome.windows.create({
-                tabId: statusTab.id, focused: false, type: "normal",
+                tabId: statusTabs[0].id,
+                focused: false,
+                type: "normal",
+            });
+            await this.chrome.tabs.move(statusTabs[1].id, {
+                windowId: created.id,
+                index: -1,
             });
         } catch (error) {
-            try { await this.chrome.tabs.remove(statusTab.id); } catch (_) {}
+            if (created?.id !== undefined) {
+                try { await this.chrome.windows.remove(created.id); } catch (_) {}
+            }
+            for (const tab of statusTabs) {
+                try { await this.chrome.tabs.remove(tab.id); } catch (_) {}
+            }
+            await this.disownMarker(nonce);
             throw error;
         }
         flight.createdWindowId = created.id;
         try {
             this.ensureActive(flight);
+            for (const tab of statusTabs) {
+                await this.chrome.tabs.update(tab.id, {pinned: true});
+            }
+            const business = await this.chrome.tabs.create({
+                windowId: created.id, url: "about:blank", active: true,
+            });
+            const expected = payload.expected_page;
+            let logicalWindowId = crypto.randomUUID();
+            let logicalPageId = crypto.randomUUID();
+            let windowGeneration = 1;
+            let pageGeneration = 1;
+            if (expected) {
+                logicalWindowId = expected.window.window_id;
+                logicalPageId = expected.page_id;
+                windowGeneration = expected.window.generation;
+                pageGeneration = expected.generation;
+            }
+            const record = {
+                remoteKey: payload.remote_key,
+                principalId: payload.principal_id,
+                workspaceId: payload.workspace_id,
+                connectionId: payload.connection_id,
+                executorFence: payload.executor_fence,
+                ownerDisplay: payload.owner_display,
+                connectionDisplayName: payload.connection_display_name,
+                logicalWindowId,
+                logicalPageId,
+                windowGeneration,
+                pageGeneration,
+                windowId: created.id,
+                statusTabIds: statusTabs.map(tab => tab.id),
+                pageTabId: business.id,
+                nonce,
+                debuggerAttached: false,
+            };
+            try {
+                this.ensureActive(flight);
+                await this.bind(record);
+                this.ensureActive(flight);
+                if (!await this.isLive(record)) throw new Error("workspace changed during bind");
+                this.ensureActive(flight);
+                await this.commitRecord(record);
+                flight.committed = true;
+                return record;
+            } catch (error) {
+                this.forget(record);
+                try { await this.persist(); } catch (_) {}
+                throw error;
+            }
         } catch (error) {
             await this.cleanupFlightWindow(flight);
-            throw error;
-        }
-        await this.chrome.tabs.update(statusTab.id, {pinned: true});
-        const business = await this.chrome.tabs.create({
-            windowId: created.id, url: "about:blank", active: true,
-        });
-        const expected = payload.expected_page;
-        let logicalWindowId = crypto.randomUUID();
-        let logicalPageId = crypto.randomUUID();
-        let windowGeneration = 1;
-        let pageGeneration = 1;
-        if (expected) {
-            logicalWindowId = expected.window.window_id;
-            logicalPageId = expected.page_id;
-            windowGeneration = expected.window.generation;
-            pageGeneration = expected.generation;
-        }
-        const record = {
-            remoteKey: payload.remote_key,
-            principalId: payload.principal_id,
-            workspaceId: payload.workspace_id,
-            connectionId: payload.connection_id,
-            executorFence: payload.executor_fence,
-            ownerDisplay: payload.owner_display,
-            connectionDisplayName: payload.connection_display_name,
-            logicalWindowId,
-            logicalPageId,
-            windowGeneration,
-            pageGeneration,
-            windowId: created.id,
-            statusTabId: statusTab.id,
-            pageTabId: business.id,
-            nonce,
-            debuggerAttached: false,
-        };
-        try {
-            this.ensureActive(flight);
-            await this.bind(record);
-            this.ensureActive(flight);
-            if (!await this.isLive(record)) throw new Error("workspace changed during bind");
-            this.ensureActive(flight);
-            await this.commitRecord(record);
-            flight.committed = true;
-            return record;
-        } catch (error) {
-            this.forget(record);
-            try { await this.persist(); } catch (_) {}
-            await this.cleanupFlightWindow(flight);
+            await this.disownMarker(nonce);
             throw error;
         }
     }
@@ -582,9 +704,8 @@ class WorkspaceExecutor {
                 if (operation.cancelled) completion = "not_applied";
                 else {
                     operation.mutationStarted = true;
-                    await this.chrome.tabs.remove(record.pageTabId);
+                    await this.closeOwnedWindow(record);
                     operation.committed = true;
-                    this.forget(record);
                     completion = operation.cancelled ? "unknown" : "applied";
                 }
             } else if (payload.command.command === "close_window") {
@@ -592,9 +713,8 @@ class WorkspaceExecutor {
                 if (operation.cancelled) completion = "not_applied";
                 else {
                     operation.mutationStarted = true;
-                    await this.chrome.windows.remove(record.windowId);
+                    await this.closeOwnedWindow(record);
                     operation.committed = true;
-                    this.forget(record);
                     completion = operation.cancelled ? "unknown" : "applied";
                 }
             }
@@ -698,6 +818,14 @@ class WorkspaceExecutor {
         this.workspaces.delete(key);
         this.windowOwners.delete(record.windowId);
         this.tabOwners.delete(record.pageTabId);
+        for (const tabId of record.statusTabIds) this.statusTabOwners.delete(tabId);
+    }
+
+    async closeOwnedWindow(record) {
+        if (!await this.isLive(record)) throw new Error("managed window topology changed");
+        await this.chrome.windows.remove(record.windowId);
+        await this.disownMarker(record.nonce);
+        this.forget(record);
     }
 
     async debuggerDetached(tabId) {
@@ -713,6 +841,28 @@ class WorkspaceExecutor {
     }
 
     async tabMoved(tabId, moveInfo) {
+        const statusKey = this.statusTabOwners.get(tabId);
+        if (statusKey) {
+            const record = this.workspaces.get(statusKey);
+            if (record && moveInfo.windowId !== record.windowId) {
+                for (const statusTabId of record.statusTabIds) {
+                    try { await this.chrome.tabs.remove(statusTabId); } catch (_) {}
+                    this.statusTabOwners.delete(statusTabId);
+                }
+                await this.nativeRequest("abush_browser", "managed_page_moved_outside", {
+                    remote_key: record.remoteKey,
+                    connection_id: record.connectionId,
+                    principal_id: record.principalId,
+                    request_id: crypto.randomUUID(),
+                    executor_fence: record.executorFence,
+                    page: this.pageRef(record),
+                });
+                await this.detach(record.pageTabId);
+                this.forget(record);
+                await this.persist();
+            }
+            return;
+        }
         const key = this.tabOwners.get(tabId);
         if (!key) return;
         const record = this.workspaces.get(key);
@@ -726,6 +876,7 @@ class WorkspaceExecutor {
             page: this.pageRef(record),
         });
         await this.detach(tabId);
+        await this.disownMarker(record.nonce);
         this.forget(record);
         await this.persist();
     }
@@ -742,5 +893,5 @@ class WorkspaceExecutor {
 
 if (typeof module !== "undefined") {
     module.exports = {WorkspaceExecutor, sameRef, displayTitle, STATUS_PREFIX,
-        BROWSER_ERROR_CODES};
+        MARKER_IDS, BROWSER_ERROR_CODES};
 }

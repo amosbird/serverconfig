@@ -180,11 +180,17 @@ async function configureSiteLanguages() {
     });
 }
 
+function connectWorkspaceAfterRestore(workspaces, connect) {
+    return workspaces.restoreWhenReady().then(connect);
+}
+
 if (typeof chrome !== "undefined") {
     configureSiteLanguages();
-    dispatcher().ensurePort();
     const workspaces = workspace();
-    const workspaceReady = workspaces.restoreWhenReady().catch(error => {
+    const workspaceReady = connectWorkspaceAfterRestore(
+        workspaces,
+        () => dispatcher().ensurePort(),
+    ).catch(error => {
         notifyFailure(error.message || "Unable to restore Abush browser workspaces");
         throw error;
     });
@@ -250,5 +256,6 @@ if (typeof chrome !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-    module.exports = {NativeDispatcher, ENVELOPE_VERSION, workspace};
+    module.exports = {NativeDispatcher, ENVELOPE_VERSION, workspace,
+        connectWorkspaceAfterRestore};
 }

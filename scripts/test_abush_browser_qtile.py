@@ -33,7 +33,7 @@ def literal_keyword(call, name):
 class FakeAdapter:
     def __init__(self):
         self.values = {
-            (22, "_NET_WM_NAME"): "__ABUSH_BIND__:0123456789abcdef0123456789abcdef",
+            (22, "_NET_WM_NAME"): "__ABUSH_BIND__:0123456789abcdef0123456789abcdef:a",
             (22, "WM_CLASS"): "chromium\0Chromium",
         }
 
@@ -167,11 +167,11 @@ class QtileConfigTest(unittest.TestCase):
         window.togroup.assert_called_once_with("c", switch_group=False)
         self.assertFalse(hasattr(window, "focus"))
         self.assertFalse(hasattr(window.group, "toscreen"))
-        candidate = FakeWindow(None, name="__ABUSH_BIND__:" + "a" * 32 + " - Google Chrome")
+        candidate = FakeWindow(None, name="__ABUSH_BIND__:" + "a" * 32 + ":a - Google Chrome")
         self.assertTrue(namespace["place_abush_browser"](candidate))
         self.assertFalse(candidate.can_steal_focus)
         candidate.togroup.assert_called_once_with("c", switch_group=False)
-        impostor = FakeWindow(None, name="__ABUSH_BIND__:" + "b" * 32,
+        impostor = FakeWindow(None, name="__ABUSH_BIND__:" + "b" * 32 + ":a",
                               wm_class=["kitty", "kitty"])
         self.assertFalse(namespace["place_abush_browser"](impostor))
         self.assertTrue(impostor.can_steal_focus)

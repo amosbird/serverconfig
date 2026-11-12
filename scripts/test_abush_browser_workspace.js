@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 
 const assert = require("assert");
-const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX} = require(
+const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX,
+    MARKER_IDS} = require(
     "../chromium/external-links/extension/workspace.js");
-const {NativeDispatcher} = require("../chromium/external-links/extension/background.js");
+const {NativeDispatcher, connectWorkspaceAfterRestore} = require(
+    "../chromium/external-links/extension/background.js");
 
 const fence = {executor_id: "executor", epoch: 1};
 const logicalWindowId = "11111111-1111-4111-8111-111111111111";
@@ -50,39 +52,96 @@ function deferred() {
 }
 
 function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
-                 orphanPage = false) {
+                 orphanPage = false, restoredPopup = null, localState = {}) {
     const calls = [];
+    if (!localState.abushOwnedMarkers) {
+        localState.abushOwnedMarkers = Object.fromEntries(saved.map(record => [record.nonce, true]));
+    }
     let nextWindow = 10;
     let nextTab = 1000;
     const orphaned = orphanStatusNonces.map((nonce, index) => [500 + index, [{
         id: 1500 + index,
         windowId: 500 + index,
+        windowType: "normal",
         url: `chrome-extension://id/status.html#${nonce}`,
         title: `${STATUS_PREFIX}${nonce}`,
     }, ...(orphanPage ? [{id: 1600 + index, windowId: 500 + index,
-        url: "about:blank"}] : [])]]);
-    const windows = new Map([[1, Array.from({length: ordinaryTabCount}, (_, index) => ({
-        id: 2000 + index, windowId: 1, url: `https://ordinary-${index}.test/`,
-    }))], ...orphaned, ...saved.map(record => [record.windowId, [
-        {id: record.statusTabId, windowId: record.windowId,
-            url: `chrome-extension://id/status.html#${record.nonce}`,
-            title: `${STATUS_PREFIX}${record.nonce}`},
-        {id: record.pageTabId, windowId: record.windowId, url: "about:blank"},
+        windowType: "normal", url: "about:blank"}] : [])]]);
+    const restored = restoredPopup ? [[restoredPopup.windowId, [
+        ...MARKER_IDS.map((marker, index) => ({
+            id: restoredPopup.tabIds[index],
+            windowId: restoredPopup.windowId,
+            windowType: "normal",
+            index,
+            pinned: true,
+            url: `chrome-extension://id/status.html#nonce=${restoredPopup.nonce}&marker=${marker}`,
+            title: `${STATUS_PREFIX}${restoredPopup.nonce}:${marker}`,
+        })),
+        {id: restoredPopup.tabIds[2], windowId: restoredPopup.windowId,
+            windowType: "normal", index: 2, pinned: false, url: restoredPopup.businessUrl},
+    ]]] : [];
+    const windows = new Map([[1, Array.from({length: Math.max(ordinaryTabCount, 1)}, (_, index) => ({
+        id: 2000 + index, windowId: 1, windowType: "normal",
+        url: `https://ordinary-${index}.test/`,
+    }))], ...orphaned, ...restored, ...saved.map(record => [record.windowId, [
+        ...record.statusTabIds.map((id, index) => ({
+            id,
+            windowId: record.windowId,
+            windowType: "normal",
+            index,
+            pinned: true,
+            url: `chrome-extension://id/status.html#nonce=${record.nonce}&marker=${MARKER_IDS[index]}`,
+            title: `${STATUS_PREFIX}${record.nonce}:${MARKER_IDS[index]}`,
+        })),
+        {id: record.pageTabId, windowId: record.windowId, windowType: "normal",
+            index: 2, pinned: false, url: "about:blank"},
     ]])]);
     const chrome = {
         runtime: {getURL: path => `chrome-extension://id/${path}`},
-        storage: {session: {
-            get: async () => ({abushWorkspaces: saved}),
-            set: async value => calls.push(["persist", value]),
-        }},
+        storage: {
+            session: {
+                get: async () => ({abushWorkspaces: saved}),
+                set: async value => calls.push(["persist", value]),
+            },
+            local: {
+                get: async () => structuredClone(localState),
+                set: async value => {
+                    calls.push(["persistLocal", structuredClone(value)]);
+                    Object.assign(localState, structuredClone(value));
+                },
+            },
+        },
         windows: {
+            get: async id => ({
+                id,
+                type: windows.get(id)[0]?.windowType || "normal",
+                focused: id === 1,
+            }),
+            getAll: async () => [...windows.keys()].map(id => ({
+                id,
+                type: windows.get(id)[0]?.windowType || "normal",
+                focused: id === 1,
+            })),
             create: async properties => {
                 calls.push(["createWindow", properties]);
                 const id = nextWindow++;
+                if (properties.url) {
+                    const urls = Array.isArray(properties.url) ? properties.url : [properties.url];
+                    const tabs = urls.map((url, index) => {
+                        const tab = {id: nextTab++, windowId: id,
+                            windowType: properties.type, url, index, pinned: false};
+                        const params = new URLSearchParams(url.split("#")[1]);
+                        tab.title = `${STATUS_PREFIX}${params.get("nonce")}:${params.get("marker")}`;
+                        return tab;
+                    });
+                    windows.set(id, tabs);
+                    return {id, tabs};
+                }
                 const source = [...windows.values()].find(tabs =>
                     tabs.some(tab => tab.id === properties.tabId));
                 const tab = source.splice(source.findIndex(item => item.id === properties.tabId), 1)[0];
                 tab.windowId = id;
+                tab.windowType = properties.type;
                 windows.set(id, [tab]);
                 return {id, tabs: [tab]};
             },
@@ -97,14 +156,41 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             create: async properties => {
                 calls.push(["createTab", properties]);
                 const windowId = properties.windowId ?? 1;
-                const tab = {id: nextTab++, windowId, url: properties.url};
+                const tab = {id: nextTab++, windowId, windowType: "normal", url: properties.url,
+                    index: windows.get(windowId).length, pinned: false};
                 if (properties.url?.includes("status.html#")) {
-                    tab.title = `${STATUS_PREFIX}${properties.url.split("#")[1]}`;
+                    const params = new URLSearchParams(properties.url.split("#")[1]);
+                    tab.title = `${STATUS_PREFIX}${params.get("nonce")}:${params.get("marker")}`;
                 }
                 windows.get(windowId).push(tab);
                 return tab;
             },
-            update: async (id, properties) => calls.push(["update", id, properties]),
+            move: async (id, properties) => {
+                calls.push(["move", id, properties]);
+                let tab;
+                for (const tabs of windows.values()) {
+                    const index = tabs.findIndex(candidate => candidate.id === id);
+                    if (index !== -1) tab = tabs.splice(index, 1)[0];
+                }
+                tab.windowId = properties.windowId;
+                tab.windowType = windows.get(properties.windowId)[0].windowType;
+                windows.get(properties.windowId).push(tab);
+                return tab;
+            },
+            update: async (id, properties) => {
+                calls.push(["update", id, properties]);
+                for (const tabs of windows.values()) {
+                    const tab = tabs.find(candidate => candidate.id === id);
+                    if (!tab) continue;
+                    Object.assign(tab, properties);
+                    if (properties.pinned) {
+                        tabs.splice(tabs.indexOf(tab), 1);
+                        const pinnedCount = tabs.filter(candidate => candidate.pinned).length;
+                        tabs.splice(pinnedCount, 0, tab);
+                        tabs.forEach((candidate, index) => candidate.index = index);
+                    }
+                }
+            },
             get: async id => {
                 for (const [windowId, tabs] of windows) {
                     const tab = tabs.find(item => item.id === id);
@@ -160,11 +246,53 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             throw new Error("window creation failed");
         };
         await assert.rejects(executor.ensure(ensurePayload()), /window creation failed/);
-        const statusCreate = calls.find(call => call[0] === "createTab" &&
-            call[1].url.includes("status.html#"));
-        assert(statusCreate);
-        assert(calls.some(call => call[0] === "remove"),
-            "failed window creation must remove the temporary marker tab");
+        assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
+            "a failed window create must not leave a partial marker tab");
+    }
+    {
+        const nonce = "9".repeat(32);
+        const restoredPopup = {
+            windowId: 700,
+            tabIds: [1700, 1701, 1702],
+            nonce,
+            businessUrl: "https://restored-abush.test/",
+        };
+        const localState = {abushOwnedMarkers: {[nonce]: true}};
+        const {executor, calls} = fixture([], [], 0, false, restoredPopup, localState);
+        await executor.restore();
+        assert.deepEqual(calls.filter(call => call[0] === "removeWindow"),
+            [["removeWindow", 700]], "restored owned popup must be removed before ensures");
+    }
+    {
+        const nonce = "8".repeat(32);
+        const restoredPopup = {
+            windowId: 701,
+            tabIds: [1710, 1711, 1712],
+            nonce,
+            businessUrl: "https://user-tab.test/",
+        };
+        const {executor, calls} = fixture([], [], 0, false, restoredPopup);
+        await executor.restore();
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0,
+            "marker topology without durable ownership must preserve the window");
+        assert.equal(calls.filter(call => call[0] === "remove").length, 2);
+    }
+    {
+        const gate = deferred();
+        const order = [];
+        const workspaces = {
+            restoreWhenReady: async () => {
+                order.push("restore-start");
+                await gate.promise;
+                order.push("restore-done");
+            },
+        };
+        const ready = connectWorkspaceAfterRestore(workspaces, () => order.push("connect"));
+        await Promise.resolve();
+        assert.deepEqual(order, ["restore-start"]);
+        gate.resolve();
+        await ready;
+        assert.deepEqual(order, ["restore-start", "restore-done", "connect"]);
     }
     {
         const {executor, calls} = fixture();
@@ -188,7 +316,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             workspaceId: "workspace-authoritative",
             connectionId: "c_old00000", executorFence: {...fence, epoch: 1},
             logicalWindowId, logicalPageId, generation: 1,
-            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([record]);
         await executor.restore();
@@ -213,13 +341,12 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.notEqual(first.logicalWindowId, String(first.windowId));
         assert.notEqual(first.logicalPageId, String(first.pageTabId));
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 1);
-        assert.deepEqual(calls.find(call => call[0] === "createWindow")[1], {
-            tabId: first.statusTabId,
-            focused: false,
-            type: "normal",
-        });
-        assert.equal(calls.filter(call => call[0] === "createTab").length, 2);
-        assert.equal(calls.find(call => call[0] === "createTab")[1].active, false);
+        const createWindow = calls.find(call => call[0] === "createWindow")[1];
+        assert.equal(createWindow.focused, false);
+        assert.equal(createWindow.type, "normal");
+        assert.equal(createWindow.tabId, first.statusTabIds[0]);
+        assert.equal(calls.filter(call => call[0] === "createTab").length, 3);
+        assert.equal(calls.filter(call => call[0] === "move").length, 1);
         assert.equal(calls.filter(call => call[0] === "bind_x11_window").length, 1);
         assert.equal(calls.find(call => call[0] === "bind_x11_window")[1].display_title,
             "local");
@@ -286,7 +413,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             workspaceId: "workspace-before-restart",
             connectionId: "c_old00000", executorFence: {...fence, epoch: 1},
             logicalWindowId, logicalPageId, generation: 1,
-            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([record]);
         await executor.restore();
@@ -308,7 +435,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             workspaceId: "workspace-authoritative",
             connectionId: "c_old00000", executorFence: {...fence, epoch: 1},
             logicalWindowId, logicalPageId, generation: 1,
-            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([record]);
         await executor.restore();
@@ -333,7 +460,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             workspaceId: "workspace-authoritative",
             connectionId: "c_old00000", executorFence: {...fence, epoch: 1},
             logicalWindowId, logicalPageId, generation: 1,
-            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([record]);
         await executor.restore();
@@ -361,7 +488,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             workspaceId: "workspace-authoritative",
             connectionId: "c_old00000", executorFence: {...fence, epoch: 1},
             logicalWindowId, logicalPageId, generation: 1,
-            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([record]);
         await executor.restore();
@@ -381,7 +508,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     {
         const legacy = {
             remoteKey: "r_12345678", connectionId: "c_12345678",
-            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([legacy]);
         await executor.restore();
@@ -462,7 +589,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             workspaceId: "workspace-authoritative",
             connectionId: "c_12345678", executorFence: fence,
             logicalWindowId, logicalPageId, generation: 1,
-            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([persisted]);
         await executor.restore();
@@ -679,13 +806,13 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             remoteKey: "r_aaaaaaaa", principalId: "principal-a", workspaceId: "workspace-a",
             connectionId: "c_aaaaaaaa", executorFence: fence, logicalWindowId: "window-a",
             logicalPageId: "page-a", windowGeneration: 1, pageGeneration: 1, windowId: 10,
-            statusTabId: 11, pageTabId: 12, nonce: "a".repeat(32), debuggerAttached: false,
+            statusTabIds: [11, 13], pageTabId: 12, nonce: "a".repeat(32), debuggerAttached: false,
         };
         const recordB = {
             remoteKey: "r_bbbbbbbb", principalId: "principal-b", workspaceId: "workspace-b",
             connectionId: "c_bbbbbbbb", executorFence: fence, logicalWindowId: "window-b",
             logicalPageId: "page-b", windowGeneration: 1, pageGeneration: 1, windowId: 20,
-            statusTabId: 21, pageTabId: 22, nonce: "b".repeat(32), debuggerAttached: false,
+            statusTabIds: [21, 23], pageTabId: 22, nonce: "b".repeat(32), debuggerAttached: false,
         };
         executor.install(recordA);
         const writeA = executor.persist();
@@ -727,17 +854,21 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative", connectionId: "c_12345678",
             executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
-            windowId: 10, statusTabId: 110, pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([record]);
         executor.chrome.tabs.query = async () => [
-            {id: 110, url: executor.statusUrl(record)},
-            {id: 210, url: "about:blank"},
-            {id: 211, url: "https://unexpected.test/"},
+            {id: 110, windowId: 10, index: 0, pinned: true,
+                url: executor.statusUrl(record, "a")},
+            {id: 111, windowId: 10, index: 1, pinned: true,
+                url: executor.statusUrl(record, "b")},
+            {id: 210, windowId: 10, index: 2, pinned: false, url: "about:blank"},
+            {id: 211, windowId: 10, index: 3, pinned: false,
+                url: "https://unexpected.test/"},
         ];
         await executor.restore();
         assert.equal(executor.workspaces.size, 0,
-            "restore must require exactly one status tab and one business tab");
+            "restore must require exactly two marker tabs and one business tab");
         assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, []);
     }
     {
