@@ -90,13 +90,20 @@ class WorkspaceExecutor {
     }
 
     async persistWithRemovedRecord(record) {
+        await this.persistWithoutRecords([record]);
+    }
+
+    async persistWithoutRecords(removed) {
+        const removedRecords = new Set(removed);
         const write = this.persistTail.catch(() => {}).then(async () => {
             const records = [...this.workspaces.values()]
-                .filter(saved => saved !== record)
+                .filter(saved => !removedRecords.has(saved))
                 .map(saved => this.persistedRecord(saved));
             await this.persistRecords(records);
-            if (this.workspaces.get(this.key(record.remoteKey, record.principalId)) === record) {
-                this.forget(record);
+            for (const record of removedRecords) {
+                if (this.workspaces.get(this.key(record.remoteKey, record.principalId)) === record) {
+                    this.forget(record);
+                }
             }
         });
         this.persistTail = write;
@@ -184,15 +191,24 @@ class WorkspaceExecutor {
             const legacyMarkers = markers.filter(item => item.marker.marker === "legacy");
             const markerIds = new Set(markers.map(item => item.marker.marker));
             const nonces = new Set(markers.map(item => item.marker.nonce));
+            const ownedNonce = markers.length > 0 && nonces.size === 1 &&
+                ownedMarkers[markers[0].marker.nonce] === true;
+            const ownedSingleMarkerWindow = windowTypes.get(windowId) === "normal" &&
+                windowTabs.length === 2 && markers.length === 1 && ownedNonce &&
+                markers[0].tab.pinned && markers[0].tab.index === 0 &&
+                markers[0].tab.title === `${STATUS_PREFIX}${markers[0].marker.nonce}` +
+                    (markers[0].marker.marker === "legacy" ? "" : `:${markers[0].marker.marker}`) &&
+                windowTabs.filter(tab => tab.id !== markers[0].tab.id &&
+                    !tab.pinned && tab.index === 1).length === 1;
             const ownedWindow = windowTypes.get(windowId) === "normal" &&
                 windowTabs.length === 3 && markers.length === 2 &&
                 legacyMarkers.length === 0 && markerIds.size === 2 && nonces.size === 1 &&
-                ownedMarkers[markers[0].marker.nonce] === true &&
+                ownedNonce &&
                 markers.every(({tab, marker}) => tab.pinned &&
                     tab.title === `${STATUS_PREFIX}${marker.nonce}:${marker.marker}`) &&
                 markers.map(({tab}) => tab.index).sort().join(",") === "0,1" &&
                 windowTabs.filter(tab => !tab.pinned && tab.index === 2).length === 1;
-            if (ownedWindow) {
+            if (ownedWindow || ownedSingleMarkerWindow) {
                 await this.chrome.windows.remove(windowId);
                 delete ownedMarkers[markers[0].marker.nonce];
             } else {
@@ -849,18 +865,28 @@ class WorkspaceExecutor {
 
     async closeManagedWindowsWithoutHost(removedWindowId) {
         const normalWindows = await this.visibleNormalWindows(removedWindowId);
-        if (normalWindows.length !== 1 || !this.windowOwners.has(normalWindows[0].id)) return;
-        const key = this.windowOwners.get(normalWindows[0].id);
-        const record = this.workspaces.get(key);
-        if (!record || record.windowId !== normalWindows[0].id) return;
-        await this.detach(record.pageTabId);
-        await this.persistWithRemovedRecord(record);
-        try {
-            await this.chrome.windows.remove(record.windowId);
-        } catch (_) {
-            if (await this.isLive(record)) throw new Error("managed window did not close");
+        if (normalWindows.length === 0 || normalWindows.some(window =>
+            !this.windowOwners.has(window.id))) return;
+        await this.closeManagedWindowSet(normalWindows);
+    }
+
+    async closeManagedWindowSet(normalWindows) {
+        const records = normalWindows.map(window => {
+            const key = this.windowOwners.get(window.id);
+            const record = key && this.workspaces.get(key);
+            return record?.windowId === window.id ? record : null;
+        }).filter(record => record !== null);
+        if (records.length === 0) return;
+        await this.persistWithoutRecords(records);
+        for (const record of records) {
+            await this.detach(record.pageTabId);
+            try {
+                await this.chrome.windows.remove(record.windowId);
+            } catch (_) {
+                if (await this.isLive(record)) throw new Error("managed window did not close");
+            }
+            await this.disownMarker(record.nonce);
         }
-        await this.disownMarker(record.nonce);
     }
 
     async windowRemoved(windowId) {

@@ -280,6 +280,41 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "remove").length, 2);
     }
     {
+        const nonce = "7".repeat(32);
+        const restoredPopup = {
+            windowId: 702,
+            tabIds: [1720, 1721, 1722],
+            nonce,
+            businessUrl: "https://single-marker.test/",
+        };
+        const localState = {abushOwnedMarkers: {[nonce]: true}};
+        const {executor, calls} = fixture([], [], 0, false, restoredPopup, localState);
+        const tabs = await executor.chrome.tabs.query({windowId: restoredPopup.windowId});
+        tabs.splice(1, 1);
+        tabs[1].index = 1;
+        await executor.restore();
+        assert.deepEqual(calls.filter(call => call[0] === "removeWindow"),
+            [["removeWindow", restoredPopup.windowId]],
+            "owned one-marker shutdown residue must be removed before restore connects");
+    }
+    {
+        const nonce = "6".repeat(32);
+        const restoredPopup = {
+            windowId: 703,
+            tabIds: [1730, 1731, 1732],
+            nonce,
+            businessUrl: "https://single-marker.test/",
+        };
+        const {executor, calls} = fixture([], [], 0, false, restoredPopup);
+        const tabs = await executor.chrome.tabs.query({windowId: restoredPopup.windowId});
+        tabs.splice(1, 1);
+        tabs[1].index = 1;
+        await executor.restore();
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0,
+            "one-marker topology without durable ownership must preserve user windows");
+        assert.deepEqual(calls.filter(call => call[0] === "remove"), [["remove", 1730]]);
+    }
+    {
         const gate = deferred();
         const order = [];
         const workspaces = {
@@ -638,6 +673,35 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(executor.workspaces.size, 1,
             "another ordinary window must keep managed browser workspaces alive");
         assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0);
+    }
+    {
+        const firstRecord = {
+            remoteKey: "r_aaaaaaaa", principalId: "principal-a", workspaceId: "workspace-a",
+            connectionId: "c_aaaaaaaa", executorFence: fence, logicalWindowId: "window-a",
+            logicalPageId: "page-a", generation: 1, windowId: 10,
+            statusTabIds: [110, 111], pageTabId: 210, nonce: "a".repeat(32),
+        };
+        const secondRecord = {
+            remoteKey: "r_bbbbbbbb", principalId: "principal-b", workspaceId: "workspace-b",
+            connectionId: "c_bbbbbbbb", executorFence: fence, logicalWindowId: "window-b",
+            logicalPageId: "page-b", generation: 1, windowId: 20,
+            statusTabIds: [120, 121], pageTabId: 220, nonce: "b".repeat(32),
+        };
+        const {executor, calls} = fixture([firstRecord, secondRecord]);
+        await executor.restore();
+        calls.length = 0;
+        executor.chrome.windows.getAll = async () => [
+            {id: 1, type: "normal", focused: false},
+            {id: 10, type: "normal", focused: false},
+            {id: 20, type: "normal", focused: false},
+        ];
+        await executor.windowRemoved(1);
+        assert.equal(executor.workspaces.size, 0);
+        assert.deepEqual(calls.filter(call => call[0] === "persist")
+            .map(call => call[1].abushWorkspaces), [[]],
+        "all managed windows must leave durable restore state in one write");
+        assert.deepEqual(calls.filter(call => call[0] === "removeWindow")
+            .map(call => call[1]), [10, 20]);
     }
     {
         const first = fixture();
