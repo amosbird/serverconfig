@@ -855,7 +855,7 @@ def claim_ordinary_launch_leases(profile, *, root=None, uid=None, now_ms=None):
             if lease["request_id"] != match.group(1):
                 raise ValueError("ordinary launch lease filename identity mismatch")
             if lease["request_id"] in seen_request_ids:
-                raise ValueError("duplicate ordinary launch lease request ID")
+                continue
             seen_request_ids.add(lease["request_id"])
             claimed.append({"lease": lease, "claim_path": claim})
         except (OSError, ValueError, TimeoutError, json.JSONDecodeError) as error:
@@ -1016,21 +1016,36 @@ class OrdinaryOpenServer:
                 self.workers.add(worker)
             worker.start()
 
+    def _cancel_locked(self, state):
+        if state["response"] is not None or state["cancelled"]:
+            return False
+        state["cancelled"] = True
+        self.outbound.put(event("ordinary_open_cancel", "ordinary_open", {
+            "version": ORDINARY_OPEN_VERSION,
+            "request_id": state["request"]["request_id"],
+            "operation": "ordinary_open_cancel",
+        }))
+        return True
+
     def _cancel(self, state):
         with self.lock:
-            if state["response"] is not None or state["cancelled"]:
-                return
-            state["cancelled"] = True
-            self.outbound.put(event("ordinary_open_cancel", "ordinary_open", {
-                "version": ORDINARY_OPEN_VERSION,
-                "request_id": state["request"]["request_id"],
-                "operation": "ordinary_open_cancel",
-            }))
+            return self._cancel_locked(state)
+
+    def _attach_waiter(self, state):
+        waiter = object()
+        with self.lock:
+            state["active_waiters"].add(waiter)
+        return waiter
+
+    def _release_waiter(self, state, waiter, abandoned=False):
+        with self.lock:
+            state["active_waiters"].discard(waiter)
+            if abandoned and not state["active_waiters"] and not state["bootstrap_owner"]:
+                self._cancel_locked(state)
 
     def _wait(self, state, client=None):
         while not state["done"].wait(0.05):
             if self.stopping.is_set():
-                self._cancel(state)
                 raise TimeoutError("ordinary-open broker stopped")
             if time.time() * 1000 >= state["request"]["deadline_ms"]:
                 self._cancel(state)
@@ -1039,12 +1054,10 @@ class OrdinaryOpenServer:
                 try:
                     readable, _, _ = select.select([client], [], [], 0)
                     if readable and client.recv(1, socket.MSG_PEEK) == b"":
-                        self._cancel(state)
                         raise EOFError("ordinary-open client disconnected")
                 except BlockingIOError:
                     pass
         if state["response"] is None:
-            self._cancel(state)
             raise TimeoutError("ordinary-open broker stopped")
         return state["response"]
 
@@ -1053,7 +1066,8 @@ class OrdinaryOpenServer:
             state = self.requests.get(request["request_id"])
             if state is None:
                 state = {"request": request, "done": threading.Event(), "response": None,
-                         "cancelled": False, "source": source}
+                         "cancelled": False, "source": source, "active_waiters": set(),
+                         "bootstrap_owner": source == "bootstrap"}
                 self.requests[request["request_id"]] = state
                 if publish:
                     self.outbound.put(event(
@@ -1061,10 +1075,14 @@ class OrdinaryOpenServer:
                         "ordinary_open", request))
             elif state["request"] != request:
                 raise ValueError("conflicting duplicate ordinary-open request")
+            elif source == "bootstrap":
+                state["bootstrap_owner"] = True
             return state
 
     def _handle(self, client):
         state = None
+        waiter = None
+        abandoned = False
         try:
             client.settimeout(self.timeout)
             credentials = client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
@@ -1074,12 +1092,14 @@ class OrdinaryOpenServer:
                 return
             request = validate_ordinary_open_request(read_ordinary_open_message(client))
             state = self._register(request)
+            waiter = self._attach_waiter(state)
             response = self._wait(state, client)
             client.sendall(encode_ordinary_open_message(response))
         except (EOFError, OSError, TimeoutError, ValueError, json.JSONDecodeError):
-            if state is not None and not state["done"].is_set():
-                self._cancel(state)
+            abandoned = state is not None and not state["done"].is_set()
         finally:
+            if state is not None and waiter is not None:
+                self._release_waiter(state, waiter, abandoned=abandoned)
             client.close()
             with self.lock:
                 self.workers.discard(threading.current_thread())
@@ -1091,7 +1111,11 @@ class OrdinaryOpenServer:
             deadline_ms=int(time.time() * 1000 + timeout * 1000),
         )
         state = self._register(request)
-        return self._wait(state)["completion"]
+        waiter = self._attach_waiter(state)
+        try:
+            return self._wait(state)["completion"]
+        finally:
+            self._release_waiter(state, waiter, abandoned=not state["done"].is_set())
 
     def complete(self, payload):
         fields = {"version", "request_id", "operation", "completion"}
@@ -1109,21 +1133,25 @@ class OrdinaryOpenServer:
                     raise ValueError("conflicting ordinary-open completion")
                 return
             state["response"] = payload
+            state["bootstrap_owner"] = False
             state["done"].set()
-            claim = self.bootstrap_claims.pop(payload["request_id"], None)
-            if claim is not None:
-                try:
-                    info = claim.lstat()
-                    if stat.S_ISREG(info.st_mode) and not claim.is_symlink() and \
-                            info.st_uid == self.uid:
-                        claim.unlink()
-                except FileNotFoundError:
-                    pass
+            self._remove_bootstrap_claim(payload["request_id"])
             while len(self.requests) > 256:
                 request_id = next(iter(self.requests))
                 if not self.requests[request_id]["done"].is_set():
                     break
                 self.requests.pop(request_id)
+
+    def _remove_bootstrap_claim(self, request_id):
+        claim = self.bootstrap_claims.pop(request_id, None)
+        if claim is None:
+            return
+        try:
+            info = claim.lstat()
+            if stat.S_ISREG(info.st_mode) and not claim.is_symlink() and info.st_uid == self.uid:
+                claim.unlink()
+        except FileNotFoundError:
+            pass
 
     def close(self):
         self.stopping.set()
@@ -1138,15 +1166,6 @@ class OrdinaryOpenServer:
             state["done"].set()
         for worker in workers:
             worker.join(timeout=1)
-        for claim in self.bootstrap_claims.values():
-            try:
-                info = claim.lstat()
-                if stat.S_ISREG(info.st_mode) and not claim.is_symlink() and \
-                        info.st_uid == self.uid:
-                    claim.unlink()
-            except FileNotFoundError:
-                pass
-        self.bootstrap_claims.clear()
         try:
             info = self.path.lstat()
             identity = (info.st_dev, info.st_ino)

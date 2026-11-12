@@ -117,6 +117,38 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         first.close()
         second.close()
 
+    def test_duplicate_disconnect_leaves_other_waiter_and_broadcasts_terminal(self):
+        first = self.connect(self.request("shared-disconnect"))
+        second = self.connect(self.request("shared-disconnect"))
+        self.assertEqual(self.outbound.get(timeout=1)["payload"]["request_id"],
+                         "shared-disconnect")
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            with self.server.lock:
+                state = self.server.requests.get("shared-disconnect")
+                if state and len(state["active_waiters"]) == 2:
+                    break
+            time.sleep(0.01)
+        else:
+            self.fail("duplicate waiters were not both registered")
+        first.close()
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            with self.server.lock:
+                if len(state["active_waiters"]) == 1:
+                    break
+            time.sleep(0.01)
+        else:
+            self.fail("disconnected waiter was not released")
+        with self.assertRaises(queue.Empty):
+            self.outbound.get(timeout=0.1)
+        completion = host.ordinary_open_response("shared-disconnect", "applied")
+        self.server.complete(completion)
+        self.assertEqual(host.read_ordinary_open_message(second), completion)
+        second.close()
+        with self.assertRaises(queue.Empty):
+            self.outbound.get(timeout=0.1)
+
     def test_conflicting_duplicate_is_rejected_without_second_event(self):
         first = self.connect(self.request())
         self.assertEqual(self.outbound.get(timeout=1)["payload"], self.request())
@@ -309,6 +341,53 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 host.claim_ordinary_launch_leases(profile, root=root)
         self.assertTrue(wrong_uid.exists(), "UID mismatch must not consume another user's lease")
+
+    def test_server_close_preserves_nonterminal_claim_for_next_host(self):
+        profile = self.runtime / "claim-profile"
+        profile.mkdir()
+        request_id = "f" * 32
+        deadline_ms = int(time.time() * 1000) + 30_000
+        lease = {
+            "version": 1,
+            "request_id": request_id,
+            "url": "https://example.test/recover-claim",
+            "url_hash": host.hashlib.sha256(
+                b"https://example.test/recover-claim").hexdigest(),
+            "deadline_ms": deadline_ms,
+            "profile_hash": host._lease_profile_hash(profile),
+            "boot_target": "next",
+        }
+        root = self.runtime / "claim-leases"
+        root.mkdir(mode=0o700)
+        lease_path = root / f"{request_id}.json"
+        lease_path.write_text(json.dumps(lease))
+        lease_path.chmod(0o600)
+        claimed = host.claim_ordinary_launch_leases(profile, root=root)
+        request = host.ordinary_open_request(
+            lease["url"], request_id=request_id, deadline_ms=deadline_ms)
+        claim = claimed[0]["claim_path"]
+        server = host.OrdinaryOpenServer(
+            queue.Queue(), path=self.runtime / "claimed.sock", timeout=1,
+            bootstrap_requests=[request], bootstrap_claims={request_id: claim},
+        )
+        server.start()
+        server.close()
+        self.assertTrue(claim.exists(), "nonterminal close must preserve the durable claim")
+        recovered = host.claim_ordinary_launch_leases(profile, root=root)
+        self.assertEqual([entry["lease"] for entry in recovered], [lease])
+        outbound = queue.Queue()
+        reopened = host.OrdinaryOpenServer(
+            outbound, path=self.runtime / "reopened.sock", timeout=1,
+            bootstrap_requests=[request], bootstrap_claims={request_id: claim},
+        )
+        reopened.start()
+        try:
+            with self.assertRaises(queue.Empty):
+                outbound.get(timeout=0.1)
+            reopened.complete(host.ordinary_open_response(request_id, "applied"))
+            self.assertFalse(claim.exists(), "terminal completion must consume the claim")
+        finally:
+            reopened.close()
 
 
 class FakeWebSocket:

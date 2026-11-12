@@ -1915,6 +1915,53 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
             nonce: "0".repeat(32),
         };
+        for (const order of ["ordinary-first", "interleaved"]) {
+            const localState = {};
+            const {executor, calls} = fixture([record], [], 1, false, null, localState);
+            await executor.restore();
+            calls.length = 0;
+            const second = {
+                windowId: 2, kind: "ordinary",
+                snapshot: {tabCount: 1, urls: ["https://second.test/"]},
+                tabIds: [3000], revision: ++executor.windowRegistryRevision,
+            };
+            executor.windowRegistry.set(2, second);
+            executor.freezeClosingWindow(1);
+            if (order === "interleaved") await Promise.resolve();
+            executor.freezeClosingWindow(2);
+            executor.chrome.windows.getAll = async () => [
+                {id: 10, type: "normal", focused: false},
+            ];
+            executor.chrome.sessions = {getRecentlyClosed: async () => [
+                {window: {sessionId: `${order}-one`,
+                    tabs: [{url: "https://ordinary-0.test/"}]}},
+                {window: {sessionId: `${order}-two`,
+                    tabs: [{url: "https://second.test/"}]}},
+            ]};
+            const firstRemoval = executor.windowRemoved(1);
+            const secondRemoval = executor.windowRemoved(2);
+            await Promise.all([firstRemoval, secondRemoval]);
+            assert.equal(executor.workspaces.size, 1,
+                `${order} multi-ordinary close must retain managed ownership`);
+            assert.equal(calls.some(call => call[0] === "removeWindow"), false,
+                `${order} multi-ordinary close must perform zero managed cleanup`);
+            assert.equal(localState.abushRestoreHost, undefined,
+                `${order} multi-ordinary close must not capture an exact handoff`);
+            const ambiguity = localState.abushCloseAmbiguities.at(-1);
+            assert.deepEqual(ambiguity.windows.map(window => window.window_id).sort(), [1, 2]);
+            assert.deepEqual(ambiguity.session_candidates.map(candidate =>
+                candidate.session_id).sort(), [`${order}-one`, `${order}-two`].sort());
+        }
+    }
+    {
+        beginCase();
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "0".repeat(32),
+        };
         for (const order of ["ordinary-first", "managed-first", "interleaved"]) {
             const {executor, calls} = fixture([record], [], 0, false, null, {});
             await executor.restore();
@@ -1986,6 +2033,26 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(handoff.sessionId, null);
         assert.equal(localState.abushCloseAmbiguities.length, 1,
             "identical concurrent closes must persist ambiguity instead of guessing");
+    }
+    {
+        beginCase();
+        const {executor} = fixture([], [], 2);
+        await executor.refreshWindowRegistry();
+        const before = structuredClone(executor.windowRegistry.get(1).snapshot);
+        const query = deferred("in-flight snapshot query");
+        executor.chrome.tabs.query = async ({windowId}) => {
+            assert.equal(windowId, 1);
+            return query.promise;
+        };
+        const remembering = executor.rememberWindowSnapshot(1);
+        await Promise.resolve();
+        executor.freezeClosingWindow(1);
+        query.resolve([{id: 2001, windowId: 1, index: 0,
+            url: "https://ordinary-1.test/"}]);
+        await remembering;
+        assert.deepEqual(executor.removedHostSnapshots.get(1), before,
+            "a query captured before freeze must never replace the frozen full snapshot");
+        assert.equal(executor.windowRegistry.get(1).closing, true);
     }
     {
         beginCase();
@@ -2072,14 +2139,19 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             phase: "effect_started",
             completion: null,
             browser_boot_id: "test-browser-boot",
+            target_window_id: 1,
+            target_tab_id: 2000,
         }]};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
+        const tabs = await executor.chrome.tabs.query({windowId: 1});
+        tabs[0].url = payload.url;
         executor.bootstrapLeases.set("crashed-cold", payload);
         await executor.executeBootstrapLeases();
         assert.equal(calls.some(call => call[0] === "createWindow" ||
             call[0] === "createTab" || call[0] === "update" && call[2]?.url), false,
         "effect-started cold request must not execute a second URL mutation after restart");
-        assert.equal(localState.abushColdOrdinaryLedger[0].completion, "unknown");
+        assert.equal(localState.abushColdOrdinaryLedger[0].completion, "applied",
+            "an exact live URL must reconcile a recovered effect as applied");
         assert.equal(calls.filter(call => call[0] === "ordinary_open_completion").length, 1);
     }
     {

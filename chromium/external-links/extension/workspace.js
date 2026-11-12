@@ -16,6 +16,8 @@ const PENDING_OPERATIONS_KEY = "abushPendingOperations";
 const EXECUTION_LEDGER_KEY = "abushExecutionLedger";
 const REPLACEMENT_LEDGER_KEY = "abushReplacementLedger";
 const TRANSACTION_WAIT_MS = 5000;
+const ORDINARY_CLOSE_RETRY_MS = 25;
+const ORDINARY_CLOSE_RETRY_ATTEMPTS = 20;
 const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -98,7 +100,11 @@ class WorkspaceExecutor {
         this.onAdvisoryError = null;
         this.removedHostSnapshots = new Map();
         this.snapshotTails = new Map();
+        this.windowSnapshotTokens = new Map();
         this.recentSessionIds = null;
+        this.ordinaryCloseGeneration = 0;
+        this.activeOrdinaryCloseBatch = null;
+        this.ordinaryCloseWindowBatches = new Map();
         this.startupManagedRecords = [];
         this.windowRegistry = new Map();
         this.windowRegistryRevision = 0;
@@ -1668,6 +1674,8 @@ class WorkspaceExecutor {
                     "conflicting durable cold ordinary launch identity"));
                 continue;
             }
+            const context = payload.bootstrapContext;
+            delete payload.bootstrapContext;
             if (known?.phase === "completed") {
                 this.bootstrapLeases.delete(requestId);
                 this.rememberOrdinaryCompletion(payload, known.completion);
@@ -1676,15 +1684,14 @@ class WorkspaceExecutor {
             }
             if (known?.phase === "effect_started") {
                 this.bootstrapLeases.delete(requestId);
+                const completion = await this.reconcileColdOrdinaryEffect(payload, known);
                 ledger = ledger.map(entry => entry === known ?
-                    {...entry, phase: "completed", completion: "unknown"} : entry);
+                    {...entry, phase: "completed", completion} : entry);
                 await this.persistColdOrdinaryLedger(ledger);
-                this.rememberOrdinaryCompletion(payload, "unknown");
-                await this.ordinaryCompletion(payload, "unknown");
+                this.rememberOrdinaryCompletion(payload, completion);
+                await this.ordinaryCompletion(payload, completion);
                 continue;
             }
-            const context = payload.bootstrapContext;
-            delete payload.bootstrapContext;
             this.bootstrapLeases.delete(requestId);
             const started = {
                 version: 1,
@@ -1692,6 +1699,8 @@ class WorkspaceExecutor {
                 phase: "effect_started",
                 completion: null,
                 browser_boot_id: this.browserBootId,
+                target_window_id: Number.isInteger(context?.windowId) ? context.windowId : null,
+                target_tab_id: Number.isInteger(context?.stagingTabId) ? context.stagingTabId : null,
             };
             ledger = [...ledger.filter(entry => entry.request_id !== requestId), started];
             await this.persistColdOrdinaryLedger(ledger);
@@ -1705,6 +1714,19 @@ class WorkspaceExecutor {
                 this.reportAdvisoryError(new AggregateError([error],
                     "cold ordinary launch lease failed"));
             }
+        }
+    }
+
+    async reconcileColdOrdinaryEffect(payload, ledger) {
+        if (ledger.browser_boot_id !== this.browserBootId ||
+                !Number.isInteger(ledger.target_window_id) ||
+                !Number.isInteger(ledger.target_tab_id)) return "unknown";
+        try {
+            const tab = await this.chrome.tabs.get(ledger.target_tab_id);
+            return tab.windowId === ledger.target_window_id && tab.url === payload.url ?
+                "applied" : "unknown";
+        } catch (_) {
+            return "unknown";
         }
     }
 
@@ -2199,6 +2221,7 @@ class WorkspaceExecutor {
             sessionId: intent?.sessionId || null,
             snapshot: intent?.snapshot || null,
             registry_revision: intent?.registryRevision ?? this.windowRegistryRevision,
+            ambiguity: intent?.ambiguity || null,
         };
         await this.localStateWrite(RESTORE_HOST_KEY, () => ledger);
     }
@@ -2249,33 +2272,80 @@ class WorkspaceExecutor {
         return revision;
     }
 
+    nextWindowSnapshotToken(windowId) {
+        const token = (this.windowSnapshotTokens.get(windowId) || 0) + 1;
+        this.windowSnapshotTokens.set(windowId, token);
+        return token;
+    }
+
+    closeWindowIdentity(windowId, record = this.windowRegistry.get(windowId)) {
+        const snapshot = record?.snapshot || this.removedHostSnapshots.get(windowId) || null;
+        return {
+            windowId,
+            snapshot: snapshot ? structuredClone(snapshot) : null,
+            tabIds: Array.isArray(record?.tabIds) ? [...record.tabIds] : [],
+            registryRevision: record?.revision ?? this.windowRegistryRevision,
+        };
+    }
+
+    captureOrdinaryCloseWindow(windowId, record = this.windowRegistry.get(windowId)) {
+        const existing = this.ordinaryCloseWindowBatches.get(windowId);
+        if (existing) return existing;
+        let batch = this.activeOrdinaryCloseBatch;
+        if (!batch || batch.settled) {
+            batch = {
+                generation: ++this.ordinaryCloseGeneration,
+                revision: 0,
+                windows: new Map(),
+                expectedWindowIds: new Set([...this.windowRegistry.values()]
+                    .filter(candidate => candidate.kind === "ordinary")
+                    .map(candidate => candidate.windowId)),
+                knownSessionIds: new Set(this.recentSessionIds || []),
+                settled: false,
+            };
+            this.activeOrdinaryCloseBatch = batch;
+        }
+        batch.windows.set(windowId, this.closeWindowIdentity(windowId, record));
+        batch.revision += 1;
+        this.ordinaryCloseWindowBatches.set(windowId, batch);
+        return batch;
+    }
+
     freezeClosingWindow(windowId) {
+        this.nextWindowSnapshotToken(windowId);
         const record = this.windowRegistry.get(windowId);
         if (!record) return false;
+        if (record.kind === "ordinary") this.captureOrdinaryCloseWindow(windowId, record);
         this.removedHostSnapshots.set(windowId, structuredClone(record.snapshot));
         this.windowRegistry.set(windowId, {...record, closing: true});
         return true;
     }
 
     async rememberWindowSnapshot(windowId) {
+        const token = this.nextWindowSnapshotToken(windowId);
         const frozen = this.windowRegistry.get(windowId);
         if (frozen?.closing) return;
         const previous = this.snapshotTails.get(windowId) || Promise.resolve();
-        const update = previous.catch(() => {}).then(() => this.chrome.tabs.query({windowId}))
-            .then(tabs => {
-                if (tabs.length === 0 ||
-                        tabs.some(tab => this.parseStatusUrl(tab.url) !== null)) return;
-                this.removedHostSnapshots.set(windowId, this.sessionSnapshot(tabs));
-                const prior = this.windowRegistry.get(windowId);
-                this.windowRegistry.set(windowId, {
-                    windowId,
-                    kind: this.classifyWindow(windowId, tabs, "normal"),
-                    snapshot: this.registryFingerprint(tabs),
-                    tabIds: tabs.map(tab => tab.id).filter(Number.isInteger),
-                    revision: ++this.windowRegistryRevision,
-                    closing: prior?.closing === true,
-                });
-            }).catch(() => {});
+        const update = previous.catch(() => {}).then(async () => {
+            const captured = this.windowRegistry.get(windowId);
+            if (captured?.closing || this.windowSnapshotTokens.get(windowId) !== token) return;
+            const capturedRevision = captured?.revision ?? null;
+            const tabs = await this.chrome.tabs.query({windowId});
+            const current = this.windowRegistry.get(windowId);
+            if (this.windowSnapshotTokens.get(windowId) !== token || current?.closing ||
+                    (capturedRevision !== null && current?.revision !== capturedRevision) ||
+                    (capturedRevision === null && current !== undefined)) return;
+            if (tabs.length === 0 ||
+                    tabs.some(tab => this.parseStatusUrl(tab.url) !== null)) return;
+            this.removedHostSnapshots.set(windowId, this.sessionSnapshot(tabs));
+            this.windowRegistry.set(windowId, {
+                windowId,
+                kind: this.classifyWindow(windowId, tabs, "normal"),
+                snapshot: this.registryFingerprint(tabs),
+                tabIds: tabs.map(tab => tab.id).filter(Number.isInteger),
+                revision: ++this.windowRegistryRevision,
+            });
+        }).catch(() => {});
         this.snapshotTails.set(windowId, update);
         return update.finally(() => {
             if (this.snapshotTails.get(windowId) === update) this.snapshotTails.delete(windowId);
@@ -2294,57 +2364,145 @@ class WorkspaceExecutor {
             .filter(Boolean));
     }
 
-    async recentlyClosedHostIntent(windowId) {
-        const pendingSnapshot = this.snapshotTails.get(windowId);
-        if (pendingSnapshot) await pendingSnapshot;
-        const snapshot = this.removedHostSnapshots.get(windowId);
-        this.removedHostSnapshots.delete(windowId);
-        if (!snapshot || !this.chrome.sessions?.getRecentlyClosed) return null;
-        const knownSessionIds = this.recentSessionIds || new Set();
-        let latestEntries = [];
-        for (let attempt = 0; attempt < 20; attempt++) {
-            latestEntries = await this.recentlyClosedEntries();
-            const candidates = latestEntries.filter(entry => {
-                const sessionId = this.sessionEntryId(entry);
-                return sessionId && !knownSessionIds.has(sessionId) &&
-                    this.sessionMatchesSnapshot(entry, snapshot);
-            });
-            if (candidates.length === 1) {
-                this.recentSessionIds = new Set(latestEntries.map(entry =>
-                    this.sessionEntryId(entry)).filter(Boolean));
-                return {
-                    version: 3,
-                    outcome: "exact",
-                    sessionId: this.sessionEntryId(candidates[0]),
-                    snapshot,
-                    registryRevision: this.windowRegistryRevision,
-                };
-            }
-            if (candidates.length > 1) break;
-            if (attempt + 1 < 20) {
-                await new Promise(resolve => setTimeout(resolve, 25));
-            }
+    async settleOrdinaryCloseBatch(batch) {
+        if (batch.settled) return batch;
+        if (!batch.expectedWindowIds) batch.expectedWindowIds = new Set(batch.windows.keys());
+        let stableRevision = null;
+        for (let attempt = 0; attempt < ORDINARY_CLOSE_RETRY_ATTEMPTS; attempt++) {
+            const capturedExpected = [...batch.expectedWindowIds]
+                .every(windowId => batch.windows.has(windowId));
+            if (capturedExpected && stableRevision === batch.revision) break;
+            stableRevision = batch.revision;
+            await new Promise(resolve => setTimeout(resolve, ORDINARY_CLOSE_RETRY_MS));
         }
-        this.recentSessionIds = new Set(latestEntries.map(entry =>
-            this.sessionEntryId(entry)).filter(Boolean));
-        const ambiguity = {
-            version: 1,
-            source_boot: this.browserBootId,
-            registry_revision: this.windowRegistryRevision,
-            snapshot,
-            observed_session_ids: latestEntries.map(entry => this.sessionEntryId(entry))
-                .filter(sessionId => sessionId && !knownSessionIds.has(sessionId)),
-        };
-        await this.localStateUpdate(CLOSE_AMBIGUITIES_KEY, entries => [
-            ...(Array.isArray(entries) ? entries : []), ambiguity,
-        ].slice(-64), []);
+        batch.settled = true;
+        if ([...batch.expectedWindowIds].some(windowId => !batch.windows.has(windowId))) {
+            batch.forcedAmbiguous = true;
+        }
+        if (this.activeOrdinaryCloseBatch === batch) this.activeOrdinaryCloseBatch = null;
+        return batch;
+    }
+
+    async waitForOrdinaryClosePeer(batch) {
+        for (let attempt = 0; attempt < ORDINARY_CLOSE_RETRY_ATTEMPTS; attempt++) {
+            if (batch.windows.size > 1) return true;
+            await new Promise(resolve => setTimeout(resolve, ORDINARY_CLOSE_RETRY_MS));
+        }
+        return batch.windows.size > 1;
+    }
+
+    settleNonFinalOrdinaryClose(windowId) {
+        const batch = this.ordinaryCloseWindowBatches.get(windowId);
+        if (!batch || batch.windows.size !== 1) return false;
+        batch.settled = true;
+        if (this.activeOrdinaryCloseBatch === batch) this.activeOrdinaryCloseBatch = null;
+        this.ordinaryCloseWindowBatches.delete(windowId);
+        return true;
+    }
+
+    ordinarySessionCandidate(entry) {
+        const sessionId = this.sessionEntryId(entry);
+        if (!sessionId || !this.isOrdinarySessionEntry(entry)) return null;
         return {
-            version: 3,
-            outcome: "ambiguous",
-            sessionId: null,
-            snapshot,
-            registryRevision: this.windowRegistryRevision,
+            session_id: sessionId,
+            snapshot: this.sessionSnapshot(entry.window.tabs),
         };
+    }
+
+    async persistOrdinaryCloseAmbiguity(batch, entries) {
+        const candidates = entries.map(entry => this.ordinarySessionCandidate(entry))
+            .filter(candidate => candidate !== null &&
+                !batch.knownSessionIds.has(candidate.session_id));
+        const windows = [...batch.windows.values()].map(identity => ({
+            window_id: identity.windowId,
+            registry_revision: identity.registryRevision,
+            tab_ids: [...identity.tabIds],
+            snapshot: identity.snapshot ? structuredClone(identity.snapshot) : null,
+            candidate_session_ids: candidates.filter(candidate => identity.snapshot &&
+                sameRef(candidate.snapshot, identity.snapshot))
+                .map(candidate => candidate.session_id),
+        }));
+        const ambiguity = {
+            version: 2,
+            source_boot: this.browserBootId,
+            batch_generation: batch.generation,
+            registry_revision: this.windowRegistryRevision,
+            windows,
+            session_candidates: candidates,
+        };
+        await this.localStateUpdate(CLOSE_AMBIGUITIES_KEY, saved => [
+            ...(Array.isArray(saved) ? saved : []), ambiguity,
+        ].slice(-64), []);
+        return ambiguity;
+    }
+
+    async resolveOrdinaryCloseBatch(batch) {
+        if (batch.resolution) return batch.resolution;
+        batch.resolution = (async () => {
+            await this.settleOrdinaryCloseBatch(batch);
+            let latestEntries = [];
+            let exact = null;
+            for (let attempt = 0; attempt < ORDINARY_CLOSE_RETRY_ATTEMPTS; attempt++) {
+                latestEntries = this.chrome.sessions?.getRecentlyClosed ?
+                    await this.recentlyClosedEntries() : [];
+                const unseen = latestEntries.filter(entry => {
+                    const sessionId = this.sessionEntryId(entry);
+                    return sessionId && !batch.knownSessionIds.has(sessionId);
+                });
+                const expectedWindowIds = batch.expectedWindowIds ||
+                    new Set(batch.windows.keys());
+                const exactEligible = expectedWindowIds.size === 1 &&
+                    batch.windows.size === 1 && !batch.forcedAmbiguous;
+                if (exactEligible) {
+                    const identity = [...batch.windows.values()][0];
+                    const matches = unseen.filter(entry =>
+                        this.sessionMatchesSnapshot(entry, identity.snapshot));
+                    if (matches.length === 1) {
+                        exact = {
+                            version: 3,
+                            outcome: "exact",
+                            sessionId: this.sessionEntryId(matches[0]),
+                            snapshot: structuredClone(identity.snapshot),
+                            registryRevision: identity.registryRevision,
+                        };
+                        break;
+                    }
+                    if (matches.length > 1) break;
+                } else {
+                    const candidates = unseen.map(entry => this.ordinarySessionCandidate(entry))
+                        .filter(candidate => candidate !== null);
+                    const allObserved = [...batch.windows.values()].every(identity =>
+                        identity.snapshot && candidates.some(candidate =>
+                            sameRef(candidate.snapshot, identity.snapshot)));
+                    if (allObserved) break;
+                }
+                if (attempt + 1 < ORDINARY_CLOSE_RETRY_ATTEMPTS) {
+                    await new Promise(resolve => setTimeout(resolve, ORDINARY_CLOSE_RETRY_MS));
+                }
+            }
+            this.recentSessionIds = new Set(latestEntries.map(entry =>
+                this.sessionEntryId(entry)).filter(Boolean));
+            if (exact) return exact;
+            const ambiguity = await this.persistOrdinaryCloseAmbiguity(batch, latestEntries);
+            const identities = [...batch.windows.values()];
+            return {
+                version: 3,
+                outcome: "ambiguous",
+                sessionId: null,
+                snapshot: identities.length === 1 && identities[0].snapshot ?
+                    structuredClone(identities[0].snapshot) : null,
+                registryRevision: Math.max(...identities.map(identity =>
+                    identity.registryRevision), this.windowRegistryRevision),
+                ambiguity,
+            };
+        })();
+        return batch.resolution;
+    }
+
+    async recentlyClosedHostIntent(windowId) {
+        const batch = this.ordinaryCloseWindowBatches.get(windowId) ||
+            this.captureOrdinaryCloseWindow(windowId);
+        return this.resolveOrdinaryCloseBatch(batch);
     }
 
     async closeOrphanedStatusWindows(liveWindowIds, ownedMarkers) {
@@ -4252,21 +4410,32 @@ class WorkspaceExecutor {
 
     async replaceClosedHostWindow(removedWindowId) {
         if (!this.browserBootId) throw new Error("browser boot identity is unavailable");
+        const batch = this.ordinaryCloseWindowBatches.get(removedWindowId) ||
+            this.captureOrdinaryCloseWindow(removedWindowId);
         const normalWindows = await this.visibleNormalWindows(removedWindowId);
         const registryOrdinary = [...this.windowRegistry.values()].filter(record =>
             record.windowId !== removedWindowId && record.kind === "ordinary" && !record.closing);
         const liveOrdinary = normalWindows.filter(window => !this.windowOwners.has(window.id));
-        if (registryOrdinary.length > 0 || liveOrdinary.length > 0 || normalWindows.length === 0) {
+        if (batch.windows.size === 1 &&
+                (registryOrdinary.length > 0 || liveOrdinary.length > 0)) {
+            if (await this.waitForOrdinaryClosePeer(batch)) {
+                await this.resolveOrdinaryCloseBatch(batch);
+                this.reportAdvisoryError(new Error(
+                    "ordinary close identity is ambiguous; managed cleanup remains pending"));
+                return;
+            }
+            this.settleNonFinalOrdinaryClose(removedWindowId);
             await this.primeRecentlyClosedSessions();
             return;
         }
-        const intent = await this.recentlyClosedHostIntent(removedWindowId) || {
-            outcome: "ambiguous", sessionId: null,
-            snapshot: this.removedHostSnapshots.get(removedWindowId) || null,
-            registryRevision: this.windowRegistryRevision,
-        };
+        const intent = await this.resolveOrdinaryCloseBatch(batch);
+        if (intent.outcome !== "exact") {
+            this.reportAdvisoryError(new Error(
+                "ordinary close identity is ambiguous; managed cleanup remains pending"));
+            return;
+        }
         await this.markRestoreHost(intent);
-        await this.closeManagedWindowSet(normalWindows);
+        if (normalWindows.length > 0) await this.closeManagedWindowSet(normalWindows);
     }
 
     async persistManagedCleanupBatch(batch) {
@@ -4353,7 +4522,9 @@ class WorkspaceExecutor {
 
     async windowRemoved(windowId) {
         const registry = this.windowRegistry.get(windowId);
+        if (registry?.kind === "ordinary") this.captureOrdinaryCloseWindow(windowId, registry);
         this.windowRegistry.delete(windowId);
+        this.nextWindowSnapshotToken(windowId);
         if (this.closingManagedWindows.delete(windowId)) return;
         const key = this.windowOwners.get(windowId);
         if (!key) {
