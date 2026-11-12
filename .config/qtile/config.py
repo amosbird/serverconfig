@@ -488,7 +488,11 @@ keys = [
         [ctrl, alt],
         "a",
         lazy.spawn(
-            "chromium chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html", shell=True
+            "google-chrome-stable "
+            "--user-data-dir=/home/amos/.config/google-chrome-downloads "
+            "--class=download-manager "
+            "--app=chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html",
+            shell=True,
         ),
     ),
     Key([ctrl, alt], "g", lazy.spawn("colorpick")),
@@ -542,12 +546,7 @@ scratchpad_matches = {
     "chatgpt": Match(wm_class="chatgpt"),
     "stardict": Match(title="stardict"),
     "stalonetray": Match(title="stalonetray"),
-    "bookmarks": Match(
-        wm_class=[
-            "jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html",
-            "aocepclkpgckjeikiphffdlileoaceec__bookmarks.html",
-        ]
-    ),
+    "bookmarks": Match(wm_class="bookmark-manager"),
 }
 
 

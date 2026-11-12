@@ -9,6 +9,7 @@ import struct
 import sys
 import time
 import uuid
+from urllib.parse import urlsplit
 
 MAX_MESSAGE_SIZE = 64 * 1024
 
@@ -78,11 +79,17 @@ def connect(path, timeout):
 def main():
     if len(sys.argv) != 2:
         raise RuntimeError("usage: ordinary-open-client URL")
+    url = sys.argv[1]
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https", "file"} or \
+            (parsed.scheme in {"http", "https"} and not parsed.hostname) or \
+            (parsed.scheme == "file" and (not url.startswith("file:///") or parsed.netloc)):
+        raise RuntimeError("unsupported ordinary-open URL")
     request = {
         "version": 1,
         "request_id": uuid.uuid4().hex,
         "operation": "ordinary_open",
-        "url": sys.argv[1],
+        "url": url,
         "focus": True,
     }
     timeout = float(os.environ.get("ABUSH_ORDINARY_OPEN_TIMEOUT", "10"))

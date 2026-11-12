@@ -2,7 +2,9 @@
 
 import json
 import os
+import pathlib
 import re
+import struct
 import subprocess
 import time
 
@@ -52,9 +54,21 @@ class XcffibAdapter:
         return self.atoms[name]
 
     def property(self, window, name, property_type="UTF8_STRING"):
-        reply = self.core.GetProperty(False, window, self.atom(name), self.atom(property_type),
-                                      0, 4096).reply()
-        return bytes(reply.value.buf()).rstrip(b"\0").decode(errors="replace")
+        type_atom = getattr(self.xproto.Atom, property_type, None)
+        if type_atom is None:
+            type_atom = self.atom(property_type)
+        reply = self.core.GetProperty(False, window, self.atom(name), type_atom, 0, 4096).reply()
+        missing = None if property_type in {"CARDINAL", "WINDOW"} else ""
+        if reply.type == self.xproto.Atom.NONE or reply.type != type_atom or reply.format == 0:
+            return missing
+        raw = bytes(reply.value.buf())
+        if property_type in {"CARDINAL", "WINDOW"}:
+            if reply.format != 32 or len(raw) != 4:
+                return None
+            return struct.unpack("=I", raw)[0]
+        if reply.format != 8:
+            return ""
+        return raw.rstrip(b"\0").decode(errors="replace")
 
     def windows(self):
         pending = list(self.core.QueryTree(self.root).reply().children)
@@ -77,17 +91,10 @@ class XcffibAdapter:
         return self.property(window, "WM_CLASS", "STRING").split("\0")
 
     def pid(self, window):
-        value = self.property(window, "_NET_WM_PID", "CARDINAL")
-        try:
-            return int(value)
-        except ValueError:
-            return None
+        return self.property(window, "_NET_WM_PID", "CARDINAL")
 
     def active_window(self):
-        reply = self.core.GetProperty(False, self.root, self.atom("_NET_ACTIVE_WINDOW"),
-                                      self.xproto.Atom.WINDOW, 0, 1).reply()
-        values = reply.value.to_atoms()
-        return values[0] if values else None
+        return self.property(self.root, "_NET_ACTIVE_WINDOW", "WINDOW")
 
     def set_text(self, window, name, value, property_type="UTF8_STRING"):
         encoded = str(value).encode()
@@ -102,14 +109,22 @@ def binding_title_matches(title, expected):
     return title == expected or any(title == expected + suffix for suffix in CHROME_TITLE_SUFFIXES)
 
 
-def browser_process(pid):
+def browser_process(pid, proc_root="/proc"):
     if pid is None:
         return False
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as process:
-            return b"chrom" in process.read().lower()
+        arguments = (pathlib.Path(proc_root) / str(pid) / "cmdline").read_bytes().split(b"\0")
     except OSError:
         return False
+    executable = pathlib.PurePath(os.fsdecode(arguments[0])).name.lower() if arguments[0] else ""
+    return executable in {
+        "chrome", "chrome-wrapper", "chromium", "chromium-browser", "google-chrome",
+        "google-chrome-beta", "google-chrome-stable", "google-chrome-unstable",
+    }
+
+
+def chrome_process_window(adapter, window):
+    return browser_process(adapter.pid(window))
 
 
 def qtile_command(name, window):
@@ -212,7 +227,7 @@ def managed_window(adapter, window):
 def ordinary_candidate(adapter, window, nonce):
     return ordinary_title_matches(adapter.title(window), nonce) and \
         any("chrom" in value.lower() for value in adapter.wm_class(window)) and \
-        not managed_window(adapter, window)
+        chrome_process_window(adapter, window) and not managed_window(adapter, window)
 
 
 def find_ordinary_window(adapter, nonce, attempts=100, interval=0.05):
@@ -248,28 +263,46 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
     return {"xid": window, "nonce": payload["nonce"]}
 
 
-def activate_ordinary_window(payload, adapter=None, run=None, verify=None):
+def prepared_ordinary_identity(payload):
     if not isinstance(payload, dict) or set(payload) != {"nonce", "xid"} or \
             not isinstance(payload["nonce"], str) or not NONCE_RE.fullmatch(payload["nonce"]) or \
             not isinstance(payload["xid"], int) or isinstance(payload["xid"], bool) or \
             payload["xid"] <= 0:
-        raise ValueError("invalid ordinary activate payload")
+        raise ValueError("invalid prepared ordinary identity")
+    return payload["xid"], payload["nonce"]
+
+
+def verify_ordinary_chrome(adapter, window, nonce, require_staging_title=False):
+    title_mismatch = require_staging_title and \
+        not ordinary_title_matches(adapter.title(window), nonce)
+    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != nonce or title_mismatch or \
+            not any("chrom" in value.lower() for value in adapter.wm_class(window)) or \
+            not chrome_process_window(adapter, window) or managed_window(adapter, window):
+        raise ValueError("ordinary prepared window identity mismatch")
+    return True
+
+
+def verify_prepared_ordinary_window(payload, adapter=None):
+    window, nonce = prepared_ordinary_identity(payload)
     adapter = adapter or XcffibAdapter()
-    window = payload["xid"]
-    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
-            managed_window(adapter, window):
-        raise ValueError("ordinary activation identity mismatch")
+    return verify_ordinary_chrome(adapter, window, nonce, require_staging_title=True)
+
+
+def activate_ordinary_window(payload, adapter=None, run=None, verify=None):
+    window, nonce = prepared_ordinary_identity(payload)
+    adapter = adapter or XcffibAdapter()
+    verify_ordinary_chrome(adapter, window, nonce)
     qtile_transition(qtile_activate_command(window), window, "f", run)
-    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
+    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != nonce or \
             managed_window(adapter, window):
         raise X11Unavailable("ordinary activation changed window identity")
     if verify is None:
-        verified = verify_ordinary_activation(adapter, window, payload["nonce"], run)
+        verified = verify_ordinary_activation(adapter, window, nonce, run)
     else:
         verified = verify(window)
     if verified is not True:
         raise X11Unavailable("ordinary activation verification failed")
-    return {"xid": window, "nonce": payload["nonce"]}
+    return {"xid": window, "nonce": nonce}
 
 
 def bind_workspace_window(
@@ -306,8 +339,7 @@ def bind_workspace_window(
         matches = existing or fresh
         if len(matches) == 1:
             window = matches[0]
-            pid = getattr(adapter, "pid", lambda _window: None)(window)
-            if pid is not None and not browser_process(pid):
+            if not chrome_process_window(adapter, window):
                 raise ValueError("X11 binding candidate is not a Chrome process")
             break
         if len(matches) > 1:

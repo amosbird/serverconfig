@@ -24,23 +24,25 @@ chrome_args=(
 )
 
 start_chrome() {
-    "$chrome" "${chrome_args[@]}" "$@"
+    "$chrome" "${chrome_args[@]}"
 }
 
 launch_chrome() {
-    exec "$chrome" "${chrome_args[@]}" "$@"
+    exec "$chrome" "${chrome_args[@]}"
 }
 
 focus_group=true
-special=false
 if [[ ${1:-} == --current-group ]]; then
     focus_group=false
-    special=true
     shift
 fi
 
-if ! $special && [[ $# -eq 1 && $1 != -* ]]; then
+if [[ $# -eq 1 && $1 != -* ]]; then
     url=$1
+    if [[ $url != http://* && $url != https://* && $url != file:///* ]]; then
+        printf 'chromium: unsupported URL scheme\n' >&2
+        exit 2
+    fi
     proc_root=${ABUSH_PROC_ROOT:-/proc}
     chrome_running=false
     for process in "$proc_root"/[0-9]*/cmdline; do
@@ -57,13 +59,18 @@ if ! $special && [[ $# -eq 1 && $1 != -* ]]; then
     exec python3 "$root/scripts/ordinary-open-client.py" "$url"
 fi
 
+if [[ $# -gt 0 ]]; then
+    printf 'chromium: flags and app launches require a dedicated profile launcher\n' >&2
+    exit 2
+fi
+
 if $focus_group; then
     focus_main_group
 fi
-if chromium-remote "$@"; then
+if chromium-remote; then
     if $focus_group; then
         focus_main_group
     fi
     exit
 fi
-launch_chrome "$@"
+launch_chrome

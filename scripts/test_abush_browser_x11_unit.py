@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import struct
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -39,6 +40,9 @@ class FakeAdapter:
     def wm_class(self, window):
         return self.values.get((window, "WM_CLASS"), "").split("\0")
 
+    def pid(self, _window):
+        return 4242
+
     def set_text(self, window, name, value, property_type="UTF8_STRING"):
         self.values[(window, name)] = str(value)
 
@@ -49,8 +53,64 @@ class FakeAdapter:
         self.finished = True
 
 
+class XcffibPropertyAdapterTest(unittest.TestCase):
+    class Value:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def buf(self):
+            return self.raw
+
+    @staticmethod
+    def adapter(raw, value_type, value_format):
+        reply = mock.Mock(
+            type=value_type,
+            format=value_format,
+            value=XcffibPropertyAdapterTest.Value(raw),
+        )
+        core = mock.Mock()
+        core.GetProperty.return_value.reply.return_value = reply
+        adapter = binding.XcffibAdapter.__new__(binding.XcffibAdapter)
+        adapter.xproto = mock.Mock()
+        adapter.xproto.Atom.NONE = 0
+        adapter.xproto.Atom.CARDINAL = 6
+        adapter.xproto.Atom.WINDOW = 33
+        adapter.core = core
+        adapter.atom = mock.Mock(side_effect={
+            "_NET_WM_PID": 100,
+            "_NET_ACTIVE_WINDOW": 101,
+            "UTF8_STRING": 102,
+        }.get)
+        adapter.root = 1
+        return adapter
+
+    def test_binary_cardinal_pid_and_window_are_read_as_32_bit_values(self):
+        pid = self.adapter(struct.pack("=I", 424242), 6, 32)
+        self.assertEqual(pid.pid(22), 424242)
+        pid.core.GetProperty.assert_called_once_with(False, 22, 100, 6, 0, 4096)
+
+        active = self.adapter(struct.pack("=I", 0x12345678), 33, 32)
+        self.assertEqual(active.active_window(), 0x12345678)
+        active.core.GetProperty.assert_called_once_with(False, 1, 101, 33, 0, 4096)
+
+    def test_cardinal_type_or_width_mismatch_is_rejected(self):
+        self.assertIsNone(self.adapter(struct.pack("=I", 42), 33, 32).pid(22))
+        self.assertIsNone(self.adapter(b"42", 6, 8).pid(22))
+
+    def test_browser_process_matches_exact_chrome_executable_not_argument_substrings(self):
+        root = pathlib.Path(self._testMethodName)
+        with mock.patch.object(binding.pathlib.Path, "read_bytes") as read_bytes:
+            read_bytes.return_value = b"/usr/bin/google-chrome-stable\0--type=browser\0"
+            self.assertTrue(binding.browser_process(42, root))
+            read_bytes.return_value = b"/usr/bin/python3\0script.py\0--name=chromium\0"
+            self.assertFalse(binding.browser_process(42, root))
+
+
 class X11BindingTest(unittest.TestCase):
     def setUp(self):
+        self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
+        self.process_patch.start()
+        self.addCleanup(self.process_patch.stop)
         self.qtile_patch = mock.patch.object(binding, "notify_qtile", return_value=False)
         self.qtile_patch.start()
         self.addCleanup(self.qtile_patch.stop)
@@ -197,6 +257,37 @@ class X11BindingTest(unittest.TestCase):
                 run=lambda *_args, **_kwargs: mock.Mock(
                     returncode=0, stdout=json.dumps({"id": 22, "group": "f"})))
 
+    def test_ordinary_prepare_refuses_non_chrome_pid(self):
+        nonce = "e" * 32
+        adapter = FakeAdapter()
+        adapter.values[(11, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce}"
+        adapter.pid = lambda _window: 4242
+        with mock.patch.object(binding, "browser_process", return_value=False), \
+                self.assertRaises(binding.X11Unavailable):
+            binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, attempts=1,
+                run=lambda *_args, **_kwargs: mock.Mock(
+                    returncode=0, stdout=json.dumps({"id": 11, "group": "f"})))
+
+    def test_prepared_identity_requires_exact_title_nonce_pid_and_xid(self):
+        nonce = "f" * 32
+        adapter = FakeAdapter()
+        adapter.values[(11, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce}"
+        adapter.values[(11, binding.ORDINARY_NONCE_PROPERTY)] = nonce
+        adapter.pid = lambda _window: 4242
+        with mock.patch.object(binding, "browser_process", return_value=True):
+            self.assertTrue(binding.verify_prepared_ordinary_window(
+                {"nonce": nonce, "xid": 11}, adapter=adapter))
+        with mock.patch.object(binding, "browser_process", return_value=False), \
+                self.assertRaisesRegex(ValueError, "identity mismatch"):
+            binding.verify_prepared_ordinary_window(
+                {"nonce": nonce, "xid": 11}, adapter=adapter)
+        adapter.values[(11, "_NET_WM_NAME")] = "different title"
+        with mock.patch.object(binding, "browser_process", return_value=True), \
+                self.assertRaisesRegex(ValueError, "identity mismatch"):
+            binding.verify_prepared_ordinary_window(
+                {"nonce": nonce, "xid": 11}, adapter=adapter)
+
     def test_qtile_info_is_strict_json_and_activation_verifier_polls_all_fields(self):
         nonce = "d" * 32
         adapter = FakeAdapter()
@@ -222,6 +313,7 @@ class X11BindingTest(unittest.TestCase):
         nonce = "c" * 32
         adapter = FakeAdapter()
         adapter.values[(11, "_ABUSH_ORDINARY_NONCE")] = nonce
+        adapter.values[(11, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce}"
         commands = []
 
         def run(command, **_kwargs):

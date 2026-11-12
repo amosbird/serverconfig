@@ -45,8 +45,12 @@ for (const [page, link, expected] of cases) {{
         content = CONTENT.read_text()
         routes_js = CONTENT.with_name("routes.js").read_text()
         host = HOST.read_text()
+        launcher = (ROOT / "scripts/chromium").read_text()
         self.assertIn("const ROUTES = {", routes_js)
         self.assertIn("ROUTES = json.loads(ROUTES_PATH.read_text())", host)
+        self.assertIn("--remote-debugging-port=9222", launcher)
+        self.assertIn("ABUSH_CHROME_DEBUG_PORT", host)
+        self.assertIn('"9222"', host)
         self.assertNotIn("AI_SITES =", host)
         self.assertNotIn("exactSiteGroups", content)
 
@@ -106,6 +110,7 @@ for (const [page, link, expected] of cases) {{
     def test_shared_extension_provides_scroll_commands_for_isolated_profiles(self):
         manifest = json.loads(MANIFEST.read_text())
         background = CONTENT.with_name("background.js").read_text()
+        workspace = CONTENT.with_name("workspace.js").read_text()
         self.assertEqual(
             manifest["commands"]["scrollToTop"]["suggested_key"]["default"],
             "Alt+Shift+Home",
@@ -116,16 +121,19 @@ for (const [page, link, expected] of cases) {{
         )
         self.assertIn("debugger", manifest["permissions"])
         self.assertIn("storage", manifest["permissions"])
-        self.assertIn("file:///*", manifest["host_permissions"])
+        self.assertNotIn("host_permissions", manifest)
         for dangerous in ("scripting", "activeTab", "downloads", "offscreen", "clipboardWrite"):
             self.assertNotIn(dangerous, manifest["permissions"])
         self.assertIn("chrome.commands.onCommand", background)
         self.assertIn('sendNativeRequest("external_links", "scroll", {', background)
         self.assertIn("connectNative", background)
+        self.assertIn("reconnect_exhausted", background)
+        self.assertIn("Native browser integration could not reconnect", background)
         self.assertIn("url: tab?.url", background)
         self.assertIn("scrollQueues", background)
         self.assertIn("chrome.debugger", background)
-        self.assertIn("isAllowedFileSchemeAccess", CONTENT.with_name("workspace.js").read_text())
+        self.assertNotIn("isAllowedFileSchemeAccess", workspace)
+        self.assertIn('"ordinary_file_navigate"', workspace)
         self.assertIn('"Input.dispatchKeyEvent"', HOST.read_text())
         self.assertIn('"ScrollToBeginningOfDocument"', HOST.read_text())
         self.assertIn('"ScrollToEndOfDocument"', HOST.read_text())
@@ -262,6 +270,57 @@ dispatcher.stop();
 """
         subprocess.run(["node", "-e", script], check=True)
 
+    def test_native_dispatcher_marks_pre_and_post_dispatch_failures(self):
+        background = CONTENT.with_name("background.js")
+        script = f"""
+const assert = require('assert');
+const {{NativeDispatcher}} = require({json.dumps(str(background))});
+function signal() {{ return {{addListener() {{}}}}; }}
+const unavailable = new NativeDispatcher(() => {{ throw new Error('connect failed'); }});
+const notSent = unavailable.request('ordinary_open', 'ordinary_file_navigate', {{}})
+    .catch(error => error.nativeDispatch);
+const uncertain = new NativeDispatcher(() => ({{
+    onMessage: signal(), onDisconnect: signal(),
+    postMessage() {{ throw new Error('post failed'); }},
+}}));
+const unknown = uncertain.request('ordinary_open', 'ordinary_file_navigate', {{}})
+    .catch(error => error.nativeDispatch);
+Promise.all([notSent, unknown]).then(values => {{
+    assert.deepEqual(values, ['not_sent', 'unknown']);
+    unavailable.stop();
+    uncertain.stop();
+}}).catch(() => process.exit(1));
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_native_dispatcher_stops_reconnecting_after_bound(self):
+        background = CONTENT.with_name("background.js")
+        script = f"""
+const assert = require('assert');
+const {{NativeDispatcher}} = require({json.dumps(str(background))});
+const timers = [];
+const events = [];
+const dispatcher = new NativeDispatcher(() => {{ throw new Error('offline'); }}, 1000);
+dispatcher.onEvent(message => events.push(message.event));
+dispatcher.maxReconnectAttempts = 3;
+dispatcher.setTimeout = (callback, delay) => {{
+    timers.push([callback, delay]);
+    return timers.length;
+}};
+for (let attempt = 0; attempt < 3; attempt++) {{
+    try {{ dispatcher.ensurePort(); }} catch (_) {{}}
+    assert.equal(timers.length, 1);
+    timers.shift();
+    dispatcher.reconnectTimer = null;
+}}
+assert.equal(dispatcher.reconnectAttempts, 3);
+dispatcher.scheduleReconnect();
+dispatcher.scheduleReconnect();
+assert.equal(timers.length, 0, 'bounded reconnect must stop scheduling');
+assert.deepEqual(events, ['reconnect_exhausted'], 'exhaustion emits one lifecycle notice');
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
 
 class NativeHostTest(unittest.TestCase):
     @classmethod
@@ -309,38 +368,41 @@ class NativeHostTest(unittest.TestCase):
             broker.handle_request(request)
         self.assertEqual(ordinary.url, "https://example.test/")
 
-    @mock.patch("subprocess.Popen")
-    def test_authentication_urls_stay_in_the_calling_browser(self, popen):
-        self.assertEqual(
-            self.host.handle_message(
-                {"url": "https://accounts.google.com/o/oauth2/auth", "sourceGroup": "chat"}
-            ),
-            {"ok": True},
-        )
+    def test_authentication_urls_stay_in_the_calling_browser(self):
+        with mock.patch.object(self.host.subprocess, "Popen") as popen:
+            self.assertEqual(
+                self.host.handle_message(
+                    {"url": "https://accounts.google.com/o/oauth2/auth", "sourceGroup": "chat"}
+                ),
+                {"ok": True},
+            )
         popen.assert_not_called()
 
-    @mock.patch("scripts.test_ai_external_links.NativeHostTest.host.submit_ordinary_open",
-                return_value="applied")
-    @mock.patch("subprocess.Popen")
-    def test_routes_urls_to_their_own_browser(self, popen, submit_ordinary_open):
+    def test_routes_urls_to_their_own_browser(self):
         routes = {
             "https://chatgpt.com/c/1": "runai",
             "https://discord.com/channels/1": "runchat",
             "https://example.com/": "chromium",
         }
-        with mock.patch.object(self.host, "reuse_tab", return_value=False):
+        with (
+            mock.patch.object(self.host, "reuse_tab", return_value=False),
+            mock.patch.object(self.host, "submit_ordinary_open", return_value="applied") as submit,
+            mock.patch.object(self.host.subprocess, "Popen") as popen,
+        ):
             for url, launcher in routes.items():
                 with self.subTest(url=url):
                     self.assertEqual(self.host.handle_message({"url": url}), {"ok": True})
                     if launcher == "chromium":
-                        submit_ordinary_open.assert_called_with(url)
+                        submit.assert_called_with(url)
                     else:
                         popen.assert_called_with(
                             [str(pathlib.Path.home() / "scripts" / launcher), url])
 
-    @mock.patch("subprocess.Popen")
-    def test_reuses_existing_app_tab_before_launching(self, popen):
-        with mock.patch.object(self.host, "reuse_tab", return_value=True) as reuse_tab:
+    def test_reuses_existing_app_tab_before_launching(self):
+        with (
+            mock.patch.object(self.host, "reuse_tab", return_value=True) as reuse_tab,
+            mock.patch.object(self.host.subprocess, "Popen") as popen,
+        ):
             self.assertEqual(
                 self.host.handle_message({"url": "https://app.slack.com/client/T1/C1"}),
                 {"ok": True},
@@ -349,34 +411,32 @@ class NativeHostTest(unittest.TestCase):
             "chat", "app.slack.com", "https://app.slack.com/client/T1/C1")
         popen.assert_not_called()
 
-    @mock.patch("scripts.test_ai_external_links.NativeHostTest.host.scroll_page", return_value=True)
-    def test_scroll_command_uses_cdp(self, scroll_page):
-        self.assertEqual(
-            self.host.handle_message({
-                "command": "scroll",
-                "direction": "scrollToBottom",
-                "url": "https://example.com/page",
-            }),
-            {"ok": True},
-        )
+    def test_scroll_command_uses_cdp(self):
+        with mock.patch.object(self.host, "scroll_page", return_value=True) as scroll_page:
+            self.assertEqual(
+                self.host.handle_message({
+                    "command": "scroll",
+                    "direction": "scrollToBottom",
+                    "url": "https://example.com/page",
+                }),
+                {"ok": True},
+            )
         scroll_page.assert_called_once_with(
             "scrollToBottom", url="https://example.com/page"
         )
 
-    @mock.patch(
-        "scripts.test_ai_external_links.NativeHostTest.host.scroll_page",
-        return_value=False,
-    )
-    def test_invalid_scroll_command_fails(self, scroll_page):
-        self.assertEqual(
-            self.host.handle_message({"command": "scroll", "direction": "invalid"}),
-            {"ok": False},
-        )
+    def test_invalid_scroll_command_fails(self):
+        with mock.patch.object(self.host, "scroll_page", return_value=False) as scroll_page:
+            self.assertEqual(
+                self.host.handle_message({"command": "scroll", "direction": "invalid"}),
+                {"ok": False},
+            )
         scroll_page.assert_called_once_with("invalid", url=None)
 
-    @mock.patch("subprocess.run")
-    def test_rejects_non_http_url(self, run):
-        self.assertEqual(self.host.handle_message({"url": "file:///etc/passwd"}), {"ok": False})
+    def test_rejects_non_http_url(self):
+        with mock.patch.object(self.host.subprocess, "run") as run:
+            self.assertEqual(
+                self.host.handle_message({"url": "file:///etc/passwd"}), {"ok": False})
         run.assert_not_called()
 
 

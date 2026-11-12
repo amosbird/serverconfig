@@ -51,6 +51,7 @@ DEBUG_PORTS = {
     9223: "chrome-chatgpt",
     9224: "chrome-chat",
 }
+ORDINARY_STAGING_ORIGIN = "chrome-extension://ahonjbfnmpjgjgaabbppofphidfomgcj"
 LOG = pathlib.Path.home() / ".cache/browser-router.log"
 logging.basicConfig(
     filename=LOG,
@@ -130,6 +131,156 @@ def receive_response(websocket, response_id):
         response = json.loads(websocket.recv(timeout=1))
         if response.get("id") == response_id:
             return response
+
+
+def ordinary_debug_port(value=None):
+    value = value if value is not None else os.environ.get("ABUSH_CHROME_DEBUG_PORT", "9222")
+    try:
+        port = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid ordinary Chrome debug port") from error
+    if not 0 < port < 65536:
+        raise ValueError("invalid ordinary Chrome debug port")
+    return port
+
+
+def ordinary_staging_url(nonce):
+    return f"{ORDINARY_STAGING_ORIGIN}/ordinary-staging.html#{nonce}"
+
+
+def _load_cdp_targets(port, opener):
+    response = opener(f"http://127.0.0.1:{port}/json", timeout=1)
+    try:
+        targets = json.load(response)
+    finally:
+        close = getattr(response, "close", None)
+        if close is not None:
+            close()
+    if not isinstance(targets, list) or not all(isinstance(target, dict) for target in targets):
+        raise ValueError("invalid Chrome target list")
+    return targets
+
+
+def _valid_target_websocket(url, port):
+    if not isinstance(url, str):
+        return False
+    try:
+        parsed = urlsplit(url)
+        return parsed.scheme == "ws" and parsed.hostname == "127.0.0.1" and \
+            parsed.port == port and bool(parsed.path) and not parsed.username and \
+            not parsed.password and not parsed.query and not parsed.fragment
+    except ValueError:
+        return False
+
+
+def ordinary_staging_target(nonce, port, opener=urllib.request.urlopen):
+    expected_url = ordinary_staging_url(nonce)
+    expected_title = f"__ABUSH_ORDINARY__:{nonce}"
+    matches = [
+        target for target in _load_cdp_targets(port, opener)
+        if target.get("type") == "page" and target.get("url") == expected_url and
+        target.get("title") == expected_title
+    ]
+    if len(matches) != 1:
+        raise ValueError("ordinary staging CDP target is not unique")
+    target = matches[0]
+    if not isinstance(target.get("id"), str) or not target["id"] or \
+            not _valid_target_websocket(target.get("webSocketDebuggerUrl"), port):
+        raise ValueError("ordinary staging CDP target is invalid")
+    return target
+
+
+def _strict_file_url(url):
+    if not isinstance(url, str) or not url.startswith("file:///"):
+        return False
+    parsed = urlsplit(url)
+    return parsed.scheme == "file" and not parsed.netloc and parsed.path.startswith("/") and \
+        not parsed.query
+
+
+def _receive_cdp_response(websocket, response_id, limit=64):
+    for _ in range(limit):
+        response = json.loads(websocket.recv(timeout=1))
+        if not isinstance(response, dict):
+            raise ValueError("invalid CDP response")
+        if response.get("id") == response_id:
+            return response
+    raise TimeoutError("CDP response was not received")
+
+
+def _file_target_applied(target_id, url, port, opener):
+    matches = [
+        target for target in _load_cdp_targets(port, opener)
+        if target.get("type") == "page" and target.get("id") == target_id and
+        target.get("url") == url
+    ]
+    return len(matches) == 1
+
+
+def navigate_ordinary_file(
+    payload,
+    prepared_verifier,
+    debug_port=None,
+    opener=urllib.request.urlopen,
+    websocket_connect=connect,
+    verify_attempts=20,
+    verify_interval=0.025,
+):
+    required = {"nonce", "xid", "url"}
+    if not isinstance(payload, dict) or set(payload) != required:
+        raise ValueError("invalid ordinary file navigation payload")
+    nonce = payload.get("nonce")
+    xid = payload.get("xid")
+    url = payload.get("url")
+    if not isinstance(nonce, str) or not re.fullmatch(r"[0-9a-f]{32}", nonce) or \
+            not isinstance(xid, int) or isinstance(xid, bool) or xid <= 0 or \
+            not isinstance(url, str):
+        raise ValueError("invalid ordinary file navigation payload")
+    result = {"nonce": nonce, "xid": xid, "url": url, "completion": "not_applied"}
+    if not _strict_file_url(url):
+        return result
+    try:
+        if prepared_verifier({"nonce": nonce, "xid": xid}) is not True:
+            return result
+        port = ordinary_debug_port(debug_port)
+        target = ordinary_staging_target(nonce, port, opener)
+    except Exception as error:
+        logging.info("ordinary file navigation rejected before mutation nonce=%s error=%s",
+                     nonce, error)
+        return result
+
+    request_sent = False
+    try:
+        request = {
+            "id": 1,
+            "method": "Page.navigate",
+            "params": {"url": url},
+        }
+        with websocket_connect(
+            target["webSocketDebuggerUrl"], open_timeout=1, close_timeout=1,
+        ) as websocket:
+            request_sent = True
+            websocket.send(json.dumps(request))
+            response = _receive_cdp_response(websocket, request["id"])
+        navigation = response.get("result")
+        if response.get("error") is not None or not isinstance(navigation, dict) or \
+                not isinstance(navigation.get("frameId"), str) or not navigation["frameId"] or \
+                navigation.get("errorText"):
+            result["completion"] = "unknown"
+            return result
+        for attempt in range(verify_attempts):
+            if _file_target_applied(target["id"], url, port, opener):
+                result["completion"] = "applied"
+                return result
+            if attempt + 1 < verify_attempts:
+                time.sleep(verify_interval)
+        result["completion"] = "unknown"
+        return result
+    except Exception as error:
+        result["completion"] = "unknown" if request_sent else "not_applied"
+        logging.info("ordinary file navigation failed nonce=%s sent=%s error=%s",
+                     nonce, request_sent, error)
+        return result
 
 
 def execute(websocket, expression, response_id=4):
@@ -585,6 +736,11 @@ def validate_ordinary_open_request(message):
     if not isinstance(request_id, str) or not request_id or len(request_id) > 128 or \
             not isinstance(url, str) or not url or len(url.encode()) > 32768:
         raise ValueError("invalid ordinary-open request")
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https", "file"} or \
+            (parsed.scheme in {"http", "https"} and not parsed.hostname) or \
+            (parsed.scheme == "file" and (not url.startswith("file:///") or parsed.netloc)):
+        raise ValueError("invalid ordinary-open URL")
     return message
 
 
@@ -1356,9 +1512,12 @@ class RemotePeer:
         command = message.get("command")
         if not self._valid_command(command):
             raise ValueError("invalid browser command")
+        correlation = {"request_id": request_id, "fence": fence, "command": command}
         if effect_id in self.pending:
-            raise ValueError("duplicate execute effect")
-        self.pending[effect_id] = {"request_id": request_id, "fence": fence}
+            if self.pending[effect_id] != correlation:
+                raise ValueError("conflicting duplicate execute effect")
+            return
+        self.pending[effect_id] = correlation
         self.broker.outbound.put(event("abush_browser.execute", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
             "connection_id": self.metadata["connection_id"],
@@ -1564,6 +1723,12 @@ class BrowserBroker:
         payload = request["payload"]
         if service == "ordinary_open" and operation == "prepare":
             return self.x11_binding().prepare_ordinary_window(payload)
+        if service == "ordinary_open" and operation == "ordinary_file_navigate":
+            binding = self.x11_binding()
+            return navigate_ordinary_file(
+                payload,
+                lambda identity: binding.verify_prepared_ordinary_window(identity),
+            )
         if service == "ordinary_open" and operation == "activate":
             return self.x11_binding().activate_ordinary_window(payload)
         if service == "ordinary_open" and operation == "ordinary_open_completion":

@@ -46,6 +46,9 @@ class FakeAdapter:
     def wm_class(self, window):
         return self.values.get((window, "WM_CLASS"), "").split("\0")
 
+    def pid(self, _window):
+        return 4242
+
     def property(self, window, name, property_type="UTF8_STRING"):
         return self.values.get((window, name), "")
 
@@ -100,6 +103,11 @@ class FakeHook:
 
 
 class QtileConfigTest(unittest.TestCase):
+    def setUp(self):
+        self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
+        self.process_patch.start()
+        self.addCleanup(self.process_patch.stop)
+
     @classmethod
     def setUpClass(cls):
         cls.source = CONFIG_PATH.read_text()
@@ -282,6 +290,37 @@ class QtileConfigTest(unittest.TestCase):
                             name="Restored work - Google Chrome")
         namespace["reclassify_abush_browser"](window)
         window.togroup.assert_called_once_with("f", switch_group=False)
+
+    def test_prepare_ordinary_window_runs_focus_guard_before_move(self):
+        namespace = {"re": re, "QtileWindow": FakeWindow}
+        function_names = {
+            "is_chrome_window", "is_abush_browser_verified", "is_abush_browser_candidate",
+            "qtile_window_by_xid", "prepare_ordinary_window",
+        }
+        functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name in function_names]
+        binding_title = next(
+            node.value for node in self.tree.body if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
+                    for target in node.targets)
+        )
+        module = ast.Module(
+            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title), *functions],
+            [],
+        )
+        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        window = FakeWindow("browser", group="e", name="GitHub - Google Chrome")
+        observed = []
+
+        def move(group, switch_group=False):
+            observed.append((window.can_steal_focus, group, switch_group))
+            window.group = FakeGroup(group)
+
+        window.togroup.side_effect = move
+        manager = mock.Mock(windows_map={22: window})
+        namespace["prepare_ordinary_window"](manager, 22)
+        self.assertEqual(observed, [(False, "f", False)])
+
     def test_exact_xid_prepare_and_activate_helpers_preserve_focus_policy(self):
         namespace = {"re": re, "QtileWindow": FakeWindow}
         function_names = {
@@ -322,6 +361,11 @@ class QtileConfigTest(unittest.TestCase):
 
 
 class BinderQtileNotificationTest(unittest.TestCase):
+    def setUp(self):
+        self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
+        self.process_patch.start()
+        self.addCleanup(self.process_patch.stop)
+
     def payload(self):
         return {
             "nonce": "0123456789abcdef0123456789abcdef",

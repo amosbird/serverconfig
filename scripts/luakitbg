@@ -5,4 +5,7 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 
-exec /home/amos/scripts/chromium "$1"
+/home/amos/scripts/chromium "$1"
+status=$?
+notify-send "Open Url" "$1"
+exit "$status"

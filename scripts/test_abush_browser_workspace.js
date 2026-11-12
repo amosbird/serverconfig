@@ -232,7 +232,6 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 }
             },
         },
-        extension: {isAllowedFileSchemeAccess: callback => callback(true)},
         debugger: {
             attach: async target => calls.push(["attach", target]),
             detach: async target => calls.push(["detach", target]),
@@ -266,6 +265,28 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "prepare failure must not navigate the staging tab");
         const staging = calls.find(call => call[0] === "createTab");
         assert.equal(staging[1].windowId, 1, "staging must always carry an exact windowId");
+    }
+    {
+        const {executor, calls} = fixture([], [], 1);
+        const originalActive = await executor.chrome.tabs.get(2000);
+        assert.equal(originalActive.active, true);
+        executor.nativeRequest = async (service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "prepare") throw new Error("prepare failed");
+            return {};
+        };
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-prepare-rollback",
+            operation: "ordinary_open",
+            url: "https://ordinary-open.test/rollback",
+            focus: true,
+        });
+        assert.equal(completion, "not_applied");
+        assert.equal((await executor.chrome.tabs.get(2000)).active, true,
+            "prepare rollback must restore the exact original active tab");
+        assert.equal(calls.filter(call => call[0] === "remove").length, 1,
+            "prepare rollback must delete the staging tab");
     }
     {
         const {executor, calls} = fixture([], [], 1);
@@ -315,17 +336,90 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         const {executor, calls} = fixture([], [], 1);
-        executor.chrome.extension.isAllowedFileSchemeAccess = callback => callback(false);
+        executor.nativeRequest = async (service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
+            if (operation === "ordinary_file_navigate") {
+                return {...payload, completion: "applied"};
+            }
+            return {};
+        };
         const completion = await executor.ordinaryOpen({
             version: 1,
-            request_id: "ordinary-file-denied",
+            request_id: "ordinary-file",
             operation: "ordinary_open",
             url: "file:///home/amos/private.txt",
             focus: true,
         });
-        assert.equal(completion, "not_applied");
-        assert.equal(calls.filter(call => call[0] === "createTab").length, 0,
-            "file permission denial must happen before staging or navigation");
+        assert.equal(completion, "applied");
+        const navigate = calls.find(call => call[0] === "ordinary_file_navigate");
+        assert.equal(navigate[1].url, "file:///home/amos/private.txt");
+        assert.equal(navigate[1].xid, 42);
+        assert.equal(typeof navigate[1].nonce, "string");
+        assert.equal(calls.filter(call => call[0] === "update" && call[2]?.url).length, 0,
+            "file navigation must never use extension tabs.update");
+    }
+    {
+        const {executor} = fixture([], [], 1);
+        executor.nativeRequest = (service, operation, payload) => {
+            if (operation === "prepare") return Promise.resolve({xid: 42, nonce: payload.nonce});
+            if (operation === "ordinary_file_navigate") {
+                const error = new Error("native request was not sent");
+                error.nativeDispatch = "not_sent";
+                return Promise.reject(error);
+            }
+            return Promise.resolve({});
+        };
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-file-before-send",
+            operation: "ordinary_open",
+            url: "file:///home/amos/private.txt",
+            focus: true,
+        });
+        assert.equal(completion, "not_applied",
+            "synchronous failure before native dispatch must remain not_applied");
+    }
+    {
+        const {executor} = fixture([], [], 1);
+        executor.nativeRequest = (service, operation, payload) => {
+            if (operation === "prepare") return Promise.resolve({xid: 42, nonce: payload.nonce});
+            if (operation === "ordinary_file_navigate") {
+                const error = new Error("native request dispatch became uncertain");
+                error.nativeDispatch = "unknown";
+                return Promise.reject(error);
+            }
+            return Promise.resolve({});
+        };
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-file-dispatch-unknown",
+            operation: "ordinary_open",
+            url: "file:///home/amos/private.txt",
+            focus: true,
+        });
+        assert.equal(completion, "unknown",
+            "native dispatch failure after postMessage starts must remain unknown");
+    }
+    {
+        const {executor, calls} = fixture([], [], 1);
+        executor.nativeRequest = async (service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
+            if (operation === "ordinary_file_navigate") {
+                return {...payload, nonce: "f".repeat(32), completion: "applied"};
+            }
+            return {};
+        };
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-file-wrong-nonce",
+            operation: "ordinary_open",
+            url: "file:///home/amos/private.txt",
+            focus: true,
+        });
+        assert.equal(completion, "unknown",
+            "a sent mutation with a mismatched native correlation must be unknown");
     }
     {
         const {executor, calls} = fixture([], [], 1);
@@ -356,6 +450,35 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "ordinary_open_completion").length, 1);
         await assert.rejects(executor.ordinaryOpen({...payload,
             url: "https://ordinary-open.test/completed-conflict"}), /conflicting duplicate/);
+    }
+    {
+        const {executor, calls} = fixture([], [], 1);
+        const gates = [deferred(), deferred()];
+        let prepares = 0;
+        executor.nativeRequest = async (service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "prepare") {
+                const gate = gates[prepares++];
+                await gate.promise;
+                return {xid: 42, nonce: payload.nonce};
+            }
+            return {};
+        };
+        const first = executor.ordinaryOpen({
+            version: 1, request_id: "ordinary-serialized-one",
+            operation: "ordinary_open", url: "https://one.test/", focus: true,
+        });
+        const second = executor.ordinaryOpen({
+            version: 1, request_id: "ordinary-serialized-two",
+            operation: "ordinary_open", url: "https://two.test/", focus: true,
+        });
+        while (prepares < 1) await Promise.resolve();
+        assert.equal(prepares, 1, "ordinary opens must not share staging state concurrently");
+        gates[0].resolve();
+        await first;
+        while (prepares < 2) await Promise.resolve();
+        gates[1].resolve();
+        assert.equal(await second, "applied");
     }
     {
         const {executor} = fixture([], [], 2);
@@ -1401,7 +1524,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(events, ["timeout"]);
         const pending = dispatcher.request("abush_browser", "execute", {});
         listeners.disconnect();
-        await assert.rejects(pending, /disconnected/);
+        const disconnected = await pending.catch(error => error);
+        assert.match(disconnected.message, /disconnected/);
+        assert.equal(disconnected.nativeDispatch, "unknown");
         assert.deepEqual(events, ["timeout", "disconnect"]);
         assert.equal(sent.length, 2);
     }

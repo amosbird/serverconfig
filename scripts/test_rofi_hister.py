@@ -353,11 +353,21 @@ class RofiHisterTest(unittest.TestCase):
 
     def test_chromium_uses_installed_extensions(self):
         launcher = SCRIPT.with_name("chromium").read_text()
-        self.assertIn('if chromium-remote "$@"', launcher)
-        self.assertIn('launch_chrome "$@"', launcher)
+        self.assertIn("if chromium-remote; then", launcher)
+        self.assertIn("launch_chrome", launcher)
+        self.assertNotIn('launch_chrome "$@"', launcher)
         self.assertIn("/usr/bin/google-chrome-stable", launcher)
         self.assertNotIn("--load-extension", launcher)
         self.assertNotIn("--disable-extensions-except", launcher)
+
+    def test_chromium_wrapper_accepts_only_one_explicit_url(self):
+        launcher = SCRIPT.with_name("chromium").read_text()
+        helper = SCRIPT.with_name("chromium-sleep").read_text()
+        self.assertIn("unsupported URL scheme", launcher)
+        self.assertIn("flags and app launches require a dedicated profile", launcher)
+        self.assertIn('if [[ $# -ne 1 ]]; then', helper)
+        self.assertIn('chromium "$1"', helper)
+        self.assertNotIn('chromium "$@"', helper)
 
     def test_rofi_chrome_mode_only_selects_extension_id(self):
         root = SCRIPT.parent.parent
@@ -403,11 +413,13 @@ class RofiHisterTest(unittest.TestCase):
         )
         self.assertIn("--disable-smooth-scrolling", launcher)
         self.assertIn('--user-data-dir="$profile"', launcher)
-        self.assertIn(
-            "chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html",
+        self.assertIn("--app=chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html",
+                      qtile_config)
+        self.assertIn("--user-data-dir=/home/amos/.config/google-chrome-downloads", qtile_config)
+        self.assertNotIn(
+            "chromium chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/download.html",
             qtile_config,
         )
-        self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html", qtile_config)
 
     def test_chromium_popups_float_and_match_telegram_geometry(self):
         root = SCRIPT.parent.parent

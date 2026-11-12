@@ -3,10 +3,12 @@
 import importlib.util
 import json
 import pathlib
+import queue
 import socket
 import threading
 import unittest
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 HOST = ROOT / "chromium/external-links/host.py"
@@ -512,6 +514,36 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             peer.complete("wrong", "effect", peer.executor_fence, "applied")
         self.assertIn("effect", peer.pending)
+
+    def test_duplicate_effect_rejects_different_payload_without_second_delivery(self):
+        broker = mock.Mock()
+        broker.outbound = queue.Queue()
+        peer = host.RemotePeer(broker, {
+            "remote_key": "r_12345678", "connection_id": "c_12345678",
+        })
+        peer.principal_id = "principal"
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        page = {
+            "window": {"workspace_id": "workspace", "window_id": "window", "generation": 1},
+            "page_id": "page", "generation": 1,
+        }
+        message = {
+            "type": "execute", "request_id": "request", "effect_id": "effect",
+            "executor_fence": peer.executor_fence,
+            "command": {"command": "navigate", "page": page, "url": "https://one.test/"},
+        }
+        peer.handle(message)
+        first = broker.outbound.get_nowait()
+        self.assertEqual(first["payload"]["command"]["url"], "https://one.test/")
+        peer.handle(json.loads(json.dumps(message)))
+        with self.assertRaises(queue.Empty):
+            broker.outbound.get_nowait()
+        conflicting = json.loads(json.dumps(message))
+        conflicting["command"]["url"] = "https://two.test/"
+        with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
+            peer.handle(conflicting)
+        with self.assertRaises(queue.Empty):
+            broker.outbound.get_nowait()
 
     def test_owner_display_requires_exact_fields_and_matches_acceptance(self):
         peer = host.RemotePeer(None, {})

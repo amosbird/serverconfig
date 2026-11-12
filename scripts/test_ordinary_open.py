@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -67,6 +68,19 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         client.close()
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
+
+    def test_validate_request_rejects_non_web_and_non_file_schemes(self):
+        request = self.request("scheme-check")
+        for url in (
+            "chrome-extension://id/page", "javascript:alert(1)", "data:text/plain,x",
+            "file://remote/share", "https:///missing-host",
+        ):
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "URL"):
+                host.validate_ordinary_open_request({**request, "url": url})
+        validated = host.validate_ordinary_open_request({
+            **request, "url": "file:///home/amos/a.txt",
+        })
+        self.assertEqual(validated["url"], "file:///home/amos/a.txt")
 
     def test_duplicate_request_reuses_one_event_and_terminal_completion(self):
         first = self.connect(self.request())
@@ -156,6 +170,163 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         self.assertFalse(host.is_main_profile_host("/profiles/other", 30, proc))
 
 
+class FakeWebSocket:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.sent = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def send(self, message):
+        self.sent.append(json.loads(message))
+
+    def recv(self, timeout=None):
+        if not self.responses:
+            raise TimeoutError("no response")
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return json.dumps(response)
+
+
+class OrdinaryFileNavigationTest(unittest.TestCase):
+    nonce = "a" * 32
+    url = "file:///home/amos/file%20with%20space.txt#section"
+
+    def target(self, *, target_id="target-one", nonce=None, url=None, title=None):
+        nonce = nonce or self.nonce
+        return {
+            "id": target_id,
+            "type": "page",
+            "url": url or host.ordinary_staging_url(nonce),
+            "title": title or f"__ABUSH_ORDINARY__:{nonce}",
+            "webSocketDebuggerUrl": f"ws://127.0.0.1:9222/devtools/page/{target_id}",
+        }
+
+    @staticmethod
+    def opener_for(*target_lists):
+        responses = iter(target_lists)
+
+        def open_targets(request_url, timeout):
+            if request_url != "http://127.0.0.1:9222/json" or timeout != 1:
+                raise AssertionError((request_url, timeout))
+            return io.BytesIO(json.dumps(next(responses)).encode())
+
+        return open_targets
+
+    def payload(self, url=None):
+        return {"nonce": self.nonce, "xid": 42, "url": url or self.url}
+
+    def test_unique_nonce_title_and_url_target_navigates_exact_file_uri(self):
+        websocket = FakeWebSocket([
+            {"method": "Page.frameNavigated"},
+            {"id": 1, "result": {"frameId": "frame-one"}},
+        ])
+        staging = self.target()
+        navigated = self.target(url=self.url, title="file with space.txt")
+        verifier = mock.Mock(return_value=True)
+        connect = mock.Mock(return_value=websocket)
+
+        result = host.navigate_ordinary_file(
+            self.payload(), verifier, opener=self.opener_for([staging], [navigated]),
+            websocket_connect=connect, verify_attempts=1,
+        )
+
+        self.assertEqual(result, {**self.payload(), "completion": "applied"})
+        verifier.assert_called_once_with({"nonce": self.nonce, "xid": 42})
+        connect.assert_called_once_with(
+            staging["webSocketDebuggerUrl"], open_timeout=1, close_timeout=1)
+        self.assertEqual(websocket.sent, [{
+            "id": 1,
+            "method": "Page.navigate",
+            "params": {"url": self.url},
+        }])
+
+    def test_ambiguous_staging_target_is_not_applied_without_websocket(self):
+        connect = mock.Mock()
+        result = host.navigate_ordinary_file(
+            self.payload(), lambda _identity: True,
+            opener=self.opener_for([self.target(), self.target(target_id="target-two")]),
+            websocket_connect=connect,
+        )
+        self.assertEqual(result["completion"], "not_applied")
+        connect.assert_not_called()
+
+    def test_nonce_title_and_extension_url_must_all_correlate(self):
+        wrong_nonce = "b" * 32
+        candidates = [
+            self.target(nonce=wrong_nonce),
+            self.target(title="wrong title"),
+            self.target(url=host.ordinary_staging_url(wrong_nonce)),
+        ]
+        connect = mock.Mock()
+        result = host.navigate_ordinary_file(
+            self.payload(), lambda _identity: True,
+            opener=self.opener_for(candidates), websocket_connect=connect,
+        )
+        self.assertEqual(result["completion"], "not_applied")
+        connect.assert_not_called()
+
+    def test_target_url_must_be_strict_local_file_uri(self):
+        for url in (
+            "https://example.test/",
+            "file://server/share",
+            "file:///home/amos/file.txt?query=1",
+            "FILE:///home/amos/file.txt",
+        ):
+            with self.subTest(url=url):
+                opener = mock.Mock()
+                result = host.navigate_ordinary_file(
+                    self.payload(url), lambda _identity: True, opener=opener)
+                self.assertEqual(result["completion"], "not_applied")
+                opener.assert_not_called()
+
+    def test_strict_file_url_accepts_file_fragments_but_not_remote_authorities(self):
+        self.assertTrue(host._strict_file_url(self.url))
+        self.assertFalse(host._strict_file_url("file://localhost/home/amos/file.txt"))
+
+    def test_debug_port_can_be_injected(self):
+        target = self.target()
+        target["webSocketDebuggerUrl"] = "ws://127.0.0.1:9333/devtools/page/target-one"
+        websocket = FakeWebSocket([{"id": 1, "result": {"frameId": "frame"}}])
+
+        def opener(request_url, timeout):
+            self.assertEqual(request_url, "http://127.0.0.1:9333/json")
+            targets = [target] if not websocket.sent else [self.target(url=self.url)]
+            targets[0]["webSocketDebuggerUrl"] = target["webSocketDebuggerUrl"]
+            return io.BytesIO(json.dumps(targets).encode())
+
+        result = host.navigate_ordinary_file(
+            self.payload(), lambda _identity: True, debug_port="9333", opener=opener,
+            websocket_connect=lambda *_args, **_kwargs: websocket, verify_attempts=1,
+        )
+        self.assertEqual(result["completion"], "applied")
+
+    def test_failure_during_page_navigate_send_is_unknown(self):
+        websocket = FakeWebSocket([])
+        websocket.send = mock.Mock(side_effect=OSError("send result unknown"))
+        result = host.navigate_ordinary_file(
+            self.payload(), lambda _identity: True,
+            opener=self.opener_for([self.target()]),
+            websocket_connect=lambda *_args, **_kwargs: websocket,
+        )
+        self.assertEqual(result["completion"], "unknown")
+
+    def test_failure_after_page_navigate_send_is_unknown(self):
+        websocket = FakeWebSocket([TimeoutError("response lost")])
+        result = host.navigate_ordinary_file(
+            self.payload(), lambda _identity: True,
+            opener=self.opener_for([self.target()]),
+            websocket_connect=lambda *_args, **_kwargs: websocket,
+        )
+        self.assertEqual(result["completion"], "unknown")
+        self.assertEqual(websocket.sent[0]["params"]["url"], self.url)
+
+
 class LauncherTest(unittest.TestCase):
     def setUp(self):
         self.base = ROOT / ".tmp" / f"launcher-{os.getpid()}-{id(self):x}"
@@ -208,7 +379,7 @@ class LauncherTest(unittest.TestCase):
             time.sleep(0.01)
         arguments = self.log.read_bytes().split(b"\0")
         self.assertNotIn(url.encode(), arguments)
-        self.assertIn(b"--restore-last-session", arguments)
+        self.assertIn(b"--remote-debugging-port=9222", arguments)
         self.assertEqual((self.base / "client").read_text(), url)
 
     def test_running_chrome_skips_start_and_still_submits_socket_client(self):
@@ -236,7 +407,17 @@ class LauncherTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("chromium-remote", result.stderr)
 
-    def test_special_flags_keep_legacy_singleton_path(self):
+    def test_unsupported_scheme_is_rejected_before_start_or_socket_submission(self):
+        result = subprocess.run(
+            [ROOT / "scripts/chromium", "chrome-extension://id/page.html"],
+            env=self.environment(), capture_output=True, text=True, timeout=2,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unsupported URL scheme", result.stderr)
+        self.assertFalse(self.log.exists())
+        self.assertFalse((self.base / "client").exists())
+
+    def test_flagged_or_app_launches_are_rejected_without_singleton_forwarding(self):
         remote_log = self.base / "remote"
         remote = self.bin / "chromium-remote"
         remote.write_text(
@@ -246,8 +427,6 @@ class LauncherTest(unittest.TestCase):
         environment = self.environment()
         environment["PATH"] = f"{self.bin}:{environment['PATH']}"
         environment["ABUSH_TEST_REMOTE_LOG"] = str(remote_log)
-        (self.bin / "nc").write_text("#!/usr/bin/env bash\nexit 0\n")
-        (self.bin / "nc").chmod(0o755)
         for arguments in (
             ["--current-group", "--app=chrome-extension://id/bookmarks.html"],
             ["--class=jupyterlab", "https://example.test/app"],
@@ -257,11 +436,11 @@ class LauncherTest(unittest.TestCase):
                     [ROOT / "scripts/chromium", *arguments], env=environment,
                     capture_output=True, text=True, timeout=2,
                 )
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("dedicated profile launcher", result.stderr)
                 self.assertFalse((self.base / "client").exists())
-                self.assertEqual(remote_log.read_bytes().split(b"\0")[:-1],
-                                 [argument.encode() for argument in arguments
-                                  if argument != "--current-group"])
+                self.assertFalse(remote_log.exists())
+                self.assertFalse(self.log.exists())
 
     def test_real_client_waits_for_delayed_server_and_reports_terminal_states(self):
         url = "https://example.test/delayed-server"

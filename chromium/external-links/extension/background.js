@@ -11,6 +11,8 @@ class NativeDispatcher {
         this.pending = new Map();
         this.eventListeners = new Set();
         this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 8;
+        this.reconnectExhausted = false;
         this.reconnectTimer = null;
         this.stopped = false;
         this.setTimeout = setTimeout;
@@ -38,7 +40,9 @@ class NativeDispatcher {
             if (this.port !== port) return;
             this.port = null;
             this.emitLifecycle("disconnect");
-            this.rejectAll(new Error("native host disconnected"));
+            const error = new Error("native host disconnected");
+            error.nativeDispatch = "unknown";
+            this.rejectAll(error);
             this.scheduleReconnect();
         });
         return port;
@@ -50,11 +54,16 @@ class NativeDispatcher {
             const timer = this.setTimeout(() => {
                 if (!this.pending.delete(id)) return;
                 this.emitLifecycle("timeout", {service, operation});
-                reject(new Error("native request timed out"));
+                const error = new Error("native request timed out");
+                error.nativeDispatch = "unknown";
+                reject(error);
             }, this.timeoutMs);
             this.pending.set(id, {resolve, reject, timer});
+            let dispatchStarted = false;
             try {
-                this.ensurePort().postMessage({
+                const port = this.ensurePort();
+                dispatchStarted = true;
+                port.postMessage({
                     version: ENVELOPE_VERSION,
                     id,
                     service,
@@ -62,7 +71,9 @@ class NativeDispatcher {
                     payload,
                 });
             } catch (error) {
-                this.finish(id, false, error);
+                const failure = new Error(error?.message || String(error));
+                failure.nativeDispatch = dispatchStarted ? "unknown" : "not_sent";
+                this.finish(id, false, failure);
             }
         });
     }
@@ -73,6 +84,15 @@ class NativeDispatcher {
 
     scheduleReconnect() {
         if (this.stopped || this.reconnectTimer !== null) return;
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            if (!this.reconnectExhausted) {
+                this.reconnectExhausted = true;
+                this.emitLifecycle("reconnect_exhausted", {
+                    attempts: this.reconnectAttempts,
+                });
+            }
+            return;
+        }
         const delay = this.reconnectDelay();
         this.reconnectAttempts += 1;
         this.reconnectTimer = this.setTimeout(() => {
@@ -106,9 +126,15 @@ class NativeDispatcher {
             return;
         }
         if (message.version !== ENVELOPE_VERSION) return;
+        const validEvent = typeof message.event === "string" &&
+            typeof message.service === "string" && message.payload &&
+            typeof message.payload === "object";
+        const validResponse = typeof message.reply_to === "string" &&
+            this.pending.has(message.reply_to);
+        if (!validEvent && !validResponse) return;
         this.reconnectAttempts = 0;
-        if (typeof message.event === "string" && typeof message.service === "string" &&
-                message.payload && typeof message.payload === "object") {
+        this.reconnectExhausted = false;
+        if (validEvent) {
             this.eventListeners.forEach(listener => listener(message));
             return;
         }
@@ -276,6 +302,9 @@ if (typeof chrome !== "undefined") {
     dispatcher().onEvent(message => {
         if (message.service === "native_host") {
             workspaceReady.then(() => workspaces.invalidateRemote()).catch(() => {});
+            if (message.event === "reconnect_exhausted") {
+                notifyFailure("Native browser integration could not reconnect");
+            }
             return;
         }
         if (message.service === "ordinary_open" && message.event === "ordinary_open") {

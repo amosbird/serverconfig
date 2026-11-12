@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
 
-chromium "$@" 2>/dev/null
+if [[ $# -ne 1 ]]; then
+    printf 'usage: chromium-sleep URL\n' >&2
+    exit 2
+fi
+
+chromium "$1" 2>/dev/null
 sleep 5

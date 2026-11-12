@@ -96,29 +96,28 @@ class QtileScratchpadTest(unittest.TestCase):
         launcher = ROOT / "scripts/bookmark-manager"
         self.assertTrue(launcher.exists())
         source = launcher.read_text()
-        self.assertIn('--current-group --app="$url"', source)
+        self.assertIn('--app="$url"', source)
         self.assertIn("rofi-chrome-mode id", source)
         self.assertIn('chrome-extension://$extension_id/bookmarks.html', source)
-        self.assertNotIn("--no-startup-window", source)
-        self.assertNotIn("/json/version", source)
-        self.assertNotIn("--class", source)
-        self.assertIn("/home/amos/scripts/chromium", source)
+        self.assertIn('profile=${ABUSH_BOOKMARK_PROFILE:-"$HOME/.config/google-chrome-bookmarks"}',
+                      source)
+        self.assertIn('exec "$chrome"', source)
+        self.assertIn("--class=bookmark-manager", source)
+        self.assertNotIn("/home/amos/scripts/chromium", source)
         chromium = (ROOT / "scripts/chromium").read_text()
         self.assertIn('if [[ ${1:-} == --current-group ]]; then', chromium)
         self.assertIn("focus_group=false", chromium)
-        self.assertIn("special=true", chromium)
-        self.assertIn("if ! $special && [[ $# -eq 1", chromium)
+        self.assertIn("flags and app launches require a dedicated profile", chromium)
         self.assertIn("if $focus_group; then", chromium)
         self.assertGreater(
             chromium.rindex("focus_main_group"),
-            chromium.index('chromium-remote "$@"'),
+            chromium.index("chromium-remote"),
         )
         self.assertIn(
             'Key([ctrl, alt], "b", toggle_scratchpad("bookmarks"))',
             self.config,
         )
-        self.assertIn("jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html", self.config)
-        self.assertIn("aocepclkpgckjeikiphffdlileoaceec__bookmarks.html", self.config)
+        self.assertIn('"bookmarks": Match(wm_class="bookmark-manager")', self.config)
         self.assertIn('"bookmark-manager",', self.config)
         self.assertEqual(self.config.count('Key([ctrl, alt], "b",'), 1)
         self.assertNotIn('Key([ctrl, alt], "b", lazy.spawn("scanqrcode"))', self.config)

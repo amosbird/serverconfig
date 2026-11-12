@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 extension_id=$(rofi-chrome-mode id)
 url="chrome-extension://$extension_id/bookmarks.html"
-exec /home/amos/scripts/chromium --current-group --app="$url"
+profile=${ABUSH_BOOKMARK_PROFILE:-"$HOME/.config/google-chrome-bookmarks"}
+chrome=${ABUSH_CHROME_BIN:-/usr/bin/google-chrome-stable}
+
+exec "$chrome" \
+    --user-data-dir="$profile" \
+    --no-default-browser-check \
+    --class=bookmark-manager \
+    --app="$url"
