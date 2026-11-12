@@ -661,10 +661,15 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                        "principal_id": "principal-one", "request_id": "topology-one",
                        "executor_fence": server.fence, "page": page}
             broker.handle_request(self.request("managed_page_moved_outside", payload))
+            broker.handle_request(self.request("managed_page_moved_outside", payload))
             self.assertEqual(server.wait_for("managed_page_moved_outside"), {
                 "type": "managed_page_moved_outside", "request_id": "topology-one",
                 "executor_fence": server.fence, "page": page,
             })
+            with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
+                broker.handle_request(self.request("managed_page_moved_outside", {
+                    **payload, "page": {**page, "page_id": "other"},
+                }))
             server.send({"type": "topology_response", "request_id": "topology-one",
                          "result": {"outcome": "page_moved_outside"}})
             for _ in range(100):

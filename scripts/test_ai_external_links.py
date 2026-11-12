@@ -346,6 +346,44 @@ class NativeHostTest(unittest.TestCase):
         with self.assertRaises(self.host.EnvelopeError):
             self.host.validate_request({**request, "extra": True})
 
+    def test_native_broker_routes_strict_x11_bind_and_cleanup_contracts(self):
+        broker = self.host.BrowserBroker(ordinary_open=None)
+        binding = mock.Mock()
+        binding.bind_workspace_window.return_value = {
+            "available": True,
+            "xid": 42,
+            "observed": {},
+            "qtile_moved": True,
+            "observed_group": "c",
+        }
+        binding.clear_workspace_window.return_value = {
+            "cleared": True, "xid": 42, "reclassified_group": "f"}
+        payload = {
+            "nonce": "a" * 32,
+            "remote_key": "r_12345678",
+            "workspace_id": "workspace",
+            "generation": 7,
+            "control_state": "remote",
+            "display_title": "local",
+        }
+        with mock.patch.object(broker, "x11_binding", return_value=binding):
+            request = {
+                "version": 1,
+                "id": "bind",
+                "service": "abush_browser",
+                "operation": "bind_x11_window",
+                "payload": payload,
+            }
+            self.assertEqual(broker.handle_request(request),
+                             binding.bind_workspace_window.return_value)
+            cleanup = {"xid": 42, **payload}
+            self.assertEqual(broker.handle_request({
+                **request, "id": "clear", "operation": "clear_x11_window",
+                "payload": cleanup,
+            }), {"cleared": True, "xid": 42, "reclassified_group": "f"})
+        binding.bind_workspace_window.assert_called_once_with(payload)
+        binding.clear_workspace_window.assert_called_once_with(cleanup)
+
     def test_external_link_open_waits_for_terminal_ordinary_completion(self):
         class Ordinary:
             def submit(self, url):

@@ -257,51 +257,97 @@ async function configureSiteLanguages() {
 }
 
 function connectWorkspaceAfterRestore(workspaces, connect) {
-    return workspaces.restoreWhenReady().then(connect);
+    return workspaces.restoreWhenReady().then(async () => {
+        await connect();
+        return workspaces.drainAdvisoryErrors?.() || [];
+    });
 }
 
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
+    const run = task => ready.then(() => workspaces.enqueueLifecycle(task)).catch(onFailure);
     chromeApi.windows.onCreated.addListener(window => {
         if (window.type !== "normal") return;
-        ready.then(() => workspaces.rememberWindowSnapshot(window.id)).catch(onFailure);
+        run(async () => {
+            await workspaces.tabCreated({id: null, windowId: window.id});
+            await workspaces.rememberWindowSnapshot(window.id);
+        });
     });
     chromeApi.windows.onFocusChanged.addListener(windowId => {
-        ready.then(() => workspaces.recordOrdinaryFocus(windowId)).catch(onFailure);
+        run(() => workspaces.recordOrdinaryFocus(windowId));
     });
     chromeApi.windows.onRemoved.addListener(windowId => {
-        ready.then(() => workspaces.windowRemoved(windowId)).catch(onFailure);
+        run(() => workspaces.windowRemoved(windowId));
     });
     chromeApi.tabs.onCreated.addListener(tab => {
-        ready.then(() => workspaces.rememberWindowSnapshot(tab.windowId)).catch(onFailure);
+        run(async () => {
+            await workspaces.tabCreated(tab);
+            await workspaces.rememberWindowSnapshot(tab.windowId);
+        });
     });
     chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-        ready.then(() => workspaces.rememberWindowSnapshot(tab.windowId)).catch(onFailure);
+        run(async () => {
+            await workspaces.tabUpdated(tabId, changeInfo, tab);
+            await workspaces.rememberWindowSnapshot(tab.windowId);
+        });
+    });
+    chromeApi.tabs.onMoved.addListener((tabId, info) => {
+        run(async () => {
+            await workspaces.tabMoved(tabId, info);
+            await workspaces.rememberWindowSnapshot(info.windowId);
+        });
     });
     chromeApi.tabs.onRemoved.addListener((tabId, info) => {
-        ready.then(() => workspaces.rememberWindowSnapshot(info.windowId)).catch(onFailure);
+        run(async () => {
+            await workspaces.tabRemoved(tabId, info);
+            await workspaces.rememberWindowSnapshot(info.windowId);
+        });
     });
     chromeApi.tabs.onAttached.addListener((tabId, info) => {
-        ready.then(() => workspaces.tabMoved(tabId, info)).catch(() => {});
-        ready.then(() => workspaces.rememberWindowSnapshot(info.newWindowId)).catch(onFailure);
+        run(async () => {
+            await workspaces.tabAttached(tabId, info);
+            await workspaces.rememberWindowSnapshot(info.newWindowId);
+        });
     });
     chromeApi.tabs.onDetached.addListener((tabId, info) => {
-        ready.then(() => workspaces.rememberWindowSnapshot(info.oldWindowId)).catch(onFailure);
+        run(async () => {
+            await workspaces.tabDetached(tabId, info);
+            await workspaces.rememberWindowSnapshot(info.oldWindowId);
+        });
     });
 }
 
 if (typeof chrome !== "undefined") {
     configureSiteLanguages();
     const workspaces = workspace();
+    workspaces.onAdvisoryError = error => notifyFailure(
+        error.message || "Managed browser topology report is pending retry");
     const workspaceReady = connectWorkspaceAfterRestore(
         workspaces,
-        () => dispatcher().ensurePort(),
-    ).catch(error => {
+        async () => {
+            dispatcher().ensurePort();
+            try {
+                await workspaces.flushTopologyOutbox();
+            } catch (error) {
+                workspaces.reportAdvisoryError(error);
+            }
+        },
+    ).then(errors => {
+        if (errors.length > 0) {
+            notifyFailure(errors[0].message ||
+                "Managed browser topology reports are pending retry");
+        }
+        return workspaces;
+    }).catch(error => {
         notifyFailure(error.message || "Unable to restore Abush browser workspaces");
         throw error;
     });
     dispatcher().onEvent(message => {
         if (message.service === "native_host") {
-            workspaceReady.then(() => workspaces.invalidateRemote()).catch(() => {});
+            workspaceReady.then(async () => {
+                await workspaces.invalidateRemote();
+                await workspaces.flushTopologyOutbox();
+            }).catch(error => notifyFailure(error.message ||
+                "Unable to retry managed browser topology reports"));
             if (message.event === "reconnect_exhausted") {
                 notifyFailure("Native browser integration could not reconnect");
             }
@@ -323,8 +369,10 @@ if (typeof chrome !== "undefined") {
                     error.message || "Unable to ensure Abush browser workspace"));
         }
         if (message.event === "abush_browser.retire_managed_page") {
-            workspaceReady.then(() => workspaces.retireManagedPage(message.payload))
-                .catch(() => {});
+            workspaceReady.then(() => workspaces.enqueueLifecycle(
+                () => workspaces.retireManagedPage(message.payload)))
+                .catch(error => notifyFailure(
+                    error.message || "Unable to retire Abush browser workspace"));
         }
         if (message.event === "abush_browser.cancel_ensure_managed_page") {
             workspaceReady.then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});

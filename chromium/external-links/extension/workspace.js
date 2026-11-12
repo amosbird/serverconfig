@@ -3,6 +3,8 @@ const ORDINARY_PREFIX = "__ABUSH_ORDINARY__:";
 const STATUS_NONCE_RE = /^[0-9a-f]{32}$/;
 const MARKER_IDS = ["a", "b"];
 const OWNED_MARKERS_KEY = "abushOwnedMarkers";
+const TOPOLOGY_OUTBOX_KEY = "abushTopologyOutbox";
+const CLEANUP_TOMBSTONES_KEY = "abushCleanupTombstones";
 const RESTORE_HOST_KEY = "abushRestoreHost";
 const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
@@ -59,6 +61,14 @@ class WorkspaceExecutor {
         this.persistTail = Promise.resolve();
         this.persistRevision = 0;
         this.markerTail = Promise.resolve();
+        this.lifecycleTail = Promise.resolve();
+        this.topologyOutbox = new Map();
+        this.outboxTail = Promise.resolve();
+        this.cleanupTail = Promise.resolve();
+        this.retireCompletions = new Set();
+        this.advisoryErrors = [];
+        this.notifiedAdvisoryErrors = new WeakSet();
+        this.onAdvisoryError = null;
         this.removedHostSnapshots = new Map();
         this.snapshotTails = new Map();
         this.recentSessionIds = null;
@@ -103,6 +113,25 @@ class WorkspaceExecutor {
         await this.persistWithoutRecords([record]);
     }
 
+    async persistOrForget(record) {
+        try {
+            await this.persistWithRemovedRecord(record);
+            return null;
+        } catch (error) {
+            return error;
+        } finally {
+            if (this.workspaces.get(this.key(record.remoteKey, record.principalId)) === record) {
+                this.forget(record);
+            }
+        }
+    }
+
+    enqueueLifecycle(task) {
+        const operation = this.lifecycleTail.catch(() => {}).then(task);
+        this.lifecycleTail = operation;
+        return operation;
+    }
+
     async persistWithoutRecords(removed) {
         const removedRecords = new Set(removed);
         const write = this.persistTail.catch(() => {}).then(async () => {
@@ -121,6 +150,142 @@ class WorkspaceExecutor {
         await write;
     }
 
+    topologyReport(record, page = this.pageRef(record)) {
+        return {
+            remote_key: record.remoteKey,
+            connection_id: record.connectionId,
+            principal_id: record.principalId,
+            request_id: crypto.randomUUID(),
+            executor_fence: record.executorFence,
+            page,
+        };
+    }
+
+    topologyReportKey(report) {
+        return JSON.stringify({
+            remote_key: report.remote_key,
+            connection_id: report.connection_id,
+            principal_id: report.principal_id,
+            executor_fence: report.executor_fence,
+            page: report.page,
+        });
+    }
+
+    async persistTopologyOutbox() {
+        if (!this.chrome.storage?.local) throw new Error("local extension storage is unavailable");
+        await this.chrome.storage.local.set({
+            [TOPOLOGY_OUTBOX_KEY]: [...this.topologyOutbox.values()],
+        });
+    }
+
+    async queueTopologyReport(report) {
+        const key = this.topologyReportKey(report);
+        const existing = this.topologyOutbox.get(key);
+        this.topologyOutbox.set(key, existing || report);
+        try {
+            await this.persistTopologyOutbox();
+        } catch (error) {
+            if (!existing) this.topologyOutbox.delete(key);
+            throw error;
+        }
+        return key;
+    }
+
+    async flushTopologyOutbox() {
+        const flush = this.outboxTail.catch(() => {}).then(async () => {
+            const failures = [];
+            for (const [key, report] of [...this.topologyOutbox]) {
+                try {
+                    await this.nativeRequest(
+                        "abush_browser", "managed_page_moved_outside", report);
+                    this.topologyOutbox.delete(key);
+                    await this.persistTopologyOutbox();
+                } catch (error) {
+                    this.topologyOutbox.set(key, report);
+                    try {
+                        await this.persistTopologyOutbox();
+                    } catch (persistError) {
+                        failures.push(new AggregateError([error, persistError],
+                            "topology report and outbox persistence failed"));
+                        continue;
+                    }
+                    failures.push(error);
+                    continue;
+                }
+            }
+            if (failures.length > 0) {
+                throw new AggregateError(failures, "managed topology report is pending retry");
+            }
+        });
+        this.outboxTail = flush;
+        await flush;
+    }
+
+    async restoreTopologyOutbox() {
+        if (!this.chrome.storage?.local) return;
+        const local = await this.chrome.storage.local.get([TOPOLOGY_OUTBOX_KEY]);
+        const reports = local[TOPOLOGY_OUTBOX_KEY];
+        if (!Array.isArray(reports)) return;
+        let dirty = false;
+        for (const report of reports) {
+            if (exactFields(report, ["remote_key", "connection_id", "principal_id",
+                "request_id", "executor_fence", "page"]) && validPageRef(report.page) &&
+                    validFence(report.executor_fence) &&
+                    [report.remote_key, report.connection_id, report.principal_id,
+                        report.request_id].every(value => typeof value === "string" && value)) {
+                const key = this.topologyReportKey(report);
+                if (!this.topologyOutbox.has(key)) this.topologyOutbox.set(key, report);
+                else dirty = true;
+            } else {
+                dirty = true;
+            }
+        }
+        if (dirty) await this.persistTopologyOutbox();
+    }
+
+    reportAdvisoryError(error) {
+        this.advisoryErrors.push(error);
+        if (error && typeof error === "object" && !this.notifiedAdvisoryErrors.has(error) &&
+                this.onAdvisoryError) {
+            this.notifiedAdvisoryErrors.add(error);
+            this.onAdvisoryError(error);
+        }
+    }
+
+    drainAdvisoryErrors() {
+        const errors = this.advisoryErrors.splice(0);
+        return errors.filter(error => !this.notifiedAdvisoryErrors.has(error));
+    }
+
+    async recordCleanupTombstone(record, errors) {
+        if (!this.chrome.storage?.local) return;
+        const write = this.cleanupTail.catch(() => {}).then(async () => {
+            const local = await this.chrome.storage.local.get([CLEANUP_TOMBSTONES_KEY]);
+            const tombstones = Array.isArray(local[CLEANUP_TOMBSTONES_KEY]) ?
+                local[CLEANUP_TOMBSTONES_KEY] : [];
+            tombstones.push({
+                nonce: record.nonce,
+                window_id: record.windowId,
+                status_tab_ids: [...record.statusTabIds],
+                page_tab_id: record.pageTabId,
+                errors: errors.map(error => error?.message || String(error)),
+            });
+            await this.chrome.storage.local.set({
+                [CLEANUP_TOMBSTONES_KEY]: tombstones.slice(-64),
+            });
+        });
+        this.cleanupTail = write;
+        await write;
+    }
+
+    async appendCleanupError(errors, cleanup) {
+        try {
+            await cleanup();
+        } catch (error) {
+            errors.push(error);
+        }
+    }
+
     async updateOwnedMarkers(update) {
         if (!this.chrome.storage?.local) throw new Error("local extension storage is unavailable");
         const write = this.markerTail.catch(() => {}).then(async () => {
@@ -135,7 +300,45 @@ class WorkspaceExecutor {
 
     async ownMarker(nonce) {
         await this.updateOwnedMarkers(markers => {
-            markers[nonce] = true;
+            markers[nonce] = {version: 1, nonce, pending: true};
+        });
+    }
+
+    markerOwnership(record) {
+        return {
+            version: 2,
+            nonce: record.nonce,
+            window_id: record.windowId,
+            status_tab_ids: [...record.statusTabIds],
+            page_tab_id: record.pageTabId,
+            xid: record.x11WindowId,
+            logical_window_id: record.logicalWindowId,
+            logical_page_id: record.logicalPageId,
+            window_generation: record.windowGeneration ?? record.generation,
+            page_generation: record.pageGeneration ?? record.generation,
+            binding: this.bindingPayload(record),
+        };
+    }
+
+    savedOwnershipMatches(ownership, record) {
+        return Boolean(ownership && ownership.version === 2 &&
+            ownership.nonce === record.nonce && ownership.window_id === record.windowId &&
+            sameRef(ownership.status_tab_ids, record.statusTabIds) &&
+            ownership.page_tab_id === record.pageTabId && ownership.xid === record.x11WindowId &&
+            ownership.logical_window_id === record.logicalWindowId &&
+            ownership.logical_page_id === record.logicalPageId &&
+            ownership.window_generation === (record.windowGeneration ?? record.generation) &&
+            ownership.page_generation === (record.pageGeneration ?? record.generation) &&
+            sameRef(ownership.binding, this.bindingPayload(record)));
+    }
+
+    async claimMarker(record) {
+        const ownership = this.markerOwnership(record);
+        if (!Number.isInteger(ownership.xid) || ownership.xid <= 0) {
+            throw new Error("managed marker has no verified X11 window");
+        }
+        await this.updateOwnedMarkers(markers => {
+            markers[record.nonce] = ownership;
         });
     }
 
@@ -662,6 +865,7 @@ class WorkspaceExecutor {
         const windowTypes = new Map((await this.chrome.windows.getAll()).map(window =>
             [window.id, window.type]));
         const windows = new Map();
+        const cleanupErrors = [];
         for (const tab of tabs) {
             if (!windows.has(tab.windowId)) windows.set(tab.windowId, []);
             windows.get(tab.windowId).push(tab);
@@ -673,32 +877,57 @@ class WorkspaceExecutor {
             const legacyMarkers = markers.filter(item => item.marker.marker === "legacy");
             const markerIds = new Set(markers.map(item => item.marker.marker));
             const nonces = new Set(markers.map(item => item.marker.nonce));
-            const ownedNonce = markers.length > 0 && nonces.size === 1 &&
-                ownedMarkers[markers[0].marker.nonce] === true;
-            const ownedSingleMarkerWindow = windowTypes.get(windowId) === "normal" &&
-                windowTabs.length === 2 && markers.length === 1 && ownedNonce &&
-                markers[0].tab.pinned && markers[0].tab.index === 0 &&
-                markers[0].tab.title === `${STATUS_PREFIX}${markers[0].marker.nonce}` +
-                    (markers[0].marker.marker === "legacy" ? "" : `:${markers[0].marker.marker}`) &&
-                windowTabs.filter(tab => tab.id !== markers[0].tab.id &&
-                    !tab.pinned && tab.index === 1).length === 1;
-            const ownedWindow = windowTypes.get(windowId) === "normal" &&
+            const ownership = nonces.size === 1 ?
+                ownedMarkers[markers[0]?.marker.nonce] : null;
+            const exactOwnedFingerprint = Boolean(ownership && ownership.version === 2 &&
+                Array.isArray(ownership.status_tab_ids) &&
+                ownership.nonce === markers[0]?.marker.nonce &&
+                ownership.window_id === windowId &&
+                sameRef([...ownership.status_tab_ids].sort((left, right) => left - right),
+                    markers.map(({tab}) => tab.id).sort((left, right) => left - right)) &&
+                windowTabs.some(tab => tab.id === ownership.page_tab_id));
+            const ownedWindow = exactOwnedFingerprint && windowTypes.get(windowId) === "normal" &&
                 windowTabs.length === 3 && markers.length === 2 &&
                 legacyMarkers.length === 0 && markerIds.size === 2 && nonces.size === 1 &&
-                ownedNonce &&
                 markers.every(({tab, marker}) => tab.pinned &&
                     tab.title === `${STATUS_PREFIX}${marker.nonce}:${marker.marker}`) &&
                 markers.map(({tab}) => tab.index).sort().join(",") === "0,1" &&
                 windowTabs.filter(tab => !tab.pinned && tab.index === 2).length === 1;
-            if (ownedWindow || ownedSingleMarkerWindow) {
-                await this.chrome.windows.remove(windowId);
+            if (ownedWindow) {
+                try {
+                    await this.chrome.windows.remove(windowId);
+                } catch (error) {
+                    if (!await this.windowIsMissing(windowId)) cleanupErrors.push(error);
+                }
                 delete ownedMarkers[markers[0].marker.nonce];
             } else {
-                for (const {tab} of markers) await this.chrome.tabs.remove(tab.id);
+                for (const {tab} of markers) await this.removeKnownTab(tab.id, cleanupErrors);
+                if (ownership?.version === 2 && Number.isInteger(ownership.xid) &&
+                        ownership.xid > 0) {
+                    const record = {
+                        remoteKey: ownership.binding?.remote_key,
+                        workspaceId: ownership.binding?.workspace_id,
+                        connectionDisplayName: ownership.binding?.display_title,
+                        windowGeneration: ownership.binding?.generation,
+                        nonce: ownership.nonce,
+                        x11WindowId: ownership.xid,
+                    };
+                    if (record.remoteKey && record.workspaceId &&
+                            Number.isInteger(record.windowGeneration)) {
+                        await this.clearManagedX11(record, cleanupErrors);
+                    }
+                }
+                if (markers.length > 0 && nonces.size === 1) {
+                    delete ownedMarkers[markers[0].marker.nonce];
+                }
             }
         }
         if (this.chrome.storage?.local) {
             await this.chrome.storage.local.set({[OWNED_MARKERS_KEY]: ownedMarkers});
+        }
+        if (cleanupErrors.length > 0) {
+            this.reportAdvisoryError(new AggregateError(
+                cleanupErrors, "orphan X11 cleanup was incomplete"));
         }
     }
 
@@ -734,6 +963,7 @@ class WorkspaceExecutor {
 
     async restore() {
         await this.restoreHost();
+        await this.restoreTopologyOutbox();
         const liveWindowIds = new Set();
         let removed = false;
         const seenKeys = new Set();
@@ -756,13 +986,15 @@ class WorkspaceExecutor {
                         !Number.isInteger(saved.pageGeneration ?? saved.generation) ||
                         (saved.pageGeneration ?? saved.generation) < 1 ||
                         typeof saved.windowId !== "number" ||
+                        !Number.isInteger(saved.x11WindowId) || saved.x11WindowId <= 0 ||
                         !Array.isArray(saved.statusTabIds) || saved.statusTabIds.length !== 2 ||
                         !saved.statusTabIds.every(id => typeof id === "number") ||
                         typeof saved.pageTabId !== "number" || typeof saved.nonce !== "string") {
                     removed = true;
                     continue;
                 }
-                if (!await this.isLive(saved) || ownedMarkers[saved.nonce] !== true) {
+                if (!await this.isLive(saved) ||
+                        !this.savedOwnershipMatches(ownedMarkers[saved.nonce], saved)) {
                     removed = true;
                     continue;
                 }
@@ -800,17 +1032,41 @@ class WorkspaceExecutor {
             nonce: record.nonce,
             remote_key: record.remoteKey,
             workspace_id: record.workspaceId,
-            generation: 1,
+            generation: record.windowGeneration ?? record.generation,
             control_state: "remote",
             display_title: displayTitle(record.connectionDisplayName),
         };
     }
 
+    validBindResult(result, payload) {
+        const observed = result?.observed;
+        return exactFields(result,
+            ["available", "xid", "observed", "qtile_moved", "observed_group"]) &&
+            result.available === true && Number.isInteger(result.xid) && result.xid > 0 &&
+            result.qtile_moved === true && result.observed_group === "c" &&
+            exactFields(observed, ["WM_WINDOW_ROLE", "_ABUSH_BINDING_NONCE",
+                "_ABUSH_REMOTE_ID", "_ABUSH_WORKSPACE_ID", "_ABUSH_WINDOW_GENERATION",
+                "_ABUSH_CONTROL_STATE", "_ABUSH_DISPLAY_TITLE"]) &&
+            observed.WM_WINDOW_ROLE === "abush-browser" &&
+            observed._ABUSH_BINDING_NONCE === payload.nonce &&
+            observed._ABUSH_REMOTE_ID === payload.remote_key &&
+            observed._ABUSH_WORKSPACE_ID === payload.workspace_id &&
+            observed._ABUSH_WINDOW_GENERATION === String(payload.generation) &&
+            observed._ABUSH_CONTROL_STATE === payload.control_state &&
+            observed._ABUSH_DISPLAY_TITLE === payload.display_title;
+    }
+
     async bind(record, workspaceId = record.workspaceId) {
+        const payload = this.bindingPayload({...record, workspaceId});
         await this.chrome.tabs.update(record.statusTabIds[0], {active: true});
         try {
-            await this.nativeRequest("abush_browser", "bind_x11_window",
-                this.bindingPayload({...record, workspaceId}));
+            const result = await this.nativeRequest(
+                "abush_browser", "bind_x11_window", payload);
+            if (!this.validBindResult(result, payload)) {
+                this.fail("invalid_command", "native X11 bind was not fully verified");
+            }
+            record.x11WindowId = result.xid;
+            return result;
         } finally {
             await this.chrome.tabs.update(record.pageTabId, {active: true});
         }
@@ -873,7 +1129,7 @@ class WorkspaceExecutor {
         }
         if (!flight) {
             flight = {waiters: new Set(), cancelled: false, createdWindowId: null,
-                committed: false, cleanupStarted: false, expectedPage: payload.expected_page};
+                committed: false, cleanupCompleted: false, expectedPage: payload.expected_page};
             flight.promise = this.ensureWorkspace(payload, flight);
             this.ensureFlights.set(key, flight);
             flight.promise.finally(() => {
@@ -919,19 +1175,20 @@ class WorkspaceExecutor {
     async retireManagedPage(payload) {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
             "ensure_id", "executor_fence", "window_id", "page_id"])) return false;
+        const completionKey = this.ensureRequestKey(payload);
+        if (this.retireCompletions.has(completionKey)) return true;
         const record = this.workspaces.get(this.key(payload.remote_key, payload.principal_id));
         if (record && record.connectionId === payload.connection_id &&
                 sameRef(record.executorFence, payload.executor_fence) &&
                 record.logicalWindowId === payload.window_id &&
                 record.logicalPageId === payload.page_id) {
-            await this.detach(record.pageTabId);
-            if (!await this.isLive(record)) return false;
-            await this.chrome.windows.remove(record.windowId);
-            await this.disownMarker(record.nonce);
-            this.forget(record);
-            await this.persist();
+            await this.convergeManagedTopology(record, {closeWindow: true, report: false});
         }
         await this.ensureCancellationCompleted(payload);
+        this.retireCompletions.add(completionKey);
+        if (this.retireCompletions.size > 256) {
+            this.retireCompletions.delete(this.retireCompletions.values().next().value);
+        }
         return true;
     }
 
@@ -949,7 +1206,20 @@ class WorkspaceExecutor {
         if (this.activeEnsureWaiters(flight).length === 0) {
             flight.cancelled = true;
             if (flight.createdWindowId !== null && !flight.committed) {
-                await this.cleanupFlightWindow(flight);
+                try {
+                    await this.cleanupFlightWindow(flight);
+                } catch (error) {
+                    await this.recordCleanupTombstone({
+                        nonce: null,
+                        windowId: flight.createdWindowId,
+                        statusTabIds: [],
+                        pageTabId: null,
+                    }, [error]);
+                    const failure = new AggregateError([error],
+                        "cancelled ensure cleanup is uncertain");
+                    failure.browserCode = "unknown_effect";
+                    throw failure;
+                }
             }
             try { await flight.promise; } catch (_) {}
         }
@@ -958,9 +1228,46 @@ class WorkspaceExecutor {
     }
 
     async cleanupFlightWindow(flight) {
-        if (flight.cleanupStarted || flight.createdWindowId === null) return;
-        flight.cleanupStarted = true;
-        try { await this.chrome.windows.remove(flight.createdWindowId); } catch (_) {}
+        if (flight.createdWindowId === null || flight.cleanupCompleted) return;
+        await this.chrome.windows.remove(flight.createdWindowId);
+        if (!await this.windowIsMissing(flight.createdWindowId)) {
+            throw new Error("managed bind cleanup could not remove the new window");
+        }
+        flight.cleanupCompleted = true;
+    }
+
+    async cleanupPreparedWindow(windowId, statusTabs, nonce) {
+        const errors = [];
+        if (Number.isInteger(windowId)) {
+            try {
+                await this.chrome.windows.remove(windowId);
+            } catch (error) {
+                if (!await this.windowIsMissing(windowId)) errors.push(error);
+            }
+        }
+        for (const tab of statusTabs) await this.removeKnownTab(tab.id, errors);
+        try {
+            await this.disownMarker(nonce);
+        } catch (error) {
+            errors.push(error);
+        }
+        if (errors.length > 0) {
+            const record = {
+                nonce,
+                windowId,
+                statusTabIds: statusTabs.map(tab => tab.id),
+                pageTabId: null,
+            };
+            try {
+                await this.recordCleanupTombstone(record, errors);
+            } catch (error) {
+                errors.push(error);
+            }
+            const failure = new AggregateError(errors,
+                "managed window preparation cleanup is uncertain");
+            failure.browserCode = "unknown_effect";
+            throw failure;
+        }
     }
 
     ensureActive(flight) {
@@ -974,8 +1281,7 @@ class WorkspaceExecutor {
         this.ensureActive(flight);
         let existing = this.workspaces.get(key);
         if (existing && !await this.isLive(existing)) {
-            this.forget(existing);
-            await this.persist();
+            await this.convergeManagedTopology(existing);
             existing = null;
         }
         if (existing) {
@@ -984,6 +1290,7 @@ class WorkspaceExecutor {
                 this.fail("stale_page", "restored workspace does not match expected page");
             }
             this.ensureActive(flight);
+            const previous = {...existing, statusTabIds: [...existing.statusTabIds]};
             const candidate = {
                 ...existing,
                 workspaceId: payload.workspace_id,
@@ -992,11 +1299,35 @@ class WorkspaceExecutor {
                 ownerDisplay: payload.owner_display,
                 connectionDisplayName: payload.connection_display_name,
             };
-            await this.bind(candidate, payload.workspace_id);
-            this.ensureActive(flight);
-            if (!await this.isLive(existing)) throw new Error("workspace changed during bind");
-            this.ensureActive(flight);
-            await this.commitRecord(candidate, existing);
+            let bindCompleted = false;
+            let committed = false;
+            try {
+                await this.bind(candidate, payload.workspace_id);
+                bindCompleted = true;
+                this.ensureActive(flight);
+                if (!await this.isLive(existing)) throw new Error("workspace changed during bind");
+                this.ensureActive(flight);
+                await this.commitRecord(candidate, existing);
+                committed = true;
+                await this.claimMarker(existing);
+            } catch (error) {
+                const rollbackErrors = [];
+                Object.assign(existing, previous);
+                if (bindCompleted) {
+                    if (committed) {
+                        await this.appendCleanupError(rollbackErrors, () => this.persist());
+                    }
+                    await this.appendCleanupError(rollbackErrors, () => this.bind(existing));
+                    await this.appendCleanupError(rollbackErrors, () => this.claimMarker(existing));
+                }
+                if (rollbackErrors.length > 0) {
+                    const failure = new AggregateError([error, ...rollbackErrors],
+                        "managed failover rollback is uncertain");
+                    failure.browserCode = "unknown_effect";
+                    throw failure;
+                }
+                throw error;
+            }
             return existing;
         }
         const nonce = crypto.randomUUID().replaceAll("-", "");
@@ -1024,13 +1355,16 @@ class WorkspaceExecutor {
                 index: -1,
             });
         } catch (error) {
-            if (created?.id !== undefined) {
-                try { await this.chrome.windows.remove(created.id); } catch (_) {}
+            try {
+                await this.cleanupPreparedWindow(created?.id, statusTabs, nonce);
+            } catch (cleanupError) {
+                const errors = cleanupError instanceof AggregateError ?
+                    cleanupError.errors : [cleanupError];
+                const failure = new AggregateError([error, ...errors],
+                    "managed window preparation and cleanup failed");
+                failure.browserCode = "unknown_effect";
+                throw failure;
             }
-            for (const tab of statusTabs) {
-                try { await this.chrome.tabs.remove(tab.id); } catch (_) {}
-            }
-            await this.disownMarker(nonce);
             throw error;
         }
         flight.createdWindowId = created.id;
@@ -1074,6 +1408,7 @@ class WorkspaceExecutor {
             try {
                 this.ensureActive(flight);
                 await this.bind(record);
+                await this.claimMarker(record);
                 this.ensureActive(flight);
                 if (!await this.isLive(record)) throw new Error("workspace changed during bind");
                 this.ensureActive(flight);
@@ -1082,12 +1417,50 @@ class WorkspaceExecutor {
                 return record;
             } catch (error) {
                 this.forget(record);
-                try { await this.persist(); } catch (_) {}
+                const rollbackErrors = [];
+                try {
+                    await this.persist();
+                } catch (persistError) {
+                    rollbackErrors.push(persistError);
+                }
+                await this.clearManagedX11(record, rollbackErrors);
+                if (rollbackErrors.length > 0) {
+                    const failure = new AggregateError([error, ...rollbackErrors],
+                        "managed bind rollback is uncertain");
+                    failure.browserCode = "unknown_effect";
+                    throw failure;
+                }
                 throw error;
             }
         } catch (error) {
-            await this.cleanupFlightWindow(flight);
-            await this.disownMarker(nonce);
+            const cleanupErrors = [];
+            try {
+                await this.cleanupFlightWindow(flight);
+            } catch (cleanupError) {
+                cleanupErrors.push(cleanupError);
+            }
+            try {
+                await this.disownMarker(nonce);
+            } catch (cleanupError) {
+                cleanupErrors.push(cleanupError);
+            }
+            if (cleanupErrors.length > 0) {
+                const cleanupRecord = {
+                    nonce,
+                    windowId: flight.createdWindowId,
+                    statusTabIds: statusTabs.map(tab => tab.id),
+                    pageTabId: null,
+                };
+                try {
+                    await this.recordCleanupTombstone(cleanupRecord, cleanupErrors);
+                } catch (tombstoneError) {
+                    cleanupErrors.push(tombstoneError);
+                }
+                const failure = new AggregateError([error, ...cleanupErrors],
+                    "managed bind failed and cleanup is uncertain");
+                failure.browserCode = "unknown_effect";
+                throw failure;
+            }
             throw error;
         }
     }
@@ -1331,7 +1704,11 @@ class WorkspaceExecutor {
     }
 
     async detach(tabId) {
-        try { await this.chrome.debugger.detach({tabId}); } catch (_) {}
+        try {
+            await this.chrome.debugger.detach({tabId});
+        } catch (error) {
+            if (!await this.tabIsMissing(tabId)) throw error;
+        }
     }
 
     forget(record) {
@@ -1343,10 +1720,7 @@ class WorkspaceExecutor {
     }
 
     async closeOwnedWindow(record) {
-        if (!await this.isLive(record)) throw new Error("managed window topology changed");
-        await this.chrome.windows.remove(record.windowId);
-        await this.disownMarker(record.nonce);
-        this.forget(record);
+        await this.convergeManagedTopology(record, {closeWindow: true, report: false});
     }
 
     async visibleNormalWindows(removedWindowId) {
@@ -1392,9 +1766,7 @@ class WorkspaceExecutor {
         }
         const record = this.workspaces.get(key);
         if (!record || record.windowId !== windowId) return;
-        await this.detach(record.pageTabId);
-        await this.persistWithRemovedRecord(record);
-        await this.disownMarker(record.nonce);
+        await this.convergeManagedTopology(record);
     }
 
     async debuggerDetached(tabId) {
@@ -1409,45 +1781,130 @@ class WorkspaceExecutor {
         }
     }
 
-    async tabMoved(tabId, moveInfo) {
-        const statusKey = this.statusTabOwners.get(tabId);
-        if (statusKey) {
-            const record = this.workspaces.get(statusKey);
-            if (record && moveInfo.windowId !== record.windowId) {
-                for (const statusTabId of record.statusTabIds) {
-                    try { await this.chrome.tabs.remove(statusTabId); } catch (_) {}
-                    this.statusTabOwners.delete(statusTabId);
-                }
-                await this.nativeRequest("abush_browser", "managed_page_moved_outside", {
-                    remote_key: record.remoteKey,
-                    connection_id: record.connectionId,
-                    principal_id: record.principalId,
-                    request_id: crypto.randomUUID(),
-                    executor_fence: record.executorFence,
-                    page: this.pageRef(record),
-                });
-                await this.detach(record.pageTabId);
-                this.forget(record);
-                await this.persist();
-            }
-            return;
+    async removeKnownTab(tabId, errors) {
+        try {
+            await this.chrome.tabs.remove(tabId);
+        } catch (error) {
+            if (!await this.tabIsMissing(tabId)) errors.push(error);
         }
-        const key = this.tabOwners.get(tabId);
-        if (!key) return;
-        const record = this.workspaces.get(key);
-        if (!record || moveInfo.windowId === record.windowId) return;
-        await this.nativeRequest("abush_browser", "managed_page_moved_outside", {
-            remote_key: record.remoteKey,
-            connection_id: record.connectionId,
-            principal_id: record.principalId,
-            request_id: crypto.randomUUID(),
-            executor_fence: record.executorFence,
-            page: this.pageRef(record),
-        });
-        await this.detach(tabId);
-        await this.disownMarker(record.nonce);
-        this.forget(record);
-        await this.persist();
+    }
+
+    async clearManagedX11(record, errors) {
+        if (!Number.isInteger(record.x11WindowId) || record.x11WindowId <= 0) return;
+        try {
+            const result = await this.nativeRequest("abush_browser", "clear_x11_window", {
+                xid: record.x11WindowId,
+                ...this.bindingPayload(record),
+            });
+            if (!exactFields(result, ["cleared", "xid", "reclassified_group"]) ||
+                    result.cleared !== true || result.xid !== record.x11WindowId ||
+                    result.reclassified_group !== "f") {
+                throw new Error("native X11 cleanup was not verified");
+            }
+        } catch (error) {
+            errors.push(error);
+        }
+    }
+
+    async convergeManagedTopology(record, {closeWindow = false, report = true} = {}) {
+        const page = this.pageRef(record);
+        const live = await this.isLive(record);
+        let physicalGone = await this.windowIsMissing(record.windowId);
+        const errors = [];
+        const persistError = await this.persistOrForget(record);
+        if (persistError) errors.push(persistError);
+        if (this.workspaces.get(this.key(record.remoteKey, record.principalId)) === record) {
+            this.forget(record);
+        }
+        await this.appendCleanupError(errors, () => this.detach(record.pageTabId));
+        await this.appendCleanupError(errors, () => this.disownMarker(record.nonce));
+        if (closeWindow && live) {
+            try {
+                await this.chrome.windows.remove(record.windowId);
+            } catch (error) {
+                if (!await this.windowIsMissing(record.windowId)) errors.push(error);
+            }
+            physicalGone = await this.windowIsMissing(record.windowId);
+        } else {
+            for (const tabId of record.statusTabIds) {
+                await this.removeKnownTab(tabId, errors);
+            }
+            if (closeWindow) await this.removeKnownTab(record.pageTabId, errors);
+        }
+        if (!physicalGone) await this.clearManagedX11(record, errors);
+        let reportError = null;
+        if (report) {
+            try {
+                await this.queueTopologyReport(this.topologyReport(record, page));
+                await this.flushTopologyOutbox();
+            } catch (error) {
+                reportError = error;
+            }
+        }
+        if (errors.length > 0) {
+            try {
+                await this.recordCleanupTombstone(record, errors);
+            } catch (error) {
+                errors.push(error);
+            }
+            throw new AggregateError(errors, "managed topology cleanup was incomplete");
+        }
+        if (reportError) this.reportAdvisoryError(reportError);
+    }
+
+    recordForTopology(tabId, windowId = null) {
+        const key = this.tabOwners.get(tabId) || this.statusTabOwners.get(tabId) ||
+            this.windowOwners.get(windowId);
+        return key ? this.workspaces.get(key) || null : null;
+    }
+
+    async reconcileManagedTab(tabId, info = {}, force = false) {
+        const windowId = info.windowId ?? info.newWindowId ?? info.oldWindowId ?? null;
+        const record = this.recordForTopology(tabId, windowId);
+        if (!record || (!force && await this.isLive(record))) return false;
+        await this.convergeManagedTopology(record);
+        return true;
+    }
+
+    async tabCreated(tab) {
+        const record = this.recordForTopology(tab.id, tab.windowId);
+        if (!record || await this.isLive(record)) return false;
+        await this.convergeManagedTopology(record);
+        return true;
+    }
+
+    async tabUpdated(tabId, changeInfo, tab) {
+        const record = this.recordForTopology(tabId, tab?.windowId);
+        if (!record) return false;
+        const ownerWindow = tab?.windowId === record.windowId;
+        const ownedTab = record.pageTabId === tabId || record.statusTabIds.includes(tabId);
+        const topologyField = "url" in changeInfo || "title" in changeInfo ||
+            "pinned" in changeInfo || Number.isInteger(changeInfo.index) ||
+            Number.isInteger(tab?.index);
+        if ((!ownerWindow && !ownedTab) || (!ownedTab && !topologyField) ||
+                await this.isLive(record)) return false;
+        await this.convergeManagedTopology(record);
+        return true;
+    }
+
+    async tabRemoved(tabId, info) {
+        return this.reconcileManagedTab(tabId, info, true);
+    }
+
+    async tabDetached(tabId, info) {
+        return this.reconcileManagedTab(tabId, info, true);
+    }
+
+    async tabAttached(tabId, info) {
+        const record = this.recordForTopology(tabId, info.newWindowId);
+        const movedOutside = record && info.newWindowId !== record.windowId;
+        return this.reconcileManagedTab(tabId, info, movedOutside);
+    }
+
+    async tabMoved(tabId, moveInfo) {
+        const record = this.recordForTopology(tabId, moveInfo.windowId);
+        const movedOutside = record && moveInfo.windowId !== record.windowId;
+        return this.reconcileManagedTab(tabId, moveInfo, movedOutside);
     }
 
     ownsWindow(windowId) {

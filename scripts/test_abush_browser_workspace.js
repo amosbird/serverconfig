@@ -55,9 +55,30 @@ function deferred() {
 function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                  orphanPage = false, restoredPopup = null, localState = {}) {
     const calls = [];
+    for (const record of saved) {
+        if (!Number.isInteger(record.x11WindowId)) record.x11WindowId = record.windowId + 10000;
+    }
     if (!localState.abushOwnedMarkers) {
-        localState.abushOwnedMarkers = Object.fromEntries(
-            saved.map(record => [record.nonce, true]));
+        localState.abushOwnedMarkers = Object.fromEntries(saved.map(record => [record.nonce, {
+            version: 2,
+            nonce: record.nonce,
+            window_id: record.windowId,
+            status_tab_ids: [...record.statusTabIds],
+            page_tab_id: record.pageTabId,
+            xid: record.x11WindowId,
+            logical_window_id: record.logicalWindowId,
+            logical_page_id: record.logicalPageId,
+            window_generation: record.windowGeneration ?? record.generation,
+            page_generation: record.pageGeneration ?? record.generation,
+            binding: {
+                nonce: record.nonce,
+                remote_key: record.remoteKey,
+                workspace_id: record.workspaceId,
+                generation: record.windowGeneration ?? record.generation,
+                control_state: "remote",
+                display_title: record.connectionDisplayName,
+            },
+        }]));
     }
     let nextWindow = 10;
     let nextTab = 1000;
@@ -240,6 +261,26 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     };
     const native = async (service, operation, payload) => {
         calls.push([operation, payload]);
+        if (operation === "bind_x11_window") {
+            return {
+                available: true,
+                xid: 42,
+                observed: {
+                    WM_WINDOW_ROLE: "abush-browser",
+                    _ABUSH_BINDING_NONCE: payload.nonce,
+                    _ABUSH_REMOTE_ID: payload.remote_key,
+                    _ABUSH_WORKSPACE_ID: payload.workspace_id,
+                    _ABUSH_WINDOW_GENERATION: String(payload.generation),
+                    _ABUSH_CONTROL_STATE: payload.control_state,
+                    _ABUSH_DISPLAY_TITLE: payload.display_title,
+                },
+                qtile_moved: true,
+                observed_group: "c",
+            };
+        }
+        if (operation === "clear_x11_window") {
+            return {cleared: true, xid: payload.xid, reclassified_group: "f"};
+        }
         return {};
     };
     return {executor: new WorkspaceExecutor(chrome, native), calls};
@@ -586,7 +627,26 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             nonce,
             businessUrl: "https://restored-abush.test/",
         };
-        const localState = {abushOwnedMarkers: {[nonce]: true}};
+        const localState = {abushOwnedMarkers: {[nonce]: {
+            version: 2,
+            nonce,
+            window_id: 700,
+            status_tab_ids: [1700, 1701],
+            page_tab_id: 1702,
+            xid: 7000,
+            logical_window_id: logicalWindowId,
+            logical_page_id: logicalPageId,
+            window_generation: 1,
+            page_generation: 1,
+            binding: {
+                nonce,
+                remote_key: "r_12345678",
+                workspace_id: "workspace",
+                generation: 1,
+                control_state: "remote",
+                display_title: "local",
+            },
+        }}};
         const {executor, calls} = fixture([], [], 0, false, restoredPopup, localState);
         await executor.restore();
         assert.deepEqual(calls.filter(call => call[0] === "removeWindow"),
@@ -620,9 +680,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         tabs.splice(1, 1);
         tabs[1].index = 1;
         await executor.restore();
-        assert.deepEqual(calls.filter(call => call[0] === "removeWindow"),
-            [["removeWindow", restoredPopup.windowId]],
-            "owned one-marker shutdown residue must be removed before restore connects");
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0,
+            "legacy one-marker ownership cannot prove whole-window ownership");
+        assert.deepEqual(calls.filter(call => call[0] === "remove"), [["remove", 1720]],
+            "unsafe shutdown residue must remove only its marker tab");
     }
     {
         const nonce = "6".repeat(32);
@@ -640,6 +701,44 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0,
             "one-marker topology without durable ownership must preserve user windows");
         assert.deepEqual(calls.filter(call => call[0] === "remove"), [["remove", 1730]]);
+    }
+    {
+        const nonce = "5".repeat(32);
+        const restoredPopup = {
+            windowId: 704,
+            tabIds: [1740, 1741, 1742],
+            nonce,
+            businessUrl: "https://attacker-business.test/",
+        };
+        const localState = {abushOwnedMarkers: {[nonce]: {
+            version: 2,
+            nonce,
+            window_id: 704,
+            status_tab_ids: [1740, 1741],
+            page_tab_id: 999999,
+            xid: 7040,
+            logical_window_id: logicalWindowId,
+            logical_page_id: logicalPageId,
+            window_generation: 7,
+            page_generation: 9,
+            binding: {
+                nonce,
+                remote_key: "r_attacker",
+                workspace_id: "workspace-attacker",
+                generation: 7,
+                control_state: "remote",
+                display_title: "attacker",
+            },
+        }}};
+        const {executor, calls} = fixture([], [], 0, false, restoredPopup, localState);
+        await executor.restore();
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0,
+            "copied markers plus a mismatched fingerprint must never destroy a user window");
+        assert.deepEqual(calls.filter(call => call[0] === "remove").map(call => call[1]),
+            [1740, 1741]);
+        assert(calls.some(call => call[0] === "clear_x11_window" && call[1].xid === 7040),
+            "unproven orphan ownership must clear verified managed X11 metadata");
+        assert.equal(localState.abushOwnedMarkers[nonce], undefined);
     }
     {
         const localState = {abushRestoreHost: true};
@@ -762,8 +861,22 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await Promise.resolve();
         assert.deepEqual(order, ["restore-start"]);
         gate.resolve();
-        await ready;
+        assert.deepEqual(await ready, []);
         assert.deepEqual(order, ["restore-start", "restore-done", "connect"]);
+    }
+    {
+        const order = [];
+        const workspaces = {
+            restoreWhenReady: async () => { order.push("restore"); },
+            drainAdvisoryErrors: () => [new Error("outbox pending")],
+        };
+        const errors = await connectWorkspaceAfterRestore(workspaces, async () => {
+            order.push("connect-start");
+            await Promise.resolve();
+            order.push("connect-done");
+        });
+        assert.deepEqual(order, ["restore", "connect-start", "connect-done"]);
+        assert.match(errors[0].message, /outbox pending/);
     }
     {
         const {executor, calls} = fixture();
@@ -779,6 +892,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const recreated = await executor.ensure(ensurePayload({expected_page: expectedPage}));
         assert.deepEqual(executor.pageRef(recreated), expectedPage,
             "empty Chrome session storage must recreate the physical window with exact refs");
+        const binding = calls.find(call => call[0] === "bind_x11_window")[1];
+        assert.equal(binding.generation, 7,
+            "X11 binding must use logical window generation, not page generation or a constant");
+        assert.equal(executor.pageRef(recreated).generation, 9);
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 1);
     }
     {
@@ -786,6 +903,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const moved = [];
         const removed = [];
         const failures = [];
+        const lifecycle = [];
         const chromeApi = {
             windows: {
                 onCreated: {addListener: listener => { listeners.windowCreated = listener; }},
@@ -795,6 +913,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             tabs: {
                 onCreated: {addListener: listener => { listeners.tabCreated = listener; }},
                 onUpdated: {addListener: listener => { listeners.tabUpdated = listener; }},
+                onMoved: {addListener: listener => { listeners.tabMoved = listener; }},
                 onRemoved: {addListener: listener => { listeners.tabRemoved = listener; }},
                 onAttached: {addListener: listener => { listeners.tabAttached = listener; }},
                 onDetached: {addListener: listener => { listeners.tabDetached = listener; }},
@@ -802,15 +921,31 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         };
         const ready = deferred();
         const snapshots = [];
-        registerWorkspaceWindowListeners(chromeApi, {
+        const workspaceMethods = {
+            enqueueLifecycle: async task => {
+                lifecycle.push("start");
+                await task();
+                lifecycle.push("done");
+            },
             recordOrdinaryFocus: async id => { moved.push(["focus", id]); },
             windowRemoved: async id => { removed.push(id); },
-            tabMoved: async (id, info) => { moved.push([id, info]); },
+            tabCreated: async (tab) => { moved.push(["created", tab.id]); },
+            tabUpdated: async (id, info) => { moved.push(["updated", id, info]); },
+            tabMoved: async (id, info) => { moved.push(["moved", id, info]); },
+            tabRemoved: async (id, info) => { moved.push(["removed", id, info]); },
+            tabAttached: async (id, info) => { moved.push(["attached", id, info]); },
+            tabDetached: async (id, info) => { moved.push(["detached", id, info]); },
             rememberWindowSnapshot: async id => { snapshots.push(id); },
-        }, ready.promise, error => failures.push(error));
+        };
+        registerWorkspaceWindowListeners(chromeApi, workspaceMethods,
+            ready.promise, error => failures.push(error));
         listeners.windowCreated({id: 42, type: "normal"});
         listeners.windowFocused(42);
         listeners.tabCreated({id: 24, windowId: 42});
+        listeners.tabUpdated(24, {title: "changed"}, {id: 24, windowId: 42, index: 0});
+        listeners.tabMoved(24, {windowId: 42, fromIndex: 0, toIndex: 1});
+        listeners.tabRemoved(24, {windowId: 42});
+        listeners.tabDetached(24, {oldWindowId: 42});
         listeners.windowRemoved(42);
         listeners.tabAttached(24, {windowId: 7, newWindowId: 7});
         await Promise.resolve();
@@ -821,8 +956,17 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await Promise.resolve();
         await Promise.resolve();
         assert.deepEqual(removed, [42]);
-        assert.deepEqual(moved, [["focus", 42], [24, {windowId: 7, newWindowId: 7}]]);
-        assert.deepEqual(snapshots, [42, 42, 7]);
+        assert.deepEqual(moved, [
+            ["created", null], ["focus", 42], ["created", 24],
+            ["updated", 24, {title: "changed"}],
+            ["moved", 24, {windowId: 42, fromIndex: 0, toIndex: 1}],
+            ["removed", 24, {windowId: 42}],
+            ["detached", 24, {oldWindowId: 42}],
+            ["attached", 24, {windowId: 7, newWindowId: 7}],
+        ]);
+        assert.deepEqual(snapshots, [42, 42, 42, 42, 42, 42, 7]);
+        assert.equal(lifecycle.filter(value => value === "start").length, 9,
+            "all lifecycle-sensitive Chrome events must enter the serialized tail");
         assert.deepEqual(failures, []);
     }
     {
@@ -1015,7 +1159,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await assert.rejects(executor.ensure(ensurePayload({
             connection_id: "c_12345678", executor_fence: {...fence, epoch: 2},
             expected_page: executor.pageRef(record),
-        })), /persist failed/);
+        })), error => /persist failed/.test(error.message) ||
+            (error instanceof AggregateError && error.browserCode === "unknown_effect" &&
+                error.errors.some(inner => /persist failed/.test(inner.message))));
         assert.equal(record.connectionId, "c_old00000");
         assert.equal(record.executorFence.epoch, 1);
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0);
@@ -1279,6 +1425,57 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0);
     }
     {
+        const invalidResults = [
+            {},
+            {available: false, xid: 42, observed: {}, qtile_moved: true, observed_group: "c"},
+            {available: true, xid: 0, observed: {}, qtile_moved: true, observed_group: "c"},
+            {available: true, xid: 42, observed: {}, qtile_moved: false, observed_group: "c"},
+            {available: true, xid: 42, observed: {}, qtile_moved: true, observed_group: "f"},
+        ];
+        for (const [index, result] of invalidResults.entries()) {
+            const {executor, calls} = fixture();
+            executor.nativeRequest = async (_service, operation, payload) => {
+                calls.push([operation, payload]);
+                if (operation === "bind_x11_window") return result;
+                return {};
+            };
+            await assert.rejects(executor.ensure(ensurePayload({
+                request_id: `strict-bind-${index}`,
+                ensure_id: `strict-bind-${index}`,
+            })), /fully verified/);
+            assert.equal(executor.workspaces.size, 0);
+            assert.equal(calls.filter(call => call[0] === "persist" &&
+                call[1].abushWorkspaces.length > 0).length, 0,
+            "invalid native bind must never commit a managed record");
+            assert(!calls.some(call => call[0] === "ensure_managed_page_completion" &&
+                call[1].completion.outcome === "created"));
+        }
+    }
+    {
+        const {executor, calls} = fixture();
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation !== "bind_x11_window") return {};
+            return {
+                available: true,
+                xid: 42,
+                observed: {
+                    WM_WINDOW_ROLE: "abush-browser",
+                    _ABUSH_BINDING_NONCE: payload.nonce,
+                    _ABUSH_REMOTE_ID: payload.remote_key,
+                    _ABUSH_WORKSPACE_ID: payload.workspace_id,
+                    _ABUSH_WINDOW_GENERATION: String(payload.generation),
+                    _ABUSH_CONTROL_STATE: payload.control_state,
+                    _ABUSH_DISPLAY_TITLE: `${payload.display_title}-wrong`,
+                },
+                qtile_moved: true,
+                observed_group: "c",
+            };
+        };
+        await assert.rejects(executor.ensure(ensurePayload()), /fully verified/);
+        assert.equal(executor.workspaces.size, 0);
+    }
+    {
         const {executor, calls} = fixture();
         let attempts = 0;
         executor.nativeRequest = async (_service, operation, payload) => {
@@ -1295,6 +1492,28 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             .completion, {outcome: "rejected", code: "invalid_command"});
         assert(BROWSER_ERROR_CODES.has("invalid_command"));
         assert(!BROWSER_ERROR_CODES.has("workspace_unavailable"));
+    }
+    {
+        const {executor, calls} = fixture();
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "bind_x11_window") throw new Error("bind failed");
+            return {};
+        };
+        executor.chrome.windows.remove = async id => {
+            calls.push(["removeWindow", id]);
+            throw new Error("window remove failed");
+        };
+        await assert.rejects(executor.ensure(ensurePayload()), error =>
+            error instanceof AggregateError && error.browserCode === "unknown_effect" &&
+            error.errors.some(inner => /bind failed/.test(inner.message)) &&
+            error.errors.some(inner => /window remove failed/.test(inner.message)));
+        const completion = calls.find(call => call[0] === "ensure_managed_page_completion")[1]
+            .completion;
+        assert.deepEqual(completion, {outcome: "rejected", code: "unknown_effect"},
+            "failed bind cleanup must never claim a safely not-applied result");
+        assert(calls.some(call => call[0] === "persistLocal" &&
+            Array.isArray(call[1].abushCleanupTombstones)));
     }
     {
         const {executor} = fixture();
@@ -1559,7 +1778,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             await persist(value);
             throw new Error("persist failed");
         };
-        await assert.rejects(executor.ensure(ensurePayload()), /persist failed/);
+        await assert.rejects(executor.ensure(ensurePayload()), error =>
+            error instanceof AggregateError && error.errors.some(inner =>
+                /persist failed/.test(inner.message)));
         assert.equal(executor.workspaces.size, 0,
             "failed persist must roll back in-memory install");
         assert.equal(executor.windowOwners.size, 0);
@@ -1599,9 +1820,136 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     {
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
+        const before = executor.pageRef(record);
+        calls.length = 0;
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "managed_page_moved_outside") throw new Error("daemon offline");
+            if (operation === "clear_x11_window") {
+                return {cleared: true, xid: payload.xid, reclassified_group: "f"};
+            }
+            return {};
+        };
+        const advisory = [];
+        executor.onAdvisoryError = error => advisory.push(error);
+        await executor.tabMoved(record.pageTabId, {windowId: 999});
+        assert.equal(executor.workspaces.size, 0,
+            "native report failure must not block local ownership convergence");
+        const names = calls.map(call => call[0]);
+        const persistIndex = names.indexOf("persist");
+        const detachIndex = names.indexOf("detach");
+        const disownIndex = calls.findIndex(call => call[0] === "persistLocal" &&
+            call[1].abushOwnedMarkers);
+        const clearIndex = names.indexOf("clear_x11_window");
+        const reportIndex = names.indexOf("managed_page_moved_outside");
+        assert(persistIndex >= 0 && detachIndex > persistIndex && disownIndex > persistIndex &&
+            clearIndex > disownIndex && reportIndex > clearIndex,
+        "durable forget/detach/disown/cleanup must precede remote topology reporting");
+        assert.deepEqual(calls.find(call => call[0] === "managed_page_moved_outside")[1].page,
+            before, "pageRef must be captured before the record is forgotten");
+        const outboxWrite = calls.find(call => call[0] === "persistLocal" &&
+            Array.isArray(call[1].abushTopologyOutbox) && call[1].abushTopologyOutbox.length === 1);
+        assert(outboxWrite, "failed topology reports must remain durable in storage.local");
+        assert(calls.some(call => call[0] === "persistLocal" &&
+            Array.isArray(call[1].abushTopologyOutbox)),
+        "failed topology report must remain visible through the durable outbox");
+        assert.equal(advisory.length, 1,
+            "report failure must trigger a user-visible advisory callback");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        calls.length = 0;
+        const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
+        tabs.push({id: 9999, windowId: record.windowId, index: 3, pinned: false,
+            url: "https://fourth-tab.test/"});
+        await executor.tabCreated(tabs.at(-1));
+        assert.equal(executor.workspaces.size, 0,
+            "a fourth managed-window tab must trigger convergence");
+        assert(calls.some(call => call[0] === "managed_page_moved_outside"));
+    }
+    {
+        const mutations = [
+            ["marker reorder", (record, tabs) => { tabs[0].index = 1; tabs[1].index = 0; }],
+            ["marker unpin", (_record, tabs) => { tabs[0].pinned = false; }],
+            ["marker url", (record, tabs) => { tabs[0].url = `${record.nonce}-wrong`; }],
+            ["marker title", (_record, tabs) => { tabs[0].title = "wrong"; }],
+            ["business pin", (record, tabs) => {
+                tabs.find(tab => tab.id === record.pageTabId).pinned = true;
+            }],
+        ];
+        for (const [name, mutate] of mutations) {
+            const {executor} = fixture();
+            const record = await executor.ensure(ensurePayload({
+                request_id: `topology-${name}`, ensure_id: `topology-${name}`,
+            }));
+            const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
+            mutate(record, tabs);
+            await executor.tabUpdated(record.statusTabIds[0], {title: "changed"}, tabs[0]);
+            assert.equal(executor.workspaces.size, 0, `${name} must converge locally`);
+        }
+    }
+    {
+        const {executor} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
+        const index = tabs.findIndex(tab => tab.id === record.pageTabId);
+        tabs.splice(index, 1);
+        await executor.tabRemoved(record.pageTabId, {windowId: record.windowId});
+        assert.equal(executor.workspaces.size, 0,
+            "business close must not leave managed ownership");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
+        const payload = {
+            ...executor.ensureIdentity(ensurePayload()),
+            window_id: record.logicalWindowId,
+            page_id: record.logicalPageId,
+        };
+        const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
+        tabs.splice(tabs.findIndex(tab => tab.id === record.pageTabId), 1);
+        calls.length = 0;
+        assert.equal(await executor.retireManagedPage(payload), true);
+        assert.equal(executor.workspaces.size, 0);
+        assert.equal(calls.filter(call =>
+            call[0] === "ensure_managed_page_cancellation_completion").length, 1);
+        assert.equal(await executor.retireManagedPage(payload), true,
+            "duplicate retire replay must converge without waiting");
+        assert.equal(calls.filter(call =>
+            call[0] === "ensure_managed_page_cancellation_completion").length, 1,
+        "duplicate delivery must not publish a second correlated completion");
+    }
+    {
+        const report = {
+            remote_key: "r_12345678",
+            connection_id: "c_12345678",
+            principal_id: "principal-one",
+            request_id: "topology-retry",
+            executor_fence: fence,
+            page: {
+                window: {workspace_id: "workspace-authoritative",
+                    window_id: logicalWindowId, generation: 7},
+                page_id: logicalPageId,
+                generation: 9,
+            },
+        };
+        const localState = {abushTopologyOutbox: [report, {...report,
+            request_id: "duplicate-correlation"}, {bad: true}]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restore();
+        await executor.flushTopologyOutbox();
+        assert.equal(calls.filter(call => call[0] === "managed_page_moved_outside").length, 1,
+            "strict identity dedup must retry one topology effect despite correlation changes");
+        assert.deepEqual(localState.abushTopologyOutbox, [],
+            "startup must drain a successfully reported durable topology outbox");
+    }
+    {
+        const {executor, calls} = fixture();
+        const record = await executor.ensure(ensurePayload());
         await executor.tabMoved(record.pageTabId, {windowId: 999});
         const report = calls.find(call => call[0] === "managed_page_moved_outside");
-        assert(report, "moving a managed page must report topology before forgetting it");
+        assert(report, "moving a managed page must report topology after local convergence");
         assert.deepEqual(report[1].page, executor.pageRef(record));
         assert.equal(executor.workspaces.size, 0);
     }

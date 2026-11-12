@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 from threading import Lock
@@ -220,12 +221,42 @@ def activate_ordinary_window(manager, xid: int):
     return {"id": window.wid, "group": window.group.name if window.group else None}
 
 
-def place_abush_browser_window(manager, xid: int):
+def passive_window_move(manager, window, destination):
+    current_group = manager.current_screen.group.name
+    active_xid = getattr(manager.current_window, "wid", None)
+    window.can_steal_focus = False
+    window.togroup(destination, switch_group=False)
+    if window.group is None or window.group.name != destination or \
+            manager.current_screen.group.name != current_group or \
+            getattr(manager.current_window, "wid", None) != active_xid:
+        raise ValueError("passive window placement changed focus or current group")
+    return {
+        "id": window.wid,
+        "group": window.group.name,
+        "current_group_before": current_group,
+        "current_group_after": manager.current_screen.group.name,
+        "active_xid_before": active_xid,
+        "active_xid_after": getattr(manager.current_window, "wid", None),
+    }
+
+
+def place_abush_browser_window(manager, xid: int, expected_json: str):
     window = qtile_window_by_xid(manager, xid)
-    if not is_abush_browser_verified(window):
+    try:
+        expected = json.loads(expected_json)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid expected Abush metadata") from error
+    if not isinstance(expected, dict) or set(expected) != set(ABUSH_METADATA_PROPERTIES) or \
+            not is_abush_browser_verified(window, expected):
         raise ValueError("unverified Abush browser window")
-    place_abush_browser(window)
-    return {"id": window.wid, "group": window.group.name if window.group else None}
+    return passive_window_move(manager, window, "c")
+
+
+def reclassify_ordinary_window(manager, xid: int):
+    window = qtile_window_by_xid(manager, xid)
+    if not is_chrome_window(window) or is_abush_browser_verified(window):
+        raise ValueError("managed metadata was not cleared")
+    return passive_window_move(manager, window, "f")
 
 
 def install_browser_commands():
@@ -233,6 +264,7 @@ def install_browser_commands():
         "prepare_ordinary_window": prepare_ordinary_window,
         "activate_ordinary_window": activate_ordinary_window,
         "place_abush_browser_window": place_abush_browser_window,
+        "reclassify_ordinary_window": reclassify_ordinary_window,
     }
     registered = getattr(Qtile, "_commands", {}).copy()
     for name, function in commands.items():
@@ -553,6 +585,16 @@ scratchpad_matches = {
 ABUSH_BINDING_TITLE = re.compile(
     r"^__ABUSH_BIND__:[0-9a-f]{32}:[ab](?: - (?:Google Chrome|Chromium))?$"
 )
+ABUSH_NONCE = re.compile(r"^[0-9a-f]{32}$")
+ABUSH_CONTROL_STATES = {"remote", "human"}
+ABUSH_METADATA_PROPERTIES = {
+    "nonce": ("_ABUSH_BINDING_NONCE", "UTF8_STRING"),
+    "remote_key": ("_ABUSH_REMOTE_ID", "UTF8_STRING"),
+    "workspace_id": ("_ABUSH_WORKSPACE_ID", "UTF8_STRING"),
+    "generation": ("_ABUSH_WINDOW_GENERATION", "UTF8_STRING"),
+    "control_state": ("_ABUSH_CONTROL_STATE", "UTF8_STRING"),
+    "display_title": ("_ABUSH_DISPLAY_TITLE", "UTF8_STRING"),
+}
 
 
 groups = [
@@ -722,13 +764,49 @@ def is_chrome_window(window):
     return any("chrom" in value for value in wm_class) or "abushbrowser" in wm_class
 
 
-def is_abush_browser_verified(window):
-    return is_chrome_window(window) and window.get_wm_role() == "abush-browser"
+def x11_text_property(window, name, property_type="UTF8_STRING"):
+    try:
+        value = window.window.get_property(name, property_type, unpack=str)
+    except (AttributeError, ValueError, TypeError):
+        return ""
+    if isinstance(value, bytes):
+        return value.rstrip(b"\0").decode(errors="replace")
+    if isinstance(value, str):
+        return value.rstrip("\0")
+    return ""
+
+
+def abush_browser_metadata(window):
+    metadata = {
+        field: x11_text_property(window, property_name, property_type)
+        for field, (property_name, property_type) in ABUSH_METADATA_PROPERTIES.items()
+    }
+    generation = metadata["generation"]
+    if not ABUSH_NONCE.fullmatch(metadata["nonce"]) or not metadata["remote_key"] or \
+            len(metadata["remote_key"]) > 256 or not metadata["workspace_id"] or \
+            len(metadata["workspace_id"]) > 256 or not generation.isascii() or \
+            not generation.isdecimal() or int(generation) <= 0 or \
+            metadata["control_state"] not in ABUSH_CONTROL_STATES or \
+            not metadata["display_title"] or len(metadata["display_title"]) > 256:
+        return None
+    metadata["generation"] = int(generation)
+    return metadata
+
+
+def is_abush_browser_verified(window, expected=None):
+    metadata = abush_browser_metadata(window)
+    if not is_chrome_window(window) or window.get_wm_role() != "abush-browser" or \
+            metadata is None:
+        return False
+    return expected is None or metadata == expected
 
 
 def is_abush_browser_candidate(window):
+    wm_class = [value.lower() for value in (window.get_wm_class() or [])]
     return (
         is_chrome_window(window)
+        and window.get_wm_role() != "abush-browser"
+        and "abushbrowser" not in wm_class
         and not is_abush_browser_verified(window)
         and bool(ABUSH_BINDING_TITLE.fullmatch(window.name or ""))
     )

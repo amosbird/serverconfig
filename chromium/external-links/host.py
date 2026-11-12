@@ -1454,9 +1454,13 @@ class RemotePeer:
         if not isinstance(request_id, str) or not request_id or \
                 fence != self.executor_fence or not self._valid_page_ref(page):
             raise ValueError("invalid managed page moved outside report")
-        if request_id in self.topology_pending:
-            raise ValueError("duplicate topology request")
-        self.topology_pending[request_id] = {"kind": "page_moved_outside", "page": page}
+        existing = self.topology_pending.get(request_id)
+        pending = {"kind": "page_moved_outside", "page": page}
+        if existing is not None:
+            if existing != pending:
+                raise ValueError("conflicting duplicate topology request")
+            return
+        self.topology_pending[request_id] = pending
         self.send({
             "type": "managed_page_moved_outside",
             "request_id": request_id,
@@ -1806,6 +1810,13 @@ class BrowserBroker:
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"))
             return {}
+        if service == "abush_browser" and operation == "clear_x11_window":
+            try:
+                return self.x11_binding().clear_workspace_window(payload)
+            except Exception as error:
+                logging.info("browser X11 cleanup failed xid=%s error=%s",
+                             payload.get("xid"), error)
+                raise
         if service == "abush_browser" and operation == "bind_x11_window":
             try:
                 return self.x11_binding().bind_workspace_window(payload)

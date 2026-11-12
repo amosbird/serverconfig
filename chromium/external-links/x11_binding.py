@@ -13,7 +13,7 @@ ORDINARY_TITLE_PREFIX = "__ABUSH_ORDINARY__:"
 ORDINARY_NONCE_PROPERTY = "_ABUSH_ORDINARY_NONCE"
 MANAGED_PROPERTIES = (
     "_ABUSH_BINDING_NONCE", "_ABUSH_REMOTE_ID", "_ABUSH_WORKSPACE_ID",
-    "_ABUSH_WINDOW_GENERATION", "_ABUSH_CONTROL_STATE",
+    "_ABUSH_WINDOW_GENERATION", "_ABUSH_CONTROL_STATE", "_ABUSH_DISPLAY_TITLE",
 )
 CHROME_TITLE_SUFFIXES = (" - Google Chrome", " - Chromium")
 TEXT_FIELDS = {
@@ -101,6 +101,9 @@ class XcffibAdapter:
         self.core.ChangeProperty(self.xproto.PropMode.Replace, window, self.atom(name),
                                  self.atom(property_type), 8, len(encoded), encoded)
 
+    def delete_property(self, window, name):
+        self.core.DeleteProperty(window, self.atom(name))
+
     def finish(self):
         self.connection.flush()
 
@@ -110,7 +113,7 @@ def binding_title_matches(title, expected):
 
 
 def browser_process(pid, proc_root="/proc"):
-    if pid is None:
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return False
     try:
         arguments = (pathlib.Path(proc_root) / str(pid) / "cmdline").read_bytes().split(b"\0")
@@ -127,7 +130,7 @@ def chrome_process_window(adapter, window):
     return browser_process(adapter.pid(window))
 
 
-def qtile_command(name, window):
+def qtile_command(name, window, *arguments):
     return [
         "qtile",
         "cmd-obj",
@@ -137,15 +140,32 @@ def qtile_command(name, window):
         name,
         "--args",
         str(window),
+        *(str(argument) for argument in arguments),
     ]
 
 
-def qtile_move_command(window, group="c"):
+def expected_managed_metadata(payload):
+    return {
+        "nonce": payload["nonce"],
+        "remote_key": payload["remote_key"],
+        "workspace_id": payload["workspace_id"],
+        "generation": payload["generation"],
+        "control_state": payload["control_state"],
+        "display_title": payload["display_title"],
+    }
+
+
+def qtile_move_command(window, group="c", expected=None):
     if group == "f":
         return qtile_command("prepare_ordinary_window", window)
-    if group != "c":
+    if group != "c" or expected is None:
         raise ValueError("unsupported Qtile destination")
-    return qtile_command("place_abush_browser_window", window)
+    encoded = json.dumps(expected, sort_keys=True, separators=(",", ":"))
+    return qtile_command("place_abush_browser_window", window, encoded)
+
+
+def qtile_reclassify_command(window):
+    return qtile_command("reclassify_ordinary_window", window)
 
 
 def qtile_activate_command(window):
@@ -164,12 +184,30 @@ def qtile_transition(command, window, group, run=None):
     return transition
 
 
-def notify_qtile(window, run=None):
-    try:
-        qtile_transition(qtile_move_command(window), window, "c", run)
-    except X11Unavailable:
-        return False
-    return True
+def notify_qtile(window, expected, adapter, run=None):
+    active_before = getattr(adapter, "active_window", lambda: None)()
+    transition = qtile_transition(qtile_move_command(window, expected=expected), window, "c", run)
+    required = {"id", "group", "current_group_before", "current_group_after",
+                "active_xid_before", "active_xid_after"}
+    if set(transition) != required or \
+            not isinstance(transition["current_group_before"], str) or \
+            not transition["current_group_before"] or \
+            transition["current_group_before"] != transition["current_group_after"] or \
+            transition["active_xid_before"] != transition["active_xid_after"] or \
+            transition["active_xid_before"] != active_before:
+        raise X11Unavailable("Qtile managed placement changed focus or current group")
+    info = qtile_window_info(window, run)
+    active_after = getattr(adapter, "active_window", lambda: None)()
+    if info.get("id") != window or info.get("group") != "c":
+        raise X11Unavailable("Qtile did not place the exact managed window")
+    if active_before != active_after or active_after != transition["active_xid_after"]:
+        raise X11Unavailable("Qtile managed placement changed the active X11 window")
+    return {
+        "id": window,
+        "group": info["group"],
+        "current_group_preserved": True,
+        "active_xid_preserved": True,
+    }
 
 
 def run_qtile(command, run=None):
@@ -218,10 +256,30 @@ def ordinary_title_matches(title, nonce):
     return binding_title_matches(title, expected)
 
 
+def managed_metadata(adapter, window):
+    metadata = {
+        "nonce": adapter.property(window, "_ABUSH_BINDING_NONCE"),
+        "remote_key": adapter.property(window, "_ABUSH_REMOTE_ID"),
+        "workspace_id": adapter.property(window, "_ABUSH_WORKSPACE_ID"),
+        "generation": adapter.property(window, "_ABUSH_WINDOW_GENERATION"),
+        "control_state": adapter.property(window, "_ABUSH_CONTROL_STATE"),
+        "display_title": adapter.property(window, "_ABUSH_DISPLAY_TITLE"),
+    }
+    generation = metadata["generation"]
+    if adapter.property(window, "WM_WINDOW_ROLE", "STRING") != "abush-browser" or \
+            not NONCE_RE.fullmatch(metadata["nonce"] or "") or not metadata["remote_key"] or \
+            len(metadata["remote_key"]) > 256 or not metadata["workspace_id"] or \
+            len(metadata["workspace_id"]) > 256 or not isinstance(generation, str) or \
+            not generation.isascii() or not generation.isdecimal() or int(generation) <= 0 or \
+            metadata["control_state"] not in {"remote", "human"} or \
+            not metadata["display_title"] or len(metadata["display_title"]) > 256:
+        return None
+    metadata["generation"] = int(generation)
+    return metadata
+
+
 def managed_window(adapter, window):
-    if adapter.property(window, "WM_WINDOW_ROLE", "STRING") == "abush-browser":
-        return True
-    return any(adapter.property(window, name) for name in MANAGED_PROPERTIES)
+    return managed_metadata(adapter, window) is not None
 
 
 def ordinary_candidate(adapter, window, nonce):
@@ -305,6 +363,32 @@ def activate_ordinary_window(payload, adapter=None, run=None, verify=None):
     return {"xid": window, "nonce": nonce}
 
 
+def clear_workspace_window(payload, adapter=None, run=None):
+    required = {"xid", "nonce", "remote_key", "workspace_id", "generation",
+                "control_state", "display_title"}
+    if not isinstance(payload, dict) or set(payload) != required or \
+            not isinstance(payload["xid"], int) or isinstance(payload["xid"], bool) or \
+            payload["xid"] <= 0:
+        raise ValueError("invalid X11 cleanup payload")
+    expected = expected_managed_metadata(payload)
+    adapter = adapter or XcffibAdapter()
+    if managed_metadata(adapter, payload["xid"]) != expected:
+        raise ValueError("X11 cleanup identity mismatch")
+    adapter.set_text(payload["xid"], "WM_WINDOW_ROLE", "", "STRING")
+    for name in MANAGED_PROPERTIES:
+        if hasattr(adapter, "delete_property"):
+            adapter.delete_property(payload["xid"], name)
+        else:
+            adapter.set_text(payload["xid"], name, "")
+    adapter.finish()
+    if managed_metadata(adapter, payload["xid"]) is not None:
+        raise X11Unavailable("X11 cleanup verification failed")
+    transition = qtile_transition(qtile_reclassify_command(payload["xid"]),
+                                  payload["xid"], "f", run)
+    return {"cleared": True, "xid": payload["xid"],
+            "reclassified_group": transition["group"]}
+
+
 def bind_workspace_window(
     payload,
     adapter=None,
@@ -329,14 +413,19 @@ def bind_workspace_window(
     expected = f"__ABUSH_BIND__:{nonce}:a"
     matches = []
     for attempt in range(attempts):
-        existing = [window for window in adapter.windows()
-                    if adapter.property(window, "WM_WINDOW_ROLE", "STRING") == "abush-browser" and
-                    all(adapter.property(window, prop) == str(payload[field])
-                        for prop, field in STABLE_FIELDS.items())]
-        fresh = [window for window in adapter.windows()
-                 if binding_title_matches(adapter.title(window), expected) and
-                 any("chrom" in value.lower() for value in adapter.wm_class(window))]
-        matches = existing or fresh
+        windows = list(adapter.windows())
+        existing = {
+            window for window in windows
+            if adapter.property(window, "WM_WINDOW_ROLE", "STRING") == "abush-browser" and
+            all(adapter.property(window, prop) == str(payload[field])
+                for prop, field in STABLE_FIELDS.items())
+        }
+        fresh = {
+            window for window in windows
+            if binding_title_matches(adapter.title(window), expected) and
+            any("chrom" in value.lower() for value in adapter.wm_class(window))
+        }
+        matches = sorted(existing | fresh)
         if len(matches) == 1:
             window = matches[0]
             if not chrome_process_window(adapter, window):
@@ -363,17 +452,22 @@ def bind_workspace_window(
     }
     if observed != expected_observed:
         raise X11Unavailable(f"X11 binding verification failed: {observed}")
-    qtile_moved = (qtile_notifier or notify_qtile)(window)
-    try:
-        adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
-        adapter.set_text(window, "_NET_WM_NAME", payload["display_title"])
-        adapter.set_text(window, "_NET_WM_VISIBLE_NAME", payload["display_title"])
-        adapter.finish()
-    except Exception:
-        pass
+    adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
+    adapter.set_text(window, "_NET_WM_NAME", payload["display_title"])
+    adapter.set_text(window, "_NET_WM_VISIBLE_NAME", payload["display_title"])
+    adapter.finish()
+    expected_metadata = expected_managed_metadata(payload)
+    transition = qtile_notifier(window, expected_metadata) if qtile_notifier else \
+        notify_qtile(window, expected_metadata, adapter)
+    if not isinstance(transition, dict) or transition.get("id") != window or \
+            transition.get("group") != "c" or \
+            transition.get("current_group_preserved") is not True or \
+            transition.get("active_xid_preserved") is not True:
+        raise X11Unavailable("Qtile managed placement verification failed")
     return {
         "available": True,
         "xid": window,
         "observed": observed,
-        "qtile_moved": qtile_moved,
+        "qtile_moved": True,
+        "observed_group": transition["group"],
     }

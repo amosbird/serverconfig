@@ -2,6 +2,7 @@
 
 import ast
 import importlib.util
+import json
 import pathlib
 import re
 import subprocess
@@ -35,6 +36,7 @@ class FakeAdapter:
         self.values = {
             (22, "_NET_WM_NAME"): "__ABUSH_BIND__:0123456789abcdef0123456789abcdef:a",
             (22, "WM_CLASS"): "chromium\0Chromium",
+            (1, "_NET_ACTIVE_WINDOW"): 11,
         }
 
     def windows(self):
@@ -52,6 +54,9 @@ class FakeAdapter:
     def property(self, window, name, property_type="UTF8_STRING"):
         return self.values.get((window, name), "")
 
+    def active_window(self):
+        return self.values.get((1, "_NET_ACTIVE_WINDOW"))
+
     def set_text(self, window, name, value, property_type="UTF8_STRING"):
         self.values[(window, name)] = str(value)
 
@@ -65,13 +70,24 @@ class FakeGroup:
 
 
 class FakeWindow:
-    def __init__(self, role, group="f", name="", wm_class=None):
+    def __init__(self, role, group="f", name="", wm_class=None, metadata=None):
         self.role = role
         self.group = FakeGroup(group)
         self.name = name
         self.wm_class = wm_class or ["google-chrome", "Google-chrome"]
         self.can_steal_focus = True
         self.wid = 22
+        self.metadata = ({
+            "_ABUSH_BINDING_NONCE": "a" * 32,
+            "_ABUSH_REMOTE_ID": "r_12345678",
+            "_ABUSH_WORKSPACE_ID": "workspace",
+            "_ABUSH_WINDOW_GENERATION": "7",
+            "_ABUSH_CONTROL_STATE": "remote",
+            "_ABUSH_DISPLAY_TITLE": "local",
+        } if role == "abush-browser" else {}) if metadata is None else metadata
+        self.window = mock.Mock()
+        self.window.get_property.side_effect = lambda name, _type, unpack=None: \
+            self.metadata.get(name)
         self.togroup = mock.Mock(side_effect=self._togroup)
         self.focus = mock.Mock()
 
@@ -180,24 +196,22 @@ class QtileConfigTest(unittest.TestCase):
             for node in self.tree.body
             if isinstance(node, ast.FunctionDef)
             and node.name in {
+                "x11_text_property",
+                "abush_browser_metadata",
                 "is_chrome_window",
                 "is_abush_browser_verified",
                 "is_abush_browser_candidate",
                 "prevent_abush_browser_focus_steal",
             }
         }
-        binding_title = next(
-            node.value
-            for node in self.tree.body
-            if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
-                    for target in node.targets)
-        )
-        module = ast.Module(
-            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title),
-             *functions.values()],
-            [],
-        )
+        constants = [
+            node for node in self.tree.body if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in {
+                    "ABUSH_BINDING_TITLE", "ABUSH_NONCE", "ABUSH_CONTROL_STATES",
+                    "ABUSH_METADATA_PROPERTIES",
+                } for target in node.targets)
+        ]
+        module = ast.Module([*constants, *functions.values()], [])
         exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
 
         for window in (
@@ -218,24 +232,22 @@ class QtileConfigTest(unittest.TestCase):
             for node in self.tree.body
             if isinstance(node, ast.FunctionDef)
             and node.name in {
+                "x11_text_property",
+                "abush_browser_metadata",
                 "is_chrome_window",
                 "is_abush_browser_verified",
                 "is_abush_browser_candidate",
                 "place_abush_browser",
             }
         }
-        binding_title = next(
-            node.value
-            for node in self.tree.body
-            if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
-                    for target in node.targets)
-        )
-        module = ast.Module(
-            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title),
-             *functions.values()],
-            [],
-        )
+        constants = [
+            node for node in self.tree.body if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in {
+                    "ABUSH_BINDING_TITLE", "ABUSH_NONCE", "ABUSH_CONTROL_STATES",
+                    "ABUSH_METADATA_PROPERTIES",
+                } for target in node.targets)
+        ]
+        module = ast.Module([*constants, *functions.values()], [])
         exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
 
         verified = FakeWindow("abush-browser", wm_class=["abush-browser", "AbushBrowser"])
@@ -262,6 +274,22 @@ class QtileConfigTest(unittest.TestCase):
         self.assertFalse(namespace["place_abush_browser"](ordinary))
         ordinary.togroup.assert_not_called()
 
+        stale_role = FakeWindow("abush-browser", group="c", name="Stale - Google Chrome",
+                                metadata={})
+        self.assertTrue(namespace["place_abush_browser"](stale_role))
+        stale_role.togroup.assert_called_once_with("f", switch_group=False)
+
+        malformed = FakeWindow("abush-browser", group="c", metadata={
+            "_ABUSH_BINDING_NONCE": "a" * 32,
+            "_ABUSH_REMOTE_ID": "r_12345678",
+            "_ABUSH_WORKSPACE_ID": "workspace",
+            "_ABUSH_WINDOW_GENERATION": "not-an-int",
+            "_ABUSH_CONTROL_STATE": "remote",
+            "_ABUSH_DISPLAY_TITLE": "local",
+        })
+        self.assertTrue(namespace["place_abush_browser"](malformed))
+        malformed.togroup.assert_called_once_with("f", switch_group=False)
+
         impostor = FakeWindow(None, name="__ABUSH_BIND__:" + "b" * 32 + ":a",
                               wm_class=["kitty", "kitty"])
         self.assertFalse(namespace["place_abush_browser"](impostor))
@@ -271,20 +299,20 @@ class QtileConfigTest(unittest.TestCase):
     def test_title_update_reclassifies_a_stale_candidate_shell(self):
         namespace = {"re": re, "QtileWindow": FakeWindow, "hook": FakeHook}
         function_names = {
-            "is_chrome_window", "is_abush_browser_verified", "is_abush_browser_candidate",
+            "x11_text_property", "abush_browser_metadata", "is_chrome_window",
+            "is_abush_browser_verified", "is_abush_browser_candidate",
             "place_abush_browser", "reclassify_abush_browser",
         }
         functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
                      and node.name in function_names]
-        binding_title = next(
-            node.value for node in self.tree.body if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
-                    for target in node.targets)
-        )
-        module = ast.Module(
-            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title), *functions],
-            [],
-        )
+        constants = [
+            node for node in self.tree.body if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in {
+                    "ABUSH_BINDING_TITLE", "ABUSH_NONCE", "ABUSH_CONTROL_STATES",
+                    "ABUSH_METADATA_PROPERTIES",
+                } for target in node.targets)
+        ]
+        module = ast.Module([*constants, *functions], [])
         exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
         window = FakeWindow("browser", group="__abush_quarantine",
                             name="Restored work - Google Chrome")
@@ -294,20 +322,20 @@ class QtileConfigTest(unittest.TestCase):
     def test_prepare_ordinary_window_runs_focus_guard_before_move(self):
         namespace = {"re": re, "QtileWindow": FakeWindow}
         function_names = {
-            "is_chrome_window", "is_abush_browser_verified", "is_abush_browser_candidate",
+            "x11_text_property", "abush_browser_metadata", "is_chrome_window",
+            "is_abush_browser_verified", "is_abush_browser_candidate",
             "qtile_window_by_xid", "prepare_ordinary_window",
         }
         functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
                      and node.name in function_names]
-        binding_title = next(
-            node.value for node in self.tree.body if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
-                    for target in node.targets)
-        )
-        module = ast.Module(
-            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title), *functions],
-            [],
-        )
+        constants = [
+            node for node in self.tree.body if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in {
+                    "ABUSH_BINDING_TITLE", "ABUSH_NONCE", "ABUSH_CONTROL_STATES",
+                    "ABUSH_METADATA_PROPERTIES",
+                } for target in node.targets)
+        ]
+        module = ast.Module([*constants, *functions], [])
         exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
         window = FakeWindow("browser", group="e", name="GitHub - Google Chrome")
         observed = []
@@ -324,20 +352,20 @@ class QtileConfigTest(unittest.TestCase):
     def test_exact_xid_prepare_and_activate_helpers_preserve_focus_policy(self):
         namespace = {"re": re, "QtileWindow": FakeWindow}
         function_names = {
-            "is_chrome_window", "is_abush_browser_verified", "is_abush_browser_candidate",
+            "x11_text_property", "abush_browser_metadata", "is_chrome_window",
+            "is_abush_browser_verified", "is_abush_browser_candidate",
             "qtile_window_by_xid", "prepare_ordinary_window", "activate_ordinary_window",
         }
         functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
                      and node.name in function_names]
-        binding_title = next(
-            node.value for node in self.tree.body if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
-                    for target in node.targets)
-        )
-        module = ast.Module(
-            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title), *functions],
-            [],
-        )
+        constants = [
+            node for node in self.tree.body if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in {
+                    "ABUSH_BINDING_TITLE", "ABUSH_NONCE", "ABUSH_CONTROL_STATES",
+                    "ABUSH_METADATA_PROPERTIES",
+                } for target in node.targets)
+        ]
+        module = ast.Module([*constants, *functions], [])
         exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
         window = FakeWindow("browser", group="e", name="GitHub - Google Chrome")
         group = FakeGroup("f")
@@ -359,6 +387,61 @@ class QtileConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown X11"):
             namespace["prepare_ordinary_window"](manager, 23)
 
+    def test_exact_xid_managed_placement_verifies_metadata_and_preserves_focus(self):
+        namespace = {
+            "json": json,
+            "re": re,
+            "QtileWindow": FakeWindow,
+        }
+        function_names = {
+            "qtile_window_by_xid", "x11_text_property", "abush_browser_metadata",
+            "is_chrome_window", "is_abush_browser_verified", "passive_window_move",
+            "place_abush_browser_window", "reclassify_ordinary_window",
+        }
+        functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name in function_names]
+        constants = [
+            node for node in self.tree.body if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id in {
+                    "ABUSH_NONCE", "ABUSH_CONTROL_STATES", "ABUSH_METADATA_PROPERTIES",
+                } for target in node.targets)
+        ]
+        module = ast.Module([*constants, *functions], [])
+        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        window = FakeWindow("abush-browser", group="f")
+        current = FakeWindow("browser", group="e")
+        current.wid = 99
+        screen = mock.Mock(group=FakeGroup("e"))
+        manager = mock.Mock(windows_map={22: window}, current_screen=screen,
+                            current_window=current)
+        expected = {
+            "nonce": "a" * 32,
+            "remote_key": "r_12345678",
+            "workspace_id": "workspace",
+            "generation": 7,
+            "control_state": "remote",
+            "display_title": "local",
+        }
+        result = namespace["place_abush_browser_window"](
+            manager, 22, json.dumps(expected))
+        self.assertEqual(result["group"], "c")
+        self.assertEqual(result["current_group_before"], "e")
+        self.assertEqual(result["current_group_after"], "e")
+        self.assertEqual(result["active_xid_before"], 99)
+        self.assertEqual(result["active_xid_after"], 99)
+        self.assertFalse(window.can_steal_focus)
+        window.togroup.assert_called_once_with("c", switch_group=False)
+        window.focus.assert_not_called()
+        window.role = "browser"
+        window.metadata = {}
+        reclassified = namespace["reclassify_ordinary_window"](manager, 22)
+        self.assertEqual(reclassified["group"], "f")
+        window.focus.assert_not_called()
+        window.role = "abush-browser"
+        with self.assertRaisesRegex(ValueError, "unverified"):
+            namespace["place_abush_browser_window"](
+                manager, 22, json.dumps({**expected, "generation": 8}))
+
 
 class BinderQtileNotificationTest(unittest.TestCase):
     def setUp(self):
@@ -377,10 +460,12 @@ class BinderQtileNotificationTest(unittest.TestCase):
         }
 
     def test_qtile_command_targets_exact_xid_without_switching(self):
-        command = binding.qtile_move_command(22)
+        expected = binding.expected_managed_metadata(self.payload())
+        command = binding.qtile_move_command(22, expected=expected)
         self.assertEqual(command[:3], ["qtile", "cmd-obj", "--object"])
         self.assertIn("22", command)
-        self.assertEqual(command[-2:], ["--args", "22"])
+        self.assertEqual(command[-3:-1], ["--args", "22"])
+        self.assertEqual(json.loads(command[-1]), expected)
         self.assertEqual(command[3:6], ["root", "--function", "place_abush_browser_window"])
         self.assertNotIn("--kwargs", command)
         self.assertFalse(any(argument.startswith("switch_group=") for argument in command))
@@ -389,11 +474,20 @@ class BinderQtileNotificationTest(unittest.TestCase):
 
     def test_binding_notifies_after_verified_role_and_reports_move(self):
         adapter = FakeAdapter()
-        notifier = mock.Mock(return_value=True)
+        notifier = mock.Mock(return_value={
+            "id": 22,
+            "group": "c",
+            "current_group_before": "e",
+            "current_group_after": "e",
+            "active_xid_before": 11,
+            "active_xid_after": 11,
+            "current_group_preserved": True,
+            "active_xid_preserved": True,
+        })
         result = binding.bind_workspace_window(
             self.payload(), adapter=adapter, attempts=1, qtile_notifier=notifier
         )
-        notifier.assert_called_once_with(22)
+        notifier.assert_called_once_with(22, binding.expected_managed_metadata(self.payload()))
         self.assertEqual(
             adapter.property(22, "_ABUSH_DISPLAY_TITLE"),
             "Abush Browser — local · workbench",
@@ -405,23 +499,23 @@ class BinderQtileNotificationTest(unittest.TestCase):
         self.assertNotIn("_NET_WM_VISIBLE_NAME", result["observed"])
         self.assertTrue(result["qtile_moved"])
 
-    def test_qtile_notification_failures_are_safe(self):
+    def test_qtile_notification_failures_are_fatal(self):
+        adapter = FakeAdapter()
+        adapter.active_window = mock.Mock(return_value=11)
+        expected = binding.expected_managed_metadata(self.payload())
         for side_effect in (FileNotFoundError(), subprocess.TimeoutExpired("qtile", 2)):
-            with self.subTest(error=type(side_effect).__name__):
-                run = mock.Mock(side_effect=side_effect)
-                self.assertFalse(binding.notify_qtile(22, run=run))
+            with self.subTest(error=type(side_effect).__name__), \
+                    self.assertRaises(binding.X11Unavailable):
+                binding.notify_qtile(22, expected, adapter,
+                                     run=mock.Mock(side_effect=side_effect))
         run = mock.Mock(return_value=mock.Mock(returncode=1, stdout="", stderr="failed"))
-        self.assertFalse(binding.notify_qtile(22, run=run))
-        run.assert_called_once_with(
-            binding.qtile_move_command(22),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=2,
-        )
+        with self.assertRaises(binding.X11Unavailable):
+            binding.notify_qtile(22, expected, adapter, run=run)
+        self.assertEqual(run.call_args.args[0], binding.qtile_move_command(22, expected=expected))
         wrong = mock.Mock(return_value=mock.Mock(
             returncode=0, stdout='{"id":22,"group":"f"}', stderr=""))
-        self.assertFalse(binding.notify_qtile(22, run=wrong))
+        with self.assertRaises(binding.X11Unavailable):
+            binding.notify_qtile(22, expected, adapter, run=wrong)
 
 
 if __name__ == "__main__":

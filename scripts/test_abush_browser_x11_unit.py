@@ -49,6 +49,9 @@ class FakeAdapter:
     def property(self, window, name, property_type="UTF8_STRING"):
         return self.values.get((window, name), "")
 
+    def delete_property(self, window, name):
+        self.values.pop((window, name), None)
+
     def finish(self):
         self.finished = True
 
@@ -99,6 +102,8 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
 
     def test_browser_process_matches_exact_chrome_executable_not_argument_substrings(self):
         root = pathlib.Path(self._testMethodName)
+        self.assertFalse(binding.browser_process(True, root),
+                         "bool must not be accepted as a typed X11 PID")
         with mock.patch.object(binding.pathlib.Path, "read_bytes") as read_bytes:
             read_bytes.return_value = b"/usr/bin/google-chrome-stable\0--type=browser\0"
             self.assertTrue(binding.browser_process(42, root))
@@ -111,7 +116,16 @@ class X11BindingTest(unittest.TestCase):
         self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
         self.process_patch.start()
         self.addCleanup(self.process_patch.stop)
-        self.qtile_patch = mock.patch.object(binding, "notify_qtile", return_value=False)
+        self.qtile_patch = mock.patch.object(binding, "notify_qtile", return_value={
+            "id": 22,
+            "group": "c",
+            "current_group_before": "e",
+            "current_group_after": "e",
+            "active_xid_before": 11,
+            "active_xid_after": 11,
+            "current_group_preserved": True,
+            "active_xid_preserved": True,
+        })
         self.qtile_patch.start()
         self.addCleanup(self.qtile_patch.stop)
 
@@ -166,6 +180,34 @@ class X11BindingTest(unittest.TestCase):
         self.assertEqual(second["observed"]["_ABUSH_WORKSPACE_ID"], "workspace-new")
         self.assertEqual(second["observed"]["_ABUSH_WINDOW_GENERATION"], "8")
 
+    def test_existing_and_fresh_distinct_candidates_are_ambiguous(self):
+        adapter = FakeAdapter()
+        payload = {
+            "nonce": "0123456789abcdef0123456789abcdef",
+            "remote_key": "r_12345678", "workspace_id": "workspace",
+            "generation": 7, "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
+        }
+        adapter.values[(11, "WM_WINDOW_ROLE")] = "abush-browser"
+        adapter.values[(11, "_ABUSH_BINDING_NONCE")] = payload["nonce"]
+        adapter.values[(11, "_ABUSH_REMOTE_ID")] = payload["remote_key"]
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
+
+    def test_duplicate_existing_and_fresh_same_xid_is_deduplicated(self):
+        adapter = FakeAdapter()
+        payload = {
+            "nonce": "0123456789abcdef0123456789abcdef",
+            "remote_key": "r_12345678", "workspace_id": "workspace",
+            "generation": 7, "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
+        }
+        adapter.values[(22, "WM_WINDOW_ROLE")] = "abush-browser"
+        adapter.values[(22, "_ABUSH_BINDING_NONCE")] = payload["nonce"]
+        adapter.values[(22, "_ABUSH_REMOTE_ID")] = payload["remote_key"]
+        result = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
+        self.assertEqual(result["xid"], 22)
+
     def test_rebind_preserves_pid_spoof_protection(self):
         adapter = FakeAdapter()
         payload = {
@@ -217,6 +259,39 @@ class X11BindingTest(unittest.TestCase):
                 "display_title": "Abush Browser — local · workbench",
             }, adapter=adapter, attempts=1)
 
+    def test_clear_workspace_window_requires_exact_identity_and_verifies_cleanup(self):
+        adapter = FakeAdapter()
+        payload = {
+            "xid": 22,
+            "nonce": "0123456789abcdef0123456789abcdef",
+            "remote_key": "r_12345678",
+            "workspace_id": "workspace",
+            "generation": 7,
+            "control_state": "remote",
+            "display_title": "Abush Browser — local · workbench",
+        }
+        binding.bind_workspace_window(
+            {key: value for key, value in payload.items() if key != "xid"},
+            adapter=adapter,
+            attempts=1,
+        )
+        run = mock.Mock(return_value=mock.Mock(
+            returncode=0, stdout=json.dumps({"id": 22, "group": "f"}), stderr=""))
+        result = binding.clear_workspace_window(payload, adapter=adapter, run=run)
+        self.assertEqual(result, {"cleared": True, "xid": 22, "reclassified_group": "f"})
+        self.assertIsNone(binding.managed_metadata(adapter, 22))
+        adapter = FakeAdapter()
+        binding.bind_workspace_window(
+            {key: value for key, value in payload.items() if key != "xid"},
+            adapter=adapter,
+            attempts=1,
+        )
+        with self.assertRaisesRegex(ValueError, "identity mismatch"):
+            binding.clear_workspace_window({**payload, "workspace_id": "other"},
+                                           adapter=adapter, run=run)
+        self.assertIsNotNone(binding.managed_metadata(adapter, 22),
+                             "mismatched cleanup must leave the verified owner untouched")
+
     def test_rejects_bad_nonce(self):
         with self.assertRaises(ValueError):
             binding.bind_workspace_window({
@@ -251,6 +326,12 @@ class X11BindingTest(unittest.TestCase):
         adapter.values[(11, "_NET_WM_NAME")] = "ordinary"
         adapter.values[(22, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce}"
         adapter.values[(22, "WM_WINDOW_ROLE")] = "abush-browser"
+        adapter.values[(22, "_ABUSH_BINDING_NONCE")] = nonce
+        adapter.values[(22, "_ABUSH_REMOTE_ID")] = "r_12345678"
+        adapter.values[(22, "_ABUSH_WORKSPACE_ID")] = "workspace"
+        adapter.values[(22, "_ABUSH_WINDOW_GENERATION")] = "1"
+        adapter.values[(22, "_ABUSH_CONTROL_STATE")] = "remote"
+        adapter.values[(22, "_ABUSH_DISPLAY_TITLE")] = "local"
         with self.assertRaises(binding.X11Unavailable):
             binding.prepare_ordinary_window(
                 {"nonce": nonce}, adapter=adapter, attempts=1,
