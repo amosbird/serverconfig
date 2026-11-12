@@ -401,6 +401,10 @@ if (typeof chrome !== "undefined") {
                 .catch(error => notifyFailure(error.message || "Unable to open ordinary URL"));
             return;
         }
+        if (message.service === "ordinary_open" && message.event === "ordinary_open_cancel") {
+            workspaceReady.then(() => workspaces.cancelOrdinaryOpen(message.payload)).catch(() => {});
+            return;
+        }
         if (message.service !== "abush_browser") return;
         if (message.event === "abush_browser.remote_state") {
             workspaceReady.then(() => workspaces.remoteState(message.payload)).catch(() => {});
@@ -420,7 +424,14 @@ if (typeof chrome !== "undefined") {
             workspaceReady.then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});
         }
         if (message.event === "abush_browser.execute") {
-            workspaceReady.then(() => workspaces.execute(message.payload))
+            let registered = false;
+            try {
+                registered = workspaces.registerOperation(message.payload);
+            } catch (error) {
+                notifyFailure(error.message || "Unable to register Abush browser command");
+            }
+            if (!registered) return;
+            workspaceReady.then(() => workspaces.executeRegistered(message.payload))
                 .catch(error => notifyFailure(
                     error.message || "Unable to complete Abush browser command"));
         }

@@ -8,7 +8,10 @@ const CLEANUP_TOMBSTONES_KEY = "abushCleanupTombstones";
 const RETIRE_LEDGER_KEY = "abushRetireLedger";
 const RESTORE_HOST_KEY = "abushRestoreHost";
 const PENDING_TRANSACTIONS_KEY = "abushPendingTransactions";
+const PENDING_OPERATIONS_KEY = "abushPendingOperations";
+const TAB_REPLACEMENTS_KEY = "abushTabReplacements";
 const TRANSACTION_WAIT_MS = 5000;
+const ORDINARY_OPEN_DEADLINE_MS = 30000;
 const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -54,6 +57,8 @@ class WorkspaceExecutor {
         this.statusTabOwners = new Map();
         this.operations = new Map();
         this.completedOperations = new Map();
+        this.pendingOperationCancels = new Map();
+        this.operationTail = Promise.resolve();
         this.ordinaryOperations = new Map();
         this.completedOrdinaryOperations = new Map();
         this.ordinaryTail = Promise.resolve();
@@ -63,6 +68,7 @@ class WorkspaceExecutor {
         this.ensureWaiters = new Map();
         this.persistTail = Promise.resolve();
         this.persistRevision = 0;
+        this.localStateTail = Promise.resolve();
         this.pendingTransactions = new Map();
         this.eventTransactions = new Map();
         this.eventTransactionClock = 0;
@@ -86,6 +92,7 @@ class WorkspaceExecutor {
         this.removedHostSnapshots = new Map();
         this.snapshotTails = new Map();
         this.recentSessionIds = null;
+        this.quarantinedRecords = new Map();
         this.ready = Promise.resolve();
     }
 
@@ -140,12 +147,36 @@ class WorkspaceExecutor {
         return "unknown";
     }
 
-    async persistPendingTransactions() {
+    enqueueLocalState(task) {
+        const operation = this.localStateTail.catch(() => {}).then(task);
+        this.localStateTail = operation;
+        return operation;
+    }
+
+    localStateWrite(key, snapshot) {
+        if (!this.chrome.storage?.local) {
+            return Promise.reject(new Error("local extension storage is unavailable"));
+        }
+        const value = structuredClone(snapshot);
+        return this.enqueueLocalState(() => this.chrome.storage.local.set({[key]: value}));
+    }
+
+    async localStateUpdate(key, update, fallback) {
         if (!this.chrome.storage?.local) {
             throw new Error("local extension storage is unavailable");
         }
-        const transactions = [...this.pendingTransactions.values()].map(transaction => ({
-            version: 1,
+        return this.enqueueLocalState(async () => {
+            const stored = await this.chrome.storage.local.get([key]);
+            const current = stored[key] === undefined ? fallback : stored[key];
+            const next = await update(structuredClone(current));
+            await this.chrome.storage.local.set({[key]: structuredClone(next)});
+            return next;
+        });
+    }
+
+    pendingTransactionSnapshot() {
+        return [...this.pendingTransactions.values()].map(transaction => ({
+            version: 2,
             transaction_id: transaction.id,
             phase: transaction.phase,
             remote_key: transaction.remoteKey,
@@ -158,8 +189,13 @@ class WorkspaceExecutor {
             xid: transaction.x11WindowId,
             binding: transaction.binding,
             record: transaction.record,
+            planned_effect: transaction.plannedEffect || null,
+            observed_effects: structuredClone(transaction.observedEffects || []),
         }));
-        await this.chrome.storage.local.set({[PENDING_TRANSACTIONS_KEY]: transactions});
+    }
+
+    async persistPendingTransactions() {
+        await this.localStateWrite(PENDING_TRANSACTIONS_KEY, this.pendingTransactionSnapshot());
     }
 
     async beginEnsureTransaction(payload, nonce) {
@@ -176,6 +212,8 @@ class WorkspaceExecutor {
             x11WindowId: null,
             binding: null,
             record: null,
+            plannedEffect: null,
+            observedEffects: [],
             expectedEvents: [],
             invalid: false,
             finished: false,
@@ -268,6 +306,66 @@ class WorkspaceExecutor {
         this.pruneEventTransactions();
     }
 
+    transactionAllowsBenignEvent(transaction, type, payload) {
+        if (type !== "tabUpdated") return false;
+        const tabId = payload?.tabId ?? payload?.tab?.id;
+        if (!Number.isInteger(tabId)) return false;
+        const transactionTab = transaction.statusTabIds.includes(tabId) ||
+            transaction.pageTabId === tabId || transaction.plannedEffect?.tab_id === tabId;
+        if (!transactionTab) return false;
+        const fields = Object.keys(payload?.changeInfo || {});
+        if (!fields.every(field => ["status", "title", "favIconUrl", "audible",
+            "discarded", "autoDiscardable", "mutedInfo", "groupId", "url", "pinned"]
+            .includes(field))) return false;
+        const change = payload.changeInfo || {};
+        if ("url" in change) {
+            const parsed = this.parseStatusUrl(change.url);
+            const plannedBusiness = transaction.plannedEffect?.kind === "tabs.create.business" &&
+                change.url === "about:blank";
+            if (!(parsed?.nonce === transaction.nonce || plannedBusiness)) return false;
+        }
+        if ("pinned" in change && change.pinned === false &&
+                transaction.statusTabIds.includes(tabId)) return false;
+        return true;
+    }
+
+    async reconcileTransactionTopology(transaction) {
+        const candidateWindowIds = new Set([transaction.windowId,
+            transaction.plannedEffect?.window_id].filter(Number.isInteger));
+        if (transaction.plannedEffect?.kind === "windows.create" ||
+                transaction.windowId === null) {
+            const tabs = await this.chrome.tabs.query({});
+            for (const tab of tabs) {
+                const marker = this.parseStatusUrl(tab.url);
+                if (marker?.nonce === transaction.nonce) candidateWindowIds.add(tab.windowId);
+            }
+        }
+        const matches = [];
+        for (const windowId of candidateWindowIds) {
+            let tabs;
+            try {
+                tabs = await this.chrome.tabs.query({windowId});
+            } catch (_) {
+                continue;
+            }
+            const markers = tabs.map(tab => ({tab, marker: this.parseStatusUrl(tab.url)}))
+                .filter(item => item.marker?.nonce === transaction.nonce);
+            if (markers.length > 0) matches.push({windowId, tabs, markers});
+        }
+        if (matches.length > 1) throw new Error("managed transaction marker is ambiguous");
+        const match = matches[0];
+        if (!match) return null;
+        transaction.windowId = match.windowId;
+        transaction.statusTabIds = MARKER_IDS.map(marker => match.markers.find(item =>
+            item.marker.marker === marker)?.tab.id).filter(Number.isInteger);
+        if (!Number.isInteger(transaction.pageTabId)) {
+            const business = match.tabs.filter(tab =>
+                !transaction.statusTabIds.includes(tab.id) && tab.pinned !== true);
+            if (business.length === 1) transaction.pageTabId = business[0].id;
+        }
+        return match;
+    }
+
     observeChromeEvent(type, payload) {
         const transactions = [...this.eventTransactions.values()]
             .sort((left, right) => right.clock - left.clock);
@@ -278,6 +376,7 @@ class WorkspaceExecutor {
                 this.consumeTransactionEvent(transaction, expected, type, payload);
                 return true;
             }
+            if (this.transactionAllowsBenignEvent(transaction, type, payload)) return true;
             if (!transaction.finished && this.transactionTouchesEvent(transaction, payload)) {
                 transaction.invalid = true;
                 transaction.clock = ++this.eventTransactionClock;
@@ -329,7 +428,7 @@ class WorkspaceExecutor {
     }
 
     validPendingTransaction(transaction) {
-        return transaction?.version === 1 &&
+        return transaction?.version >= 1 && transaction?.version <= 2 &&
             typeof transaction.transaction_id === "string" && transaction.transaction_id &&
             typeof transaction.nonce === "string" && STATUS_NONCE_RE.test(transaction.nonce) &&
             Array.isArray(transaction.status_tab_ids) &&
@@ -353,6 +452,9 @@ class WorkspaceExecutor {
             x11WindowId: saved.xid,
             binding: saved.binding || null,
             record: saved.record || null,
+            plannedEffect: saved.planned_effect || null,
+            observedEffects: Array.isArray(saved.observed_effects) ?
+                structuredClone(saved.observed_effects) : [],
             expectedEvents: [],
             invalid: false,
             finished: false,
@@ -516,10 +618,8 @@ class WorkspaceExecutor {
     }
 
     async persistTopologyOutbox() {
-        if (!this.chrome.storage?.local) throw new Error("local extension storage is unavailable");
-        await this.chrome.storage.local.set({
-            [TOPOLOGY_OUTBOX_KEY]: [...this.topologyOutbox.values()],
-        });
+        await this.localStateWrite(TOPOLOGY_OUTBOX_KEY,
+            [...this.topologyOutbox.values()]);
     }
 
     async queueTopologyReport(report) {
@@ -735,21 +835,14 @@ class WorkspaceExecutor {
     }
 
     async recordCleanupTombstone(record, errors) {
-        if (!this.chrome.storage?.local) throw new Error("local extension storage is unavailable");
-        const write = this.cleanupTail.catch(() => {}).then(async () => {
-            const local = await this.chrome.storage.local.get([CLEANUP_TOMBSTONES_KEY]);
-            const tombstones = Array.isArray(local[CLEANUP_TOMBSTONES_KEY]) ?
-                local[CLEANUP_TOMBSTONES_KEY] : [];
+        await this.localStateUpdate(CLEANUP_TOMBSTONES_KEY, tombstones => {
+            const current = Array.isArray(tombstones) ? tombstones : [];
             const tombstone = this.cleanupTombstone(record, errors);
             const key = this.tombstoneKey(tombstone);
-            const next = tombstones.filter(saved => this.tombstoneKey(saved) !== key);
+            const next = current.filter(saved => this.tombstoneKey(saved) !== key);
             next.push(tombstone);
-            await this.chrome.storage.local.set({
-                [CLEANUP_TOMBSTONES_KEY]: next.slice(-64),
-            });
-        });
-        this.cleanupTail = write;
-        await write;
+            return next.slice(-64);
+        }, []);
     }
 
     validCleanupTombstone(tombstone) {
@@ -833,7 +926,7 @@ class WorkspaceExecutor {
                 failures.push(error);
             }
         }
-        await this.chrome.storage.local.set({[CLEANUP_TOMBSTONES_KEY]: pending});
+        await this.localStateWrite(CLEANUP_TOMBSTONES_KEY, pending);
         if (failures.length > 0) {
             this.reportAdvisoryError(new AggregateError(
                 failures, "managed cleanup tombstones remain pending"));
@@ -849,15 +942,12 @@ class WorkspaceExecutor {
     }
 
     async updateOwnedMarkers(update) {
-        if (!this.chrome.storage?.local) throw new Error("local extension storage is unavailable");
-        const write = this.markerTail.catch(() => {}).then(async () => {
-            const stored = await this.chrome.storage.local.get([OWNED_MARKERS_KEY]);
-            const markers = stored[OWNED_MARKERS_KEY] || {};
-            update(markers);
-            await this.chrome.storage.local.set({[OWNED_MARKERS_KEY]: markers});
-        });
-        this.markerTail = write;
-        await write;
+        await this.localStateUpdate(OWNED_MARKERS_KEY, markers => {
+            const next = markers && typeof markers === "object" && !Array.isArray(markers) ?
+                markers : {};
+            update(next);
+            return next;
+        }, {});
     }
 
     async ownMarker(nonce) {
@@ -956,12 +1046,15 @@ class WorkspaceExecutor {
     }
 
     validateOrdinaryOpen(payload) {
-        if (!exactFields(payload, ["version", "request_id", "operation", "url", "focus"]) ||
+        if (!exactFields(payload, ["version", "request_id", "operation", "url", "focus",
+            "deadline_ms"]) ||
                 payload.version !== 1 || payload.operation !== "ordinary_open" ||
                 payload.focus !== true || typeof payload.request_id !== "string" ||
-                !payload.request_id || typeof payload.url !== "string" || !payload.url) {
+                !payload.request_id || typeof payload.url !== "string" || !payload.url ||
+                !Number.isFinite(payload.deadline_ms) || payload.deadline_ms <= 0) {
             throw new Error("invalid ordinary-open payload");
         }
+        if (Date.now() >= payload.deadline_ms) throw new Error("ordinary-open deadline expired");
         const url = new URL(payload.url);
         if (!["http:", "https:", "file:"].includes(url.protocol)) {
             throw new Error("invalid ordinary-open URL");
@@ -1050,7 +1143,7 @@ class WorkspaceExecutor {
     sameOrdinaryPayload(left, right) {
         return left.version === right.version && left.request_id === right.request_id &&
             left.operation === right.operation && left.url === right.url &&
-            left.focus === right.focus;
+            left.focus === right.focus && left.deadline_ms === right.deadline_ms;
     }
 
     async ordinaryOpen(payload) {
@@ -1070,6 +1163,12 @@ class WorkspaceExecutor {
             }
             return existing.operation;
         }
+        if (Date.now() >= payload.deadline_ms) {
+            const completion = "not_applied";
+            this.rememberOrdinaryCompletion(payload, completion);
+            await this.ordinaryCompletion(payload, completion);
+            return completion;
+        }
         const operation = this.ordinaryTail.catch(() => {})
             .then(() => this.performOrdinaryOpen(payload));
         this.ordinaryTail = operation;
@@ -1078,7 +1177,9 @@ class WorkspaceExecutor {
                 this.ordinaryOperations.delete(payload.request_id);
             }
         }).catch(() => {});
-        this.ordinaryOperations.set(payload.request_id, {payload: {...payload}, operation});
+        this.ordinaryOperations.set(payload.request_id, {
+            payload: {...payload}, operation, cancelled: false,
+        });
         return operation;
     }
 
@@ -1191,13 +1292,27 @@ class WorkspaceExecutor {
         }
     }
 
+    async cancelOrdinaryOpen(payload) {
+        if (!payload || payload.version !== 1 ||
+                payload.operation !== "ordinary_open_cancel" ||
+                typeof payload.request_id !== "string") return false;
+        const operation = this.ordinaryOperations.get(payload.request_id);
+        if (!operation) return false;
+        operation.cancelled = true;
+        return true;
+    }
+
     async performOrdinaryOpen(payload) {
         let context = null;
         let navigationRequested = false;
         let completion = "not_applied";
         const nonce = crypto.randomUUID().replaceAll("-", "");
+        const isCancelled = () => this.ordinaryOperations.get(payload.request_id)?.cancelled === true;
         try {
             const url = this.validateOrdinaryOpen(payload);
+            if (isCancelled() || Date.now() >= payload.deadline_ms) {
+                throw new Error("ordinary-open deadline expired or cancelled");
+            }
             context = await this.selectOrdinaryWindow();
             if (context === null) {
                 const windows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
@@ -1208,6 +1323,9 @@ class WorkspaceExecutor {
                     createdWindow: true,
                     baselineWindowIds: windows.map(window => window.id),
                 };
+                if (Date.now() >= payload.deadline_ms) {
+                    throw new Error("ordinary-open deadline expired");
+                }
                 const stagingWindow = await this.chrome.windows.create({
                     url: this.ordinaryStagingUrl(nonce), focused: false, type: "normal",
                 });
@@ -1224,6 +1342,9 @@ class WorkspaceExecutor {
                     if (stagingTabs.length === 1) context.stagingTabId = stagingTabs[0].id;
                 }
             } else {
+                if (Date.now() >= payload.deadline_ms) {
+                    throw new Error("ordinary-open deadline expired");
+                }
                 const stagingTab = await this.chrome.tabs.create({
                     windowId: context.windowId,
                     url: this.ordinaryStagingUrl(nonce),
@@ -1241,10 +1362,16 @@ class WorkspaceExecutor {
             }
             await this.waitForOrdinaryTitle(context.stagingTabId, nonce);
             await this.verifyOrdinaryStaging(context, nonce);
+            if (isCancelled() || Date.now() >= payload.deadline_ms) {
+                throw new Error("ordinary-open deadline expired or cancelled");
+            }
             const prepared = await this.nativeRequest("ordinary_open", "prepare", {nonce});
             if (!exactFields(prepared, ["xid", "nonce"]) || prepared.nonce !== nonce ||
                     !Number.isInteger(prepared.xid) || prepared.xid <= 0) {
                 throw new Error("invalid ordinary prepare response");
+            }
+            if (isCancelled() || Date.now() >= payload.deadline_ms) {
+                throw new Error("ordinary-open deadline expired or cancelled");
             }
             navigationRequested = true;
             if (new URL(url).protocol === "file:") {
@@ -1277,6 +1404,10 @@ class WorkspaceExecutor {
                 } catch (_) {
                     throw new Error("ordinary navigation completion is unknown");
                 }
+            }
+            if (Date.now() >= payload.deadline_ms) {
+                completion = navigationRequested ? "unknown" : "not_applied";
+                throw new Error("ordinary-open deadline expired");
             }
             try {
                 await this.nativeRequest("ordinary_open", "activate", prepared);
@@ -1610,9 +1741,7 @@ class WorkspaceExecutor {
                 }
             }
         }
-        if (this.chrome.storage?.local) {
-            await this.chrome.storage.local.set({[OWNED_MARKERS_KEY]: ownedMarkers});
-        }
+        await this.localStateWrite(OWNED_MARKERS_KEY, ownedMarkers);
         if (cleanupErrors.length > 0) {
             this.reportAdvisoryError(new AggregateError(
                 cleanupErrors, "orphan X11 cleanup was incomplete"));
@@ -1692,6 +1821,7 @@ class WorkspaceExecutor {
     }
 
     async restore() {
+        await this.restoreOperationCancels();
         await this.restorePendingTransactions();
         await this.restoreCleanupTombstones();
         await this.restoreHost();
@@ -2001,18 +2131,13 @@ class WorkspaceExecutor {
     }
 
     async persistRetireLedger() {
-        if (!this.chrome.storage?.local) throw new Error("local extension storage is unavailable");
-        const write = this.retireTail.catch(() => {}).then(() =>
-            this.chrome.storage.local.set({
-                [RETIRE_LEDGER_KEY]: [
-                    ...this.retirePending.values()].map(pending => ({
-                        status: "accepted", identity: pending,
-                    })).concat([...this.retireCompletions.values()].map(completion => ({
-                        status: "completed", identity: completion,
-                    }))),
-            }));
-        this.retireTail = write;
-        await write;
+        const snapshot = [
+            ...this.retirePending.values()].map(pending => ({
+                status: "accepted", identity: pending,
+            })).concat([...this.retireCompletions.values()].map(completion => ({
+                status: "completed", identity: completion,
+            })));
+        await this.localStateWrite(RETIRE_LEDGER_KEY, snapshot);
     }
 
     validRetireIdentity(identity) {
@@ -2216,12 +2341,32 @@ class WorkspaceExecutor {
         }
     }
 
-    async mutateTransaction(transaction, events, effect) {
-        const expectedEvents = Array.isArray(events) ? events : [events];
+    async mutateTransaction(transaction, effects, effect) {
+        const expectedEvents = Array.isArray(effects) ? effects : [effects];
         for (const {type, match} of expectedEvents) {
             this.expectTransactionEvent(transaction, type, match);
         }
-        const result = await effect();
+        const planned = expectedEvents[0]?.planned || {kind: expectedEvents[0]?.type};
+        transaction.plannedEffect = structuredClone(planned);
+        transaction.phase = "effect_planned";
+        await this.persistPendingTransactions();
+        let result;
+        try {
+            result = await effect();
+        } catch (error) {
+            await this.reconcileTransactionTopology(transaction);
+            throw error;
+        }
+        const observation = {
+            kind: planned.kind,
+            window_id: result?.windowId ?? result?.id ?? transaction.windowId ?? null,
+            tab_id: result?.windowId !== undefined ? result?.id : null,
+        };
+        transaction.observedEffects.push(observation);
+        transaction.plannedEffect = null;
+        transaction.phase = "effect_observed";
+        await this.reconcileTransactionTopology(transaction);
+        await this.persistPendingTransactions();
         if (transaction.invalid) throw new Error("managed transaction topology changed");
         return result;
     }
@@ -2305,6 +2450,8 @@ class WorkspaceExecutor {
                 const url = this.statusUrl({nonce}, marker);
                 const tab = await this.mutateTransaction(transaction, {
                     type: "tabCreated", match: {tab: {windowId: hostWindowId, url}},
+                    planned: {kind: "tabs.create.marker", window_id: hostWindowId,
+                        marker, url},
                 }, () => this.chrome.tabs.create({
                         windowId: hostWindowId,
                         url,
@@ -2320,6 +2467,7 @@ class WorkspaceExecutor {
             created = await this.mutateTransaction(transaction, {
                 type: "windowCreated",
                 match: {window: {type: "normal"}, sourceTabId: statusTabs[0].id},
+                planned: {kind: "windows.create", tab_id: statusTabs[0].id},
             }, () => this.chrome.windows.create({
                     tabId: statusTabs[0].id,
                     focused: false,
@@ -2338,6 +2486,8 @@ class WorkspaceExecutor {
             await this.mutateTransaction(transaction, [{
                 type: "tabDetached",
                 match: {tabId: statusTabs[1].id, oldWindowId: hostWindowId},
+                planned: {kind: "tabs.move", tab_id: statusTabs[1].id,
+                    window_id: created.id},
             }, {
                 type: "tabAttached",
                 match: {tabId: statusTabs[1].id, newWindowId: created.id},
@@ -2367,11 +2517,15 @@ class WorkspaceExecutor {
                 await this.mutateTransaction(transaction, {
                     type: "tabUpdated",
                     match: {tabId: tab.id, changeInfo: {pinned: true}},
+                    planned: {kind: "tabs.pin", tab_id: tab.id,
+                        window_id: created.id},
                 }, () => this.chrome.tabs.update(tab.id, {pinned: true}));
             }
             const business = await this.mutateTransaction(transaction, {
                 type: "tabCreated",
                 match: {tab: {windowId: created.id, url: "about:blank"}},
+                planned: {kind: "tabs.create.business", window_id: created.id,
+                    url: "about:blank"},
             }, () => this.chrome.tabs.create({
                 windowId: created.id, url: "about:blank", active: true,
             }));
@@ -2584,15 +2738,50 @@ class WorkspaceExecutor {
         }
     }
 
-    async execute(payload) {
-        return this.enqueueLifecycle(() => this.executeSerialized(payload));
+    operationExecutionFromCancel(payload) {
+        const execution = {...payload, request_id: payload.execution_request_id};
+        delete execution.execution_request_id;
+        return execution;
     }
 
-    async executeSerialized(payload) {
+    operationCancelSnapshot() {
+        const pending = [];
+        for (const payloads of this.pendingOperationCancels.values()) {
+            pending.push(...payloads.map(payload => structuredClone(payload)));
+        }
+        for (const operation of this.operations.values()) {
+            pending.push(...(operation.cancellationPayloads || [])
+                .map(payload => structuredClone(payload)));
+        }
+        return pending;
+    }
+
+    async persistOperationCancels() {
+        await this.localStateWrite(PENDING_OPERATIONS_KEY, this.operationCancelSnapshot());
+    }
+
+    async restoreOperationCancels() {
+        if (!this.chrome.storage?.local) return;
+        const local = await this.chrome.storage.local.get([PENDING_OPERATIONS_KEY]);
+        const saved = Array.isArray(local[PENDING_OPERATIONS_KEY]) ?
+            local[PENDING_OPERATIONS_KEY] : [];
+        for (const payload of saved) {
+            if (!exactFields(payload, ["remote_key", "connection_id", "principal_id",
+                "request_id", "execution_request_id", "effect_id", "executor_fence"]) ||
+                    !validFence(payload.executor_fence)) continue;
+            const key = this.operationKey(this.operationExecutionFromCancel(payload));
+            const pending = this.pendingOperationCancels.get(key) || [];
+            if (!pending.some(candidate => sameRef(candidate, payload))) pending.push(payload);
+            this.pendingOperationCancels.set(key, pending);
+        }
+    }
+
+    createOperation(payload) {
         let resolveDone;
         const done = new Promise(resolve => { resolveDone = resolve; });
-        const operation = {
+        return {
             ...this.operationIdentity(payload),
+            payload: structuredClone(payload),
             cancelled: false,
             mutationStarted: false,
             committed: false,
@@ -2601,10 +2790,40 @@ class WorkspaceExecutor {
             done,
             resolveDone,
         };
+    }
+
+    registerOperation(payload) {
         const operationKey = this.operationKey(payload);
-        const existing = this.operations.get(operationKey);
-        if (existing || this.completedOperations.has(operationKey)) return;
+        if (this.operations.has(operationKey) || this.completedOperations.has(operationKey)) {
+            return false;
+        }
+        const operation = this.createOperation(payload);
+        const pending = this.pendingOperationCancels.get(operationKey);
+        if (pending) {
+            operation.cancelled = true;
+            operation.cancellationPayloads = pending;
+            operation.orphanedCancels = true;
+            this.pendingOperationCancels.delete(operationKey);
+        }
         this.operations.set(operationKey, operation);
+        return true;
+    }
+
+    async execute(payload) {
+        if (!this.registerOperation(payload)) return;
+        return this.executeRegistered(payload);
+    }
+
+    async executeRegistered(payload) {
+        await this.persistOperationCancels();
+        return this.enqueueLifecycle(() => this.executeSerialized(payload));
+    }
+
+    async executeSerialized(payload) {
+        const operationKey = this.operationKey(payload);
+        const operation = this.operations.get(operationKey);
+        if (!operation || operation.started || this.completedOperations.has(operationKey)) return;
+        operation.started = true;
         let completion = "unknown";
         try {
             const {record} = await this.validate(payload, payload.command);
@@ -2667,6 +2886,20 @@ class WorkspaceExecutor {
                     this.operations.delete(operationKey);
                 }
                 operation.resolveDone();
+                const pendingCancels = operation.orphanedCancels ?
+                    operation.cancellationPayloads || [] : [];
+                for (const cancelPayload of pendingCancels) {
+                    const cancelCompletion = operation.mutationStarted || operation.committed ||
+                        operation.uncertain || operation.completion === "applied" ||
+                        operation.completion === "unknown" ? "unknown" : "not_applied";
+                    try {
+                        await this.cancellationCompletion(cancelPayload, cancelCompletion);
+                    } catch (error) {
+                        this.reportAdvisoryError(error);
+                    }
+                }
+                operation.cancellationPayloads = [];
+                await this.persistOperationCancels();
             }
         }
     }
@@ -2691,14 +2924,25 @@ class WorkspaceExecutor {
                     .every(value => typeof value === "string" && value) ||
                 payload.request_id === payload.execution_request_id ||
                 !validFence(payload.executor_fence)) return;
-        const execution = {...payload, request_id: payload.execution_request_id};
-        delete execution.execution_request_id;
+        const execution = this.operationExecutionFromCancel(payload);
         const operationKey = this.operationKey(execution);
         const operation = this.operations.get(operationKey) ||
             this.completedOperations.get(operationKey);
-        if (operation && this.operations.get(operationKey) === operation) {
+        if (!operation) {
+            const pending = this.pendingOperationCancels.get(operationKey) || [];
+            if (!pending.some(saved => sameRef(saved, payload))) pending.push(structuredClone(payload));
+            this.pendingOperationCancels.set(operationKey, pending);
+            await this.persistOperationCancels();
+            return;
+        }
+        if (this.operations.get(operationKey) === operation) {
             operation.cancelled = true;
+            operation.cancellationPayloads ||= [];
+            if (!operation.cancellationPayloads.some(saved => sameRef(saved, payload))) {
+                operation.cancellationPayloads.push(structuredClone(payload));
+            }
             if (operation.mutationStarted) operation.uncertain = true;
+            await this.persistOperationCancels();
             try { await operation.done; } catch (_) {}
         }
         const completion = operation &&
@@ -2706,6 +2950,11 @@ class WorkspaceExecutor {
                 operation.completion === "applied" || operation.completion === "unknown") ?
             "unknown" : "not_applied";
         await this.cancellationCompletion(payload, completion);
+        if (operation?.cancellationPayloads) {
+            operation.cancellationPayloads = operation.cancellationPayloads
+                .filter(saved => !sameRef(saved, payload));
+            await this.persistOperationCancels();
+        }
     }
 
     cancelMatching(matches) {
