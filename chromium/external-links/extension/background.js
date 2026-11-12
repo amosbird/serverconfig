@@ -184,6 +184,15 @@ function connectWorkspaceAfterRestore(workspaces, connect) {
     return workspaces.restoreWhenReady().then(connect);
 }
 
+function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
+    chromeApi.windows.onRemoved.addListener(windowId => {
+        ready.then(() => workspaces.windowRemoved(windowId)).catch(onFailure);
+    });
+    chromeApi.tabs.onAttached.addListener((tabId, info) => {
+        ready.then(() => workspaces.tabMoved(tabId, info)).catch(() => {});
+    });
+}
+
 if (typeof chrome !== "undefined") {
     configureSiteLanguages();
     const workspaces = workspace();
@@ -224,9 +233,8 @@ if (typeof chrome !== "undefined") {
             workspaceReady.then(() => workspaces.cancel(message.payload)).catch(() => {});
         }
     });
-    chrome.tabs.onAttached.addListener((tabId, info) => {
-        workspaceReady.then(() => workspaces.tabMoved(tabId, info)).catch(() => {});
-    });
+    registerWorkspaceWindowListeners(chrome, workspaces, workspaceReady, error =>
+        notifyFailure(error.message || "Unable to retire closed Abush browser workspace"));
     chrome.debugger.onDetach.addListener(source => {
         if (source.tabId) {
             workspaceReady.then(() => workspaces.debuggerDetached(source.tabId)).catch(() => {});
@@ -257,5 +265,5 @@ if (typeof chrome !== "undefined") {
 
 if (typeof module !== "undefined") {
     module.exports = {NativeDispatcher, ENVELOPE_VERSION, workspace,
-        connectWorkspaceAfterRestore};
+        connectWorkspaceAfterRestore, registerWorkspaceWindowListeners};
 }

@@ -89,6 +89,20 @@ class WorkspaceExecutor {
         await write;
     }
 
+    async persistWithRemovedRecord(record) {
+        const write = this.persistTail.catch(() => {}).then(async () => {
+            const records = [...this.workspaces.values()]
+                .filter(saved => saved !== record)
+                .map(saved => this.persistedRecord(saved));
+            await this.persistRecords(records);
+            if (this.workspaces.get(this.key(record.remoteKey, record.principalId)) === record) {
+                this.forget(record);
+            }
+        });
+        this.persistTail = write;
+        await write;
+    }
+
     async updateOwnedMarkers(update) {
         if (!this.chrome.storage?.local) throw new Error("local extension storage is unavailable");
         const write = this.markerTail.catch(() => {}).then(async () => {
@@ -826,6 +840,40 @@ class WorkspaceExecutor {
         await this.chrome.windows.remove(record.windowId);
         await this.disownMarker(record.nonce);
         this.forget(record);
+    }
+
+    async visibleNormalWindows(removedWindowId) {
+        return (await this.chrome.windows.getAll({windowTypes: ["normal"]}))
+            .filter(window => window.type === "normal" && window.id !== removedWindowId);
+    }
+
+    async closeManagedWindowsWithoutHost(removedWindowId) {
+        const normalWindows = await this.visibleNormalWindows(removedWindowId);
+        if (normalWindows.length !== 1 || !this.windowOwners.has(normalWindows[0].id)) return;
+        const key = this.windowOwners.get(normalWindows[0].id);
+        const record = this.workspaces.get(key);
+        if (!record || record.windowId !== normalWindows[0].id) return;
+        await this.detach(record.pageTabId);
+        await this.persistWithRemovedRecord(record);
+        try {
+            await this.chrome.windows.remove(record.windowId);
+        } catch (_) {
+            if (await this.isLive(record)) throw new Error("managed window did not close");
+        }
+        await this.disownMarker(record.nonce);
+    }
+
+    async windowRemoved(windowId) {
+        const key = this.windowOwners.get(windowId);
+        if (!key) {
+            await this.closeManagedWindowsWithoutHost(windowId);
+            return;
+        }
+        const record = this.workspaces.get(key);
+        if (!record || record.windowId !== windowId) return;
+        await this.detach(record.pageTabId);
+        await this.persistWithRemovedRecord(record);
+        await this.disownMarker(record.nonce);
     }
 
     async debuggerDetached(tabId) {

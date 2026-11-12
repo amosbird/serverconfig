@@ -4,7 +4,8 @@ const assert = require("assert");
 const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX,
     MARKER_IDS} = require(
     "../chromium/external-links/extension/workspace.js");
-const {NativeDispatcher, connectWorkspaceAfterRestore} = require(
+const {NativeDispatcher, connectWorkspaceAfterRestore,
+    registerWorkspaceWindowListeners} = require(
     "../chromium/external-links/extension/background.js");
 
 const fence = {executor_id: "executor", epoch: 1};
@@ -112,6 +113,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             },
         },
         windows: {
+            onRemoved: {addListener: listener => { calls.push(["windowRemovedListener", listener]); }},
             get: async id => ({
                 id,
                 type: windows.get(id)[0]?.windowType || "normal",
@@ -309,6 +311,33 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(executor.pageRef(recreated), expectedPage,
             "empty Chrome session storage must recreate the physical window with exact refs");
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 1);
+    }
+    {
+        const listeners = {};
+        const moved = [];
+        const removed = [];
+        const failures = [];
+        const chromeApi = {
+            windows: {onRemoved: {addListener: listener => { listeners.windowRemoved = listener; }}},
+            tabs: {onAttached: {addListener: listener => { listeners.tabAttached = listener; }}},
+        };
+        const ready = deferred();
+        registerWorkspaceWindowListeners(chromeApi, {
+            windowRemoved: async id => { removed.push(id); },
+            tabMoved: async (id, info) => { moved.push([id, info]); },
+        }, ready.promise, error => failures.push(error));
+        listeners.windowRemoved(42);
+        listeners.tabAttached(24, {windowId: 7});
+        await Promise.resolve();
+        assert.deepEqual(removed, []);
+        assert.deepEqual(moved, []);
+        ready.resolve();
+        await ready.promise;
+        await Promise.resolve();
+        await Promise.resolve();
+        assert.deepEqual(removed, [42]);
+        assert.deepEqual(moved, [[24, {windowId: 7}]]);
+        assert.deepEqual(failures, []);
     }
     {
         const record = {
@@ -515,6 +544,100 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(executor.workspaces.size, 0);
         assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, []);
         assert(!calls.some(call => call[0] === "createWindow"), "restore must not create windows");
+    }
+    {
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative",
+            connectionId: "c_12345678", executorFence: fence,
+            logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
+        };
+        const {executor, calls} = fixture([record]);
+        await executor.restore();
+        calls.length = 0;
+        await executor.windowRemoved(record.windowId);
+        assert.equal(executor.workspaces.size, 0,
+            "a user-closed managed window must be forgotten before Chrome exits");
+        assert.equal(executor.windowOwners.has(record.windowId), false);
+        assert.equal(executor.tabOwners.has(record.pageTabId), false);
+        assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, [],
+            "window close must durably remove restore ownership before marker cleanup");
+        const persistIndex = calls.findIndex(call => call[0] === "persist");
+        const markerIndex = calls.findIndex(call => call[0] === "persistLocal");
+        assert(persistIndex >= 0 && markerIndex > persistIndex,
+            "durable workspace removal must precede durable marker disown");
+        assert(calls.some(call => call[0] === "detach" && call[1].tabId === record.pageTabId));
+        await executor.windowRemoved(record.windowId);
+        assert.equal(calls.filter(call => call[0] === "persist").length, 1,
+            "duplicate window removal must be idempotent");
+    }
+    {
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative",
+            connectionId: "c_12345678", executorFence: fence,
+            logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
+        };
+        const {executor, calls} = fixture([record]);
+        await executor.restore();
+        calls.length = 0;
+        executor.chrome.windows.getAll = async () => [
+            {id: 10, type: "normal", focused: false},
+        ];
+        await executor.windowRemoved(record.windowId);
+        assert.equal(executor.workspaces.size, 0,
+            "closing the final managed window must clear ownership without a restore race");
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0,
+            "a window already removed by the user must not be closed again");
+        assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, []);
+    }
+    {
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative",
+            connectionId: "c_12345678", executorFence: fence,
+            logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
+        };
+        const {executor, calls} = fixture([record]);
+        await executor.restore();
+        calls.length = 0;
+        executor.chrome.windows.getAll = async () => [
+            {id: 1, type: "normal", focused: false},
+            {id: 10, type: "normal", focused: false},
+        ];
+        await executor.windowRemoved(1);
+        assert.equal(executor.workspaces.size, 0,
+            "closing the ordinary host first must retire the last managed window");
+        assert(calls.some(call => call[0] === "removeWindow" && call[1] === record.windowId),
+            "the extension must close the last managed window before Chrome records it as last session");
+        const persistIndex = calls.findIndex(call => call[0] === "persist");
+        const closeIndex = calls.findIndex(call => call[0] === "removeWindow");
+        assert(persistIndex >= 0 && closeIndex > persistIndex,
+            "durable ownership removal must precede closing the last managed window");
+    }
+    {
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative",
+            connectionId: "c_12345678", executorFence: fence,
+            logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
+        };
+        const {executor, calls} = fixture([record], [], 1);
+        await executor.restore();
+        calls.length = 0;
+        executor.chrome.windows.getAll = async () => [
+            {id: 1, type: "normal", focused: false},
+            {id: 10, type: "normal", focused: false},
+            {id: 2, type: "normal", focused: false},
+        ];
+        await executor.windowRemoved(1);
+        assert.equal(executor.workspaces.size, 1,
+            "another ordinary window must keep managed browser workspaces alive");
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0);
     }
     {
         const first = fixture();
