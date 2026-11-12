@@ -82,20 +82,15 @@ def write_launch_lease(url, request_id, deadline_ms, profile):
 
 
 def remove_launch_lease(path):
-    if path is None:
+    if path is None or path.suffix != ".json":
         return
-    candidates = [path]
-    if path.suffix == ".json":
-        candidates.append(path.with_suffix(".claimed"))
-    for candidate in candidates:
-        try:
-            info = candidate.lstat()
-            if candidate.is_symlink() or not stat.S_ISREG(info.st_mode) or \
-                    info.st_uid != os.getuid():
-                raise RuntimeError("ordinary launch lease changed identity")
-            candidate.unlink()
-        except FileNotFoundError:
-            pass
+    try:
+        info = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise RuntimeError("ordinary launch lease changed identity")
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def socket_path():

@@ -12,7 +12,7 @@ const executorHash = async value => {
 const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX,
     MARKER_IDS} = require(
     "../chromium/external-links/extension/workspace.js");
-const {NativeDispatcher, connectWorkspaceAfterRestore,
+const {NativeDispatcher, connectWorkspaceAfterRestore, createWorkspaceInitializer,
     registerWorkspaceWindowListeners} = require(
     "../chromium/external-links/extension/background.js");
 
@@ -1698,9 +1698,52 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
-            workspaceId: "workspace-authoritative",
-            connectionId: "c_12345678", executorFence: fence,
-            logicalWindowId, logicalPageId, generation: 1,
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "d".repeat(32), connectionDisplayName: "local",
+        };
+        const localState = {abushManagedCleanupBatch: {
+            version: 1,
+            batch_id: "old-browser-cleanup",
+            source_boot: "previous-browser-boot",
+            phase: "records_removed",
+            records: [{
+                key: `r_12345678\0principal-one`,
+                record,
+                phase: "converging",
+            }],
+        }};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        executor.chrome.windows.get = async id => ({id, type: "normal", focused: true});
+        executor.chrome.tabs.query = async query => {
+            if (query.windowId === undefined || query.windowId === 10) {
+                return [
+                    {id: 110, windowId: 10, index: 0, pinned: false,
+                        url: "https://ordinary-reused.test/one"},
+                    {id: 111, windowId: 10, index: 1, pinned: false,
+                        url: "https://ordinary-reused.test/two"},
+                    {id: 210, windowId: 10, index: 2, pinned: false,
+                        url: "https://ordinary-reused.test/three"},
+                ];
+            }
+            return [];
+        };
+        await executor.restoreManagedCleanupBatch();
+        assert.equal(calls.some(call => call[0] === "removeWindow" && call[1] === 10), false,
+            "cross-boot cleanup must not remove a window by a reused numeric ID");
+        assert.equal(calls.some(call => call[0] === "remove" && [110, 111, 210].includes(call[1])),
+            false, "cross-boot cleanup must not remove ordinary tabs by reused numeric IDs");
+        assert.equal(localState.abushManagedCleanupBatch.records[0].phase, "pending");
+        assert.match(localState.abushManagedCleanupBatch.records[0].error, /relocated/,
+            "unrelocated cross-boot cleanup must retain a durable advisory");
+    }
+    {
+        beginCase();
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
             windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([record]);
@@ -2778,6 +2821,83 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const ports = [];
+        const makePort = () => {
+            const listeners = {message: [], disconnect: []};
+            const port = {
+                listeners,
+                onMessage: {addListener: listener => listeners.message.push(listener)},
+                onDisconnect: {addListener: listener => listeners.disconnect.push(listener)},
+                postMessage() {},
+                disconnect() {},
+            };
+            ports.push(port);
+            return port;
+        };
+        const reconnectTimers = [];
+        const dispatcher = new NativeDispatcher(makePort, 1000, 1000);
+        dispatcher.setTimeout = (callback, delay) => {
+            reconnectTimers.push({callback, delay, cleared: false});
+            return reconnectTimers.length - 1;
+        };
+        dispatcher.clearTimeout = id => {
+            if (reconnectTimers[id]) reconnectTimers[id].cleared = true;
+        };
+        const firstBootstrap = dispatcher.bootstrap();
+        assert.equal(ports.length, 1);
+        ports[0].listeners.disconnect[0]();
+        await assert.rejects(exactWait(firstBootstrap, "disconnected native bootstrap"),
+            /disconnected/);
+        const reconnect = reconnectTimers.find(timer => timer.delay === 100 && !timer.cleared);
+        assert(reconnect, "bootstrap disconnect must schedule a reconnect attempt");
+        reconnect.callback();
+        assert.equal(ports.length, 2);
+        const secondBootstrap = dispatcher.bootstrap();
+        const payload = {
+            browser_boot_id: "bootstrap-reconnected",
+            browser_pid: 42,
+            browser_starttime: "123",
+            ordinary_launch_leases: [],
+        };
+        ports[1].listeners.message[0]({
+            version: 1, event: "bootstrap", service: "native_host", payload,
+        });
+        assert.deepEqual(await exactWait(secondBootstrap,
+            "reconnected native bootstrap"), payload);
+        dispatcher.stop();
+    }
+    {
+        beginCase();
+        const failures = [];
+        const attempts = [Promise.reject(new Error("bootstrap failed")), Promise.resolve({
+            browser_boot_id: "bootstrap-retry",
+            browser_pid: 43,
+            browser_starttime: "124",
+            ordinary_launch_leases: [],
+        })];
+        const native = {
+            bootstrap: () => attempts.shift(),
+            ensurePort() {},
+        };
+        let restores = 0;
+        const workspaces = {
+            acceptNativeBootstrap: async () => {},
+            restoreWhenReady: async () => { restores += 1; },
+            flushTopologyOutbox: async () => {},
+            reportAdvisoryError: () => {},
+            drainAdvisoryErrors: () => [],
+        };
+        const initialize = createWorkspaceInitializer(
+            workspaces, native, message => failures.push(message));
+        await assert.rejects(initialize(), /bootstrap failed/);
+        assert.equal(restores, 0);
+        assert.strictEqual(await initialize(), workspaces,
+            "failed workspace readiness must permit a later bootstrap generation");
+        assert.equal(restores, 1);
+        assert.deepEqual(failures, ["bootstrap failed"]);
+    }
+    {
+        beginCase();
         const {executor, calls} = fixture();
         const persist = executor.chrome.storage.session.set;
         executor.chrome.storage.session.set = async value => {
@@ -3372,6 +3492,83 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.notEqual(second.calls.filter(call =>
             call[0] === "managed_page_moved_outside")[0][1].request_id, "ack-loss",
             "native restart must allocate a fresh delivery request ID");
+    }
+    {
+        beginCase();
+        const report = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", report_id: "sync-rejected",
+            request_id: "sync-delivery", executor_fence: fence,
+            origin_executor_fence: fence, daemon_instance_id: "daemon-instance",
+            page: {window: {workspace_id: "workspace-authoritative",
+                window_id: logicalWindowId, generation: 1},
+            page_id: logicalPageId, generation: 1},
+            phase: "pending", response: null, cleanup: null,
+        };
+        const localState = {abushTopologyOutbox: [report]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "managed_page_moved_outside") {
+                return {
+                    request_id: payload.request_id,
+                    report_id: payload.report_id,
+                    executor_fence: payload.executor_fence,
+                    response_delivery_id: "sync-rejected-response",
+                    result: {outcome: "rejected", code: "stale_page"},
+                };
+            }
+            if (operation === "topology_response_consumed") {
+                return {
+                    accepted: true,
+                    request_id: payload.request_id,
+                    report_id: payload.report_id,
+                    response_delivery_id: payload.response_delivery_id,
+                };
+            }
+            return {};
+        };
+        await executor.restoreTopologyOutbox();
+        await executor.flushTopologyOutbox();
+        assert.deepEqual(localState.abushTopologyOutbox, [],
+            "synchronous rejected topology responses must be terminal and consumed");
+        assert.equal(calls.filter(call => call[0] === "topology_response_consumed").length, 1);
+    }
+    {
+        beginCase();
+        const report = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", report_id: "replay-rejected",
+            request_id: "old-replay-delivery", executor_fence: fence,
+            origin_executor_fence: fence, daemon_instance_id: "daemon-instance",
+            page: {window: {workspace_id: "workspace-authoritative",
+                window_id: logicalWindowId, generation: 1},
+            page_id: logicalPageId, generation: 1},
+            phase: "pending", response: null, cleanup: null,
+        };
+        const localState = {abushTopologyOutbox: [report]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restoreTopologyOutbox();
+        const replayed = {
+            remote_key: report.remote_key, connection_id: report.connection_id,
+            principal_id: report.principal_id, request_id: "replayed-rejected-delivery",
+            report_id: report.report_id, executor_fence: fence,
+            response_delivery_id: "replayed-rejected-response",
+            result: {outcome: "rejected", code: "unknown_effect"},
+        };
+        assert.equal(await executor.topologyReportResponse(replayed), true);
+        assert.deepEqual(localState.abushTopologyOutbox, [],
+            "replayed rejected topology responses must be consumed exactly once");
+        const consumed = calls.find(call => call[0] === "topology_response_consumed")[1];
+        assert.equal(consumed.request_id, replayed.request_id);
+        const invalidReport = {...report, report_id: "unknown-rejected-report"};
+        executor.topologyOutbox.set(invalidReport.report_id, invalidReport);
+        const invalid = {...replayed,
+            request_id: "unknown-rejected-delivery",
+            report_id: invalidReport.report_id,
+            result: {outcome: "rejected", code: "not_a_browser_error"}};
+        assert.equal(await executor.topologyReportResponse(invalid), false,
+            "unknown rejected error codes must not become canonical terminal responses");
     }
     {
         beginCase();

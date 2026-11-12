@@ -750,6 +750,14 @@ class WorkspaceExecutor {
         return key;
     }
 
+    validTopologyResult(result) {
+        if (exactFields(result, ["outcome"])) {
+            return ["applied", "already_converged"].includes(result.outcome);
+        }
+        return exactFields(result, ["outcome", "code"]) &&
+            result.outcome === "rejected" && BROWSER_ERROR_CODES.has(result.code);
+    }
+
     validTopologyResponse(response, report, requireRequest = true) {
         return exactFields(response, ["request_id", "report_id", "executor_fence",
             "response_delivery_id", "result"]) &&
@@ -758,8 +766,7 @@ class WorkspaceExecutor {
             sameRef(response.executor_fence, report.executor_fence) &&
             typeof response.response_delivery_id === "string" &&
             response.response_delivery_id.length > 0 &&
-            exactFields(response.result, ["outcome"]) &&
-            ["applied", "already_converged"].includes(response.result.outcome);
+            this.validTopologyResult(response.result);
     }
 
     topologyConsumedPayload(report) {
@@ -4493,15 +4500,101 @@ class WorkspaceExecutor {
         }
     }
 
+    async relocateCleanupBatchRecord(record) {
+        if (!record || typeof record.nonce !== "string" ||
+                !STATUS_NONCE_RE.test(record.nonce)) return null;
+        const ownership = await this.currentOwnedMarker(record.nonce);
+        if (ownership?.version !== 2 || ownership.nonce !== record.nonce ||
+                !Array.isArray(ownership.status_tab_ids) ||
+                ownership.status_tab_ids.length !== MARKER_IDS.length ||
+                !ownership.status_tab_ids.every(Number.isInteger) ||
+                !Number.isInteger(ownership.page_tab_id) ||
+                !Number.isInteger(ownership.window_id) || !Number.isInteger(ownership.xid) ||
+                ownership.xid <= 0 || !ownership.binding) return null;
+        const matches = [];
+        const tabs = await this.chrome.tabs.query({});
+        const windowIds = new Set(tabs.filter(tab => {
+            const marker = this.parseStatusUrl(tab.url);
+            return marker?.nonce === record.nonce && MARKER_IDS.includes(marker.marker);
+        }).map(tab => tab.windowId).filter(Number.isInteger));
+        for (const windowId of windowIds) {
+            const windowTabs = tabs.filter(tab => tab.windowId === windowId);
+            if (windowTabs.length !== 3) continue;
+            const markers = MARKER_IDS.map((markerId, index) => windowTabs.find(tab => {
+                const marker = this.parseStatusUrl(tab.url);
+                return marker?.nonce === record.nonce && marker.marker === markerId &&
+                    tab.title === `${STATUS_PREFIX}${record.nonce}:${markerId}` &&
+                    tab.pinned === true && tab.index === index;
+            }));
+            const pages = windowTabs.filter(tab => tab.pinned !== true && tab.index === 2);
+            if (markers.every(Boolean) && pages.length === 1) {
+                matches.push({windowId, statusTabIds: markers.map(tab => tab.id),
+                    pageTabId: pages[0].id});
+            }
+        }
+        if (matches.length !== 1) return null;
+        const match = matches[0];
+        const candidate = {
+            ...record,
+            windowId: match.windowId,
+            statusTabIds: match.statusTabIds,
+            pageTabId: match.pageTabId,
+            x11WindowId: ownership.xid,
+            remoteKey: ownership.binding.remote_key,
+            workspaceId: ownership.binding.workspace_id,
+            windowGeneration: ownership.binding.generation,
+            connectionDisplayName: ownership.binding.display_title,
+        };
+        if (!this.savedOwnershipMatches(ownership, candidate) ||
+                !await this.isLive(candidate)) return null;
+        let verified;
+        try {
+            verified = await this.verifyCleanupX11({
+                xid: candidate.x11WindowId,
+                binding: ownership.binding,
+            });
+        } catch (_) {
+            return null;
+        }
+        return verified ? candidate : null;
+    }
+
     async restoreManagedCleanupBatch() {
         if (!this.chrome.storage?.local) return;
         const local = await this.chrome.storage.local.get([MANAGED_CLEANUP_BATCH_KEY]);
         const batch = local[MANAGED_CLEANUP_BATCH_KEY];
         if (!batch || batch.version !== 1 || !Array.isArray(batch.records)) return;
+        const crossBoot = typeof batch.source_boot !== "string" ||
+            batch.source_boot !== this.browserBootId;
         const failures = [];
         for (const entry of batch.records) {
             if (entry.phase === "removed" || !entry.record) continue;
-            const record = {...entry.record, debuggerAttached: false};
+            let record = {...entry.record, debuggerAttached: false};
+            if (crossBoot) {
+                const cleanupRecord = record;
+                let relocationError = null;
+                try {
+                    record = await this.relocateCleanupBatchRecord(record);
+                } catch (error) {
+                    relocationError = error;
+                    record = null;
+                }
+                if (!record) {
+                    const error = relocationError || new Error(
+                        "managed cleanup identity could not be uniquely relocated after restart");
+                    entry.phase = "pending";
+                    entry.error = error.message;
+                    try {
+                        await this.recordCleanupTombstone(cleanupRecord, [error]);
+                    } catch (tombstoneError) {
+                        failures.push(tombstoneError);
+                    }
+                    failures.push(error);
+                    await this.persistManagedCleanupBatch(batch);
+                    continue;
+                }
+                entry.record = this.persistedRecord(record);
+            }
             try {
                 this.closingManagedWindows.add(record.windowId);
                 await this.convergeManagedTopology(record, {closeWindow: true, report: false,

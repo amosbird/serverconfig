@@ -342,6 +342,58 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
                 host.claim_ordinary_launch_leases(profile, root=root)
         self.assertTrue(wrong_uid.exists(), "UID mismatch must not consume another user's lease")
 
+    def test_client_failure_preserves_claim_for_new_host_bootstrap(self):
+        profile = self.runtime / "client-failure-profile"
+        profile.mkdir()
+        request_id = "9" * 32
+        deadline_ms = int(time.time() * 1000) + 30_000
+        url = "https://example.test/recover-client-failure"
+        root = self.runtime / "client-failure-leases"
+        root.mkdir(mode=0o700)
+        lease = {
+            "version": 1,
+            "request_id": request_id,
+            "url": url,
+            "url_hash": host.hashlib.sha256(url.encode()).hexdigest(),
+            "deadline_ms": deadline_ms,
+            "profile_hash": host._lease_profile_hash(profile),
+            "boot_target": "next",
+        }
+        lease_path = root / f"{request_id}.json"
+        lease_path.write_text(json.dumps(lease))
+        lease_path.chmod(0o600)
+        claimed = host.claim_ordinary_launch_leases(profile, root=root)
+        claim = claimed[0]["claim_path"]
+        self.assertFalse(lease_path.exists())
+        self.assertTrue(claim.exists())
+
+        client_path = ROOT / "scripts/ordinary-open-client.py"
+        spec = importlib.util.spec_from_file_location("ordinary_open_client", client_path)
+        client_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(client_module)
+        client_module.remove_launch_lease(lease_path)
+        self.assertTrue(claim.exists(),
+                        "client EOF/timeout cleanup must never delete a host-owned claim")
+
+        recovered = host.claim_ordinary_launch_leases(profile, root=root)
+        self.assertEqual([entry["lease"] for entry in recovered], [lease])
+        request = host.ordinary_open_request(
+            url, request_id=request_id, deadline_ms=deadline_ms)
+        outbound = queue.Queue()
+        reopened = host.OrdinaryOpenServer(
+            outbound, path=self.runtime / "recover.sock", timeout=1,
+            bootstrap_requests=[request], bootstrap_claims={request_id: claim},
+        )
+        reopened.start()
+        try:
+            with self.assertRaises(queue.Empty):
+                outbound.get(timeout=0.1)
+            reopened.complete(host.ordinary_open_response(request_id, "applied"))
+            self.assertFalse(claim.exists(),
+                             "the recovering host owns terminal claim removal")
+        finally:
+            reopened.close()
+
     def test_server_close_preserves_nonterminal_claim_for_next_host(self):
         profile = self.runtime / "claim-profile"
         profile.mkdir()
