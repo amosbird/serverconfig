@@ -240,8 +240,10 @@ class NativeHostTest(unittest.TestCase):
         )
         popen.assert_not_called()
 
+    @mock.patch("scripts.test_ai_external_links.NativeHostTest.host.submit_ordinary_open",
+                return_value="applied")
     @mock.patch("subprocess.Popen")
-    def test_routes_urls_to_their_own_browser(self, popen):
+    def test_routes_urls_to_their_own_browser(self, popen, submit_ordinary_open):
         routes = {
             "https://chatgpt.com/c/1": "runai",
             "https://discord.com/channels/1": "runchat",
@@ -251,7 +253,11 @@ class NativeHostTest(unittest.TestCase):
             for url, launcher in routes.items():
                 with self.subTest(url=url):
                     self.assertEqual(self.host.handle_message({"url": url}), {"ok": True})
-                    popen.assert_called_with([str(pathlib.Path.home() / "scripts" / launcher), url])
+                    if launcher == "chromium":
+                        submit_ordinary_open.assert_called_with(url)
+                    else:
+                        popen.assert_called_with(
+                            [str(pathlib.Path.home() / "scripts" / launcher), url])
 
     @mock.patch("subprocess.Popen")
     def test_reuses_existing_app_tab_before_launching(self, popen):

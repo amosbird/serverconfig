@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
 
-# set -x
-
-# exec 3>&1 4>&2
-# trap 'exec 2>&4 1>&3' 0 1 2 3
-# exec 1>/tmp/log 2>&1
-
-# echo "$@" > /tmp/log
-
-if [ "$DISPLAY" != "" ]; then
-    xhost +
+if [[ $# -ne 1 ]]; then
+    printf 'usage: luakit URL_OR_PATH\n' >&2
+    exit 2
 fi
 
-N=$(realpath "$1" &>/dev/null)
-if [ -e "$N" ]; then
-    "$HOME"/scripts/chromium file://"$N"
-else
-    "$HOME"/scripts/chromium "$1"
+value=$1
+if [[ -e $value ]]; then
+    value=$(python3 - "$value" <<'PY'
+import pathlib
+import sys
+
+print(pathlib.Path(sys.argv[1]).resolve().as_uri())
+PY
+    ) || exit
 fi
+
+exec "${ABUSH_CHROMIUM_LAUNCHER:-$HOME/scripts/chromium}" "$value"

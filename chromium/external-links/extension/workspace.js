@@ -1,4 +1,5 @@
 const STATUS_PREFIX = "__ABUSH_BIND__:";
+const ORDINARY_PREFIX = "__ABUSH_ORDINARY__:";
 const STATUS_NONCE_RE = /^[0-9a-f]{32}$/;
 const MARKER_IDS = ["a", "b"];
 const OWNED_MARKERS_KEY = "abushOwnedMarkers";
@@ -48,6 +49,10 @@ class WorkspaceExecutor {
         this.statusTabOwners = new Map();
         this.operations = new Map();
         this.completedOperations = new Map();
+        this.ordinaryOperations = new Map();
+        this.completedOrdinaryOperations = new Map();
+        this.ordinaryWindowMru = new Map();
+        this.ordinaryMruClock = 0;
         this.ensureFlights = new Map();
         this.ensureWaiters = new Map();
         this.persistTail = Promise.resolve();
@@ -164,6 +169,140 @@ class WorkspaceExecutor {
         if (STATUS_NONCE_RE.test(fragment)) return {nonce: fragment, marker: "legacy"};
         const match = /^nonce=([0-9a-f]{32})&marker=([ab])$/.exec(fragment);
         return match ? {nonce: match[1], marker: match[2]} : null;
+    }
+
+    ordinaryStagingUrl(nonce) {
+        return this.chrome.runtime.getURL(`ordinary-staging.html#${nonce}`);
+    }
+
+    validateOrdinaryOpen(payload) {
+        if (!exactFields(payload, ["version", "request_id", "operation", "url", "focus"]) ||
+                payload.version !== 1 || payload.operation !== "ordinary_open" ||
+                payload.focus !== true || typeof payload.request_id !== "string" ||
+                !payload.request_id || typeof payload.url !== "string" || !payload.url) {
+            throw new Error("invalid ordinary-open payload");
+        }
+        const url = new URL(payload.url);
+        if (!["http:", "https:", "file:"].includes(url.protocol)) {
+            throw new Error("invalid ordinary-open URL");
+        }
+        return url.href;
+    }
+
+    async ordinaryWindows() {
+        const windows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
+        const ordinary = [];
+        for (const window of windows) {
+            if (window.type !== "normal" || this.windowOwners.has(window.id)) continue;
+            const tabs = await this.chrome.tabs.query({windowId: window.id});
+            if (tabs.some(tab => this.parseStatusUrl(tab.url) !== null)) continue;
+            ordinary.push(window);
+        }
+        return ordinary;
+    }
+
+    async selectOrdinaryWindow(nonce) {
+        const ordinary = await this.ordinaryWindows();
+        const selected = ordinary.find(window => window.focused) ||
+            ordinary.sort((left, right) =>
+                (this.ordinaryWindowMru.get(right.id) || 0) -
+                (this.ordinaryWindowMru.get(left.id) || 0))[0];
+        if (selected) return {windowId: selected.id, stagingTabId: null};
+        const staging = await this.chrome.windows.create({
+            url: this.ordinaryStagingUrl(nonce), focused: false, type: "normal",
+        });
+        const stagingTabId = staging.tabs?.[0]?.id;
+        if (!Number.isInteger(staging.id) || !Number.isInteger(stagingTabId)) {
+            throw new Error("ordinary staging window has no exact tab");
+        }
+        return {windowId: staging.id, stagingTabId};
+    }
+
+    async ordinaryCompletion(payload, completion) {
+        await this.nativeRequest("ordinary_open", "ordinary_open_completion", {
+            version: 1,
+            request_id: payload.request_id,
+            operation: "ordinary_open_completed",
+            completion,
+        });
+    }
+
+    rememberOrdinaryCompletion(requestId, completion) {
+        this.completedOrdinaryOperations.delete(requestId);
+        this.completedOrdinaryOperations.set(requestId, completion);
+        if (this.completedOrdinaryOperations.size > 256) {
+            this.completedOrdinaryOperations.delete(
+                this.completedOrdinaryOperations.keys().next().value);
+        }
+    }
+
+    async ordinaryOpen(payload) {
+        const completed = this.completedOrdinaryOperations.get(payload.request_id);
+        if (completed) {
+            await this.ordinaryCompletion(payload, completed);
+            return completed;
+        }
+        const existing = this.ordinaryOperations.get(payload.request_id);
+        if (existing) return existing;
+        const operation = this.performOrdinaryOpen(payload).finally(() => {
+            if (this.ordinaryOperations.get(payload.request_id) === operation) {
+                this.ordinaryOperations.delete(payload.request_id);
+            }
+        });
+        this.ordinaryOperations.set(payload.request_id, operation);
+        return operation;
+    }
+
+    async performOrdinaryOpen(payload) {
+        let mutated = false;
+        let completion = "not_applied";
+        try {
+            const url = this.validateOrdinaryOpen(payload);
+            const nonce = crypto.randomUUID().replaceAll("-", "");
+            const selected = await this.selectOrdinaryWindow(nonce);
+            let stagingTabId = selected.stagingTabId;
+            if (stagingTabId === null) {
+                const staging = await this.chrome.tabs.create({
+                    windowId: selected.windowId,
+                    url: this.ordinaryStagingUrl(nonce),
+                    active: false,
+                });
+                stagingTabId = staging.id;
+            }
+            if (!Number.isInteger(stagingTabId)) throw new Error("missing staging tab ID");
+            const staging = await this.chrome.tabs.get(stagingTabId);
+            if (staging.windowId !== selected.windowId) throw new Error("staging window changed");
+            await this.waitForOrdinaryTitle(stagingTabId, nonce);
+            const prepared = await this.nativeRequest("ordinary_open", "prepare", {nonce});
+            if (!exactFields(prepared, ["xid", "nonce"]) || prepared.nonce !== nonce ||
+                    !Number.isInteger(prepared.xid) || prepared.xid <= 0) {
+                throw new Error("invalid ordinary prepare response");
+            }
+            mutated = true;
+            await this.chrome.tabs.update(stagingTabId, {url, active: true});
+            try {
+                await this.nativeRequest("ordinary_open", "activate", prepared);
+                this.ordinaryWindowMru.set(selected.windowId, ++this.ordinaryMruClock);
+                completion = "applied";
+            } catch (_) {
+                completion = "unknown";
+            }
+        } catch (_) {
+            completion = mutated ? "unknown" : "not_applied";
+        }
+        this.rememberOrdinaryCompletion(payload.request_id, completion);
+        await this.ordinaryCompletion(payload, completion);
+        return completion;
+    }
+
+    async waitForOrdinaryTitle(tabId, nonce) {
+        const expected = `${ORDINARY_PREFIX}${nonce}`;
+        for (let attempt = 0; attempt < 100; attempt++) {
+            const tab = await this.chrome.tabs.get(tabId);
+            if (tab.title === expected) return;
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        throw new Error("ordinary staging title was not ready");
     }
 
     async waitForStatusTitle(tabId, nonce, marker) {
@@ -1092,5 +1231,5 @@ class WorkspaceExecutor {
 
 if (typeof module !== "undefined") {
     module.exports = {WorkspaceExecutor, sameRef, displayTitle, STATUS_PREFIX,
-        MARKER_IDS, BROWSER_ERROR_CODES};
+        ORDINARY_PREFIX, MARKER_IDS, BROWSER_ERROR_CODES};
 }

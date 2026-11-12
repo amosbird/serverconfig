@@ -29,6 +29,9 @@ except ImportError:
         raise WebSocketException("websockets package is unavailable")
 
 MAX_MESSAGE_SIZE = 1024 * 1024
+ORDINARY_OPEN_MAX_MESSAGE_SIZE = 64 * 1024
+ORDINARY_OPEN_VERSION = 1
+ORDINARY_OPEN_COMPLETIONS = {"applied", "not_applied", "unknown"}
 NATIVE_ENVELOPE_VERSION = 1
 PEER_PROTOCOL_VERSION = 6
 BROWSER_ERROR_CODES = {
@@ -418,7 +421,7 @@ def send_message(message, stream=None):
     stream.flush()
 
 
-def handle_message(message):
+def handle_message(message, ordinary_submit=None):
     if message.get("command") == "scroll":
         try:
             return {"ok": scroll_page(
@@ -443,6 +446,16 @@ def handle_message(message):
         logging.info("reused group=%s url=%s", group, url)
         return {"ok": True}
     logging.info("launching launcher=%s url=%s", launcher, url)
+    if launcher == "chromium":
+        try:
+            if ordinary_submit is not None:
+                ordinary_submit(url)
+                return {"ok": True}
+            completion = submit_ordinary_open(url)
+            return {"ok": completion == "applied"}
+        except (EOFError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as error:
+            logging.info("ordinary-open failed url=%s error=%s", url, error)
+            return {"ok": False}
     subprocess.Popen([str(SCRIPTS / launcher), url])
     return {"ok": True}
 
@@ -490,6 +503,262 @@ def event(name, service, payload):
         "service": service,
         "payload": payload,
     }
+
+
+def command_line(pid, proc_root="/proc"):
+    try:
+        return (pathlib.Path(proc_root) / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return []
+
+
+def parent_pid(pid, proc_root="/proc"):
+    try:
+        stat_line = (pathlib.Path(proc_root) / str(pid) / "stat").read_text()
+        fields = stat_line[stat_line.rfind(")") + 1:].split()
+        return int(fields[1])
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def command_profile(arguments):
+    prefix = b"--user-data-dir="
+    for index, argument in enumerate(arguments):
+        if argument.startswith(prefix):
+            return os.fsdecode(argument[len(prefix):])
+        if argument == b"--user-data-dir" and index + 1 < len(arguments):
+            return os.fsdecode(arguments[index + 1])
+    return None
+
+
+def native_host_profile(pid=None, proc_root="/proc", max_depth=32):
+    current = os.getppid() if pid is None else pid
+    seen = set()
+    for _ in range(max_depth):
+        if current <= 1 or current in seen:
+            break
+        seen.add(current)
+        profile = command_profile(command_line(current, proc_root))
+        if profile is not None:
+            return pathlib.Path(profile).expanduser().resolve()
+        current = parent_pid(current, proc_root)
+    return None
+
+
+def is_main_profile_host(profile=None, pid=None, proc_root="/proc"):
+    expected = pathlib.Path(profile or os.environ.get(
+        "ABUSH_CHROME_PROFILE", pathlib.Path.home() / ".config/google-chrome-main"
+    )).expanduser().resolve()
+    return native_host_profile(pid, proc_root) == expected
+
+
+def ordinary_open_socket_path():
+    injected = os.environ.get("ABUSH_ORDINARY_OPEN_SOCKET")
+    if injected:
+        return pathlib.Path(injected)
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        raise ValueError("XDG_RUNTIME_DIR is unavailable")
+    return pathlib.Path(runtime) / "abush" / "ordinary-open.sock"
+
+
+def ordinary_open_response(request_id, completion):
+    return {
+        "version": ORDINARY_OPEN_VERSION,
+        "request_id": request_id,
+        "operation": "ordinary_open_completed",
+        "completion": completion,
+    }
+
+
+def validate_ordinary_open_request(message):
+    fields = {"version", "request_id", "operation", "url", "focus"}
+    if not isinstance(message, dict) or set(message) != fields or \
+            message.get("version") != ORDINARY_OPEN_VERSION or \
+            message.get("operation") != "ordinary_open" or message.get("focus") is not True:
+        raise ValueError("invalid ordinary-open request")
+    request_id = message.get("request_id")
+    url = message.get("url")
+    if not isinstance(request_id, str) or not request_id or len(request_id) > 128 or \
+            not isinstance(url, str) or not url or len(url.encode()) > 32768:
+        raise ValueError("invalid ordinary-open request")
+    return message
+
+
+def encode_ordinary_open_message(message):
+    payload = json.dumps(message, separators=(",", ":")).encode()
+    if len(payload) > ORDINARY_OPEN_MAX_MESSAGE_SIZE:
+        raise ValueError("ordinary-open message is too large")
+    return struct.pack(">I", len(payload)) + payload
+
+
+def read_ordinary_open_message(sock):
+    size = struct.unpack(">I", read_exact(sock, 4))[0]
+    if size > ORDINARY_OPEN_MAX_MESSAGE_SIZE:
+        raise ValueError("ordinary-open message is too large")
+    message = json.loads(read_exact(sock, size))
+    if not isinstance(message, dict):
+        raise ValueError("ordinary-open message must be an object")
+    return message
+
+
+class OrdinaryOpenServer:
+    def __init__(self, outbound, path=None, uid=None, timeout=15):
+        self.outbound = outbound
+        self.path = pathlib.Path(path) if path else ordinary_open_socket_path()
+        self.uid = os.getuid() if uid is None else uid
+        self.timeout = timeout
+        self.server = None
+        self.thread = None
+        self.workers = set()
+        self.lock = threading.RLock()
+        self.requests = {}
+        self.stopping = threading.Event()
+
+    def start(self):
+        directory = self.path.parent
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        info = directory.lstat()
+        if directory.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != self.uid:
+            raise ValueError("unsafe ordinary-open runtime directory")
+        os.chmod(directory, 0o700)
+        if self.path.exists() or self.path.is_symlink():
+            info = self.path.lstat()
+            if self.path.is_symlink() or not stat.S_ISSOCK(info.st_mode) or \
+                    info.st_uid != self.uid:
+                raise ValueError("unsafe ordinary-open socket path")
+            self.path.unlink()
+        self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.server.bind(str(self.path))
+        os.chmod(self.path, 0o600)
+        self.server.listen(16)
+        self.server.settimeout(0.2)
+        self.thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread.start()
+
+    def _serve(self):
+        while not self.stopping.is_set():
+            try:
+                client, _ = self.server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            worker = threading.Thread(target=self._handle, args=(client,), daemon=True)
+            with self.lock:
+                self.workers.add(worker)
+            worker.start()
+
+    def _handle(self, client):
+        try:
+            client.settimeout(self.timeout)
+            credentials = client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                            struct.calcsize("3i"))
+            _, uid, _ = struct.unpack("3i", credentials)
+            if uid != self.uid:
+                return
+            request = validate_ordinary_open_request(read_ordinary_open_message(client))
+            with self.lock:
+                state = self.requests.get(request["request_id"])
+                if state is None:
+                    state = {"request": request, "done": threading.Event(), "response": None}
+                    self.requests[request["request_id"]] = state
+                    self.outbound.put(event("ordinary_open", "ordinary_open", request))
+                elif state["request"] != request:
+                    raise ValueError("conflicting duplicate ordinary-open request")
+            deadline = time.monotonic() + self.timeout
+            while not state["done"].wait(min(0.1, max(0, deadline - time.monotonic()))):
+                if self.stopping.is_set() or time.monotonic() >= deadline:
+                    raise TimeoutError("ordinary-open completion timed out")
+            if state["response"] is None:
+                raise TimeoutError("ordinary-open broker stopped")
+            client.sendall(encode_ordinary_open_message(state["response"]))
+        except (EOFError, OSError, TimeoutError, ValueError, json.JSONDecodeError):
+            return
+        finally:
+            client.close()
+            with self.lock:
+                self.workers.discard(threading.current_thread())
+
+    def submit(self, url, request_id=None):
+        request = validate_ordinary_open_request({
+            "version": ORDINARY_OPEN_VERSION,
+            "request_id": request_id or uuid.uuid4().hex,
+            "operation": "ordinary_open",
+            "url": url,
+            "focus": True,
+        })
+        with self.lock:
+            if request["request_id"] in self.requests:
+                raise ValueError("duplicate internally submitted ordinary-open request")
+            self.requests[request["request_id"]] = {
+                "request": request, "done": threading.Event(), "response": None,
+            }
+            self.outbound.put(event("ordinary_open", "ordinary_open", request))
+        return request["request_id"]
+
+    def complete(self, payload):
+        fields = {"version", "request_id", "operation", "completion"}
+        if not isinstance(payload, dict) or set(payload) != fields or \
+                payload.get("version") != ORDINARY_OPEN_VERSION or \
+                payload.get("operation") != "ordinary_open_completed" or \
+                payload.get("completion") not in ORDINARY_OPEN_COMPLETIONS:
+            raise ValueError("invalid ordinary-open completion")
+        with self.lock:
+            state = self.requests.get(payload.get("request_id"))
+            if state is None:
+                raise ValueError("uncorrelated ordinary-open completion")
+            if state["response"] is not None:
+                if state["response"] != payload:
+                    raise ValueError("conflicting ordinary-open completion")
+                return
+            state["response"] = payload
+            state["done"].set()
+            while len(self.requests) > 256:
+                request_id = next(iter(self.requests))
+                if not self.requests[request_id]["done"].is_set():
+                    break
+                self.requests.pop(request_id)
+
+    def close(self):
+        self.stopping.set()
+        if self.server is not None:
+            self.server.close()
+        if self.thread is not None:
+            self.thread.join(timeout=1)
+        with self.lock:
+            states = list(self.requests.values())
+            workers = list(self.workers)
+        for state in states:
+            state["done"].set()
+        for worker in workers:
+            worker.join(timeout=1)
+        try:
+            info = self.path.lstat()
+            if stat.S_ISSOCK(info.st_mode) and info.st_uid == self.uid:
+                self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def submit_ordinary_open(url, socket_path=None, timeout=15, request_id=None):
+    request = {
+        "version": ORDINARY_OPEN_VERSION,
+        "request_id": request_id or uuid.uuid4().hex,
+        "operation": "ordinary_open",
+        "url": url,
+        "focus": True,
+    }
+    path = pathlib.Path(socket_path) if socket_path else ordinary_open_socket_path()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(timeout)
+        client.connect(str(path))
+        client.sendall(encode_ordinary_open_message(request))
+        completion = read_ordinary_open_message(client)
+    expected = ordinary_open_response(request["request_id"], completion.get("completion"))
+    if completion != expected or completion.get("completion") not in ORDINARY_OPEN_COMPLETIONS:
+        raise ValueError("invalid ordinary-open completion")
+    return completion["completion"]
 
 
 def _secure_stat(path, kind, mode, uid):
@@ -1104,9 +1373,10 @@ class RemotePeer:
 
 
 class BrowserBroker:
-    def __init__(self, remote_root=None, outbound=None):
+    def __init__(self, remote_root=None, outbound=None, ordinary_open=None):
         self.remote_root = pathlib.Path(remote_root) if remote_root else None
         self.outbound = outbound or queue.Queue()
+        self.ordinary_open = ordinary_open
         self.peers = {}
         self.principals = {}
         self.candidates = {}
@@ -1246,8 +1516,20 @@ class BrowserBroker:
         service = request["service"]
         operation = request["operation"]
         payload = request["payload"]
+        if service == "ordinary_open" and operation == "prepare":
+            from x11_binding import prepare_ordinary_window
+            return prepare_ordinary_window(payload)
+        if service == "ordinary_open" and operation == "activate":
+            from x11_binding import activate_ordinary_window
+            return activate_ordinary_window(payload)
+        if service == "ordinary_open" and operation == "ordinary_open_completion":
+            if self.ordinary_open is None:
+                raise ValueError("ordinary-open broker is unavailable")
+            self.ordinary_open.complete(payload)
+            return {}
         if service == "external_links" and operation == "open":
-            result = handle_message(payload)
+            submit = self.ordinary_open.submit if self.ordinary_open is not None else None
+            result = handle_message(payload, ordinary_submit=submit)
             if not result.get("ok"):
                 raise ValueError("failed to open external link")
             return {}
@@ -1325,11 +1607,16 @@ class BrowserBroker:
 
 
 class NativeBrokerHost:
-    def __init__(self, input_stream=None, output_stream=None, remote_root=None):
+    def __init__(self, input_stream=None, output_stream=None, remote_root=None,
+                 ordinary_open_factory=OrdinaryOpenServer):
         self.input = input_stream or sys.stdin.buffer
         self.output = output_stream or sys.stdout.buffer
         self.outbound = queue.Queue()
-        self.broker = BrowserBroker(remote_root=remote_root, outbound=self.outbound)
+        self.ordinary_open = None
+        if ordinary_open_factory is not None and is_main_profile_host():
+            self.ordinary_open = ordinary_open_factory(self.outbound)
+        self.broker = BrowserBroker(remote_root=remote_root, outbound=self.outbound,
+                                    ordinary_open=self.ordinary_open)
         self.writer_error = None
         self.writer = threading.Thread(target=self._write_loop, daemon=True)
 
@@ -1345,6 +1632,8 @@ class NativeBrokerHost:
 
     def run(self):
         self.writer.start()
+        if self.ordinary_open is not None:
+            self.ordinary_open.start()
         self.broker.refresh()
         try:
             while self.writer_error is None:
@@ -1358,6 +1647,8 @@ class NativeBrokerHost:
                 except (EnvelopeError, OSError, ValueError, WebSocketException) as error:
                     self.outbound.put(response(request_id, error=error))
         finally:
+            if self.ordinary_open is not None:
+                self.ordinary_open.close()
             self.broker.close()
             self.outbound.put(None)
             self.writer.join(timeout=2)

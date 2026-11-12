@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 
+import ast
 import os
 import re
 import subprocess
 import time
 
 NONCE_RE = re.compile(r"[0-9a-f]{32}\Z")
+ORDINARY_TITLE_PREFIX = "__ABUSH_ORDINARY__:"
+ORDINARY_NONCE_PROPERTY = "_ABUSH_ORDINARY_NONCE"
+MANAGED_PROPERTIES = (
+    "_ABUSH_BINDING_NONCE", "_ABUSH_REMOTE_ID", "_ABUSH_WORKSPACE_ID",
+    "_ABUSH_WINDOW_GENERATION", "_ABUSH_CONTROL_STATE",
+)
 CHROME_TITLE_SUFFIXES = (" - Google Chrome", " - Chromium")
 TEXT_FIELDS = {
     "_ABUSH_REMOTE_ID": "remote_key",
@@ -76,6 +83,12 @@ class XcffibAdapter:
         except ValueError:
             return None
 
+    def active_window(self):
+        reply = self.core.GetProperty(False, self.root, self.atom("_NET_ACTIVE_WINDOW"),
+                                      self.xproto.Atom.WINDOW, 0, 1).reply()
+        values = reply.value.to_atoms()
+        return values[0] if values else None
+
     def set_text(self, window, name, value, property_type="UTF8_STRING"):
         encoded = str(value).encode()
         self.core.ChangeProperty(self.xproto.PropMode.Replace, window, self.atom(name),
@@ -99,7 +112,7 @@ def browser_process(pid):
         return False
 
 
-def qtile_move_command(window):
+def qtile_move_command(window, group="c"):
     return [
         "qtile",
         "cmd-obj",
@@ -109,7 +122,7 @@ def qtile_move_command(window):
         "--function",
         "togroup",
         "--args",
-        "c",
+        group,
     ]
 
 
@@ -126,6 +139,111 @@ def notify_qtile(window, run=None):
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
+
+
+def run_qtile(command, run=None):
+    run = run or subprocess.run
+    try:
+        result = run(command, capture_output=True, text=True, check=False, timeout=2)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise X11Unavailable("Qtile command failed") from error
+    if result.returncode != 0:
+        raise X11Unavailable("Qtile command failed")
+    return result.stdout.strip()
+
+
+def qtile_window_group(window, run=None):
+    output = run_qtile([
+        "qtile", "cmd-obj", "--object", "window", str(window), "--function", "info",
+    ], run)
+    try:
+        info = ast.literal_eval(output)
+    except (SyntaxError, ValueError) as error:
+        raise X11Unavailable("invalid Qtile window info") from error
+    if not isinstance(info, dict) or not isinstance(info.get("group"), str):
+        raise X11Unavailable("Qtile window info has no group")
+    return info["group"]
+
+
+def verify_ordinary_activation(adapter, window, run=None):
+    active = getattr(adapter, "active_window", lambda: None)()
+    return active == window and qtile_window_group(window, run) == "f"
+
+
+def ordinary_title_matches(title, nonce):
+    expected = f"{ORDINARY_TITLE_PREFIX}{nonce}"
+    return binding_title_matches(title, expected)
+
+
+def managed_window(adapter, window):
+    if adapter.property(window, "WM_WINDOW_ROLE", "STRING") == "abush-browser":
+        return True
+    return any(adapter.property(window, name) for name in MANAGED_PROPERTIES)
+
+
+def ordinary_candidate(adapter, window, nonce):
+    return ordinary_title_matches(adapter.title(window), nonce) and \
+        any("chrom" in value.lower() for value in adapter.wm_class(window)) and \
+        not managed_window(adapter, window)
+
+
+def find_ordinary_window(adapter, nonce, attempts=100, interval=0.05):
+    for attempt in range(attempts):
+        matches = [window for window in adapter.windows()
+                   if ordinary_candidate(adapter, window, nonce)]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError("ambiguous ordinary staging nonce")
+        if attempt + 1 < attempts:
+            time.sleep(interval)
+    raise X11Unavailable("matching ordinary Chrome X11 window was not found")
+
+
+def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, run=None):
+    if not isinstance(payload, dict) or set(payload) != {"nonce"} or \
+            not isinstance(payload["nonce"], str) or not NONCE_RE.fullmatch(payload["nonce"]):
+        raise ValueError("invalid ordinary prepare payload")
+    adapter = adapter or XcffibAdapter()
+    window = find_ordinary_window(adapter, payload["nonce"], attempts, interval)
+    if managed_window(adapter, window):
+        raise ValueError("ordinary staging window is managed")
+    adapter.set_text(window, ORDINARY_NONCE_PROPERTY, payload["nonce"])
+    adapter.finish()
+    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
+            managed_window(adapter, window):
+        raise X11Unavailable("ordinary prepare verification failed")
+    run_qtile(qtile_move_command(window, "f"), run)
+    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
+            managed_window(adapter, window):
+        raise X11Unavailable("ordinary prepare changed window identity")
+    return {"xid": window, "nonce": payload["nonce"]}
+
+
+def activate_ordinary_window(payload, adapter=None, run=None, verify=None):
+    if not isinstance(payload, dict) or set(payload) != {"nonce", "xid"} or \
+            not isinstance(payload["nonce"], str) or not NONCE_RE.fullmatch(payload["nonce"]) or \
+            not isinstance(payload["xid"], int) or isinstance(payload["xid"], bool) or \
+            payload["xid"] <= 0:
+        raise ValueError("invalid ordinary activate payload")
+    adapter = adapter or XcffibAdapter()
+    window = payload["xid"]
+    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
+            managed_window(adapter, window):
+        raise ValueError("ordinary activation identity mismatch")
+    run_qtile(["qtile", "cmd-obj", "--object", "group", "f", "--function", "toscreen"], run)
+    run_qtile(["qtile", "cmd-obj", "--object", "window", str(window),
+               "--function", "focus"], run)
+    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
+            managed_window(adapter, window):
+        raise X11Unavailable("ordinary activation changed window identity")
+    if verify is None:
+        verified = verify_ordinary_activation(adapter, window, run)
+    else:
+        verified = verify(window)
+    if verified is not True:
+        raise X11Unavailable("ordinary activation verification failed")
+    return {"xid": window, "nonce": payload["nonce"]}
 
 
 def bind_workspace_window(

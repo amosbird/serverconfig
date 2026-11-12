@@ -225,6 +225,11 @@ if (typeof chrome !== "undefined") {
             workspaceReady.then(() => workspaces.invalidateRemote()).catch(() => {});
             return;
         }
+        if (message.service === "ordinary_open" && message.event === "ordinary_open") {
+            workspaceReady.then(() => workspaces.ordinaryOpen(message.payload))
+                .catch(error => notifyFailure(error.message || "Unable to open ordinary URL"));
+            return;
+        }
         if (message.service !== "abush_browser") return;
         if (message.event === "abush_browser.remote_state") {
             workspaceReady.then(() => workspaces.remoteState(message.payload)).catch(() => {});

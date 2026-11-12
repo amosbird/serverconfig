@@ -165,6 +165,56 @@ class X11BindingTest(unittest.TestCase):
                 "display_title": "Abush Browser — local · workbench",
             }, adapter=FakeAdapter(), attempts=1)
 
+    def test_ordinary_prepare_uses_unique_exact_xid_without_focus(self):
+        nonce = "a" * 32
+        adapter = FakeAdapter()
+        adapter.values[(11, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce} - Google Chrome"
+        commands = []
+
+        def run(command, **_kwargs):
+            commands.append(command)
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        result = binding.prepare_ordinary_window(
+            {"nonce": nonce}, adapter=adapter, attempts=1, run=run)
+        self.assertEqual(result, {"xid": 11, "nonce": nonce})
+        self.assertEqual(adapter.values[(11, "_ABUSH_ORDINARY_NONCE")], nonce)
+        self.assertEqual(commands, [binding.qtile_move_command(11, "f")])
+        self.assertNotIn("focus", commands[0])
+        self.assertNotIn("toscreen", commands[0])
+
+    def test_ordinary_prepare_refuses_managed_candidate(self):
+        nonce = "b" * 32
+        adapter = FakeAdapter()
+        adapter.values[(11, "_NET_WM_NAME")] = "ordinary"
+        adapter.values[(22, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce}"
+        adapter.values[(22, "WM_WINDOW_ROLE")] = "abush-browser"
+        with self.assertRaises(binding.X11Unavailable):
+            binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, attempts=1,
+                run=lambda *_args, **_kwargs: mock.Mock(returncode=0, stdout=""))
+
+    def test_ordinary_activate_focuses_exact_xid_and_rejects_string_bool(self):
+        nonce = "c" * 32
+        adapter = FakeAdapter()
+        adapter.values[(11, "_ABUSH_ORDINARY_NONCE")] = nonce
+        commands = []
+
+        def run(command, **_kwargs):
+            commands.append(command)
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        result = binding.activate_ordinary_window(
+            {"nonce": nonce, "xid": 11}, adapter=adapter, run=run,
+            verify=lambda xid: xid == 11)
+        self.assertEqual(result["xid"], 11)
+        self.assertEqual(commands[-1], [
+            "qtile", "cmd-obj", "--object", "window", "11", "--function", "focus",
+        ])
+        with self.assertRaises(ValueError):
+            binding.activate_ordinary_window(
+                {"nonce": nonce, "xid": True}, adapter=adapter, run=run)
+
 
 class AcceptanceOutputTest(unittest.TestCase):
     def test_parses_explicit_xprop_fields(self):

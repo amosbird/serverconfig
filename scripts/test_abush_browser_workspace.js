@@ -167,6 +167,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                     const params = new URLSearchParams(properties.url.split("#")[1]);
                     tab.title = `${STATUS_PREFIX}${params.get("nonce")}:${params.get("marker")}`;
                 }
+                if (properties.url?.includes("ordinary-staging.html#")) {
+                    tab.title = `__ABUSH_ORDINARY__:${properties.url.split("#")[1]}`;
+                }
                 windows.get(windowId).push(tab);
                 return tab;
             },
@@ -228,6 +231,65 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     assert.equal(displayTitle("local"), "local");
     assert.equal(displayTitle("dev.example.com"), "dev.example.com");
     assert.equal(displayTitle("prod-alias"), "prod-alias");
+    {
+        const {executor, calls} = fixture([], [], 1);
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-one",
+            operation: "ordinary_open",
+            url: "https://ordinary-open.test/path",
+            focus: true,
+        });
+        assert.equal(completion, "not_applied",
+            "prepare failure must be not_applied before URL mutation");
+        assert.equal(calls.filter(call => call[0] === "update" &&
+            call[2]?.url === "https://ordinary-open.test/path").length, 0,
+            "prepare failure must not navigate the staging tab");
+        const staging = calls.find(call => call[0] === "createTab");
+        assert.equal(staging[1].windowId, 1, "staging must always carry an exact windowId");
+    }
+    {
+        const {executor, calls} = fixture([], [], 1);
+        executor.nativeRequest = async (service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
+            if (operation === "activate") throw new Error("focus verification failed");
+            return {};
+        };
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-two",
+            operation: "ordinary_open",
+            url: "https://ordinary-open.test/after-prepare",
+            focus: true,
+        });
+        assert.equal(completion, "unknown",
+            "activation failure after navigation must be unknown");
+        assert.equal(calls.filter(call => call[0] === "update" &&
+            call[2]?.url === "https://ordinary-open.test/after-prepare").length, 1);
+    }
+    {
+        const managed = {
+            remoteKey: "r_12345678", principalId: "principal", workspaceId: "workspace",
+            connectionId: "c_12345678", executorFence: fence,
+            logicalWindowId, logicalPageId, windowGeneration: 1, pageGeneration: 1,
+            windowId: 1, statusTabIds: [3001, 3002], pageTabId: 3003,
+            nonce: "d".repeat(32), connectionDisplayName: "local",
+        };
+        const {executor, calls} = fixture([managed], [], 0);
+        executor.chrome.windows.create = async properties => {
+            calls.push(["createWindow", properties]);
+            return {id: 99, tabs: [{id: 1999, windowId: 99, url: properties.url,
+                title: `__ABUSH_ORDINARY__:${properties.url.split("#")[1]}`}]};
+        };
+        const selected = await executor.selectOrdinaryWindow("e".repeat(32));
+        assert.deepEqual(selected, {windowId: 99, stagingTabId: 1999});
+        assert.deepEqual(calls.find(call => call[0] === "createWindow")[1], {
+            url: "chrome-extension://id/ordinary-staging.html#" + "e".repeat(32),
+            focused: false,
+            type: "normal",
+        }, "only managed windows must create an unfocused ordinary staging window");
+    }
     {
         const orphanNonce = "f".repeat(32);
         const {executor, calls} = fixture([], [orphanNonce]);

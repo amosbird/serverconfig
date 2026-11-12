@@ -1,37 +1,42 @@
 #!/usr/bin/env bash
 
-profile="$HOME/.config/google-chrome-main"
+if [[ $# -ne 1 ]]; then
+    printf 'usage: chromium URL\n' >&2
+    exit 2
+fi
+
+url=$1
+profile=${ABUSH_CHROME_PROFILE:-$HOME/.config/google-chrome-main}
+chrome=${ABUSH_CHROME_BIN:-/usr/bin/google-chrome-stable}
+root=${ABUSH_SERVERCONFIG_ROOT:-/home/amos/git/serverconfig}
 host="$profile/NativeMessagingHosts/io.github.amosbird.browser_router.json"
 mkdir -p "$(dirname "$host")"
-ln -sf /home/amos/git/serverconfig/chromium/external-links/native-host.json "$host"
+ln -sf "$root/chromium/external-links/native-host.json" "$host"
 
-focus_main_group() {
-    printf '%s' '[[["group","f"]],"toscreen",[],{},true]' \
-        | nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY" >/dev/null
+proc_root=${ABUSH_PROC_ROOT:-/proc}
+chrome_running() {
+    local process cmdline
+    for process in "$proc_root"/[0-9]*/cmdline; do
+        [[ -r $process ]] || continue
+        cmdline=$(tr '\0' '\n' < "$process" 2>/dev/null) || continue
+        if grep -Fqx -- "--user-data-dir=$profile" <<< "$cmdline"; then
+            return 0
+        fi
+    done
+    return 1
 }
 
-focus_group=true
-if [[ ${1:-} == --current-group ]]; then
-    focus_group=false
-    shift
-else
-    focus_main_group
+if ! chrome_running; then
+    "$chrome" \
+        --user-data-dir="$profile" \
+        --no-default-browser-check \
+        --silent-debugger-extension-api \
+        --remote-debugging-port=9222 \
+        --restore-last-session \
+        --hide-crash-restore-bubble \
+        --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation \
+        --disable-smooth-scrolling \
+        >/dev/null 2>&1 &
 fi
 
-if chromium-remote "$@"; then
-    if $focus_group; then
-        focus_main_group
-    fi
-    exit
-fi
-
-exec /usr/bin/google-chrome-stable \
-    --user-data-dir="$profile" \
-    --no-default-browser-check \
-    --silent-debugger-extension-api \
-    --remote-debugging-port=9222 \
-    --restore-last-session \
-    --hide-crash-restore-bubble \
-    --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation \
-    --disable-smooth-scrolling \
-    "$@"
+exec python3 "$root/scripts/ordinary-open-client.py" "$url"
