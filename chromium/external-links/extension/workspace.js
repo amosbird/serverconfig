@@ -178,6 +178,15 @@ class WorkspaceExecutor {
         const local = await this.chrome.storage.local.get([RESTORE_HOST_KEY]);
         if (local[RESTORE_HOST_KEY] !== true) return;
         await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: false});
+        const sessions = this.chrome.sessions;
+        if (sessions?.getRecentlyClosed && sessions?.restore) {
+            const entries = await sessions.getRecentlyClosed({maxResults: 25});
+            const window = entries.find(entry => entry.window && entry.sessionId);
+            if (window) {
+                await sessions.restore(window.sessionId);
+                return;
+            }
+        }
         await this.chrome.windows.create({url: "about:blank", focused: false, type: "normal"});
     }
 

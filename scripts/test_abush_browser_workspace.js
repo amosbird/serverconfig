@@ -333,6 +333,45 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "intent must clear before host creation to avoid duplicate recovery after a crash");
     }
     {
+        const localState = {abushRestoreHost: true};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        executor.chrome.sessions = {
+            getRecentlyClosed: async query => {
+                calls.push(["getRecentlyClosed", query]);
+                return [
+                    {tab: {sessionId: "tab-session"}, sessionId: "tab-session"},
+                    {window: {tabs: [{url: "https://work.test/"}]}, sessionId: "window-session"},
+                ];
+            },
+            restore: async sessionId => { calls.push(["restoreSession", sessionId]); },
+        };
+        await executor.restore();
+        assert.equal(localState.abushRestoreHost, false);
+        assert.deepEqual(calls.filter(call => call[0] === "restoreSession"), [
+            ["restoreSession", "window-session"],
+        ], "restart recovery must restore the most recent closed ordinary window");
+        assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
+            "successful session restore must not create a blank fallback window");
+        const clearIndex = calls.findIndex(call => call[0] === "persistLocal" &&
+            call[1].abushRestoreHost === false);
+        const restoreIndex = calls.findIndex(call => call[0] === "restoreSession");
+        assert(clearIndex >= 0 && restoreIndex > clearIndex,
+            "intent must clear before session restore to avoid duplicate recovery after a crash");
+    }
+    {
+        const localState = {abushRestoreHost: true};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        executor.chrome.sessions = {
+            getRecentlyClosed: async () => [],
+            restore: async sessionId => { calls.push(["restoreSession", sessionId]); },
+        };
+        await executor.restore();
+        assert.equal(calls.filter(call => call[0] === "restoreSession").length, 0);
+        assert.deepEqual(calls.filter(call => call[0] === "createWindow").map(call => call[1]), [
+            {url: "about:blank", focused: false, type: "normal"},
+        ], "missing recently closed windows must fall back to a neutral host");
+    }
+    {
         const gate = deferred();
         const order = [];
         const workspaces = {
