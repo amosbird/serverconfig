@@ -185,11 +185,28 @@ function connectWorkspaceAfterRestore(workspaces, connect) {
 }
 
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
+    chromeApi.windows.onCreated.addListener(window => {
+        if (window.type !== "normal") return;
+        ready.then(() => workspaces.rememberWindowSnapshot(window.id)).catch(onFailure);
+    });
     chromeApi.windows.onRemoved.addListener(windowId => {
         ready.then(() => workspaces.windowRemoved(windowId)).catch(onFailure);
     });
+    chromeApi.tabs.onCreated.addListener(tab => {
+        ready.then(() => workspaces.rememberWindowSnapshot(tab.windowId)).catch(onFailure);
+    });
+    chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+        ready.then(() => workspaces.rememberWindowSnapshot(tab.windowId)).catch(onFailure);
+    });
+    chromeApi.tabs.onRemoved.addListener((tabId, info) => {
+        ready.then(() => workspaces.rememberWindowSnapshot(info.windowId)).catch(onFailure);
+    });
     chromeApi.tabs.onAttached.addListener((tabId, info) => {
         ready.then(() => workspaces.tabMoved(tabId, info)).catch(() => {});
+        ready.then(() => workspaces.rememberWindowSnapshot(info.newWindowId)).catch(onFailure);
+    });
+    chromeApi.tabs.onDetached.addListener((tabId, info) => {
+        ready.then(() => workspaces.rememberWindowSnapshot(info.oldWindowId)).catch(onFailure);
     });
 }
 

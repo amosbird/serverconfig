@@ -53,6 +53,9 @@ class WorkspaceExecutor {
         this.persistTail = Promise.resolve();
         this.persistRevision = 0;
         this.markerTail = Promise.resolve();
+        this.removedHostSnapshots = new Map();
+        this.snapshotTails = new Map();
+        this.recentSessionIds = null;
         this.ready = Promise.resolve();
     }
 
@@ -173,16 +176,45 @@ class WorkspaceExecutor {
         throw new Error("status tab title was not ready");
     }
 
+    isOrdinarySessionEntry(entry) {
+        return Boolean(entry?.window && typeof entry.sessionId === "string" && entry.sessionId &&
+            !entry.window.tabs?.some(tab => this.parseStatusUrl(tab.url) !== null));
+    }
+
+    sessionSnapshot(tabs) {
+        const urls = (tabs || []).map(tab => tab.url).filter(url => typeof url === "string");
+        return {tabCount: (tabs || []).length, urls};
+    }
+
+    sessionMatchesSnapshot(entry, snapshot) {
+        if (!this.isOrdinarySessionEntry(entry) || !snapshot ||
+                !Number.isInteger(snapshot.tabCount) || !Array.isArray(snapshot.urls)) return false;
+        const observed = this.sessionSnapshot(entry.window.tabs);
+        return observed.tabCount === snapshot.tabCount &&
+            observed.urls.length === snapshot.urls.length &&
+            observed.urls.every((url, index) => url === snapshot.urls[index]);
+    }
+
     async restoreHost() {
         if (!this.chrome.storage?.local) return;
         const local = await this.chrome.storage.local.get([RESTORE_HOST_KEY]);
-        if (local[RESTORE_HOST_KEY] !== true) return;
+        const intent = local[RESTORE_HOST_KEY];
+        const exact = Boolean(intent && typeof intent === "object" && intent.version === 1 &&
+            typeof intent.sessionId === "string" && intent.sessionId);
+        if (intent !== true && !exact) return;
         await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: false});
         const sessions = this.chrome.sessions;
+        if (sessions?.restore && exact) {
+            try {
+                await sessions.restore(intent.sessionId);
+                return;
+            } catch (_) {}
+        }
         if (sessions?.getRecentlyClosed && sessions?.restore) {
             const entries = await sessions.getRecentlyClosed({maxResults: 25});
-            const window = entries.find(entry => entry.window && entry.sessionId &&
-                !entry.window.tabs?.some(tab => this.parseStatusUrl(tab.url) !== null));
+            const window = exact ?
+                entries.find(entry => this.sessionMatchesSnapshot(entry, intent.snapshot)) :
+                entries.find(entry => this.isOrdinarySessionEntry(entry));
             if (window) {
                 await sessions.restore(window.sessionId);
                 return;
@@ -191,9 +223,60 @@ class WorkspaceExecutor {
         await this.chrome.windows.create({url: "about:blank", focused: false, type: "normal"});
     }
 
-    async markRestoreHost() {
+    async markRestoreHost(intent) {
         if (!this.chrome.storage?.local) return;
-        await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: true});
+        await this.chrome.storage.local.set({[RESTORE_HOST_KEY]: intent});
+    }
+
+    rememberWindowSnapshot(windowId) {
+        const previous = this.snapshotTails.get(windowId) || Promise.resolve();
+        const update = previous.catch(() => {}).then(() => this.chrome.tabs.query({windowId}))
+            .then(tabs => {
+                if (tabs.length === 0 ||
+                        tabs.some(tab => this.parseStatusUrl(tab.url) !== null)) return;
+                this.removedHostSnapshots.set(windowId, this.sessionSnapshot(tabs));
+            }).catch(() => {});
+        this.snapshotTails.set(windowId, update);
+        return update.finally(() => {
+            if (this.snapshotTails.get(windowId) === update) this.snapshotTails.delete(windowId);
+        });
+    }
+
+    async recentlyClosedEntries() {
+        const sessions = this.chrome.sessions;
+        if (!sessions?.getRecentlyClosed) return [];
+        return sessions.getRecentlyClosed({maxResults: 25});
+    }
+
+    async primeRecentlyClosedSessions() {
+        const entries = await this.recentlyClosedEntries();
+        this.recentSessionIds = new Set(entries.map(entry => entry.sessionId).filter(Boolean));
+    }
+
+    async recentlyClosedHostIntent(windowId) {
+        const pendingSnapshot = this.snapshotTails.get(windowId);
+        if (pendingSnapshot) await pendingSnapshot;
+        const snapshot = this.removedHostSnapshots.get(windowId);
+        this.removedHostSnapshots.delete(windowId);
+        if (!snapshot || !this.chrome.sessions?.getRecentlyClosed) return null;
+        const knownSessionIds = this.recentSessionIds || new Set();
+        for (let attempt = 0; attempt < 20; attempt++) {
+            const entries = await this.recentlyClosedEntries();
+            const window = entries.find(entry => !knownSessionIds.has(entry.sessionId) &&
+                this.sessionMatchesSnapshot(entry, snapshot));
+            if (window) {
+                this.recentSessionIds = new Set(entries.map(entry => entry.sessionId).filter(Boolean));
+                return {
+                    version: 1,
+                    sessionId: window.sessionId,
+                    snapshot,
+                };
+            }
+            if (attempt + 1 < 20) {
+                await new Promise(resolve => setTimeout(resolve, 25));
+            }
+        }
+        return null;
     }
 
     async closeOrphanedStatusWindows(liveWindowIds) {
@@ -322,6 +405,9 @@ class WorkspaceExecutor {
         }
         await this.closeOrphanedStatusWindows(liveWindowIds);
         if (removed) await this.persist();
+        const normalWindows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
+        await Promise.all(normalWindows.map(window => this.rememberWindowSnapshot(window.id)));
+        await this.primeRecentlyClosedSessions();
     }
 
     install(record) {
@@ -892,8 +978,10 @@ class WorkspaceExecutor {
         const normalWindows = await this.visibleNormalWindows(removedWindowId);
         if (normalWindows.length === 0 || normalWindows.some(window =>
             !this.windowOwners.has(window.id))) return;
+        const intent = await this.recentlyClosedHostIntent(removedWindowId);
+        if (!intent) throw new Error("closed Chrome host session was not captured");
+        await this.markRestoreHost(intent);
         await this.closeManagedWindowSet(normalWindows);
-        await this.markRestoreHost();
         await this.chrome.windows.create({url: "about:blank", focused: false, type: "normal"});
     }
 

@@ -83,6 +83,14 @@ class FakeHook:
         def group_window_add(function):
             return function
 
+        @staticmethod
+        def startup(function):
+            return function
+
+        @staticmethod
+        def client_name_updated(function):
+            return function
+
     subscribe = Subscribe()
 
 
@@ -121,26 +129,25 @@ class QtileConfigTest(unittest.TestCase):
         self.assertIn('@hook.subscribe.startup\ndef initialize_browser_tabs()', self.source)
         self.assertIn('screen.top.show(screen.group.name == "c")', self.source)
         self.assertIn('lazy.group["c"].toscreen()', self.source)
-        self.assertIn('lazy.window.togroup("c")', self.source)
+        self.assertNotIn('lazy.window.togroup("c")', self.source)
 
-    def test_abush_role_rule_precedes_chrome_rule_and_weechat_is_removed(self):
-        rules = [
+    def test_quarantine_group_exists_and_only_ordinary_chrome_has_a_static_rule(self):
+        groups = [
             node
+            for node in ast.walk(self.tree)
+            if isinstance(node, ast.Call) and call_name(node.func) == "Group" and node.args
+        ]
+        self.assertTrue(any(isinstance(group.args[0], ast.Constant) and
+                            group.args[0].value == "__abush_quarantine" for group in groups))
+        rules = [
+            ast.get_source_segment(self.source, node)
             for node in ast.walk(self.tree)
             if isinstance(node, ast.Call) and call_name(node.func) == "Rule"
         ]
-        abush = next(
-            index
-            for index, rule in enumerate(rules)
-            if "role=\"abush-browser\"" in ast.get_source_segment(self.source, rule)
-        )
-        chrome = next(
-            index
-            for index, rule in enumerate(rules)
-            if "wm_class=\"Google-chrome\"" in ast.get_source_segment(self.source, rule)
-            and "group=\"f\"" in ast.get_source_segment(self.source, rule)
-        )
-        self.assertLess(abush, chrome)
+        self.assertFalse(any('role="abush-browser"' in rule for rule in rules),
+                         "verified placement must use the exact-XID binder transition")
+        self.assertTrue(any('wm_class="Google-chrome"' in rule and 'group="f"' in rule
+                            for rule in rules))
         self.assertNotIn("weechat", self.source.lower())
         self.assertFalse((ROOT / "scripts/wee").exists())
         self.assertFalse((ROOT / "scripts/kitty-notify").exists())
@@ -152,7 +159,8 @@ class QtileConfigTest(unittest.TestCase):
             for node in self.tree.body
             if isinstance(node, ast.FunctionDef)
             and node.name in {
-                "is_abush_browser",
+                "is_chrome_window",
+                "is_abush_browser_verified",
                 "is_abush_browser_candidate",
                 "prevent_abush_browser_focus_steal",
             }
@@ -182,14 +190,15 @@ class QtileConfigTest(unittest.TestCase):
         namespace["prevent_abush_browser_focus_steal"](FakeGroup("f"), ordinary)
         self.assertTrue(ordinary.can_steal_focus)
 
-    def test_place_helper_moves_without_switching_or_focusing(self):
+    def test_place_helper_enforces_three_state_routing_without_focus(self):
         namespace = {"re": re, "QtileWindow": FakeWindow}
         functions = {
             node.name: node
             for node in self.tree.body
             if isinstance(node, ast.FunctionDef)
             and node.name in {
-                "is_abush_browser",
+                "is_chrome_window",
+                "is_abush_browser_verified",
                 "is_abush_browser_candidate",
                 "place_abush_browser",
             }
@@ -207,25 +216,59 @@ class QtileConfigTest(unittest.TestCase):
             [],
         )
         exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
-        window = FakeWindow("abush-browser")
-        self.assertTrue(namespace["place_abush_browser"](window))
-        self.assertFalse(window.can_steal_focus)
-        window.togroup.assert_called_once_with("c", switch_group=False)
-        self.assertFalse(hasattr(window, "focus"))
-        self.assertFalse(hasattr(window.group, "toscreen"))
+
+        verified = FakeWindow("abush-browser", wm_class=["abush-browser", "AbushBrowser"])
+        self.assertTrue(namespace["place_abush_browser"](verified))
+        self.assertFalse(verified.can_steal_focus)
+        verified.togroup.assert_called_once_with("c", switch_group=False)
+
         candidate = FakeWindow(None, name="__ABUSH_BIND__:" + "a" * 32 + ":a - Google Chrome")
         self.assertTrue(namespace["place_abush_browser"](candidate))
         self.assertFalse(candidate.can_steal_focus)
-        candidate.togroup.assert_called_once_with("c", switch_group=False)
+        candidate.togroup.assert_called_once_with("__abush_quarantine", switch_group=False)
+        self.assertNotIn(mock.call("c", switch_group=False), candidate.togroup.mock_calls)
+
+        stale_shell = FakeWindow("browser", group="c", name="GitHub - Google Chrome")
+        self.assertTrue(namespace["place_abush_browser"](stale_shell))
+        stale_shell.togroup.assert_called_once_with("f", switch_group=False)
+
+        quarantined_shell = FakeWindow("browser", group="__abush_quarantine",
+                                       name="GitHub - Google Chrome")
+        self.assertTrue(namespace["place_abush_browser"](quarantined_shell))
+        quarantined_shell.togroup.assert_called_once_with("f", switch_group=False)
+
+        ordinary = FakeWindow("browser", group="f", name="GitHub - Google Chrome")
+        self.assertFalse(namespace["place_abush_browser"](ordinary))
+        ordinary.togroup.assert_not_called()
+
         impostor = FakeWindow(None, name="__ABUSH_BIND__:" + "b" * 32 + ":a",
                               wm_class=["kitty", "kitty"])
         self.assertFalse(namespace["place_abush_browser"](impostor))
         self.assertTrue(impostor.can_steal_focus)
         impostor.togroup.assert_not_called()
-        other = FakeWindow("pop-up", name="Example Domain - Google Chrome")
-        self.assertFalse(namespace["place_abush_browser"](other))
-        self.assertTrue(other.can_steal_focus)
-        other.togroup.assert_not_called()
+
+    def test_title_update_reclassifies_a_stale_candidate_shell(self):
+        namespace = {"re": re, "QtileWindow": FakeWindow, "hook": FakeHook}
+        function_names = {
+            "is_chrome_window", "is_abush_browser_verified", "is_abush_browser_candidate",
+            "place_abush_browser", "reclassify_abush_browser",
+        }
+        functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name in function_names]
+        binding_title = next(
+            node.value for node in self.tree.body if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
+                    for target in node.targets)
+        )
+        module = ast.Module(
+            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title), *functions],
+            [],
+        )
+        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        window = FakeWindow("browser", group="__abush_quarantine",
+                            name="Restored work - Google Chrome")
+        namespace["reclassify_abush_browser"](window)
+        window.togroup.assert_called_once_with("f", switch_group=False)
 
 
 class BinderQtileNotificationTest(unittest.TestCase):

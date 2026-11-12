@@ -582,6 +582,7 @@ groups = [
     Group("h"),
     Group("2", layout="max"),
     Group("c", layouts=[layout.Max()]),
+    Group("__abush_quarantine"),
 ]
 
 keys.append(Key([ctrl, alt, shift], "2", lazy.window.togroup("2")))
@@ -592,10 +593,8 @@ for i in ["w", "e", "d", "f", "v", "n", "i", "o"]:
     keys.append(Key([ctrl, alt, shift], i, lazy.window.togroup(i)))
 
 keys.append(Key([ctrl, alt], "c", lazy.group["c"].toscreen()))
-keys.append(Key([ctrl, alt, shift], "c", lazy.window.togroup("c")))
 
 dgroups_app_rules = [
-    Rule(Match(role="abush-browser"), group="c"),
     Rule(Match(wm_class="kitty", title="local"), group="e"),
     Rule(Match(wm_class="kitty", title="work"), group="v"),
     Rule(Match(wm_class="kitty", title="remote"), group="i"),
@@ -657,33 +656,48 @@ ABUSH_BINDING_TITLE = re.compile(
 )
 
 
-def is_abush_browser(window):
-    return isinstance(window, QtileWindow) and window.get_wm_role() == "abush-browser"
+def is_chrome_window(window):
+    if not isinstance(window, QtileWindow):
+        return False
+    wm_class = [value.lower() for value in (window.get_wm_class() or [])]
+    return any("chrom" in value for value in wm_class) or "abushbrowser" in wm_class
+
+
+def is_abush_browser_verified(window):
+    return is_chrome_window(window) and window.get_wm_role() == "abush-browser"
 
 
 def is_abush_browser_candidate(window):
-    if not isinstance(window, QtileWindow):
-        return False
-    wm_class = window.get_wm_class() or []
-    return is_abush_browser(window) or (
-        any("chrom" in value.lower() for value in wm_class)
+    return (
+        is_chrome_window(window)
+        and not is_abush_browser_verified(window)
         and bool(ABUSH_BINDING_TITLE.fullmatch(window.name or ""))
     )
 
 
 @hook.subscribe.group_window_add
 def prevent_abush_browser_focus_steal(group, window):
-    if is_abush_browser_candidate(window):
+    if is_abush_browser_verified(window) or is_abush_browser_candidate(window):
         window.can_steal_focus = False
 
 
 def place_abush_browser(window):
-    if not is_abush_browser_candidate(window):
+    if is_abush_browser_verified(window):
+        destination = "c"
+        window.can_steal_focus = False
+    elif is_abush_browser_candidate(window):
+        destination = "__abush_quarantine"
+        window.can_steal_focus = False
+    elif is_chrome_window(window) and window.group is not None and window.group.name in {
+        "c",
+        "__abush_quarantine",
+    }:
+        destination = "f"
+    else:
         return False
-    window.can_steal_focus = False
-    if window.group is not None and window.group.name == "c":
+    if window.group is not None and window.group.name == destination:
         return False
-    window.togroup("c", switch_group=False)
+    window.togroup(destination, switch_group=False)
     return True
 
 
@@ -691,6 +705,11 @@ def place_abush_browser(window):
 def recover_abush_browsers():
     for window in qtile.windows_map.values():
         place_abush_browser(window)
+
+
+@hook.subscribe.client_name_updated
+def reclassify_abush_browser(window):
+    place_abush_browser(window)
 
 
 @hook.subscribe.startup
