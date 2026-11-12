@@ -223,6 +223,12 @@ class NativeDispatcher {
 let nativeDispatcher;
 let workspaceExecutor;
 let scrollQueues = Promise.resolve();
+let nativeBootstrapResolve;
+let nativeBootstrapReject;
+const nativeBootstrap = new Promise((resolve, reject) => {
+    nativeBootstrapResolve = resolve;
+    nativeBootstrapReject = reject;
+});
 
 function dispatcher() {
     nativeDispatcher ||= new NativeDispatcher(
@@ -297,8 +303,10 @@ async function configureSiteLanguages() {
     });
 }
 
-function connectWorkspaceAfterRestore(workspaces, connect) {
-    return workspaces.restoreWhenReady().then(async () => {
+function connectWorkspaceAfterRestore(workspaces, connect, bootstrap = null) {
+    const accept = bootstrap === null ? Promise.resolve() : Promise.resolve(bootstrap)
+        .then(payload => payload ? workspaces.acceptNativeBootstrap(payload) : undefined);
+    return accept.then(() => workspaces.restoreWhenReady()).then(async () => {
         await connect();
         return workspaces.drainAdvisoryErrors?.() || [];
     });
@@ -321,6 +329,7 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
         run(() => workspaces.recordOrdinaryFocus(windowId));
     });
     chromeApi.windows.onRemoved.addListener(windowId => {
+        workspaces.freezeClosingWindow?.(windowId);
         run(() => workspaces.windowRemoved(windowId));
     });
     chromeApi.tabs.onCreated.addListener(tab => {
@@ -345,10 +354,11 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
         });
     });
     chromeApi.tabs.onRemoved.addListener((tabId, info) => {
+        if (info?.isWindowClosing) workspaces.freezeClosingWindow?.(info.windowId);
         if (observe("tabRemoved", {tabId, ...info})) return;
         run(async () => {
             await workspaces.tabRemoved(tabId, info);
-            await workspaces.rememberWindowSnapshot(info.windowId);
+            if (!info?.isWindowClosing) await workspaces.rememberWindowSnapshot(info.windowId);
         });
     });
     chromeApi.tabs.onAttached.addListener((tabId, info) => {
@@ -376,6 +386,17 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
 if (typeof chrome !== "undefined") {
     configureSiteLanguages();
     const workspaces = workspace();
+    const native = dispatcher();
+    native.onEvent(message => {
+        if (message.service === "native_host" && message.event === "bootstrap") {
+            nativeBootstrapResolve(message.payload);
+        }
+    });
+    try {
+        native.ensurePort();
+    } catch (error) {
+        nativeBootstrapReject(error);
+    }
     workspaces.onAdvisoryError = error => notifyFailure(
         error.message || "Managed browser topology report is pending retry");
     const workspaceReady = connectWorkspaceAfterRestore(
@@ -388,6 +409,7 @@ if (typeof chrome !== "undefined") {
                 workspaces.reportAdvisoryError(error);
             }
         },
+        nativeBootstrap,
     ).then(errors => {
         if (errors.length > 0) {
             notifyFailure(errors[0].message ||
@@ -400,6 +422,12 @@ if (typeof chrome !== "undefined") {
     });
     dispatcher().onEvent(message => {
         if (message.service === "native_host") {
+            if (message.event === "bootstrap") {
+                workspaceReady.then(() => workspaces.acceptNativeBootstrap(message.payload))
+                    .catch(error => notifyFailure(error.message ||
+                        "Unable to accept native browser bootstrap"));
+                return;
+            }
             workspaceReady.then(async () => {
                 await workspaces.invalidateRemote();
                 await workspaces.flushTopologyOutbox();
@@ -410,7 +438,8 @@ if (typeof chrome !== "undefined") {
             }
             return;
         }
-        if (message.service === "ordinary_open" && message.event === "ordinary_open") {
+        if (message.service === "ordinary_open" &&
+                ["ordinary_open", "ordinary_open_bootstrap"].includes(message.event)) {
             workspaceReady.then(() => workspaces.ordinaryOpen(message.payload))
                 .catch(error => notifyFailure(error.message || "Unable to open ordinary URL"));
             return;

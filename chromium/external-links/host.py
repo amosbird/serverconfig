@@ -34,6 +34,10 @@ ORDINARY_OPEN_MAX_MESSAGE_SIZE = 64 * 1024
 ORDINARY_OPEN_VERSION = 1
 ORDINARY_OPEN_COMPLETIONS = {"applied", "not_applied", "unknown"}
 ORDINARY_OPEN_DEADLINE_MS = 30_000
+ORDINARY_LAUNCH_LEASE_VERSION = 1
+ORDINARY_LAUNCH_LEASE_MAX_SIZE = 64 * 1024
+ORDINARY_LAUNCH_LEASE_MAX_LIFETIME_MS = 60_000
+ORDINARY_LAUNCH_LEASE_DIR = "ordinary-launch"
 NATIVE_ENVELOPE_VERSION = 1
 PEER_PROTOCOL_VERSION = 7
 BROWSER_ERROR_CODES = {
@@ -688,6 +692,44 @@ def command_profile(arguments):
     return None
 
 
+def process_starttime(pid, proc_root="/proc"):
+    try:
+        stat_line = (pathlib.Path(proc_root) / str(pid) / "stat").read_text()
+        fields = stat_line[stat_line.rfind(")") + 1:].split()
+        starttime = fields[19]
+        if not starttime.isdigit():
+            return None
+        return starttime
+    except (OSError, IndexError):
+        return None
+
+
+def native_host_browser(pid=None, proc_root="/proc", max_depth=32):
+    current = os.getppid() if pid is None else pid
+    seen = set()
+    for _ in range(max_depth):
+        if current <= 1 or current in seen:
+            break
+        seen.add(current)
+        profile = command_profile(command_line(current, proc_root))
+        if profile is not None:
+            starttime = process_starttime(current, proc_root)
+            if starttime is None:
+                raise ValueError("Chrome browser start time is unavailable")
+            resolved = pathlib.Path(profile).expanduser().resolve()
+            identity = hashlib.sha256(
+                f"{current}:{starttime}:{resolved}".encode()
+            ).hexdigest()
+            return {
+                "pid": current,
+                "starttime": starttime,
+                "profile": resolved,
+                "browser_boot_id": f"chrome-{identity}",
+            }
+        current = parent_pid(current, proc_root)
+    return None
+
+
 def native_host_profile(pid=None, proc_root="/proc", max_depth=32):
     current = os.getppid() if pid is None else pid
     seen = set()
@@ -717,6 +759,116 @@ def ordinary_open_socket_path():
     if not runtime:
         raise ValueError("XDG_RUNTIME_DIR is unavailable")
     return pathlib.Path(runtime) / "abush" / "ordinary-open.sock"
+
+
+def ordinary_launch_lease_root(runtime=None):
+    runtime = runtime or os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        raise ValueError("XDG_RUNTIME_DIR is unavailable")
+    return pathlib.Path(runtime) / "abush" / ORDINARY_LAUNCH_LEASE_DIR
+
+
+def _secure_runtime_directory(path, uid):
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = path.lstat()
+    if path.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != uid:
+        raise ValueError("unsafe ordinary launch lease directory")
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        os.chmod(path, 0o700)
+    return info
+
+
+def _lease_profile_hash(profile):
+    return hashlib.sha256(os.fsencode(pathlib.Path(profile).expanduser().resolve())).hexdigest()
+
+
+def validate_ordinary_launch_lease(lease, *, profile, now_ms=None):
+    fields = {
+        "version", "request_id", "url", "url_hash", "deadline_ms", "profile_hash",
+        "boot_target",
+    }
+    if not isinstance(lease, dict) or set(lease) != fields or \
+            lease.get("version") != ORDINARY_LAUNCH_LEASE_VERSION or \
+            lease.get("boot_target") != "next":
+        raise ValueError("invalid ordinary launch lease")
+    request_id = lease.get("request_id")
+    url = lease.get("url")
+    url_hash = lease.get("url_hash")
+    deadline_ms = lease.get("deadline_ms")
+    profile_hash = lease.get("profile_hash")
+    if not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id) or \
+            not isinstance(url_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", url_hash) or \
+            not isinstance(profile_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", profile_hash) or \
+            profile_hash != _lease_profile_hash(profile) or \
+            not isinstance(deadline_ms, int) or isinstance(deadline_ms, bool):
+        raise ValueError("invalid ordinary launch lease")
+    validate_ordinary_open_request({
+        "version": ORDINARY_OPEN_VERSION,
+        "request_id": request_id,
+        "operation": "ordinary_open",
+        "url": url,
+        "focus": True,
+        "deadline_ms": deadline_ms,
+    })
+    if hashlib.sha256(url.encode()).hexdigest() != url_hash:
+        raise ValueError("ordinary launch lease URL hash mismatch")
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    if deadline_ms <= now_ms or deadline_ms - now_ms > ORDINARY_LAUNCH_LEASE_MAX_LIFETIME_MS:
+        raise TimeoutError("ordinary launch lease expired or exceeds its lifetime")
+    return lease
+
+
+def claim_ordinary_launch_leases(profile, *, root=None, uid=None, now_ms=None):
+    uid = os.getuid() if uid is None else uid
+    root = pathlib.Path(root) if root else ordinary_launch_lease_root()
+    _secure_runtime_directory(root.parent, uid)
+    _secure_runtime_directory(root, uid)
+    claimed = []
+    seen_request_ids = set()
+    entries = sorted(os.scandir(root), key=lambda entry: entry.name)
+    for entry in entries:
+        match = re.fullmatch(r"([0-9a-f]{32})\.(json|claimed)", entry.name)
+        path = pathlib.Path(entry.path)
+        claim = root / f"{match.group(1)}.claimed" if match else None
+        if match is None or entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+            continue
+        try:
+            info = path.lstat()
+            if info.st_uid != uid or stat.S_IMODE(info.st_mode) != 0o600 or \
+                    info.st_size > ORDINARY_LAUNCH_LEASE_MAX_SIZE:
+                raise ValueError("unsafe ordinary launch lease file")
+            if match.group(2) == "json":
+                try:
+                    os.link(path, claim, follow_symlinks=False)
+                except FileExistsError:
+                    path.unlink()
+                    continue
+                path.unlink()
+            claim_info = claim.lstat()
+            if claim.is_symlink() or not stat.S_ISREG(claim_info.st_mode) or \
+                    claim_info.st_uid != uid or stat.S_IMODE(claim_info.st_mode) != 0o600 or \
+                    claim_info.st_size > ORDINARY_LAUNCH_LEASE_MAX_SIZE:
+                raise ValueError("unsafe claimed ordinary launch lease")
+            with claim.open("r", encoding="utf-8") as source:
+                lease = validate_ordinary_launch_lease(
+                    json.load(source), profile=profile, now_ms=now_ms)
+            if lease["request_id"] != match.group(1):
+                raise ValueError("ordinary launch lease filename identity mismatch")
+            if lease["request_id"] in seen_request_ids:
+                raise ValueError("duplicate ordinary launch lease request ID")
+            seen_request_ids.add(lease["request_id"])
+            claimed.append({"lease": lease, "claim_path": claim})
+        except (OSError, ValueError, TimeoutError, json.JSONDecodeError) as error:
+            logging.info("ordinary launch lease rejected path=%s error=%s", path, error)
+            try:
+                candidate = claim if claim and claim.exists() else path
+                info = candidate.lstat()
+                if stat.S_ISREG(info.st_mode) and not candidate.is_symlink() and \
+                        info.st_uid == uid:
+                    candidate.unlink()
+            except FileNotFoundError:
+                pass
+    return claimed
 
 
 def ordinary_open_response(request_id, completion):
@@ -796,11 +948,14 @@ def read_ordinary_open_message(sock):
 
 
 class OrdinaryOpenServer:
-    def __init__(self, outbound, path=None, uid=None, timeout=30):
+    def __init__(self, outbound, path=None, uid=None, timeout=30, bootstrap_requests=None,
+                 bootstrap_claims=None):
         self.outbound = outbound
         self.path = pathlib.Path(path) if path else ordinary_open_socket_path()
         self.uid = os.getuid() if uid is None else uid
         self.timeout = timeout
+        self.bootstrap_requests = list(bootstrap_requests or [])
+        self.bootstrap_claims = dict(bootstrap_claims or {})
         self.server = None
         self.socket_identity = None
         self.thread = None
@@ -845,6 +1000,8 @@ class OrdinaryOpenServer:
         self.server.settimeout(0.2)
         self.thread = threading.Thread(target=self._serve, daemon=True)
         self.thread.start()
+        for request in self.bootstrap_requests:
+            self._register(request, source="bootstrap", publish=False)
 
     def _serve(self):
         while not self.stopping.is_set():
@@ -891,14 +1048,17 @@ class OrdinaryOpenServer:
             raise TimeoutError("ordinary-open broker stopped")
         return state["response"]
 
-    def _register(self, request):
+    def _register(self, request, source="socket", publish=True):
         with self.lock:
             state = self.requests.get(request["request_id"])
             if state is None:
                 state = {"request": request, "done": threading.Event(), "response": None,
-                         "cancelled": False}
+                         "cancelled": False, "source": source}
                 self.requests[request["request_id"]] = state
-                self.outbound.put(event("ordinary_open", "ordinary_open", request))
+                if publish:
+                    self.outbound.put(event(
+                        "ordinary_open_bootstrap" if source == "bootstrap" else "ordinary_open",
+                        "ordinary_open", request))
             elif state["request"] != request:
                 raise ValueError("conflicting duplicate ordinary-open request")
             return state
@@ -950,6 +1110,15 @@ class OrdinaryOpenServer:
                 return
             state["response"] = payload
             state["done"].set()
+            claim = self.bootstrap_claims.pop(payload["request_id"], None)
+            if claim is not None:
+                try:
+                    info = claim.lstat()
+                    if stat.S_ISREG(info.st_mode) and not claim.is_symlink() and \
+                            info.st_uid == self.uid:
+                        claim.unlink()
+                except FileNotFoundError:
+                    pass
             while len(self.requests) > 256:
                 request_id = next(iter(self.requests))
                 if not self.requests[request_id]["done"].is_set():
@@ -969,6 +1138,15 @@ class OrdinaryOpenServer:
             state["done"].set()
         for worker in workers:
             worker.join(timeout=1)
+        for claim in self.bootstrap_claims.values():
+            try:
+                info = claim.lstat()
+                if stat.S_ISREG(info.st_mode) and not claim.is_symlink() and \
+                        info.st_uid == self.uid:
+                    claim.unlink()
+            except FileNotFoundError:
+                pass
+        self.bootstrap_claims.clear()
         try:
             info = self.path.lstat()
             identity = (info.st_dev, info.st_ino)
@@ -2116,13 +2294,36 @@ class BrowserBroker:
 
 class NativeBrokerHost:
     def __init__(self, input_stream=None, output_stream=None, remote_root=None,
-                 ordinary_open_factory=OrdinaryOpenServer):
+                 ordinary_open_factory=OrdinaryOpenServer, browser=None):
         self.input = input_stream or sys.stdin.buffer
         self.output = output_stream or sys.stdout.buffer
         self.outbound = queue.Queue()
+        self.browser = browser or native_host_browser()
+        if self.browser is None:
+            if ordinary_open_factory is not None:
+                raise ValueError("native host has no Chrome browser identity")
+            self.browser = {
+                "pid": 0,
+                "starttime": "0",
+                "profile": pathlib.Path(),
+                "browser_boot_id": "test-no-browser",
+            }
+        self.bootstrap_requests = []
         self.ordinary_open = None
-        if ordinary_open_factory is not None and is_main_profile_host():
-            self.ordinary_open = ordinary_open_factory(self.outbound)
+        expected_profile = pathlib.Path(os.environ.get(
+            "ABUSH_CHROME_PROFILE", pathlib.Path.home() / ".config/google-chrome-main"
+        )).expanduser().resolve()
+        if ordinary_open_factory is not None and self.browser["profile"] == expected_profile:
+            claimed = claim_ordinary_launch_leases(self.browser["profile"])
+            leases = [entry["lease"] for entry in claimed]
+            self.bootstrap_requests = [ordinary_open_request(
+                lease["url"], request_id=lease["request_id"],
+                deadline_ms=lease["deadline_ms"],
+            ) for lease in leases]
+            claims = {entry["lease"]["request_id"]: entry["claim_path"] for entry in claimed}
+            self.ordinary_open = ordinary_open_factory(
+                self.outbound, bootstrap_requests=self.bootstrap_requests,
+                bootstrap_claims=claims)
         self.broker = BrowserBroker(remote_root=remote_root, outbound=self.outbound,
                                     ordinary_open=self.ordinary_open)
         self.refresh_stop = threading.Event()
@@ -2134,6 +2335,14 @@ class NativeBrokerHost:
         self.writer = threading.Thread(target=self._write_loop, daemon=True)
         self.request_workers = set()
         self.request_workers_lock = threading.Lock()
+
+    def bootstrap_event(self):
+        return event("bootstrap", "native_host", {
+            "browser_boot_id": self.browser["browser_boot_id"],
+            "browser_pid": self.browser["pid"],
+            "browser_starttime": self.browser["starttime"],
+            "ordinary_launch_leases": self.bootstrap_requests,
+        })
 
     def _refresh_loop(self):
         self.refresh_started.set()
@@ -2190,6 +2399,7 @@ class NativeBrokerHost:
         self.writer.start()
         if self.ordinary_open is not None:
             self.ordinary_open.start()
+        self.outbound.put(self.bootstrap_event())
         self.broker.refresh()
         self.refresh_thread.start()
         try:

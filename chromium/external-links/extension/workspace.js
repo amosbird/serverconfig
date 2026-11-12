@@ -7,6 +7,10 @@ const TOPOLOGY_OUTBOX_KEY = "abushTopologyOutbox";
 const CLEANUP_TOMBSTONES_KEY = "abushCleanupTombstones";
 const RETIRE_LEDGER_KEY = "abushRetireLedger";
 const RESTORE_HOST_KEY = "abushRestoreHost";
+const CLOSE_AMBIGUITIES_KEY = "abushCloseAmbiguities";
+const MANAGED_CLEANUP_BATCH_KEY = "abushManagedCleanupBatch";
+const CURRENT_BROWSER_BOOT_KEY = "abushCurrentBrowserBoot";
+const COLD_ORDINARY_LEDGER_KEY = "abushColdOrdinaryLedger";
 const PENDING_TRANSACTIONS_KEY = "abushPendingTransactions";
 const PENDING_OPERATIONS_KEY = "abushPendingOperations";
 const EXECUTION_LEDGER_KEY = "abushExecutionLedger";
@@ -49,7 +53,7 @@ function validPageRef(value) {
 }
 
 class WorkspaceExecutor {
-    constructor(chromeApi, nativeRequest) {
+    constructor(chromeApi, nativeRequest, bootstrap = null) {
         this.chrome = chromeApi;
         this.nativeRequest = nativeRequest;
         this.workspaces = new Map();
@@ -95,7 +99,68 @@ class WorkspaceExecutor {
         this.removedHostSnapshots = new Map();
         this.snapshotTails = new Map();
         this.recentSessionIds = null;
+        this.startupManagedRecords = [];
+        this.windowRegistry = new Map();
+        this.windowRegistryRevision = 0;
+        this.closingManagedWindows = new Set();
+        this.browserBootId = null;
+        this.bootstrapLeases = new Map();
+        this.bootstrapResolved = false;
+        this.bootstrapReady = new Promise((resolve, reject) => {
+            this.resolveBootstrap = resolve;
+            this.rejectBootstrap = reject;
+        });
         this.ready = Promise.resolve();
+        if (bootstrap) this.acceptNativeBootstrap(bootstrap).catch(error => {
+            this.rejectBootstrap(error);
+            this.reportAdvisoryError(error);
+        });
+    }
+
+    async acceptNativeBootstrap(payload) {
+        if (!exactFields(payload, ["browser_boot_id", "browser_pid", "browser_starttime",
+            "ordinary_launch_leases"]) || typeof payload.browser_boot_id !== "string" ||
+                !payload.browser_boot_id || !Number.isInteger(payload.browser_pid) ||
+                payload.browser_pid <= 0 || typeof payload.browser_starttime !== "string" ||
+                !/^\d+$/.test(payload.browser_starttime) ||
+                !Array.isArray(payload.ordinary_launch_leases)) {
+            throw new Error("invalid native browser bootstrap");
+        }
+        if (this.browserBootId && this.browserBootId !== payload.browser_boot_id) {
+            throw new Error("native browser boot identity changed inside one service worker");
+        }
+        const leases = new Map();
+        for (const lease of payload.ordinary_launch_leases) {
+            this.validateOrdinaryOpen(lease);
+            if (lease.deadline_ms <= Date.now()) continue;
+            const previous = leases.get(lease.request_id);
+            if (previous && !this.sameOrdinaryPayload(previous, lease)) {
+                throw new Error("conflicting native bootstrap ordinary lease");
+            }
+            leases.set(lease.request_id, structuredClone(lease));
+        }
+        this.browserBootId = payload.browser_boot_id;
+        for (const [requestId, lease] of leases) {
+            const previous = this.bootstrapLeases.get(requestId);
+            if (previous && !this.sameOrdinaryPayload(previous, lease)) {
+                throw new Error("conflicting repeated native bootstrap ordinary lease");
+            }
+            this.bootstrapLeases.set(requestId, lease);
+        }
+        if (this.chrome.storage?.session) {
+            await this.chrome.storage.session.set({
+                [CURRENT_BROWSER_BOOT_KEY]: this.browserBootId,
+            });
+        }
+        if (!this.bootstrapResolved) {
+            this.bootstrapResolved = true;
+            this.resolveBootstrap();
+        }
+    }
+
+    async waitForNativeBootstrap() {
+        await this.bootstrapReady;
+        if (!this.browserBootId) throw new Error("native browser boot identity is unavailable");
     }
 
     restoreWhenReady() {
@@ -1352,7 +1417,10 @@ class WorkspaceExecutor {
         for (const window of windows) {
             if (window.type !== "normal" || this.windowOwners.has(window.id)) continue;
             const tabs = await this.chrome.tabs.query({windowId: window.id});
-            if (tabs.some(tab => this.parseStatusUrl(tab.url) !== null)) continue;
+            if (tabs.some(tab => this.parseStatusUrl(tab.url) !== null ||
+                    tab.url?.startsWith(this.chrome.runtime.getURL("ordinary-staging.html#")))) {
+                continue;
+            }
             ordinary.push(window);
         }
         return ordinary;
@@ -1430,7 +1498,217 @@ class WorkspaceExecutor {
             left.focus === right.focus && left.deadline_ms === right.deadline_ms;
     }
 
-    async ordinaryOpen(payload) {
+    async stageBootstrapLeaseIfNeeded() {
+        const valid = [...this.bootstrapLeases.values()].filter(lease =>
+            lease.deadline_ms > Date.now());
+        if (valid.length === 0) return;
+        if (valid.length > 1) {
+            this.reportAdvisoryError(new Error(
+                "multiple cold ordinary launch leases are pending; bootstrap is serialized"));
+        }
+        const lease = valid.sort((left, right) => left.deadline_ms - right.deadline_ms)[0];
+        const nonce = lease.request_id;
+        const stagingUrl = this.ordinaryStagingUrl(nonce);
+        const allTabs = await this.chrome.tabs.query({});
+        const existing = allTabs.filter(tab => tab.url === stagingUrl);
+        if (existing.length > 1) {
+            throw new Error("cold ordinary launch staging identity is ambiguous");
+        }
+        if (existing.length === 1) {
+            lease.bootstrapContext = {
+                windowId: existing[0].windowId,
+                stagingTabId: existing[0].id,
+                originalActiveTabId: existing[0].id,
+                createdWindow: true,
+                baselineWindowIds: [],
+                nonce,
+            };
+            this.rememberOrdinaryWindow(existing[0].windowId);
+            this.windowRegistry.set(existing[0].windowId, {
+                windowId: existing[0].windowId,
+                kind: "ordinary",
+                snapshot: this.sessionSnapshot([existing[0]]),
+                tabIds: [existing[0].id],
+                revision: ++this.windowRegistryRevision,
+            });
+            return;
+        }
+        const windows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
+        const ordinary = [];
+        for (const window of windows) {
+            if (window.type !== "normal" || this.windowOwners.has(window.id)) continue;
+            const tabs = allTabs.filter(tab => tab.windowId === window.id);
+            if (tabs.some(tab => this.parseStatusUrl(tab.url) !== null ||
+                    tab.url?.startsWith(this.chrome.runtime.getURL("ordinary-staging.html#")))) {
+                continue;
+            }
+            ordinary.push(window);
+        }
+        if (ordinary.length > 0) return;
+        const stagingWindow = await this.chrome.windows.create({
+            url: stagingUrl, focused: false, type: "normal",
+        });
+        const tabs = Array.isArray(stagingWindow?.tabs) ? stagingWindow.tabs :
+            await this.chrome.tabs.query({windowId: stagingWindow?.id});
+        const staging = tabs.filter(tab => tab.url === stagingUrl);
+        if (!Number.isInteger(stagingWindow?.id) || staging.length !== 1 ||
+                !Number.isInteger(staging[0].id)) {
+            throw new Error("cold ordinary launch staging window is not exact");
+        }
+        lease.bootstrapContext = {
+            windowId: stagingWindow.id,
+            stagingTabId: staging[0].id,
+            originalActiveTabId: staging[0].id,
+            createdWindow: true,
+            baselineWindowIds: [],
+            nonce,
+        };
+        this.rememberOrdinaryWindow(stagingWindow.id);
+        this.windowRegistry.set(stagingWindow.id, {
+            windowId: stagingWindow.id,
+            kind: "ordinary",
+            snapshot: this.sessionSnapshot(staging),
+            tabIds: [staging[0].id],
+            revision: ++this.windowRegistryRevision,
+        });
+    }
+
+    async coldOrdinaryLedger() {
+        if (!this.chrome.storage?.local) return [];
+        const local = await this.chrome.storage.local.get([COLD_ORDINARY_LEDGER_KEY]);
+        return Array.isArray(local[COLD_ORDINARY_LEDGER_KEY]) ?
+            local[COLD_ORDINARY_LEDGER_KEY] : [];
+    }
+
+    async persistColdOrdinaryLedger(entries) {
+        await this.localStateWrite(COLD_ORDINARY_LEDGER_KEY, () => entries.slice(-256));
+    }
+
+    async cleanupStaleManagedBeforeBootstrap() {
+        const stagingWindowIds = new Set([...this.bootstrapLeases.values()]
+            .map(lease => lease.bootstrapContext?.windowId).filter(Number.isInteger));
+        if (stagingWindowIds.size === 0) return;
+        let candidates = [
+            ...this.workspaces.values(),
+            ...this.startupManagedRecords,
+        ].filter((record, index, records) => !stagingWindowIds.has(record.windowId) &&
+            records.findIndex(candidate => candidate.windowId === record.windowId) === index);
+        const durable = this.chrome.storage?.session ?
+            await this.chrome.storage.session.get(["abushWorkspaces"]) : {abushWorkspaces: []};
+        for (const saved of durable.abushWorkspaces || []) {
+            if (!Number.isInteger(saved?.windowId) || stagingWindowIds.has(saved.windowId) ||
+                    candidates.some(record => record.windowId === saved.windowId)) continue;
+            const ownership = await this.currentOwnedMarker(saved.nonce);
+            if (this.savedOwnershipMatches(ownership, saved)) candidates.push(saved);
+        }
+        if (candidates.length === 0 && this.chrome.storage?.local) {
+            const local = await this.chrome.storage.local.get([OWNED_MARKERS_KEY]);
+            candidates = Object.values(local[OWNED_MARKERS_KEY] || {})
+                .filter(ownership => ownership?.version === 2 &&
+                    !stagingWindowIds.has(ownership.window_id))
+                .map(ownership => ({
+                    remoteKey: ownership.binding?.remote_key,
+                    principalId: `startup-${ownership.nonce}`,
+                    workspaceId: ownership.binding?.workspace_id,
+                    connectionId: "startup-cleanup",
+                    executorFence: {executor_id: "startup-cleanup", epoch: 1},
+                    logicalWindowId: ownership.logical_window_id,
+                    logicalPageId: ownership.logical_page_id,
+                    windowGeneration: ownership.window_generation,
+                    pageGeneration: ownership.page_generation,
+                    windowId: ownership.window_id,
+                    x11WindowId: ownership.xid,
+                    statusTabIds: ownership.status_tab_ids,
+                    pageTabId: ownership.page_tab_id,
+                    nonce: ownership.nonce,
+                    connectionDisplayName: ownership.binding?.display_title,
+                })).filter(record => record.remoteKey && record.workspaceId &&
+                    Number.isInteger(record.windowId));
+        }
+        if (candidates.length === 0) return;
+        for (const record of candidates) {
+            if (!this.workspaces.has(this.key(record.remoteKey, record.principalId))) {
+                record.debuggerAttached = false;
+                this.install(record);
+            }
+        }
+        const stale = candidates.map(record => ({id: record.windowId, type: "normal"}));
+        await this.closeManagedWindowSet(stale);
+    }
+
+    async coldOrdinaryIdentity(payload) {
+        const digest = await crypto.subtle.digest(
+            "SHA-256", new TextEncoder().encode(payload.url));
+        const urlHash = [...new Uint8Array(digest)]
+            .map(value => value.toString(16).padStart(2, "0")).join("");
+        return {
+            request_id: payload.request_id,
+            url_hash: urlHash,
+            deadline_ms: payload.deadline_ms,
+        };
+    }
+
+    sameColdOrdinaryIdentity(entry, identity) {
+        return entry.request_id === identity.request_id &&
+            entry.url_hash === identity.url_hash &&
+            entry.deadline_ms === identity.deadline_ms;
+    }
+
+    async executeBootstrapLeases() {
+        let ledger = await this.coldOrdinaryLedger();
+        for (const [requestId, payload] of [...this.bootstrapLeases]) {
+            if (payload.deadline_ms <= Date.now()) {
+                this.bootstrapLeases.delete(requestId);
+                continue;
+            }
+            const identity = await this.coldOrdinaryIdentity(payload);
+            const known = ledger.find(entry => entry.request_id === requestId);
+            if (known && !this.sameColdOrdinaryIdentity(known, identity)) {
+                this.reportAdvisoryError(new Error(
+                    "conflicting durable cold ordinary launch identity"));
+                continue;
+            }
+            if (known?.phase === "completed") {
+                this.bootstrapLeases.delete(requestId);
+                this.rememberOrdinaryCompletion(payload, known.completion);
+                await this.ordinaryCompletion(payload, known.completion);
+                continue;
+            }
+            if (known?.phase === "effect_started") {
+                this.bootstrapLeases.delete(requestId);
+                ledger = ledger.map(entry => entry === known ?
+                    {...entry, phase: "completed", completion: "unknown"} : entry);
+                await this.persistColdOrdinaryLedger(ledger);
+                this.rememberOrdinaryCompletion(payload, "unknown");
+                await this.ordinaryCompletion(payload, "unknown");
+                continue;
+            }
+            const context = payload.bootstrapContext;
+            delete payload.bootstrapContext;
+            this.bootstrapLeases.delete(requestId);
+            const started = {
+                version: 1,
+                ...identity,
+                phase: "effect_started",
+                completion: null,
+                browser_boot_id: this.browserBootId,
+            };
+            ledger = [...ledger.filter(entry => entry.request_id !== requestId), started];
+            await this.persistColdOrdinaryLedger(ledger);
+            try {
+                const completion = await this.ordinaryOpen(payload, context || null, true);
+                const completed = {...started, phase: "completed", completion};
+                ledger = [...ledger.filter(entry => entry.request_id !== requestId), completed];
+                await this.persistColdOrdinaryLedger(ledger);
+                await this.ordinaryCompletion(payload, completion);
+            } catch (error) {
+                this.reportAdvisoryError(new AggregateError([error],
+                    "cold ordinary launch lease failed"));
+            }
+        }
+    }
+
+    async ordinaryOpen(payload, bootstrapContext = null, durableBootstrap = false) {
         this.validateOrdinaryOpen(payload);
         const completed = this.completedOrdinaryOperations.get(payload.request_id);
         if (completed) {
@@ -1448,7 +1726,8 @@ class WorkspaceExecutor {
             return existing.operation;
         }
         const operation = this.ordinaryTail.catch(() => {})
-            .then(() => this.performOrdinaryOpen(payload));
+            .then(() => this.performOrdinaryOpen(payload, bootstrapContext,
+                !durableBootstrap));
         this.ordinaryTail = operation;
         operation.finally(() => {
             if (this.ordinaryOperations.get(payload.request_id)?.operation === operation) {
@@ -1580,18 +1859,18 @@ class WorkspaceExecutor {
         return true;
     }
 
-    async performOrdinaryOpen(payload) {
-        let context = null;
+    async performOrdinaryOpen(payload, bootstrapContext = null, publishCompletion = true) {
+        let context = bootstrapContext;
         let navigationRequested = false;
         let completion = "not_applied";
-        const nonce = crypto.randomUUID().replaceAll("-", "");
+        const nonce = bootstrapContext?.nonce || crypto.randomUUID().replaceAll("-", "");
         const isCancelled = () => this.ordinaryOperations.get(payload.request_id)?.cancelled === true;
         try {
             const url = this.validateOrdinaryOpen(payload);
             if (isCancelled() || Date.now() >= payload.deadline_ms) {
                 throw new Error("ordinary-open deadline expired or cancelled");
             }
-            context = await this.selectOrdinaryWindow();
+            if (context === null) context = await this.selectOrdinaryWindow();
             if (context === null) {
                 const windows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
                 context = {
@@ -1619,7 +1898,7 @@ class WorkspaceExecutor {
                         tab.url === this.ordinaryStagingUrl(nonce));
                     if (stagingTabs.length === 1) context.stagingTabId = stagingTabs[0].id;
                 }
-            } else {
+            } else if (!Number.isInteger(context.stagingTabId)) {
                 if (Date.now() >= payload.deadline_ms) {
                     throw new Error("ordinary-open deadline expired");
                 }
@@ -1629,10 +1908,19 @@ class WorkspaceExecutor {
                     active: true,
                 });
                 context.stagingTabId = stagingTab.id;
+            } else {
+                await this.chrome.tabs.update(context.stagingTabId, {active: true});
             }
             if (!Number.isInteger(context.windowId) ||
                     !Number.isInteger(context.stagingTabId)) {
                 throw new Error("ordinary staging window has no exact tab");
+            }
+            if (bootstrapContext) {
+                const candidate = await this.chrome.tabs.get(context.stagingTabId);
+                if (candidate.url === this.ordinaryStagingUrl(nonce) &&
+                        candidate.windowId === context.windowId) {
+                    candidate.title = candidate.title || `${ORDINARY_PREFIX}${nonce}`;
+                }
             }
             const staging = await this.chrome.tabs.get(context.stagingTabId);
             if (staging.windowId !== context.windowId || staging.active !== true) {
@@ -1681,6 +1969,7 @@ class WorkspaceExecutor {
             } else {
                 try {
                     await this.chrome.tabs.update(context.stagingTabId, {url, active: true});
+                    navigationRequested = true;
                 } catch (_) {
                     throw new Error("ordinary navigation completion is unknown");
                 }
@@ -1708,7 +1997,7 @@ class WorkspaceExecutor {
             }
         }
         this.rememberOrdinaryCompletion(payload, completion);
-        await this.ordinaryCompletion(payload, completion);
+        if (publishCompletion) await this.ordinaryCompletion(payload, completion);
         return completion;
     }
 
@@ -1765,33 +2054,37 @@ class WorkspaceExecutor {
     }
 
     async restoreHostLocked() {
+        if (!this.browserBootId) throw new Error("browser boot identity is required for handoff");
         const local = await this.chrome.storage.local.get([RESTORE_HOST_KEY]);
-        let intent = local[RESTORE_HOST_KEY];
-        const exact = Boolean(intent && typeof intent === "object" && intent.version === 1 &&
-            typeof intent.sessionId === "string" && intent.sessionId);
-        if (intent !== true && !exact && intent?.version !== 2) return;
-        if (intent === true || exact) {
-            intent = {
-                version: 2,
-                phase: "prepared",
-                sessionId: exact ? intent.sessionId : null,
-                snapshot: exact ? intent.snapshot : null,
-            };
-            await this.localStateWriteLocked(RESTORE_HOST_KEY, intent);
-        }
-        if (![
-            "prepared", "inflight", "verified", "consumed", "unknown",
-        ].includes(intent.phase)) return;
-        if (intent.phase === "unknown") {
-            if (await this.restoreHostAlreadyLive(intent)) await this.consumeRestoreHost(intent);
+        const intent = local[RESTORE_HOST_KEY];
+        if (!intent || typeof intent !== "object" || intent.version !== 3 ||
+                !["prepared", "inflight", "unknown", "verified", "consumed"]
+                    .includes(intent.phase) ||
+                !["exact", "ambiguous"].includes(intent.outcome) ||
+                typeof intent.source_boot !== "string" ||
+                typeof intent.target_boot !== "string" || !intent.target_boot ||
+                (intent.sessionId !== null && typeof intent.sessionId !== "string")) return;
+        if (intent.source_boot === this.browserBootId ||
+                intent.target_boot === this.browserBootId) return;
+        if (intent.outcome === "ambiguous") {
+            this.reportAdvisoryError(new Error(
+                "ordinary close handoff is ambiguous and remains pending"));
             return;
         }
         if (intent.phase === "consumed") {
             await this.localStateWriteLocked(RESTORE_HOST_KEY, false);
             return;
         }
-        const sessions = this.chrome.sessions;
-        if (intent.phase === "inflight") {
+        if (intent.phase === "verified") {
+            await this.consumeRestoreHost(intent);
+            return;
+        }
+        if (intent.phase === "unknown" || intent.phase === "inflight") {
+            if (await this.restoreHostAlreadyLive(intent)) {
+                await this.consumeRestoreHost(intent);
+                return;
+            }
+            if (intent.phase === "unknown") return;
             for (let attempt = 0; attempt < 20; attempt++) {
                 if (await this.restoreHostAlreadyLive(intent)) {
                     await this.consumeRestoreHost(intent);
@@ -1799,76 +2092,73 @@ class WorkspaceExecutor {
                 }
                 if (attempt + 1 < 20) await new Promise(resolve => setTimeout(resolve, 25));
             }
-            const entries = sessions?.getRecentlyClosed ?
-                await sessions.getRecentlyClosed({maxResults: 25}) : null;
-            const exactSession = (entries || []).filter(entry =>
+            const entries = this.chrome.sessions?.getRecentlyClosed ?
+                await this.recentlyClosedEntries() : null;
+            const stillRestorable = (entries || []).filter(entry =>
                 this.sessionEntryId(entry) === intent.sessionId &&
-                (!intent.snapshot || this.sessionMatchesSnapshot(entry, intent.snapshot)));
-            if (exactSession.length > 1) {
-                throw new Error("ambiguous inflight ordinary restore snapshot");
-            }
-            if (entries !== null && exactSession.length === 0) {
-                const unknown = {...intent, phase: "unknown"};
-                await this.localStateWriteLocked(RESTORE_HOST_KEY, unknown);
+                this.sessionMatchesSnapshot(entry, intent.snapshot));
+            if (entries !== null && stillRestorable.length === 0) {
+                await this.localStateWriteLocked(RESTORE_HOST_KEY,
+                    {...intent, phase: "unknown"});
                 this.reportAdvisoryError(new Error(
                     "ordinary host restore was accepted but is not yet visible"));
-                return;
             }
-            if (entries === null) return;
-            await this.consumeRestoreHost(intent);
             return;
         }
         if (await this.restoreHostAlreadyLive(intent)) {
             await this.consumeRestoreHost(intent);
             return;
         }
-        let sessionId = intent.sessionId;
-        if (!sessionId && sessions?.getRecentlyClosed) {
-            const entries = await sessions.getRecentlyClosed({maxResults: 25});
-            const matches = intent.snapshot ?
-                entries.filter(entry => this.sessionMatchesSnapshot(entry, intent.snapshot)) :
-                entries.filter(entry => this.isOrdinarySessionEntry(entry));
-            if (matches.length > 1) {
-                throw new Error("ambiguous ordinary restore snapshot");
-            }
-            sessionId = this.sessionEntryId(matches[0]);
-        }
-        if (!sessionId || !sessions?.restore) {
-            if (intent.snapshot) throw new Error("exact ordinary restore snapshot is unavailable");
-            const ordinary = await this.ordinaryWindows();
-            if (ordinary.length === 0) {
-                await this.chrome.windows.create({
-                    url: "about:blank", focused: false, type: "normal",
-                });
-            }
-            await this.consumeRestoreHost(intent);
+        if (!intent.sessionId || !intent.snapshot || !this.chrome.sessions?.restore) {
+            this.reportAdvisoryError(new Error(
+                "exact ordinary restore identity is unavailable; handoff retained"));
             return;
         }
-        intent = {...intent, phase: "inflight", sessionId};
-        await this.localStateWriteLocked(RESTORE_HOST_KEY, intent);
+        let entries = this.chrome.sessions?.getRecentlyClosed ?
+            await this.recentlyClosedEntries() : null;
+        if (entries !== null) {
+            const exact = entries.filter(entry =>
+                this.sessionEntryId(entry) === intent.sessionId &&
+                this.sessionMatchesSnapshot(entry, intent.snapshot));
+            if (exact.length !== 1) {
+                this.reportAdvisoryError(new Error(
+                    "exact ordinary restore session is unavailable; handoff retained"));
+                return;
+            }
+        }
+        const inflight = {...intent, phase: "inflight", target_boot: this.browserBootId};
+        await this.localStateWriteLocked(RESTORE_HOST_KEY, inflight);
         let restored;
         try {
-            restored = await sessions.restore(sessionId);
+            restored = await this.chrome.sessions.restore(intent.sessionId);
         } catch (error) {
-            if (!intent.snapshot || !sessions.getRecentlyClosed) throw error;
-            const entries = await sessions.getRecentlyClosed({maxResults: 25});
-            const matches = entries.filter(entry =>
+            entries = this.chrome.sessions?.getRecentlyClosed ?
+                await this.recentlyClosedEntries() : null;
+            const exactStillPresent = entries?.some(entry =>
+                this.sessionEntryId(entry) === intent.sessionId &&
                 this.sessionMatchesSnapshot(entry, intent.snapshot));
-            if (matches.length !== 1) {
-                throw new Error("exact ordinary restore snapshot is ambiguous or unavailable");
+            if (exactStillPresent) {
+                await this.localStateWriteLocked(RESTORE_HOST_KEY,
+                    {...inflight, phase: "prepared", target_boot: "next"});
+                this.reportAdvisoryError(new AggregateError([error],
+                    "exact ordinary restore failed and remains pending"));
+            } else {
+                await this.localStateWriteLocked(RESTORE_HOST_KEY,
+                    {...inflight, phase: "unknown"});
+                this.reportAdvisoryError(new AggregateError([error],
+                    "ordinary restore completion is unknown"));
             }
-            sessionId = this.sessionEntryId(matches[0]);
-            intent = {...intent, phase: "inflight", sessionId};
-            await this.localStateWriteLocked(RESTORE_HOST_KEY, intent);
-            restored = await sessions.restore(sessionId);
+            return;
         }
-        const resultVerified = intent.snapshot ?
-            this.sessionMatchesSnapshot(restored, intent.snapshot) :
-            this.isOrdinarySessionEntry(restored);
-        if (!resultVerified && !await this.restoreHostAlreadyLive(intent)) {
-            throw new Error("ordinary host restore was not verified live");
+        if (!this.sessionMatchesSnapshot(restored, intent.snapshot) &&
+                !await this.restoreHostAlreadyLive(intent)) {
+            await this.localStateWriteLocked(RESTORE_HOST_KEY,
+                {...inflight, phase: "unknown"});
+            this.reportAdvisoryError(new Error(
+                "ordinary host restore was not verified live"));
+            return;
         }
-        await this.consumeRestoreHost(intent);
+        await this.consumeRestoreHost(inflight);
     }
 
     async restoreHostAlreadyLive(intent) {
@@ -1885,7 +2175,7 @@ class WorkspaceExecutor {
     }
 
     async consumeRestoreHost(intent) {
-        const verified = {...intent, phase: "verified"};
+        const verified = {...intent, phase: "verified", target_boot: this.browserBootId};
         await this.localStateWriteLocked(RESTORE_HOST_KEY, verified);
         await this.localStateWriteLocked(RESTORE_HOST_KEY,
             {...verified, phase: "consumed"});
@@ -1897,25 +2187,94 @@ class WorkspaceExecutor {
     }
 
     async markRestoreHost(intent) {
-        if (!this.chrome.storage?.local) return;
-        const ledger = intent === true ? {
-            version: 2, phase: "prepared", sessionId: null, snapshot: null,
-        } : {
-            version: 2,
+        if (!this.chrome.storage?.local || !this.browserBootId) {
+            throw new Error("browser boot identity is required before durable handoff");
+        }
+        const ledger = {
+            version: 3,
             phase: "prepared",
+            outcome: intent?.outcome || (intent?.sessionId ? "exact" : "ambiguous"),
+            source_boot: this.browserBootId,
+            target_boot: "next",
             sessionId: intent?.sessionId || null,
             snapshot: intent?.snapshot || null,
+            registry_revision: intent?.registryRevision ?? this.windowRegistryRevision,
         };
         await this.localStateWrite(RESTORE_HOST_KEY, () => ledger);
     }
 
-    rememberWindowSnapshot(windowId) {
+    classifyWindow(windowId, tabs, type = "normal") {
+        if (type !== "normal") return "transient";
+        if (this.windowOwners.has(windowId) || tabs.some(tab =>
+            this.parseStatusUrl(tab.url) !== null)) return "managed";
+        if (tabs.some(tab => typeof tab.url === "string" &&
+                tab.url.startsWith(this.chrome.runtime.getURL("ordinary-staging.html#")))) {
+            return "transient";
+        }
+        return "ordinary";
+    }
+
+    registryFingerprint(tabs) {
+        return this.sessionSnapshot([...tabs].sort((left, right) =>
+            (left.index ?? 0) - (right.index ?? 0)));
+    }
+
+    async refreshWindowRegistry() {
+        const [windows, tabs] = await Promise.all([
+            this.chrome.windows.getAll({windowTypes: ["normal"]}),
+            this.chrome.tabs.query({}),
+        ]);
+        const tabsByWindow = new Map();
+        for (const tab of tabs) {
+            if (!tabsByWindow.has(tab.windowId)) tabsByWindow.set(tab.windowId, []);
+            tabsByWindow.get(tab.windowId).push(tab);
+        }
+        const next = new Map();
+        const revision = ++this.windowRegistryRevision;
+        for (const window of windows) {
+            const windowTabs = tabsByWindow.get(window.id) || [];
+            next.set(window.id, {
+                windowId: window.id,
+                kind: this.classifyWindow(window.id, windowTabs, window.type),
+                snapshot: this.registryFingerprint(windowTabs),
+                tabIds: windowTabs.map(tab => tab.id).filter(Number.isInteger),
+                revision,
+            });
+        }
+        for (const [windowId, registry] of this.windowRegistry) {
+            if (!next.has(windowId) && registry.kind === "managed" &&
+                    this.windowOwners.has(windowId)) next.set(windowId, registry);
+        }
+        this.windowRegistry = next;
+        return revision;
+    }
+
+    freezeClosingWindow(windowId) {
+        const record = this.windowRegistry.get(windowId);
+        if (!record) return false;
+        this.removedHostSnapshots.set(windowId, structuredClone(record.snapshot));
+        this.windowRegistry.set(windowId, {...record, closing: true});
+        return true;
+    }
+
+    async rememberWindowSnapshot(windowId) {
+        const frozen = this.windowRegistry.get(windowId);
+        if (frozen?.closing) return;
         const previous = this.snapshotTails.get(windowId) || Promise.resolve();
         const update = previous.catch(() => {}).then(() => this.chrome.tabs.query({windowId}))
             .then(tabs => {
                 if (tabs.length === 0 ||
                         tabs.some(tab => this.parseStatusUrl(tab.url) !== null)) return;
                 this.removedHostSnapshots.set(windowId, this.sessionSnapshot(tabs));
+                const prior = this.windowRegistry.get(windowId);
+                this.windowRegistry.set(windowId, {
+                    windowId,
+                    kind: this.classifyWindow(windowId, tabs, "normal"),
+                    snapshot: this.registryFingerprint(tabs),
+                    tabIds: tabs.map(tab => tab.id).filter(Number.isInteger),
+                    revision: ++this.windowRegistryRevision,
+                    closing: prior?.closing === true,
+                });
             }).catch(() => {});
         this.snapshotTails.set(windowId, update);
         return update.finally(() => {
@@ -1942,27 +2301,50 @@ class WorkspaceExecutor {
         this.removedHostSnapshots.delete(windowId);
         if (!snapshot || !this.chrome.sessions?.getRecentlyClosed) return null;
         const knownSessionIds = this.recentSessionIds || new Set();
+        let latestEntries = [];
         for (let attempt = 0; attempt < 20; attempt++) {
-            const entries = await this.recentlyClosedEntries();
-            const window = entries.find(entry => {
+            latestEntries = await this.recentlyClosedEntries();
+            const candidates = latestEntries.filter(entry => {
                 const sessionId = this.sessionEntryId(entry);
                 return sessionId && !knownSessionIds.has(sessionId) &&
                     this.sessionMatchesSnapshot(entry, snapshot);
             });
-            if (window) {
-                this.recentSessionIds = new Set(entries.map(entry => this.sessionEntryId(entry))
-                    .filter(Boolean));
+            if (candidates.length === 1) {
+                this.recentSessionIds = new Set(latestEntries.map(entry =>
+                    this.sessionEntryId(entry)).filter(Boolean));
                 return {
-                    version: 1,
-                    sessionId: this.sessionEntryId(window),
+                    version: 3,
+                    outcome: "exact",
+                    sessionId: this.sessionEntryId(candidates[0]),
                     snapshot,
+                    registryRevision: this.windowRegistryRevision,
                 };
             }
+            if (candidates.length > 1) break;
             if (attempt + 1 < 20) {
                 await new Promise(resolve => setTimeout(resolve, 25));
             }
         }
-        return null;
+        this.recentSessionIds = new Set(latestEntries.map(entry =>
+            this.sessionEntryId(entry)).filter(Boolean));
+        const ambiguity = {
+            version: 1,
+            source_boot: this.browserBootId,
+            registry_revision: this.windowRegistryRevision,
+            snapshot,
+            observed_session_ids: latestEntries.map(entry => this.sessionEntryId(entry))
+                .filter(sessionId => sessionId && !knownSessionIds.has(sessionId)),
+        };
+        await this.localStateUpdate(CLOSE_AMBIGUITIES_KEY, entries => [
+            ...(Array.isArray(entries) ? entries : []), ambiguity,
+        ].slice(-64), []);
+        return {
+            version: 3,
+            outcome: "ambiguous",
+            sessionId: null,
+            snapshot,
+            registryRevision: this.windowRegistryRevision,
+        };
     }
 
     async closeOrphanedStatusWindows(liveWindowIds, ownedMarkers) {
@@ -2199,21 +2581,48 @@ class WorkspaceExecutor {
     }
 
     async restore() {
+        await this.waitForNativeBootstrap();
+        await this.refreshWindowRegistry();
+        await this.restoreHost();
+        await this.stageBootstrapLeaseIfNeeded();
+        const bootstrapStaging = [...this.bootstrapLeases.values()]
+            .map(lease => lease.bootstrapContext?.windowId)
+            .filter(Number.isInteger);
         await this.restoreReplacementLedger();
         await this.restoreExecutionLedger();
         await this.restoreOperationCancels();
         await this.restorePendingTransactions();
+        await this.restoreManagedCleanupBatch();
         await this.restoreCleanupTombstones();
-        await this.restoreHost();
         await this.restoreRetireLedger();
         await this.restoreTopologyOutbox();
-        const liveWindowIds = new Set();
+        const liveWindowIds = new Set(bootstrapStaging);
         let removed = false;
         const seenKeys = new Set();
         const seenPhysical = new Set();
         const ownedMarkers = this.chrome.storage?.local ?
             (await this.chrome.storage.local.get([OWNED_MARKERS_KEY]))[OWNED_MARKERS_KEY] || {} :
             {};
+        this.startupManagedRecords = Object.values(ownedMarkers)
+            .filter(ownership => ownership?.version === 2)
+            .map(ownership => ({
+                remoteKey: ownership.binding?.remote_key,
+                principalId: `startup-${ownership.nonce}`,
+                workspaceId: ownership.binding?.workspace_id,
+                connectionId: "startup-cleanup",
+                executorFence: {executor_id: "startup-cleanup", epoch: 1},
+                logicalWindowId: ownership.logical_window_id,
+                logicalPageId: ownership.logical_page_id,
+                windowGeneration: ownership.window_generation,
+                pageGeneration: ownership.page_generation,
+                windowId: ownership.window_id,
+                x11WindowId: ownership.xid,
+                statusTabIds: ownership.status_tab_ids,
+                pageTabId: ownership.page_tab_id,
+                nonce: ownership.nonce,
+                connectionDisplayName: ownership.binding?.display_title,
+            })).filter(record => record.remoteKey && record.workspaceId &&
+                Number.isInteger(record.windowId));
         if (this.chrome.storage?.session) {
             const {abushWorkspaces = [], revision = 0} =
                 await this.chrome.storage.session.get(["abushWorkspaces", "revision"]);
@@ -2264,11 +2673,26 @@ class WorkspaceExecutor {
             }
         }
         await this.restoreReplacementLedger({consume: true});
+        if (this.bootstrapLeases.size > 0) {
+            for (const record of this.startupManagedRecords) {
+                try {
+                    const stillPresent = await this.chrome.windows.get(record.windowId);
+                    if (stillPresent?.type === "normal") this.install(record);
+                } catch (error) {
+                    this.reportAdvisoryError(new AggregateError([error],
+                        "startup managed window could not be inspected before cold cleanup"));
+                }
+            }
+            await this.cleanupStaleManagedBeforeBootstrap();
+        }
         await this.closeOrphanedStatusWindows(liveWindowIds, ownedMarkers);
+        await this.executeBootstrapLeases();
+        this.startupManagedRecords = [];
         if (removed) await this.persist();
         await this.convergeRestoredTopologyOutbox();
         const normalWindows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
         await Promise.all(normalWindows.map(window => this.rememberWindowSnapshot(window.id)));
+        await this.refreshWindowRegistry();
         await this.primeRecentlyClosedSessions();
         await this.initializeOrdinaryMru();
         await this.flushExecutionLedger();
@@ -2278,6 +2702,14 @@ class WorkspaceExecutor {
         const key = this.key(record.remoteKey, record.principalId);
         this.workspaces.set(key, record);
         this.windowOwners.set(record.windowId, key);
+        const registry = this.windowRegistry.get(record.windowId);
+        this.windowRegistry.set(record.windowId, registry ? {...registry, kind: "managed"} : {
+            windowId: record.windowId,
+            kind: "managed",
+            snapshot: null,
+            tabIds: [record.pageTabId, ...record.statusTabIds],
+            revision: this.windowRegistryRevision,
+        });
         this.tabOwners.set(record.pageTabId, key);
         for (const tabId of record.statusTabIds) this.statusTabOwners.set(tabId, key);
     }
@@ -3819,14 +4251,34 @@ class WorkspaceExecutor {
     }
 
     async replaceClosedHostWindow(removedWindowId) {
+        if (!this.browserBootId) throw new Error("browser boot identity is unavailable");
         const normalWindows = await this.visibleNormalWindows(removedWindowId);
-        if (normalWindows.length === 0 || normalWindows.some(window =>
-            !this.windowOwners.has(window.id))) return;
-        const intent = await this.recentlyClosedHostIntent(removedWindowId);
-        if (!intent) throw new Error("closed Chrome host session was not captured");
+        const registryOrdinary = [...this.windowRegistry.values()].filter(record =>
+            record.windowId !== removedWindowId && record.kind === "ordinary" && !record.closing);
+        const liveOrdinary = normalWindows.filter(window => !this.windowOwners.has(window.id));
+        if (registryOrdinary.length > 0 || liveOrdinary.length > 0 || normalWindows.length === 0) {
+            await this.primeRecentlyClosedSessions();
+            return;
+        }
+        const intent = await this.recentlyClosedHostIntent(removedWindowId) || {
+            outcome: "ambiguous", sessionId: null,
+            snapshot: this.removedHostSnapshots.get(removedWindowId) || null,
+            registryRevision: this.windowRegistryRevision,
+        };
         await this.markRestoreHost(intent);
         await this.closeManagedWindowSet(normalWindows);
-        await this.chrome.windows.create({url: "about:blank", focused: false, type: "normal"});
+    }
+
+    async persistManagedCleanupBatch(batch) {
+        await this.localStateWrite(MANAGED_CLEANUP_BATCH_KEY, () => batch);
+    }
+
+    cleanupBatchRecord(record) {
+        return {
+            key: this.key(record.remoteKey, record.principalId),
+            record: this.persistedRecord(record),
+            phase: "prepared",
+        };
     }
 
     async closeManagedWindowSet(normalWindows) {
@@ -3836,22 +4288,78 @@ class WorkspaceExecutor {
             return record?.windowId === window.id ? record : null;
         }).filter(record => record !== null);
         if (records.length === 0) return;
+        const batch = {
+            version: 1,
+            batch_id: crypto.randomUUID(),
+            source_boot: this.browserBootId,
+            phase: "prepared",
+            records: records.map(record => this.cleanupBatchRecord(record)),
+        };
+        await this.persistManagedCleanupBatch(batch);
         await this.persistWithoutRecords(records);
-        for (const record of records) {
-            await this.detach(record.pageTabId);
+        batch.phase = "records_removed";
+        await this.persistManagedCleanupBatch(batch);
+        const failures = [];
+        for (const [index, record] of records.entries()) {
+            const entry = batch.records[index];
+            this.closingManagedWindows.add(record.windowId);
+            entry.phase = "converging";
+            await this.persistManagedCleanupBatch(batch);
             try {
-                await this.chrome.windows.remove(record.windowId);
-            } catch (_) {
-                if (await this.isLive(record)) throw new Error("managed window did not close");
+                await this.convergeManagedTopology(record, {closeWindow: true, report: false,
+                    persisted: true});
+                entry.phase = "removed";
+            } catch (error) {
+                entry.phase = "pending";
+                entry.error = error?.message || String(error);
+                failures.push(error);
             }
-            await this.disownMarker(record.nonce);
+            await this.persistManagedCleanupBatch(batch);
+        }
+        if (failures.length === 0) {
+            await this.persistManagedCleanupBatch(false);
+        } else {
+            this.reportAdvisoryError(new AggregateError(failures,
+                "managed shutdown cleanup remains pending"));
         }
     }
 
+    async restoreManagedCleanupBatch() {
+        if (!this.chrome.storage?.local) return;
+        const local = await this.chrome.storage.local.get([MANAGED_CLEANUP_BATCH_KEY]);
+        const batch = local[MANAGED_CLEANUP_BATCH_KEY];
+        if (!batch || batch.version !== 1 || !Array.isArray(batch.records)) return;
+        const failures = [];
+        for (const entry of batch.records) {
+            if (entry.phase === "removed" || !entry.record) continue;
+            const record = {...entry.record, debuggerAttached: false};
+            try {
+                this.closingManagedWindows.add(record.windowId);
+                await this.convergeManagedTopology(record, {closeWindow: true, report: false,
+                    persisted: true});
+                entry.phase = "removed";
+                delete entry.error;
+            } catch (error) {
+                entry.phase = "pending";
+                entry.error = error?.message || String(error);
+                failures.push(error);
+            }
+            await this.persistManagedCleanupBatch(batch);
+        }
+        if (failures.length === 0) await this.persistManagedCleanupBatch(false);
+        else this.reportAdvisoryError(new AggregateError(failures,
+            "managed shutdown cleanup remains pending"));
+    }
+
     async windowRemoved(windowId) {
+        const registry = this.windowRegistry.get(windowId);
+        this.windowRegistry.delete(windowId);
+        if (this.closingManagedWindows.delete(windowId)) return;
         const key = this.windowOwners.get(windowId);
         if (!key) {
-            await this.replaceClosedHostWindow(windowId);
+            if (registry?.kind === "ordinary" || this.removedHostSnapshots.has(windowId)) {
+                await this.replaceClosedHostWindow(windowId);
+            }
             return;
         }
         const record = this.workspaces.get(key);
@@ -3896,7 +4404,8 @@ class WorkspaceExecutor {
         }
     }
 
-    async convergeManagedTopology(record, {closeWindow = false, report = true} = {}) {
+    async convergeManagedTopology(record, {closeWindow = false, report = true,
+        persisted = false} = {}) {
         const page = this.pageRef(record);
         const live = await this.isLive(record);
         let physicalGone = await this.windowIsMissing(record.windowId);
@@ -3906,7 +4415,7 @@ class WorkspaceExecutor {
             const reportPayload = this.topologyReport(record, page);
             await this.queueTopologyReport(reportPayload);
         }
-        const persistError = await this.persistOrForget(record);
+        const persistError = persisted ? null : await this.persistOrForget(record);
         if (persistError) throw persistError;
         if (this.workspaces.get(this.key(record.remoteKey, record.principalId)) === record) {
             this.forget(record);
@@ -3991,6 +4500,10 @@ class WorkspaceExecutor {
     }
 
     async tabRemoved(tabId, info) {
+        if (info?.isWindowClosing) {
+            this.freezeClosingWindow(info.windowId);
+            return this.reconcileManagedTab(tabId, info);
+        }
         return this.reconcileManagedTab(tabId, info);
     }
 
@@ -4003,7 +4516,11 @@ class WorkspaceExecutor {
     }
 
     async tabMoved(tabId, moveInfo) {
-        return this.reconcileManagedTab(tabId, moveInfo);
+        const reconciled = await this.reconcileManagedTab(tabId, moveInfo);
+        if (!reconciled && Number.isInteger(moveInfo?.windowId)) {
+            await this.rememberWindowSnapshot(moveInfo.windowId);
+        }
+        return reconciled;
     }
 
     async persistReplacementLedger(entries) {

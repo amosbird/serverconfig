@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 
 const assert = require("assert");
+const crypto = require("crypto").webcrypto;
+global.crypto ||= crypto;
+const executorHash = async value => {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+    return [...new Uint8Array(digest)]
+        .map(byte => byte.toString(16).padStart(2, "0")).join("");
+};
+
 const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX,
     MARKER_IDS} = require(
     "../chromium/external-links/extension/workspace.js");
@@ -364,7 +372,11 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         }
         return {};
     };
-    return {executor: new WorkspaceExecutor(chrome, native), calls};
+    const executor = new WorkspaceExecutor(chrome, native);
+    executor.browserBootId = "test-browser-boot";
+    executor.bootstrapResolved = true;
+    executor.resolveBootstrap();
+    return {executor, calls};
 }
 
 (async () => {
@@ -1054,37 +1066,36 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
-        const localState = {abushRestoreHost: true};
+        const localState = {abushRestoreHost: {
+            version: 3, phase: "prepared", outcome: "ambiguous",
+            source_boot: "previous-browser-boot", target_boot: "next",
+            sessionId: null, snapshot: null, registry_revision: 1,
+        }};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         executor.chrome.windows.getAll = async () => [];
         await executor.restore();
-        assert.equal(localState.abushRestoreHost, false,
-            "restore intent must be consumed before opening a neutral host");
-        assert.deepEqual(calls.filter(call => call[0] === "createWindow").map(call => call[1]), [
-            {url: "about:blank", focused: false, type: "normal"},
-        ]);
-        const clearIndex = calls.findIndex(call => call[0] === "persistLocal" &&
-            call[1].abushRestoreHost === false);
-        const createIndex = calls.findIndex(call => call[0] === "createWindow");
-        assert(clearIndex > createIndex,
-            "verified recovery must be consumed only after host creation");
+        assert.equal(localState.abushRestoreHost.outcome, "ambiguous",
+            "ambiguous handoff must remain durable and fail closed");
+        assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
+            "startup without an exact handoff must never create a neutral window");
+        assert.equal(calls.filter(call => call[0] === "restoreSession").length, 0);
     }
     {
         beginCase();
-        const localState = {abushRestoreHost: true};
-        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        const snapshot = {tabCount: 1, urls: ["https://work.test/"]};
+        const localState = {abushRestoreHost: {
+            version: 3, phase: "prepared", outcome: "exact",
+            source_boot: "previous-browser-boot", target_boot: "next",
+            sessionId: "window-session", snapshot, registry_revision: 1,
+        }};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        executor.chrome.windows.getAll = async () => [];
+        executor.chrome.tabs.query = async () => [];
         executor.chrome.sessions = {
             getRecentlyClosed: async query => {
                 calls.push(["getRecentlyClosed", query]);
-                return [
-                    {tab: {sessionId: "tab-session"}, sessionId: "tab-session"},
-                    {window: {tabs: [
-                        {url: "chrome-extension://id/status.html#nonce=" +
-                            "a".repeat(32) + "&marker=a"},
-                        {url: "https://managed.test/"},
-                    ]}, sessionId: "managed-window-session"},
-                    {window: {tabs: [{url: "https://work.test/"}]}, sessionId: "window-session"},
-                ];
+                return [{window: {sessionId: "window-session",
+                    tabs: [{url: "https://work.test/"}]}}];
             },
             restore: async sessionId => {
                 calls.push(["restoreSession", sessionId]);
@@ -1095,50 +1106,58 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(localState.abushRestoreHost, false);
         assert.deepEqual(calls.filter(call => call[0] === "restoreSession"), [
             ["restoreSession", "window-session"],
-        ], "restart recovery must skip managed entries and restore the ordinary window");
-        assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
-            "successful session restore must not create a blank fallback window");
-        const clearIndex = calls.findIndex(call => call[0] === "persistLocal" &&
-            call[1].abushRestoreHost === false);
-        const restoreIndex = calls.findIndex(call => call[0] === "restoreSession");
-        assert(clearIndex > restoreIndex,
-            "verified recovery must be consumed only after session restore");
-    }
-    {
-        beginCase();
-        const localState = {abushRestoreHost: {
-            version: 1,
-            sessionId: "ordinary-window-session",
-            snapshot: {tabCount: 2, urls: ["https://work.test/", "https://docs.test/"]},
-        }};
-        const {executor, calls} = fixture([], [], 1, false, null, localState);
-        executor.chrome.sessions = {
-            getRecentlyClosed: async query => {
-                calls.push(["getRecentlyClosed", query]);
-                return [{window: {tabs: [{url: "chrome-extension://id/status.html#nonce=" +
-                    "a".repeat(32) + "&marker=a"}]}, sessionId: "managed-window-session"}];
-            },
-            restore: async sessionId => {
-                calls.push(["restoreSession", sessionId]);
-                return {window: {sessionId, tabs: [
-                    {url: "https://work.test/"}, {url: "https://docs.test/"},
-                ]}};
-            },
-        };
-        await executor.restore();
-        assert.equal(localState.abushRestoreHost, false);
-        assert.deepEqual(calls.filter(call => call[0] === "restoreSession"), [
-            ["restoreSession", "ordinary-window-session"],
-        ], "restart recovery must use the persisted exact ordinary session ID");
-        assert.equal(calls.filter(call => call[0] === "getRecentlyClosed").length, 1,
-            "successful exact restore may only refresh the close baseline after recovery");
+        ], "next boot must restore only its persisted exact ordinary session ID");
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0);
     }
     {
         beginCase();
+        const snapshot = {tabCount: 1, urls: ["https://ordinary-0.test/"]};
         const localState = {abushRestoreHost: {
-            version: 2, phase: "inflight", sessionId: "ordinary-window-session",
-            snapshot: {tabCount: 1, urls: ["https://ordinary-0.test/"]},
+            version: 3, phase: "prepared", outcome: "exact",
+            source_boot: "previous-browser-boot", target_boot: "next",
+            sessionId: "auto-restored", snapshot, registry_revision: 1,
+        }};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        executor.browserBootId = "new-browser-boot";
+        executor.chrome.sessions = {
+            restore: async sessionId => {
+                calls.push(["restoreSession", sessionId]);
+                throw new Error("must not duplicate Chrome auto restore");
+            },
+        };
+        await executor.restore();
+        assert.equal(calls.some(call => call[0] === "restoreSession"), false,
+            "Chrome auto-restored exact ordinary window must consume without duplication");
+        assert.equal(localState.abushRestoreHost, false);
+    }
+    {
+        beginCase();
+        const snapshot = {tabCount: 1, urls: ["https://ordinary-0.test/"]};
+        const localState = {abushRestoreHost: {
+            version: 3, phase: "inflight", outcome: "exact",
+            source_boot: "previous-browser-boot", target_boot: "other-browser-boot",
+            sessionId: "accepted-session", snapshot, registry_revision: 1,
+        }};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        executor.browserBootId = "new-browser-boot";
+        executor.chrome.sessions = {
+            restore: async sessionId => {
+                calls.push(["restoreSession", sessionId]);
+                throw new Error("must not duplicate accepted restore after crash");
+            },
+        };
+        await executor.restore();
+        assert.equal(calls.some(call => call[0] === "restoreSession"), false);
+        assert.equal(localState.abushRestoreHost, false,
+            "accepted restore visible after restart must verify and consume exactly once");
+    }
+    {
+        beginCase();
+        const snapshot = {tabCount: 1, urls: ["https://ordinary-0.test/"]};
+        const localState = {abushRestoreHost: {
+            version: 3, phase: "inflight", outcome: "exact",
+            source_boot: "previous-browser-boot", target_boot: "test-browser-boot",
+            sessionId: "ordinary-window-session", snapshot, registry_revision: 1,
         }};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         executor.chrome.sessions = {
@@ -1149,14 +1168,18 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         };
         await executor.restore();
         assert.equal(calls.filter(call => call[0] === "restoreSession").length, 0,
-            "inflight restore restart must verify live target before replaying the effect");
-        assert.equal(localState.abushRestoreHost, false);
+            "accepted restore must verify live target before replaying the effect");
+        assert.equal(localState.abushRestoreHost.phase, "inflight",
+            "same browser boot service-worker restart must not consume next-boot handoff");
     }
     {
         beginCase();
         const localState = {abushRestoreHost: {
-            version: 2, phase: "inflight", sessionId: "consumed-session",
+            version: 3, phase: "inflight", outcome: "exact",
+            source_boot: "previous-browser-boot", target_boot: "test-browser-boot",
+            sessionId: "consumed-session",
             snapshot: {tabCount: 1, urls: ["https://accepted-not-visible.test/"]},
+            registry_revision: 1,
         }};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         executor.chrome.sessions = {
@@ -1168,66 +1191,34 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         };
         await executor.restoreHost();
         assert.equal(calls.some(call => call[0] === "restoreSession"), false);
-        assert.equal(calls.some(call => call[0] === "createWindow"), false,
-            "accepted-not-visible restore must never create a blank fallback");
-        assert.equal(localState.abushRestoreHost.phase, "unknown",
-            "consumed but unconfirmed inflight restore remains durable unknown");
+        assert.equal(calls.some(call => call[0] === "createWindow"), false);
+        assert.equal(localState.abushRestoreHost.phase, "inflight",
+            "same browser boot must leave accepted handoff untouched");
     }
     {
         beginCase();
         const snapshot = {tabCount: 2, urls: ["https://work.test/", "https://docs.test/"]};
         const localState = {abushRestoreHost: {
-            version: 1, sessionId: "expired-session", snapshot,
+            version: 3, phase: "prepared", outcome: "exact",
+            source_boot: "previous-browser-boot", target_boot: "next",
+            sessionId: "expired-session", snapshot, registry_revision: 1,
         }};
-        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        executor.chrome.windows.getAll = async () => [];
+        executor.chrome.tabs.query = async () => [];
         executor.chrome.sessions = {
             getRecentlyClosed: async () => [
-                {window: {tabs: [{url: "https://wrong.test/"}]}, sessionId: "newer-wrong"},
-                {window: {tabs: snapshot.urls.map(url => ({url}))}, sessionId: "matched-session"},
-                {window: {tabs: [{url: "chrome-extension://id/status.html#nonce=" +
-                    "a".repeat(32) + "&marker=a"}]}, sessionId: "managed-window-session"},
+                {window: {sessionId: "newer-wrong", tabs: [{url: "https://wrong.test/"}]}},
+                {window: {sessionId: "matched-session",
+                    tabs: snapshot.urls.map(url => ({url}))}},
             ],
-            restore: async sessionId => {
-                calls.push(["restoreSession", sessionId]);
-                if (sessionId === "expired-session") throw new Error("expired");
-                return {window: {sessionId, tabs: snapshot.urls.map(url => ({url}))}};
-            },
-        };
-        await executor.restore();
-        assert.deepEqual(calls.filter(call => call[0] === "restoreSession"), [
-            ["restoreSession", "expired-session"],
-            ["restoreSession", "matched-session"],
-        ], "failed exact restore must fall back to the matching snapshot, not the newest window");
-    }
-    {
-        beginCase();
-        const localState = {abushRestoreHost: true};
-        const {executor, calls} = fixture([], [], 1, false, null, localState);
-        executor.chrome.windows.getAll = async () => [];
-        executor.chrome.sessions = {
-            getRecentlyClosed: async () => [],
             restore: async sessionId => { calls.push(["restoreSession", sessionId]); },
         };
         await executor.restore();
-        assert.equal(calls.filter(call => call[0] === "restoreSession").length, 0);
-        assert.deepEqual(calls.filter(call => call[0] === "createWindow").map(call => call[1]), [
-            {url: "about:blank", focused: false, type: "normal"},
-        ], "missing recently closed windows must fall back to a neutral host");
-    }
-    {
-        beginCase();
-        const localState = {abushRestoreHost: true};
-        const {executor} = fixture([], [], 1, false, null, localState);
-        executor.chrome.sessions = {
-            getRecentlyClosed: async () => [
-                {window: {sessionId: "one", tabs: [{url: "https://one.test/"}]}},
-                {window: {sessionId: "two", tabs: [{url: "https://two.test/"}]}},
-            ],
-            restore: async () => { throw new Error("must not choose an ambiguous snapshot"); },
-        };
-        await assert.rejects(executor.restore(), /ambiguous ordinary restore snapshot/);
-        assert.equal(localState.abushRestoreHost.phase, "prepared",
-            "ambiguous restore must fail closed without consuming its ledger");
+        assert.equal(calls.filter(call => call[0] === "restoreSession").length, 0,
+            "invalid session ID must not guess another session by URLs");
+        assert.equal(localState.abushRestoreHost.sessionId, "expired-session");
+        assert.equal(localState.abushRestoreHost.phase, "prepared");
     }
     {
         beginCase();
@@ -1789,9 +1780,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await executor.windowRemoved(1);
         assert.equal(executor.workspaces.size, 0,
             "closing the ordinary host first must retire the last managed window");
-        assert.deepEqual(calls.filter(call => call[0] === "createWindow").map(call => call[1]), [
-            {url: "about:blank", focused: false, type: "normal"},
-        ], "a neutral host must replace the closed ordinary window before managed cleanup");
+        assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
+            "last ordinary close must never create a neutral replacement");
         assert(calls.some(call => call[0] === "removeWindow" &&
             call[1] === record.windowId),
             "the extension must close the last managed window before Chrome records it " +
@@ -1800,19 +1790,18 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const closeIndex = calls.findIndex(call => call[0] === "removeWindow");
         assert(persistIndex >= 0 && closeIndex > persistIndex,
             "durable ownership removal must precede closing the last managed window");
-        const createIndex = calls.findIndex(call => call[0] === "createWindow");
-        assert(createIndex > closeIndex,
-            "neutral host creation must follow managed cleanup so Chrome keeps running");
         const intentIndex = calls.findIndex(call => call[0] === "persistLocal" &&
             call[1].abushRestoreHost?.sessionId === "ordinary-host-session");
-        assert(intentIndex >= 0 && intentIndex < closeIndex && createIndex > intentIndex,
+        assert(intentIndex >= 0 && intentIndex < closeIndex,
             "exact ordinary session ownership must commit before managed cleanup");
-        assert.deepEqual(localState.abushRestoreHost, {
-            version: 2,
-            phase: "prepared",
-            sessionId: "ordinary-host-session",
-            snapshot: {tabCount: 1, urls: ["https://ordinary-0.test/"]},
-        }, "the removed window snapshot must select its own session, not a newer ordinary entry");
+        assert.equal(localState.abushRestoreHost.version, 3);
+        assert.equal(localState.abushRestoreHost.phase, "prepared");
+        assert.equal(localState.abushRestoreHost.outcome, "exact");
+        assert.equal(localState.abushRestoreHost.source_boot, "test-browser-boot");
+        assert.equal(localState.abushRestoreHost.target_boot, "next");
+        assert.equal(localState.abushRestoreHost.sessionId, "ordinary-host-session");
+        assert.deepEqual(localState.abushRestoreHost.snapshot,
+            {tabCount: 1, urls: ["https://ordinary-0.test/"]});
     }
     {
         beginCase();
@@ -1875,6 +1864,240 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         "all managed windows must leave durable restore state in one write");
         assert.deepEqual(calls.filter(call => call[0] === "removeWindow")
             .map(call => call[1]), [10, 20]);
+    }
+    {
+        beginCase();
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "0".repeat(32),
+        };
+        const localState = {};
+        const {executor, calls} = fixture([record], [], 0, false, null, localState);
+        await executor.restore();
+        calls.length = 0;
+        executor.removedHostSnapshots.set(1, {
+            tabCount: 1, urls: ["https://ordinary-0.test/"],
+        });
+        executor.windowRegistry.set(1, {
+            windowId: 1, kind: "ordinary",
+            snapshot: {tabCount: 1, urls: ["https://ordinary-0.test/"]},
+            tabIds: [2000], revision: ++executor.windowRegistryRevision, closing: true,
+        });
+        executor.chrome.windows.getAll = async () => [
+            {id: 10, type: "normal", focused: false},
+        ];
+        executor.chrome.sessions = {
+            getRecentlyClosed: async () => [{window: {
+                sessionId: "ordinary-host-session",
+                tabs: [{url: "https://ordinary-0.test/"}],
+            }}],
+        };
+        await executor.windowRemoved(1);
+        assert.equal(calls.some(call => call[0] === "createWindow"), false,
+            "last ordinary close must never create a replacement window");
+        assert.equal(calls.some(call => call[0] === "restoreSession"), false,
+            "windows.onRemoved must never restore in the source boot");
+        assert(calls.some(call => call[0] === "removeWindow" && call[1] === 10));
+        assert.equal(localState.abushRestoreHost.sessionId, "ordinary-host-session");
+        assert.equal(localState.abushRestoreHost.target_boot, "next");
+        assert.equal(localState.abushManagedCleanupBatch, false,
+            "managed cleanup batch must converge durably");
+    }
+    {
+        beginCase();
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "0".repeat(32),
+        };
+        for (const order of ["ordinary-first", "managed-first", "interleaved"]) {
+            const {executor, calls} = fixture([record], [], 0, false, null, {});
+            await executor.restore();
+            calls.length = 0;
+            executor.removedHostSnapshots.set(1, {
+                tabCount: 1, urls: ["https://ordinary-0.test/"],
+            });
+            executor.windowRegistry.set(1, {
+                windowId: 1, kind: "ordinary",
+                snapshot: {tabCount: 1, urls: ["https://ordinary-0.test/"]},
+                tabIds: [2000], revision: ++executor.windowRegistryRevision, closing: true,
+            });
+            executor.chrome.windows.getAll = async () => order === "managed-first" ? [] :
+                [{id: 10, type: "normal", focused: false}];
+            executor.chrome.sessions = {getRecentlyClosed: async () => [{window: {
+                sessionId: `menu-${order}`,
+                tabs: [{url: "https://ordinary-0.test/"}],
+            }}]};
+            if (order === "managed-first") await executor.windowRemoved(10);
+            await executor.windowRemoved(1);
+            if (order === "interleaved") await executor.windowRemoved(10);
+            assert.equal(calls.some(call => call[0] === "createWindow"), false,
+                `${order} menu exit must create zero windows`);
+            assert.equal(calls.some(call => call[0] === "restoreSession"), false,
+                `${order} menu exit must restore zero sessions`);
+        }
+    }
+    {
+        beginCase();
+        const {executor, calls} = fixture([], [], 2);
+        await executor.restore();
+        calls.length = 0;
+        executor.windowRegistry.set(2, {
+            windowId: 2, kind: "ordinary",
+            snapshot: {tabCount: 1, urls: ["https://second.test/"]},
+            tabIds: [3000], revision: ++executor.windowRegistryRevision,
+        });
+        executor.removedHostSnapshots.set(1, {
+            tabCount: 1, urls: ["https://ordinary-0.test/"],
+        });
+        executor.chrome.windows.getAll = async () => [
+            {id: 2, type: "normal", focused: false},
+        ];
+        executor.chrome.sessions = {getRecentlyClosed: async () => [{window: {
+            sessionId: "closed-first", tabs: [{url: "https://ordinary-0.test/"}],
+        }}]};
+        await executor.windowRemoved(1);
+        assert.equal(calls.some(call => call[0] === "removeWindow"), false,
+            "closing one of multiple ordinary windows must not touch managed windows");
+        assert.equal(calls.some(call => call[0] === "createWindow" ||
+            call[0] === "restoreSession"), false);
+        assert(executor.recentSessionIds.has("closed-first"),
+            "multiple-ordinary close must advance the session baseline");
+    }
+    {
+        beginCase();
+        const localState = {};
+        const {executor} = fixture([], [], 1, false, null, localState);
+        executor.removedHostSnapshots.set(1, {
+            tabCount: 1, urls: ["https://identical.test/"],
+        });
+        executor.recentSessionIds = new Set();
+        executor.chrome.sessions = {getRecentlyClosed: async () => [
+            {window: {sessionId: "same-a", tabs: [{url: "https://identical.test/"}]}},
+            {window: {sessionId: "same-b", tabs: [{url: "https://identical.test/"}]}},
+        ]};
+        const handoff = await executor.recentlyClosedHostIntent(1);
+        assert.equal(handoff.outcome, "ambiguous");
+        assert.equal(handoff.sessionId, null);
+        assert.equal(localState.abushCloseAmbiguities.length, 1,
+            "identical concurrent closes must persist ambiguity instead of guessing");
+    }
+    {
+        beginCase();
+        const {executor} = fixture([], [], 2);
+        await executor.refreshWindowRegistry();
+        const before = structuredClone(executor.windowRegistry.get(1).snapshot);
+        executor.freezeClosingWindow(1);
+        const tabs = await executor.chrome.tabs.query({windowId: 1});
+        tabs.splice(0, 1);
+        await executor.tabRemoved(2000, {windowId: 1, isWindowClosing: true});
+        await executor.rememberWindowSnapshot(1);
+        assert.deepEqual(executor.removedHostSnapshots.get(1), before,
+            "tabs.onRemoved while closing must preserve the frozen full-window snapshot");
+    }
+    {
+        beginCase();
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "0".repeat(32),
+        };
+        const {executor, calls} = fixture([record]);
+        await executor.restore();
+        calls.length = 0;
+        executor.closingManagedWindows.add(10);
+        await executor.windowRemoved(10);
+        assert.equal(calls.some(call => call[0] === "createWindow" ||
+            call[0] === "restoreSession"), false,
+        "self-generated managed removal must not re-enter ordinary close handling");
+    }
+    {
+        beginCase();
+        const managed = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 20, x11WindowId: 10020, statusTabIds: [120, 121], pageTabId: 220,
+            nonce: "0".repeat(32), connectionDisplayName: "local",
+        };
+        const localState = {};
+        const {executor, calls} = fixture([managed], [], 0, false, null, localState);
+        const originalGetAll = executor.chrome.windows.getAll;
+        executor.chrome.windows.getAll = async options => (await originalGetAll(options))
+            .filter(window => window.id !== 1);
+        const lease = {
+            version: 1, request_id: "cold-request", operation: "ordinary_open",
+            deadline_ms: Date.now() + 30000, url: "https://cold.test/", focus: true,
+        };
+        executor.bootstrapLeases.set(lease.request_id, lease);
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
+            if (operation === "verify_x11_window") return {verified: true, xid: payload.xid};
+            if (operation === "clear_x11_window") {
+                return {cleared: true, xid: payload.xid, reclassified_group: "f"};
+            }
+            return {};
+        };
+        await executor.restore();
+        const stage = calls.findIndex(call => call[0] === "createWindow" &&
+            call[1].url?.includes("ordinary-staging.html#"));
+        const cleanup = calls.findIndex(call => call[0] === "removeWindow" && call[1] === 20);
+        const navigation = calls.findIndex(call => call[0] === "update" &&
+            call[2]?.url === lease.url);
+        assert(stage >= 0 && cleanup > stage && navigation > cleanup,
+            "cold lease must stage before managed cleanup, then navigate exactly once");
+        assert.equal(calls.filter(call => call[0] === "update" &&
+            call[2]?.url === lease.url).length, 1);
+        assert.equal(localState.abushColdOrdinaryLedger.at(-1).completion, "applied");
+    }
+    {
+        beginCase();
+        const payload = {
+            version: 1, request_id: "crashed-cold", operation: "ordinary_open",
+            deadline_ms: Date.now() + 30000, url: "https://cold-once.test/", focus: true,
+        };
+        const localState = {abushColdOrdinaryLedger: [{
+            version: 1,
+            request_id: payload.request_id,
+            url_hash: await executorHash(payload.url),
+            deadline_ms: payload.deadline_ms,
+            phase: "effect_started",
+            completion: null,
+            browser_boot_id: "test-browser-boot",
+        }]};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        executor.bootstrapLeases.set("crashed-cold", payload);
+        await executor.executeBootstrapLeases();
+        assert.equal(calls.some(call => call[0] === "createWindow" ||
+            call[0] === "createTab" || call[0] === "update" && call[2]?.url), false,
+        "effect-started cold request must not execute a second URL mutation after restart");
+        assert.equal(localState.abushColdOrdinaryLedger[0].completion, "unknown");
+        assert.equal(calls.filter(call => call[0] === "ordinary_open_completion").length, 1);
+    }
+    {
+        beginCase();
+        const managed = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "0".repeat(32), connectionDisplayName: "local",
+        };
+        const {executor, calls} = fixture([managed], [], 0);
+        const originalGetAll = executor.chrome.windows.getAll;
+        executor.chrome.windows.getAll = async options => (await originalGetAll(options))
+            .filter(window => window.id !== 1);
+        await executor.restore();
+        assert.equal(calls.some(call => call[0] === "createWindow"), false,
+            "stale managed-only startup without a lease must not create a neutral window");
     }
     {
         beginCase();

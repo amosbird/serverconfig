@@ -53,10 +53,56 @@ if [[ $# -eq 1 && $1 != -* ]]; then
             break
         fi
     done
+    if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
+        printf 'chromium: XDG_RUNTIME_DIR is unavailable\n' >&2
+        exit 1
+    fi
+    request_id=$(python3 - <<'PY'
+import uuid
+print(uuid.uuid4().hex)
+PY
+    ) || exit
+    timeout=${ABUSH_ORDINARY_OPEN_TIMEOUT:-30}
+    deadline_ms=$(python3 - "$timeout" <<'PY'
+import sys
+import time
+
+timeout = float(sys.argv[1])
+if timeout <= 0 or timeout > 60:
+    raise SystemExit("ordinary-open timeout is outside its safe range")
+print(int(time.time() * 1000 + timeout * 1000))
+PY
+    ) || exit
+    lease_path=
     if ! $chrome_running; then
+        lease_output=${XDG_RUNTIME_DIR}/abush/ordinary-launch-metadata.$request_id
+        mkdir -p "$(dirname "$lease_output")"
+        chmod 700 "$(dirname "$lease_output")"
+        rm -f "$lease_output"
+        if ! ABUSH_ORDINARY_OPEN_REQUEST_ID="$request_id" \
+            ABUSH_ORDINARY_OPEN_DEADLINE_MS="$deadline_ms" \
+            ABUSH_ORDINARY_OPEN_WRITE_LEASE=1 \
+            ABUSH_ORDINARY_OPEN_LEASE_ONLY=1 \
+            ABUSH_ORDINARY_OPEN_LEASE_METADATA="$lease_output" \
+            ABUSH_CHROME_PROFILE="$profile" \
+            python3 "$root/scripts/ordinary-open-client.py" "$url"; then
+            rm -f "$lease_output"
+            exit 1
+        fi
+        lease_path=$(python3 -c \
+            'import json,sys; print(json.load(open(sys.argv[1]))["lease_path"])' \
+            "$lease_output") || {
+            rm -f "$lease_output"
+            exit 1
+        }
+        rm -f "$lease_output"
         start_chrome >/dev/null 2>&1 &
     fi
-    exec python3 "$root/scripts/ordinary-open-client.py" "$url"
+    ABUSH_ORDINARY_OPEN_REQUEST_ID="$request_id" \
+        ABUSH_ORDINARY_OPEN_DEADLINE_MS="$deadline_ms" \
+        ABUSH_ORDINARY_OPEN_LEASE_PATH="$lease_path" \
+        ABUSH_CHROME_PROFILE="$profile" \
+        exec python3 "$root/scripts/ordinary-open-client.py" "$url"
 fi
 
 if [[ $# -gt 0 ]]; then

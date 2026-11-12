@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import queue
+import select
 import socket
 import subprocess
 import sys
@@ -219,6 +220,96 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         self.assertTrue(host.is_main_profile_host("/profiles/main", 30, proc))
         self.assertFalse(host.is_main_profile_host("/profiles/other", 30, proc))
 
+    def test_browser_boot_id_uses_browser_pid_starttime_and_profile(self):
+        proc = self.runtime / "boot-proc"
+        for pid, parent, arguments, starttime in (
+            (30, 20, [b"host.py"], 300),
+            (20, 10, [b"chrome", b"--user-data-dir=/profiles/main"], 200),
+            (10, 1, [b"init"], 100),
+        ):
+            directory = proc / str(pid)
+            directory.mkdir(parents=True)
+            (directory / "cmdline").write_bytes(b"\0".join(arguments) + b"\0")
+            fields = ["S", str(parent), *(["0"] * 17), str(starttime), "0"]
+            (directory / "stat").write_text(f"{pid} (process) {' '.join(fields)}\n")
+        first = host.native_host_browser(30, proc)
+        second = host.native_host_browser(30, proc)
+        self.assertEqual(first, second)
+        self.assertEqual(first["pid"], 20)
+        self.assertEqual(first["starttime"], "200")
+        self.assertEqual(first["profile"], pathlib.Path("/profiles/main"))
+        self.assertRegex(first["browser_boot_id"], r"^chrome-[0-9a-f]{64}$")
+        restarted = host.native_host_browser(30, proc)
+        self.assertEqual(restarted["browser_boot_id"], first["browser_boot_id"],
+                         "native host restart in one browser boot must keep the same ID")
+        stat_path = proc / "20/stat"
+        fields = stat_path.read_text().split()
+        fields[-2] = "201"
+        stat_path.write_text(" ".join(fields) + "\n")
+        self.assertNotEqual(host.native_host_browser(30, proc)["browser_boot_id"],
+                            first["browser_boot_id"])
+
+    def test_launch_lease_claim_is_secure_exact_and_expiring(self):
+        profile = self.runtime / "profile"
+        profile.mkdir()
+        root = self.runtime / "leases"
+        root.mkdir(mode=0o700)
+        now_ms = int(time.time() * 1000)
+
+        def lease(request_id, deadline_ms=None):
+            url = "https://example.test/cold"
+            return {
+                "version": 1,
+                "request_id": request_id,
+                "url": url,
+                "url_hash": host.hashlib.sha256(url.encode()).hexdigest(),
+                "deadline_ms": deadline_ms or now_ms + 30_000,
+                "profile_hash": host._lease_profile_hash(profile),
+                "boot_target": "next",
+            }
+
+        request_id = "a" * 32
+        path = root / f"{request_id}.json"
+        path.write_text(json.dumps(lease(request_id)))
+        path.chmod(0o600)
+        claimed = host.claim_ordinary_launch_leases(
+            profile, root=root, now_ms=now_ms)
+        self.assertEqual([item["lease"] for item in claimed], [lease(request_id)])
+        self.assertFalse(path.exists())
+        self.assertTrue(claimed[0]["claim_path"].exists())
+        claimed[0]["claim_path"].unlink()
+
+        expired_id = "b" * 32
+        expired = root / f"{expired_id}.json"
+        expired.write_text(json.dumps(lease(expired_id, now_ms - 1)))
+        expired.chmod(0o600)
+        self.assertEqual(host.claim_ordinary_launch_leases(
+            profile, root=root, now_ms=now_ms), [])
+        self.assertFalse(expired.exists())
+
+        target = self.runtime / "target"
+        target.write_text("keep")
+        symlink = root / f"{'c' * 32}.json"
+        symlink.symlink_to(target)
+        self.assertEqual(host.claim_ordinary_launch_leases(
+            profile, root=root, now_ms=now_ms), [])
+        self.assertEqual(target.read_text(), "keep")
+
+        unsafe = root / f"{'d' * 32}.json"
+        unsafe.write_text(json.dumps(lease("d" * 32)))
+        unsafe.chmod(0o644)
+        self.assertEqual(host.claim_ordinary_launch_leases(
+            profile, root=root, now_ms=now_ms), [])
+        self.assertFalse(unsafe.exists())
+
+        wrong_uid = root / f"{'e' * 32}.json"
+        wrong_uid.write_text(json.dumps(lease("e" * 32)))
+        wrong_uid.chmod(0o600)
+        with mock.patch.object(host.os, "getuid", return_value=os.getuid() + 1):
+            with self.assertRaises(ValueError):
+                host.claim_ordinary_launch_leases(profile, root=root)
+        self.assertTrue(wrong_uid.exists(), "UID mismatch must not consume another user's lease")
+
 
 class FakeWebSocket:
     def __init__(self, responses):
@@ -398,8 +489,15 @@ class LauncherTest(unittest.TestCase):
         self.fake_client = self.base / "root/scripts/ordinary-open-client.py"
         self.fake_client.parent.mkdir(parents=True)
         self.fake_client.write_text(
-            "import os,sys,pathlib\n"
+            "import json,os,sys,pathlib\n"
             "pathlib.Path(os.environ['ABUSH_TEST_CLIENT_LOG']).write_text(sys.argv[1])\n"
+            "metadata=os.environ.get('ABUSH_ORDINARY_OPEN_LEASE_METADATA')\n"
+            "request_id=os.environ.get('ABUSH_ORDINARY_OPEN_REQUEST_ID','test')\n"
+            "if metadata:\n"
+            " pathlib.Path(metadata).write_text(json.dumps({\n"
+            "  'request_id':request_id,'deadline_ms':1,\n"
+            "  'lease_path':str(pathlib.Path(os.environ['XDG_RUNTIME_DIR']) /\n"
+            "   'abush/ordinary-launch' / f'{request_id}.json')}))\n"
         )
 
     def tearDown(self):
@@ -410,6 +508,7 @@ class LauncherTest(unittest.TestCase):
         return {
             **os.environ,
             "HOME": str(self.home),
+            "XDG_RUNTIME_DIR": str(self.base / "runtime"),
             "ABUSH_CHROME_PROFILE": str(self.base / "profile"),
             "ABUSH_CHROME_BIN": str(self.fake_chrome),
             "ABUSH_PROC_ROOT": str(self.proc),
@@ -431,6 +530,60 @@ class LauncherTest(unittest.TestCase):
         self.assertNotIn(url.encode(), arguments)
         self.assertIn(b"--remote-debugging-port=9222", arguments)
         self.assertEqual((self.base / "client").read_text(), url)
+
+    def test_cold_wrapper_writes_secure_lease_before_chrome_without_url_argv(self):
+        url = "https://example.test/private-cold"
+        runtime = self.base / "runtime"
+        client = self.fake_client
+        original_write_lease = (ROOT / "scripts/ordinary-open-client.py").read_text()
+        client.write_text(original_write_lease.replace(
+            "    return final\n\n\ndef remove_launch_lease",
+            "    with open(os.environ['ABUSH_TEST_LEASE_READY'], 'w') as ready:\n"
+            "        ready.write('1')\n"
+            "    return final\n\n\ndef remove_launch_lease",
+        ))
+        client.chmod(0o755)
+        environment = self.environment()
+        environment["ABUSH_ORDINARY_OPEN_TIMEOUT"] = "0.3"
+        lease_ready_path = self.base / "lease-ready"
+        os.mkfifo(lease_ready_path, 0o600)
+        environment["ABUSH_TEST_LEASE_READY"] = str(lease_ready_path)
+        socket_path = self.base / "cold.sock"
+        environment["ABUSH_ORDINARY_OPEN_SOCKET"] = str(socket_path)
+        outbound = queue.Queue()
+        server = host.OrdinaryOpenServer(outbound, path=socket_path, timeout=1)
+
+        def delayed_server():
+            descriptor = os.open(lease_ready_path, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                readable, _, _ = select.select([descriptor], [], [], 1)
+                self.assertEqual(readable, [descriptor],
+                                 "cold lease readiness barrier timed out")
+                self.assertEqual(os.read(descriptor, 1), b"1")
+            finally:
+                os.close(descriptor)
+            claimed = list((runtime / "abush/ordinary-launch").glob("*.json"))
+            self.assertTrue(claimed, "cold lease was not written before Chrome start")
+            lease = json.loads(claimed[0].read_text())
+            self.assertEqual(lease["url"], url)
+            self.assertEqual(claimed[0].stat().st_mode & 0o777, 0o600)
+            self.assertEqual(claimed[0].parent.stat().st_mode & 0o777, 0o700)
+            server.start()
+            opened = outbound.get(timeout=1)
+            self.assertEqual(opened["payload"]["request_id"], lease["request_id"])
+            server.complete(host.ordinary_open_response(lease["request_id"], "applied"))
+
+        worker = threading.Thread(target=delayed_server, daemon=True)
+        worker.start()
+        result = subprocess.run([ROOT / "scripts/chromium", url], env=environment,
+                                capture_output=True, text=True, timeout=2)
+        worker.join(timeout=1)
+        server.close()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = self.log.read_bytes().split(b"\0")
+        self.assertNotIn(url.encode(), arguments)
+        self.assertEqual(list((runtime / "abush/ordinary-launch").glob("*")), [],
+                         "client completion must remove every launch lease artifact")
 
     def test_running_chrome_skips_start_and_still_submits_socket_client(self):
         process = self.proc / "42"
