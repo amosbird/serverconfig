@@ -110,8 +110,6 @@ def qtile_move_command(window):
         "togroup",
         "--args",
         "c",
-        "--kwargs",
-        "switch_group=False",
     ]
 
 

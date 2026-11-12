@@ -294,7 +294,9 @@ class BinderQtileNotificationTest(unittest.TestCase):
         command = binding.qtile_move_command(22)
         self.assertEqual(command[:3], ["qtile", "cmd-obj", "--object"])
         self.assertIn("22", command)
-        self.assertEqual(command[-2:], ["--kwargs", "switch_group=False"])
+        self.assertEqual(command[-2:], ["--args", "c"])
+        self.assertNotIn("--kwargs", command)
+        self.assertFalse(any(argument.startswith("switch_group=") for argument in command))
         self.assertNotIn("focus", command)
         self.assertNotIn("toscreen", command)
 
