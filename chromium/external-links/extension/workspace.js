@@ -176,8 +176,13 @@ class WorkspaceExecutor {
         throw new Error("status tab title was not ready");
     }
 
+    sessionEntryId(entry) {
+        const sessionId = entry?.window?.sessionId ?? entry?.tab?.sessionId ?? entry?.sessionId;
+        return typeof sessionId === "string" && sessionId ? sessionId : null;
+    }
+
     isOrdinarySessionEntry(entry) {
-        return Boolean(entry?.window && typeof entry.sessionId === "string" && entry.sessionId &&
+        return Boolean(entry?.window && this.sessionEntryId(entry) &&
             !entry.window.tabs?.some(tab => this.parseStatusUrl(tab.url) !== null));
     }
 
@@ -216,7 +221,7 @@ class WorkspaceExecutor {
                 entries.find(entry => this.sessionMatchesSnapshot(entry, intent.snapshot)) :
                 entries.find(entry => this.isOrdinarySessionEntry(entry));
             if (window) {
-                await sessions.restore(window.sessionId);
+                await sessions.restore(this.sessionEntryId(window));
                 return;
             }
         }
@@ -250,7 +255,8 @@ class WorkspaceExecutor {
 
     async primeRecentlyClosedSessions() {
         const entries = await this.recentlyClosedEntries();
-        this.recentSessionIds = new Set(entries.map(entry => entry.sessionId).filter(Boolean));
+        this.recentSessionIds = new Set(entries.map(entry => this.sessionEntryId(entry))
+            .filter(Boolean));
     }
 
     async recentlyClosedHostIntent(windowId) {
@@ -262,13 +268,17 @@ class WorkspaceExecutor {
         const knownSessionIds = this.recentSessionIds || new Set();
         for (let attempt = 0; attempt < 20; attempt++) {
             const entries = await this.recentlyClosedEntries();
-            const window = entries.find(entry => !knownSessionIds.has(entry.sessionId) &&
-                this.sessionMatchesSnapshot(entry, snapshot));
+            const window = entries.find(entry => {
+                const sessionId = this.sessionEntryId(entry);
+                return sessionId && !knownSessionIds.has(sessionId) &&
+                    this.sessionMatchesSnapshot(entry, snapshot);
+            });
             if (window) {
-                this.recentSessionIds = new Set(entries.map(entry => entry.sessionId).filter(Boolean));
+                this.recentSessionIds = new Set(entries.map(entry => this.sessionEntryId(entry))
+                    .filter(Boolean));
                 return {
                     version: 1,
-                    sessionId: window.sessionId,
+                    sessionId: this.sessionEntryId(window),
                     snapshot,
                 };
             }

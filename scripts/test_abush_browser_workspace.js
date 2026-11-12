@@ -774,10 +774,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         });
         executor.chrome.sessions = {
             getRecentlyClosed: async () => [
-                {window: {tabs: [{url: "https://newer-but-different.test/"}]},
-                    sessionId: "wrong-ordinary-session"},
-                {window: {tabs: [{url: "https://ordinary-0.test/"}]},
-                    sessionId: "ordinary-host-session"},
+                {window: {sessionId: "wrong-ordinary-session",
+                    tabs: [{url: "https://newer-but-different.test/"}]}},
+                {window: {sessionId: "ordinary-host-session",
+                    tabs: [{url: "https://ordinary-0.test/"}]}},
             ],
             restore: async sessionId => { calls.push(["restoreSession", sessionId]); },
         };
@@ -854,8 +854,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         });
         executor.chrome.sessions = {
             getRecentlyClosed: async () => [{
-                window: {tabs: [{url: "https://ordinary-0.test/"}]},
-                sessionId: "ordinary-host-session",
+                window: {sessionId: "ordinary-host-session",
+                    tabs: [{url: "https://ordinary-0.test/"}]},
             }],
         };
         await executor.windowRemoved(1);
