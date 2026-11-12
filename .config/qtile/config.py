@@ -4,6 +4,7 @@ from threading import Lock
 
 import xcffib.xproto
 from libqtile import bar, hook, layout, qtile, widget
+from libqtile.command.base import expose_command
 from libqtile.config import (
     Click,
     Drag,
@@ -187,6 +188,58 @@ class ShellHolder:
 
 
 shell = ShellHolder()
+
+
+def qtile_window_by_xid(manager, xid):
+    if not isinstance(xid, int) or isinstance(xid, bool) or xid <= 0:
+        raise ValueError("invalid X11 window ID")
+    window = manager.windows_map.get(xid)
+    if not isinstance(window, QtileWindow) or window.wid != xid:
+        raise ValueError("unknown X11 window ID")
+    return window
+
+
+def prepare_ordinary_window(manager, xid: int):
+    window = qtile_window_by_xid(manager, xid)
+    if not is_chrome_window(window) or is_abush_browser_verified(window) or \
+            is_abush_browser_candidate(window):
+        raise ValueError("invalid ordinary Chrome window")
+    window.can_steal_focus = False
+    window.togroup("f", switch_group=False)
+    return {"id": window.wid, "group": window.group.name if window.group else None}
+
+
+def activate_ordinary_window(manager, xid: int):
+    window = qtile_window_by_xid(manager, xid)
+    if not is_chrome_window(window) or is_abush_browser_verified(window) or \
+            is_abush_browser_candidate(window):
+        raise ValueError("invalid ordinary Chrome window")
+    window.can_steal_focus = True
+    manager.groups_map["f"].toscreen()
+    window.focus(warp=False)
+    return {"id": window.wid, "group": window.group.name if window.group else None}
+
+
+def place_abush_browser_window(manager, xid: int):
+    window = qtile_window_by_xid(manager, xid)
+    if not is_abush_browser_verified(window):
+        raise ValueError("unverified Abush browser window")
+    place_abush_browser(window)
+    return {"id": window.wid, "group": window.group.name if window.group else None}
+
+
+def install_browser_commands():
+    commands = {
+        "prepare_ordinary_window": prepare_ordinary_window,
+        "activate_ordinary_window": activate_ordinary_window,
+        "place_abush_browser_window": place_abush_browser_window,
+    }
+    registered = getattr(Qtile, "_commands", {}).copy()
+    for name, function in commands.items():
+        exposed = expose_command(name)(function)
+        setattr(Qtile, name, exposed)
+        registered[name] = exposed
+    Qtile._commands = registered
 
 
 @hook.subscribe.startup
@@ -706,6 +759,9 @@ def place_abush_browser(window):
         return False
     window.togroup(destination, switch_group=False)
     return True
+
+
+install_browser_commands()
 
 
 @hook.subscribe.startup

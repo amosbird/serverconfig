@@ -81,6 +81,57 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         first.close()
         second.close()
 
+    def test_conflicting_duplicate_is_rejected_without_second_event(self):
+        first = self.connect(self.request())
+        self.assertEqual(self.outbound.get(timeout=1)["payload"], self.request())
+        conflicting = self.request()
+        conflicting["url"] = "https://different.test/"
+        second = self.connect(conflicting)
+        with self.assertRaises((EOFError, ConnectionResetError, socket.timeout)):
+            host.read_ordinary_open_message(second)
+        completion = host.ordinary_open_response("request-one", "applied")
+        self.server.complete(completion)
+        self.assertEqual(host.read_ordinary_open_message(first), completion)
+        first.close()
+        second.close()
+
+    def test_internal_submit_waits_for_terminal_completion(self):
+        result = queue.Queue()
+        submitted = threading.Thread(
+            target=lambda: result.put(self.server.submit(
+                "https://example.test/from-extension", request_id="internal-request")),
+            daemon=True,
+        )
+        submitted.start()
+        event = self.outbound.get(timeout=1)
+        self.assertEqual(event["payload"]["request_id"], "internal-request")
+        self.assertTrue(submitted.is_alive(), "accepted is not a terminal applied result")
+        self.server.complete(host.ordinary_open_response("internal-request", "unknown"))
+        submitted.join(timeout=1)
+        self.assertFalse(submitted.is_alive())
+        self.assertEqual(result.get_nowait(), "unknown")
+
+    def test_real_peer_credentials_are_read_from_connected_socket(self):
+        client = self.connect(self.request("peer-credentials"))
+        event = self.outbound.get(timeout=1)
+        self.assertEqual(event["payload"]["request_id"], "peer-credentials")
+        self.server.complete(host.ordinary_open_response("peer-credentials", "not_applied"))
+        self.assertEqual(host.read_ordinary_open_message(client)["completion"], "not_applied")
+        client.close()
+
+    def test_active_socket_is_never_unlinked(self):
+        other = host.OrdinaryOpenServer(
+            self.outbound, path=self.path, timeout=1,
+        )
+        with self.assertRaisesRegex(ValueError, "already active"):
+            other.start()
+        self.assertTrue(self.path.exists())
+        client = self.connect(self.request("still-active"))
+        self.assertEqual(self.outbound.get(timeout=1)["payload"]["request_id"], "still-active")
+        self.server.complete(host.ordinary_open_response("still-active", "applied"))
+        self.assertEqual(host.read_ordinary_open_message(client)["completion"], "applied")
+        client.close()
+
     def test_peer_uid_is_checked_before_request_delivery(self):
         with mock.patch.object(host.os, "getuid", return_value=os.getuid() + 1):
             other = host.OrdinaryOpenServer(
@@ -116,9 +167,11 @@ class LauncherTest(unittest.TestCase):
         self.bin.mkdir()
         self.proc.mkdir()
         self.log = self.base / "log"
+        self.chrome_ready = self.base / "chrome-ready"
         self.fake_chrome = self.bin / "chrome"
         self.fake_chrome.write_text(
             "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$ABUSH_TEST_CHROME_LOG\"\n"
+            "touch \"$ABUSH_TEST_CHROME_READY\"\n"
         )
         self.fake_chrome.chmod(0o755)
         self.fake_client = self.base / "root/scripts/ordinary-open-client.py"
@@ -141,6 +194,7 @@ class LauncherTest(unittest.TestCase):
             "ABUSH_PROC_ROOT": str(self.proc),
             "ABUSH_SERVERCONFIG_ROOT": str(self.base / "root"),
             "ABUSH_TEST_CHROME_LOG": str(self.log),
+            "ABUSH_TEST_CHROME_READY": str(self.chrome_ready),
             "ABUSH_TEST_CLIENT_LOG": str(self.base / "client"),
         }
 
@@ -181,6 +235,68 @@ class LauncherTest(unittest.TestCase):
             env=environment, capture_output=True, text=True, timeout=2)
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("chromium-remote", result.stderr)
+
+    def test_special_flags_keep_legacy_singleton_path(self):
+        remote_log = self.base / "remote"
+        remote = self.bin / "chromium-remote"
+        remote.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$ABUSH_TEST_REMOTE_LOG\"\n"
+        )
+        remote.chmod(0o755)
+        environment = self.environment()
+        environment["PATH"] = f"{self.bin}:{environment['PATH']}"
+        environment["ABUSH_TEST_REMOTE_LOG"] = str(remote_log)
+        (self.bin / "nc").write_text("#!/usr/bin/env bash\nexit 0\n")
+        (self.bin / "nc").chmod(0o755)
+        for arguments in (
+            ["--current-group", "--app=chrome-extension://id/bookmarks.html"],
+            ["--class=jupyterlab", "https://example.test/app"],
+        ):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    [ROOT / "scripts/chromium", *arguments], env=environment,
+                    capture_output=True, text=True, timeout=2,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse((self.base / "client").exists())
+                self.assertEqual(remote_log.read_bytes().split(b"\0")[:-1],
+                                 [argument.encode() for argument in arguments
+                                  if argument != "--current-group"])
+
+    def test_real_client_waits_for_delayed_server_and_reports_terminal_states(self):
+        url = "https://example.test/delayed-server"
+        for completion, expected in (("applied", 0), ("unknown", 1)):
+            with self.subTest(completion=completion):
+                socket_path = self.base / f"{completion}.sock"
+                environment = self.environment()
+                environment["ABUSH_SERVERCONFIG_ROOT"] = str(ROOT)
+                environment["ABUSH_ORDINARY_OPEN_SOCKET"] = str(socket_path)
+                environment["ABUSH_ORDINARY_OPEN_TIMEOUT"] = "2"
+                outbound = queue.Queue()
+                server = host.OrdinaryOpenServer(
+                    outbound, path=socket_path, timeout=2,
+                )
+
+                def delayed_server():
+                    time.sleep(0.1)
+                    server.start()
+                    event = outbound.get(timeout=1)
+                    server.complete(host.ordinary_open_response(
+                        event["payload"]["request_id"], completion))
+
+                worker = threading.Thread(target=delayed_server, daemon=True)
+                worker.start()
+                result = subprocess.run(
+                    [ROOT / "scripts/chromium", url], env=environment,
+                    capture_output=True, text=True, timeout=3,
+                )
+                worker.join(timeout=1)
+                server.close()
+                self.assertEqual(result.returncode, expected, result.stderr)
+                arguments = self.log.read_bytes().split(b"\0")
+                self.assertNotIn(url.encode(), arguments)
+                self.log.unlink()
+                self.chrome_ready.unlink(missing_ok=True)
 
     def test_luakit_argument_count_and_file_uri_encoding(self):
         env = self.environment()

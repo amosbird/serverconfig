@@ -13,6 +13,9 @@
         "debugger",
         "declarativeNetRequest"
     ],
+    "host_permissions": [
+        "file:///*"
+    ],
     "action": {
         "default_title": "Open Abush browser workspace"
     },

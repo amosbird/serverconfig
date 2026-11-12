@@ -116,6 +116,7 @@ for (const [page, link, expected] of cases) {{
         )
         self.assertIn("debugger", manifest["permissions"])
         self.assertIn("storage", manifest["permissions"])
+        self.assertIn("file:///*", manifest["host_permissions"])
         for dangerous in ("scripting", "activeTab", "downloads", "offscreen", "clipboardWrite"):
             self.assertNotIn(dangerous, manifest["permissions"])
         self.assertIn("chrome.commands.onCommand", background)
@@ -124,6 +125,7 @@ for (const [page, link, expected] of cases) {{
         self.assertIn("url: tab?.url", background)
         self.assertIn("scrollQueues", background)
         self.assertIn("chrome.debugger", background)
+        self.assertIn("isAllowedFileSchemeAccess", CONTENT.with_name("workspace.js").read_text())
         self.assertIn('"Input.dispatchKeyEvent"', HOST.read_text())
         self.assertIn('"ScrollToBeginningOfDocument"', HOST.read_text())
         self.assertIn('"ScrollToEndOfDocument"', HOST.read_text())
@@ -168,7 +170,10 @@ for (const [page, link, expected] of cases) {{
         script = f"""
 const {{NativeDispatcher}} = require({json.dumps(str(background))});
 global.crypto = require('crypto').webcrypto;
-class Signal {{ constructor() {{ this.listeners = []; }} addListener(f) {{ this.listeners.push(f); }} }}
+class Signal {{
+    constructor() {{ this.listeners = []; }}
+    addListener(listener) {{ this.listeners.push(listener); }}
+}}
 const port = {{onMessage: new Signal(), onDisconnect: new Signal(), sent: [],
     postMessage(message) {{ this.sent.push(message); }}}};
 const dispatcher = new NativeDispatcher(() => port, 1000);
@@ -190,7 +195,10 @@ Promise.all([first, second]).then(values => {{
         script = f"""
 const {{NativeDispatcher}} = require({json.dumps(str(background))});
 global.crypto = require('crypto').webcrypto;
-class Signal {{ constructor() {{ this.listeners = []; }} addListener(f) {{ this.listeners.push(f); }} }}
+class Signal {{
+    constructor() {{ this.listeners = []; }}
+    addListener(listener) {{ this.listeners.push(listener); }}
+}}
 const port = {{onMessage: new Signal(), onDisconnect: new Signal(),
     postMessage() {{}}}};
 const dispatcher = new NativeDispatcher(() => port, 1000);
@@ -202,6 +210,55 @@ port.onDisconnect.listeners[0]();
 Promise.all(requests).then(() => {{
     if (rejected !== 2 || dispatcher.pending.size !== 0) process.exit(1);
 }});
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_native_dispatcher_reconnects_with_bounded_backoff(self):
+        background = CONTENT.with_name("background.js")
+        script = f"""
+const assert = require('assert');
+const {{NativeDispatcher}} = require({json.dumps(str(background))});
+class Signal {{
+    constructor() {{ this.listeners = []; }}
+    addListener(listener) {{ this.listeners.push(listener); }}
+}}
+function port() {{ return {{onMessage: new Signal(), onDisconnect: new Signal(),
+    postMessage() {{}}, disconnect() {{}}}}; }}
+const ports = [port(), port()];
+let connects = 0;
+const timers = [];
+const dispatcher = new NativeDispatcher(() => ports[connects++], 1000);
+dispatcher.setTimeout = (callback, delay) => {{
+    timers.push([callback, delay]);
+    return timers.length;
+}};
+dispatcher.clearTimeout = () => {{}};
+const first = dispatcher.ensurePort();
+first.onDisconnect.listeners[0]();
+first.onDisconnect.listeners[0]();
+assert.equal(timers.length, 1, 'disconnect storms must schedule one reconnect');
+assert.equal(timers[0][1], 100);
+timers.shift()[0]();
+assert.equal(connects, 2);
+assert.strictEqual(dispatcher.port, ports[1]);
+ports[1].onDisconnect.listeners[0]();
+assert.equal(timers.length, 1);
+assert.equal(timers[0][1], 200, 'backoff persists until a valid native message');
+timers.shift();
+dispatcher.reconnectTimer = null;
+const third = port();
+dispatcher.port = third;
+third.onMessage.addListener(message => dispatcher.dispatch(message));
+third.onDisconnect.addListener(() => {{
+    dispatcher.port = null;
+    dispatcher.scheduleReconnect();
+}});
+third.onMessage.listeners[0]({{
+    version: 1, event: 'ready', service: 'native_host', payload: {{}},
+}});
+third.onDisconnect.listeners[0]();
+assert.equal(timers[0][1], 100, 'a valid native message resets backoff');
+dispatcher.stop();
 """
         subprocess.run(["node", "-e", script], check=True)
 
@@ -229,6 +286,28 @@ class NativeHostTest(unittest.TestCase):
         )
         with self.assertRaises(self.host.EnvelopeError):
             self.host.validate_request({**request, "extra": True})
+
+    def test_external_link_open_waits_for_terminal_ordinary_completion(self):
+        class Ordinary:
+            def submit(self, url):
+                self.url = url
+                return "unknown"
+
+        ordinary = Ordinary()
+        broker = self.host.BrowserBroker(ordinary_open=ordinary)
+        request = {
+            "version": 1,
+            "id": "external-open",
+            "service": "external_links",
+            "operation": "open",
+            "payload": {"url": "https://example.test/", "sourceUrl": ""},
+        }
+        with (
+            mock.patch.object(self.host, "reuse_tab", return_value=False),
+            self.assertRaisesRegex(ValueError, "unknown"),
+        ):
+            broker.handle_request(request)
+        self.assertEqual(ordinary.url, "https://example.test/")
 
     @mock.patch("subprocess.Popen")
     def test_authentication_urls_stay_in_the_calling_browser(self, popen):
@@ -266,7 +345,8 @@ class NativeHostTest(unittest.TestCase):
                 self.host.handle_message({"url": "https://app.slack.com/client/T1/C1"}),
                 {"ok": True},
             )
-        reuse_tab.assert_called_once_with("chat", "app.slack.com", "https://app.slack.com/client/T1/C1")
+        reuse_tab.assert_called_once_with(
+            "chat", "app.slack.com", "https://app.slack.com/client/T1/C1")
         popen.assert_not_called()
 
     @mock.patch("scripts.test_ai_external_links.NativeHostTest.host.scroll_page", return_value=True)
@@ -283,7 +363,10 @@ class NativeHostTest(unittest.TestCase):
             "scrollToBottom", url="https://example.com/page"
         )
 
-    @mock.patch("scripts.test_ai_external_links.NativeHostTest.host.scroll_page", return_value=False)
+    @mock.patch(
+        "scripts.test_ai_external_links.NativeHostTest.host.scroll_page",
+        return_value=False,
+    )
     def test_invalid_scroll_command_fails(self, scroll_page):
         self.assertEqual(
             self.host.handle_message({"command": "scroll", "direction": "invalid"}),

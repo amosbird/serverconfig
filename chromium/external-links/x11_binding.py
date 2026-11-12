@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import ast
+import json
 import os
 import re
 import subprocess
@@ -112,33 +112,49 @@ def browser_process(pid):
         return False
 
 
-def qtile_move_command(window, group="c"):
+def qtile_command(name, window):
     return [
         "qtile",
         "cmd-obj",
         "--object",
-        "window",
-        str(window),
+        "root",
         "--function",
-        "togroup",
+        name,
         "--args",
-        group,
+        str(window),
     ]
 
 
-def notify_qtile(window, run=None):
-    run = run or subprocess.run
+def qtile_move_command(window, group="c"):
+    if group == "f":
+        return qtile_command("prepare_ordinary_window", window)
+    if group != "c":
+        raise ValueError("unsupported Qtile destination")
+    return qtile_command("place_abush_browser_window", window)
+
+
+def qtile_activate_command(window):
+    return qtile_command("activate_ordinary_window", window)
+
+
+def qtile_transition(command, window, group, run=None):
+    output = run_qtile(command, run)
     try:
-        result = run(
-            qtile_move_command(window),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=2,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        transition = json.loads(output)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise X11Unavailable("invalid Qtile transition response") from error
+    if not isinstance(transition, dict) or transition.get("id") != window or \
+            transition.get("group") != group:
+        raise X11Unavailable("Qtile transition did not reach the exact window")
+    return transition
+
+
+def notify_qtile(window, run=None):
+    try:
+        qtile_transition(qtile_move_command(window), window, "c", run)
+    except X11Unavailable:
         return False
-    return result.returncode == 0
+    return True
 
 
 def run_qtile(command, run=None):
@@ -152,22 +168,34 @@ def run_qtile(command, run=None):
     return result.stdout.strip()
 
 
-def qtile_window_group(window, run=None):
+def qtile_window_info(window, run=None):
     output = run_qtile([
         "qtile", "cmd-obj", "--object", "window", str(window), "--function", "info",
     ], run)
     try:
-        info = ast.literal_eval(output)
-    except (SyntaxError, ValueError) as error:
+        info = json.loads(output)
+    except (json.JSONDecodeError, TypeError) as error:
         raise X11Unavailable("invalid Qtile window info") from error
     if not isinstance(info, dict) or not isinstance(info.get("group"), str):
         raise X11Unavailable("Qtile window info has no group")
-    return info["group"]
+    return info
 
 
-def verify_ordinary_activation(adapter, window, run=None):
-    active = getattr(adapter, "active_window", lambda: None)()
-    return active == window and qtile_window_group(window, run) == "f"
+def verify_ordinary_activation(adapter, window, nonce, run=None, attempts=20, interval=0.05):
+    for attempt in range(attempts):
+        try:
+            info = qtile_window_info(window, run)
+            active = getattr(adapter, "active_window", lambda: None)()
+            if active == window and info.get("id") == window and info.get("group") == "f" and \
+                    adapter.property(window, ORDINARY_NONCE_PROPERTY) == nonce and \
+                    not managed_window(adapter, window):
+                return True
+        except X11Unavailable:
+            if attempt + 1 == attempts:
+                raise
+        if attempt + 1 < attempts:
+            time.sleep(interval)
+    return False
 
 
 def ordinary_title_matches(title, nonce):
@@ -213,7 +241,7 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
     if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             managed_window(adapter, window):
         raise X11Unavailable("ordinary prepare verification failed")
-    run_qtile(qtile_move_command(window, "f"), run)
+    qtile_transition(qtile_move_command(window, "f"), window, "f", run)
     if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             managed_window(adapter, window):
         raise X11Unavailable("ordinary prepare changed window identity")
@@ -231,14 +259,12 @@ def activate_ordinary_window(payload, adapter=None, run=None, verify=None):
     if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             managed_window(adapter, window):
         raise ValueError("ordinary activation identity mismatch")
-    run_qtile(["qtile", "cmd-obj", "--object", "group", "f", "--function", "toscreen"], run)
-    run_qtile(["qtile", "cmd-obj", "--object", "window", str(window),
-               "--function", "focus"], run)
+    qtile_transition(qtile_activate_command(window), window, "f", run)
     if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             managed_window(adapter, window):
         raise X11Unavailable("ordinary activation changed window identity")
     if verify is None:
-        verified = verify_ordinary_activation(adapter, window, run)
+        verified = verify_ordinary_activation(adapter, window, payload["nonce"], run)
     else:
         verified = verify(window)
     if verified is not True:

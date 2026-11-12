@@ -106,8 +106,13 @@ class QtileScratchpadTest(unittest.TestCase):
         chromium = (ROOT / "scripts/chromium").read_text()
         self.assertIn('if [[ ${1:-} == --current-group ]]; then', chromium)
         self.assertIn("focus_group=false", chromium)
+        self.assertIn("special=true", chromium)
+        self.assertIn("if ! $special && [[ $# -eq 1", chromium)
         self.assertIn("if $focus_group; then", chromium)
-        self.assertGreater(chromium.rindex("focus_main_group"), chromium.index('chromium-remote "$@"'))
+        self.assertGreater(
+            chromium.rindex("focus_main_group"),
+            chromium.index('chromium-remote "$@"'),
+        )
         self.assertIn(
             'Key([ctrl, alt], "b", toggle_scratchpad("bookmarks"))',
             self.config,

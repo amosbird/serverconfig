@@ -16,4 +16,4 @@ PY
     ) || exit
 fi
 
-exec "${ABUSH_CHROMIUM_LAUNCHER:-$HOME/scripts/chromium}" "$value"
+exec "${ABUSH_CHROMIUM_LAUNCHER:-"$HOME"/scripts/chromium}" "$value"

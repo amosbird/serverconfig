@@ -110,7 +110,8 @@ class WorkspaceExecutor {
                 .map(saved => this.persistedRecord(saved));
             await this.persistRecords(records);
             for (const record of removedRecords) {
-                if (this.workspaces.get(this.key(record.remoteKey, record.principalId)) === record) {
+                const key = this.key(record.remoteKey, record.principalId);
+                if (this.workspaces.get(key) === record) {
                     this.forget(record);
                 }
             }
@@ -189,6 +190,42 @@ class WorkspaceExecutor {
         return url.href;
     }
 
+    async allowedFileSchemeAccess() {
+        const check = this.chrome.extension?.isAllowedFileSchemeAccess;
+        if (typeof check !== "function") return false;
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = (allowed, error = null) => {
+                if (settled) return;
+                settled = true;
+                if (error) reject(error);
+                else resolve(allowed === true);
+            };
+            const callback = allowed => {
+                const error = this.chrome.runtime?.lastError;
+                finish(allowed, error ? new Error(error.message) : null);
+            };
+            try {
+                const result = check.call(this.chrome.extension, callback);
+                if (result && typeof result.then === "function") {
+                    result.then(allowed => finish(allowed)).catch(error => finish(false, error));
+                } else if (typeof result === "boolean") {
+                    finish(result);
+                }
+            } catch (error) {
+                finish(false, error);
+            }
+        });
+    }
+
+    async ordinaryNavigationUrl(payload) {
+        const url = this.validateOrdinaryOpen(payload);
+        if (new URL(url).protocol === "file:" && !await this.allowedFileSchemeAccess()) {
+            throw new Error("file URL access is disabled for External Links");
+        }
+        return url;
+    }
+
     async ordinaryWindows() {
         const windows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
         const ordinary = [];
@@ -201,21 +238,49 @@ class WorkspaceExecutor {
         return ordinary;
     }
 
-    async selectOrdinaryWindow(nonce) {
+    async selectOrdinaryWindow() {
         const ordinary = await this.ordinaryWindows();
         const selected = ordinary.find(window => window.focused) ||
             ordinary.sort((left, right) =>
                 (this.ordinaryWindowMru.get(right.id) || 0) -
                 (this.ordinaryWindowMru.get(left.id) || 0))[0];
-        if (selected) return {windowId: selected.id, stagingTabId: null};
-        const staging = await this.chrome.windows.create({
-            url: this.ordinaryStagingUrl(nonce), focused: false, type: "normal",
-        });
-        const stagingTabId = staging.tabs?.[0]?.id;
-        if (!Number.isInteger(staging.id) || !Number.isInteger(stagingTabId)) {
-            throw new Error("ordinary staging window has no exact tab");
+        if (!selected) return null;
+        const tabs = await this.chrome.tabs.query({windowId: selected.id});
+        const originalActiveTab = tabs.find(tab => tab.active);
+        if (!Number.isInteger(originalActiveTab?.id)) {
+            throw new Error("ordinary window has no active tab");
         }
-        return {windowId: staging.id, stagingTabId};
+        return {
+            windowId: selected.id,
+            stagingTabId: null,
+            originalActiveTabId: originalActiveTab.id,
+            createdWindow: false,
+        };
+    }
+
+    rememberOrdinaryWindow(windowId) {
+        this.ordinaryWindowMru.set(windowId, ++this.ordinaryMruClock);
+    }
+
+    async recordOrdinaryFocus(windowId) {
+        if (!Number.isInteger(windowId) || windowId < 0) return false;
+        const ordinary = await this.ordinaryWindows();
+        if (!ordinary.some(window => window.id === windowId)) return false;
+        this.rememberOrdinaryWindow(windowId);
+        return true;
+    }
+
+    async initializeOrdinaryMru() {
+        let lastFocused = null;
+        try {
+            if (typeof this.chrome.windows.getLastFocused === "function") {
+                lastFocused = await this.chrome.windows.getLastFocused({windowTypes: ["normal"]});
+            }
+        } catch (_) {}
+        const ordinary = await this.ordinaryWindows();
+        const selected = ordinary.find(window => window.id === lastFocused?.id) ||
+            ordinary.find(window => window.focused);
+        if (selected) this.rememberOrdinaryWindow(selected.id);
     }
 
     async ordinaryCompletion(payload, completion) {
@@ -227,70 +292,215 @@ class WorkspaceExecutor {
         });
     }
 
-    rememberOrdinaryCompletion(requestId, completion) {
-        this.completedOrdinaryOperations.delete(requestId);
-        this.completedOrdinaryOperations.set(requestId, completion);
+    rememberOrdinaryCompletion(payload, completion) {
+        this.completedOrdinaryOperations.delete(payload.request_id);
+        this.completedOrdinaryOperations.set(payload.request_id, {
+            payload: {...payload},
+            completion,
+        });
         if (this.completedOrdinaryOperations.size > 256) {
             this.completedOrdinaryOperations.delete(
                 this.completedOrdinaryOperations.keys().next().value);
         }
     }
 
+    sameOrdinaryPayload(left, right) {
+        return left.version === right.version && left.request_id === right.request_id &&
+            left.operation === right.operation && left.url === right.url &&
+            left.focus === right.focus;
+    }
+
     async ordinaryOpen(payload) {
+        this.validateOrdinaryOpen(payload);
         const completed = this.completedOrdinaryOperations.get(payload.request_id);
         if (completed) {
-            await this.ordinaryCompletion(payload, completed);
-            return completed;
+            if (!this.sameOrdinaryPayload(completed.payload, payload)) {
+                throw new Error("conflicting duplicate ordinary-open request");
+            }
+            await this.ordinaryCompletion(payload, completed.completion);
+            return completed.completion;
         }
         const existing = this.ordinaryOperations.get(payload.request_id);
-        if (existing) return existing;
+        if (existing) {
+            if (!this.sameOrdinaryPayload(existing.payload, payload)) {
+                throw new Error("conflicting duplicate ordinary-open request");
+            }
+            return existing.operation;
+        }
         const operation = this.performOrdinaryOpen(payload).finally(() => {
-            if (this.ordinaryOperations.get(payload.request_id) === operation) {
+            if (this.ordinaryOperations.get(payload.request_id)?.operation === operation) {
                 this.ordinaryOperations.delete(payload.request_id);
             }
         });
-        this.ordinaryOperations.set(payload.request_id, operation);
+        this.ordinaryOperations.set(payload.request_id, {payload: {...payload}, operation});
         return operation;
     }
 
-    async performOrdinaryOpen(payload) {
-        let mutated = false;
-        let completion = "not_applied";
+    async tabIsMissing(tabId) {
         try {
-            const url = this.validateOrdinaryOpen(payload);
-            const nonce = crypto.randomUUID().replaceAll("-", "");
-            const selected = await this.selectOrdinaryWindow(nonce);
-            let stagingTabId = selected.stagingTabId;
-            if (stagingTabId === null) {
-                const staging = await this.chrome.tabs.create({
-                    windowId: selected.windowId,
-                    url: this.ordinaryStagingUrl(nonce),
-                    active: false,
-                });
-                stagingTabId = staging.id;
+            await this.chrome.tabs.get(tabId);
+            return false;
+        } catch (_) {
+            return true;
+        }
+    }
+
+    async windowIsMissing(windowId) {
+        try {
+            await this.chrome.windows.get(windowId);
+            return false;
+        } catch (_) {
+            return true;
+        }
+    }
+
+    async cleanupOrdinaryPrepare(context, nonce) {
+        if (!context) return true;
+        if (context.createdWindow) {
+            if (Number.isInteger(context.windowId)) {
+                try {
+                    await this.chrome.windows.remove(context.windowId);
+                } catch (_) {}
+                return this.windowIsMissing(context.windowId);
             }
-            if (!Number.isInteger(stagingTabId)) throw new Error("missing staging tab ID");
-            const staging = await this.chrome.tabs.get(stagingTabId);
-            if (staging.windowId !== selected.windowId) throw new Error("staging window changed");
-            await this.waitForOrdinaryTitle(stagingTabId, nonce);
+            return this.cleanupUnknownOrdinaryStaging(
+                nonce, context.baselineWindowIds || []);
+        }
+
+        let restored = false;
+        if (Number.isInteger(context.originalActiveTabId)) {
+            try {
+                await this.chrome.tabs.update(context.originalActiveTabId, {active: true});
+                const original = await this.chrome.tabs.get(context.originalActiveTabId);
+                restored = original.active === true;
+            } catch (_) {}
+        }
+        let stagingIds = [];
+        if (Number.isInteger(context.stagingTabId)) stagingIds.push(context.stagingTabId);
+        try {
+            const tabs = await this.chrome.tabs.query({windowId: context.windowId});
+            stagingIds.push(...tabs.filter(tab => tab.url === this.ordinaryStagingUrl(nonce))
+                .map(tab => tab.id));
+        } catch (_) {
+            return false;
+        }
+        stagingIds = [...new Set(stagingIds.filter(Number.isInteger))];
+        for (const tabId of stagingIds) {
+            try {
+                await this.chrome.tabs.remove(tabId);
+            } catch (_) {}
+        }
+        const removed = (await Promise.all(stagingIds.map(tabId => this.tabIsMissing(tabId))))
+            .every(Boolean);
+        return restored && removed;
+    }
+
+    async cleanupUnknownOrdinaryStaging(nonce, baselineWindowIds) {
+        let tabs;
+        let windows;
+        try {
+            [tabs, windows] = await Promise.all([
+                this.chrome.tabs.query({}),
+                this.chrome.windows.getAll({windowTypes: ["normal"]}),
+            ]);
+        } catch (_) {
+            return false;
+        }
+        const baseline = new Set(baselineWindowIds);
+        const stagingUrl = this.ordinaryStagingUrl(nonce);
+        const candidateIds = [...new Set(tabs
+            .filter(tab => tab.url === stagingUrl && !baseline.has(tab.windowId))
+            .map(tab => tab.windowId)
+            .filter(Number.isInteger))];
+        const observedNewIds = windows.map(window => window.id)
+            .filter(windowId => !baseline.has(windowId));
+        for (const windowId of candidateIds) {
+            try {
+                await this.chrome.windows.remove(windowId);
+            } catch (_) {}
+        }
+        const removed = (await Promise.all(candidateIds.map(id => this.windowIsMissing(id))))
+            .every(Boolean);
+        if (!removed) return false;
+        let remaining;
+        try {
+            remaining = await this.chrome.windows.getAll({windowTypes: ["normal"]});
+        } catch (_) {
+            return false;
+        }
+        const remainingNewIds = remaining.map(window => window.id)
+            .filter(windowId => !baseline.has(windowId));
+        return observedNewIds.every(windowId => candidateIds.includes(windowId)) &&
+            remainingNewIds.length === 0;
+    }
+
+    async performOrdinaryOpen(payload) {
+        let context = null;
+        let navigationRequested = false;
+        let completion = "not_applied";
+        const nonce = crypto.randomUUID().replaceAll("-", "");
+        try {
+            const url = await this.ordinaryNavigationUrl(payload);
+            context = await this.selectOrdinaryWindow();
+            if (context === null) {
+                const windows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
+                context = {
+                    windowId: null,
+                    stagingTabId: null,
+                    originalActiveTabId: null,
+                    createdWindow: true,
+                    baselineWindowIds: windows.map(window => window.id),
+                };
+                const stagingWindow = await this.chrome.windows.create({
+                    url: this.ordinaryStagingUrl(nonce), focused: false, type: "normal",
+                });
+                context.windowId = stagingWindow?.id;
+                context.stagingTabId = stagingWindow?.tabs?.[0]?.id;
+            } else {
+                const stagingTab = await this.chrome.tabs.create({
+                    windowId: context.windowId,
+                    url: this.ordinaryStagingUrl(nonce),
+                    active: true,
+                });
+                context.stagingTabId = stagingTab.id;
+            }
+            if (!Number.isInteger(context.windowId) ||
+                    !Number.isInteger(context.stagingTabId)) {
+                throw new Error("ordinary staging window has no exact tab");
+            }
+            const staging = await this.chrome.tabs.get(context.stagingTabId);
+            if (staging.windowId !== context.windowId || staging.active !== true) {
+                throw new Error("ordinary staging tab is not active in its exact window");
+            }
+            await this.waitForOrdinaryTitle(context.stagingTabId, nonce);
             const prepared = await this.nativeRequest("ordinary_open", "prepare", {nonce});
             if (!exactFields(prepared, ["xid", "nonce"]) || prepared.nonce !== nonce ||
                     !Number.isInteger(prepared.xid) || prepared.xid <= 0) {
                 throw new Error("invalid ordinary prepare response");
             }
-            mutated = true;
-            await this.chrome.tabs.update(stagingTabId, {url, active: true});
+            navigationRequested = true;
+            try {
+                await this.chrome.tabs.update(context.stagingTabId, {url, active: true});
+            } catch (_) {
+                throw new Error("ordinary navigation completion is unknown");
+            }
             try {
                 await this.nativeRequest("ordinary_open", "activate", prepared);
-                this.ordinaryWindowMru.set(selected.windowId, ++this.ordinaryMruClock);
+                this.rememberOrdinaryWindow(context.windowId);
                 completion = "applied";
             } catch (_) {
                 completion = "unknown";
             }
         } catch (_) {
-            completion = mutated ? "unknown" : "not_applied";
+            if (navigationRequested) {
+                completion = "unknown";
+            } else {
+                const cleaned = context ?
+                    await this.cleanupOrdinaryPrepare(context, nonce) : true;
+                completion = cleaned ? "not_applied" : "unknown";
+            }
         }
-        this.rememberOrdinaryCompletion(payload.request_id, completion);
+        this.rememberOrdinaryCompletion(payload, completion);
         await this.ordinaryCompletion(payload, completion);
         return completion;
     }
@@ -299,7 +509,7 @@ class WorkspaceExecutor {
         const expected = `${ORDINARY_PREFIX}${nonce}`;
         for (let attempt = 0; attempt < 100; attempt++) {
             const tab = await this.chrome.tabs.get(tabId);
-            if (tab.title === expected) return;
+            if (tab.active === true && tab.title === expected) return;
             await new Promise(resolve => setTimeout(resolve, 10));
         }
         throw new Error("ordinary staging title was not ready");
@@ -513,7 +723,8 @@ class WorkspaceExecutor {
         const seenKeys = new Set();
         const seenPhysical = new Set();
         const ownedMarkers = this.chrome.storage?.local ?
-            (await this.chrome.storage.local.get([OWNED_MARKERS_KEY]))[OWNED_MARKERS_KEY] || {} : {};
+            (await this.chrome.storage.local.get([OWNED_MARKERS_KEY]))[OWNED_MARKERS_KEY] || {} :
+            {};
         if (this.chrome.storage?.session) {
             const {abushWorkspaces = [], revision = 0} =
                 await this.chrome.storage.session.get(["abushWorkspaces", "revision"]);
@@ -557,6 +768,7 @@ class WorkspaceExecutor {
         const normalWindows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
         await Promise.all(normalWindows.map(window => this.rememberWindowSnapshot(window.id)));
         await this.primeRecentlyClosedSessions();
+        await this.initializeOrdinaryMru();
     }
 
     install(record) {
@@ -694,7 +906,8 @@ class WorkspaceExecutor {
         const record = this.workspaces.get(this.key(payload.remote_key, payload.principal_id));
         if (record && record.connectionId === payload.connection_id &&
                 sameRef(record.executorFence, payload.executor_fence) &&
-                record.logicalWindowId === payload.window_id && record.logicalPageId === payload.page_id) {
+                record.logicalWindowId === payload.window_id &&
+                record.logicalPageId === payload.page_id) {
             await this.detach(record.pageTabId);
             if (!await this.isLive(record)) return false;
             await this.chrome.windows.remove(record.windowId);
@@ -1018,8 +1231,8 @@ class WorkspaceExecutor {
                 if (operation.mutationStarted || operation.committed) operation.uncertain = true;
             }
             if (operation.cancelled) {
-                completion = operation.mutationStarted || operation.committed || operation.uncertain ?
-                    "unknown" : "not_applied";
+                completion = operation.mutationStarted || operation.committed ||
+                    operation.uncertain ? "unknown" : "not_applied";
             }
             operation.completion = completion;
             try {
@@ -1074,7 +1287,9 @@ class WorkspaceExecutor {
     cancelMatching(matches) {
         const cancels = [];
         for (const waiter of this.ensureWaiters.values()) {
-            if (matches(waiter.payload)) cancels.push(this.cancelEnsure(this.ensureIdentity(waiter.payload)));
+            if (matches(waiter.payload)) {
+                cancels.push(this.cancelEnsure(this.ensureIdentity(waiter.payload)));
+            }
         }
         for (const operation of this.operations.values()) {
             if (!matches(operation)) continue;

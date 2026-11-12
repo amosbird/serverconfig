@@ -56,7 +56,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                  orphanPage = false, restoredPopup = null, localState = {}) {
     const calls = [];
     if (!localState.abushOwnedMarkers) {
-        localState.abushOwnedMarkers = Object.fromEntries(saved.map(record => [record.nonce, true]));
+        localState.abushOwnedMarkers = Object.fromEntries(
+            saved.map(record => [record.nonce, true]));
     }
     let nextWindow = 10;
     let nextTab = 1000;
@@ -81,9 +82,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         {id: restoredPopup.tabIds[2], windowId: restoredPopup.windowId,
             windowType: "normal", index: 2, pinned: false, url: restoredPopup.businessUrl},
     ]]] : [];
-    const windows = new Map([[1, Array.from({length: Math.max(ordinaryTabCount, 1)}, (_, index) => ({
+    const windows = new Map([[1, Array.from(
+        {length: Math.max(ordinaryTabCount, 1)}, (_, index) => ({
         id: 2000 + index, windowId: 1, windowType: "normal",
-        url: `https://ordinary-${index}.test/`,
+        url: `https://ordinary-${index}.test/`, active: index === 0,
     }))], ...orphaned, ...restored, ...saved.map(record => [record.windowId, [
         ...record.statusTabIds.map((id, index) => ({
             id,
@@ -91,7 +93,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             windowType: "normal",
             index,
             pinned: true,
-            url: `chrome-extension://id/status.html#nonce=${record.nonce}&marker=${MARKER_IDS[index]}`,
+            url: `chrome-extension://id/status.html#nonce=${record.nonce}` +
+                `&marker=${MARKER_IDS[index]}`,
             title: `${STATUS_PREFIX}${record.nonce}:${MARKER_IDS[index]}`,
         })),
         {id: record.pageTabId, windowId: record.windowId, windowType: "normal",
@@ -113,7 +116,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             },
         },
         windows: {
-            onRemoved: {addListener: listener => { calls.push(["windowRemovedListener", listener]); }},
+            onRemoved: {addListener: listener => {
+                calls.push(["windowRemovedListener", listener]);
+            }},
             get: async id => ({
                 id,
                 type: windows.get(id)[0]?.windowType || "normal",
@@ -132,10 +137,13 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                     const tabs = urls.map((url, index) => {
                         const tab = {id: nextTab++, windowId: id,
                             windowType: properties.type, url, index, pinned: false};
-                        const fragment = url.split("#")[1];
-                        if (fragment) {
-                            const params = new URLSearchParams(fragment);
-                            tab.title = `${STATUS_PREFIX}${params.get("nonce")}:${params.get("marker")}`;
+                        tab.active = index === 0;
+                        if (url.includes("ordinary-staging.html#")) {
+                            tab.title = `__ABUSH_ORDINARY__:${url.split("#")[1]}`;
+                        } else if (url.includes("status.html#")) {
+                            const params = new URLSearchParams(url.split("#")[1]);
+                            tab.title = `${STATUS_PREFIX}${params.get("nonce")}:` +
+                                params.get("marker");
                         }
                         return tab;
                     });
@@ -144,7 +152,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 }
                 const source = [...windows.values()].find(tabs =>
                     tabs.some(tab => tab.id === properties.tabId));
-                const tab = source.splice(source.findIndex(item => item.id === properties.tabId), 1)[0];
+                const index = source.findIndex(item => item.id === properties.tabId);
+                const tab = source.splice(index, 1)[0];
                 tab.windowId = id;
                 tab.windowType = properties.type;
                 windows.set(id, [tab]);
@@ -161,14 +170,20 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             create: async properties => {
                 calls.push(["createTab", properties]);
                 const windowId = properties.windowId ?? 1;
-                const tab = {id: nextTab++, windowId, windowType: "normal", url: properties.url,
-                    index: windows.get(windowId).length, pinned: false};
+                const tab = {
+                    id: nextTab++, windowId, windowType: "normal", url: properties.url,
+                    index: windows.get(windowId).length, pinned: false,
+                    active: properties.active === true,
+                };
                 if (properties.url?.includes("status.html#")) {
                     const params = new URLSearchParams(properties.url.split("#")[1]);
                     tab.title = `${STATUS_PREFIX}${params.get("nonce")}:${params.get("marker")}`;
                 }
                 if (properties.url?.includes("ordinary-staging.html#")) {
                     tab.title = `__ABUSH_ORDINARY__:${properties.url.split("#")[1]}`;
+                }
+                if (properties.active) {
+                    windows.get(windowId).forEach(candidate => candidate.active = false);
                 }
                 windows.get(windowId).push(tab);
                 return tab;
@@ -190,6 +205,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 for (const tabs of windows.values()) {
                     const tab = tabs.find(candidate => candidate.id === id);
                     if (!tab) continue;
+                    if (properties.active) {
+                        tabs.forEach(candidate => candidate.active = candidate.id === id);
+                    }
                     Object.assign(tab, properties);
                     if (properties.pinned) {
                         tabs.splice(tabs.indexOf(tab), 1);
@@ -214,6 +232,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 }
             },
         },
+        extension: {isAllowedFileSchemeAccess: callback => callback(true)},
         debugger: {
             attach: async target => calls.push(["attach", target]),
             detach: async target => calls.push(["detach", target]),
@@ -269,6 +288,129 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             call[2]?.url === "https://ordinary-open.test/after-prepare").length, 1);
     }
     {
+        const {executor, calls} = fixture([], [], 1);
+        const originalUpdate = executor.chrome.tabs.update;
+        executor.chrome.tabs.update = async (id, properties) => {
+            if (properties.url === "https://ordinary-open.test/update-race") {
+                throw new Error("update result lost");
+            }
+            return originalUpdate(id, properties);
+        };
+        executor.nativeRequest = async (service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
+            return {};
+        };
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-update-race",
+            operation: "ordinary_open",
+            url: "https://ordinary-open.test/update-race",
+            focus: true,
+        });
+        assert.equal(completion, "unknown",
+            "a rejected navigation call may already have applied and must be unknown");
+        assert.equal(calls.filter(call => call[0] === "remove").length, 0,
+            "a navigation race must not delete the target tab");
+    }
+    {
+        const {executor, calls} = fixture([], [], 1);
+        executor.chrome.extension.isAllowedFileSchemeAccess = callback => callback(false);
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-file-denied",
+            operation: "ordinary_open",
+            url: "file:///home/amos/private.txt",
+            focus: true,
+        });
+        assert.equal(completion, "not_applied");
+        assert.equal(calls.filter(call => call[0] === "createTab").length, 0,
+            "file permission denial must happen before staging or navigation");
+    }
+    {
+        const {executor, calls} = fixture([], [], 1);
+        const payload = {
+            version: 1,
+            request_id: "ordinary-duplicate",
+            operation: "ordinary_open",
+            url: "https://ordinary-open.test/duplicate",
+            focus: true,
+        };
+        const gate = deferred();
+        executor.nativeRequest = async (service, operation, value) => {
+            calls.push([operation, value]);
+            if (operation === "prepare") {
+                await gate.promise;
+                return {xid: 42, nonce: value.nonce};
+            }
+            return {};
+        };
+        const first = executor.ordinaryOpen(payload);
+        while (!calls.some(call => call[0] === "prepare")) await Promise.resolve();
+        const duplicate = executor.ordinaryOpen({...payload});
+        await assert.rejects(executor.ordinaryOpen({...payload,
+            url: "https://ordinary-open.test/conflict"}), /conflicting duplicate/);
+        gate.resolve();
+        assert.deepEqual(await Promise.all([first, duplicate]), ["applied", "applied"]);
+        assert.equal(calls.filter(call => call[0] === "prepare").length, 1);
+        assert.equal(calls.filter(call => call[0] === "ordinary_open_completion").length, 1);
+        await assert.rejects(executor.ordinaryOpen({...payload,
+            url: "https://ordinary-open.test/completed-conflict"}), /conflicting duplicate/);
+    }
+    {
+        const {executor} = fixture([], [], 2);
+        const selected = await executor.selectOrdinaryWindow();
+        assert.equal(selected.windowId, 1);
+        assert.equal(selected.originalActiveTabId, 2000,
+            "prepare rollback must capture the active tab before staging");
+    }
+    {
+        const {executor} = fixture([], [], 1);
+        executor.chrome.windows.getAll = async () => [
+            {id: 1, type: "normal", focused: false},
+            {id: 2, type: "normal", focused: false},
+        ];
+        executor.chrome.windows.getLastFocused = async () => ({id: 2, type: "normal"});
+        const originalQuery = executor.chrome.tabs.query;
+        executor.chrome.tabs.query = async query => query.windowId === 2 ? [{
+            id: 3000, windowId: 2, windowType: "normal", active: true,
+            url: "https://last-focused.test/",
+        }] : originalQuery(query);
+        await executor.initializeOrdinaryMru();
+        assert(executor.ordinaryWindowMru.get(2) > 0,
+            "service worker restart must seed ordinary MRU from getLastFocused");
+        await executor.recordOrdinaryFocus(1);
+        assert(executor.ordinaryWindowMru.get(1) > executor.ordinaryWindowMru.get(2),
+            "focus changes after readiness must update ordinary MRU");
+    }
+    {
+        const managed = {
+            remoteKey: "r_12345678", principalId: "principal", workspaceId: "workspace",
+            connectionId: "c_12345678", executorFence: fence,
+            logicalWindowId, logicalPageId, windowGeneration: 1, pageGeneration: 1,
+            windowId: 1, statusTabIds: [3001, 3002], pageTabId: 3003,
+            nonce: "a".repeat(32), connectionDisplayName: "local",
+        };
+        const {executor, calls} = fixture([managed], [], 0);
+        const create = executor.chrome.windows.create;
+        executor.chrome.windows.create = async properties => {
+            await create(properties);
+            throw new Error("window result lost");
+        };
+        const completion = await executor.ordinaryOpen({
+            version: 1,
+            request_id: "ordinary-create-race",
+            operation: "ordinary_open",
+            url: "https://ordinary-open.test/create-race",
+            focus: true,
+        });
+        assert.equal(completion, "not_applied",
+            "a created staging window is not_applied only after verified cleanup");
+        assert.equal(calls.filter(call => call[0] === "removeWindow").length, 1);
+        assert.equal(calls.filter(call => call[0] === "update" &&
+            call[2]?.url === "https://ordinary-open.test/create-race").length, 0);
+    }
+    {
         const managed = {
             remoteKey: "r_12345678", principalId: "principal", workspaceId: "workspace",
             connectionId: "c_12345678", executorFence: fence,
@@ -282,13 +424,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             return {id: 99, tabs: [{id: 1999, windowId: 99, url: properties.url,
                 title: `__ABUSH_ORDINARY__:${properties.url.split("#")[1]}`}]};
         };
-        const selected = await executor.selectOrdinaryWindow("e".repeat(32));
-        assert.deepEqual(selected, {windowId: 99, stagingTabId: 1999});
-        assert.deepEqual(calls.find(call => call[0] === "createWindow")[1], {
-            url: "chrome-extension://id/ordinary-staging.html#" + "e".repeat(32),
-            focused: false,
-            type: "normal",
-        }, "only managed windows must create an unfocused ordinary staging window");
+        const selected = await executor.selectOrdinaryWindow();
+        assert.equal(selected, null);
+        assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
+            "selection must not create a window before rollback state exists");
     }
     {
         const orphanNonce = "f".repeat(32);
@@ -527,6 +666,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const chromeApi = {
             windows: {
                 onCreated: {addListener: listener => { listeners.windowCreated = listener; }},
+                onFocusChanged: {addListener: listener => { listeners.windowFocused = listener; }},
                 onRemoved: {addListener: listener => { listeners.windowRemoved = listener; }},
             },
             tabs: {
@@ -540,11 +680,13 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const ready = deferred();
         const snapshots = [];
         registerWorkspaceWindowListeners(chromeApi, {
+            recordOrdinaryFocus: async id => { moved.push(["focus", id]); },
             windowRemoved: async id => { removed.push(id); },
             tabMoved: async (id, info) => { moved.push([id, info]); },
             rememberWindowSnapshot: async id => { snapshots.push(id); },
         }, ready.promise, error => failures.push(error));
         listeners.windowCreated({id: 42, type: "normal"});
+        listeners.windowFocused(42);
         listeners.tabCreated({id: 24, windowId: 42});
         listeners.windowRemoved(42);
         listeners.tabAttached(24, {windowId: 7, newWindowId: 7});
@@ -556,7 +698,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await Promise.resolve();
         await Promise.resolve();
         assert.deepEqual(removed, [42]);
-        assert.deepEqual(moved, [[24, {windowId: 7, newWindowId: 7}]]);
+        assert.deepEqual(moved, [["focus", 42], [24, {windowId: 7, newWindowId: 7}]]);
         assert.deepEqual(snapshots, [42, 42, 7]);
         assert.deepEqual(failures, []);
     }
@@ -849,8 +991,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(calls.filter(call => call[0] === "createWindow").map(call => call[1]), [
             {url: "about:blank", focused: false, type: "normal"},
         ], "a neutral host must replace the closed ordinary window before managed cleanup");
-        assert(calls.some(call => call[0] === "removeWindow" && call[1] === record.windowId),
-            "the extension must close the last managed window before Chrome records it as last session");
+        assert(calls.some(call => call[0] === "removeWindow" &&
+            call[1] === record.windowId),
+            "the extension must close the last managed window before Chrome records it " +
+            "as last session");
         const persistIndex = calls.findIndex(call => call[0] === "persist");
         const closeIndex = calls.findIndex(call => call[0] === "removeWindow");
         assert(persistIndex >= 0 && closeIndex > persistIndex,
@@ -1291,7 +1435,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             throw new Error("persist failed");
         };
         await assert.rejects(executor.ensure(ensurePayload()), /persist failed/);
-        assert.equal(executor.workspaces.size, 0, "failed persist must roll back in-memory install");
+        assert.equal(executor.workspaces.size, 0,
+            "failed persist must roll back in-memory install");
         assert.equal(executor.windowOwners.size, 0);
         assert.equal(executor.tabOwners.size, 0);
         assert(calls.some(call => call[0] === "removeWindow"));

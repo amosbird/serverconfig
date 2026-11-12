@@ -1,42 +1,69 @@
 #!/usr/bin/env bash
 
-if [[ $# -ne 1 ]]; then
-    printf 'usage: chromium URL\n' >&2
-    exit 2
-fi
-
-url=$1
-profile=${ABUSH_CHROME_PROFILE:-$HOME/.config/google-chrome-main}
+profile=${ABUSH_CHROME_PROFILE:-"$HOME/.config/google-chrome-main"}
 chrome=${ABUSH_CHROME_BIN:-/usr/bin/google-chrome-stable}
 root=${ABUSH_SERVERCONFIG_ROOT:-/home/amos/git/serverconfig}
 host="$profile/NativeMessagingHosts/io.github.amosbird.browser_router.json"
 mkdir -p "$(dirname "$host")"
 ln -sf "$root/chromium/external-links/native-host.json" "$host"
 
-proc_root=${ABUSH_PROC_ROOT:-/proc}
-chrome_running() {
-    local process cmdline
+focus_main_group() {
+    printf '%s' '[[["group","f"]],"toscreen",[],{},true]' \
+        | nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY" >/dev/null
+}
+
+chrome_args=(
+    --user-data-dir="$profile"
+    --no-default-browser-check
+    --silent-debugger-extension-api
+    --remote-debugging-port=9222
+    --restore-last-session
+    --hide-crash-restore-bubble
+    --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation
+    --disable-smooth-scrolling
+)
+
+start_chrome() {
+    "$chrome" "${chrome_args[@]}" "$@"
+}
+
+launch_chrome() {
+    exec "$chrome" "${chrome_args[@]}" "$@"
+}
+
+focus_group=true
+special=false
+if [[ ${1:-} == --current-group ]]; then
+    focus_group=false
+    special=true
+    shift
+fi
+
+if ! $special && [[ $# -eq 1 && $1 != -* ]]; then
+    url=$1
+    proc_root=${ABUSH_PROC_ROOT:-/proc}
+    chrome_running=false
     for process in "$proc_root"/[0-9]*/cmdline; do
         [[ -r $process ]] || continue
         cmdline=$(tr '\0' '\n' < "$process" 2>/dev/null) || continue
         if grep -Fqx -- "--user-data-dir=$profile" <<< "$cmdline"; then
-            return 0
+            chrome_running=true
+            break
         fi
     done
-    return 1
-}
-
-if ! chrome_running; then
-    "$chrome" \
-        --user-data-dir="$profile" \
-        --no-default-browser-check \
-        --silent-debugger-extension-api \
-        --remote-debugging-port=9222 \
-        --restore-last-session \
-        --hide-crash-restore-bubble \
-        --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation \
-        --disable-smooth-scrolling \
-        >/dev/null 2>&1 &
+    if ! $chrome_running; then
+        start_chrome >/dev/null 2>&1 &
+    fi
+    exec python3 "$root/scripts/ordinary-open-client.py" "$url"
 fi
 
-exec python3 "$root/scripts/ordinary-open-client.py" "$url"
+if $focus_group; then
+    focus_main_group
+fi
+if chromium-remote "$@"; then
+    if $focus_group; then
+        focus_main_group
+    fi
+    exit
+fi
+launch_chrome "$@"

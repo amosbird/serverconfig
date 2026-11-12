@@ -24,7 +24,8 @@ class FakeAdapter:
         self.values = {
             (11, "_NET_WM_NAME"): "ordinary",
             (11, "WM_CLASS"): "chromium\0Chromium",
-            (22, "_NET_WM_NAME"): "__ABUSH_BIND__:0123456789abcdef0123456789abcdef:a - Google Chrome",
+            (22, "_NET_WM_NAME"):
+                "__ABUSH_BIND__:0123456789abcdef0123456789abcdef:a - Google Chrome",
             (22, "WM_CLASS"): "chromium\0Chromium",
         }
         self.finished = False
@@ -173,7 +174,8 @@ class X11BindingTest(unittest.TestCase):
 
         def run(command, **_kwargs):
             commands.append(command)
-            return mock.Mock(returncode=0, stdout="", stderr="")
+            return mock.Mock(
+                returncode=0, stdout=json.dumps({"id": 11, "group": "f"}), stderr="")
 
         result = binding.prepare_ordinary_window(
             {"nonce": nonce}, adapter=adapter, attempts=1, run=run)
@@ -192,7 +194,29 @@ class X11BindingTest(unittest.TestCase):
         with self.assertRaises(binding.X11Unavailable):
             binding.prepare_ordinary_window(
                 {"nonce": nonce}, adapter=adapter, attempts=1,
-                run=lambda *_args, **_kwargs: mock.Mock(returncode=0, stdout=""))
+                run=lambda *_args, **_kwargs: mock.Mock(
+                    returncode=0, stdout=json.dumps({"id": 22, "group": "f"})))
+
+    def test_qtile_info_is_strict_json_and_activation_verifier_polls_all_fields(self):
+        nonce = "d" * 32
+        adapter = FakeAdapter()
+        adapter.values[(11, "_ABUSH_ORDINARY_NONCE")] = nonce
+        active = iter([22, 11])
+        adapter.active_window = lambda: next(active)
+        outputs = iter([
+            json.dumps({"id": 11, "group": "e"}),
+            json.dumps({"id": 11, "group": "f"}),
+        ])
+
+        def run(_command, **_kwargs):
+            return mock.Mock(returncode=0, stdout=next(outputs), stderr="")
+
+        self.assertTrue(binding.verify_ordinary_activation(
+            adapter, 11, nonce, run=run, attempts=2, interval=0))
+        bad = lambda *_args, **_kwargs: mock.Mock(
+            returncode=0, stdout="{'id': 11, 'group': 'f'}", stderr="")
+        with self.assertRaisesRegex(binding.X11Unavailable, "invalid Qtile"):
+            binding.qtile_window_info(11, run=bad)
 
     def test_ordinary_activate_focuses_exact_xid_and_rejects_string_bool(self):
         nonce = "c" * 32
@@ -202,15 +226,16 @@ class X11BindingTest(unittest.TestCase):
 
         def run(command, **_kwargs):
             commands.append(command)
-            return mock.Mock(returncode=0, stdout="", stderr="")
+            return mock.Mock(
+                returncode=0, stdout=json.dumps({"id": 11, "group": "f"}), stderr="")
 
         result = binding.activate_ordinary_window(
             {"nonce": nonce, "xid": 11}, adapter=adapter, run=run,
             verify=lambda xid: xid == 11)
         self.assertEqual(result["xid"], 11)
-        self.assertEqual(commands[-1], [
-            "qtile", "cmd-obj", "--object", "window", "11", "--function", "focus",
-        ])
+        self.assertEqual(commands[-1], binding.qtile_activate_command(11))
+        self.assertNotIn("True", commands[-1])
+        self.assertNotIn("False", commands[-1])
         with self.assertRaises(ValueError):
             binding.activate_ordinary_window(
                 {"nonce": nonce, "xid": True}, adapter=adapter, run=run)
@@ -254,7 +279,9 @@ _NET_WM_NAME(UTF8_STRING) = "Managed page"
             def run(command, **_kwargs):
                 if command[0] == missing:
                     raise FileNotFoundError(missing)
-                return mock.Mock(returncode=0, stdout="_NET_ACTIVE_WINDOW(WINDOW): window id # 0x1\n",
+                return mock.Mock(
+                    returncode=0,
+                    stdout="_NET_ACTIVE_WINDOW(WINDOW): window id # 0x1\n",
                                  stderr="")
 
             with self.subTest(missing=missing), \

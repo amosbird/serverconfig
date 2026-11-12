@@ -122,7 +122,7 @@ for (const [page, link, expected] of cases) {{
         self.assertIn('"webchat",\n                "runchat",', config)
         self.assertNotIn('"discord",\n                "discord",', config)
         self.assertIn(
-            'Key([ctrl, alt], "minus", toggle_scratchpad("webchat"))',
+            'Key([ctrl, alt], "9", toggle_scratchpad("webchat"))',
             config,
         )
 

@@ -10,11 +10,28 @@ class NativeDispatcher {
         this.port = null;
         this.pending = new Map();
         this.eventListeners = new Set();
+        this.reconnectAttempts = 0;
+        this.reconnectTimer = null;
+        this.stopped = false;
+        this.setTimeout = setTimeout;
+        this.clearTimeout = clearTimeout;
     }
 
     ensurePort() {
         if (this.port) return this.port;
-        const port = this.connect();
+        this.stopped = false;
+        if (this.reconnectTimer !== null) {
+            this.clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        const port = (() => {
+            try {
+                return this.connect();
+            } catch (error) {
+                this.scheduleReconnect();
+                throw error;
+            }
+        })();
         this.port = port;
         port.onMessage.addListener(message => this.dispatch(message));
         port.onDisconnect.addListener(() => {
@@ -22,6 +39,7 @@ class NativeDispatcher {
             this.port = null;
             this.emitLifecycle("disconnect");
             this.rejectAll(new Error("native host disconnected"));
+            this.scheduleReconnect();
         });
         return port;
     }
@@ -29,7 +47,7 @@ class NativeDispatcher {
     request(service, operation, payload = {}) {
         const id = crypto.randomUUID();
         return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
+            const timer = this.setTimeout(() => {
                 if (!this.pending.delete(id)) return;
                 this.emitLifecycle("timeout", {service, operation});
                 reject(new Error("native request timed out"));
@@ -49,6 +67,37 @@ class NativeDispatcher {
         });
     }
 
+    reconnectDelay() {
+        return Math.min(5000, 100 * (2 ** Math.min(this.reconnectAttempts, 6)));
+    }
+
+    scheduleReconnect() {
+        if (this.stopped || this.reconnectTimer !== null) return;
+        const delay = this.reconnectDelay();
+        this.reconnectAttempts += 1;
+        this.reconnectTimer = this.setTimeout(() => {
+            this.reconnectTimer = null;
+            if (this.stopped || this.port) return;
+            try {
+                this.ensurePort();
+                this.emitLifecycle("reconnect");
+            } catch (_) {
+                this.scheduleReconnect();
+            }
+        }, delay);
+    }
+
+    stop() {
+        this.stopped = true;
+        if (this.reconnectTimer !== null) {
+            this.clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this.port?.disconnect?.();
+        this.port = null;
+        this.rejectAll(new Error("native dispatcher stopped"));
+    }
+
     dispatch(message) {
         if (!message || typeof message !== "object") return;
         if (typeof message.reply_to === "string" && this.pending.has(message.reply_to) &&
@@ -57,6 +106,7 @@ class NativeDispatcher {
             return;
         }
         if (message.version !== ENVELOPE_VERSION) return;
+        this.reconnectAttempts = 0;
         if (typeof message.event === "string" && typeof message.service === "string" &&
                 message.payload && typeof message.payload === "object") {
             this.eventListeners.forEach(listener => listener(message));
@@ -79,7 +129,7 @@ class NativeDispatcher {
         const pending = this.pending.get(id);
         if (!pending) return;
         this.pending.delete(id);
-        clearTimeout(pending.timer);
+        this.clearTimeout(pending.timer);
         if (ok) pending.resolve(value);
         else pending.reject(value instanceof Error ? value : new Error(String(value)));
     }
@@ -189,6 +239,9 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
         if (window.type !== "normal") return;
         ready.then(() => workspaces.rememberWindowSnapshot(window.id)).catch(onFailure);
     });
+    chromeApi.windows.onFocusChanged.addListener(windowId => {
+        ready.then(() => workspaces.recordOrdinaryFocus(windowId)).catch(onFailure);
+    });
     chromeApi.windows.onRemoved.addListener(windowId => {
         ready.then(() => workspaces.windowRemoved(windowId)).catch(onFailure);
     });
@@ -241,7 +294,8 @@ if (typeof chrome !== "undefined") {
                     error.message || "Unable to ensure Abush browser workspace"));
         }
         if (message.event === "abush_browser.retire_managed_page") {
-            workspaceReady.then(() => workspaces.retireManagedPage(message.payload)).catch(() => {});
+            workspaceReady.then(() => workspaces.retireManagedPage(message.payload))
+                .catch(() => {});
         }
         if (message.event === "abush_browser.cancel_ensure_managed_page") {
             workspaceReady.then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});

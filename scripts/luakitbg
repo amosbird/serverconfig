@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
 
-/home/amos/scripts/chromium "$@" x
-notify-send "Open Url" "$@"
+if [[ $# -ne 1 ]]; then
+    printf 'usage: luakitbg URL\n' >&2
+    exit 2
+fi
+
+exec /home/amos/scripts/chromium "$1"

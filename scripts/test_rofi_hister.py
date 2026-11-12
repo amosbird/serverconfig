@@ -354,7 +354,8 @@ class RofiHisterTest(unittest.TestCase):
     def test_chromium_uses_installed_extensions(self):
         launcher = SCRIPT.with_name("chromium").read_text()
         self.assertIn('if chromium-remote "$@"', launcher)
-        self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
+        self.assertIn('launch_chrome "$@"', launcher)
+        self.assertIn("/usr/bin/google-chrome-stable", launcher)
         self.assertNotIn("--load-extension", launcher)
         self.assertNotIn("--disable-extensions-except", launcher)
 
@@ -425,8 +426,8 @@ class RofiHisterTest(unittest.TestCase):
         remote = SCRIPT.with_name("chromium-remote").read_text()
         qtile_config = (root / ".config/qtile/config.py").read_text()
         restore = (root / "restore.sh").read_text()
-        self.assertIn('profile="$HOME/.config/google-chrome-main"', launcher)
-        self.assertIn("exec /usr/bin/google-chrome-stable", launcher)
+        self.assertIn('.config/google-chrome-main', launcher)
+        self.assertIn("/usr/bin/google-chrome-stable", launcher)
         self.assertIn('PROFILE = Path.home() / ".config/google-chrome-main"', remote)
         self.assertIn("--user-data-dir=\"$profile\"", launcher)
         self.assertIn("--silent-debugger-extension-api", launcher)

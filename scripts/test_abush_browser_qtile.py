@@ -68,7 +68,12 @@ class FakeWindow:
         self.name = name
         self.wm_class = wm_class or ["google-chrome", "Google-chrome"]
         self.can_steal_focus = True
-        self.togroup = mock.Mock()
+        self.wid = 22
+        self.togroup = mock.Mock(side_effect=self._togroup)
+        self.focus = mock.Mock()
+
+    def _togroup(self, group, switch_group=False):
+        self.group = FakeGroup(group)
 
     def get_wm_role(self):
         return self.role
@@ -277,6 +282,43 @@ class QtileConfigTest(unittest.TestCase):
                             name="Restored work - Google Chrome")
         namespace["reclassify_abush_browser"](window)
         window.togroup.assert_called_once_with("f", switch_group=False)
+    def test_exact_xid_prepare_and_activate_helpers_preserve_focus_policy(self):
+        namespace = {"re": re, "QtileWindow": FakeWindow}
+        function_names = {
+            "is_chrome_window", "is_abush_browser_verified", "is_abush_browser_candidate",
+            "qtile_window_by_xid", "prepare_ordinary_window", "activate_ordinary_window",
+        }
+        functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
+                     and node.name in function_names]
+        binding_title = next(
+            node.value for node in self.tree.body if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
+                    for target in node.targets)
+        )
+        module = ast.Module(
+            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title), *functions],
+            [],
+        )
+        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        window = FakeWindow("browser", group="e", name="GitHub - Google Chrome")
+        group = FakeGroup("f")
+        group.toscreen = mock.Mock()
+        manager = mock.Mock(windows_map={22: window}, groups_map={"f": group})
+
+        prepared = namespace["prepare_ordinary_window"](manager, 22)
+        self.assertEqual(prepared, {"id": 22, "group": "f"})
+        self.assertFalse(window.can_steal_focus)
+        window.togroup.assert_called_once_with("f", switch_group=False)
+        group.toscreen.assert_not_called()
+        window.focus.assert_not_called()
+
+        activated = namespace["activate_ordinary_window"](manager, 22)
+        self.assertEqual(activated, {"id": 22, "group": "f"})
+        self.assertTrue(window.can_steal_focus)
+        group.toscreen.assert_called_once_with()
+        window.focus.assert_called_once_with(warp=False)
+        with self.assertRaisesRegex(ValueError, "unknown X11"):
+            namespace["prepare_ordinary_window"](manager, 23)
 
 
 class BinderQtileNotificationTest(unittest.TestCase):
@@ -294,7 +336,8 @@ class BinderQtileNotificationTest(unittest.TestCase):
         command = binding.qtile_move_command(22)
         self.assertEqual(command[:3], ["qtile", "cmd-obj", "--object"])
         self.assertIn("22", command)
-        self.assertEqual(command[-2:], ["--args", "c"])
+        self.assertEqual(command[-2:], ["--args", "22"])
+        self.assertEqual(command[3:6], ["root", "--function", "place_abush_browser_window"])
         self.assertNotIn("--kwargs", command)
         self.assertFalse(any(argument.startswith("switch_group=") for argument in command))
         self.assertNotIn("focus", command)
@@ -323,7 +366,7 @@ class BinderQtileNotificationTest(unittest.TestCase):
             with self.subTest(error=type(side_effect).__name__):
                 run = mock.Mock(side_effect=side_effect)
                 self.assertFalse(binding.notify_qtile(22, run=run))
-        run = mock.Mock(return_value=mock.Mock(returncode=1))
+        run = mock.Mock(return_value=mock.Mock(returncode=1, stdout="", stderr="failed"))
         self.assertFalse(binding.notify_qtile(22, run=run))
         run.assert_called_once_with(
             binding.qtile_move_command(22),
@@ -332,6 +375,9 @@ class BinderQtileNotificationTest(unittest.TestCase):
             check=False,
             timeout=2,
         )
+        wrong = mock.Mock(return_value=mock.Mock(
+            returncode=0, stdout='{"id":22,"group":"f"}', stderr=""))
+        self.assertFalse(binding.notify_qtile(22, run=wrong))
 
 
 if __name__ == "__main__":
