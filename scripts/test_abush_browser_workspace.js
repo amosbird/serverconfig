@@ -2630,6 +2630,30 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const localState = {};
+        const {executor} = fixture([], [], 0, false, null, localState);
+        const identity = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", request_id: "retire-conflict-one",
+            retire_id: "stable-retire-conflict", ensure_id: "ensure-conflict",
+            executor_fence: fence, origin_executor_fence: fence,
+            window_id: logicalWindowId, page_id: logicalPageId,
+        };
+        executor.nativeRequest = async (_service, operation) => {
+            if (operation === "retire_managed_page_completion") {
+                throw new Error("hold canonical completion for conflict test");
+            }
+            return {};
+        };
+        await executor.retireManagedPage(identity);
+        await assert.rejects(executor.retireManagedPage({
+            ...identity, request_id: "retire-conflict-two", page_id: "different-page",
+        }), /conflicting duplicate retire request/);
+        assert.equal(executor.retireCompleted.size, 1,
+            "conflicting stable retire ID must retain the canonical completion");
+    }
+    {
+        beginCase();
         const identity = {
             remote_key: "r_12345678", connection_id: "c_old00000",
             principal_id: "principal-one", request_id: "retire-old-delivery",
