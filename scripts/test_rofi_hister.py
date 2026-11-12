@@ -393,7 +393,7 @@ class RofiHisterTest(unittest.TestCase):
         self.assertIn('[[["group","f"]],"toscreen",[],{},true]', launcher)
         self.assertIn('nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY"', launcher)
         self.assertNotIn("qtile cmd-obj", launcher)
-        self.assertNotIn("--restore-last-session", launcher)
+        self.assertIn("--restore-last-session", launcher)
         self.assertIn("--hide-crash-restore-bubble", launcher)
         self.assertIn(
             "--disable-features=OverscrollHistoryNavigation,"

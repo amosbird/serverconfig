@@ -30,6 +30,7 @@ exec /usr/bin/google-chrome-stable \
     --no-default-browser-check \
     --silent-debugger-extension-api \
     --remote-debugging-port=9222 \
+    --restore-last-session \
     --hide-crash-restore-bubble \
     --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation \
     --disable-smooth-scrolling \
