@@ -671,6 +671,12 @@ def is_abush_browser_candidate(window):
     )
 
 
+@hook.subscribe.group_window_add
+def prevent_abush_browser_focus_steal(group, window):
+    if is_abush_browser_candidate(window):
+        window.can_steal_focus = False
+
+
 def place_abush_browser(window):
     if not is_abush_browser_candidate(window):
         return False

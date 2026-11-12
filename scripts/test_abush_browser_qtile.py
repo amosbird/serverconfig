@@ -77,6 +77,15 @@ class FakeWindow:
         return self.wm_class
 
 
+class FakeHook:
+    class Subscribe:
+        @staticmethod
+        def group_window_add(function):
+            return function
+
+    subscribe = Subscribe()
+
+
 class QtileConfigTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -135,6 +144,43 @@ class QtileConfigTest(unittest.TestCase):
         self.assertNotIn("weechat", self.source.lower())
         self.assertFalse((ROOT / "scripts/wee").exists())
         self.assertFalse((ROOT / "scripts/kitty-notify").exists())
+
+    def test_group_add_guard_runs_at_focus_linearization_point(self):
+        namespace = {"re": re, "QtileWindow": FakeWindow, "hook": FakeHook}
+        functions = {
+            node.name: node
+            for node in self.tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name in {
+                "is_abush_browser",
+                "is_abush_browser_candidate",
+                "prevent_abush_browser_focus_steal",
+            }
+        }
+        binding_title = next(
+            node.value
+            for node in self.tree.body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "ABUSH_BINDING_TITLE"
+                    for target in node.targets)
+        )
+        module = ast.Module(
+            [ast.Assign([ast.Name("ABUSH_BINDING_TITLE", ast.Store())], binding_title),
+             *functions.values()],
+            [],
+        )
+        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+
+        for window in (
+            FakeWindow("abush-browser"),
+            FakeWindow(None, name="__ABUSH_BIND__:" + "a" * 32 + ":a - Google Chrome"),
+        ):
+            namespace["prevent_abush_browser_focus_steal"](FakeGroup("c"), window)
+            self.assertFalse(window.can_steal_focus)
+
+        ordinary = FakeWindow("browser", name="GitHub - Google Chrome")
+        namespace["prevent_abush_browser_focus_steal"](FakeGroup("f"), ordinary)
+        self.assertTrue(ordinary.can_steal_focus)
 
     def test_place_helper_moves_without_switching_or_focusing(self):
         namespace = {"re": re, "QtileWindow": FakeWindow}
