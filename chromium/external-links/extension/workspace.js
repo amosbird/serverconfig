@@ -9,9 +9,7 @@ const RETIRE_LEDGER_KEY = "abushRetireLedger";
 const RESTORE_HOST_KEY = "abushRestoreHost";
 const PENDING_TRANSACTIONS_KEY = "abushPendingTransactions";
 const PENDING_OPERATIONS_KEY = "abushPendingOperations";
-const TAB_REPLACEMENTS_KEY = "abushTabReplacements";
 const TRANSACTION_WAIT_MS = 5000;
-const ORDINARY_OPEN_DEADLINE_MS = 30000;
 const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -58,7 +56,6 @@ class WorkspaceExecutor {
         this.operations = new Map();
         this.completedOperations = new Map();
         this.pendingOperationCancels = new Map();
-        this.operationTail = Promise.resolve();
         this.ordinaryOperations = new Map();
         this.completedOrdinaryOperations = new Map();
         this.ordinaryTail = Promise.resolve();
@@ -72,19 +69,16 @@ class WorkspaceExecutor {
         this.pendingTransactions = new Map();
         this.eventTransactions = new Map();
         this.eventTransactionClock = 0;
-        this.markerTail = Promise.resolve();
         this.lifecycleTail = Promise.resolve();
         this.lifecycleGeneration = 0;
         this.topologyOutbox = new Map();
         this.outboxTail = Promise.resolve();
-        this.cleanupTail = Promise.resolve();
         this.retireCompletions = new Map();
         this.retirePending = new Map();
         this.retireDeliveries = new Map();
         this.retireRecoveryReady = false;
         this.retireRecoveries = [];
         this.retireRecoveryState = null;
-        this.retireTail = Promise.resolve();
         this.nativeMutationTail = Promise.resolve();
         this.advisoryErrors = [];
         this.notifiedAdvisoryErrors = new WeakSet();
@@ -92,7 +86,6 @@ class WorkspaceExecutor {
         this.removedHostSnapshots = new Map();
         this.snapshotTails = new Map();
         this.recentSessionIds = null;
-        this.quarantinedRecords = new Map();
         this.ready = Promise.resolve();
     }
 

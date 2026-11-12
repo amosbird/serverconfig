@@ -42,14 +42,51 @@ function executePayload(overrides = {}) {
     return payload;
 }
 
-function deferred() {
+const WAIT_TIMEOUT_MS = 1000;
+let activeCase = "startup";
+let caseNumber = 0;
+
+function beginCase() {
+    const caller = new Error().stack.split("\n")[2]?.trim() || "unknown location";
+    activeCase = caller.replace(/^at\s+/, "");
+    caseNumber += 1;
+    console.error(`[workspace-test] ${caseNumber}: ${activeCase}`);
+}
+
+function timeoutError(label) {
+    return new Error(`${activeCase}: timed out waiting for ${label}`);
+}
+
+async function waitFor(predicate, label, timeoutMs = WAIT_TIMEOUT_MS) {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+        if (Date.now() >= deadline) throw timeoutError(label);
+        await new Promise(resolve => setImmediate(resolve));
+    }
+}
+
+async function exactWait(promise, label, timeoutMs = WAIT_TIMEOUT_MS) {
+    let timer;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(timeoutError(label)), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
+}
+
+function deferred(label = "deferred promise") {
     let resolve;
     let reject;
-    const promise = new Promise((resolvePromise, rejectPromise) => {
+    const pending = new Promise((resolvePromise, rejectPromise) => {
         resolve = resolvePromise;
         reject = rejectPromise;
     });
-    return {promise, resolve, reject};
+    return {promise: exactWait(pending, label), resolve, reject};
 }
 
 function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
@@ -295,10 +332,19 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
 }
 
 (async () => {
-    assert.equal(displayTitle("local"), "local");
-    assert.equal(displayTitle("dev.example.com"), "dev.example.com");
-    assert.equal(displayTitle("prod-alias"), "prod-alias");
+    const testDeadline = setTimeout(() => {
+        console.error(timeoutError("test completion"));
+        process.exitCode = 1;
+    }, 15000);
+    testDeadline.unref();
+    try {
+        beginCase();
+        activeCase = "display titles";
+        assert.equal(displayTitle("local"), "local");
+        assert.equal(displayTitle("dev.example.com"), "dev.example.com");
+        assert.equal(displayTitle("prod-alias"), "prod-alias");
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -317,6 +363,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(staging[1].windowId, 1, "staging must always carry an exact windowId");
     }
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         const originalActive = await executor.chrome.tabs.get(2000);
         assert.equal(originalActive.active, true);
@@ -340,6 +387,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "prepare rollback must delete the staging tab");
     }
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         executor.nativeRequest = async (service, operation, payload) => {
             calls.push([operation, payload]);
@@ -361,6 +409,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             call[2]?.url === "https://ordinary-open.test/after-prepare").length, 1);
     }
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         const originalUpdate = executor.chrome.tabs.update;
         executor.chrome.tabs.update = async (id, properties) => {
@@ -388,6 +437,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "a navigation race must not delete the target tab");
     }
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         executor.nativeRequest = async (service, operation, payload) => {
             calls.push([operation, payload]);
@@ -414,6 +464,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "file navigation must never use extension tabs.update");
     }
     {
+        beginCase();
         const {executor} = fixture([], [], 1);
         executor.nativeRequest = (service, operation, payload) => {
             if (operation === "prepare") return Promise.resolve({xid: 42, nonce: payload.nonce});
@@ -436,6 +487,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "synchronous failure before native dispatch must remain not_applied");
     }
     {
+        beginCase();
         const {executor} = fixture([], [], 1);
         executor.nativeRequest = (service, operation, payload) => {
             if (operation === "prepare") return Promise.resolve({xid: 42, nonce: payload.nonce});
@@ -458,6 +510,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "native dispatch failure after postMessage starts must remain unknown");
     }
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         executor.nativeRequest = async (service, operation, payload) => {
             calls.push([operation, payload]);
@@ -479,6 +532,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "a sent mutation with a mismatched native correlation must be unknown");
     }
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         const payload = {
             version: 1,
@@ -498,7 +552,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             return {};
         };
         const first = executor.ordinaryOpen(payload);
-        while (!calls.some(call => call[0] === "prepare")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "prepare"),
+            "ordinary duplicate prepare");
         const duplicate = executor.ordinaryOpen({...payload});
         await assert.rejects(executor.ordinaryOpen({...payload,
             url: "https://ordinary-open.test/conflict"}), /conflicting duplicate/);
@@ -510,6 +565,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             url: "https://ordinary-open.test/completed-conflict"}), /conflicting duplicate/);
     }
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         const gates = [deferred(), deferred()];
         let prepares = 0;
@@ -524,21 +580,24 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         };
         const first = executor.ordinaryOpen({
             version: 1, request_id: "ordinary-serialized-one",
-            operation: "ordinary_open", url: "https://one.test/", focus: true,
+            operation: "ordinary_open", deadline_ms: Date.now() + 30000,
+            url: "https://one.test/", focus: true,
         });
         const second = executor.ordinaryOpen({
             version: 1, request_id: "ordinary-serialized-two",
-            operation: "ordinary_open", url: "https://two.test/", focus: true,
+            operation: "ordinary_open", deadline_ms: Date.now() + 30000,
+            url: "https://two.test/", focus: true,
         });
-        while (prepares < 1) await Promise.resolve();
+        await waitFor(() => prepares >= 1, "first serialized ordinary prepare");
         assert.equal(prepares, 1, "ordinary opens must not share staging state concurrently");
         gates[0].resolve();
         await first;
-        while (prepares < 2) await Promise.resolve();
+        await waitFor(() => prepares >= 2, "second serialized ordinary prepare");
         gates[1].resolve();
         assert.equal(await second, "applied");
     }
     {
+        beginCase();
         const {executor} = fixture([], [], 2);
         const selected = await executor.selectOrdinaryWindow();
         assert.equal(selected.windowId, 1);
@@ -546,6 +605,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "prepare rollback must capture the active tab before staging");
     }
     {
+        beginCase();
         const {executor} = fixture([], [], 1);
         executor.chrome.windows.getAll = async () => [
             {id: 1, type: "normal", focused: false},
@@ -565,6 +625,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "focus changes after readiness must update ordinary MRU");
     }
     {
+        beginCase();
         const managed = {
             remoteKey: "r_12345678", principalId: "principal", workspaceId: "workspace",
             connectionId: "c_12345678", executorFence: fence,
@@ -593,6 +654,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             call[2]?.url === "https://ordinary-open.test/create-race").length, 0);
     }
     {
+        beginCase();
         const managed = {
             remoteKey: "r_12345678", principalId: "principal", workspaceId: "workspace",
             connectionId: "c_12345678", executorFence: fence,
@@ -612,6 +674,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "selection must not create a window before rollback state exists");
     }
     {
+        beginCase();
         const nonce = "4".repeat(32);
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
@@ -643,6 +706,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(localState.abushOwnedMarkers[nonce], undefined);
     }
     {
+        beginCase();
         const nonce = "3".repeat(32);
         const tombstone = {
             version: 1, nonce, window_id: 999, xid: null,
@@ -660,6 +724,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "failed fresh-candidate cleanup must converge after service-worker restart");
     }
     {
+        beginCase();
         const orphanNonce = "f".repeat(32);
         const {executor, calls} = fixture([], [orphanNonce]);
         await executor.restore();
@@ -668,6 +733,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0);
     }
     {
+        beginCase();
         const orphanNonce = "f".repeat(32);
         const {executor, calls} = fixture([], [orphanNonce], 1, true);
         await executor.restore();
@@ -677,6 +743,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "orphan cleanup must never destroy a window containing user tabs");
     }
     {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         executor.chrome.windows.create = async () => {
             throw new Error("window creation failed");
@@ -686,6 +753,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "a failed window create must not leave a partial marker tab");
     }
     {
+        beginCase();
         const nonce = "9".repeat(32);
         const restoredPopup = {
             windowId: 700,
@@ -719,6 +787,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             [["removeWindow", 700]], "restored owned popup must be removed before ensures");
     }
     {
+        beginCase();
         const nonce = "8".repeat(32);
         const restoredPopup = {
             windowId: 701,
@@ -733,6 +802,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "remove").length, 2);
     }
     {
+        beginCase();
         const nonce = "7".repeat(32);
         const restoredPopup = {
             windowId: 702,
@@ -752,6 +822,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "unsafe shutdown residue must remove only its marker tab");
     }
     {
+        beginCase();
         const nonce = "6".repeat(32);
         const restoredPopup = {
             windowId: 703,
@@ -769,6 +840,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(calls.filter(call => call[0] === "remove"), [["remove", 1730]]);
     }
     {
+        beginCase();
         const nonce = "5".repeat(32);
         const restoredPopup = {
             windowId: 704,
@@ -807,6 +879,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(localState.abushOwnedMarkers[nonce], undefined);
     }
     {
+        beginCase();
         const localState = {abushRestoreHost: true};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         executor.chrome.windows.getAll = async () => [];
@@ -823,6 +896,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "verified recovery must be consumed only after host creation");
     }
     {
+        beginCase();
         const localState = {abushRestoreHost: true};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         executor.chrome.sessions = {
@@ -857,6 +931,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "verified recovery must be consumed only after session restore");
     }
     {
+        beginCase();
         const localState = {abushRestoreHost: {
             version: 1,
             sessionId: "ordinary-window-session",
@@ -886,6 +961,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0);
     }
     {
+        beginCase();
         const localState = {abushRestoreHost: {
             version: 2, phase: "inflight", sessionId: "ordinary-window-session",
             snapshot: {tabCount: 1, urls: ["https://ordinary-0.test/"]},
@@ -903,6 +979,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(localState.abushRestoreHost, false);
     }
     {
+        beginCase();
         const snapshot = {tabCount: 2, urls: ["https://work.test/", "https://docs.test/"]};
         const localState = {abushRestoreHost: {
             version: 1, sessionId: "expired-session", snapshot,
@@ -928,6 +1005,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         ], "failed exact restore must fall back to the matching snapshot, not the newest window");
     }
     {
+        beginCase();
         const localState = {abushRestoreHost: true};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         executor.chrome.windows.getAll = async () => [];
@@ -942,6 +1020,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         ], "missing recently closed windows must fall back to a neutral host");
     }
     {
+        beginCase();
         const localState = {abushRestoreHost: true};
         const {executor} = fixture([], [], 1, false, null, localState);
         executor.chrome.sessions = {
@@ -956,6 +1035,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "ambiguous restore must fail closed without consuming its ledger");
     }
     {
+        beginCase();
         const gate = deferred();
         const order = [];
         const workspaces = {
@@ -973,6 +1053,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(order, ["restore-start", "restore-done", "connect"]);
     }
     {
+        beginCase();
         const order = [];
         const workspaces = {
             restoreWhenReady: async () => { order.push("restore"); },
@@ -987,6 +1068,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.match(errors[0].message, /outbox pending/);
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const expectedPage = {
             window: {
@@ -1007,6 +1089,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 1);
     }
     {
+        beginCase();
         const listeners = {};
         const moved = [];
         const removed = [];
@@ -1089,6 +1172,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(failures.length, 0);
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative", connectionId: "c_old00000",
@@ -1175,6 +1259,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         "unprovable rollback must quarantine the old record instead of keeping it active");
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1194,6 +1279,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             .completion.code, "stale_page");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const [first, second] = await Promise.all([
             executor.ensure(ensurePayload()),
@@ -1225,6 +1311,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert(!calls.some(call => call[0].toLowerCase().includes("focus")));
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const created = deferred();
         executor.chrome.windows.create = async properties => {
@@ -1233,8 +1320,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         };
         const payload = ensurePayload();
         const ensuring = executor.ensure(payload);
-        while (!executor.ensureFlights.has(executor.key(payload.remote_key,
-            payload.principal_id))) await Promise.resolve();
+        await waitFor(() => executor.ensureFlights.has(executor.key(payload.remote_key,
+            payload.principal_id)), "ensure flight registration");
         const cancel = executor.ensureIdentity(payload);
         const cancelling = executor.cancelEnsure(cancel);
         created.resolve({id: 10, tabs: [{id: 110}]});
@@ -1247,6 +1334,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "visible cancellation must suppress completion");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const created = deferred();
         const originalCreate = executor.chrome.windows.create;
@@ -1258,8 +1346,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const secondPayload = ensurePayload({request_id: "request-two", ensure_id: "ensure-two"});
         const first = executor.ensure(firstPayload);
         const second = executor.ensure(secondPayload);
-        while (!executor.ensureFlights.has(executor.key(firstPayload.remote_key,
-            firstPayload.principal_id))) await Promise.resolve();
+        await waitFor(() => executor.ensureFlights.has(executor.key(firstPayload.remote_key,
+            firstPayload.principal_id)), "shared ensure flight registration");
         const firstCancel = executor.ensureIdentity(firstPayload);
         const cancelling = executor.cancelEnsure(firstCancel);
         assert.equal(await executor.cancelEnsure({...firstCancel, request_id: "stale"}), false);
@@ -1275,6 +1363,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(completions.map(call => call[1].request_id), ["request-two"]);
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-before-restart",
@@ -1297,6 +1386,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(record.executorFence.epoch, 2);
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1322,6 +1412,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "failover identity must commit only after successful bind");
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1352,6 +1443,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0);
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1377,6 +1469,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0);
     }
     {
+        beginCase();
         const legacy = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative", connectionId: "c_12345678",
@@ -1399,6 +1492,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert(calls.some(call => call[0] === "bind_x11_window"));
     }
     {
+        beginCase();
         const legacy = {
             remoteKey: "r_12345678", connectionId: "c_12345678",
             windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
@@ -1410,6 +1504,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert(!calls.some(call => call[0] === "createWindow"), "restore must not create windows");
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1440,6 +1535,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "duplicate window removal must be idempotent");
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1461,6 +1557,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, []);
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1518,6 +1615,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         }, "the removed window snapshot must select its own session, not a newer ordinary entry");
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1539,6 +1637,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0);
     }
     {
+        beginCase();
         const firstRecord = {
             remoteKey: "r_aaaaaaaa", principalId: "principal-a", workspaceId: "workspace-a",
             connectionId: "c_aaaaaaaa", executorFence: fence, logicalWindowId: "window-a",
@@ -1578,6 +1677,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             .map(call => call[1]), [10, 20]);
     }
     {
+        beginCase();
         const first = fixture();
         const one = await first.executor.ensure(ensurePayload());
         const second = await first.executor.ensure(ensurePayload({
@@ -1589,6 +1689,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(first.executor.workspaces.size, 2);
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         assert.equal(executor.pageRef(record).window.workspace_id, "workspace-authoritative");
@@ -1645,6 +1746,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "not_applied");
     }
     {
+        beginCase();
         const persisted = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative",
@@ -1661,6 +1763,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0);
     }
     {
+        beginCase();
         const invalidResults = [
             {},
             {available: false, xid: 42, observed: {}, qtile_moved: true, observed_group: "c"},
@@ -1688,6 +1791,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         }
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         executor.nativeRequest = async (_service, operation, payload) => {
             calls.push([operation, payload]);
@@ -1712,6 +1816,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(executor.workspaces.size, 0);
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         let attempts = 0;
         executor.nativeRequest = async (_service, operation, payload) => {
@@ -1730,6 +1835,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert(!BROWSER_ERROR_CODES.has("workspace_unavailable"));
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         executor.nativeRequest = async (_service, operation, payload) => {
             calls.push([operation, payload]);
@@ -1752,6 +1858,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             Array.isArray(call[1].abushCleanupTombstones)));
     }
     {
+        beginCase();
         const {executor} = fixture();
         executor.nativeRequest = async (_service, operation) => {
             throw new Error(operation === "ensure_managed_page_completion" ?
@@ -1761,6 +1868,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             error instanceof AggregateError && error.errors.length === 2);
     }
     {
+        beginCase();
         const {executor} = fixture();
         const payload = {...executePayload(), effect_id: "effect", command: {}};
         const operation = {
@@ -1783,6 +1891,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(operation.cancelled, true);
     }
     {
+        beginCase();
         const {executor} = fixture();
         const firstKey = executor.key("r_12345678", "principal-one");
         const secondKey = executor.key("r_12345678", "principal-two");
@@ -1799,6 +1908,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(otherTab.uncertain, undefined);
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         const navigate = deferred();
@@ -1810,7 +1920,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
         }};
         const executing = executor.execute(payload);
-        while (!calls.some(call => call[0] === "command")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "command"),
+            "navigate command dispatch");
         executor.cancel({...executor.operationIdentity(payload), request_id: "cancel-request",
             execution_request_id: payload.request_id});
         navigate.resolve();
@@ -1819,6 +1930,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "unknown", "cancellation after mutation send must not report not_applied or success");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         const attach = deferred();
@@ -1830,7 +1942,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
         }};
         const executing = executor.execute(payload);
-        while (!calls.some(call => call[0] === "attach")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "attach"),
+            "debugger attach dispatch");
         executor.cancel({...executor.operationIdentity(payload), request_id: "cancel-request",
             execution_request_id: payload.request_id});
         attach.resolve();
@@ -1840,6 +1953,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "not_applied");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         const navigate = deferred();
@@ -1851,7 +1965,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
         }};
         const executing = executor.execute(payload);
-        while (!calls.some(call => call[0] === "command")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "command"),
+            "navigate command dispatch");
         await executor.remoteState({remote_key: payload.remote_key,
             connection_id: payload.connection_id, connected: false});
         navigate.resolve();
@@ -1860,6 +1975,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "unknown");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         const navigate = deferred();
@@ -1871,7 +1987,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
         }};
         const executing = executor.execute(payload);
-        while (!calls.some(call => call[0] === "command")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "command"),
+            "navigate command dispatch");
         navigate.resolve();
         executor.cancel({...executor.operationIdentity(payload), request_id: "cancel-request",
             execution_request_id: payload.request_id});
@@ -1880,6 +1997,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "unknown", "cancellation after navigate resolves must suppress success");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         calls.length = 0;
@@ -1892,7 +2010,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             command: "navigate", page: executor.pageRef(record), url: "https://example.test/",
         }};
         const executing = executor.execute(payload);
-        while (!calls.some(call => call[0] === "persist")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "persist"),
+            "session persistence start");
         assert(calls.some(call => call[0] === "command"),
             "navigate must commit before the persistence barrier");
         const cancelling = executor.cancel({...executor.operationIdentity(payload),
@@ -1904,6 +2023,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "cancellation acknowledgement must wait for executor completion publication");
         persisted.resolve();
         await Promise.all([executing, cancelling]);
+        assert.equal(executor.operations.size, 0,
+            "terminal execution must release all operation waiters");
+        assert.deepEqual(executor.operationCancelSnapshot(), [],
+            "terminal cancellation must consume its durable waiter");
         assert.deepEqual(calls.filter(call => call[0] === "executor_completion")
             .map(call => call[1].completion), ["unknown"],
         "late cancellation must produce exactly one executor completion");
@@ -1912,6 +2035,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         "cancellation after navigate commit must never acknowledge not_applied");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         calls.length = 0;
@@ -1927,8 +2051,37 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call => call[0] === "cancellation_completion").at(-1)[1]
             .completion, "unknown",
         "terminal applied completion must remain visible to a late cancellation");
+        assert.equal(executor.operations.size, 0);
+        assert.deepEqual(executor.operationCancelSnapshot(), []);
     }
     {
+        beginCase();
+        const localState = {};
+        const first = fixture([], [], 0, false, null, localState);
+        const payload = {...executePayload(), effect_id: "cancel-before-register", command: {}};
+        const cancellation = {
+            ...first.executor.operationIdentity(payload),
+            request_id: "cancel-before-register-request",
+            execution_request_id: payload.request_id,
+        };
+        await first.executor.cancel(cancellation);
+        assert.deepEqual(localState.abushPendingOperations, [cancellation],
+            "a cancellation arriving before execute must remain durable");
+
+        const second = fixture([], [], 0, false, null, localState);
+        await second.executor.restoreOperationCancels();
+        await second.executor.execute(payload);
+        assert.deepEqual(localState.abushPendingOperations, [],
+            "restored cancellation must be consumed by the matching execution");
+        assert.deepEqual(second.calls.filter(call => call[0] === "executor_completion")
+            .map(call => call[1].completion), ["not_applied"]);
+        assert.deepEqual(second.calls.filter(call => call[0] === "cancellation_completion")
+            .map(call => call[1].completion), ["not_applied"]);
+        assert.equal(second.executor.operations.size, 0);
+        assert.equal(second.executor.pendingOperationCancels.size, 0);
+    }
+    {
+        beginCase();
         const {executor, calls} = fixture();
         const firstWrite = deferred();
         let writes = 0;
@@ -1950,7 +2103,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         };
         executor.install(recordA);
         const writeA = executor.persist();
-        while (!calls.some(call => call[0] === "persist")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "persist"),
+            "session persistence start");
         executor.install(recordB);
         const writeB = executor.persist();
         firstWrite.resolve();
@@ -1965,6 +2119,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         "final durable state must equal the final workspace map");
     }
     {
+        beginCase();
         const listeners = {message: null, disconnect: null};
         const sent = [];
         const port = {
@@ -1986,6 +2141,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(sent.length, 2);
     }
     {
+        beginCase();
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative", connectionId: "c_12345678",
@@ -2008,6 +2164,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(calls.find(call => call[0] === "persist")[1].abushWorkspaces, []);
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const persist = executor.chrome.storage.session.set;
         executor.chrome.storage.session.set = async value => {
@@ -2024,6 +2181,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert(calls.some(call => call[0] === "removeWindow"));
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const gates = [deferred(), deferred()];
         const persisted = [];
@@ -2054,6 +2212,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             ["r_one", "r_two"], "newer whole-map state must win after reversed pressure");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         calls.length = 0;
@@ -2065,7 +2224,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
         tabs.push({id: 9999, windowId: record.windowId, index: 3, pinned: false});
         const converging = executor.tabCreated(tabs.at(-1));
-        while (!calls.some(call => call[0] === "persist")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "persist"),
+            "session persistence start");
         assert.strictEqual(executor.workspaces.get(
             executor.key(record.remoteKey, record.principalId)), record,
         "persist-before-effect must retain in-memory authority until the write commits");
@@ -2075,6 +2235,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(executor.workspaces.size, 0);
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         calls.length = 0;
@@ -2094,6 +2255,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.some(call => call[0] === "clear_x11_window"), false);
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         calls.length = 0;
@@ -2116,6 +2278,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.some(call => call[0] === "clear_x11_window"), false);
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         const before = executor.pageRef(record);
@@ -2159,6 +2322,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "report failure must trigger a user-visible advisory callback");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const bindGate = deferred();
         const originalNative = executor.nativeRequest;
@@ -2168,7 +2332,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             return originalNative(service, operation, payload);
         };
         const ensuring = executor.ensure(ensurePayload());
-        while (!calls.some(call => call[0] === "bind_x11_window")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "bind_x11_window"),
+            "X11 bind dispatch");
         const unrelated = executor.enqueueLifecycle(() => false);
         bindGate.resolve();
         const record = await ensuring;
@@ -2176,6 +2341,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert(record, "unrelated lifecycle work must not reject an owned transaction");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const bindGate = deferred();
         const originalNative = executor.nativeRequest;
@@ -2185,7 +2351,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             return originalNative(service, operation, payload);
         };
         const ensuring = executor.ensure(ensurePayload());
-        while (!calls.some(call => call[0] === "bind_x11_window")) await Promise.resolve();
+        await waitFor(() => calls.some(call => call[0] === "bind_x11_window"),
+            "X11 bind dispatch");
         const flight = executor.ensureFlights.get(executor.key("r_12345678", "principal-one"));
         const createdWindowId = flight.createdWindowId;
         const tabs = await executor.chrome.tabs.query({windowId: createdWindowId});
@@ -2202,6 +2369,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "an event queued before install/commit must not leave a managed record");
     }
     {
+        beginCase();
         const {executor} = fixture();
         const record = await executor.ensure(ensurePayload());
         const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
@@ -2225,6 +2393,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         "delayed self-generated detach must re-check exact live topology");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         calls.length = 0;
@@ -2240,7 +2409,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             return live;
         };
         const reconciling = executor.tabCreated({id: 9999, windowId: record.windowId});
-        while (!checked) await Promise.resolve();
+        await waitFor(() => checked, "initial topology check");
         const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
         const fourth = {id: 9999, windowId: record.windowId, index: 3, pinned: false};
         tabs.push(fourth);
@@ -2251,6 +2420,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "a fourth tab arriving after an isLive check must be caught by its own event");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         calls.length = 0;
@@ -2263,6 +2433,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert(calls.some(call => call[0] === "managed_page_moved_outside"));
     }
     {
+        beginCase();
         const mutations = [
             ["marker reorder", (record, tabs) => { tabs[0].index = 1; tabs[1].index = 0; }],
             ["marker unpin", (_record, tabs) => { tabs[0].pinned = false; }],
@@ -2284,6 +2455,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         }
     }
     {
+        beginCase();
         const {executor} = fixture();
         const record = await executor.ensure(ensurePayload());
         const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
@@ -2294,6 +2466,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "business close must not leave managed ownership");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         const payload = {
@@ -2317,6 +2490,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             /conflicting duplicate retire request/);
     }
     {
+        beginCase();
         const localState = {};
         const first = fixture([], [], 0, false, null, localState);
         const record = await first.executor.ensure(ensurePayload());
@@ -2369,6 +2543,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         "completed retire identity must reauthorize its ACK on a new fence");
     }
     {
+        beginCase();
         const localState = {};
         const first = fixture([], [], 0, false, null, localState);
         const record = await first.executor.ensure(ensurePayload());
@@ -2387,6 +2562,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         "service-worker restart must replay the durable terminal retire completion");
     }
     {
+        beginCase();
         const report = {
             remote_key: "r_12345678", connection_id: "c_12345678",
             principal_id: "principal-one", request_id: "ack-loss",
@@ -2415,6 +2591,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             call[0] === "managed_page_moved_outside")[0][1].request_id, "ack-loss");
     }
     {
+        beginCase();
         const report = {
             remote_key: "r_12345678",
             connection_id: "c_12345678",
@@ -2439,6 +2616,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "startup must drain a successfully reported durable topology outbox");
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         const record = await executor.ensure(ensurePayload());
         const tabs = await executor.chrome.tabs.query({windowId: record.windowId});
@@ -2450,6 +2628,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(executor.workspaces.size, 0);
     }
     {
+        beginCase();
         const localState = {};
         const first = fixture([], [], 0, false, null, localState);
         const record = await first.executor.ensure(ensurePayload());
@@ -2487,6 +2666,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(resent.executor_fence, rotatedFence);
     }
     {
+        beginCase();
         const localState = {};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         await executor.restore();
@@ -2535,6 +2715,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "real create/attach/detach/pin events must be owned and reconciled by the transaction");
     }
     {
+        beginCase();
         const localState = {};
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         await executor.restore();
@@ -2557,6 +2738,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "committed transaction must be consumed after durable workspace commit");
     }
     {
+        beginCase();
         const localState = {};
         const first = fixture([], [], 1, false, null, localState);
         const createGate = deferred();
@@ -2567,8 +2749,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         };
         const payload = ensurePayload();
         const ensuring = first.executor.ensure(payload);
-        while (!localState.abushPendingTransactions?.some(transaction =>
-            transaction.status_tab_ids.length === 2)) await Promise.resolve();
+        await waitFor(() => localState.abushPendingTransactions?.some(transaction =>
+            transaction.status_tab_ids.length === 2), "two-marker transaction persistence");
         const persisted = structuredClone(localState.abushPendingTransactions);
         createGate.resolve();
         await ensuring;
@@ -2579,6 +2761,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "restart must consume a write-ahead transaction from before windows.create");
     }
     {
+        beginCase();
         const nonce = "c".repeat(32);
         const localState = {abushCleanupTombstones: [{
             nonce, window_id: 710, status_tab_ids: [1810, 1811], page_tab_id: 1812,
@@ -2592,6 +2775,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "v0 cleanup proof must migrate and retry instead of being silently dropped");
     }
     {
+        beginCase();
         const {executor} = fixture();
         const record = await executor.ensure(ensurePayload());
         const oldPageTabId = record.pageTabId;
@@ -2607,10 +2791,14 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             executor.key(record.remoteKey, record.principalId));
     }
     {
+        beginCase();
         const {executor, calls} = fixture();
         await executor.status();
         assert.deepEqual(calls.map(call => call[0]), ["refresh_remotes"]);
         assert(!calls.some(call => call[0] === "createWindow"), "status must not create windows");
     }
     console.log("workspace executor tests passed");
+    } finally {
+        clearTimeout(testDeadline);
+    }
 })().catch(error => { console.error(error); process.exitCode = 1; });
