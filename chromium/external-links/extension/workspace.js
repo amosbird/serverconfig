@@ -14,7 +14,8 @@ const BROWSER_ERROR_CODES = new Set([
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
     "stale_window", "stale_page", "page_quarantined", "operation_conflict",
-    "unknown_effect", "stale_effect", "generation_exhausted", "invalid_command",
+    "unknown_effect", "stale_effect", "generation_exhausted", "executor_unavailable",
+    "invalid_command",
 ]);
 
 function sameRef(left, right) {
@@ -73,9 +74,10 @@ class WorkspaceExecutor {
         this.lifecycleGeneration = 0;
         this.topologyOutbox = new Map();
         this.outboxTail = Promise.resolve();
-        this.retireCompletions = new Map();
         this.retirePending = new Map();
-        this.retireDeliveries = new Map();
+        this.retireCompleted = new Map();
+        this.retireAckReceived = new Map();
+        this.retireSeen = new Map();
         this.retireRecoveryReady = false;
         this.retireRecoveries = [];
         this.retireRecoveryState = null;
@@ -579,9 +581,11 @@ class WorkspaceExecutor {
             report_id: crypto.randomUUID(),
             request_id: crypto.randomUUID(),
             executor_fence: record.executorFence,
-            original_executor_fence: record.executorFence,
+            origin_executor_fence: record.executorFence,
             daemon_instance_id: record.ownerDisplay?.daemon_instance_id || null,
             page,
+            phase: "pending",
+            response: null,
             cleanup: {
                 phase: "queued",
                 nonce: record.nonce,
@@ -605,7 +609,7 @@ class WorkspaceExecutor {
             request_id: report.request_id,
             report_id: report.report_id,
             executor_fence: report.executor_fence,
-            original_executor_fence: report.original_executor_fence,
+            origin_executor_fence: report.origin_executor_fence,
             page: report.page,
         };
     }
@@ -631,29 +635,111 @@ class WorkspaceExecutor {
         return key;
     }
 
+    validTopologyResponse(response, report, requireRequest = true) {
+        return exactFields(response, ["request_id", "report_id", "executor_fence",
+            "response_delivery_id", "result"]) &&
+            (!requireRequest || response.request_id === report.request_id) &&
+            response.report_id === report.report_id &&
+            sameRef(response.executor_fence, report.executor_fence) &&
+            typeof response.response_delivery_id === "string" &&
+            response.response_delivery_id.length > 0 &&
+            exactFields(response.result, ["outcome"]) &&
+            ["applied", "already_converged"].includes(response.result.outcome);
+    }
+
+    topologyConsumedPayload(report) {
+        return {
+            remote_key: report.remote_key,
+            connection_id: report.connection_id,
+            principal_id: report.principal_id,
+            request_id: report.request_id,
+            report_id: report.report_id,
+            executor_fence: report.executor_fence,
+            response_delivery_id: report.response.response_delivery_id,
+        };
+    }
+
+    async recordTopologyResponse(key, report, response) {
+        const current = this.topologyOutbox.get(key);
+        if (current?.phase === "response_received") {
+            const sameCanonical = current.response.response_delivery_id ===
+                response.response_delivery_id &&
+                sameRef(current.response.result, response.result);
+            if (!sameCanonical) throw new Error("conflicting canonical topology response");
+            if (current.response.request_id === response.request_id &&
+                    sameRef(current.response.executor_fence, response.executor_fence)) {
+                return current;
+            }
+        } else if (current && !sameRef(current, report)) {
+            throw new Error("stale topology response delivery");
+        }
+        const received = {
+            ...report,
+            request_id: response.request_id,
+            executor_fence: response.executor_fence,
+            phase: "response_received",
+            response,
+        };
+        this.topologyOutbox.set(key, received);
+        await this.persistTopologyOutbox();
+        return received;
+    }
+
+    async consumeTopologyResponse(key, report) {
+        if (this.topologyOutbox.get(key) !== report) return;
+        let confirmation;
+        try {
+            confirmation = await this.nativeRequest(
+                "abush_browser", "topology_response_consumed",
+                this.topologyConsumedPayload(report));
+        } catch (error) {
+            error.consumptionUncertain = error?.nativeDispatch !== "not_sent";
+            throw error;
+        }
+        if (!exactFields(confirmation,
+            ["accepted", "request_id", "report_id", "response_delivery_id"]) ||
+                confirmation.accepted !== true ||
+                confirmation.request_id !== report.request_id ||
+                confirmation.report_id !== report.report_id ||
+                confirmation.response_delivery_id !== report.response.response_delivery_id) {
+            throw new Error("managed topology consumption was not confirmed");
+        }
+        if (this.topologyOutbox.get(key) !== report) return;
+        this.topologyOutbox.delete(key);
+        await this.persistTopologyOutbox();
+    }
+
     async flushTopologyOutbox() {
         const flush = this.outboxTail.catch(() => {}).then(async () => {
             await this.convergeRestoredTopologyOutbox();
             const failures = [];
-            for (const [key, report] of [...this.topologyOutbox]) {
+            const snapshot = [...this.topologyOutbox];
+            for (const [key, original] of snapshot) {
+                if (!this.topologyOutbox.has(key)) continue;
+                let report = this.topologyOutbox.get(key) || original;
                 try {
-                    const acknowledgement = await this.nativeRequest(
-                        "abush_browser", "managed_page_moved_outside",
-                        this.topologyWireReport(report));
-                    const fields = Object.keys(acknowledgement || {}).sort().join("\0");
-                    if (!["acknowledged\0report_id\0request_id\0result",
-                        "acknowledged\0request_id\0result"].includes(fields) ||
-                            acknowledgement.acknowledged !== true ||
-                            acknowledgement.request_id !== report.request_id ||
-                            ("report_id" in acknowledgement &&
-                                acknowledgement.report_id !== report.report_id) ||
-                            !sameRef(acknowledgement.result,
-                                {outcome: "page_moved_outside"})) {
-                        throw new Error("managed topology response was not acknowledged");
+                    if (report.phase !== "response_received") {
+                        report = {...report, request_id: crypto.randomUUID(), phase: "pending"};
+                        this.topologyOutbox.set(key, report);
+                        await this.persistTopologyOutbox();
+                        const response = await this.nativeRequest(
+                            "abush_browser", "managed_page_moved_outside",
+                            this.topologyWireReport(report));
+                        if (!this.validTopologyResponse(response, report)) {
+                            throw new Error("managed topology response was not canonical");
+                        }
+                        report = await this.recordTopologyResponse(key, report, response);
                     }
-                    this.topologyOutbox.delete(key);
-                    await this.persistTopologyOutbox();
+                    await this.consumeTopologyResponse(key, report);
                 } catch (error) {
+                    const current = this.topologyOutbox.get(key);
+                    if (current && current.phase === "response_received" &&
+                            report.phase !== "response_received") {
+                        report = current;
+                    }
+                    if (report.phase === "response_received" && error.consumptionUncertain) {
+                        report = {...report, phase: "pending", response: null};
+                    }
                     this.topologyOutbox.set(key, report);
                     try {
                         await this.persistTopologyOutbox();
@@ -663,7 +749,6 @@ class WorkspaceExecutor {
                         continue;
                     }
                     failures.push(error);
-                    continue;
                 }
             }
             if (failures.length > 0) {
@@ -714,22 +799,35 @@ class WorkspaceExecutor {
         if (!Array.isArray(reports)) return;
         let dirty = false;
         for (const report of reports) {
-            const legacy = exactFields(report, ["remote_key", "connection_id", "principal_id",
+            const legacyV6 = exactFields(report, ["remote_key", "connection_id", "principal_id",
                 "request_id", "executor_fence", "page"]);
             const current = exactFields(report, ["remote_key", "connection_id", "principal_id",
-                "report_id", "request_id", "executor_fence", "original_executor_fence",
+                "report_id", "request_id", "executor_fence", "origin_executor_fence",
+                "daemon_instance_id", "page", "cleanup", "phase", "response"]);
+            const prePhaseV7 = exactFields(report, ["remote_key", "connection_id", "principal_id",
+                "report_id", "request_id", "executor_fence", "origin_executor_fence",
                 "daemon_instance_id", "page", "cleanup"]);
-            if ((legacy || current) && validPageRef(report.page) &&
+            if ((legacyV6 || current || prePhaseV7) && validPageRef(report.page) &&
                     validFence(report.executor_fence) &&
                     [report.remote_key, report.connection_id, report.principal_id,
                         report.request_id].every(value => typeof value === "string" && value)) {
-                const restored = legacy ? {
+                const restored = legacyV6 ? {
                     ...report,
                     report_id: report.request_id,
-                    original_executor_fence: report.executor_fence,
+                    origin_executor_fence: report.executor_fence,
                     daemon_instance_id: null,
                     cleanup: null,
-                } : report;
+                    phase: "pending",
+                    response: null,
+                } : prePhaseV7 ? {...report, phase: "pending", response: null} : report;
+                const validResponse = restored.phase !== "response_received" ||
+                    this.validTopologyResponse(restored.response, restored);
+                if (!validFence(restored.origin_executor_fence) ||
+                        !["pending", "response_received"].includes(restored.phase) ||
+                        !validResponse) {
+                    dirty = true;
+                    continue;
+                }
                 const key = this.topologyReportKey(restored);
                 const existing = this.topologyOutbox.get(key);
                 if (!existing) this.topologyOutbox.set(key, restored);
@@ -753,16 +851,42 @@ class WorkspaceExecutor {
                     report.principal_id !== state.principal_id ||
                     (report.daemon_instance_id && state.owner_display?.daemon_instance_id !==
                         report.daemon_instance_id)) continue;
+            const authorityChanged = report.connection_id !== state.connection_id ||
+                !sameRef(report.executor_fence, state.executor_fence);
             const next = {
                 ...report,
                 connection_id: state.connection_id,
                 executor_fence: state.executor_fence,
+                request_id: authorityChanged ? crypto.randomUUID() : report.request_id,
+                phase: authorityChanged ? "pending" : report.phase,
+                response: authorityChanged ? null : report.response,
             };
             this.topologyOutbox.set(key, next);
             changed = true;
         }
         if (changed) await this.persistTopologyOutbox();
         return changed;
+    }
+
+    async topologyReportResponse(payload) {
+        if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
+            "report_id", "executor_fence", "response_delivery_id", "result"])) return false;
+        const key = payload.report_id;
+        const report = this.topologyOutbox.get(key);
+        if (!report || payload.remote_key !== report.remote_key ||
+                payload.principal_id !== report.principal_id ||
+                payload.connection_id !== report.connection_id) return false;
+        const response = {
+            request_id: payload.request_id,
+            report_id: payload.report_id,
+            executor_fence: payload.executor_fence,
+            response_delivery_id: payload.response_delivery_id,
+            result: payload.result,
+        };
+        if (!this.validTopologyResponse(response, report, false)) return false;
+        const received = await this.recordTopologyResponse(key, report, response);
+        await this.consumeTopologyResponse(key, received);
+        return true;
     }
 
     reportAdvisoryError(error) {
@@ -2064,123 +2188,146 @@ class WorkspaceExecutor {
             this.ensureIdentity(payload));
     }
 
-    currentRetireIdentity(identity, record = null) {
-        if (!record) return identity;
-        return {
-            ...identity,
-            connection_id: record.connectionId,
-            executor_fence: record.executorFence,
-        };
-    }
-
-    async deliverRetireCompletion(payload) {
-        try {
-            await this.ensureCancellationCompleted(payload);
-            this.retireDeliveries.delete(payload.request_id);
-        } catch (error) {
-            this.retireDeliveries.set(payload.request_id, payload);
-            this.reportAdvisoryError(new AggregateError([error],
-                "retire completion is pending current peer authorization"));
-        }
-    }
-
-    async reauthorizeRetireCompletions(state) {
-        if (!state?.connected || typeof state.remote_key !== "string" ||
-                typeof state.connection_id !== "string" ||
-                typeof state.principal_id !== "string" || !validFence(state.executor_fence)) return;
-        for (const [requestId, completion] of this.retireCompletions) {
-            const original = completion.original || completion;
-            if (original.remote_key !== state.remote_key ||
-                    original.principal_id !== state.principal_id) continue;
-            const delivery = {
-                ...(completion.delivery || original),
-                connection_id: state.connection_id,
-                executor_fence: state.executor_fence,
-            };
-            const next = completion.original ? {...completion, delivery} : {
-                original,
-                delivery,
-            };
-            this.retireCompletions.set(requestId, next);
-            this.retireDeliveries.set(requestId, delivery);
-        }
-        await this.persistRetireLedger();
-        for (const delivery of [...this.retireDeliveries.values()]) {
-            await this.deliverRetireCompletion(delivery);
-        }
-    }
-
     retireIdentity(payload) {
         return {
             remote_key: payload.remote_key,
             connection_id: payload.connection_id,
             principal_id: payload.principal_id,
             request_id: payload.request_id,
+            retire_id: payload.retire_id,
             ensure_id: payload.ensure_id,
             executor_fence: payload.executor_fence,
+            origin_executor_fence: payload.origin_executor_fence,
             window_id: payload.window_id,
             page_id: payload.page_id,
         };
     }
 
+    stableRetireMatches(left, right) {
+        return Boolean(left && right && left.remote_key === right.remote_key &&
+            left.principal_id === right.principal_id && left.retire_id === right.retire_id &&
+            left.ensure_id === right.ensure_id && left.window_id === right.window_id &&
+            left.page_id === right.page_id &&
+            sameRef(left.origin_executor_fence, right.origin_executor_fence));
+    }
+
+    retireDelivery(identity, state) {
+        return {
+            ...identity,
+            connection_id: state.connection_id,
+            request_id: crypto.randomUUID(),
+            executor_fence: state.executor_fence,
+        };
+    }
+
     async persistRetireLedger() {
-        const snapshot = [
-            ...this.retirePending.values()].map(pending => ({
-                status: "accepted", identity: pending,
-            })).concat([...this.retireCompletions.values()].map(completion => ({
-                status: "completed", identity: completion,
-            })));
+        const snapshot = [];
+        for (const identity of this.retirePending.values()) {
+            snapshot.push({version: 7, phase: "accepted", identity});
+        }
+        for (const entry of this.retireCompleted.values()) {
+            snapshot.push({version: 7, phase: "completed", ...entry});
+        }
+        for (const entry of this.retireAckReceived.values()) {
+            snapshot.push({version: 7, phase: "ack_received", ...entry});
+        }
         await this.localStateWrite(RETIRE_LEDGER_KEY, snapshot);
     }
 
     validRetireIdentity(identity) {
-        return identity && typeof identity.request_id === "string" && identity.request_id &&
-            typeof identity.window_id === "string" && identity.window_id &&
-            typeof identity.page_id === "string" && identity.page_id;
+        return identity && ["remote_key", "connection_id", "principal_id", "request_id",
+            "retire_id", "ensure_id", "window_id", "page_id"].every(field =>
+            typeof identity[field] === "string" && identity[field]) &&
+            validFence(identity.executor_fence) &&
+            validFence(identity.origin_executor_fence);
+    }
+
+    validRetireCompletion(completion) {
+        return exactFields(completion, ["outcome"]) &&
+            ["retired", "already_retired"].includes(completion.outcome);
+    }
+
+    validRetireAck(ack, entry) {
+        return exactFields(ack, ["request_id", "retire_id", "executor_fence",
+            "response_delivery_id", "origin_executor_fence", "completion"]) &&
+            ack.request_id === entry.delivery.request_id &&
+            ack.retire_id === entry.identity.retire_id &&
+            sameRef(ack.executor_fence, entry.delivery.executor_fence) &&
+            sameRef(ack.origin_executor_fence, entry.identity.origin_executor_fence) &&
+            sameRef(ack.completion, entry.completion) &&
+            typeof ack.response_delivery_id === "string" && ack.response_delivery_id;
     }
 
     async restoreRetireLedger() {
         if (!this.chrome.storage?.local) return;
         const local = await this.chrome.storage.local.get([RETIRE_LEDGER_KEY]);
         const entries = Array.isArray(local[RETIRE_LEDGER_KEY]) ? local[RETIRE_LEDGER_KEY] : [];
-        this.retireRecoveries = [];
+        const legacyCleanup = [];
+        let dirty = false;
         for (const entry of entries) {
-            const status = entry?.status;
-            const identity = entry?.identity;
-            const validPending = status === "accepted" && identity &&
-                this.validRetireIdentity(identity.original) &&
-                this.validRetireIdentity(identity.delivery);
-            const validCompletion = status === "completed" && identity &&
-                this.validRetireIdentity(identity.original) &&
-                this.validRetireIdentity(identity.delivery);
-            if (validPending || validCompletion) {
-                const target = status === "completed" ?
-                    this.retireCompletions : this.retirePending;
-                const requestId = identity.original.request_id;
-                target.set(requestId, identity);
-                if (status === "accepted") this.retireRecoveries.push(identity.delivery);
+            if (entry?.version !== 7) {
+                const legacy = entry?.identity?.original || entry?.identity;
+                if (legacy && typeof legacy.window_id === "string" &&
+                        typeof legacy.page_id === "string") legacyCleanup.push(legacy);
+                dirty = true;
+                continue;
+            }
+            const identity = entry.identity;
+            if (!this.validRetireIdentity(identity)) {
+                dirty = true;
+                continue;
+            }
+            if (entry.phase === "accepted") {
+                this.retireSeen.set(identity.retire_id, identity);
+                this.retirePending.set(identity.retire_id, identity);
+            } else if (entry.phase === "completed" &&
+                    this.validRetireIdentity(entry.delivery) &&
+                    this.validRetireCompletion(entry.completion)) {
+                this.retireSeen.set(identity.retire_id, identity);
+                this.retireCompleted.set(identity.retire_id, entry);
+            } else if (entry.phase === "ack_received" &&
+                    this.validRetireIdentity(entry.delivery) &&
+                    this.validRetireCompletion(entry.completion) &&
+                    this.validRetireAck(entry.ack, entry)) {
+                this.retireSeen.set(identity.retire_id, identity);
+                this.retireAckReceived.set(identity.retire_id, entry);
+            } else {
+                dirty = true;
             }
         }
+        this.retireRecoveries = legacyCleanup;
+        if (dirty) await this.persistRetireLedger();
+    }
+
+    async recoverLegacyRetire(identity) {
+        const record = this.workspaces.get(this.key(identity.remote_key, identity.principal_id));
+        if (!record || record.logicalWindowId !== identity.window_id ||
+                record.logicalPageId !== identity.page_id) return;
+        await this.convergeManagedTopology(record, {closeWindow: true, report: false});
     }
 
     async recoverRetireLedger() {
         if (!this.retireRecoveryReady) return;
-        const recoveries = this.retireRecoveries.splice(0);
-        for (const identity of recoveries) {
+        const legacy = this.retireRecoveries.splice(0);
+        for (const identity of legacy) {
             try {
-                const state = this.retireRecoveryState;
-                const payload = state && identity.remote_key === state.remote_key &&
-                    identity.principal_id === state.principal_id ? {
-                        ...identity,
-                        connection_id: state.connection_id,
-                        executor_fence: state.executor_fence,
-                    } : identity;
-                await this.retireManagedPage(payload);
+                await this.recoverLegacyRetire(identity);
+            } catch (error) {
+                this.reportAdvisoryError(new AggregateError([error],
+                    "legacy retire cleanup remains pending"));
+            }
+        }
+        for (const identity of [...this.retirePending.values()]) {
+            if (identity.remote_key !== this.retireRecoveryState.remote_key ||
+                    identity.principal_id !== this.retireRecoveryState.principal_id) continue;
+            try {
+                await this.finishRetire(identity);
             } catch (error) {
                 this.reportAdvisoryError(new AggregateError([error],
                     "accepted retire request remains pending recovery"));
             }
         }
+        await this.flushRetireLedger();
     }
 
     async retireManagedPage(payload) {
@@ -2189,62 +2336,142 @@ class WorkspaceExecutor {
 
     async retireManagedPageSerialized(payload) {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
-            "ensure_id", "executor_fence", "window_id", "page_id"])) return false;
+            "retire_id", "ensure_id", "executor_fence", "origin_executor_fence", "window_id",
+            "page_id"])) return false;
         const identity = this.retireIdentity(payload);
-        const completed = this.retireCompletions.get(payload.request_id);
-        if (completed) {
-            const completedOriginal = completed.original || completed;
-            const sameStableRetire = completedOriginal.remote_key === identity.remote_key &&
-                completedOriginal.principal_id === identity.principal_id &&
-                completedOriginal.request_id === identity.request_id &&
-                completedOriginal.ensure_id === identity.ensure_id &&
-                completedOriginal.window_id === identity.window_id &&
-                completedOriginal.page_id === identity.page_id;
-            if (!sameStableRetire) {
-                throw new Error("conflicting duplicate retire request");
-            }
-            const record = this.workspaces.get(this.key(
-                payload.remote_key, payload.principal_id));
-            const delivery = completed.delivery || this.currentRetireIdentity(identity, record);
-            if (sameRef(delivery.executor_fence, payload.executor_fence) &&
-                    delivery.connection_id === payload.connection_id) {
-                await this.deliverRetireCompletion(delivery);
-            }
-            return true;
+        if (!this.validRetireIdentity(identity)) return false;
+        this.retireRecoveryReady = true;
+        this.retireRecoveryState = {
+            remote_key: identity.remote_key,
+            connection_id: identity.connection_id,
+            principal_id: identity.principal_id,
+            executor_fence: identity.executor_fence,
+            connected: true,
+        };
+        const known = this.retirePending.get(identity.retire_id) ||
+            this.retireCompleted.get(identity.retire_id)?.identity ||
+            this.retireAckReceived.get(identity.retire_id)?.identity ||
+            this.retireSeen.get(identity.retire_id);
+        if (known && !this.stableRetireMatches(known, identity)) {
+            throw new Error("conflicting duplicate retire request");
         }
-        const pending = this.retirePending.get(payload.request_id);
-        const original = pending?.original || pending;
-        if (pending && !sameRef(original, identity)) {
-            const sameStableRetire = original && original.remote_key === identity.remote_key &&
-                original.principal_id === identity.principal_id &&
-                original.request_id === identity.request_id &&
-                original.ensure_id === identity.ensure_id &&
-                original.window_id === identity.window_id &&
-                original.page_id === identity.page_id;
-            if (!sameStableRetire) throw new Error("conflicting duplicate retire request");
-        }
-        if (!pending) {
-            this.retirePending.set(payload.request_id, {original: identity, delivery: identity});
+        if (!known) {
+            this.retireSeen.set(identity.retire_id, identity);
+            this.retirePending.set(identity.retire_id, identity);
             await this.persistRetireLedger();
         }
-        const record = this.workspaces.get(this.key(payload.remote_key, payload.principal_id));
-        if (record && record.connectionId === payload.connection_id &&
-                sameRef(record.executorFence, payload.executor_fence) &&
-                record.logicalWindowId === payload.window_id &&
-                record.logicalPageId === payload.page_id) {
+        if (this.retireAckReceived.has(identity.retire_id)) {
+            await this.consumeRetireAck(this.retireAckReceived.get(identity.retire_id));
+            return true;
+        }
+        if (this.retireCompleted.has(identity.retire_id)) {
+            await this.flushRetireLedger();
+            return true;
+        }
+        await this.finishRetire(identity);
+        await this.flushRetireLedger();
+        return true;
+    }
+
+    async finishRetire(identity) {
+        const record = this.workspaces.get(this.key(identity.remote_key, identity.principal_id));
+        let completion = {outcome: "already_retired"};
+        if (record && record.logicalWindowId === identity.window_id &&
+                record.logicalPageId === identity.page_id) {
             await this.convergeManagedTopology(record, {closeWindow: true, report: false});
+            completion = {outcome: "retired"};
         }
-        const delivery = this.currentRetireIdentity(identity, record);
-        this.retirePending.delete(payload.request_id);
-        this.retireCompletions.set(payload.request_id, {
-            original: identity,
-            delivery,
-        });
-        while (this.retireCompletions.size > 256) {
-            this.retireCompletions.delete(this.retireCompletions.keys().next().value);
-        }
+        const state = this.retireRecoveryState;
+        if (!state || state.remote_key !== identity.remote_key ||
+                state.principal_id !== identity.principal_id) return;
+        const delivery = this.retireDelivery(identity, state);
+        this.retirePending.delete(identity.retire_id);
+        this.retireCompleted.set(identity.retire_id, {identity, delivery, completion});
         await this.persistRetireLedger();
-        await this.deliverRetireCompletion(delivery);
+    }
+
+    async flushRetireLedger() {
+        const state = this.retireRecoveryState;
+        if (!state) return;
+        for (const [retireId, original] of [...this.retireCompleted]) {
+            if (original.identity.remote_key !== state.remote_key ||
+                    original.identity.principal_id !== state.principal_id) continue;
+            let entry = original;
+            if (entry.delivery.connection_id !== state.connection_id ||
+                    !sameRef(entry.delivery.executor_fence, state.executor_fence)) {
+                entry = {...entry, delivery: this.retireDelivery(entry.identity, state)};
+                this.retireCompleted.set(retireId, entry);
+                await this.persistRetireLedger();
+            }
+            try {
+                const ack = await this.nativeRequest(
+                    "abush_browser", "retire_managed_page_completion", {
+                        remote_key: entry.delivery.remote_key,
+                        connection_id: entry.delivery.connection_id,
+                        principal_id: entry.delivery.principal_id,
+                        request_id: entry.delivery.request_id,
+                        retire_id: entry.delivery.retire_id,
+                        executor_fence: entry.delivery.executor_fence,
+                        origin_executor_fence: entry.identity.origin_executor_fence,
+                        completion: entry.completion,
+                    });
+                if (!this.validRetireAck(ack, entry)) {
+                    throw new Error("retire acknowledgement was not canonical");
+                }
+                const received = {...entry, ack};
+                this.retireCompleted.delete(retireId);
+                this.retireAckReceived.set(retireId, received);
+                await this.persistRetireLedger();
+                await this.consumeRetireAck(received);
+            } catch (error) {
+                this.reportAdvisoryError(new AggregateError([error],
+                    "retire completion remains pending acknowledgement"));
+            }
+        }
+        for (const entry of [...this.retireAckReceived.values()]) {
+            if (entry.identity.remote_key !== state.remote_key ||
+                    entry.identity.principal_id !== state.principal_id) continue;
+            try {
+                await this.consumeRetireAck(entry);
+            } catch (error) {
+                this.reportAdvisoryError(new AggregateError([error],
+                    "retire acknowledgement remains pending consumption"));
+            }
+        }
+    }
+
+    async consumeRetireAck(entry) {
+        const confirmation = await this.nativeRequest(
+            "abush_browser", "retire_managed_page_ack_consumed", {
+                remote_key: entry.delivery.remote_key,
+                connection_id: entry.delivery.connection_id,
+                principal_id: entry.delivery.principal_id,
+                request_id: entry.ack.request_id,
+                retire_id: entry.ack.retire_id,
+                executor_fence: entry.ack.executor_fence,
+                response_delivery_id: entry.ack.response_delivery_id,
+            });
+        if (!exactFields(confirmation,
+            ["accepted", "request_id", "retire_id", "response_delivery_id"]) ||
+                confirmation.accepted !== true ||
+                confirmation.request_id !== entry.ack.request_id ||
+                confirmation.retire_id !== entry.ack.retire_id ||
+                confirmation.response_delivery_id !== entry.ack.response_delivery_id) {
+            throw new Error("retire acknowledgement consumption was not confirmed");
+        }
+        this.retireAckReceived.delete(entry.identity.retire_id);
+        await this.persistRetireLedger();
+    }
+
+    async retireManagedPageAck(ack) {
+        if (!ack || typeof ack.retire_id !== "string") return false;
+        const entry = this.retireCompleted.get(ack.retire_id);
+        if (!entry || !this.validRetireAck(ack, entry)) return false;
+        const received = {...entry, ack};
+        this.retireCompleted.delete(ack.retire_id);
+        this.retireAckReceived.set(ack.retire_id, received);
+        await this.persistRetireLedger();
+        await this.consumeRetireAck(received);
         return true;
     }
 
@@ -2971,7 +3198,6 @@ class WorkspaceExecutor {
         this.retireRecoveryReady = state?.connected === true;
         this.retireRecoveryState = state?.connected === true ? state : null;
         await this.recoverRetireLedger();
-        await this.reauthorizeRetireCompletions(state);
         const disconnected = state.connected === false;
         await this.cancelMatching(identity => identity.remote_key === state.remote_key &&
             (disconnected || (typeof state.connection_id === "string" &&

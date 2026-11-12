@@ -33,12 +33,13 @@ ORDINARY_OPEN_MAX_MESSAGE_SIZE = 64 * 1024
 ORDINARY_OPEN_VERSION = 1
 ORDINARY_OPEN_COMPLETIONS = {"applied", "not_applied", "unknown"}
 NATIVE_ENVELOPE_VERSION = 1
-PEER_PROTOCOL_VERSION = 6
+PEER_PROTOCOL_VERSION = 7
 BROWSER_ERROR_CODES = {
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
     "stale_window", "stale_page", "page_quarantined", "operation_conflict",
-    "unknown_effect", "stale_effect", "generation_exhausted", "invalid_command",
+    "unknown_effect", "stale_effect", "generation_exhausted", "executor_unavailable",
+    "invalid_command",
 }
 REMOTE_KEY_RE = re.compile(r"r_[A-Za-z0-9]{8,64}\Z")
 CONNECTION_ID_RE = re.compile(r"c_[A-Za-z0-9]{8,64}\Z")
@@ -1074,11 +1075,10 @@ class RemotePeer:
         self.ensure_pending = {}
         self.ensure_cancellations = {}
         self.ensure_cancellation_completed = {}
-        self.retire_requests = {}
         self.pending_cancellations = {}
-        self.topology_pending = {}
-        self.topology_completed = {}
-        self.topology_lock = threading.RLock()
+        self.topology_requests = {}
+        self.retire_requests = {}
+        self.transport_lock = threading.RLock()
         self.topology_timeout = 15
         self.reader = None
 
@@ -1266,41 +1266,29 @@ class RemotePeer:
 
     def _handle_retire_managed_page(self, message):
         if not self._exact_fields(message, {
-            "type", "request_id", "ensure_id", "executor_fence", "window_id", "page_id"
+            "type", "request_id", "retire_id", "ensure_id", "executor_fence",
+            "origin_executor_fence", "window_id", "page_id"
         }):
             raise ValueError("invalid retire managed page")
         request_id = message.get("request_id")
+        retire_id = message.get("retire_id")
         ensure_id = message.get("ensure_id")
         fence = message.get("executor_fence")
-        pending = self.ensure_cancellations.get(ensure_id)
-        retire = {"request_id": request_id, "ensure_id": ensure_id,
-                  "window_id": message.get("window_id"),
-                  "page_id": message.get("page_id"), "fence": fence}
-        known = self.retire_requests.get(request_id)
-        if known is not None:
-            if known != retire:
-                raise ValueError("conflicting duplicate retire managed page")
-        elif pending is None:
-            raise ValueError("uncorrelated retire managed page")
-        if not isinstance(request_id, str) or not request_id or \
-                (pending is not None and pending["fence"] != fence) or \
-                not all(isinstance(message.get(field), str) and message.get(field)
-                        for field in ("window_id", "page_id")):
-            raise ValueError("uncorrelated retire managed page")
-        if pending is not None:
-            existing = pending.get("retire")
-            if existing is not None and existing != retire:
-                raise ValueError("conflicting duplicate retire managed page")
-            pending["retire"] = retire
-            pending["retire_request_id"] = request_id
-        self.retire_requests[request_id] = retire
+        origin_fence = message.get("origin_executor_fence")
+        if not all(isinstance(value, str) and value for value in (
+                request_id, retire_id, ensure_id, message.get("window_id"),
+                message.get("page_id"))) or not self._valid_executor_fence(fence) or \
+                fence != self.executor_fence or not self._valid_executor_fence(origin_fence):
+            raise ValueError("invalid retire managed page correlation")
         self.broker.outbound.put(event("abush_browser.retire_managed_page", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
             "connection_id": self.metadata["connection_id"],
             "principal_id": self.principal_id,
             "request_id": request_id,
+            "retire_id": retire_id,
             "ensure_id": ensure_id,
             "executor_fence": fence,
+            "origin_executor_fence": origin_fence,
             "window_id": message["window_id"],
             "page_id": message["page_id"],
         }))
@@ -1340,7 +1328,6 @@ class RemotePeer:
         pending = self.ensure_cancellations.get(ensure_id)
         identity = {"request_id": request_id, "ensure_id": ensure_id, "fence": fence}
         completed = self.ensure_cancellation_completed.get(request_id)
-        retire = self.retire_requests.get(request_id)
         if completed is not None:
             if completed != identity:
                 raise ValueError("conflicting ensure cancellation completion")
@@ -1351,14 +1338,7 @@ class RemotePeer:
                 "executor_fence": fence,
             })
             return
-        if pending is None and retire is not None and retire["ensure_id"] == ensure_id and \
-                retire["fence"] == fence:
-            pending = {"request_id": request_id, "fence": fence,
-                       "retire_request_id": request_id}
-        expected_request_id = pending.get("retire_request_id") if pending else None
-        if expected_request_id is None and pending is not None:
-            expected_request_id = pending["request_id"]
-        if pending is None or expected_request_id != request_id or pending["fence"] != fence:
+        if pending is None or pending["request_id"] != request_id or pending["fence"] != fence:
             raise ValueError("uncorrelated ensure cancellation completion")
         self.ensure_cancellations.pop(ensure_id)
         self.ensure_cancellation_completed[request_id] = identity
@@ -1486,64 +1466,213 @@ class RemotePeer:
         if normalized_type == "cancel_ensure_managed_page":
             self._handle_cancel_ensure_managed_page(message)
             return
-        if normalized_type == "topology_response":
-            self._handle_topology_response(message)
+        if normalized_type == "topology_report_response":
+            self._handle_topology_report_response(message)
+            return
+        if normalized_type == "retire_managed_page_ack":
+            self._handle_retire_managed_page_ack(message)
             return
         raise ValueError("unknown peer message")
 
-    def report_managed_page_moved_outside(self, request_id, fence, page, timeout=None,
-                                          stable_fence=None):
-        if not isinstance(request_id, str) or not request_id or \
-                fence != self.executor_fence or not self._valid_page_ref(page):
-            raise ValueError("invalid managed page moved outside report")
-        stable_fence = stable_fence or fence
-        identity = {"kind": "page_moved_outside", "page": page,
-                    "stable_fence": stable_fence}
-        with self.topology_lock:
-            completed = self.topology_completed.get(request_id)
-            if completed is not None:
-                if completed["identity"] != identity:
-                    raise ValueError("conflicting duplicate topology request")
-                return completed["result"]
-            state = self.topology_pending.get(request_id)
-            if state is None:
-                state = {"identity": identity, "done": threading.Event(), "result": None}
-                self.topology_pending[request_id] = state
-            elif state["identity"] != identity:
-                raise ValueError("conflicting duplicate topology request")
-            self.send({
-                "type": "managed_page_moved_outside",
-                "request_id": request_id,
-                "executor_fence": fence,
-                "page": page,
-            })
-        wait_timeout = self.topology_timeout if timeout is None else timeout
-        if not state["done"].wait(wait_timeout):
-            raise TimeoutError("managed topology response timed out")
-        with self.topology_lock:
-            result = state["result"]
+    @staticmethod
+    def _valid_topology_report_result(result):
+        if not isinstance(result, dict):
+            return False
+        outcome = result.get("outcome")
+        if outcome in {"applied", "already_converged"}:
+            return set(result) == {"outcome"}
+        return outcome == "rejected" and set(result) == {"outcome", "code"} and \
+            result.get("code") in BROWSER_ERROR_CODES
+
+    @staticmethod
+    def _valid_retire_completion(completion):
+        if not isinstance(completion, dict):
+            return False
+        outcome = completion.get("outcome")
+        if outcome in {"retired", "already_retired"}:
+            return set(completion) == {"outcome"}
+        return outcome == "rejected" and set(completion) == {"outcome", "code"} and \
+            completion.get("code") in BROWSER_ERROR_CODES
+
+    def _transport_request(self, requests, message, identity, timeout, timeout_message):
+        request_id = message["request_id"]
+        state = {"identity": identity, "done": threading.Event(), "response": None}
+        with self.transport_lock:
+            if request_id in requests:
+                raise ValueError("duplicate in-flight peer delivery request")
+            requests[request_id] = state
+            try:
+                self.send(message)
+            except Exception:
+                requests.pop(request_id, None)
+                raise
+        if not state["done"].wait(timeout):
+            with self.transport_lock:
+                requests.pop(request_id, None)
+            raise TimeoutError(timeout_message)
+        with self.transport_lock:
+            requests.pop(request_id, None)
+            result = state["response"]
         if result is None:
-            raise TimeoutError("managed topology response was lost")
+            raise TimeoutError(f"{timeout_message} was lost")
         return result
 
-    def _handle_topology_response(self, message):
-        if not self._exact_fields(message, {"type", "request_id", "result"}):
-            raise ValueError("invalid topology response")
-        request_id = message.get("request_id")
-        result = message.get("result")
-        with self.topology_lock:
-            state = self.topology_pending.get(request_id)
-            if state is None or state["identity"]["kind"] != "page_moved_outside" or \
-                    result != {"outcome": "page_moved_outside"}:
-                raise ValueError("uncorrelated topology response")
-            state["result"] = result
-            self.topology_completed[request_id] = {
-                "identity": state["identity"], "result": result,
-            }
-            self.topology_pending.pop(request_id)
-            while len(self.topology_completed) > 256:
-                self.topology_completed.pop(next(iter(self.topology_completed)))
+    def _resolve_transport_response(self, requests, request_id, identity, response):
+        with self.transport_lock:
+            state = requests.get(request_id)
+            if state is None:
+                return False
+            if state["identity"] != identity:
+                raise ValueError("uncorrelated durable peer response")
+            state["response"] = response
             state["done"].set()
+            return True
+
+    def report_managed_page_moved_outside(
+            self, request_id, report_id, fence, origin_fence, page, timeout=None):
+        if not all(isinstance(value, str) and value for value in (request_id, report_id)) or \
+                fence != self.executor_fence or not self._valid_executor_fence(origin_fence) or \
+                not self._valid_page_ref(page):
+            raise ValueError("invalid managed page moved outside report")
+        message = {
+            "type": "managed_page_moved_outside",
+            "request_id": request_id,
+            "report_id": report_id,
+            "executor_fence": fence,
+            "origin_executor_fence": origin_fence,
+            "page": page,
+        }
+        identity = {"report_id": report_id, "fence": fence}
+        return self._transport_request(
+            self.topology_requests,
+            message,
+            identity,
+            self.topology_timeout if timeout is None else timeout,
+            "managed topology response timed out",
+        )
+
+    def _authenticated_event(self, name, payload):
+        self.broker.outbound.put(event(name, "abush_browser", {
+            "remote_key": self.metadata["remote_key"],
+            "connection_id": self.metadata["connection_id"],
+            "principal_id": self.principal_id,
+            **payload,
+        }))
+
+    def _handle_topology_report_response(self, message):
+        fields = {"type", "request_id", "report_id", "executor_fence",
+                  "response_delivery_id", "result"}
+        if not self._exact_fields(message, fields):
+            raise ValueError("invalid topology report response")
+        request_id = message.get("request_id")
+        report_id = message.get("report_id")
+        fence = message.get("executor_fence")
+        delivery_id = message.get("response_delivery_id")
+        result = message.get("result")
+        if not all(isinstance(value, str) and value for value in (
+                request_id, report_id, delivery_id)) or not self._valid_executor_fence(fence) or \
+                fence != self.executor_fence or not self._valid_topology_report_result(result):
+            raise ValueError("invalid topology report response correlation")
+        response_message = {key: message[key] for key in fields if key != "type"}
+        if self._resolve_transport_response(
+                self.topology_requests,
+                request_id,
+                {"report_id": report_id, "fence": fence},
+                response_message):
+            return
+        self._authenticated_event("abush_browser.topology_report_response", response_message)
+
+    def topology_response_consumed(self, request_id, report_id, fence, delivery_id):
+        if not all(isinstance(value, str) and value for value in (
+                request_id, report_id, delivery_id)) or fence != self.executor_fence:
+            raise ValueError("invalid topology response consumption")
+        self.send({
+            "type": "topology_response_consumed",
+            "request_id": request_id,
+            "report_id": report_id,
+            "executor_fence": fence,
+            "response_delivery_id": delivery_id,
+        })
+        return {
+            "accepted": True,
+            "request_id": request_id,
+            "report_id": report_id,
+            "response_delivery_id": delivery_id,
+        }
+
+    def complete_retire(
+            self, request_id, retire_id, fence, origin_fence, completion, timeout=None):
+        if not all(isinstance(value, str) and value for value in (request_id, retire_id)) or \
+                fence != self.executor_fence or not self._valid_executor_fence(origin_fence) or \
+                not self._valid_retire_completion(completion):
+            raise ValueError("invalid retire managed page completion")
+        message = {
+            "type": "retire_managed_page_completed",
+            "request_id": request_id,
+            "retire_id": retire_id,
+            "executor_fence": fence,
+            "origin_executor_fence": origin_fence,
+            "completion": completion,
+        }
+        identity = {
+            "retire_id": retire_id,
+            "fence": fence,
+            "origin_fence": origin_fence,
+            "completion": completion,
+        }
+        return self._transport_request(
+            self.retire_requests,
+            message,
+            identity,
+            self.topology_timeout if timeout is None else timeout,
+            "retire managed page acknowledgement timed out",
+        )
+
+    def _handle_retire_managed_page_ack(self, message):
+        fields = {"type", "request_id", "retire_id", "executor_fence",
+                  "response_delivery_id", "origin_executor_fence", "completion"}
+        if not self._exact_fields(message, fields):
+            raise ValueError("invalid retire managed page acknowledgement")
+        request_id = message.get("request_id")
+        retire_id = message.get("retire_id")
+        fence = message.get("executor_fence")
+        delivery_id = message.get("response_delivery_id")
+        origin_fence = message.get("origin_executor_fence")
+        completion = message.get("completion")
+        if not all(isinstance(value, str) and value for value in (
+                request_id, retire_id, delivery_id)) or not self._valid_executor_fence(fence) or \
+                fence != self.executor_fence or not self._valid_executor_fence(origin_fence) or \
+                not self._valid_retire_completion(completion):
+            raise ValueError("invalid retire managed page acknowledgement correlation")
+        response_message = {key: message[key] for key in fields if key != "type"}
+        expected = {
+            "retire_id": retire_id,
+            "fence": fence,
+            "origin_fence": origin_fence,
+            "completion": completion,
+        }
+        if self._resolve_transport_response(
+                self.retire_requests, request_id, expected, response_message):
+            return
+        self._authenticated_event("abush_browser.retire_managed_page_ack", response_message)
+
+    def retire_ack_consumed(self, request_id, retire_id, fence, delivery_id):
+        if not all(isinstance(value, str) and value for value in (
+                request_id, retire_id, delivery_id)) or fence != self.executor_fence:
+            raise ValueError("invalid retire acknowledgement consumption")
+        self.send({
+            "type": "retire_managed_page_ack_consumed",
+            "request_id": request_id,
+            "retire_id": retire_id,
+            "executor_fence": fence,
+            "response_delivery_id": delivery_id,
+        })
+        return {
+            "accepted": True,
+            "request_id": request_id,
+            "retire_id": retire_id,
+            "response_delivery_id": delivery_id,
+        }
 
     @classmethod
     def _valid_command(cls, command):
@@ -1627,9 +1756,12 @@ class RemotePeer:
             except OSError:
                 pass
             sock.close()
-        with self.topology_lock:
-            topology_states = list(self.topology_pending.values())
-        for state in topology_states:
+        with self.transport_lock:
+            transport_states = [
+                *self.topology_requests.values(),
+                *self.retire_requests.values(),
+            ]
+        for state in transport_states:
             state["done"].set()
         if self.reader and not from_reader and self.reader is not threading.current_thread():
             self.reader.join(timeout=1)
@@ -1790,6 +1922,11 @@ class BrowserBroker:
             spec.loader.exec_module(x11_binding)
         return x11_binding
 
+    def _durable_payload(self, payload, fields, error):
+        if set(payload) != fields:
+            raise ValueError(error)
+        return self.peer(payload)
+
     def handle_request(self, message):
         request = validate_request(message)
         service = request["service"]
@@ -1851,16 +1988,41 @@ class BrowserBroker:
                 payload.get("executor_fence"))
             return {}
         if service == "abush_browser" and operation == "managed_page_moved_outside":
-            if set(payload) != {
+            peer = self._durable_payload(payload, {
                 "remote_key", "connection_id", "principal_id", "request_id", "report_id",
-                "executor_fence", "original_executor_fence", "page",
-            }:
-                raise ValueError("invalid managed page moved outside payload")
-            result = self.peer(payload).report_managed_page_moved_outside(
-                payload.get("report_id"), payload.get("executor_fence"), payload.get("page"),
-                stable_fence=payload.get("original_executor_fence"))
-            return {"acknowledged": True, "result": result,
-                    "request_id": payload["request_id"], "report_id": payload["report_id"]}
+                "executor_fence", "origin_executor_fence", "page",
+            }, "invalid managed page moved outside payload")
+            return peer.report_managed_page_moved_outside(
+                payload["request_id"],
+                payload["report_id"],
+                payload["executor_fence"],
+                payload["origin_executor_fence"],
+                payload["page"],
+            )
+        if service == "abush_browser" and operation == "topology_response_consumed":
+            peer = self._durable_payload(payload, {
+                "remote_key", "connection_id", "principal_id", "request_id", "report_id",
+                "executor_fence", "response_delivery_id",
+            }, "invalid topology response consumption payload")
+            return peer.topology_response_consumed(
+                payload["request_id"], payload["report_id"], payload["executor_fence"],
+                payload["response_delivery_id"])
+        if service == "abush_browser" and operation == "retire_managed_page_completion":
+            peer = self._durable_payload(payload, {
+                "remote_key", "connection_id", "principal_id", "request_id", "retire_id",
+                "executor_fence", "origin_executor_fence", "completion",
+            }, "invalid retire managed page completion payload")
+            return peer.complete_retire(
+                payload["request_id"], payload["retire_id"], payload["executor_fence"],
+                payload["origin_executor_fence"], payload["completion"])
+        if service == "abush_browser" and operation == "retire_managed_page_ack_consumed":
+            peer = self._durable_payload(payload, {
+                "remote_key", "connection_id", "principal_id", "request_id", "retire_id",
+                "executor_fence", "response_delivery_id",
+            }, "invalid retire acknowledgement consumption payload")
+            return peer.retire_ack_consumed(
+                payload["request_id"], payload["retire_id"], payload["executor_fence"],
+                payload["response_delivery_id"])
         if service == "abush_browser" and operation == "executor_completion":
             if set(payload) != {
                 "remote_key", "connection_id", "principal_id", "request_id", "effect_id",
@@ -1958,7 +2120,9 @@ class NativeBrokerHost:
         service = message.get("service")
         operation = message.get("operation")
         return (service == "external_links" and operation == "open") or \
-            (service == "abush_browser" and operation == "managed_page_moved_outside")
+            (service == "abush_browser" and operation in {
+                "managed_page_moved_outside", "retire_managed_page_completion",
+            })
 
     def _dispatch(self, message):
         if not self._is_blocking_request(message):

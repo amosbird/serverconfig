@@ -323,8 +323,39 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             return {cleared: true, xid: payload.xid, reclassified_group: "f"};
         }
         if (operation === "managed_page_moved_outside") {
-            return {acknowledged: true, request_id: payload.request_id,
-                result: {outcome: "page_moved_outside"}};
+            return {
+                request_id: payload.request_id,
+                report_id: payload.report_id,
+                executor_fence: payload.executor_fence,
+                response_delivery_id: `topology-response-${payload.report_id}`,
+                result: {outcome: "already_converged"},
+            };
+        }
+        if (operation === "topology_response_consumed") {
+            return {
+                accepted: true,
+                request_id: payload.request_id,
+                report_id: payload.report_id,
+                response_delivery_id: payload.response_delivery_id,
+            };
+        }
+        if (operation === "retire_managed_page_completion") {
+            return {
+                request_id: payload.request_id,
+                retire_id: payload.retire_id,
+                executor_fence: payload.executor_fence,
+                response_delivery_id: `retire-response-${payload.retire_id}`,
+                origin_executor_fence: payload.origin_executor_fence,
+                completion: payload.completion,
+            };
+        }
+        if (operation === "retire_managed_page_ack_consumed") {
+            return {
+                accepted: true,
+                request_id: payload.request_id,
+                retire_id: payload.retire_id,
+                response_delivery_id: payload.response_delivery_id,
+            };
         }
         return {};
     };
@@ -2471,6 +2502,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const record = await executor.ensure(ensurePayload());
         const payload = {
             ...executor.ensureIdentity(ensurePayload()),
+            retire_id: "retire-one",
+            origin_executor_fence: fence,
             window_id: record.logicalWindowId,
             page_id: record.logicalPageId,
         };
@@ -2480,14 +2513,18 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(await executor.retireManagedPage(payload), true);
         assert.equal(executor.workspaces.size, 0);
         assert.equal(calls.filter(call =>
-            call[0] === "ensure_managed_page_cancellation_completion").length, 1);
+            call[0] === "retire_managed_page_completion").length, 1);
+        assert.equal(calls.filter(call =>
+            call[0] === "retire_managed_page_ack_consumed").length, 1);
+        assert.deepEqual(executor.retireAckReceived.size, 0);
         assert.equal(await executor.retireManagedPage(payload), true,
             "duplicate retire replay must converge without waiting");
         assert.equal(calls.filter(call =>
-            call[0] === "ensure_managed_page_cancellation_completion").length, 2,
-        "duplicate delivery after ACK loss must replay the terminal completion");
-        await assert.rejects(executor.retireManagedPage({...payload, page_id: "other"}),
-            /conflicting duplicate retire request/);
+            call[0] === "retire_managed_page_completion").length, 2,
+            "a replay after consumption must complete the replayed daemon command");
+        await assert.rejects(executor.retireManagedPage({
+            ...payload, request_id: "conflicting-delivery", page_id: "other",
+        }), /conflicting duplicate retire request/);
     }
     {
         beginCase();
@@ -2496,6 +2533,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const record = await first.executor.ensure(ensurePayload());
         const payload = {
             ...first.executor.ensureIdentity(ensurePayload()),
+            retire_id: "retire-crash",
+            origin_executor_fence: fence,
             window_id: record.logicalWindowId,
             page_id: record.logicalPageId,
         };
@@ -2509,11 +2548,18 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             /crash after retire acceptance/);
         assert.equal(first.executor.workspaces.size, 1,
             "accepted-before-effect crash must preserve physical ownership for restart recovery");
-        assert.equal(localState.abushRetireLedger[0].status, "accepted");
+        assert.equal(localState.abushRetireLedger[0].phase, "accepted");
         const second = fixture([record], [], 0, false, null, localState);
         await second.executor.restore();
         assert.equal(second.executor.workspaces.size, 1,
             "restart must retain accepted retire work until a peer can receive its ACK");
+        second.executor.nativeRequest = async (_service, operation, value) => {
+            second.calls.push([operation, value]);
+            if (operation === "retire_managed_page_completion") {
+                throw new Error("retire ACK lost");
+            }
+            return {};
+        };
         await second.executor.remoteState({
             remote_key: payload.remote_key,
             connection_id: payload.connection_id,
@@ -2523,9 +2569,31 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         });
         assert.equal(second.executor.workspaces.size, 0,
             "connected peer recovery must finish the accepted retire before ACK");
-        assert.equal(localState.abushRetireLedger[0].status, "completed");
+        assert.equal(localState.abushRetireLedger[0].phase, "completed");
         assert(second.calls.some(call =>
-            call[0] === "ensure_managed_page_cancellation_completion"));
+            call[0] === "retire_managed_page_completion"));
+        second.executor.nativeRequest = async (_service, operation, value) => {
+            second.calls.push([operation, value]);
+            if (operation === "retire_managed_page_completion") {
+                return {
+                    request_id: value.request_id,
+                    retire_id: value.retire_id,
+                    executor_fence: value.executor_fence,
+                    response_delivery_id: `retire-response-${value.retire_id}`,
+                    origin_executor_fence: value.origin_executor_fence,
+                    completion: value.completion,
+                };
+            }
+            if (operation === "retire_managed_page_ack_consumed") {
+                return {
+                    accepted: true,
+                    request_id: value.request_id,
+                    retire_id: value.retire_id,
+                    response_delivery_id: value.response_delivery_id,
+                };
+            }
+            return {};
+        };
         const rotated = {...payload, connection_id: "c_new00000",
             executor_fence: {executor_id: "executor-new", epoch: 2}};
         await second.executor.remoteState({
@@ -2536,7 +2604,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             connected: true,
         });
         assert(second.calls.some(call =>
-            call[0] === "ensure_managed_page_cancellation_completion" &&
+            call[0] === "retire_managed_page_completion" &&
             call[1].connection_id === rotated.connection_id &&
             JSON.stringify(call[1].executor_fence) ===
                 JSON.stringify(rotated.executor_fence)),
@@ -2549,6 +2617,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const record = await first.executor.ensure(ensurePayload());
         const payload = {
             ...first.executor.ensureIdentity(ensurePayload()),
+            retire_id: "retire-restart",
+            origin_executor_fence: fence,
             window_id: record.logicalWindowId,
             page_id: record.logicalPageId,
         };
@@ -2558,7 +2628,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         second.calls.length = 0;
         assert.equal(await second.executor.retireManagedPage(payload), true);
         assert.equal(second.calls.filter(call =>
-            call[0] === "ensure_managed_page_cancellation_completion").length, 1,
+            call[0] === "retire_managed_page_completion").length, 1,
         "service-worker restart must replay the durable terminal retire completion");
     }
     {
@@ -2581,14 +2651,53 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await assert.rejects(first.executor.flushTopologyOutbox(), /pending retry/);
         assert.equal(localState.abushTopologyOutbox.length, 1,
             "response loss must keep the durable request for restart retry");
-        assert.equal(localState.abushTopologyOutbox[0].request_id, report.request_id);
+        assert.notEqual(localState.abushTopologyOutbox[0].request_id, report.request_id);
+        assert.equal(localState.abushTopologyOutbox[0].report_id, report.request_id,
+            "v6 migration must preserve the stable ID as report_id");
         assert.deepEqual(localState.abushTopologyOutbox[0].page, report.page);
         const second = fixture([], [], 0, false, null, localState);
         await second.executor.restore();
         await second.executor.flushTopologyOutbox();
         assert.deepEqual(localState.abushTopologyOutbox, []);
-        assert.equal(second.calls.filter(call =>
-            call[0] === "managed_page_moved_outside")[0][1].request_id, "ack-loss");
+        assert.notEqual(second.calls.filter(call =>
+            call[0] === "managed_page_moved_outside")[0][1].request_id, "ack-loss",
+            "native restart must allocate a fresh delivery request ID");
+    }
+    {
+        beginCase();
+        const report = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", report_id: "stable-replay",
+            request_id: "old-delivery", executor_fence: fence,
+            origin_executor_fence: fence, daemon_instance_id: "daemon-instance",
+            page: {window: {workspace_id: "workspace-authoritative",
+                window_id: logicalWindowId, generation: 1},
+            page_id: logicalPageId, generation: 1},
+            phase: "pending", response: null, cleanup: null,
+        };
+        const localState = {abushTopologyOutbox: [report]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restoreTopologyOutbox();
+        const replayFence = {executor_id: "executor-restarted", epoch: 2};
+        await executor.authorizeTopologyOutbox({
+            remote_key: report.remote_key, connection_id: "c_new00000",
+            principal_id: report.principal_id, executor_fence: replayFence,
+            owner_display: ensurePayload().owner_display, connected: true,
+        });
+        const current = executor.topologyOutbox.get(report.report_id);
+        const replayed = {
+            remote_key: current.remote_key, connection_id: current.connection_id,
+            principal_id: current.principal_id, request_id: "daemon-replay-delivery",
+            report_id: current.report_id, executor_fence: replayFence,
+            response_delivery_id: "stable-response",
+            result: {outcome: "already_converged"},
+        };
+        assert.equal(await executor.topologyReportResponse(replayed), true);
+        assert.deepEqual(localState.abushTopologyOutbox, [],
+            "daemon replay must consume the canonical result after native restart");
+        const consumed = calls.find(call => call[0] === "topology_response_consumed")[1];
+        assert.equal(consumed.request_id, "daemon-replay-delivery");
+        assert.deepEqual(consumed.executor_fence, replayFence);
     }
     {
         beginCase();
@@ -2611,7 +2720,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await executor.restore();
         await executor.flushTopologyOutbox();
         assert.equal(calls.filter(call => call[0] === "managed_page_moved_outside").length, 2,
-            "different correlation IDs must each receive a terminal ACK");
+            "migrated v6 entries retain distinct stable report IDs");
         assert.deepEqual(localState.abushTopologyOutbox, [],
             "startup must drain a successfully reported durable topology outbox");
     }
@@ -2660,7 +2769,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         });
         await second.executor.flushTopologyOutbox();
         const resent = second.calls.find(call => call[0] === "managed_page_moved_outside")[1];
-        assert.equal(resent.request_id, originalRequestId);
+        assert.notEqual(resent.request_id, originalRequestId);
         assert.equal(resent.report_id, originalReportId);
         assert.equal(resent.connection_id, "c_new00000");
         assert.deepEqual(resent.executor_fence, rotatedFence);

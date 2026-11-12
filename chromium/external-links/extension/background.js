@@ -7,9 +7,14 @@ const NATIVE_TIMEOUTS_MS = Object.freeze({
     bind_x11_window: 15000,
     clear_x11_window: 8000,
     managed_page_moved_outside: 20000,
+    topology_response_consumed: 20000,
+    retire_managed_page_completion: 20000,
+    retire_managed_page_ack_consumed: 20000,
 });
 const SERIAL_NATIVE_OPERATIONS = new Set([
     "bind_x11_window", "clear_x11_window", "managed_page_moved_outside",
+    "topology_response_consumed", "retire_managed_page_completion",
+    "retire_managed_page_ack_consumed",
 ]);
 const SERIAL_NATIVE_KEY = "native-host";
 
@@ -414,14 +419,29 @@ if (typeof chrome !== "undefined") {
             workspaceReady.then(() => workspaces.ensure(message.payload))
                 .catch(error => notifyFailure(
                     error.message || "Unable to ensure Abush browser workspace"));
+            return;
         }
         if (message.event === "abush_browser.retire_managed_page") {
             workspaceReady.then(() => workspaces.retireManagedPage(message.payload))
                 .catch(error => notifyFailure(
                     error.message || "Unable to retire Abush browser workspace"));
+            return;
+        }
+        if (message.event === "abush_browser.topology_report_response") {
+            workspaceReady.then(() => workspaces.topologyReportResponse(message.payload))
+                .catch(error => notifyFailure(
+                    error.message || "Unable to consume managed topology response"));
+            return;
+        }
+        if (message.event === "abush_browser.retire_managed_page_ack") {
+            workspaceReady.then(() => workspaces.retireManagedPageAck(message.payload))
+                .catch(error => notifyFailure(
+                    error.message || "Unable to consume managed retire acknowledgement"));
+            return;
         }
         if (message.event === "abush_browser.cancel_ensure_managed_page") {
             workspaceReady.then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});
+            return;
         }
         if (message.event === "abush_browser.execute") {
             let registered = false;
@@ -434,6 +454,7 @@ if (typeof chrome !== "undefined") {
             workspaceReady.then(() => workspaces.executeRegistered(message.payload))
                 .catch(error => notifyFailure(
                     error.message || "Unable to complete Abush browser command"));
+            return;
         }
         if (message.event === "abush_browser.cancel") {
             workspaceReady.then(() => workspaces.cancel(message.payload)).catch(() => {});
