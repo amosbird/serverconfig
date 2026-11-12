@@ -15,6 +15,12 @@ class QtileConfigTest(unittest.TestCase):
         self.assertIn("DropDownToggler(window, scratchpad.name, config)", config)
         self.assertIn("dropdown.window.focus(warp=True)", config)
 
+    def test_ctrl_alt_9_scratchpad_scan_skips_internal_qtile_windows(self):
+        config = CONFIG.read_text()
+        self.assertIn('Key([ctrl, alt], "9", toggle_scratchpad("webchat"))', config)
+        self.assertIn("from libqtile.backend.base import Window as QtileWindow", config)
+        self.assertIn("if isinstance(window, QtileWindow) and match.compare(window)", config)
+
 
 if __name__ == "__main__":
     unittest.main()

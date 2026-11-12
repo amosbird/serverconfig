@@ -137,7 +137,7 @@ class QtileConfigTest(unittest.TestCase):
         self.assertFalse((ROOT / "scripts/kitty-notify").exists())
 
     def test_place_helper_moves_without_switching_or_focusing(self):
-        namespace = {"re": re}
+        namespace = {"re": re, "QtileWindow": FakeWindow}
         functions = {
             node.name: node
             for node in self.tree.body

@@ -16,6 +16,7 @@ from libqtile.config import (
     ScratchPad,
     Screen,
 )
+from libqtile.backend.base import Window as QtileWindow
 from libqtile.core.manager import Qtile
 from libqtile.backend.x11 import core as x11_core
 from libqtile.backend.x11 import xcbq
@@ -241,7 +242,11 @@ def _adopt_scratchpad_window(qtile: Qtile, name):
     scratchpad = qtile.groups_map["scratchpad"]
     match = scratchpad_matches[name]
     existing = next(
-        (window for window in qtile.windows_map.values() if match.compare(window)),
+        (
+            window
+            for window in qtile.windows_map.values()
+            if isinstance(window, QtileWindow) and match.compare(window)
+        ),
         None,
     )
     if existing is None:
@@ -653,10 +658,12 @@ ABUSH_BINDING_TITLE = re.compile(
 
 
 def is_abush_browser(window):
-    return window.get_wm_role() == "abush-browser"
+    return isinstance(window, QtileWindow) and window.get_wm_role() == "abush-browser"
 
 
 def is_abush_browser_candidate(window):
+    if not isinstance(window, QtileWindow):
+        return False
     wm_class = window.get_wm_class() or []
     return is_abush_browser(window) or (
         any("chrom" in value.lower() for value in wm_class)
