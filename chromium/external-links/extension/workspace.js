@@ -181,7 +181,8 @@ class WorkspaceExecutor {
         const sessions = this.chrome.sessions;
         if (sessions?.getRecentlyClosed && sessions?.restore) {
             const entries = await sessions.getRecentlyClosed({maxResults: 25});
-            const window = entries.find(entry => entry.window && entry.sessionId);
+            const window = entries.find(entry => entry.window && entry.sessionId &&
+                !entry.window.tabs?.some(tab => this.parseStatusUrl(tab.url) !== null));
             if (window) {
                 await sessions.restore(window.sessionId);
                 return;

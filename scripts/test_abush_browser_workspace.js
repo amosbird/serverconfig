@@ -340,6 +340,11 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 calls.push(["getRecentlyClosed", query]);
                 return [
                     {tab: {sessionId: "tab-session"}, sessionId: "tab-session"},
+                    {window: {tabs: [
+                        {url: "chrome-extension://id/status.html#nonce=" +
+                            "a".repeat(32) + "&marker=a"},
+                        {url: "https://managed.test/"},
+                    ]}, sessionId: "managed-window-session"},
                     {window: {tabs: [{url: "https://work.test/"}]}, sessionId: "window-session"},
                 ];
             },
@@ -349,7 +354,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(localState.abushRestoreHost, false);
         assert.deepEqual(calls.filter(call => call[0] === "restoreSession"), [
             ["restoreSession", "window-session"],
-        ], "restart recovery must restore the most recent closed ordinary window");
+        ], "restart recovery must skip managed entries and restore the ordinary window");
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
             "successful session restore must not create a blank fallback window");
         const clearIndex = calls.findIndex(call => call[0] === "persistLocal" &&
