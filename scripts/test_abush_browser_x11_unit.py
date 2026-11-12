@@ -128,6 +128,13 @@ class X11BindingTest(unittest.TestCase):
         })
         self.qtile_patch.start()
         self.addCleanup(self.qtile_patch.stop)
+        self.qtile_info_patch = mock.patch.object(
+            binding, "qtile_window_info", return_value={"id": 22, "group": "c"})
+        self.qtile_info_patch.start()
+        self.addCleanup(self.qtile_info_patch.stop)
+        self.qtile_restore_patch = mock.patch.object(binding, "restore_qtile_group")
+        self.qtile_restore_patch.start()
+        self.addCleanup(self.qtile_restore_patch.stop)
 
     def test_exact_nonce_chrome_match_and_metadata(self):
         adapter = FakeAdapter()
@@ -146,6 +153,39 @@ class X11BindingTest(unittest.TestCase):
         self.assertEqual(adapter.values[(22, "WM_CLASS")], "abush-browser\0AbushBrowser\0")
         self.assertEqual(adapter.values[(11, "_NET_WM_NAME")], "ordinary")
         self.assertTrue(adapter.finished)
+
+    def test_bind_failure_after_side_effect_restores_old_properties_and_group(self):
+        adapter = FakeAdapter()
+        old = {
+            "nonce": "0123456789abcdef0123456789abcdef",
+            "remote_key": "r_12345678", "workspace_id": "workspace-old",
+            "generation": 7, "control_state": "remote", "display_title": "old title",
+        }
+        binding.bind_workspace_window(old, adapter=adapter, attempts=1)
+        before = binding.property_snapshot(adapter, 22)
+        self.qtile_info_patch.stop()
+        self.qtile_restore_patch.stop()
+        groups = iter([{"id": 22, "group": "c"}, {"id": 22, "group": "f"}])
+        transitions = []
+
+        def run(command, **_kwargs):
+            if command[-1] == "info":
+                return mock.Mock(returncode=0, stdout=json.dumps(next(groups)), stderr="")
+            transitions.append(command)
+            group = "c" if "restore_abush_browser_window" in command else "f"
+            return mock.Mock(returncode=0, stdout=json.dumps({
+                "id": 22, "group": group, "current_group_before": "e",
+                "current_group_after": "e", "active_xid_before": 11,
+                "active_xid_after": 11,
+            }), stderr="")
+
+        with mock.patch.object(binding, "notify_qtile", side_effect=RuntimeError("after move")):
+            with self.assertRaisesRegex(RuntimeError, "after move"):
+                binding.bind_workspace_window(
+                    {**old, "workspace_id": "workspace-new", "generation": 8},
+                    adapter=adapter, attempts=1, run=run)
+        self.assertEqual(binding.property_snapshot(adapter, 22), before)
+        self.assertEqual(transitions[-1], binding.qtile_restore_command(22, "c"))
 
     def test_bind_twice_uses_stable_abush_identity(self):
         adapter = FakeAdapter()
@@ -280,6 +320,8 @@ class X11BindingTest(unittest.TestCase):
         result = binding.clear_workspace_window(payload, adapter=adapter, run=run)
         self.assertEqual(result, {"cleared": True, "xid": 22, "reclassified_group": "f"})
         self.assertIsNone(binding.managed_metadata(adapter, 22))
+        replay = binding.clear_workspace_window(payload, adapter=adapter, run=run)
+        self.assertEqual(replay, {"cleared": True, "xid": 22, "reclassified_group": "f"})
         adapter = FakeAdapter()
         binding.bind_workspace_window(
             {key: value for key, value in payload.items() if key != "xid"},
@@ -370,6 +412,7 @@ class X11BindingTest(unittest.TestCase):
                 {"nonce": nonce, "xid": 11}, adapter=adapter)
 
     def test_qtile_info_is_strict_json_and_activation_verifier_polls_all_fields(self):
+        self.qtile_info_patch.stop()
         nonce = "d" * 32
         adapter = FakeAdapter()
         adapter.values[(11, "_ABUSH_ORDINARY_NONCE")] = nonce

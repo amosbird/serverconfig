@@ -164,6 +164,12 @@ def qtile_move_command(window, group="c", expected=None):
     return qtile_command("place_abush_browser_window", window, encoded)
 
 
+def qtile_restore_command(window, group):
+    if not isinstance(group, str) or not group:
+        raise ValueError("invalid Qtile restore group")
+    return qtile_command("restore_abush_browser_window", window, group)
+
+
 def qtile_reclassify_command(window):
     return qtile_command("reclassify_ordinary_window", window)
 
@@ -372,21 +378,72 @@ def clear_workspace_window(payload, adapter=None, run=None):
         raise ValueError("invalid X11 cleanup payload")
     expected = expected_managed_metadata(payload)
     adapter = adapter or XcffibAdapter()
-    if managed_metadata(adapter, payload["xid"]) != expected:
+    current = managed_metadata(adapter, payload["xid"])
+    if current is not None and current != expected:
         raise ValueError("X11 cleanup identity mismatch")
-    adapter.set_text(payload["xid"], "WM_WINDOW_ROLE", "", "STRING")
-    for name in MANAGED_PROPERTIES:
-        if hasattr(adapter, "delete_property"):
-            adapter.delete_property(payload["xid"], name)
-        else:
-            adapter.set_text(payload["xid"], name, "")
-    adapter.finish()
-    if managed_metadata(adapter, payload["xid"]) is not None:
-        raise X11Unavailable("X11 cleanup verification failed")
+    if current is not None:
+        adapter.set_text(payload["xid"], "WM_WINDOW_ROLE", "", "STRING")
+        for name in MANAGED_PROPERTIES:
+            if hasattr(adapter, "delete_property"):
+                adapter.delete_property(payload["xid"], name)
+            else:
+                adapter.set_text(payload["xid"], name, "")
+        adapter.finish()
+        if managed_metadata(adapter, payload["xid"]) is not None:
+            raise X11Unavailable("X11 cleanup verification failed")
     transition = qtile_transition(qtile_reclassify_command(payload["xid"]),
                                   payload["xid"], "f", run)
     return {"cleared": True, "xid": payload["xid"],
             "reclassified_group": transition["group"]}
+
+
+def property_snapshot(adapter, window):
+    names = {
+        "WM_WINDOW_ROLE": "STRING",
+        "WM_CLASS": "STRING",
+        "_NET_WM_NAME": "UTF8_STRING",
+        "_NET_WM_VISIBLE_NAME": "UTF8_STRING",
+        **{name: "UTF8_STRING" for name in MANAGED_PROPERTIES},
+    }
+    return {name: (adapter.property(window, name, property_type), property_type)
+            for name, property_type in names.items()}
+
+
+def restore_properties(adapter, window, snapshot):
+    for name, (value, property_type) in snapshot.items():
+        if value in (None, "") and hasattr(adapter, "delete_property"):
+            adapter.delete_property(window, name)
+        else:
+            adapter.set_text(window, name, value or "", property_type)
+    adapter.finish()
+    observed = property_snapshot(adapter, window)
+    if observed != snapshot:
+        raise X11Unavailable(f"X11 binding rollback verification failed: {observed}")
+
+
+def restore_qtile_group(window, group, run=None):
+    transition = qtile_transition(qtile_restore_command(window, group), window, group, run)
+    required = {"id", "group", "current_group_before", "current_group_after",
+                "active_xid_before", "active_xid_after"}
+    if set(transition) != required or \
+            transition["current_group_before"] != transition["current_group_after"] or \
+            transition["active_xid_before"] != transition["active_xid_after"]:
+        raise X11Unavailable("Qtile rollback changed focus or current group")
+
+
+def rollback_binding(adapter, window, snapshot, old_group, run=None):
+    errors = []
+    try:
+        restore_properties(adapter, window, snapshot)
+    except Exception as error:
+        errors.append(error)
+    if old_group is not None:
+        try:
+            restore_qtile_group(window, old_group, run)
+        except Exception as error:
+            errors.append(error)
+    if errors:
+        raise ExceptionGroup("managed X11 binding rollback failed", errors)
 
 
 def bind_workspace_window(
@@ -395,6 +452,7 @@ def bind_workspace_window(
     attempts=100,
     interval=0.05,
     qtile_notifier=None,
+    run=None,
 ):
     required = {"nonce", "remote_key", "workspace_id", "generation", "control_state",
                 "display_title"}
@@ -438,36 +496,55 @@ def bind_workspace_window(
     if len(matches) != 1:
         raise X11Unavailable("matching Chrome X11 window was not found")
     window = matches[0]
-    adapter.set_text(window, "WM_WINDOW_ROLE", "abush-browser", "STRING")
-    for prop, field in {**STABLE_FIELDS, **TEXT_FIELDS}.items():
-        adapter.set_text(window, prop, payload[field])
-    adapter.finish()
-    observed = {prop: adapter.property(window, prop) for prop in TEXT_FIELDS}
-    observed["_ABUSH_BINDING_NONCE"] = adapter.property(window, "_ABUSH_BINDING_NONCE")
-    observed["WM_WINDOW_ROLE"] = adapter.property(window, "WM_WINDOW_ROLE", "STRING")
-    expected_observed = {
-        "WM_WINDOW_ROLE": "abush-browser",
-        "_ABUSH_BINDING_NONCE": nonce,
-        **{prop: str(payload[field]) for prop, field in TEXT_FIELDS.items()},
-    }
-    if observed != expected_observed:
-        raise X11Unavailable(f"X11 binding verification failed: {observed}")
-    adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
-    adapter.set_text(window, "_NET_WM_NAME", payload["display_title"])
-    adapter.set_text(window, "_NET_WM_VISIBLE_NAME", payload["display_title"])
-    adapter.finish()
-    expected_metadata = expected_managed_metadata(payload)
-    transition = qtile_notifier(window, expected_metadata) if qtile_notifier else \
-        notify_qtile(window, expected_metadata, adapter)
-    if not isinstance(transition, dict) or transition.get("id") != window or \
-            transition.get("group") != "c" or \
-            transition.get("current_group_preserved") is not True or \
-            transition.get("active_xid_preserved") is not True:
-        raise X11Unavailable("Qtile managed placement verification failed")
-    return {
-        "available": True,
-        "xid": window,
-        "observed": observed,
-        "qtile_moved": True,
-        "observed_group": transition["group"],
-    }
+    old_properties = property_snapshot(adapter, window)
+    old_group = None
+    if qtile_notifier is None or run is not None:
+        old_group = qtile_window_info(window, run).get("group")
+        if not isinstance(old_group, str) or not old_group:
+            raise X11Unavailable("Qtile window has no rollback group")
+    try:
+        adapter.set_text(window, "WM_WINDOW_ROLE", "abush-browser", "STRING")
+        for prop, field in {**STABLE_FIELDS, **TEXT_FIELDS}.items():
+            adapter.set_text(window, prop, payload[field])
+        adapter.finish()
+        observed = {prop: adapter.property(window, prop) for prop in TEXT_FIELDS}
+        observed["_ABUSH_BINDING_NONCE"] = adapter.property(window, "_ABUSH_BINDING_NONCE")
+        observed["WM_WINDOW_ROLE"] = adapter.property(window, "WM_WINDOW_ROLE", "STRING")
+        expected_observed = {
+            "WM_WINDOW_ROLE": "abush-browser",
+            "_ABUSH_BINDING_NONCE": nonce,
+            **{prop: str(payload[field]) for prop, field in TEXT_FIELDS.items()},
+        }
+        if observed != expected_observed:
+            raise X11Unavailable(f"X11 binding verification failed: {observed}")
+        adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
+        adapter.set_text(window, "_NET_WM_NAME", payload["display_title"])
+        adapter.set_text(window, "_NET_WM_VISIBLE_NAME", payload["display_title"])
+        adapter.finish()
+        expected_metadata = expected_managed_metadata(payload)
+        transition = qtile_notifier(window, expected_metadata) if qtile_notifier else \
+            notify_qtile(window, expected_metadata, adapter, run)
+        if not isinstance(transition, dict) or transition.get("id") != window or \
+                transition.get("group") != "c" or \
+                transition.get("current_group_preserved") is not True or \
+                transition.get("active_xid_preserved") is not True:
+            raise X11Unavailable("Qtile managed placement verification failed")
+        if managed_metadata(adapter, window) != expected_metadata:
+            raise X11Unavailable("final managed X11 metadata verification failed")
+        if (qtile_notifier is None or run is not None) and \
+                qtile_window_info(window, run).get("group") != "c":
+            raise X11Unavailable("final managed Qtile placement verification failed")
+        return {
+            "available": True,
+            "xid": window,
+            "observed": observed,
+            "qtile_moved": True,
+            "observed_group": transition["group"],
+        }
+    except Exception as error:
+        try:
+            rollback_binding(adapter, window, old_properties, old_group, run)
+        except Exception as rollback_error:
+            raise ExceptionGroup(
+                "managed X11 binding and rollback failed", [error, rollback_error]) from error
+        raise

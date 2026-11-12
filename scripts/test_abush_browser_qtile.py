@@ -448,6 +448,10 @@ class BinderQtileNotificationTest(unittest.TestCase):
         self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
         self.process_patch.start()
         self.addCleanup(self.process_patch.stop)
+        self.qtile_info_patch = mock.patch.object(
+            binding, "qtile_window_info", return_value={"id": 22, "group": "f"})
+        self.qtile_info_patch.start()
+        self.addCleanup(self.qtile_info_patch.stop)
 
     def payload(self):
         return {

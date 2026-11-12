@@ -274,10 +274,25 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                     key: value for key, value in retire.items()
                     if key not in {"window_id", "page_id"}
                 }))
+            broker.handle_request(self.request(
+                "ensure_managed_page_cancellation_completion", {
+                    key: value for key, value in retire.items()
+                    if key not in {"window_id", "page_id"}
+                }))
             self.assertEqual(
                 server.wait_for("ensure_managed_page_cancellation_completed",
                                 request_id="retire-cleanup-request")["request_id"],
                 "retire-cleanup-request")
+            for _ in range(100):
+                duplicate_messages = [message for message in server.received
+                                      if message.get("type") ==
+                                      "ensure_managed_page_cancellation_completed" and
+                                      message.get("request_id") == "retire-cleanup-request"]
+                if len(duplicate_messages) >= 2:
+                    break
+                threading.Event().wait(0.01)
+            self.assertGreaterEqual(len(duplicate_messages), 2,
+                                    "lost terminal completion must be replayed")
         finally:
             broker.close()
 
@@ -650,6 +665,46 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         finally:
             broker.close()
 
+    def test_topology_timeout_keeps_pending_and_retry_resends_until_ack(self):
+        broker = mock.Mock()
+        peer = host.RemotePeer(broker, {
+            "remote_key": "r_12345678", "connection_id": "c_12345678",
+        })
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        peer.topology_timeout = 0.01
+        sent = []
+        peer.send = sent.append
+        page = {"window": {"workspace_id": "workspace", "window_id": "window",
+                           "generation": 1}, "page_id": "page", "generation": 1}
+        with self.assertRaises(TimeoutError):
+            peer.report_managed_page_moved_outside(
+                "request", peer.executor_fence, page, timeout=0.01)
+        self.assertIn("request", peer.topology_pending)
+        completed = []
+
+        def retry():
+            completed.append(peer.report_managed_page_moved_outside(
+                "request", peer.executor_fence, page, timeout=1))
+
+        worker = threading.Thread(target=retry)
+        worker.start()
+        for _ in range(100):
+            if len(sent) >= 2:
+                break
+            threading.Event().wait(0.01)
+        self.assertEqual(len(sent), 2, "retry must resend the same correlated request")
+        peer._handle_topology_response({
+            "type": "topology_response", "request_id": "request",
+            "result": {"outcome": "page_moved_outside"},
+        })
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(completed, [{"outcome": "page_moved_outside"}])
+        sent.clear()
+        self.assertEqual(peer.report_managed_page_moved_outside(
+            "request", peer.executor_fence, page), {"outcome": "page_moved_outside"})
+        self.assertEqual(sent, [], "completed retry must replay success without a second effect")
+
     def test_managed_page_moved_outside_round_trip_is_correlated(self):
         server = self.peer()
         broker = host.BrowserBroker(self.root)
@@ -660,22 +715,37 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             payload = {"remote_key": "r_12345678", "connection_id": "c_12345678",
                        "principal_id": "principal-one", "request_id": "topology-one",
                        "executor_fence": server.fence, "page": page}
-            broker.handle_request(self.request("managed_page_moved_outside", payload))
-            broker.handle_request(self.request("managed_page_moved_outside", payload))
+            result = {}
+            failure = []
+
+            def report():
+                try:
+                    result.update(broker.handle_request(
+                        self.request("managed_page_moved_outside", payload)))
+                except Exception as error:
+                    failure.append(error)
+
+            first = threading.Thread(target=report)
+            first.start()
             self.assertEqual(server.wait_for("managed_page_moved_outside"), {
                 "type": "managed_page_moved_outside", "request_id": "topology-one",
                 "executor_fence": server.fence, "page": page,
             })
+            duplicate = threading.Thread(target=report)
+            duplicate.start()
+            server.send({"type": "topology_response", "request_id": "topology-one",
+                         "result": {"outcome": "page_moved_outside"}})
+            first.join(timeout=2)
+            duplicate.join(timeout=2)
+            self.assertFalse(first.is_alive())
+            self.assertFalse(duplicate.is_alive())
+            self.assertEqual(failure, [])
+            self.assertEqual(result, {"acknowledged": True, "request_id": "topology-one",
+                                      "result": {"outcome": "page_moved_outside"}})
             with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
                 broker.handle_request(self.request("managed_page_moved_outside", {
                     **payload, "page": {**page, "page_id": "other"},
                 }))
-            server.send({"type": "topology_response", "request_id": "topology-one",
-                         "result": {"outcome": "page_moved_outside"}})
-            for _ in range(100):
-                if "topology-one" not in broker.peers["r_12345678"].topology_pending:
-                    break
-                threading.Event().wait(0.01)
             self.assertNotIn("topology-one", broker.peers["r_12345678"].topology_pending)
         finally:
             broker.close()

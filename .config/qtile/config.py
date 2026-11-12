@@ -259,12 +259,20 @@ def reclassify_ordinary_window(manager, xid: int):
     return passive_window_move(manager, window, "f")
 
 
+def restore_abush_browser_window(manager, xid: int, group: str):
+    window = qtile_window_by_xid(manager, xid)
+    if not isinstance(group, str) or group not in manager.groups_map:
+        raise ValueError("unknown rollback group")
+    return passive_window_move(manager, window, group)
+
+
 def install_browser_commands():
     commands = {
         "prepare_ordinary_window": prepare_ordinary_window,
         "activate_ordinary_window": activate_ordinary_window,
         "place_abush_browser_window": place_abush_browser_window,
         "reclassify_ordinary_window": reclassify_ordinary_window,
+        "restore_abush_browser_window": restore_abush_browser_window,
     }
     registered = getattr(Qtile, "_commands", {}).copy()
     for name, function in commands.items():

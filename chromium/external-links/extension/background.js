@@ -3,11 +3,22 @@ if (typeof importScripts === "function") importScripts("workspace.js");
 const NATIVE_HOST = "io.github.amosbird.browser_router";
 const ENVELOPE_VERSION = 1;
 
+const NATIVE_TIMEOUTS_MS = Object.freeze({
+    bind_x11_window: 15000,
+    clear_x11_window: 8000,
+    managed_page_moved_outside: 20000,
+});
+const SERIAL_NATIVE_OPERATIONS = new Set([
+    "bind_x11_window", "clear_x11_window", "managed_page_moved_outside",
+]);
+const SERIAL_NATIVE_KEY = "native-host";
+
 class NativeDispatcher {
     constructor(connect, timeoutMs = 3000) {
         this.connect = connect;
         this.timeoutMs = timeoutMs;
         this.port = null;
+        this.requestTails = new Map();
         this.pending = new Map();
         this.eventListeners = new Set();
         this.reconnectAttempts = 0;
@@ -49,7 +60,23 @@ class NativeDispatcher {
     }
 
     request(service, operation, payload = {}) {
+        if (!SERIAL_NATIVE_OPERATIONS.has(operation)) {
+            return this.dispatchRequest(service, operation, payload);
+        }
+        const key = SERIAL_NATIVE_KEY;
+        const tail = this.requestTails.get(key) || Promise.resolve();
+        const request = tail.catch(() => {})
+            .then(() => this.dispatchRequest(service, operation, payload));
+        this.requestTails.set(key, request);
+        request.finally(() => {
+            if (this.requestTails.get(key) === request) this.requestTails.delete(key);
+        }).catch(() => {});
+        return request;
+    }
+
+    dispatchRequest(service, operation, payload = {}) {
         const id = crypto.randomUUID();
+        const timeoutMs = Math.max(this.timeoutMs, NATIVE_TIMEOUTS_MS[operation] || 0);
         return new Promise((resolve, reject) => {
             const timer = this.setTimeout(() => {
                 if (!this.pending.delete(id)) return;
@@ -57,7 +84,7 @@ class NativeDispatcher {
                 const error = new Error("native request timed out");
                 error.nativeDispatch = "unknown";
                 reject(error);
-            }, this.timeoutMs);
+            }, timeoutMs);
             this.pending.set(id, {resolve, reject, timer});
             let dispatchStarted = false;
             try {
@@ -369,8 +396,7 @@ if (typeof chrome !== "undefined") {
                     error.message || "Unable to ensure Abush browser workspace"));
         }
         if (message.event === "abush_browser.retire_managed_page") {
-            workspaceReady.then(() => workspaces.enqueueLifecycle(
-                () => workspaces.retireManagedPage(message.payload)))
+            workspaceReady.then(() => workspaces.retireManagedPage(message.payload))
                 .catch(error => notifyFailure(
                     error.message || "Unable to retire Abush browser workspace"));
         }
