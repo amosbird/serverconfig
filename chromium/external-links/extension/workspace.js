@@ -77,7 +77,8 @@ class WorkspaceExecutor {
         this.retirePending = new Map();
         this.retireCompleted = new Map();
         this.retireAckReceived = new Map();
-        this.retireSeen = new Map();
+        this.retireLegacyCleanup = new Map();
+        this.remoteAuthorities = new Map();
         this.retireRecoveryReady = false;
         this.retireRecoveries = [];
         this.retireRecoveryState = null;
@@ -2231,7 +2232,21 @@ class WorkspaceExecutor {
         for (const entry of this.retireAckReceived.values()) {
             snapshot.push({version: 7, phase: "ack_received", ...entry});
         }
+        for (const [key, identity] of this.retireLegacyCleanup) {
+            snapshot.push({version: 7, phase: "legacy_cleanup", key, identity});
+        }
         await this.localStateWrite(RETIRE_LEDGER_KEY, snapshot);
+    }
+
+    legacyRetireKey(identity) {
+        return identity.retire_id || identity.request_id || JSON.stringify([
+            identity.remote_key, identity.principal_id, identity.window_id, identity.page_id,
+        ]);
+    }
+
+    validLegacyRetireIdentity(identity) {
+        return identity && ["remote_key", "principal_id", "window_id", "page_id"].every(field =>
+            typeof identity[field] === "string" && identity[field]);
     }
 
     validRetireIdentity(identity) {
@@ -2247,12 +2262,12 @@ class WorkspaceExecutor {
             ["retired", "already_retired"].includes(completion.outcome);
     }
 
-    validRetireAck(ack, entry) {
+    validRetireAck(ack, entry, requireDelivery = true) {
         return exactFields(ack, ["request_id", "retire_id", "executor_fence",
             "response_delivery_id", "origin_executor_fence", "completion"]) &&
-            ack.request_id === entry.delivery.request_id &&
+            (!requireDelivery || (ack.request_id === entry.delivery.request_id &&
+                sameRef(ack.executor_fence, entry.delivery.executor_fence))) &&
             ack.retire_id === entry.identity.retire_id &&
-            sameRef(ack.executor_fence, entry.delivery.executor_fence) &&
             sameRef(ack.origin_executor_fence, entry.identity.origin_executor_fence) &&
             sameRef(ack.completion, entry.completion) &&
             typeof ack.response_delivery_id === "string" && ack.response_delivery_id;
@@ -2267,29 +2282,36 @@ class WorkspaceExecutor {
         for (const entry of entries) {
             if (entry?.version !== 7) {
                 const legacy = entry?.identity?.original || entry?.identity;
-                if (legacy && typeof legacy.window_id === "string" &&
-                        typeof legacy.page_id === "string") legacyCleanup.push(legacy);
+                if (this.validLegacyRetireIdentity(legacy)) {
+                    const key = this.legacyRetireKey(legacy);
+                    this.retireLegacyCleanup.set(key, legacy);
+                    legacyCleanup.push(legacy);
+                }
                 dirty = true;
                 continue;
             }
             const identity = entry.identity;
+            if (entry.phase === "legacy_cleanup" &&
+                    this.validLegacyRetireIdentity(identity) &&
+                    entry.key === this.legacyRetireKey(identity)) {
+                this.retireLegacyCleanup.set(entry.key, identity);
+                legacyCleanup.push(identity);
+                continue;
+            }
             if (!this.validRetireIdentity(identity)) {
                 dirty = true;
                 continue;
             }
             if (entry.phase === "accepted") {
-                this.retireSeen.set(identity.retire_id, identity);
                 this.retirePending.set(identity.retire_id, identity);
             } else if (entry.phase === "completed" &&
                     this.validRetireIdentity(entry.delivery) &&
                     this.validRetireCompletion(entry.completion)) {
-                this.retireSeen.set(identity.retire_id, identity);
                 this.retireCompleted.set(identity.retire_id, entry);
             } else if (entry.phase === "ack_received" &&
                     this.validRetireIdentity(entry.delivery) &&
                     this.validRetireCompletion(entry.completion) &&
                     this.validRetireAck(entry.ack, entry)) {
-                this.retireSeen.set(identity.retire_id, identity);
                 this.retireAckReceived.set(identity.retire_id, entry);
             } else {
                 dirty = true;
@@ -2301,9 +2323,12 @@ class WorkspaceExecutor {
 
     async recoverLegacyRetire(identity) {
         const record = this.workspaces.get(this.key(identity.remote_key, identity.principal_id));
-        if (!record || record.logicalWindowId !== identity.window_id ||
-                record.logicalPageId !== identity.page_id) return;
-        await this.convergeManagedTopology(record, {closeWindow: true, report: false});
+        if (record && record.logicalWindowId === identity.window_id &&
+                record.logicalPageId === identity.page_id) {
+            await this.convergeManagedTopology(record, {closeWindow: true, report: false});
+        }
+        this.retireLegacyCleanup.delete(this.legacyRetireKey(identity));
+        await this.persistRetireLedger();
     }
 
     async recoverRetireLedger() {
@@ -2313,6 +2338,7 @@ class WorkspaceExecutor {
             try {
                 await this.recoverLegacyRetire(identity);
             } catch (error) {
+                this.retireRecoveries.push(identity);
                 this.reportAdvisoryError(new AggregateError([error],
                     "legacy retire cleanup remains pending"));
             }
@@ -2348,15 +2374,15 @@ class WorkspaceExecutor {
             executor_fence: identity.executor_fence,
             connected: true,
         };
+        this.remoteAuthorities.set(identity.remote_key,
+            structuredClone(this.retireRecoveryState));
         const known = this.retirePending.get(identity.retire_id) ||
             this.retireCompleted.get(identity.retire_id)?.identity ||
-            this.retireAckReceived.get(identity.retire_id)?.identity ||
-            this.retireSeen.get(identity.retire_id);
+            this.retireAckReceived.get(identity.retire_id)?.identity;
         if (known && !this.stableRetireMatches(known, identity)) {
             throw new Error("conflicting duplicate retire request");
         }
         if (!known) {
-            this.retireSeen.set(identity.retire_id, identity);
             this.retirePending.set(identity.retire_id, identity);
             await this.persistRetireLedger();
         }
@@ -2441,32 +2467,57 @@ class WorkspaceExecutor {
     }
 
     async consumeRetireAck(entry) {
+        const state = this.remoteAuthorities.get(entry.identity.remote_key);
+        if (!state || state.principal_id !== entry.identity.principal_id) {
+            throw new Error("retire acknowledgement has no current peer authority");
+        }
+        const ack = {
+            ...entry.ack,
+            request_id: crypto.randomUUID(),
+            executor_fence: state.executor_fence,
+        };
         const confirmation = await this.nativeRequest(
             "abush_browser", "retire_managed_page_ack_consumed", {
-                remote_key: entry.delivery.remote_key,
-                connection_id: entry.delivery.connection_id,
-                principal_id: entry.delivery.principal_id,
-                request_id: entry.ack.request_id,
-                retire_id: entry.ack.retire_id,
-                executor_fence: entry.ack.executor_fence,
-                response_delivery_id: entry.ack.response_delivery_id,
+                remote_key: entry.identity.remote_key,
+                connection_id: state.connection_id,
+                principal_id: entry.identity.principal_id,
+                request_id: ack.request_id,
+                retire_id: ack.retire_id,
+                executor_fence: ack.executor_fence,
+                response_delivery_id: ack.response_delivery_id,
             });
         if (!exactFields(confirmation,
             ["accepted", "request_id", "retire_id", "response_delivery_id"]) ||
                 confirmation.accepted !== true ||
-                confirmation.request_id !== entry.ack.request_id ||
-                confirmation.retire_id !== entry.ack.retire_id ||
-                confirmation.response_delivery_id !== entry.ack.response_delivery_id) {
+                confirmation.request_id !== ack.request_id ||
+                confirmation.retire_id !== ack.retire_id ||
+                confirmation.response_delivery_id !== ack.response_delivery_id) {
             throw new Error("retire acknowledgement consumption was not confirmed");
         }
         this.retireAckReceived.delete(entry.identity.retire_id);
         await this.persistRetireLedger();
     }
 
-    async retireManagedPageAck(ack) {
-        if (!ack || typeof ack.retire_id !== "string") return false;
-        const entry = this.retireCompleted.get(ack.retire_id);
-        if (!entry || !this.validRetireAck(ack, entry)) return false;
+    async retireManagedPageAck(payload) {
+        if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
+            "retire_id", "executor_fence", "response_delivery_id", "origin_executor_fence",
+            "completion"])) return false;
+        const entry = this.retireCompleted.get(payload.retire_id) ||
+            this.retireAckReceived.get(payload.retire_id);
+        if (!entry || payload.remote_key !== entry.identity.remote_key ||
+                payload.principal_id !== entry.identity.principal_id ||
+                !this.validRetireAck(payload, entry, false)) return false;
+        const state = this.remoteAuthorities.get(payload.remote_key);
+        if (!state || state.connection_id !== payload.connection_id ||
+                !sameRef(state.executor_fence, payload.executor_fence)) return false;
+        const ack = {
+            request_id: payload.request_id,
+            retire_id: payload.retire_id,
+            executor_fence: payload.executor_fence,
+            response_delivery_id: payload.response_delivery_id,
+            origin_executor_fence: payload.origin_executor_fence,
+            completion: payload.completion,
+        };
         const received = {...entry, ack};
         this.retireCompleted.delete(ack.retire_id);
         this.retireAckReceived.set(ack.retire_id, received);
@@ -3195,6 +3246,12 @@ class WorkspaceExecutor {
     async remoteState(state) {
         if (!state || typeof state.remote_key !== "string") return;
         await this.authorizeTopologyOutbox(state);
+        if (state?.connected === true && typeof state.connection_id === "string" &&
+                typeof state.principal_id === "string" && validFence(state.executor_fence)) {
+            this.remoteAuthorities.set(state.remote_key, structuredClone(state));
+        } else {
+            this.remoteAuthorities.delete(state.remote_key);
+        }
         this.retireRecoveryReady = state?.connected === true;
         this.retireRecoveryState = state?.connected === true ? state : null;
         await this.recoverRetireLedger();

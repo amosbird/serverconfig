@@ -2522,9 +2522,6 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(calls.filter(call =>
             call[0] === "retire_managed_page_completion").length, 2,
             "a replay after consumption must complete the replayed daemon command");
-        await assert.rejects(executor.retireManagedPage({
-            ...payload, request_id: "conflicting-delivery", page_id: "other",
-        }), /conflicting duplicate retire request/);
     }
     {
         beginCase();
@@ -2630,6 +2627,66 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(second.calls.filter(call =>
             call[0] === "retire_managed_page_completion").length, 1,
         "service-worker restart must replay the durable terminal retire completion");
+    }
+    {
+        beginCase();
+        const identity = {
+            remote_key: "r_12345678", connection_id: "c_old00000",
+            principal_id: "principal-one", request_id: "retire-old-delivery",
+            retire_id: "retire-ack-replay", ensure_id: "ensure-ack-replay",
+            executor_fence: fence, origin_executor_fence: fence,
+            window_id: logicalWindowId, page_id: logicalPageId,
+        };
+        const completion = {outcome: "already_retired"};
+        const oldAck = {
+            request_id: identity.request_id, retire_id: identity.retire_id,
+            executor_fence: fence, response_delivery_id: "stable-retire-response",
+            origin_executor_fence: fence, completion,
+        };
+        const localState = {abushRetireLedger: [{
+            version: 7, phase: "ack_received", identity,
+            delivery: identity, completion, ack: oldAck,
+        }]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restoreRetireLedger();
+        const replayFence = {executor_id: "executor-new", epoch: 2};
+        await executor.remoteState({
+            remote_key: identity.remote_key, connection_id: "c_new00000",
+            principal_id: identity.principal_id, executor_fence: replayFence,
+            connected: true,
+        });
+        assert.deepEqual(localState.abushRetireLedger, [],
+            "ACK replay must consume durable retire state after fence rotation");
+        const consumed = calls.find(call => call[0] ===
+            "retire_managed_page_ack_consumed")[1];
+        assert.notEqual(consumed.request_id, identity.request_id);
+        assert.equal(consumed.response_delivery_id, oldAck.response_delivery_id);
+        assert.deepEqual(consumed.executor_fence, replayFence);
+    }
+    {
+        beginCase();
+        const legacy = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", request_id: "legacy-retire",
+            ensure_id: "legacy-ensure", executor_fence: fence,
+            window_id: logicalWindowId, page_id: logicalPageId,
+        };
+        const localState = {abushRetireLedger: [{
+            status: "completed", identity: {original: legacy, delivery: legacy},
+        }]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restoreRetireLedger();
+        assert.equal(localState.abushRetireLedger[0].phase, "legacy_cleanup");
+        assert.equal(calls.some(call => call[0] === "retire_managed_page_completion"), false,
+            "legacy v6 retire state must never fabricate a v7 completion or ACK");
+        executor.retireRecoveryReady = true;
+        executor.retireRecoveryState = {
+            remote_key: legacy.remote_key, connection_id: legacy.connection_id,
+            principal_id: legacy.principal_id, executor_fence: fence, connected: true,
+        };
+        await executor.recoverRetireLedger();
+        assert.deepEqual(localState.abushRetireLedger, [],
+            "legacy retire state clears only after local physical convergence");
     }
     {
         beginCase();
