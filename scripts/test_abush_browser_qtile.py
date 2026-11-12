@@ -146,6 +146,14 @@ class QtileConfigTest(unittest.TestCase):
         ]
         self.assertFalse(any('role="abush-browser"' in rule for rule in rules),
                          "verified placement must use the exact-XID binder transition")
+        self.assertTrue(any('wm_class=["Google-chrome", "Chromium"]' in rule and
+                            'group="__abush_quarantine"' in rule for rule in rules))
+        candidate = next(index for index, rule in enumerate(rules)
+                         if 'group="__abush_quarantine"' in rule)
+        ordinary = next(index for index, rule in enumerate(rules)
+                        if 'wm_class="Google-chrome"' in rule and 'group="f"' in rule)
+        self.assertLess(candidate, ordinary,
+                        "candidate quarantine must win before the ordinary Chrome rule")
         self.assertTrue(any('wm_class="Google-chrome"' in rule and 'group="f"' in rule
                             for rule in rules))
         self.assertNotIn("weechat", self.source.lower())

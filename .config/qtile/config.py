@@ -498,6 +498,11 @@ scratchpad_matches = {
 }
 
 
+ABUSH_BINDING_TITLE = re.compile(
+    r"^__ABUSH_BIND__:[0-9a-f]{32}:[ab](?: - (?:Google Chrome|Chromium))?$"
+)
+
+
 groups = [
     ScratchPad(
         "scratchpad",
@@ -595,6 +600,13 @@ for i in ["w", "e", "d", "f", "v", "n", "i", "o"]:
 keys.append(Key([ctrl, alt], "c", lazy.group["c"].toscreen()))
 
 dgroups_app_rules = [
+    Rule(
+        Match(
+            wm_class=["Google-chrome", "Chromium"],
+            title=ABUSH_BINDING_TITLE,
+        ),
+        group="__abush_quarantine",
+    ),
     Rule(Match(wm_class="kitty", title="local"), group="e"),
     Rule(Match(wm_class="kitty", title="work"), group="v"),
     Rule(Match(wm_class="kitty", title="remote"), group="i"),
@@ -649,11 +661,6 @@ def show_browser_tabs():
 @hook.subscribe.startup
 def initialize_browser_tabs():
     show_browser_tabs()
-
-
-ABUSH_BINDING_TITLE = re.compile(
-    r"^__ABUSH_BIND__:[0-9a-f]{32}:[ab](?: - (?:Google Chrome|Chromium))?$"
-)
 
 
 def is_chrome_window(window):
