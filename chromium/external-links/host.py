@@ -39,7 +39,13 @@ ORDINARY_LAUNCH_LEASE_MAX_SIZE = 64 * 1024
 ORDINARY_LAUNCH_LEASE_MAX_LIFETIME_MS = 60_000
 ORDINARY_LAUNCH_LEASE_DIR = "ordinary-launch"
 NATIVE_ENVELOPE_VERSION = 1
-PEER_PROTOCOL_VERSION = 7
+PEER_PROTOCOL_VERSION = 8
+COMPLETION_RECEIPTS = {
+    "completion": "completion_accepted",
+    "cancellation_completed": "cancellation_completion_accepted",
+    "ensure_managed_page_completed": "ensure_managed_page_completion_accepted",
+    "ensure_managed_page_cancellation_completed": "ensure_managed_page_cancellation_accepted",
+}
 BROWSER_ERROR_CODES = {
     "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
     "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
@@ -1343,10 +1349,11 @@ class RemotePeer:
         self.capabilities = {}
         self.pending = {}
         self.completions = {}
+        self.accepted_completions = {}
+        self.completion_timeout = 15
         self.transport_history = {}
         self.ensure_pending = {}
         self.ensure_cancellations = {}
-        self.ensure_cancellation_completed = {}
         self.pending_cancellations = {}
         self.topology_requests = {}
         self.retire_requests = {}
@@ -1482,7 +1489,7 @@ class RemotePeer:
         return isinstance(value, dict) and set(value) == {"executor_id", "epoch"} and \
             isinstance(value["executor_id"], str) and value["executor_id"] and \
             isinstance(value["epoch"], int) and not isinstance(value["epoch"], bool) and \
-            value["epoch"] > 0
+            0 < value["epoch"] <= 2 ** 64 - 1
 
     @staticmethod
     def _valid_window_ref(value):
@@ -1623,28 +1630,11 @@ class RemotePeer:
             }))
 
     def complete_ensure_cancellation(self, principal_id, request_id, ensure_id, fence):
-        if principal_id != self.principal_id or fence != self.executor_fence:
+        if principal_id != self.principal_id:
             raise ValueError("stale ensure cancellation completion")
-        pending = self.ensure_cancellations.get(ensure_id)
-        identity = {"request_id": request_id, "ensure_id": ensure_id, "fence": fence}
-        completed = self.ensure_cancellation_completed.get(request_id)
-        if completed is not None:
-            if completed != identity:
-                raise ValueError("conflicting ensure cancellation completion")
-            self.send({
-                "type": "ensure_managed_page_cancellation_completed",
-                "request_id": request_id,
-                "ensure_id": ensure_id,
-                "executor_fence": fence,
-            })
-            return
-        if pending is None or pending["request_id"] != request_id or pending["fence"] != fence:
-            raise ValueError("uncorrelated ensure cancellation completion")
-        self.ensure_cancellations.pop(ensure_id)
-        self.ensure_cancellation_completed[request_id] = identity
-        while len(self.ensure_cancellation_completed) > 256:
-            self.ensure_cancellation_completed.pop(next(iter(self.ensure_cancellation_completed)))
-        self.send({
+        return self._complete_request(self.ensure_cancellations, ensure_id, {
+            "request_id": request_id, "fence": fence,
+        }, {
             "type": "ensure_managed_page_cancellation_completed",
             "request_id": request_id,
             "ensure_id": ensure_id,
@@ -1652,23 +1642,11 @@ class RemotePeer:
         })
 
     def complete_ensure(self, principal_id, workspace_id, request_id, ensure_id, fence, completion):
-        if principal_id != self.principal_id or fence != self.executor_fence:
+        if principal_id != self.principal_id:
             raise ValueError("stale ensure managed page completion")
-        if not isinstance(completion, dict):
+        if not self._valid_ensure_completion(completion):
             raise ValueError("invalid ensure managed page completion")
-        outcome = completion.get("outcome")
-        if outcome == "created":
-            valid = set(completion) == {"outcome", "window_id", "page_id"} and \
-                all(isinstance(completion[key], str) and completion[key]
-                    for key in ("window_id", "page_id"))
-        elif outcome == "rejected":
-            valid = set(completion) == {"outcome", "code"} and \
-                completion.get("code") in BROWSER_ERROR_CODES
-        else:
-            valid = False
-        if not valid:
-            raise ValueError("invalid ensure managed page completion")
-        self._complete_request(self.ensure_pending, ensure_id, {
+        return self._complete_request(self.ensure_pending, ensure_id, {
             "request_id": request_id, "workspace_id": workspace_id, "fence": fence,
         }, {
             "type": "ensure_managed_page_completed",
@@ -1679,9 +1657,9 @@ class RemotePeer:
         })
 
     def complete_cancellation(self, request_id, effect_id, fence, completion):
-        if fence != self.executor_fence or completion not in {"not_applied", "unknown"}:
+        if completion not in {"not_applied", "unknown"}:
             raise ValueError("invalid cancellation completion")
-        self._complete_request(self.pending_cancellations, effect_id, {
+        receipt = self._complete_request(self.pending_cancellations, effect_id, {
             "request_id": request_id, "fence": fence,
         }, {
             "type": "cancellation_completed",
@@ -1691,11 +1669,12 @@ class RemotePeer:
             "completion": completion,
         })
         self.pending.pop(effect_id, None)
+        return receipt
 
     def complete(self, request_id, effect_id, fence, completion):
-        if fence != self.executor_fence or completion not in {"applied", "not_applied", "unknown"}:
+        if completion not in {"applied", "not_applied", "unknown"}:
             raise ValueError("invalid executor completion")
-        self._complete_request(self.pending, effect_id, {
+        return self._complete_request(self.pending, effect_id, {
             "request_id": request_id, "fence": fence,
         }, {
             "type": "completion",
@@ -1711,10 +1690,76 @@ class RemotePeer:
         while len(history) > 256:
             history.pop(next(iter(history)))
 
+    @staticmethod
+    def _receipt_key(message):
+        fence = message["executor_fence"]
+        return (message["type"], message["request_id"],
+                message.get("effect_id", message.get("ensure_id")),
+                fence["executor_id"], fence["epoch"])
+
+    def _handle_completion_accepted(self, message):
+        ensure = message["type"].startswith("ensure_")
+        cancelled = message["type"] == "ensure_managed_page_cancellation_accepted"
+        fields = {"type", "request_id", "executor_fence",
+                  "ensure_id" if ensure else "effect_id"}
+        if not cancelled:
+            fields.add("completion")
+        if not self._exact_fields(message, fields) or not all(
+                isinstance(message.get(field), str) and message[field]
+                for field in ("request_id", "ensure_id" if ensure else "effect_id")) or \
+                not self._valid_executor_fence(message.get("executor_fence")):
+            raise ValueError("invalid completion receipt")
+        if not cancelled:
+            completion = message["completion"]
+            if ensure:
+                valid = self._valid_ensure_completion(completion)
+            else:
+                valid = isinstance(completion, str) and completion in {
+                    "applied", "not_applied", "unknown"}
+                if message["type"] == "cancellation_completion_accepted":
+                    valid = valid and completion != "applied"
+            if not valid:
+                raise ValueError("invalid completion receipt outcome")
+        receipt_key = self._receipt_key(message)
+        with self.transport_lock:
+            previous = self.accepted_completions.get(receipt_key)
+            if previous is not None and previous != message:
+                raise ValueError("conflicting completion receipt")
+            for state in self.completions.values():
+                expected = {**state["message"],
+                            "type": COMPLETION_RECEIPTS[state["message"]["type"]]}
+                if self._receipt_key(expected) == receipt_key:
+                    if expected != message:
+                        raise ValueError("conflicting completion receipt")
+                    state["response"] = json.loads(json.dumps(message))
+                    state["done"].set()
+            self._retain_bounded(self.accepted_completions, receipt_key,
+                                 json.loads(json.dumps(message)))
+
+    @staticmethod
+    def _valid_ensure_completion(completion):
+        if not isinstance(completion, dict):
+            return False
+        if completion.get("outcome") == "created":
+            return set(completion) == {"outcome", "window_id", "page_id"} and all(
+                isinstance(completion[key], str) and completion[key]
+                for key in ("window_id", "page_id"))
+        return completion.get("outcome") == "rejected" and \
+            set(completion) == {"outcome", "code"} and \
+            isinstance(completion.get("code"), str) and \
+            completion["code"] in BROWSER_ERROR_CODES
+
     def _complete_request(self, requests, key, identity, message):
+        expected = {**message, "type": COMPLETION_RECEIPTS[message["type"]]}
+        if not self._valid_executor_fence(message.get("executor_fence")) or not all(
+                isinstance(value, str) and value for value in (message["request_id"], key)):
+            raise ValueError("invalid peer completion identity")
         with self.transport_lock:
             history_key = (message["type"], key)
             completed = self.completions.get(history_key)
+            receipt = self.accepted_completions.get(self._receipt_key(expected))
+            if receipt is not None and receipt != expected:
+                raise ValueError("conflicting duplicate peer completion")
             if completed is not None:
                 if completed["message"] != message or any(
                         completed["identity"].get(field) != value
@@ -1722,15 +1767,41 @@ class RemotePeer:
                     raise ValueError("conflicting duplicate peer completion")
             else:
                 pending = requests.get(key)
-                if pending is None or any(pending.get(field) != value
-                                          for field, value in identity.items()):
+                if pending is not None and any(
+                        pending.get(field) != value for field, value in identity.items()):
                     raise ValueError("uncorrelated peer completion")
-                # v7 has no daemon acceptance ACK for these completions. Retain the
-                # selected outcome before writing, including ambiguous failed writes.
-                completed = json.loads(json.dumps({"identity": pending, "message": message}))
-                self._retain_bounded(self.completions, history_key, completed)
-                requests.pop(key)
+                if receipt is None and (pending is None or
+                                        message["executor_fence"] != self.executor_fence):
+                    raise ValueError("uncorrelated peer completion")
+                completed = json.loads(json.dumps({
+                    "identity": pending if pending is not None else identity, "message": message}))
+                completed.update(done=threading.Event(), response=receipt)
+                if len(self.completions) >= 256:
+                    evict = next((entry for entry, state in self.completions.items()
+                                  if state["response"] is not None), None)
+                    if evict is None:
+                        raise ValueError("completion receipt backlog is full")
+                    self.completions.pop(evict)
+                self.completions[history_key] = completed
+                requests.pop(key, None)
+            if completed["response"] is not None:
+                return json.loads(json.dumps(completed["response"]))
+            completed["done"].clear()
+        # Register immutable selection and waiter before writing; the reader must
+        # acquire transport_lock even while sendall is blocked or fails ambiguously.
+        try:
             self.send(completed["message"])
+        except OSError:
+            with self.transport_lock:
+                if completed["response"] is not None:
+                    return json.loads(json.dumps(completed["response"]))
+            raise
+        completed["done"].wait(self.completion_timeout)
+        with self.transport_lock:
+            receipt = completed["response"]
+            if receipt is None:
+                raise TimeoutError("durable completion receipt timed out")
+            return json.loads(json.dumps(receipt))
 
     def send(self, message):
         data = encode_peer_message(message)
@@ -1757,6 +1828,9 @@ class RemotePeer:
     def handle(self, message):
         message_type = message.get("type")
         normalized_type = message_type.lower() if isinstance(message_type, str) else None
+        if message_type in COMPLETION_RECEIPTS.values():
+            self._handle_completion_accepted(message)
+            return
         if normalized_type == "ping":
             if not self._exact_fields(message, {"type", "request_id", "ping_id"}):
                 raise ValueError("invalid ping")
@@ -2171,6 +2245,7 @@ class RemotePeer:
             sock.close()
         with self.transport_lock:
             transport_states = [
+                *self.completions.values(),
                 *self.topology_requests.values(),
                 *self.retire_requests.values(),
                 *self.topology_consumed_requests.values(),
@@ -2193,6 +2268,7 @@ class BrowserBroker:
         self.write_barrier = write_barrier
         self.peers = {}
         self.principals = {}
+        self.completion_history = {}
         self.candidates = {}
         self.lock = threading.RLock()
         install = f"{pathlib.Path(__file__).resolve()}:{os.getuid()}".encode()
@@ -2236,9 +2312,11 @@ class BrowserBroker:
                 pinned = self.principals.get(remote_key)
                 if pinned is None:
                     self.principals[remote_key] = identity
+                    self._bind_completion_history(peer)
                     return peer
                 if self._same_principal_instance(pinned, identity):
                     self.principals[remote_key] = identity
+                    self._bind_completion_history(peer)
                     return peer
                 logging.warning(
                     "browser peer principal replacement rejected remote=%s connection=%s "
@@ -2248,6 +2326,13 @@ class BrowserBroker:
             logging.info("browser peer candidate failed remote=%s connection=%s",
                          remote_key, metadata["connection_id"])
         return None
+
+    def _bind_completion_history(self, peer):
+        key = (peer.metadata["remote_key"], peer.principal_id,
+               peer.owner_display["daemon_instance_id"])
+        state = self.completion_history.setdefault(
+            key, ({}, {}, threading.RLock()))
+        peer.completions, peer.accepted_completions, peer.transport_lock = state
 
     def _activate_after_remote_state(self, peer):
         self.remote_changed(peer)
@@ -2323,16 +2408,33 @@ class BrowserBroker:
         for peer in peers:
             peer.close()
 
-    def peer(self, payload):
+    def peer(self, payload, completion_type=None):
         remote_key = payload.get("remote_key")
         connection_id = payload.get("connection_id")
         principal_id = payload.get("principal_id")
         with self.lock:
             peer = self.peers.get(remote_key)
-        if peer is None or not peer.connected or peer.metadata["connection_id"] != connection_id:
+        if peer is None or not peer.connected:
             raise ValueError("remote is unavailable")
         if principal_id != peer.principal_id:
             raise ValueError("principal mismatch")
+        if peer.metadata["connection_id"] != connection_id:
+            if completion_type is None:
+                raise ValueError("remote is unavailable")
+            receipt = {key: payload[key] for key in (
+                "request_id", "executor_fence", "effect_id", "ensure_id", "completion")
+                if key in payload}
+            receipt["type"] = COMPLETION_RECEIPTS[completion_type]
+            if not peer._valid_executor_fence(receipt.get("executor_fence")):
+                raise ValueError("invalid completion origin")
+            with peer.transport_lock:
+                accepted = peer.accepted_completions.get(peer._receipt_key(receipt)) == receipt
+                selected = any(
+                    {**state["message"],
+                     "type": COMPLETION_RECEIPTS[state["message"]["type"]]} == receipt
+                    for state in peer.completions.values())
+                if not accepted and not selected:
+                    raise ValueError("unknown completion origin")
         return peer
 
     def x11_binding(self):
@@ -2399,13 +2501,12 @@ class BrowserBroker:
                 "ensure_id", "executor_fence", "completion",
             }:
                 raise ValueError("invalid ensure managed page completion payload")
-            peer = self.peer(payload)
-            peer.complete_ensure(
+            peer = self.peer(payload, "ensure_managed_page_completed")
+            return peer.complete_ensure(
                 payload.get("principal_id"), payload.get("workspace_id"),
                 payload.get("request_id"), payload.get("ensure_id"),
                 payload.get("executor_fence"), payload.get("completion"),
             )
-            return {}
         if service == "abush_browser" and \
                 operation == "ensure_managed_page_cancellation_completion":
             if set(payload) != {
@@ -2413,10 +2514,10 @@ class BrowserBroker:
                 "executor_fence",
             }:
                 raise ValueError("invalid ensure cancellation completion payload")
-            self.peer(payload).complete_ensure_cancellation(
+            peer = self.peer(payload, "ensure_managed_page_cancellation_completed")
+            return peer.complete_ensure_cancellation(
                 payload.get("principal_id"), payload.get("request_id"), payload.get("ensure_id"),
                 payload.get("executor_fence"))
-            return {}
         if service == "abush_browser" and operation == "managed_page_moved_outside":
             peer = self._durable_payload(payload, {
                 "remote_key", "connection_id", "principal_id", "request_id", "report_id",
@@ -2459,21 +2560,19 @@ class BrowserBroker:
                 "executor_fence", "completion",
             }:
                 raise ValueError("invalid executor completion payload")
-            self.peer(payload).complete(
+            return self.peer(payload, "completion").complete(
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"),
             )
-            return {}
         if service == "abush_browser" and operation == "cancellation_completion":
             if set(payload) != {
                 "remote_key", "connection_id", "principal_id", "request_id", "effect_id",
                 "executor_fence", "completion",
             }:
                 raise ValueError("invalid cancellation completion payload")
-            self.peer(payload).complete_cancellation(
+            return self.peer(payload, "cancellation_completed").complete_cancellation(
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"))
-            return {}
         if service == "abush_browser" and operation == "register_candidate_lease":
             if not isinstance(payload, dict) or set(payload) != {"nonce"}:
                 raise ValueError("invalid candidate lease payload")
@@ -2608,6 +2707,8 @@ class NativeBrokerHost:
             (service == "abush_browser" and operation in {
                 "managed_page_moved_outside", "topology_response_consumed",
                 "retire_managed_page_completion", "retire_managed_page_ack_consumed",
+                "executor_completion", "cancellation_completion",
+                "ensure_managed_page_completion", "ensure_managed_page_cancellation_completion",
             })
 
     def _dispatch(self, message):

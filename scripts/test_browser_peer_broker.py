@@ -28,6 +28,7 @@ class FakePeer:
             "workbench_name": "workbench",
         }
         self.received = []
+        self.accept_completions = True
         self.connected = threading.Event()
         self.done = threading.Event()
         self.client = None
@@ -58,7 +59,10 @@ class FakePeer:
             }))
             self.connected.set()
             while True:
-                self.received.append(host.read_peer_message(self.client))
+                message = host.read_peer_message(self.client)
+                self.received.append(message)
+                if self.accept_completions and message.get("type") in host.COMPLETION_RECEIPTS:
+                    self.send({**message, "type": host.COMPLETION_RECEIPTS[message["type"]]})
         except (OSError, EOFError):
             pass
         finally:
@@ -185,10 +189,10 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         self.assertFalse(native.refresh_thread.is_alive())
 
     def setUp(self):
-        temporary_root = ROOT.parent.parent / ".tmp"
+        temporary_root = ROOT.parent / ".tmp"
         temporary_root.mkdir(exist_ok=True)
         self.temporary = TemporaryDirectory(dir=temporary_root)
-        self.root = pathlib.Path(self.temporary.name) / "browser-remotes"
+        self.root = pathlib.Path(self.temporary.name) / "r"
         self.root.mkdir(mode=0o700)
         self.servers = []
 
@@ -229,6 +233,14 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             if message.get("event") == event_name:
                 return message
 
+    def accept_write(self, peer, writes=None):
+        def send(message):
+            if writes is not None:
+                writes.append(message)
+            if message["type"] in host.COMPLETION_RECEIPTS:
+                peer.handle({**message, "type": host.COMPLETION_RECEIPTS[message["type"]]})
+        return send
+
     def completion_payload(self, forwarded, completion):
         payload = {key: value for key, value in forwarded.items()
                    if key not in {"expected_page", "owner_display", "connection_display_name"}}
@@ -241,7 +253,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             "operation": operation, "payload": payload,
         }
 
-    def test_v6_handshake_is_rejected_by_exact_v7_peer(self):
+    def test_v7_handshake_is_rejected_by_exact_v8_peer(self):
         left, right = socket.socketpair()
 
         class ConnectedSocket:
@@ -271,7 +283,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
 
         def server():
             hello = host.read_peer_message(right)
-            self.assertEqual(hello["version"], 7)
+            self.assertEqual(hello["version"], 8)
             right.sendall(host.encode_peer_message({
                 "type": "hello_rejected", "request_id": "hello",
                 "reason": "unsupported_version",
@@ -290,13 +302,13 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             worker.join(timeout=2)
             self.assertFalse(worker.is_alive())
 
-    def test_v7_handshake_and_ensure_completion_are_strictly_correlated(self):
+    def test_v8_handshake_and_ensure_completion_are_strictly_correlated(self):
         server = self.peer()
         broker = host.BrowserBroker(self.root)
         try:
             broker.refresh()
             hello = server.received[0]
-            self.assertEqual(hello["version"], 7)
+            self.assertEqual(hello["version"], 8)
             self.assertEqual(server.received[1], {
                 "type": "hello_ready", "request_id": "hello-request",
                 "executor_fence": server.fence,
@@ -799,6 +811,273 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         finally:
             broker.close()
 
+    def test_native_completion_dispatch_waits_for_receipt_and_keeps_exact_payload(self):
+        native = host.NativeBrokerHost(
+            input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
+            ordinary_open_factory=None)
+        server = self.peer()
+        server.accept_completions = False
+        native.broker.write_barrier = None
+        try:
+            native.broker.refresh()
+            peer = native.broker.peers["r_12345678"]
+            peer.pending["effect"] = {"request_id": "request", "fence": server.fence}
+            while not native.outbound.empty():
+                native.outbound.get_nowait()
+            payload = {"remote_key": "r_12345678", "connection_id": "c_12345678",
+                       "principal_id": "principal-one", "request_id": "request",
+                       "effect_id": "effect", "executor_fence": server.fence,
+                       "completion": "applied"}
+            for operation in ("executor_completion", "cancellation_completion",
+                              "ensure_managed_page_completion",
+                              "ensure_managed_page_cancellation_completion"):
+                self.assertTrue(native._is_blocking_request(self.request(operation, {})))
+            native._dispatch(self.request("executor_completion", payload))
+            sent = server.wait_for("completion")
+            self.assertTrue(native.outbound.empty())
+            receipt = {**sent, "type": "completion_accepted"}
+            server.send(receipt)
+            self.assertEqual(native.outbound.get(timeout=2), {
+                "version": 1, "reply_to": "executor_completion", "ok": True,
+                "payload": receipt,
+            })
+        finally:
+            native.broker.close()
+            with native.request_workers_lock:
+                workers = list(native.request_workers)
+            for worker in workers:
+                worker.join(timeout=2)
+                self.assertFalse(worker.is_alive())
+
+    def test_completion_receipts_wait_match_and_survive_late_socket_delivery(self):
+        server = self.peer()
+        server.accept_completions = False
+        broker = host.BrowserBroker(self.root)
+        failures = []
+        results = []
+        worker = None
+        try:
+            broker.refresh()
+            peer = broker.peers["r_12345678"]
+            peer.pending["effect"] = {"request_id": "request", "fence": server.fence}
+            payload = {
+                "remote_key": "r_12345678", "connection_id": "c_12345678",
+                "principal_id": "principal-one", "request_id": "request",
+                "effect_id": "effect", "executor_fence": server.fence, "completion": "applied",
+            }
+
+            def complete():
+                try:
+                    results.append(broker.handle_request(self.request("executor_completion", payload)))
+                except Exception as error:
+                    failures.append(error)
+
+            worker = threading.Thread(target=complete, daemon=True)
+            worker.start()
+            sent = server.wait_for("completion")
+            self.assertTrue(worker.is_alive(), "socket write is not durable acceptance")
+            receipt = {**sent, "type": "completion_accepted"}
+            for change in ({"request_id": "wrong"}, {"effect_id": "wrong"},
+                           {"executor_fence": {**server.fence, "epoch": 99}}):
+                server.send({**receipt, **change})
+            server.send({"type": "ping", "request_id": "barrier", "ping_id": "barrier"})
+            server.wait_for("pong", request_id="barrier")
+            self.assertEqual(results, [])
+            server.send(receipt)
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(failures, [])
+            self.assertEqual(results, [receipt])
+            self.assertEqual(broker.handle_request(self.request("executor_completion", payload)),
+                             receipt, "lost native reply must replay the same receipt")
+            self.assertEqual(sum(m.get("type") == "completion" for m in server.received), 1)
+            peer.pending["late"] = {"request_id": "late", "fence": server.fence}
+            peer.completion_timeout = 0
+            with self.assertRaises(TimeoutError):
+                peer.complete("late", "late", server.fence, "unknown")
+            late = {**server.wait_for("completion", request_id="late"),
+                    "type": "completion_accepted"}
+            server.send(late)
+            server.send({"type": "ping", "request_id": "late-barrier", "ping_id": "barrier"})
+            server.wait_for("pong", request_id="late-barrier")
+            self.assertEqual(peer.complete("late", "late", server.fence, "unknown"), late)
+            self.assertTrue(peer.connected)
+        finally:
+            broker.close()
+            if worker:
+                worker.join(timeout=2)
+                self.assertFalse(worker.is_alive())
+
+    def test_origin_receipt_before_registration_only_reconciles_exact_current_principal(self):
+        server = self.peer(epoch=22)
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            peer = broker.peers["r_12345678"]
+            origin = {"executor_id": "origin-executor", "epoch": 11}
+            receipt = {
+                "type": "completion_accepted", "request_id": "original-request",
+                "effect_id": "effect", "executor_fence": origin, "completion": "applied",
+            }
+            server.send(receipt)
+            server.send({"type": "ping", "request_id": "barrier", "ping_id": "barrier"})
+            server.wait_for("pong", request_id="barrier")
+            payload = {key: value for key, value in receipt.items() if key != "type"} | {
+                "remote_key": "r_12345678", "connection_id": "c_87654321",
+                "principal_id": "principal-one",
+            }
+            for change in ({"principal_id": "other"}, {"effect_id": "other"},
+                           {"request_id": "other"}, {"completion": "unknown"},
+                           {"executor_fence": server.fence}):
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    broker.handle_request(self.request("executor_completion", payload | change))
+            self.assertEqual(broker.handle_request(self.request("executor_completion", payload)),
+                             receipt)
+            self.assertEqual(peer.executor_fence, server.fence)
+            self.assertFalse(peer.pending)
+            self.assertFalse(any(m.get("type") == "completion" for m in server.received))
+            with self.assertRaises(queue.Empty):
+                while True:
+                    message = broker.outbound.get_nowait()
+                    self.assertNotEqual(message.get("event"), "abush_browser.execute")
+            with self.assertRaises(ValueError):
+                peer.handle({"type": "execute", "request_id": "original-request",
+                             "effect_id": "effect", "executor_fence": origin,
+                             "command": {"command": "close_window", "window": {
+                                 "workspace_id": "w", "window_id": "x", "generation": 1}}})
+        finally:
+            broker.close()
+
+    def test_all_receipt_shapes_are_strict_and_ambiguous_writes_preserve_selection(self):
+        for kind in host.COMPLETION_RECEIPTS:
+            for accepted in (False, True):
+                with self.subTest(kind=kind, accepted=accepted):
+                    peer = host.RemotePeer(None, {})
+                    peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+                    peer.principal_id = "principal"
+                    fence = peer.executor_fence
+                    ensure = kind.startswith("ensure_")
+                    message = {"type": kind, "request_id": "request",
+                               "ensure_id" if ensure else "effect_id": "stable",
+                               "executor_fence": fence}
+                    if kind != "ensure_managed_page_cancellation_completed":
+                        message["completion"] = ({"outcome": "created", "window_id": "window",
+                                                  "page_id": "page"} if ensure else "unknown")
+                    receipt = {**message, "type": host.COMPLETION_RECEIPTS[kind]}
+                    pending = {"stable": {"request_id": "request", "fence": fence}}
+
+                    def complete():
+                        return peer._complete_request(pending, "stable", {
+                            "request_id": "request", "fence": fence}, message)
+
+                    def fail(sent):
+                        self.assertEqual(sent, message)
+                        if accepted:
+                            peer.handle(receipt)
+                        raise OSError("ambiguous write failure")
+
+                    peer.send = fail
+                    if accepted:
+                        self.assertEqual(complete(), receipt)
+                    else:
+                        with self.assertRaises(OSError):
+                            complete()
+                    peer.send = self.accept_write(peer)
+                    self.assertEqual(complete(), receipt)
+                    self.assertEqual(complete(), receipt)
+                    with self.assertRaises(ValueError):
+                        peer.handle({**receipt, "unexpected": True})
+                    if "completion" in message:
+                        conflict = ("applied" if not ensure else
+                                    {"outcome": "rejected", "code": "invalid_command"})
+                        with self.assertRaises(ValueError):
+                            peer.handle({**receipt, "completion": conflict})
+
+    def test_reconnect_resubmits_selected_origin_without_second_execution(self):
+        first = self.peer(connection_id="c_11111111")
+        first.accept_completions = False
+        broker = host.BrowserBroker(self.root)
+        try:
+            broker.refresh()
+            peer = broker.peers["r_12345678"]
+            peer.completion_timeout = 0
+            peer.pending["effect"] = {"request_id": "request", "fence": first.fence}
+            with self.assertRaises(TimeoutError):
+                peer.complete("request", "effect", first.fence, "applied")
+            first.wait_for("completion")
+            second = self.peer(connection_id="c_22222222", epoch=12)
+            (self.root / "r_12345678/c_11111111/connection.json").unlink()
+            broker.refresh()
+            payload = {"remote_key": "r_12345678", "connection_id": "c_11111111",
+                       "principal_id": "principal-one", "request_id": "request",
+                       "effect_id": "effect", "executor_fence": first.fence,
+                       "completion": "applied"}
+            receipt = broker.handle_request(self.request("executor_completion", payload))
+            self.assertEqual(receipt, {"type": "completion_accepted", "request_id": "request",
+                                      "effect_id": "effect", "executor_fence": first.fence,
+                                      "completion": "applied"})
+            self.assertEqual(second.wait_for("completion")["executor_fence"], first.fence)
+            self.assertEqual(broker.peers["r_12345678"].executor_fence, second.fence)
+        finally:
+            broker.close()
+
+    def test_unmatched_receipt_cache_is_bounded_and_invalid_shapes_rejected(self):
+        peer = host.RemotePeer(None, {})
+        receipt = {"type": "completion_accepted", "request_id": "request",
+                   "effect_id": "effect", "executor_fence": {"executor_id": "e", "epoch": 1},
+                   "completion": "applied"}
+        for index in range(257):
+            peer.handle({**receipt, "request_id": str(index)})
+        self.assertEqual(len(peer.accepted_completions), 256)
+        self.assertNotIn(peer._receipt_key({**receipt, "request_id": "0"}),
+                         peer.accepted_completions)
+        for change in ({"completion": {}}, {"completion": "invalid"}, {"request_id": ""},
+                       {"executor_fence": {"executor_id": "e", "epoch": True}}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                peer.handle({**receipt, **change})
+
+    def test_receipt_before_waiter_reconciles_all_four_types_without_sending(self):
+        for kind, accepted_type in host.COMPLETION_RECEIPTS.items():
+            with self.subTest(kind=kind):
+                peer = host.RemotePeer(None, {})
+                peer.executor_fence = {"executor_id": "new", "epoch": 2}
+                peer.principal_id = "principal"
+                origin = {"executor_id": "old", "epoch": 1}
+                ensure = kind.startswith("ensure_")
+                message = {"type": kind, "request_id": "request",
+                           "ensure_id" if ensure else "effect_id": "stable",
+                           "executor_fence": origin}
+                if kind != "ensure_managed_page_cancellation_completed":
+                    message["completion"] = ({"outcome": "created", "window_id": "window",
+                                              "page_id": "page"} if ensure else "unknown")
+                receipt = {**message, "type": accepted_type}
+                peer.handle(receipt)
+                peer.send = mock.Mock(side_effect=AssertionError("receipt is not execution"))
+                self.assertEqual(peer._complete_request({}, "stable", {
+                    "request_id": "request", "fence": origin}, message), receipt)
+                peer.send.assert_not_called()
+                if ensure and "completion" in message:
+                    with self.assertRaises(ValueError):
+                        peer.handle({**receipt, "completion": {"outcome": "created",
+                                    "window_id": "window", "page_id": "page", "extra": True}})
+
+    def test_unaccepted_completion_backlog_is_not_silently_evicted(self):
+        peer = host.RemotePeer(None, {})
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        peer.completion_timeout = 0
+        peer.send = mock.Mock()
+        for index in range(256):
+            key = str(index)
+            peer.pending[key] = {"request_id": key, "fence": peer.executor_fence}
+            with self.assertRaises(TimeoutError):
+                peer.complete(key, key, peer.executor_fence, "unknown")
+        peer.pending["overflow"] = {"request_id": "overflow", "fence": peer.executor_fence}
+        with self.assertRaisesRegex(ValueError, "backlog"):
+            peer.complete("overflow", "overflow", peer.executor_fence, "unknown")
+        self.assertIn("overflow", peer.pending)
+        self.assertIn(("completion", "0"), peer.completions)
+        self.assertEqual(peer.send.call_count, 256)
+
     def test_completion_retries_survive_failed_and_lost_writes(self):
         for kind in ("effect", "ensure", "cancel"):
             for after_write in (False, True):
@@ -837,15 +1116,14 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                     peer.send = fail
                     with self.assertRaises(OSError):
                         complete(value)
-                    peer.send = writes.append
+                    peer.send = self.accept_write(peer, writes)
                     complete(value)
                     complete(value)
                     self.assertTrue(all(message == writes[0] for message in writes))
                     with self.assertRaises(ValueError):
                         complete(conflict)
                     peer.executor_fence = {**fence, "epoch": 2}
-                    with self.assertRaises(ValueError):
-                        complete(value)
+                    complete(value)
 
     def test_late_consumed_acks_keep_reader_healthy_and_retry_is_idempotent(self):
         for kind in ("topology", "retire"):
@@ -958,6 +1236,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             if not release.wait(1):
                 raise TimeoutError("test write barrier was not released")
             writes.append(message)
+            self.accept_write(peer)(message)
 
         def complete():
             try:
@@ -979,7 +1258,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(failures, [])
         peer.complete("request", "effect", peer.executor_fence, "applied")
-        self.assertEqual(writes, [writes[0], writes[0]])
+        self.assertEqual(writes, [writes[0]])
         for request_id, effect_id in (("wrong", "effect"), ("request", "wrong")):
             with self.assertRaises(ValueError):
                 peer.complete(request_id, effect_id, peer.executor_fence, "applied")
@@ -987,7 +1266,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
     def test_completion_history_is_bounded_and_evicted_retry_fails_closed(self):
         peer = host.RemotePeer(None, {})
         peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.send = mock.Mock()
+        peer.send = self.accept_write(peer)
         for index in range(257):
             effect_id = f"effect-{index}"
             peer.pending[effect_id] = {"request_id": effect_id, "fence": peer.executor_fence}
@@ -1023,7 +1302,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         })
         peer.executor_fence = {"executor_id": "executor", "epoch": 1}
         peer.principal_id = "principal"
-        peer.send = mock.Mock()
+        peer.send = mock.Mock(side_effect=self.accept_write(peer))
         ensure = {"type": "ensure_managed_page", "request_id": "request",
                   "ensure_id": "ensure", "workspace_id": "workspace", "expected_page": None,
                   "executor_fence": peer.executor_fence}
