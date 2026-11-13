@@ -1395,14 +1395,13 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         }}};
         const {executor, calls} = fixture([], [], 0, false, restoredPopup, localState);
         await executor.restore();
-        const verifyIndex = calls.findIndex(call => call[0] === "verify_x11_window" &&
-            call[1].xid === 7000);
-        const removeIndex = calls.findIndex(call => call[0] === "removeWindow" &&
-            call[1] === 700);
-        assert(verifyIndex >= 0 && removeIndex > verifyIndex,
-            "orphan whole-window cleanup must verify exact X11 ownership before removal");
-        assert.deepEqual(calls.filter(call => call[0] === "removeWindow"),
-            [["removeWindow", 700]], "restored owned popup must be removed before ensures");
+        assert.equal(calls.some(call => call[0] === "verify_x11_window" ||
+            call[0] === "clear_x11_window" || call[0] === "removeWindow"), false,
+        "cross-boot ownership must not authorize physical ID or XID mutation");
+        assert.deepEqual(calls.filter(call => call[0] === "remove"), [],
+            "stable managed candidates remain quarantined, not ordinary");
+        assert.equal((await executor.chrome.tabs.get(1702)).url,
+            restoredPopup.businessUrl);
     }
     {
         beginCase();
@@ -1447,8 +1446,8 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         await executor.restore();
         assert.equal(calls.some(call => call[0] === "removeWindow" && call[1] === 705), false,
             "X11 mismatch must prevent whole-window removal despite matching Chrome IDs");
-        assert.deepEqual(calls.filter(call => call[0] === "remove").map(call => call[1]),
-            [1750, 1751], "X11 mismatch may remove only exact marker tabs");
+        assert.deepEqual(calls.filter(call => call[0] === "remove"), [],
+            "cross-boot stable managed candidate must remain quarantined");
         assert.equal(calls.some(call => call[0] === "clear_x11_window"), false,
             "X11 mismatch must not clear metadata on a reused XID");
     }
@@ -1538,11 +1537,11 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         await executor.restore();
         assert.equal(calls.filter(call => call[0] === "removeWindow").length, 0,
             "copied markers plus a mismatched fingerprint must never destroy a user window");
-        assert.deepEqual(calls.filter(call => call[0] === "remove").map(call => call[1]),
-            [1740, 1741]);
-        assert(calls.some(call => call[0] === "clear_x11_window" && call[1].xid === 7040),
-            "unproven orphan ownership must clear verified managed X11 metadata");
-        assert.equal(localState.abushOwnedMarkers[nonce], undefined);
+        assert.deepEqual(calls.filter(call => call[0] === "remove"), []);
+        assert.equal(calls.some(call => call[0] === "clear_x11_window"), false,
+            "cross-boot orphan ownership cannot authorize a reused XID");
+        assert(localState.abushOwnedMarkers[nonce],
+            "stable candidate quarantine preserves durable ownership for diagnosis");
     }
     {
         beginCase();
@@ -1649,8 +1648,8 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         await executor.restore();
         assert.equal(calls.filter(call => call[0] === "restoreSession").length, 0,
             "accepted restore must verify live target before replaying the effect");
-        assert.equal(localState.abushRestoreHost.phase, "inflight",
-            "same browser boot service-worker restart must not consume next-boot handoff");
+        assert.equal(localState.abushRestoreHost, false,
+            "same target boot worker restart reconciles accepted restore without replay");
     }
     {
         beginCase();
@@ -1672,8 +1671,8 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         await executor.restoreHost();
         assert.equal(calls.some(call => call[0] === "restoreSession"), false);
         assert.equal(calls.some(call => call[0] === "createWindow"), false);
-        assert.equal(localState.abushRestoreHost.phase, "inflight",
-            "same browser boot must leave accepted handoff untouched");
+        assert.equal(localState.abushRestoreHost.phase, "unknown",
+            "same target boot must reconcile accepted but invisible effect without replay");
     }
     {
         beginCase();
@@ -1699,6 +1698,140 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             "invalid session ID must not guess another session by URLs");
         assert.equal(localState.abushRestoreHost.sessionId, "expired-session");
         assert.equal(localState.abushRestoreHost.phase, "prepared");
+    }
+    for (const failure of ["unavailable", "rejected", "ambiguous"]) {
+        beginCase();
+        const snapshot = {tabCount: 1, urls: ["https://handoff.test/"]};
+        const localState = {};
+        const source = fixture([], [], 1, false, null, localState);
+        source.executor.browserBootId = "boot-A";
+        await source.executor.markRestoreHost({sessionId: "exact-window", snapshot});
+        await source.executor.restore();
+        assert.equal(localState.abushRestoreHost.target_boot, "next",
+            "source boot worker restart cannot claim its own handoff");
+        const target = fixture([], [], 1, false, null, localState);
+        target.executor.browserBootId = "boot-B";
+        const entry = {window: {sessionId: "exact-window",
+            tabs: snapshot.urls.map(url => ({url}))}};
+        target.executor.chrome.sessions = {
+            getRecentlyClosed: async () => failure === "unavailable" ? [] : [entry],
+            restore: async id => {
+                target.calls.push(["restoreSession", id]);
+                throw new Error("restore rejected before acceptance");
+            },
+        };
+        if (failure === "ambiguous") {
+            const first = await target.executor.chrome.tabs.query({windowId: 1});
+            first[0].url = snapshot.urls[0];
+            await target.executor.chrome.windows.create({url: snapshot.urls[0], type: "normal"});
+            await assert.rejects(exactWait(target.executor.restore(), "ambiguous restore"),
+                /ambiguous live ordinary/);
+        } else {
+            await exactWait(target.executor.restore(), "target boot restore");
+        }
+        assert.equal(localState.abushRestoreHost.target_boot, "boot-B");
+        const transitions = target.calls.filter(call => call[0] === "persistLocal" &&
+            call[1].abushRestoreHost).map(call => call[1].abushRestoreHost);
+        assert.equal(transitions[0].target_boot, "boot-B",
+            "claim must precede availability, ambiguity and restore effects");
+        assert(transitions.every(intent => intent.target_boot === "boot-B"));
+        const later = fixture([], [], 1, false, null, localState);
+        later.executor.browserBootId = "boot-C";
+        later.executor.chrome.sessions = {
+            getRecentlyClosed: async () => [entry],
+            restore: async id => { later.calls.push(["restoreSession", id]); return entry; },
+        };
+        await exactWait(later.executor.restore(), "later boot restore");
+        assert.equal(later.calls.some(call => call[0] === "restoreSession"), false,
+            "a missed next-boot handoff must never execute on boot C");
+        assert.equal(localState.abushRestoreHost.target_boot, "boot-B");
+        if (failure !== "ambiguous") {
+            const restart = fixture([], [], 1, false, null, localState);
+            restart.executor.browserBootId = "boot-B";
+            restart.executor.chrome.sessions = {
+                getRecentlyClosed: async () => [entry],
+                restore: async id => {
+                    restart.calls.push(["restoreSession", id]);
+                    return entry;
+                },
+            };
+            await exactWait(restart.executor.restore(), "same target boot retry");
+            assert.equal(restart.calls.filter(call => call[0] === "restoreSession").length, 1);
+            assert.equal(localState.abushRestoreHost, false);
+        }
+    }
+    for (const entry of [
+        {sessionId: "exact-window", window: {tabs: [{url: "https://handoff.test/"}]}},
+        {tab: {sessionId: "exact-window"}, window: {tabs: [{url: "https://handoff.test/"}]}},
+        {sessionId: "exact-window", window: {sessionId: "", tabs: [
+            {url: "https://handoff.test/"}]}},
+    ]) {
+        beginCase();
+        const localState = {abushRestoreHost: {
+            version: 3, phase: "prepared", outcome: "exact", source_boot: "boot-A",
+            target_boot: "next", sessionId: "exact-window",
+            snapshot: {tabCount: 1, urls: ["https://handoff.test/"]},
+        }};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        executor.chrome.sessions = {
+            getRecentlyClosed: async () => [entry],
+            restore: async id => calls.push(["restoreSession", id]),
+        };
+        await exactWait(executor.restore(), "invalid nested window identity");
+        assert.equal(calls.some(call => call[0] === "restoreSession"), false);
+        assert.equal(localState.abushRestoreHost.phase, "prepared");
+    }
+    {
+        beginCase();
+        const nonce = "a".repeat(32);
+        const localState = {abushRestoreHost: {
+            version: 3, phase: "prepared", outcome: "exact", source_boot: "boot-A",
+            target_boot: "next", sessionId: "auto-restored",
+            snapshot: {tabCount: 1, urls: ["https://ordinary-0.test/"]},
+        }};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        const tabs = await executor.chrome.tabs.query({windowId: 1});
+        tabs.push({id: 3000, windowId: 1, url: executor.statusUrl({nonce}, "a"),
+            title: `${STATUS_PREFIX}${nonce}:a`, pinned: true});
+        executor.chrome.sessions = {restore: async id => calls.push(["restoreSession", id])};
+        await exactWait(executor.restore(), "orphan before auto-restore reconciliation");
+        assert.deepEqual(calls.filter(call => call[0] === "remove"), [["remove", 3000]]);
+        assert.equal(calls.some(call => call[0] === "restoreSession" ||
+            call[0] === "removeWindow" || call[0] === "update"), false);
+        const removed = calls.findIndex(call => call[0] === "remove");
+        const consumed = calls.findIndex(call => call[0] === "persistLocal" &&
+            call[1].abushRestoreHost?.phase === "consumed");
+        assert(consumed > removed, "orphan sanitization must precede handoff consumption");
+        assert.equal(localState.abushRestoreHost, false);
+        assert.deepEqual(tabs.map(tab => tab.url), ["https://ordinary-0.test/"]);
+    }
+    {
+        beginCase();
+        const nonce = "b".repeat(32);
+        const old = {nonce, windowId: 1, statusTabIds: [2001, 2002], pageTabId: 2000,
+            x11WindowId: 42, logicalWindowId, logicalPageId, windowGeneration: 1,
+            pageGeneration: 1, remoteKey: "remote", workspaceId: "workspace",
+            connectionDisplayName: "local"};
+        const localState = {};
+        const {executor, calls} = fixture([], [], 3, false, null, localState);
+        localState.abushOwnedMarkers = {[nonce]: executor.markerOwnership(old)};
+        const requestId = "c".repeat(32);
+        const tabs = await executor.chrome.tabs.query({windowId: 1});
+        await executor.chrome.windows.create({url: executor.ordinaryStagingUrl(requestId),
+            type: "normal", focused: false});
+        const before = structuredClone(tabs);
+        executor.bootstrapLeases.set(requestId, {version: 1, request_id: requestId,
+            operation: "ordinary_open", url: "https://requested.test/", focus: true,
+            deadline_ms: Date.now() + 5000});
+        await exactWait(executor.restore(), "cold lease with reused IDs");
+        assert.equal(calls.some(call => call[0] === "removeWindow" && call[1] === 1 ||
+            ["clear_x11_window", "verify_x11_window"].includes(call[0])), false);
+        for (const id of [2000, 2002]) {
+            assert.equal(calls.some(call => call[0] === "remove" && call[1] === id), false,
+                "stale owned page/status IDs cannot authorize deletion of ordinary tabs");
+            assert.equal((await executor.chrome.tabs.get(id)).url,
+                before.find(tab => tab.id === id).url);
+        }
     }
     {
         beginCase();

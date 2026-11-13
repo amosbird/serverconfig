@@ -115,7 +115,6 @@ class WorkspaceExecutor {
         this.ordinaryCloseGeneration = 0;
         this.activeOrdinaryCloseBatch = null;
         this.ordinaryCloseWindowBatches = new Map();
-        this.startupManagedRecords = [];
         this.quarantinedCleanupNonces = new Set();
         this.windowRegistry = new Map();
         this.windowRegistryRevision = 0;
@@ -1926,52 +1925,16 @@ class WorkspaceExecutor {
         const stagingWindowIds = new Set([...this.bootstrapLeases.values()]
             .map(lease => lease.bootstrapContext?.windowId).filter(Number.isInteger));
         if (stagingWindowIds.size === 0) return;
-        let candidates = [
-            ...this.workspaces.values(),
-            ...this.startupManagedRecords,
-        ].filter((record, index, records) => !stagingWindowIds.has(record.windowId) &&
-            records.findIndex(candidate => candidate.windowId === record.windowId) === index);
-        const durable = this.chrome.storage?.session ?
-            await this.chrome.storage.session.get(["abushWorkspaces"]) : {abushWorkspaces: []};
-        for (const saved of durable.abushWorkspaces || []) {
-            if (!Number.isInteger(saved?.windowId) || stagingWindowIds.has(saved.windowId) ||
-                    candidates.some(record => record.windowId === saved.windowId)) continue;
-            const ownership = await this.currentOwnedMarker(saved.nonce);
-            if (ownership && this.savedOwnershipMatches(ownership, saved)) candidates.push(saved);
-        }
-        if (candidates.length === 0 && this.chrome.storage?.local) {
-            const local = await this.chrome.storage.local.get([OWNED_MARKERS_KEY]);
-            candidates = Object.values(local[OWNED_MARKERS_KEY] || {})
-                .filter(ownership => ownership?.version === 2 &&
-                    ownership.trusted !== false && ownership.phase !== "orphan_unresolved" &&
-                    !stagingWindowIds.has(ownership.window_id))
-                .map(ownership => ({
-                    remoteKey: ownership.binding?.remote_key,
-                    principalId: `startup-${ownership.nonce}`,
-                    workspaceId: ownership.binding?.workspace_id,
-                    connectionId: "startup-cleanup",
-                    executorFence: {executor_id: "startup-cleanup", epoch: 1},
-                    logicalWindowId: ownership.logical_window_id,
-                    logicalPageId: ownership.logical_page_id,
-                    windowGeneration: ownership.window_generation,
-                    pageGeneration: ownership.page_generation,
-                    windowId: ownership.window_id,
-                    x11WindowId: ownership.xid,
-                    statusTabIds: ownership.status_tab_ids,
-                    pageTabId: ownership.page_tab_id,
-                    nonce: ownership.nonce,
-                    connectionDisplayName: ownership.binding?.display_title,
-                })).filter(record => record.remoteKey && record.workspaceId &&
-                    Number.isInteger(record.windowId));
-        }
-        if (candidates.length === 0) return;
+        const candidates = [...this.workspaces.values()].filter(record =>
+            !stagingWindowIds.has(record.windowId));
+        const verified = [];
         for (const record of candidates) {
-            if (!this.workspaces.has(this.key(record.remoteKey, record.principalId))) {
-                record.debuggerAttached = false;
-                this.install(record);
-            }
+            const ownership = await this.currentOwnedMarker(record.nonce);
+            if (ownership && this.savedOwnershipMatches(ownership, record) &&
+                    await this.isLive(record)) verified.push(record);
         }
-        const stale = candidates.map(record => ({id: record.windowId, type: "normal"}));
+        if (verified.length === 0) return;
+        const stale = verified.map(record => ({id: record.windowId, type: "normal"}));
         await this.closeManagedWindowSet(stale);
     }
 
@@ -2389,7 +2352,8 @@ class WorkspaceExecutor {
     }
 
     isOrdinarySessionEntry(entry) {
-        return Boolean(entry?.window && this.sessionEntryId(entry) &&
+        return Boolean(entry?.window &&
+            typeof entry.window.sessionId === "string" && entry.window.sessionId &&
             !entry.window.tabs?.some(tab => this.parseStatusUrl(tab.url) !== null));
     }
 
@@ -2415,7 +2379,7 @@ class WorkspaceExecutor {
     async restoreHostLocked() {
         if (!this.browserBootId) throw new Error("browser boot identity is required for handoff");
         const local = await this.chrome.storage.local.get([RESTORE_HOST_KEY]);
-        const intent = local[RESTORE_HOST_KEY];
+        let intent = local[RESTORE_HOST_KEY];
         if (!intent || typeof intent !== "object" || intent.version !== 3 ||
                 !["prepared", "inflight", "unknown", "verified", "consumed"]
                     .includes(intent.phase) ||
@@ -2424,7 +2388,13 @@ class WorkspaceExecutor {
                 typeof intent.target_boot !== "string" || !intent.target_boot ||
                 (intent.sessionId !== null && typeof intent.sessionId !== "string")) return;
         if (intent.source_boot === this.browserBootId ||
-                intent.target_boot === this.browserBootId) return;
+                (intent.target_boot !== "next" &&
+                    intent.target_boot !== this.browserBootId &&
+                    !["inflight", "unknown", "verified", "consumed"].includes(intent.phase))) return;
+        if (intent.target_boot === "next") {
+            intent = {...intent, target_boot: this.browserBootId};
+            await this.localStateWriteLocked(RESTORE_HOST_KEY, intent);
+        }
         if (intent.outcome === "ambiguous") {
             this.reportAdvisoryError(new Error(
                 "ordinary close handoff is ambiguous and remains pending"));
@@ -2498,7 +2468,7 @@ class WorkspaceExecutor {
                 this.sessionMatchesSnapshot(entry, intent.snapshot));
             if (exactStillPresent) {
                 await this.localStateWriteLocked(RESTORE_HOST_KEY,
-                    {...inflight, phase: "prepared", target_boot: "next"});
+                    {...inflight, phase: "prepared"});
                 this.reportAdvisoryError(new AggregateError([error],
                     "exact ordinary restore failed and remains pending"));
             } else {
@@ -2846,6 +2816,9 @@ class WorkspaceExecutor {
         const tabs = await this.chrome.tabs.query({});
         const windowTypes = new Map((await this.chrome.windows.getAll()).map(window =>
             [window.id, window.type]));
+        const session = this.chrome.storage?.session ?
+            await this.chrome.storage.session.get(["abushWorkspaces"]) : {};
+        const currentRecords = session.abushWorkspaces || [];
         const windows = new Map();
         const cleanupErrors = [];
         for (const tab of tabs) {
@@ -2862,8 +2835,24 @@ class WorkspaceExecutor {
             const nonces = new Set(markers.map(item => item.marker.nonce));
             const ownership = nonces.size === 1 ?
                 ownedMarkers[markers[0]?.marker.nonce] : null;
+            const sameBootOwnership = currentRecords.some(record =>
+                this.savedOwnershipMatches(ownership, record));
+            const stableManagedCandidate = ownership?.version === 2 &&
+                ownership.trusted !== false && ownership.phase !== "orphan_unresolved" &&
+                ownership.nonce === markers[0]?.marker.nonce &&
+                windowTypes.get(windowId) === "normal" && windowTabs.length === 3 &&
+                markers.length === 2 && nonces.size === 1 && markerIds.size === 2 &&
+                legacyMarkers.length === 0 && markers.every(({tab, marker}) =>
+                    tab.pinned === true && tab.index === MARKER_IDS.indexOf(marker.marker) &&
+                    tab.title === `${STATUS_PREFIX}${marker.nonce}:${marker.marker}`);
+            if (stableManagedCandidate && !sameBootOwnership) {
+                this.reportAdvisoryError(new Error(
+                    "cross-boot managed candidate retained without physical ownership proof"));
+                continue;
+            }
             const trustedOwnership = ownership?.trusted === false ||
-                ownership?.phase === "orphan_unresolved" ? null : ownership;
+                ownership?.phase === "orphan_unresolved" || !sameBootOwnership ?
+                null : ownership;
             const orderedMarkerTabIds = MARKER_IDS.map(marker =>
                 markers.find(item => item.marker.marker === marker)?.tab.id);
             const ownedPage = windowTabs.find(tab => tab.id === trustedOwnership?.page_tab_id &&
@@ -3082,11 +3071,7 @@ class WorkspaceExecutor {
     async restore() {
         await this.waitForNativeBootstrap();
         await this.refreshWindowRegistry();
-        await this.restoreHost();
         await this.stageBootstrapLeaseIfNeeded();
-        const bootstrapStaging = [...this.bootstrapLeases.values()]
-            .map(lease => lease.bootstrapContext?.windowId)
-            .filter(Number.isInteger);
         await this.restoreReplacementLedger();
         await this.restoreExecutionLedger();
         await this.restoreOperationCancels();
@@ -3097,34 +3082,13 @@ class WorkspaceExecutor {
         await this.restoreTopologyOutbox();
         await this.restoreDeferredTopologyResponses();
         await this.restoreQuarantinedCleanupReports();
-        const liveWindowIds = new Set(bootstrapStaging);
+        const liveWindowIds = new Set();
         let removed = false;
         const seenKeys = new Set();
         const seenPhysical = new Set();
         const ownedMarkers = this.chrome.storage?.local ?
             (await this.chrome.storage.local.get([OWNED_MARKERS_KEY]))[OWNED_MARKERS_KEY] || {} :
             {};
-        this.startupManagedRecords = Object.values(ownedMarkers)
-            .filter(ownership => ownership?.version === 2 && ownership.trusted !== false &&
-                ownership.phase !== "orphan_unresolved")
-            .map(ownership => ({
-                remoteKey: ownership.binding?.remote_key,
-                principalId: `startup-${ownership.nonce}`,
-                workspaceId: ownership.binding?.workspace_id,
-                connectionId: "startup-cleanup",
-                executorFence: {executor_id: "startup-cleanup", epoch: 1},
-                logicalWindowId: ownership.logical_window_id,
-                logicalPageId: ownership.logical_page_id,
-                windowGeneration: ownership.window_generation,
-                pageGeneration: ownership.page_generation,
-                windowId: ownership.window_id,
-                x11WindowId: ownership.xid,
-                statusTabIds: ownership.status_tab_ids,
-                pageTabId: ownership.page_tab_id,
-                nonce: ownership.nonce,
-                connectionDisplayName: ownership.binding?.display_title,
-            })).filter(record => record.remoteKey && record.workspaceId &&
-                Number.isInteger(record.windowId));
         if (this.chrome.storage?.session) {
             const {abushWorkspaces = [], revision = 0} =
                 await this.chrome.storage.session.get(["abushWorkspaces", "revision"]);
@@ -3179,24 +3143,12 @@ class WorkspaceExecutor {
             }
         }
         await this.restoreReplacementLedger({consume: true});
+        await this.closeOrphanedStatusWindows(liveWindowIds, ownedMarkers);
+        await this.restoreHost();
         if (this.bootstrapLeases.size > 0) {
-            for (const record of this.startupManagedRecords) {
-                try {
-                    const ownership = await this.currentOwnedMarker(record.nonce);
-                    if (ownership && this.savedOwnershipMatches(ownership, record) &&
-                            await this.isLive(record)) {
-                        this.install(record);
-                    }
-                } catch (error) {
-                    this.reportAdvisoryError(new AggregateError([error],
-                        "startup managed window could not be verified before cold cleanup"));
-                }
-            }
             await this.cleanupStaleManagedBeforeBootstrap();
         }
-        await this.closeOrphanedStatusWindows(liveWindowIds, ownedMarkers);
         await this.executeBootstrapLeases();
-        this.startupManagedRecords = [];
         if (removed) await this.persist();
         await this.convergeRestoredTopologyOutbox();
         const normalWindows = await this.chrome.windows.getAll({windowTypes: ["normal"]});
