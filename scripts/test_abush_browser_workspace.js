@@ -11,7 +11,7 @@ const executorHash = async value => {
 
 const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX,
     MARKER_IDS} = require(
-    "../chromium/external-links/extension/workspace-v7.js");
+    "../chromium/external-links/extension/workspace.js");
 const {NativeDispatcher, connectWorkspaceAfterRestore, createWorkspaceInitializer,
     registerNativeEventRouter, registerWorkspaceWindowListeners, registerRuntimeMessageRouter} =
     require(

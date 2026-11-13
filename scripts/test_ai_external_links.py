@@ -6,6 +6,7 @@ import json
 import pathlib
 import subprocess
 import unittest
+import zipfile
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -14,6 +15,7 @@ HOST = ROOT / "chromium/external-links/host.py"
 CONTENT = ROOT / "chromium/external-links/extension/content.js"
 MANIFEST = CONTENT.with_name("manifest.json")
 NATIVE_MANIFEST = ROOT / "chromium/external-links/native-host.json"
+PACKAGE = ROOT / "chromium/external-links/package"
 RUNAI = ROOT / "scripts/runai"
 
 
@@ -146,10 +148,9 @@ for (const [page, link, expected] of cases) {{
         self.assertIn("key", manifest)
         self.assertNotIn("update_url", manifest)
         worker = manifest["background"]["service_worker"]
-        self.assertRegex(worker, r"^background-v[0-9]+\.js$")
+        self.assertEqual(worker, "background.js")
         worker_path = MANIFEST.with_name(worker)
         self.assertTrue(worker_path.is_file())
-        self.assertEqual(worker_path.read_text(), 'importScripts("background.js");\n')
         self.assertEqual(
             native_manifest["allowed_origins"],
             ["chrome-extension://ahonjbfnmpjgjgaabbppofphidfomgcj/"],
@@ -157,15 +158,30 @@ for (const [page, link, expected] of cases) {{
 
     def test_workspace_source_exposes_current_v7_lifecycle(self):
         background = MANIFEST.with_name("background.js").read_text()
-        workspace_path = MANIFEST.with_name("workspace-v7.js")
-        self.assertIn('importScripts("workspace-v7.js")', background)
-        self.assertIn('require("./workspace-v7.js")', background)
+        workspace_path = MANIFEST.with_name("workspace.js")
+        self.assertIn('importScripts("workspace.js")', background)
+        self.assertIn('require("./workspace.js")', background)
         self.assertTrue(workspace_path.is_file())
-        self.assertEqual(workspace_path.read_bytes(), MANIFEST.with_name("workspace.js").read_bytes())
         workspace = workspace_path.read_text()
         self.assertIn("browserBootId", workspace)
         self.assertIn("ordinaryOpen", workspace)
         self.assertIn("remoteAuthorities", workspace)
+
+    def test_packaged_worker_assets_are_correlated_with_exact_package_version(self):
+        state = json.loads((PACKAGE / "build-state.json").read_text())
+        version = state["version"]
+        suffix = version.replace(".", "-")
+        worker = f"background-{suffix}.js"
+        workspace = f"workspace-{suffix}.js"
+        with zipfile.ZipFile(PACKAGE / "extension.crx") as archive:
+            packaged_manifest = json.loads(archive.read("manifest.json"))
+            self.assertEqual(packaged_manifest["version"], version)
+            self.assertEqual(packaged_manifest["background"]["service_worker"], worker)
+            self.assertEqual(archive.read(workspace),
+                             MANIFEST.with_name("workspace.js").read_bytes())
+            self.assertEqual(archive.read(worker).decode(),
+                             f'importScripts("{workspace}");\n'
+                             'importScripts("background.js");\n')
 
     def test_runai_uses_installed_extension_and_registers_native_host(self):
         launcher = RUNAI.read_text()
@@ -191,7 +207,11 @@ for (const [page, link, expected] of cases) {{
         self.assertIn('state="$output/build-state.json"', packager)
         self.assertIn('source_hash=$(', packager)
         self.assertIn('if [[ $source_hash != "$previous_hash"', packager)
-        self.assertIn("'.version = $version'", packager)
+        self.assertIn('manifest["version"] = version', packager)
+        self.assertIn('manifest["background"]["service_worker"] = versioned_worker', packager)
+        self.assertIn('versioned_workspace = f"workspace-{suffix}.js"', packager)
+        self.assertIn('versioned_worker = f"background-{suffix}.js"', packager)
+        self.assertIn('importScripts("{versioned_workspace}")', packager)
         self.assertIn('"external_crx": "$output/extension.crx"', packager)
         self.assertIn('"external_version": "$version"', packager)
         self.assertNotIn("<gupdate", packager)

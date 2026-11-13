@@ -1,1 +1,0 @@
-importScripts("background.js");

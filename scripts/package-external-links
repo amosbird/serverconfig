@@ -71,8 +71,33 @@ PY
     )
 
     cp -a "$extension" "$work/extension"
-    jq --arg version "$version" '.version = $version' \
-        "$extension/manifest.json" > "$work/extension/manifest.json"
+    python3 - "$work/extension" "$version" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+suffix = version.replace(".", "-")
+manifest_path = root / "manifest.json"
+manifest = json.loads(manifest_path.read_text())
+worker = manifest.get("background", {}).get("service_worker")
+if worker != "background.js":
+    raise SystemExit("External Links manifest must use the canonical background.js source")
+background = (root / "background.js").read_text()
+match = re.search(r'importScripts\("([^"]+)"\)', background)
+if not match or match.group(1) != "workspace.js":
+    raise SystemExit("External Links background must import the canonical workspace.js source")
+versioned_workspace = f"workspace-{suffix}.js"
+versioned_worker = f"background-{suffix}.js"
+(root / versioned_workspace).write_bytes((root / "workspace.js").read_bytes())
+(root / versioned_worker).write_text(
+    f'importScripts("{versioned_workspace}");\nimportScripts("background.js");\n')
+manifest["version"] = version
+manifest["background"]["service_worker"] = versioned_worker
+manifest_path.write_text(json.dumps(manifest, separators=(",", ":")))
+PY
     pass show chrome/external-links.pem > "$key"
     chmod 600 "$key"
     python3 - "$key" "$extension/manifest.json" <<'PY'

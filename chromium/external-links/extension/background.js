@@ -1,4 +1,4 @@
-if (typeof importScripts === "function") importScripts("workspace-v7.js");
+if (typeof importScripts === "function") importScripts("workspace.js");
 
 const NATIVE_HOST = "io.github.amosbird.browser_router";
 const ENVELOPE_VERSION = 1;
@@ -389,7 +389,7 @@ function dispatcher() {
 
 function workspace() {
     const Executor = typeof WorkspaceExecutor !== "undefined" ? WorkspaceExecutor :
-        require("./workspace-v7.js").WorkspaceExecutor;
+        require("./workspace.js").WorkspaceExecutor;
     workspaceExecutor ||= new Executor(chrome, sendNativeRequest);
     return workspaceExecutor;
 }
