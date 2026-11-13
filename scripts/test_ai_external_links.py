@@ -326,6 +326,98 @@ Promise.all([first, second]).then(values => {{
 """
         subprocess.run(["node", "-e", script], check=True)
 
+    def test_ordinary_staging_title_wait_has_its_own_bound(self):
+        workspace = CONTENT.with_name("workspace.js")
+        script = f"""
+const assert = require('assert');
+const {{WorkspaceExecutor}} = require({json.dumps(str(workspace))});
+global.crypto = require('crypto').webcrypto;
+let reads = 0;
+const chrome = {{
+    runtime: {{getURL: path => `chrome-extension://id/${{path}}`}},
+    tabs: {{get: async id => {{
+        reads += 1;
+        return {{id, windowId: 1, active: true, title: 'Preparing ordinary Chrome window'}};
+    }}}},
+}};
+const executor = new WorkspaceExecutor(chrome, async () => {{}});
+const originalSetTimeout = global.setTimeout;
+const originalNow = Date.now;
+let now = 10000;
+global.setTimeout = callback => {{ now += 10; callback(); return 1; }};
+Date.now = () => now;
+(async () => {{
+    try {{
+        await executor.waitForOrdinaryTitle(3000, 'e'.repeat(32), now + 30000);
+        process.exit(1);
+    }} catch (error) {{
+        assert.match(error.message, /title was not ready/);
+        assert(reads <= 101, `ordinary title wait followed the 30s request deadline: ${{reads}}`);
+    }} finally {{
+        global.setTimeout = originalSetTimeout;
+        Date.now = originalNow;
+    }}
+}})().catch(() => process.exit(2));
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_native_dispatcher_uses_receiver_safe_timers_in_a_service_worker(self):
+        background = CONTENT.with_name("background.js")
+        script = f"""
+const assert = require('assert');
+const {{NativeDispatcher}} = require({json.dumps(str(background))});
+global.crypto = require('crypto').webcrypto;
+const scheduled = [];
+global.setTimeout = function(callback, delay) {{
+    'use strict';
+    if (this !== globalThis) throw new TypeError('Illegal invocation');
+    scheduled.push([callback, delay]);
+    return scheduled.length;
+}};
+global.clearTimeout = function(timer) {{
+    'use strict';
+    if (this !== globalThis) throw new TypeError('Illegal invocation');
+    assert(Number.isInteger(timer));
+}};
+const port = {{
+    onMessage: {{addListener() {{}}}},
+    onDisconnect: {{addListener() {{}}}},
+    postMessage() {{}},
+}};
+const dispatcher = new NativeDispatcher(() => port, 1000, 1000);
+const bootstrap = dispatcher.bootstrap();
+assert.equal(scheduled.length, 2,
+    'bootstrap and request timers must be scheduled without illegal invocation');
+bootstrap.catch(() => {{}});
+dispatcher.stop();
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_native_dispatcher_bounds_each_ordinary_native_phase(self):
+        background = CONTENT.with_name("background.js")
+        script = f"""
+const assert = require('assert');
+const {{NativeDispatcher}} = require({json.dumps(str(background))});
+global.crypto = require('crypto').webcrypto;
+const delays = [];
+const port = {{
+    onMessage: {{addListener() {{}}}},
+    onDisconnect: {{addListener() {{}}}},
+    postMessage() {{}},
+}};
+const dispatcher = new NativeDispatcher(() => port, 3000);
+dispatcher.setTimeout = (_callback, delay) => {{ delays.push(delay); return delays.length; }};
+dispatcher.clearTimeout = () => {{}};
+const deadline_ms = Date.now() + 30000;
+dispatcher.request('ordinary_open', 'prepare', {{deadline_ms}}).catch(() => {{}});
+dispatcher.request('ordinary_open', 'ordinary_file_navigate', {{deadline_ms}}).catch(() => {{}});
+dispatcher.request('ordinary_open', 'activate', {{deadline_ms}}).catch(() => {{}});
+assert(delays.every(delay => delay > 0 && delay <= 8000),
+    `ordinary phase timeout escaped its bound: ${{JSON.stringify(delays)}}`);
+dispatcher.stop();
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
     def test_native_dispatcher_rejects_all_once_on_disconnect(self):
         background = CONTENT.with_name("background.js")
         script = f"""

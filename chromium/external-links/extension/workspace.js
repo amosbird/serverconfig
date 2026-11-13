@@ -2319,11 +2319,12 @@ class WorkspaceExecutor {
 
     async waitForOrdinaryTitle(tabId, nonce, deadlineMs = Date.now() + 1000) {
         const expected = `${ORDINARY_PREFIX}${nonce}`;
-        while (Date.now() < deadlineMs) {
+        const waitDeadline = Math.min(deadlineMs, Date.now() + 1000);
+        while (Date.now() < waitDeadline) {
             const tab = await this.chrome.tabs.get(tabId);
             if (tab.active === true && tab.title === expected) return;
             await new Promise(resolve => setTimeout(resolve, Math.min(10,
-                Math.max(0, deadlineMs - Date.now()))));
+                Math.max(0, waitDeadline - Date.now()))));
         }
         throw new Error("ordinary staging title was not ready");
     }

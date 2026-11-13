@@ -6,6 +6,9 @@ const ENVELOPE_VERSION = 1;
 const NATIVE_TIMEOUTS_MS = Object.freeze({
     native_bootstrap: 15000,
     external_links_open: 30000,
+    ordinary_open_prepare: 8000,
+    ordinary_open_activate: 8000,
+    ordinary_file_navigate: 8000,
     bind_x11_window: 15000,
     verify_x11_window: 8000,
     clear_x11_window: 8000,
@@ -41,8 +44,8 @@ class NativeDispatcher {
         this.bootstrapGeneration = 0;
         this.bootstrapAttempt = null;
         this.bootstrapWaiters = [];
-        this.setTimeout = setTimeout;
-        this.clearTimeout = clearTimeout;
+        this.setTimeout = (callback, delay) => globalThis.setTimeout(callback, delay);
+        this.clearTimeout = timer => globalThis.clearTimeout(timer);
     }
 
     bootstrapFailure(message, dispatch = "not_sent") {
@@ -233,8 +236,13 @@ class NativeDispatcher {
         if (service === "external_links" && operation === "open") {
             timeoutMs = NATIVE_TIMEOUTS_MS.external_links_open;
         }
-        if (service === "ordinary_open" && Number.isSafeInteger(payload.deadline_ms)) {
-            timeoutMs = Math.max(1, payload.deadline_ms - Date.now());
+        if (service === "ordinary_open") {
+            const configured = NATIVE_TIMEOUTS_MS[`ordinary_open_${operation}`];
+            if (configured !== undefined) timeoutMs = configured;
+            if (Number.isSafeInteger(payload.deadline_ms)) {
+                timeoutMs = Math.max(1, Math.min(timeoutMs,
+                    payload.deadline_ms - Date.now()));
+            }
         }
         return new Promise((resolve, reject) => {
             const timer = this.setTimeout(() => {
