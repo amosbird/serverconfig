@@ -230,7 +230,9 @@ for (const [page, link, expected] of cases) {{
     def test_background_routes_ensure_and_action_is_peer_lifecycle_noop(self):
         background = CONTENT.with_name("background.js").read_text()
         self.assertIn('message.event === "abush_browser.ensure_managed_page"', background)
-        self.assertIn("workspaces.ensure(message.payload)", background)
+        self.assertIn('dispatch("ensure", "Unable to ensure Abush browser workspace", false)',
+                      background)
+        self.assertIn("workspaces.enqueueRemoteLifecycle(remoteKey, task)", background)
         self.assertNotIn("chrome.action.onClicked", background)
         self.assertNotIn("Browser workspaces are managed automatically.", background)
 
