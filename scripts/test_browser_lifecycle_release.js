@@ -12,6 +12,28 @@ const {registerWorkspaceWindowListeners} =
     require("../chromium/external-links/extension/background.js");
 
 const clone = value => structuredClone(value);
+const OFFLINE_BOOTSTRAP = Object.freeze({browser_boot_id: "offline-boot", browser_pid: 4242,
+    browser_starttime: "1234", ordinary_launch_leases: []});
+
+async function bootstrapExecutor(executor) {
+    await executor.acceptNativeBootstrap(clone(OFFLINE_BOOTSTRAP));
+}
+
+async function boundedCase(name, run, deadlineMs = 8000) {
+    let timer;
+    try {
+        return await Promise.race([Promise.resolve().then(run), new Promise((_, reject) => {
+            timer = setTimeout(() => {
+                const error = new Error(`lifecycle case ${name} exceeded ${deadlineMs}ms`);
+                error.lifecycleDeadline = true;
+                reject(error);
+            }, deadlineMs);
+        })]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 function event() {
     const listeners = [];
     return {addListener: listener => listeners.push(listener),
@@ -314,8 +336,7 @@ async function fixture(bridge, fault, pendingCreated) {
         }
         return result;
     });
-    await executor.acceptNativeBootstrap({browser_boot_id: "offline-boot", browser_pid: 4242,
-        browser_starttime: "1234", ordinary_launch_leases: []});
+    await bootstrapExecutor(executor);
     registerWorkspaceWindowListeners(model.api, executor, () => Promise.resolve(),
         error => model.errors.push(error));
     await model.sync("initial");
@@ -543,6 +564,7 @@ async function unknownTerminalCase(bridge) {
     assert.equal(transaction.admissionSettlement, undefined);
     assert.equal(transaction.admission.chrome, "unknown");
     const restarted = new WorkspaceExecutor(model.api, executor.nativeRequest);
+    await bootstrapExecutor(restarted);
     await restarted.restorePendingTransactions();
     assert.equal(restarted.pendingTransactions.size, 1);
     assert(restarted.advisoryErrors.length > 0);
@@ -559,6 +581,7 @@ async function partialRejectionCase(bridge) {
     assert(!nativeCalls.some(call => call.operation === "finish_candidate_lease"));
     assert(!nativeCalls.some(call => call.operation === "release_candidate_lease"));
     const restarted = new WorkspaceExecutor(model.api, executor.nativeRequest);
+    await bootstrapExecutor(restarted);
     await restarted.restorePendingTransactions();
     assert.equal(restarted.pendingTransactions.size, 1);
     const state = await bridge.call("state");
@@ -615,6 +638,7 @@ async function terminalRecoveryCase(bridge, fault) {
     } else {
         assert.equal(executor.pendingTransactions.size, 1);
         const restarted = new WorkspaceExecutor(model.api, originalNative);
+        await bootstrapExecutor(restarted);
         await restarted.restorePendingTransactions();
         assert.equal(restarted.pendingTransactions.size, 0);
         assert.equal(model.createdAttempts, 1);
@@ -681,9 +705,21 @@ async function ordinaryCase(bridge) {
         .every(frame => frame.windows[101].group === "f"));
 }
 
+let gateCompleted = false;
+process.once("beforeExit", () => {
+    if (!gateCompleted) {
+        console.error("lifecycle release gate exited before completing its selected cases");
+        process.exitCode = 1;
+    }
+});
+
 (async () => {
+    await assert.rejects(boundedCase("unsettled fixture", () => new Promise(() => {}), 20),
+        /unsettled fixture exceeded/);
     const bridge = new Bridge();
     const failures = [];
+    let selected = 0;
+    let completed = 0;
     try {
         for (const [name, run] of [
             ["ordinary open", () => ordinaryCase(bridge)],
@@ -707,8 +743,18 @@ async function ordinaryCase(bridge) {
             if (process.env.LIFECYCLE_CASE && !new RegExp(process.env.LIFECYCLE_CASE).test(name)) {
                 continue;
             }
-            try { await run(); } catch (error) { failures.push(`${name}: ${error.stack}`); }
+            selected++;
+            try {
+                await boundedCase(name, run);
+                completed++;
+            } catch (error) {
+                failures.push(`${name}: ${error.stack}`);
+                if (error.lifecycleDeadline) throw error;
+            }
         }
+        assert(selected > 0, "lifecycle release gate selected no cases");
+        if (failures.length) throw new Error(failures.join("\n\n"));
+        assert.equal(completed, selected, "every selected lifecycle case must finish");
     } finally { await bridge.close(); }
-    if (failures.length) throw new Error(failures.join("\n\n"));
+    gateCompleted = true;
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
