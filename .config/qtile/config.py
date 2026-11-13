@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import time
 from threading import Lock
 
 import xcffib.xproto
@@ -225,7 +226,8 @@ def passive_window_move(manager, window, destination):
     current_group = manager.current_screen.group.name
     active_xid = getattr(manager.current_window, "wid", None)
     window.can_steal_focus = False
-    window.togroup(destination, switch_group=False)
+    if window.group is None or window.group.name != destination:
+        window.togroup(destination, switch_group=False)
     if window.group is None or window.group.name != destination or \
             manager.current_screen.group.name != current_group or \
             getattr(manager.current_window, "wid", None) != active_xid:
@@ -240,6 +242,41 @@ def passive_window_move(manager, window, destination):
     }
 
 
+def register_abush_browser_candidate(manager, nonce: str):
+    if not isinstance(nonce, str) or ABUSH_NONCE.fullmatch(nonce) is None:
+        raise ValueError("invalid Abush browser candidate nonce")
+    now = time.monotonic()
+    expire_abush_browser_candidate_leases(now)
+    ABUSH_CANDIDATE_LEASES[nonce] = now + ABUSH_CANDIDATE_LEASE_SECONDS
+    return {"accepted": True, "nonce": nonce}
+
+
+def release_abush_browser_candidate(manager, nonce: str):
+    if not isinstance(nonce, str) or ABUSH_NONCE.fullmatch(nonce) is None:
+        raise ValueError("invalid Abush browser candidate nonce")
+    ABUSH_CANDIDATE_LEASES.pop(nonce, None)
+    return {"released": True, "nonce": nonce}
+
+
+def quarantine_abush_browser_window(manager, xid: int, nonce: str):
+    window = qtile_window_by_xid(manager, xid)
+    expected_titles = {
+        f"__ABUSH_BIND__:{nonce}:a",
+        f"__ABUSH_BIND__:{nonce}:a - Google Chrome",
+        f"__ABUSH_BIND__:{nonce}:a - Chromium",
+    }
+    claim = ABUSH_CANDIDATE_WINDOWS.get(window.wid)
+    now = time.monotonic()
+    if not isinstance(nonce, str) or ABUSH_NONCE.fullmatch(nonce) is None or \
+            not is_chrome_window(window) or is_abush_browser_verified(window) or \
+            claim is None or claim["nonce"] != nonce or claim["deadline"] < now or \
+            window.group is None or window.group.name != "__abush_quarantine" or \
+            x11_text_property(window, ABUSH_CANDIDATE_NONCE_PROPERTY) != nonce or \
+            (window.name or "") not in expected_titles:
+        raise ValueError("unverified Abush browser candidate")
+    return passive_window_move(manager, window, "__abush_quarantine")
+
+
 def place_abush_browser_window(manager, xid: int, expected_json: str):
     window = qtile_window_by_xid(manager, xid)
     try:
@@ -249,7 +286,9 @@ def place_abush_browser_window(manager, xid: int, expected_json: str):
     if not isinstance(expected, dict) or set(expected) != set(ABUSH_METADATA_PROPERTIES) or \
             not is_abush_browser_verified(window, expected):
         raise ValueError("unverified Abush browser window")
-    return passive_window_move(manager, window, "c")
+    result = passive_window_move(manager, window, "c")
+    ABUSH_CANDIDATE_WINDOWS.pop(window.wid, None)
+    return result
 
 
 def reclassify_ordinary_window(manager, xid: int):
@@ -270,6 +309,9 @@ def install_browser_commands():
     commands = {
         "prepare_ordinary_window": prepare_ordinary_window,
         "activate_ordinary_window": activate_ordinary_window,
+        "register_abush_browser_candidate": register_abush_browser_candidate,
+        "release_abush_browser_candidate": release_abush_browser_candidate,
+        "quarantine_abush_browser_window": quarantine_abush_browser_window,
         "place_abush_browser_window": place_abush_browser_window,
         "reclassify_ordinary_window": reclassify_ordinary_window,
         "restore_abush_browser_window": restore_abush_browser_window,
@@ -590,10 +632,14 @@ scratchpad_matches = {
 }
 
 
-ABUSH_BINDING_TITLE = re.compile(
-    r"^__ABUSH_BIND__:[0-9a-f]{32}:[ab](?: - (?:Google Chrome|Chromium))?$"
+ABUSH_CANDIDATE_TITLE = re.compile(
+    r"^__ABUSH_BIND__:([0-9a-f]{32}):a(?: - (?:Google Chrome|Chromium))?$"
 )
 ABUSH_NONCE = re.compile(r"^[0-9a-f]{32}$")
+ABUSH_CANDIDATE_NONCE_PROPERTY = "_ABUSH_CANDIDATE_NONCE"
+ABUSH_CANDIDATE_LEASE_SECONDS = 10.0
+ABUSH_CANDIDATE_LEASES = {}
+ABUSH_CANDIDATE_WINDOWS = {}
 ABUSH_CONTROL_STATES = {"remote", "human"}
 ABUSH_METADATA_PROPERTIES = {
     "nonce": ("_ABUSH_BINDING_NONCE", "UTF8_STRING"),
@@ -701,14 +747,34 @@ for i in ["w", "e", "d", "f", "v", "n", "i", "o"]:
 
 keys.append(Key([ctrl, alt], "c", lazy.group["c"].toscreen()))
 
+def expire_abush_browser_candidate_leases(now=None):
+    now = time.monotonic() if now is None else now
+    for nonce, deadline in list(ABUSH_CANDIDATE_LEASES.items()):
+        if deadline < now:
+            del ABUSH_CANDIDATE_LEASES[nonce]
+    for xid, claim in list(ABUSH_CANDIDATE_WINDOWS.items()):
+        if claim["deadline"] < now:
+            del ABUSH_CANDIDATE_WINDOWS[xid]
+
+
+def claim_abush_browser_candidate(window):
+    if not is_chrome_window(window):
+        return False
+    match = ABUSH_CANDIDATE_TITLE.fullmatch(window.name or "")
+    if match is None:
+        return False
+    nonce = match.group(1)
+    now = time.monotonic()
+    expire_abush_browser_candidate_leases(now)
+    deadline = ABUSH_CANDIDATE_LEASES.pop(nonce, None)
+    if deadline is None or deadline < now:
+        return False
+    ABUSH_CANDIDATE_WINDOWS[window.wid] = {"nonce": nonce, "deadline": deadline}
+    return True
+
+
 dgroups_app_rules = [
-    Rule(
-        Match(
-            wm_class=["Google-chrome", "Chromium"],
-            title=ABUSH_BINDING_TITLE,
-        ),
-        group="__abush_quarantine",
-    ),
+    Rule(Match(func=claim_abush_browser_candidate), group="__abush_quarantine"),
     Rule(Match(wm_class="kitty", title="local"), group="e"),
     Rule(Match(wm_class="kitty", title="work"), group="v"),
     Rule(Match(wm_class="kitty", title="remote"), group="i"),
@@ -809,20 +875,24 @@ def is_abush_browser_verified(window, expected=None):
     return expected is None or metadata == expected
 
 
+def has_abush_candidate_title(window):
+    return is_chrome_window(window) and bool(
+        ABUSH_CANDIDATE_TITLE.fullmatch(window.name or ""))
+
+
 def is_abush_browser_candidate(window):
-    wm_class = [value.lower() for value in (window.get_wm_class() or [])]
-    return (
-        is_chrome_window(window)
-        and window.get_wm_role() != "abush-browser"
-        and "abushbrowser" not in wm_class
-        and not is_abush_browser_verified(window)
-        and bool(ABUSH_BINDING_TITLE.fullmatch(window.name or ""))
-    )
+    if not is_chrome_window(window) or window.group is None or \
+            window.group.name != "__abush_quarantine" or \
+            window.get_wm_role() == "abush-browser" or is_abush_browser_verified(window):
+        return False
+    expire_abush_browser_candidate_leases()
+    return window.wid in ABUSH_CANDIDATE_WINDOWS
 
 
 @hook.subscribe.group_window_add
 def prevent_abush_browser_focus_steal(group, window):
-    if is_abush_browser_verified(window) or is_abush_browser_candidate(window):
+    if is_abush_browser_verified(window) or is_abush_browser_candidate(window) or \
+            has_abush_candidate_title(window):
         window.can_steal_focus = False
 
 
@@ -857,7 +927,15 @@ def recover_abush_browsers():
 
 @hook.subscribe.client_name_updated
 def reclassify_abush_browser(window):
-    place_abush_browser(window)
+    if is_abush_browser_verified(window) or is_abush_browser_candidate(window):
+        return False
+    if is_chrome_window(window) and window.group is not None and window.group.name in {
+        "c",
+        "__abush_quarantine",
+    }:
+        window.togroup("f", switch_group=False)
+        return True
+    return False
 
 
 @hook.subscribe.startup

@@ -579,6 +579,9 @@ class NativeHostTest(unittest.TestCase):
         binding.clear_workspace_window.return_value = {
             "cleared": True, "xid": 42, "reclassified_group": "f"}
         binding.verify_workspace_window.return_value = {"verified": True, "xid": 42}
+        binding.update_candidate_lease.side_effect = lambda operation, nonce: {
+            "accepted": True, "nonce": nonce,
+        } if operation == "register" else {"released": True, "nonce": nonce}
         payload = {
             "nonce": "a" * 32,
             "remote_key": "r_12345678",
@@ -597,6 +600,15 @@ class NativeHostTest(unittest.TestCase):
             }
             self.assertEqual(broker.handle_request(request),
                              binding.bind_workspace_window.return_value)
+            nonce_payload = {"nonce": payload["nonce"]}
+            self.assertEqual(broker.handle_request({
+                **request, "id": "register", "operation": "register_candidate_lease",
+                "payload": nonce_payload,
+            }), {"accepted": True, "nonce": payload["nonce"]})
+            self.assertEqual(broker.handle_request({
+                **request, "id": "release", "operation": "release_candidate_lease",
+                "payload": nonce_payload,
+            }), {"released": True, "nonce": payload["nonce"]})
             cleanup = {"xid": 42, **payload}
             self.assertEqual(broker.handle_request({
                 **request, "id": "verify", "operation": "verify_x11_window",
@@ -607,6 +619,10 @@ class NativeHostTest(unittest.TestCase):
                 "payload": cleanup,
             }), {"cleared": True, "xid": 42, "reclassified_group": "f"})
         binding.bind_workspace_window.assert_called_once_with(payload)
+        self.assertEqual(binding.update_candidate_lease.call_args_list, [
+            mock.call("register", payload["nonce"]),
+            mock.call("release", payload["nonce"]),
+        ])
         binding.verify_workspace_window.assert_called_once_with(cleanup)
         binding.clear_workspace_window.assert_called_once_with(cleanup)
 

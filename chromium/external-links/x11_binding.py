@@ -15,6 +15,7 @@ import time
 NONCE_RE = re.compile(r"[0-9a-f]{32}\Z")
 ORDINARY_TITLE_PREFIX = "__ABUSH_ORDINARY__:"
 ORDINARY_NONCE_PROPERTY = "_ABUSH_ORDINARY_NONCE"
+CANDIDATE_NONCE_PROPERTY = "_ABUSH_CANDIDATE_NONCE"
 MANAGED_PROPERTIES = (
     "_ABUSH_BINDING_NONCE", "_ABUSH_REMOTE_ID", "_ABUSH_WORKSPACE_ID",
     "_ABUSH_WINDOW_GENERATION", "_ABUSH_CONTROL_STATE", "_ABUSH_DISPLAY_TITLE",
@@ -191,6 +192,34 @@ def qtile_move_command(window, group="c", expected=None):
     return qtile_command("place_abush_browser_window", window, encoded)
 
 
+def qtile_candidate_lease_command(operation, nonce):
+    if operation not in {"register", "release"} or not isinstance(nonce, str) or \
+            not NONCE_RE.fullmatch(nonce):
+        raise ValueError("invalid candidate lease request")
+    function = "register_abush_browser_candidate" if operation == "register" else \
+        "release_abush_browser_candidate"
+    return qtile_command(function, nonce)
+
+
+def update_candidate_lease(operation, nonce, run=None):
+    output = run_qtile(qtile_candidate_lease_command(operation, nonce), run)
+    try:
+        result = json.loads(output)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise X11Unavailable("invalid candidate lease response") from error
+    expected = {"accepted": True, "nonce": nonce} if operation == "register" else \
+        {"released": True, "nonce": nonce}
+    if result != expected:
+        raise X11Unavailable("candidate lease was not confirmed")
+    return result
+
+
+def qtile_candidate_command(window, nonce):
+    if not isinstance(nonce, str) or not NONCE_RE.fullmatch(nonce):
+        raise ValueError("invalid candidate nonce")
+    return qtile_command("quarantine_abush_browser_window", window, nonce)
+
+
 def qtile_restore_command(window, group):
     if not isinstance(group, str) or not group:
         raise ValueError("invalid Qtile restore group")
@@ -217,9 +246,9 @@ def qtile_transition(command, window, group, run=None):
     return transition
 
 
-def notify_qtile(window, expected, adapter, run=None):
+def passive_qtile_move(command, window, group, adapter, run, label):
     active_before = getattr(adapter, "active_window", lambda: None)()
-    transition = qtile_transition(qtile_move_command(window, expected=expected), window, "c", run)
+    transition = qtile_transition(command, window, group, run)
     required = {"id", "group", "current_group_before", "current_group_after",
                 "active_xid_before", "active_xid_after"}
     if set(transition) != required or \
@@ -228,19 +257,31 @@ def notify_qtile(window, expected, adapter, run=None):
             transition["current_group_before"] != transition["current_group_after"] or \
             transition["active_xid_before"] != transition["active_xid_after"] or \
             transition["active_xid_before"] != active_before:
-        raise X11Unavailable("Qtile managed placement changed focus or current group")
+        raise X11Unavailable(f"Qtile {label} changed focus or current group")
     info = qtile_window_info(window, run)
     active_after = getattr(adapter, "active_window", lambda: None)()
-    if info.get("id") != window or info.get("group") != "c":
-        raise X11Unavailable("Qtile did not place the exact managed window")
+    if info.get("id") != window or info.get("group") != group:
+        raise X11Unavailable(f"Qtile did not place the exact {label} window")
     if active_before != active_after or active_after != transition["active_xid_after"]:
-        raise X11Unavailable("Qtile managed placement changed the active X11 window")
+        raise X11Unavailable(f"Qtile {label} changed the active X11 window")
     return {
         "id": window,
         "group": info["group"],
         "current_group_preserved": True,
         "active_xid_preserved": True,
     }
+
+
+def quarantine_qtile(window, nonce, adapter, run=None):
+    return passive_qtile_move(
+        qtile_candidate_command(window, nonce), window, "__abush_quarantine",
+        adapter, run, "candidate placement")
+
+
+def notify_qtile(window, expected, adapter, run=None):
+    return passive_qtile_move(
+        qtile_move_command(window, expected=expected), window, "c",
+        adapter, run, "managed placement")
 
 
 def qtile_socket_path():
@@ -548,7 +589,8 @@ def property_snapshot(adapter, window):
         "WM_CLASS": "STRING",
         "_NET_WM_NAME": "UTF8_STRING",
         "_NET_WM_VISIBLE_NAME": "UTF8_STRING",
-        **{name: "UTF8_STRING" for name in MANAGED_PROPERTIES},
+        **{name: "UTF8_STRING" for name in (*MANAGED_PROPERTIES,
+                                               CANDIDATE_NONCE_PROPERTY)},
     }
     return {name: (adapter.property(window, name, property_type), property_type)
             for name, property_type in names.items()}
@@ -597,6 +639,7 @@ def bind_workspace_window(
     attempts=100,
     interval=0.05,
     qtile_notifier=None,
+    qtile_candidate_notifier=None,
     run=None,
 ):
     required = {"nonce", "remote_key", "workspace_id", "generation", "control_state",
@@ -641,6 +684,7 @@ def bind_workspace_window(
     if len(matches) != 1:
         raise X11Unavailable("matching Chrome X11 window was not found")
     window = matches[0]
+    is_fresh_candidate = window in fresh and window not in existing
     old_properties = property_snapshot(adapter, window)
     old_group = None
     if qtile_notifier is None or run is not None:
@@ -648,6 +692,21 @@ def bind_workspace_window(
         if not isinstance(old_group, str) or not old_group:
             raise X11Unavailable("Qtile window has no rollback group")
     try:
+        if is_fresh_candidate:
+            adapter.set_text(window, CANDIDATE_NONCE_PROPERTY, nonce)
+            adapter.finish()
+            if adapter.property(window, CANDIDATE_NONCE_PROPERTY) != nonce or \
+                    not binding_title_matches(adapter.title(window), expected) or \
+                    managed_window(adapter, window):
+                raise X11Unavailable("X11 candidate verification failed")
+            candidate_transition = qtile_candidate_notifier(window, nonce) \
+                if qtile_candidate_notifier else quarantine_qtile(window, nonce, adapter, run)
+            if not isinstance(candidate_transition, dict) or \
+                    candidate_transition.get("id") != window or \
+                    candidate_transition.get("group") != "__abush_quarantine" or \
+                    candidate_transition.get("current_group_preserved") is not True or \
+                    candidate_transition.get("active_xid_preserved") is not True:
+                raise X11Unavailable("Qtile candidate quarantine verification failed")
         adapter.set_text(window, "WM_WINDOW_ROLE", "abush-browser", "STRING")
         for prop, field in {**STABLE_FIELDS, **TEXT_FIELDS}.items():
             adapter.set_text(window, prop, payload[field])
@@ -665,6 +724,10 @@ def bind_workspace_window(
         adapter.set_text(window, "WM_CLASS", "abush-browser\0AbushBrowser\0", "STRING")
         adapter.set_text(window, "_NET_WM_NAME", payload["display_title"])
         adapter.set_text(window, "_NET_WM_VISIBLE_NAME", payload["display_title"])
+        if hasattr(adapter, "delete_property"):
+            adapter.delete_property(window, CANDIDATE_NONCE_PROPERTY)
+        else:
+            adapter.set_text(window, CANDIDATE_NONCE_PROPERTY, "")
         adapter.finish()
         expected_metadata = expected_managed_metadata(payload)
         transition = qtile_notifier(window, expected_metadata) if qtile_notifier else \

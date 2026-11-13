@@ -100,6 +100,16 @@ function deferred(label = "deferred promise") {
     return {promise: exactWait(pending, label), resolve, reject};
 }
 
+function candidateLeaseResponse(operation, payload) {
+    if (operation === "register_candidate_lease") {
+        return {accepted: true, nonce: payload.nonce};
+    }
+    if (operation === "release_candidate_lease") {
+        return {released: true, nonce: payload.nonce};
+    }
+    return null;
+}
+
 function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                  orphanPage = false, restoredPopup = null, localState = {}) {
     const calls = [];
@@ -316,6 +326,12 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     };
     const native = async (service, operation, payload) => {
         calls.push([operation, payload]);
+        if (operation === "register_candidate_lease") {
+            return {accepted: true, nonce: payload.nonce};
+        }
+        if (operation === "release_candidate_lease") {
+            return {released: true, nonce: payload.nonce};
+        }
         if (operation === "bind_x11_window") {
             return {
                 available: true,
@@ -395,6 +411,30 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(displayTitle("local"), "local");
         assert.equal(displayTitle("dev.example.com"), "dev.example.com");
         assert.equal(displayTitle("prod-alias"), "prod-alias");
+    {
+        beginCase();
+        let leaseNonce;
+        const {executor, calls} = fixture();
+        executor.nativeRequest = async (_service, operation, payload) => {
+            calls.push([operation, payload]);
+            if (operation === "register_candidate_lease") {
+                leaseNonce = payload.nonce;
+                return {accepted: true, nonce: "b".repeat(32)};
+            }
+            if (operation === "release_candidate_lease") {
+                return {released: true, nonce: payload.nonce};
+            }
+            return {};
+        };
+        await assert.rejects(executor.ensure(ensurePayload()),
+            /candidate lease was not fully verified/);
+        assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
+            "an unverified lease receipt must block candidate creation");
+        assert.equal(calls.filter(call => call[0] === "release_candidate_lease").length, 1,
+            "an uncertain register response must trigger idempotent lease release");
+        assert.equal(calls.find(call => call[0] === "release_candidate_lease")[1].nonce,
+            leaseNonce);
+    }
     {
         beginCase();
         let listener;
@@ -1133,6 +1173,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             throw new Error("window creation failed");
         };
         await assert.rejects(executor.ensure(ensurePayload()), /window creation failed/);
+        assert.equal(calls.filter(call => call[0] === "register_candidate_lease").length, 1);
+        assert.equal(calls.filter(call => call[0] === "release_candidate_lease").length, 1,
+            "failed window creation must release its candidate lease");
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
             "a failed window create must not leave a partial marker tab");
     }
@@ -1804,6 +1847,19 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(createWindow.focused, false);
         assert.equal(createWindow.type, "normal");
         assert.equal(createWindow.tabId, first.statusTabIds[0]);
+        const registerLeaseIndex = calls.findIndex(call =>
+            call[0] === "register_candidate_lease");
+        const createWindowIndex = calls.findIndex(call => call[0] === "createWindow");
+        const releaseLeaseIndex = calls.findIndex(call =>
+            call[0] === "release_candidate_lease");
+        const bindIndex = calls.findIndex(call => call[0] === "bind_x11_window");
+        assert(registerLeaseIndex >= 0 && registerLeaseIndex < createWindowIndex &&
+            createWindowIndex < releaseLeaseIndex && releaseLeaseIndex < bindIndex,
+        "candidate lease must enclose only the unfenced window creation interval");
+        assert.equal(calls[registerLeaseIndex][1].nonce, first.nonce);
+        assert.equal(calls[releaseLeaseIndex][1].nonce, first.nonce);
+        assert.equal(calls.filter(call => call[0] === "register_candidate_lease").length, 1);
+        assert.equal(calls.filter(call => call[0] === "release_candidate_lease").length, 1);
         assert.equal(calls.filter(call => call[0] === "createTab").length, 3);
         assert.equal(calls.filter(call => call[0] === "move").length, 1);
         assert.equal(calls.filter(call => call[0] === "bind_x11_window").length, 1);
@@ -2961,6 +3017,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             const {executor, calls} = fixture();
             executor.nativeRequest = async (_service, operation, payload) => {
                 calls.push([operation, payload]);
+                const lease = candidateLeaseResponse(operation, payload);
+                if (lease !== null) return lease;
                 if (operation === "bind_x11_window") return result;
                 return {};
             };
@@ -2981,6 +3039,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const {executor, calls} = fixture();
         executor.nativeRequest = async (_service, operation, payload) => {
             calls.push([operation, payload]);
+            const lease = candidateLeaseResponse(operation, payload);
+            if (lease !== null) return lease;
             if (operation !== "bind_x11_window") return {};
             return {
                 available: true,
@@ -3007,6 +3067,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         let attempts = 0;
         executor.nativeRequest = async (_service, operation, payload) => {
             calls.push([operation, payload]);
+            const lease = candidateLeaseResponse(operation, payload);
+            if (lease !== null) return lease;
             if (operation === "bind_x11_window" && attempts++ === 0) {
                 throw new Error("bind failed");
             }
@@ -3025,6 +3087,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const {executor, calls} = fixture();
         executor.nativeRequest = async (_service, operation, payload) => {
             calls.push([operation, payload]);
+            const lease = candidateLeaseResponse(operation, payload);
+            if (lease !== null) return lease;
             if (operation === "bind_x11_window") throw new Error("bind failed");
             return {};
         };
@@ -3046,7 +3110,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     {
         beginCase();
         const {executor} = fixture();
-        executor.nativeRequest = async (_service, operation) => {
+        executor.nativeRequest = async (_service, operation, payload) => {
+            const lease = candidateLeaseResponse(operation, payload);
+            if (lease !== null) return lease;
             throw new Error(operation === "ensure_managed_page_completion" ?
                 "completion failed" : "bind failed");
         };

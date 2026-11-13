@@ -189,6 +189,33 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
                 self.assertRaisesRegex(binding.X11Unavailable, "invalid size"):
             binding.qtile_ipc_call([], "info", path=path)
 
+    def test_candidate_lease_commands_are_exact_and_verified(self):
+        nonce = "a" * 32
+        register = binding.qtile_candidate_lease_command("register", nonce)
+        release = binding.qtile_candidate_lease_command("release", nonce)
+        self.assertIn("register_abush_browser_candidate", register)
+        self.assertIn("release_abush_browser_candidate", release)
+        self.assertEqual(register[-1], nonce)
+        self.assertEqual(release[-1], nonce)
+        with self.assertRaises(ValueError):
+            binding.qtile_candidate_lease_command("register", "bad")
+
+        run = mock.Mock(return_value=mock.Mock(
+            returncode=0,
+            stdout=json.dumps({"accepted": True, "nonce": nonce}),
+            stderr="",
+        ))
+        self.assertEqual(binding.update_candidate_lease("register", nonce, run),
+                         {"accepted": True, "nonce": nonce})
+        run.assert_called_once()
+        wrong = mock.Mock(return_value=mock.Mock(
+            returncode=0,
+            stdout=json.dumps({"accepted": True, "nonce": "b" * 32}),
+            stderr="",
+        ))
+        with self.assertRaisesRegex(binding.X11Unavailable, "not confirmed"):
+            binding.update_candidate_lease("register", nonce, wrong)
+
     def test_run_qtile_uses_in_process_ipc_by_default(self):
         command = binding.qtile_move_command(22, "f")
         with mock.patch.object(binding, "qtile_ipc_command",
@@ -205,6 +232,18 @@ class X11BindingTest(unittest.TestCase):
         self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
         self.process_patch.start()
         self.addCleanup(self.process_patch.stop)
+        self.candidate_patch = mock.patch.object(binding, "quarantine_qtile", return_value={
+            "id": 22,
+            "group": "__abush_quarantine",
+            "current_group_before": "e",
+            "current_group_after": "e",
+            "active_xid_before": 11,
+            "active_xid_after": 11,
+            "current_group_preserved": True,
+            "active_xid_preserved": True,
+        })
+        self.candidate_mock = self.candidate_patch.start()
+        self.addCleanup(self.candidate_patch.stop)
         self.qtile_patch = mock.patch.object(binding, "notify_qtile", return_value={
             "id": 22,
             "group": "c",
@@ -227,20 +266,23 @@ class X11BindingTest(unittest.TestCase):
 
     def test_exact_nonce_chrome_match_and_metadata(self):
         adapter = FakeAdapter()
-        result = binding.bind_workspace_window({
+        payload = {
             "nonce": "0123456789abcdef0123456789abcdef",
             "remote_key": "r_12345678",
             "workspace_id": "workspace",
             "generation": 7,
             "control_state": "remote",
             "display_title": "Abush Browser — local · workbench",
-        }, adapter=adapter, attempts=1)
+        }
+        result = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
         self.assertEqual(result["xid"], 22)
         self.assertEqual(result["observed"]["_ABUSH_REMOTE_ID"], "r_12345678")
         self.assertEqual(result["observed"]["_ABUSH_WINDOW_GENERATION"], "7")
         self.assertEqual(result["observed"]["WM_WINDOW_ROLE"], "abush-browser")
         self.assertEqual(adapter.values[(22, "WM_CLASS")], "abush-browser\0AbushBrowser\0")
         self.assertEqual(adapter.values[(11, "_NET_WM_NAME")], "ordinary")
+        self.assertNotIn((22, binding.CANDIDATE_NONCE_PROPERTY), adapter.values)
+        self.candidate_mock.assert_called_once_with(22, payload["nonce"], adapter, None)
         self.assertTrue(adapter.finished)
 
     def test_bind_failure_after_side_effect_restores_old_properties_and_group(self):

@@ -3213,6 +3213,20 @@ class WorkspaceExecutor {
             observed._ABUSH_DISPLAY_TITLE === payload.display_title;
     }
 
+    async updateCandidateLease(operation, nonce) {
+        if (!new Set(["register", "release"]).has(operation)) {
+            throw new Error("invalid candidate lease operation");
+        }
+        const result = await this.nativeRequest(
+            "abush_browser", `${operation}_candidate_lease`, {nonce});
+        const field = operation === "register" ? "accepted" : "released";
+        if (!exactFields(result, [field, "nonce"]) || result[field] !== true ||
+                result.nonce !== nonce) {
+            this.fail("invalid_command", "native candidate lease was not fully verified");
+        }
+        return result;
+    }
+
     async bind(record, workspaceId = record.workspaceId, authority = null) {
         const checkAuthority = () => {
             if (authority && this.remoteAuthorities.has(authority.remote_key)) {
@@ -4340,6 +4354,7 @@ class WorkspaceExecutor {
         await this.updateEnsureTransaction(transaction, {hostWindowId, phase: "preparing"});
         const statusTabs = [];
         let created;
+        let candidateLeaseRequested = false;
         try {
             for (const marker of MARKER_IDS) {
                 const url = this.statusUrl({nonce}, marker);
@@ -4348,10 +4363,10 @@ class WorkspaceExecutor {
                     planned: {kind: "tabs.create.marker", window_id: hostWindowId,
                         marker, url},
                 }, () => this.chrome.tabs.create({
-                        windowId: hostWindowId,
-                        url,
-                        active: false,
-                    }));
+                    windowId: hostWindowId,
+                    url,
+                    active: false,
+                }));
                 statusTabs.push(tab);
                 transaction.statusTabIds = statusTabs.map(statusTab => statusTab.id);
                 await this.updateEnsureTransaction(transaction, {
@@ -4359,6 +4374,8 @@ class WorkspaceExecutor {
                 });
                 await this.waitForStatusTitle(tab.id, nonce, marker);
             }
+            candidateLeaseRequested = true;
+            await this.updateCandidateLease("register", nonce);
             created = await this.mutateTransaction(transaction, {
                 type: "windowCreated",
                 match: {window: {type: "normal"}, sourceTabId: statusTabs[0].id},
@@ -4391,7 +4408,14 @@ class WorkspaceExecutor {
                 index: -1,
             }));
             statusTabs[1].windowId = created.id;
+            await this.updateCandidateLease("release", nonce);
+            candidateLeaseRequested = false;
         } catch (error) {
+            const releaseErrors = [];
+            if (candidateLeaseRequested) {
+                await this.appendCleanupError(releaseErrors,
+                    () => this.updateCandidateLease("release", nonce));
+            }
             const preparedTabs = new Map(statusTabs.map(tab => [tab.id, tab]));
             for (const tabId of [
                 ...transaction.statusTabIds,
@@ -4403,6 +4427,10 @@ class WorkspaceExecutor {
                 await this.cleanupPreparedWindow(
                     created?.id, [...preparedTabs.values()], nonce);
                 await this.finishEnsureTransaction(transaction, "rolled_back");
+                if (releaseErrors.length > 0) {
+                    throw new AggregateError(releaseErrors,
+                        "managed candidate lease cleanup failed");
+                }
             } catch (cleanupError) {
                 const errors = cleanupError instanceof AggregateError ?
                     cleanupError.errors : [cleanupError];

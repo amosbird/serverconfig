@@ -2421,6 +2421,14 @@ class BrowserBroker:
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"))
             return {}
+        if service == "abush_browser" and operation == "register_candidate_lease":
+            if not isinstance(payload, dict) or set(payload) != {"nonce"}:
+                raise ValueError("invalid candidate lease payload")
+            return self.x11_binding().update_candidate_lease("register", payload["nonce"])
+        if service == "abush_browser" and operation == "release_candidate_lease":
+            if not isinstance(payload, dict) or set(payload) != {"nonce"}:
+                raise ValueError("invalid candidate lease payload")
+            return self.x11_binding().update_candidate_lease("release", payload["nonce"])
         if service == "abush_browser" and operation == "verify_x11_window":
             return self.x11_binding().verify_workspace_window(payload)
         if service == "abush_browser" and operation == "clear_x11_window":
