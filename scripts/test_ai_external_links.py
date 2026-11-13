@@ -4,7 +4,9 @@ import importlib.util
 import io
 import json
 import pathlib
+import shutil
 import subprocess
+import tempfile
 import unittest
 import zipfile
 from unittest import mock
@@ -15,7 +17,10 @@ HOST = ROOT / "chromium/external-links/host.py"
 CONTENT = ROOT / "chromium/external-links/extension/content.js"
 MANIFEST = CONTENT.with_name("manifest.json")
 NATIVE_MANIFEST = ROOT / "chromium/external-links/native-host.json"
-PACKAGE = ROOT / "chromium/external-links/package"
+ASSET_HELPER = ROOT / "chromium/external-links/package_assets.py"
+spec = importlib.util.spec_from_file_location("package_assets", ASSET_HELPER)
+package_assets = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(package_assets)
 RUNAI = ROOT / "scripts/runai"
 
 
@@ -167,26 +172,133 @@ for (const [page, link, expected] of cases) {{
         self.assertIn("ordinaryOpen", workspace)
         self.assertIn("remoteAuthorities", workspace)
 
+    def asset_fixture(self):
+        common = pathlib.Path(subprocess.check_output(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=ROOT, text=True).strip())
+        temporary_root = common.parent / ".worktrees/.tmp"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(prefix="package-assets-", dir=temporary_root)
+        self.addCleanup(temporary.cleanup)
+        root = pathlib.Path(temporary.name)
+        source = root / "source"
+        shutil.copytree(MANIFEST.parent, source)
+        return source, root / "staged"
+
+    def asset_snapshot(self, source):
+        return {str(path.relative_to(source)): path.read_bytes()
+                for path in source.rglob("*") if path.is_file()}
+
     def test_packaged_worker_assets_are_correlated_with_exact_package_version(self):
-        state = json.loads((PACKAGE / "build-state.json").read_text())
-        version = state["version"]
+        source, staged = self.asset_fixture()
+        original = self.asset_snapshot(MANIFEST.parent)
+        version = "2026.3.9.1234"
         suffix = version.replace(".", "-")
         worker = f"background-{suffix}.js"
         workspace = f"workspace-{suffix}.js"
-        with zipfile.ZipFile(PACKAGE / "extension.crx") as archive:
-            packaged_manifest = json.loads(archive.read("manifest.json"))
-            self.assertEqual(packaged_manifest["version"], version)
-            self.assertEqual(packaged_manifest["background"]["service_worker"], worker)
-            names = set(archive.namelist())
-            self.assertNotIn("background.js", names)
-            self.assertNotIn("workspace.js", names)
-            self.assertEqual(archive.read(workspace),
-                             MANIFEST.with_name("workspace.js").read_bytes())
-            worker_source = archive.read(worker).decode()
-            self.assertIn(f'importScripts("{workspace}")', worker_source)
-            self.assertNotIn('importScripts("workspace.js")', worker_source)
-            self.assertNotIn('importScripts("background.js")', worker_source)
-            self.assertIn('requestBootstrap(port)', worker_source)
+        package_assets.stage_assets(source, staged, version)
+        expected = dict(original)
+        manifest = json.loads(expected["manifest.json"])
+        manifest["version"] = version
+        manifest["background"]["service_worker"] = worker
+        expected["manifest.json"] = json.dumps(manifest, separators=(",", ":")).encode()
+        expected[workspace] = expected.pop("workspace.js")
+        expected[worker] = expected.pop("background.js").replace(
+            b'importScripts("workspace.js")', f'importScripts("{workspace}")'.encode(), 1)
+        self.assertEqual(self.asset_snapshot(staged), expected)
+        self.assertEqual(self.asset_snapshot(source), original)
+        self.assertEqual(self.asset_snapshot(MANIFEST.parent), original)
+        archive_path = staged.parent / "assets.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            for path in staged.iterdir():
+                archive.write(path, path.name)
+        with zipfile.ZipFile(archive_path) as archive:
+            self.assertEqual(set(archive.namelist()), set(expected))
+            for name, content in expected.items():
+                self.assertEqual(archive.read(name), content)
+        self.assertNotIn("background.js", expected)
+        self.assertNotIn("workspace.js", expected)
+        self.assertIn(b'requestBootstrap(port)', expected[worker])
+
+    def test_asset_staging_command_matches_shared_function(self):
+        source, staged = self.asset_fixture()
+        original = self.asset_snapshot(source)
+        package_assets.stage_assets(source, staged, "1.2.3.4")
+        command_staged = staged.with_name("command-staged")
+        subprocess.run(["python3", "-B", str(ASSET_HELPER), str(source),
+                        str(command_staged), "1.2.3.4"], check=True, timeout=5)
+        self.assertEqual(self.asset_snapshot(command_staged), self.asset_snapshot(staged))
+        self.assertEqual(self.asset_snapshot(source), original)
+
+    def test_asset_staging_rejects_invalid_versions_without_writing(self):
+        source, staged = self.asset_fixture()
+        original = self.asset_snapshot(source)
+        for version in ("", "0", "0.0.0.0", "1.2.3.4.5", "01.2", "65536.1",
+                        "1.-2", "1.2/../../escape", "../escape", "/escape", "1.2\n"):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                package_assets.stage_assets(source, staged, version)
+            self.assertFalse(staged.exists())
+            self.assertEqual(self.asset_snapshot(source), original)
+
+    def test_asset_staging_rejects_existing_destinations_without_overwriting(self):
+        source, staged = self.asset_fixture()
+        original = self.asset_snapshot(source)
+        for destination in (source, staged):
+            if destination == staged:
+                staged.mkdir()
+                (staged / "sentinel").write_bytes(b"unchanged")
+            before = self.asset_snapshot(destination)
+            with self.subTest(destination=destination), self.assertRaises(FileExistsError):
+                package_assets.stage_assets(source, destination, "1.2.3.4")
+            self.assertEqual(self.asset_snapshot(destination), before)
+        self.assertEqual(self.asset_snapshot(source), original)
+
+    def test_asset_staging_rejects_paths_inside_source(self):
+        source, staged = self.asset_fixture()
+        original = self.asset_snapshot(source)
+        for destination in (source / "nested", staged.parent / "source/../source/nested"):
+            with self.subTest(destination=destination), self.assertRaises(ValueError):
+                package_assets.stage_assets(source, destination, "1.2.3.4")
+        self.assertEqual(self.asset_snapshot(source), original)
+        self.assertFalse((source / "nested").exists())
+
+    def test_asset_staging_rejects_symlink_escapes(self):
+        source, staged = self.asset_fixture()
+        outside = staged.parent / "outside"
+        outside.write_bytes(b"unchanged")
+        (source / "workspace.js").unlink()
+        (source / "workspace.js").symlink_to(outside)
+        with self.assertRaises(ValueError):
+            package_assets.stage_assets(source, staged, "1.2.3.4")
+        self.assertFalse(staged.exists())
+        self.assertEqual(outside.read_bytes(), b"unchanged")
+        (source / "workspace.js").unlink()
+        shutil.copyfile(MANIFEST.with_name("workspace.js"), source / "workspace.js")
+        original = self.asset_snapshot(source)
+        staged.symlink_to(source, target_is_directory=True)
+        with self.assertRaises(FileExistsError):
+            package_assets.stage_assets(source, staged, "1.2.3.4")
+        self.assertEqual(self.asset_snapshot(source), original)
+
+    def test_asset_staging_rejects_noncanonical_sources_and_asset_collisions(self):
+        source, staged = self.asset_fixture()
+        for name, content in (
+                ("manifest.json", json.dumps({"background": {"service_worker": "../escape"}})),
+                ("background.js", 'importScripts("../escape")'),
+                ("workspace-1-2-3-4.js", "unexpected workspace"),
+                ("background-1-2-3-4.js", "unexpected worker")):
+            path = source / name
+            previous = path.read_bytes() if path.exists() else None
+            path.write_text(content)
+            original = self.asset_snapshot(source)
+            with self.subTest(name=name), self.assertRaises((ValueError, FileExistsError)):
+                package_assets.stage_assets(source, staged, "1.2.3.4")
+            self.assertFalse(staged.exists())
+            self.assertEqual(self.asset_snapshot(source), original)
+            if previous is None:
+                path.unlink()
+            else:
+                path.write_bytes(previous)
 
     def test_runai_uses_installed_extension_and_registers_native_host(self):
         launcher = RUNAI.read_text()
@@ -212,14 +324,21 @@ for (const [page, link, expected] of cases) {{
         self.assertIn('state="$output/build-state.json"', packager)
         self.assertIn('source_hash=$(', packager)
         self.assertIn('if [[ $source_hash != "$previous_hash"', packager)
-        self.assertIn('manifest["version"] = version', packager)
-        self.assertIn('versioned_background = background.replace(', packager)
-        self.assertIn("f'importScripts(\"{versioned_workspace}\")'", packager)
-        self.assertIn('background_path.unlink()', packager)
-        self.assertIn('(root / "workspace.js").unlink()', packager)
-        self.assertIn('manifest["background"]["service_worker"] = versioned_worker', packager)
-        self.assertIn('versioned_workspace = f"workspace-{suffix}.js"', packager)
-        self.assertIn('versioned_worker = f"background-{suffix}.js"', packager)
+        helper = ASSET_HELPER.read_text()
+        self.assertIn(
+            'python3 "$root/package_assets.py" "$extension" "$work/extension" "$version"',
+            packager)
+        self.assertIn('manifest["version"] = version', helper)
+        self.assertIn('versioned_background = background.replace(', helper)
+        self.assertIn("f'importScripts(\"{versioned_workspace}\")'", helper)
+        self.assertIn('(destination / "background.js").unlink()', helper)
+        self.assertIn('(destination / "workspace.js").unlink()', helper)
+        self.assertIn('manifest["background"]["service_worker"] = versioned_worker', helper)
+        self.assertIn('versioned_workspace = f"workspace-{suffix}.js"', helper)
+        self.assertIn('versioned_worker = f"background-{suffix}.js"', helper)
+        self.assertIn('--pack-extension-key="$key"', packager)
+        self.assertIn('header[:4] != b"Cr24"', packager)
+        self.assertIn('if version != 3:', packager)
         self.assertIn('"external_crx": "$output/extension.crx"', packager)
         self.assertIn('"external_version": "$version"', packager)
         self.assertNotIn("<gupdate", packager)
