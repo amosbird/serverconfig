@@ -237,11 +237,9 @@ PY
         "${tstart_ssh_port_arg[@]}" \
         --abush-web-forward-port "$ABUSH_WEB_FORWARD_PORT"
 
-    # LogLevel=ERROR drops INFO "channel N: open failed: connect failed"
-    # from forwards whose target is down. Auth and host-key errors still show.
     kitty "${kitty_args[@]}" -o allow_remote_control=yes --listen-on "unix:$KITTY_SOCK" \
         -T remote ssh -t "${ssh_options[@]}" -o ExitOnForwardFailure=yes \
-        -o StreamLocalBindUnlink=no -o LogLevel=ERROR -M -S "$SSH_MASTER_CTRL" \
+        -o StreamLocalBindUnlink=no -M -S "$SSH_MASTER_CTRL" \
         -L "$browser_socket:$REMOTE_BROWSER_SOCKET" \
         -L "127.0.0.1:${ABUSH_WEB_FORWARD_PORT}:${REMOTE_ABUSH_WEB_SOCKET}" \
         -L 127.0.0.1:8123:127.0.0.1:8123 -L 127.0.0.1:57201:127.0.0.1:57201 -L 127.0.0.1:8040:127.0.0.1:8040 \
