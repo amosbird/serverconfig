@@ -545,6 +545,30 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
     }
 }
 
+function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openInTargetBrowser) {
+    chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
+        const ownedFailure = () => ({owned: true, ok: false, route: false});
+        const respondAfterReady = async () => {
+            try {
+                await ready();
+                const owned = workspaces.ownsWindow(sender.tab?.windowId);
+                if (message.query === "abush_owned_window") return {owned, ok: true, route: false};
+                if (!message.url) return {owned, ok: false, route: false};
+                if (owned) return {owned: true, ok: true, route: false};
+                return await new Promise(resolve => {
+                    open(message.url, message.sourceUrl || sender.tab?.url || "", response => {
+                        resolve({...response, owned: false, route: response.ok});
+                    });
+                });
+            } catch (_) {
+                return ownedFailure();
+            }
+        };
+        respondAfterReady().then(sendResponse, () => sendResponse(ownedFailure()));
+        return true;
+    });
+}
+
 if (typeof chrome !== "undefined") {
     configureSiteLanguages();
     const workspaces = workspace();
@@ -556,7 +580,8 @@ if (typeof chrome !== "undefined") {
     dispatcher().onEvent(message => {
         if (message.service === "native_host") {
             if (message.event === "bootstrap") {
-                workspaceReady().then(() => workspaces.acceptNativeBootstrap(message.payload))
+                workspaces.acceptNativeBootstrap(message.payload)
+                    .then(() => workspaceReady())
                     .catch(error => notifyFailure(error.message ||
                         "Unable to accept native browser bootstrap"));
                 return;
@@ -640,25 +665,11 @@ if (typeof chrome !== "undefined") {
         }
     });
 
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        if (message.query === "abush_owned_window") {
-            sendResponse({owned: workspace().ownsWindow(sender.tab?.windowId)});
-            return;
-        }
-        if (!message.url) return;
-        if (workspace().ownsWindow(sender.tab?.windowId)) {
-            sendResponse({ok: true, route: false});
-            return;
-        }
-        openInTargetBrowser(message.url, message.sourceUrl || sender.tab?.url || "", response => {
-            sendResponse({...response, route: response.ok});
-        });
-        return true;
-    });
+    registerRuntimeMessageRouter(chrome, workspaces, workspaceReady);
 }
 
 if (typeof module !== "undefined") {
     module.exports = {NativeDispatcher, ENVELOPE_VERSION, workspace,
         connectWorkspaceAfterRestore, createWorkspaceInitializer,
-        registerWorkspaceWindowListeners};
+        registerWorkspaceWindowListeners, registerRuntimeMessageRouter};
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import io
 import json
 import pathlib
 import subprocess
@@ -143,7 +144,7 @@ for (const [page, link, expected] of cases) {{
 
     def test_background_routes_content_script_messages(self):
         background = CONTENT.with_name("background.js").read_text()
-        self.assertIn("chrome.runtime.onMessage.addListener", background)
+        self.assertIn("runtime.onMessage.addListener", background)
         self.assertIn("chrome.notifications.create", background)
 
     def test_background_routes_ensure_and_action_is_peer_lifecycle_noop(self):
@@ -389,6 +390,48 @@ class NativeHostTest(unittest.TestCase):
         binding.bind_workspace_window.assert_called_once_with(payload)
         binding.verify_workspace_window.assert_called_once_with(cleanup)
         binding.clear_workspace_window.assert_called_once_with(cleanup)
+
+    def test_native_host_request_failures_do_not_stop_later_requests(self):
+        class Broker:
+            def handle_request(self, message):
+                operation = message["operation"]
+                if operation == "memory":
+                    raise MemoryError("fatal")
+                if operation != "ok":
+                    raise RuntimeError(f"{operation} failed")
+                return {"operation": operation}
+
+            def close(self):
+                pass
+
+        native = self.host.NativeBrokerHost(
+            input_stream=io.BytesIO(), output_stream=io.BytesIO(),
+            ordinary_open_factory=None, browser={
+                "pid": 1, "starttime": "1", "profile": pathlib.Path(),
+                "browser_boot_id": "test-boot",
+            })
+        native.broker = Broker()
+        for operation in ("bind_x11_window", "verify_x11_window", "clear_x11_window",
+                          "prepare"):
+            native._respond({
+                "version": 1, "id": operation, "service": "test",
+                "operation": operation, "payload": {},
+            })
+            failure = native.outbound.get_nowait()
+            self.assertFalse(failure["ok"])
+            self.assertIn("failed", failure["error"])
+            native._respond({
+                "version": 1, "id": f"{operation}-next", "service": "test",
+                "operation": "ok", "payload": {},
+            })
+            success = native.outbound.get_nowait()
+            self.assertTrue(success["ok"])
+            self.assertEqual(success["payload"], {"operation": "ok"})
+        with self.assertRaises(MemoryError):
+            native._respond({
+                "version": 1, "id": "fatal", "service": "test",
+                "operation": "memory", "payload": {},
+            })
 
     def test_external_link_open_waits_for_terminal_ordinary_completion(self):
         class Ordinary:

@@ -13,7 +13,7 @@ const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX,
     MARKER_IDS} = require(
     "../chromium/external-links/extension/workspace.js");
 const {NativeDispatcher, connectWorkspaceAfterRestore, createWorkspaceInitializer,
-    registerWorkspaceWindowListeners} = require(
+    registerWorkspaceWindowListeners, registerRuntimeMessageRouter} = require(
     "../chromium/external-links/extension/background.js");
 
 const fence = {executor_id: "executor", epoch: 1};
@@ -346,9 +346,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         }
         if (operation === "topology_response_consumed") {
             return {
-                accepted: true,
                 request_id: payload.request_id,
                 report_id: payload.report_id,
+                executor_fence: payload.executor_fence,
                 response_delivery_id: payload.response_delivery_id,
             };
         }
@@ -364,9 +364,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         }
         if (operation === "retire_managed_page_ack_consumed") {
             return {
-                accepted: true,
                 request_id: payload.request_id,
                 retire_id: payload.retire_id,
+                executor_fence: payload.executor_fence,
                 response_delivery_id: payload.response_delivery_id,
             };
         }
@@ -1255,6 +1255,47 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const ready = deferred("runtime ownership readiness");
+        let listener;
+        let owned = false;
+        const chromeApi = {runtime: {onMessage: {
+            addListener: value => { listener = value; },
+        }}};
+        registerRuntimeMessageRouter(chromeApi, {
+            ownsWindow: () => owned,
+        }, () => ready.promise, (_url, _source, callback) => callback({ok: true}));
+        const responses = [];
+        assert.equal(listener({query: "abush_owned_window"}, {tab: {windowId: 42}},
+            value => responses.push(value)), true);
+        assert.equal(listener({url: "https://outside.test/"}, {tab: {windowId: 42}},
+            value => responses.push(value)), true);
+        await Promise.resolve();
+        assert.deepEqual(responses, [], "runtime messages must wait for restored ownership");
+        owned = true;
+        ready.resolve();
+        await waitFor(() => responses.length === 2, "deferred runtime responses");
+        assert.deepEqual(responses, [
+            {owned: true, ok: true, route: false},
+            {owned: true, ok: true, route: false},
+        ]);
+    }
+    {
+        beginCase();
+        let listener;
+        const chromeApi = {runtime: {onMessage: {
+            addListener: value => { listener = value; },
+        }}};
+        registerRuntimeMessageRouter(chromeApi, {ownsWindow: () => false},
+            () => Promise.reject(new Error("restore failed")));
+        const response = await new Promise(resolve => {
+            assert.equal(listener({url: "https://outside.test/"}, {tab: {windowId: 42}},
+                resolve), true);
+        });
+        assert.deepEqual(response, {owned: true, ok: false, route: false},
+            "failed readiness must conservatively suppress routing");
+    }
+    {
+        beginCase();
         const {executor, calls} = fixture();
         const expectedPage = {
             window: {
@@ -1743,8 +1784,46 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const record = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative", connectionId: "c_12345678",
+            executorFence: fence, logicalWindowId, logicalPageId, windowGeneration: 3,
+            pageGeneration: 5, windowId: 10, x11WindowId: 10010,
+            statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "e".repeat(32), connectionDisplayName: "local",
+        };
+        const localState = {abushManagedCleanupBatch: {
+            version: 1, batch_id: "restored-managed-cleanup",
+            source_boot: "previous-browser-boot", phase: "records_removed",
+            records: [{key: `r_12345678\0principal-one`, record, phase: "converging"}],
+        }};
+        const restoredPopup = {
+            windowId: 77, tabIds: [770, 771, 772], nonce: record.nonce,
+            businessUrl: "https://managed-business.test/",
+        };
+        const {executor, calls} = fixture([], [], 1, false, restoredPopup, localState);
+        localState.abushOwnedMarkers = {[record.nonce]: {
+            version: 2, nonce: record.nonce,
+            window_id: record.windowId, status_tab_ids: record.statusTabIds,
+            page_tab_id: record.pageTabId, xid: record.x11WindowId,
+            logical_window_id: logicalWindowId, logical_page_id: logicalPageId,
+            window_generation: 3, page_generation: 5,
+            binding: executor.bindingPayload(record),
+        }};
+        await executor.restoreManagedCleanupBatch();
+        assert(calls.some(call => call[0] === "bind_x11_window"),
+            "cross-boot cleanup must bind and verify the current X11 window");
+        assert(calls.some(call => call[0] === "removeWindow" && call[1] === 77),
+            "restored managed window with entirely new IDs must be cleaned");
+        assert.equal(calls.some(call => call[0] === "removeWindow" && call[1] === 1), false,
+            "similar ordinary windows must remain untouched");
+        assert.equal(localState.abushManagedCleanupBatch, false);
+    }
+    {
+        beginCase();
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_12345678",
             executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
-            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210, nonce: "0".repeat(32),
+            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "0".repeat(32),
         };
         const {executor, calls} = fixture([record]);
         await executor.restore();
@@ -2196,6 +2275,34 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(localState.abushColdOrdinaryLedger[0].completion, "applied",
             "an exact live URL must reconcile a recovered effect as applied");
         assert.equal(calls.filter(call => call[0] === "ordinary_open_completion").length, 1);
+    }
+    {
+        beginCase();
+        const payload = {
+            version: 1, request_id: "reconnected-effect", operation: "ordinary_open",
+            deadline_ms: Date.now() + 30000, url: "https://reconnected-once.test/", focus: true,
+        };
+        const localState = {abushColdOrdinaryLedger: [{
+            version: 1, request_id: payload.request_id,
+            url_hash: await executorHash(payload.url), deadline_ms: payload.deadline_ms,
+            phase: "effect_started", completion: null,
+            browser_boot_id: "test-browser-boot", target_window_id: 1, target_tab_id: 2000,
+        }]};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        const tabs = await executor.chrome.tabs.query({windowId: 1});
+        tabs[0].url = payload.url;
+        executor.restoreStarted = true;
+        executor.ready = Promise.resolve();
+        const bootstrap = {
+            browser_boot_id: "test-browser-boot", browser_pid: 42,
+            browser_starttime: "123", ordinary_launch_leases: [payload],
+        };
+        await executor.acceptNativeBootstrap(bootstrap);
+        await executor.acceptNativeBootstrap(bootstrap);
+        assert.equal(calls.filter(call => call[0] === "ordinary_open_completion").length, 1,
+            "reconnected bootstrap must reconcile an effect-started lease exactly once");
+        assert.equal(calls.some(call => call[0] === "update" && call[2]?.url === payload.url), false,
+            "reconnected effect-started lease must not repeat URL mutation");
     }
     {
         beginCase();
@@ -3218,12 +3325,12 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             call[0] === "retire_managed_page_completion").length, 1);
         assert.equal(calls.filter(call =>
             call[0] === "retire_managed_page_ack_consumed").length, 1);
-        assert.deepEqual(executor.retireAckReceived.size, 0);
+        assert.deepEqual(executor.retireResponseReceived.size, 0);
         assert.equal(await executor.retireManagedPage(payload), true,
             "duplicate retire replay must converge without waiting");
         assert.equal(calls.filter(call =>
-            call[0] === "retire_managed_page_completion").length, 2,
-            "a replay after consumption must complete the replayed daemon command");
+            call[0] === "retire_managed_page_completion").length, 1,
+            "a locally confirmed duplicate retire must remain idempotent");
     }
     {
         beginCase();
@@ -3285,9 +3392,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             }
             if (operation === "retire_managed_page_ack_consumed") {
                 return {
-                    accepted: true,
                     request_id: value.request_id,
                     retire_id: value.retire_id,
+                    executor_fence: value.executor_fence,
                     response_delivery_id: value.response_delivery_id,
                 };
             }
@@ -3404,8 +3511,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             origin_executor_fence: fence, completion,
         };
         const localState = {abushRetireLedger: [{
-            version: 7, phase: "ack_received", identity,
+            version: 8, phase: "response_received", identity,
             delivery: identity, completion, ack: oldAck,
+            ack_connection_id: identity.connection_id,
         }]};
         const {executor, calls} = fixture([], [], 0, false, null, localState);
         await executor.restoreRetireLedger();
@@ -3415,7 +3523,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             principal_id: identity.principal_id, executor_fence: replayFence,
             connected: true,
         });
-        assert.equal(localState.abushRetireLedger[0].phase, "ack_received",
+        assert.equal(localState.abushRetireLedger[0].phase, "response_received",
             "stale ACK delivery must remain durable after fence rotation");
         assert.equal(calls.some(call => call[0] ===
             "retire_managed_page_ack_consumed"), false,
@@ -3432,7 +3540,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "current-fence ACK replay must consume durable retire state");
         const consumed = calls.find(call => call[0] ===
             "retire_managed_page_ack_consumed")[1];
-        assert.equal(consumed.request_id, replayed.request_id);
+        assert.notEqual(consumed.request_id, replayed.request_id,
+            "consumption must use a distinct durable request ID");
         assert.equal(consumed.response_delivery_id, oldAck.response_delivery_id);
         assert.deepEqual(consumed.executor_fence, replayFence);
     }
@@ -3520,9 +3629,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             }
             if (operation === "topology_response_consumed") {
                 return {
-                    accepted: true,
                     request_id: payload.request_id,
                     report_id: payload.report_id,
+                    executor_fence: payload.executor_fence,
                     response_delivery_id: payload.response_delivery_id,
                 };
             }
@@ -3560,7 +3669,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(localState.abushTopologyOutbox, [],
             "replayed rejected topology responses must be consumed exactly once");
         const consumed = calls.find(call => call[0] === "topology_response_consumed")[1];
-        assert.equal(consumed.request_id, replayed.request_id);
+        assert.notEqual(consumed.request_id, replayed.request_id,
+            "topology consumption must use a distinct durable request ID");
         const invalidReport = {...report, report_id: "unknown-rejected-report"};
         executor.topologyOutbox.set(invalidReport.report_id, invalidReport);
         const invalid = {...replayed,
@@ -3603,7 +3713,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(localState.abushTopologyOutbox, [],
             "daemon replay must consume the canonical result after native restart");
         const consumed = calls.find(call => call[0] === "topology_response_consumed")[1];
-        assert.equal(consumed.request_id, "daemon-replay-delivery");
+        assert.notEqual(consumed.request_id, "daemon-replay-delivery",
+            "daemon replay consumption must use its durable request ID");
         assert.deepEqual(consumed.executor_fence, replayFence);
     }
     {

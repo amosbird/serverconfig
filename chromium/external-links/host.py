@@ -1322,6 +1322,8 @@ class RemotePeer:
         self.pending_cancellations = {}
         self.topology_requests = {}
         self.retire_requests = {}
+        self.topology_consumed_requests = {}
+        self.retire_consumed_requests = {}
         self.transport_lock = threading.RLock()
         self.topology_timeout = 15
         self.reader = None
@@ -1713,8 +1715,14 @@ class RemotePeer:
         if normalized_type == "topology_report_response":
             self._handle_topology_report_response(message)
             return
+        if normalized_type == "topology_response_consumed_ack":
+            self._handle_topology_response_consumed_ack(message)
+            return
         if normalized_type == "retire_managed_page_ack":
             self._handle_retire_managed_page_ack(message)
+            return
+        if normalized_type == "retire_managed_page_ack_consumed_ack":
+            self._handle_retire_managed_page_ack_consumed_ack(message)
             return
         raise ValueError("unknown peer message")
 
@@ -1830,19 +1838,47 @@ class RemotePeer:
         if not all(isinstance(value, str) and value for value in (
                 request_id, report_id, delivery_id)) or fence != self.executor_fence:
             raise ValueError("invalid topology response consumption")
-        self.send({
+        message = {
             "type": "topology_response_consumed",
             "request_id": request_id,
             "report_id": report_id,
             "executor_fence": fence,
             "response_delivery_id": delivery_id,
-        })
-        return {
-            "accepted": True,
-            "request_id": request_id,
+        }
+        identity = {
             "report_id": report_id,
+            "fence": fence,
             "response_delivery_id": delivery_id,
         }
+        return self._transport_request(
+            self.topology_consumed_requests,
+            message,
+            identity,
+            self.topology_timeout,
+            "topology consumption acknowledgement timed out",
+        )
+
+    def _handle_topology_response_consumed_ack(self, message):
+        fields = {"type", "request_id", "report_id", "executor_fence",
+                  "response_delivery_id"}
+        if not self._exact_fields(message, fields):
+            raise ValueError("invalid topology response consumed acknowledgement")
+        request_id = message.get("request_id")
+        report_id = message.get("report_id")
+        fence = message.get("executor_fence")
+        delivery_id = message.get("response_delivery_id")
+        if not all(isinstance(value, str) and value for value in (
+                request_id, report_id, delivery_id)) or not self._valid_executor_fence(fence) or \
+                fence != self.executor_fence:
+            raise ValueError("invalid topology response consumed acknowledgement correlation")
+        response_message = {key: message[key] for key in fields if key != "type"}
+        if not self._resolve_transport_response(
+                self.topology_consumed_requests,
+                request_id,
+                {"report_id": report_id, "fence": fence,
+                 "response_delivery_id": delivery_id},
+                response_message):
+            raise ValueError("uncorrelated topology response consumed acknowledgement")
 
     def complete_retire(
             self, request_id, retire_id, fence, origin_fence, completion, timeout=None):
@@ -1904,19 +1940,47 @@ class RemotePeer:
         if not all(isinstance(value, str) and value for value in (
                 request_id, retire_id, delivery_id)) or fence != self.executor_fence:
             raise ValueError("invalid retire acknowledgement consumption")
-        self.send({
+        message = {
             "type": "retire_managed_page_ack_consumed",
             "request_id": request_id,
             "retire_id": retire_id,
             "executor_fence": fence,
             "response_delivery_id": delivery_id,
-        })
-        return {
-            "accepted": True,
-            "request_id": request_id,
+        }
+        identity = {
             "retire_id": retire_id,
+            "fence": fence,
             "response_delivery_id": delivery_id,
         }
+        return self._transport_request(
+            self.retire_consumed_requests,
+            message,
+            identity,
+            self.topology_timeout,
+            "retire consumption acknowledgement timed out",
+        )
+
+    def _handle_retire_managed_page_ack_consumed_ack(self, message):
+        fields = {"type", "request_id", "retire_id", "executor_fence",
+                  "response_delivery_id"}
+        if not self._exact_fields(message, fields):
+            raise ValueError("invalid retire consumed acknowledgement")
+        request_id = message.get("request_id")
+        retire_id = message.get("retire_id")
+        fence = message.get("executor_fence")
+        delivery_id = message.get("response_delivery_id")
+        if not all(isinstance(value, str) and value for value in (
+                request_id, retire_id, delivery_id)) or not self._valid_executor_fence(fence) or \
+                fence != self.executor_fence:
+            raise ValueError("invalid retire consumed acknowledgement correlation")
+        response_message = {key: message[key] for key in fields if key != "type"}
+        if not self._resolve_transport_response(
+                self.retire_consumed_requests,
+                request_id,
+                {"retire_id": retire_id, "fence": fence,
+                 "response_delivery_id": delivery_id},
+                response_message):
+            raise ValueError("uncorrelated retire consumed acknowledgement")
 
     @classmethod
     def _valid_command(cls, command):
@@ -2004,6 +2068,8 @@ class RemotePeer:
             transport_states = [
                 *self.topology_requests.values(),
                 *self.retire_requests.values(),
+                *self.topology_consumed_requests.values(),
+                *self.retire_consumed_requests.values(),
             ]
         for state in transport_states:
             state["done"].set()
@@ -2354,6 +2420,7 @@ class NativeBrokerHost:
         self.writer = threading.Thread(target=self._write_loop, daemon=True)
         self.request_workers = set()
         self.request_workers_lock = threading.Lock()
+        self.fatal_error = None
 
     def bootstrap_event(self):
         return event("bootstrap", "native_host", {
@@ -2388,8 +2455,10 @@ class NativeBrokerHost:
         try:
             payload = self.broker.handle_request(message)
             self.outbound.put(response(request_id, payload=payload))
-        except (EnvelopeError, OSError, TimeoutError, ValueError,
-                WebSocketException) as error:
+        except MemoryError as error:
+            self.fatal_error = error
+            raise
+        except Exception as error:
             self.outbound.put(response(request_id, error=error))
         finally:
             with self.request_workers_lock:
@@ -2402,7 +2471,8 @@ class NativeBrokerHost:
         operation = message.get("operation")
         return (service == "external_links" and operation == "open") or \
             (service == "abush_browser" and operation in {
-                "managed_page_moved_outside", "retire_managed_page_completion",
+                "managed_page_moved_outside", "topology_response_consumed",
+                "retire_managed_page_completion", "retire_managed_page_ack_consumed",
             })
 
     def _dispatch(self, message):
@@ -2422,7 +2492,7 @@ class NativeBrokerHost:
         self.broker.refresh()
         self.refresh_thread.start()
         try:
-            while self.writer_error is None:
+            while self.writer_error is None and self.fatal_error is None:
                 message = read_message(self.input)
                 if message is None:
                     return
@@ -2440,6 +2510,8 @@ class NativeBrokerHost:
             self.broker.close()
             self.outbound.put(None)
             self.writer.join(timeout=2)
+        if self.fatal_error is not None:
+            raise self.fatal_error
 
 
 def main():

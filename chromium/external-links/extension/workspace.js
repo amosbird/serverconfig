@@ -88,12 +88,16 @@ class WorkspaceExecutor {
         this.retirePending = new Map();
         this.retireEffectStarted = new Map();
         this.retireCompleted = new Map();
-        this.retireAckReceived = new Map();
+        this.retireResponseReceived = new Map();
+        this.retireConsumedPending = new Map();
+        this.retireServerConfirmed = new Map();
         this.retireLegacyCleanup = new Map();
+        this.retireConfirmedIdentities = new Map();
         this.remoteAuthorities = new Map();
         this.retireRecoveryReady = false;
         this.retireRecoveries = [];
         this.retireRecoveryState = null;
+        this.retireFlushTail = Promise.resolve();
         this.nativeMutationTail = Promise.resolve();
         this.advisoryErrors = [];
         this.notifiedAdvisoryErrors = new WeakSet();
@@ -111,6 +115,8 @@ class WorkspaceExecutor {
         this.closingManagedWindows = new Set();
         this.browserBootId = null;
         this.bootstrapLeases = new Map();
+        this.bootstrapLeaseTail = Promise.resolve();
+        this.restoreStarted = false;
         this.bootstrapResolved = false;
         this.bootstrapReady = new Promise((resolve, reject) => {
             this.resolveBootstrap = resolve;
@@ -162,6 +168,20 @@ class WorkspaceExecutor {
             this.bootstrapResolved = true;
             this.resolveBootstrap();
         }
+        if (this.restoreStarted) {
+            await this.ready;
+            await this.resumeBootstrapLeases();
+        }
+    }
+
+    resumeBootstrapLeases() {
+        const resume = this.bootstrapLeaseTail.catch(() => {}).then(async () => {
+            if (this.bootstrapLeases.size === 0) return;
+            await this.stageBootstrapLeaseIfNeeded();
+            await this.executeBootstrapLeases();
+        });
+        this.bootstrapLeaseTail = resume;
+        return resume;
     }
 
     async waitForNativeBootstrap() {
@@ -170,6 +190,8 @@ class WorkspaceExecutor {
     }
 
     restoreWhenReady() {
+        if (this.restoreStarted) return this.ready;
+        this.restoreStarted = true;
         this.ready = this.restore();
         return this.ready;
     }
@@ -701,6 +723,7 @@ class WorkspaceExecutor {
             page,
             phase: "pending",
             response: null,
+            consumed_request_id: null,
             cleanup: {
                 phase: "queued",
                 nonce: record.nonce,
@@ -774,7 +797,7 @@ class WorkspaceExecutor {
             remote_key: report.remote_key,
             connection_id: report.connection_id,
             principal_id: report.principal_id,
-            request_id: report.request_id,
+            request_id: report.consumed_request_id,
             report_id: report.report_id,
             executor_fence: report.executor_fence,
             response_delivery_id: report.response.response_delivery_id,
@@ -783,15 +806,14 @@ class WorkspaceExecutor {
 
     async recordTopologyResponse(key, report, response) {
         const current = this.topologyOutbox.get(key);
-        if (current?.phase === "response_received") {
+        if (current && ["response_received", "consumed_pending",
+            "server_confirmed"].includes(current.phase)) {
             const sameCanonical = current.response.response_delivery_id ===
                 response.response_delivery_id &&
-                sameRef(current.response.result, response.result);
+                sameRef(current.response.result, response.result) &&
+                sameRef(current.response.executor_fence, response.executor_fence);
             if (!sameCanonical) throw new Error("conflicting canonical topology response");
-            if (current.response.request_id === response.request_id &&
-                    sameRef(current.response.executor_fence, response.executor_fence)) {
-                return current;
-            }
+            return current;
         } else if (current && !sameRef(current, report)) {
             throw new Error("stale topology response delivery");
         }
@@ -801,34 +823,57 @@ class WorkspaceExecutor {
             executor_fence: response.executor_fence,
             phase: "response_received",
             response,
+            consumed_request_id: null,
         };
         this.topologyOutbox.set(key, received);
         await this.persistTopologyOutbox();
         return received;
     }
 
-    async consumeTopologyResponse(key, report) {
-        if (this.topologyOutbox.get(key) !== report) return;
-        let confirmation;
-        try {
-            confirmation = await this.nativeRequest(
-                "abush_browser", "topology_response_consumed",
-                this.topologyConsumedPayload(report));
-        } catch (error) {
-            error.consumptionUncertain = error?.nativeDispatch !== "not_sent";
-            throw error;
+    async consumeTopologyResponse(key, original) {
+        if (this.topologyOutbox.get(key) !== original) return;
+        let report = original;
+        if (report.phase === "response_received") {
+            report = {...report, phase: "consumed_pending",
+                consumed_request_id: crypto.randomUUID()};
+            this.topologyOutbox.set(key, report);
+            await this.persistTopologyOutbox();
         }
-        if (!exactFields(confirmation,
-            ["accepted", "request_id", "report_id", "response_delivery_id"]) ||
-                confirmation.accepted !== true ||
-                confirmation.request_id !== report.request_id ||
+        if (report.phase !== "consumed_pending" ||
+                typeof report.consumed_request_id !== "string" ||
+                !report.consumed_request_id) {
+            throw new Error("managed topology consumption has no durable request ID");
+        }
+        const confirmation = await this.nativeRequest(
+            "abush_browser", "topology_response_consumed",
+            this.topologyConsumedPayload(report));
+        if (!exactFields(confirmation, ["request_id", "report_id", "executor_fence",
+            "response_delivery_id"]) ||
+                confirmation.request_id !== report.consumed_request_id ||
                 confirmation.report_id !== report.report_id ||
+                !sameRef(confirmation.executor_fence, report.executor_fence) ||
                 confirmation.response_delivery_id !== report.response.response_delivery_id) {
             throw new Error("managed topology consumption was not confirmed");
         }
         if (this.topologyOutbox.get(key) !== report) return;
-        this.topologyOutbox.delete(key);
+        const confirmed = {...report, phase: "server_confirmed"};
+        this.topologyOutbox.set(key, confirmed);
         await this.persistTopologyOutbox();
+        await this.removeConfirmedTopology(key, confirmed);
+    }
+
+    async removeConfirmedTopology(key, confirmed) {
+        if (this.topologyOutbox.get(key) !== confirmed ||
+                confirmed.phase !== "server_confirmed") return;
+        await this.persistTopologyOutbox();
+        if (this.topologyOutbox.get(key) !== confirmed) return;
+        this.topologyOutbox.delete(key);
+        try {
+            await this.persistTopologyOutbox();
+        } catch (error) {
+            this.topologyOutbox.set(key, confirmed);
+            throw error;
+        }
     }
 
     async flushTopologyOutbox() {
@@ -840,7 +885,11 @@ class WorkspaceExecutor {
                 if (!this.topologyOutbox.has(key)) continue;
                 let report = this.topologyOutbox.get(key) || original;
                 try {
-                    if (report.phase !== "response_received") {
+                    if (report.phase === "server_confirmed") {
+                        await this.removeConfirmedTopology(key, report);
+                        continue;
+                    }
+                    if (!["response_received", "consumed_pending"].includes(report.phase)) {
                         report = {...report, request_id: crypto.randomUUID(), phase: "pending"};
                         this.topologyOutbox.set(key, report);
                         await this.persistTopologyOutbox();
@@ -855,13 +904,7 @@ class WorkspaceExecutor {
                     await this.consumeTopologyResponse(key, report);
                 } catch (error) {
                     const current = this.topologyOutbox.get(key);
-                    if (current && current.phase === "response_received" &&
-                            report.phase !== "response_received") {
-                        report = current;
-                    }
-                    if (report.phase === "response_received" && error.consumptionUncertain) {
-                        report = {...report, phase: "pending", response: null};
-                    }
+                    if (current) report = current;
                     this.topologyOutbox.set(key, report);
                     try {
                         await this.persistTopologyOutbox();
@@ -925,11 +968,15 @@ class WorkspaceExecutor {
                 "request_id", "executor_fence", "page"]);
             const current = exactFields(report, ["remote_key", "connection_id", "principal_id",
                 "report_id", "request_id", "executor_fence", "origin_executor_fence",
+                "daemon_instance_id", "page", "cleanup", "phase", "response",
+                "consumed_request_id"]);
+            const previousV7 = exactFields(report, ["remote_key", "connection_id", "principal_id",
+                "report_id", "request_id", "executor_fence", "origin_executor_fence",
                 "daemon_instance_id", "page", "cleanup", "phase", "response"]);
             const prePhaseV7 = exactFields(report, ["remote_key", "connection_id", "principal_id",
                 "report_id", "request_id", "executor_fence", "origin_executor_fence",
                 "daemon_instance_id", "page", "cleanup"]);
-            if ((legacyV6 || current || prePhaseV7) && validPageRef(report.page) &&
+            if ((legacyV6 || current || previousV7 || prePhaseV7) && validPageRef(report.page) &&
                     validFence(report.executor_fence) &&
                     [report.remote_key, report.connection_id, report.principal_id,
                         report.request_id].every(value => typeof value === "string" && value)) {
@@ -941,12 +988,25 @@ class WorkspaceExecutor {
                     cleanup: null,
                     phase: "pending",
                     response: null,
-                } : prePhaseV7 ? {...report, phase: "pending", response: null} : report;
-                const validResponse = restored.phase !== "response_received" ||
-                    this.validTopologyResponse(restored.response, restored);
+                    consumed_request_id: null,
+                } : prePhaseV7 ? {...report, phase: "pending", response: null,
+                    consumed_request_id: null} : previousV7 ? {...report,
+                    consumed_request_id: report.phase === "response_received" ?
+                        crypto.randomUUID() : null,
+                    phase: report.phase === "response_received" ? "consumed_pending" : report.phase,
+                } : report;
+                const responsePhase = ["response_received", "consumed_pending",
+                    "server_confirmed"].includes(restored.phase);
+                const validResponse = !responsePhase ||
+                    this.validTopologyResponse(restored.response, restored, false);
+                const validConsumedRequest = ["pending", "response_received"].includes(
+                    restored.phase) ? restored.consumed_request_id === null :
+                    typeof restored.consumed_request_id === "string" &&
+                    restored.consumed_request_id.length > 0;
                 if (!validFence(restored.origin_executor_fence) ||
-                        !["pending", "response_received"].includes(restored.phase) ||
-                        !validResponse) {
+                        !["pending", "response_received", "consumed_pending",
+                            "server_confirmed"].includes(restored.phase) ||
+                        !validResponse || !validConsumedRequest) {
                     dirty = true;
                     continue;
                 }
@@ -982,6 +1042,7 @@ class WorkspaceExecutor {
                 request_id: authorityChanged ? crypto.randomUUID() : report.request_id,
                 phase: authorityChanged ? "pending" : report.phase,
                 response: authorityChanged ? null : report.response,
+                consumed_request_id: authorityChanged ? null : report.consumed_request_id,
             };
             this.topologyOutbox.set(key, next);
             changed = true;
@@ -1512,8 +1573,11 @@ class WorkspaceExecutor {
     }
 
     async stageBootstrapLeaseIfNeeded() {
+        const ledger = await this.coldOrdinaryLedger();
+        const recoverable = new Set(ledger.filter(entry =>
+            ["effect_started", "completed"].includes(entry.phase)).map(entry => entry.request_id));
         const valid = [...this.bootstrapLeases.values()].filter(lease =>
-            lease.deadline_ms > Date.now());
+            lease.deadline_ms > Date.now() && !recoverable.has(lease.request_id));
         if (valid.length === 0) return;
         if (valid.length > 1) {
             this.reportAdvisoryError(new Error(
@@ -1685,8 +1749,11 @@ class WorkspaceExecutor {
             delete payload.bootstrapContext;
             if (known?.phase === "completed") {
                 this.bootstrapLeases.delete(requestId);
-                this.rememberOrdinaryCompletion(payload, known.completion);
-                await this.ordinaryCompletion(payload, known.completion);
+                const remembered = this.completedOrdinaryOperations.get(requestId);
+                if (!remembered || remembered.completion !== known.completion) {
+                    this.rememberOrdinaryCompletion(payload, known.completion);
+                    await this.ordinaryCompletion(payload, known.completion);
+                }
                 continue;
             }
             if (known?.phase === "effect_started") {
@@ -3088,19 +3155,25 @@ class WorkspaceExecutor {
     retireLedgerSnapshot() {
         const snapshot = [];
         for (const identity of this.retirePending.values()) {
-            snapshot.push({version: 7, phase: "accepted", identity});
+            snapshot.push({version: 8, phase: "accepted", identity});
         }
         for (const entry of this.retireEffectStarted.values()) {
-            snapshot.push({version: 7, phase: "effect_started", ...entry});
+            snapshot.push({version: 8, phase: "effect_started", ...entry});
         }
         for (const entry of this.retireCompleted.values()) {
-            snapshot.push({version: 7, phase: "completed", ...entry});
+            snapshot.push({version: 8, phase: "completed", ...entry});
         }
-        for (const entry of this.retireAckReceived.values()) {
-            snapshot.push({version: 7, phase: "ack_received", ...entry});
+        for (const entry of this.retireResponseReceived.values()) {
+            snapshot.push({version: 8, phase: "response_received", ...entry});
+        }
+        for (const entry of this.retireConsumedPending.values()) {
+            snapshot.push({version: 8, phase: "consumed_pending", ...entry});
+        }
+        for (const entry of this.retireServerConfirmed.values()) {
+            snapshot.push({version: 8, phase: "server_confirmed", ...entry});
         }
         for (const [key, identity] of this.retireLegacyCleanup) {
-            snapshot.push({version: 7, phase: "legacy_cleanup", key, identity});
+            snapshot.push({version: 8, phase: "legacy_cleanup", key, identity});
         }
         return snapshot;
     }
@@ -3144,6 +3217,15 @@ class WorkspaceExecutor {
             typeof ack.response_delivery_id === "string" && ack.response_delivery_id;
     }
 
+    validRetireConsumedAck(ack, entry) {
+        return exactFields(ack, ["request_id", "retire_id", "executor_fence",
+            "response_delivery_id"]) &&
+            ack.request_id === entry.consumed_request_id &&
+            ack.retire_id === entry.ack.retire_id &&
+            sameRef(ack.executor_fence, entry.ack.executor_fence) &&
+            ack.response_delivery_id === entry.ack.response_delivery_id;
+    }
+
     async restoreRetireLedger() {
         if (!this.chrome.storage?.local) return;
         const local = await this.chrome.storage.local.get([RETIRE_LEDGER_KEY]);
@@ -3151,7 +3233,10 @@ class WorkspaceExecutor {
         const legacyCleanup = [];
         let dirty = false;
         for (const entry of entries) {
-            if (entry?.version !== 7) {
+            const legacyV7 = entry?.version === 7;
+            if (legacyV7 && ["accepted", "effect_started", "completed", "legacy_cleanup"].includes(
+                entry.phase)) dirty = true;
+            if (entry?.version !== 8 && !legacyV7) {
                 const legacy = entry?.identity?.original || entry?.identity;
                 if (this.validLegacyRetireIdentity(legacy)) {
                     const key = this.legacyRetireKey(legacy);
@@ -3182,11 +3267,38 @@ class WorkspaceExecutor {
                     this.validRetireIdentity(entry.delivery) &&
                     this.validRetireCompletion(entry.completion)) {
                 this.retireCompleted.set(identity.retire_id, entry);
-            } else if (entry.phase === "ack_received" &&
+            } else if ((entry.phase === "response_received" ||
+                    legacyV7 && entry.phase === "ack_received") &&
                     this.validRetireIdentity(entry.delivery) &&
                     this.validRetireCompletion(entry.completion) &&
-                    this.validRetireAck(entry.ack, entry)) {
-                this.retireAckReceived.set(identity.retire_id, entry);
+                    this.validRetireAck(entry.ack, entry) &&
+                    typeof (entry.ack_connection_id || entry.delivery.connection_id) === "string") {
+                const received = legacyV7 ? {...entry, version: 8,
+                    phase: "consumed_pending", consumed_request_id: crypto.randomUUID(),
+                    ack_connection_id: entry.delivery.connection_id} : entry;
+                if (received.phase === "response_received") {
+                    this.retireResponseReceived.set(identity.retire_id, received);
+                } else {
+                    this.retireConsumedPending.set(identity.retire_id, received);
+                }
+                if (legacyV7) dirty = true;
+            } else if (entry.phase === "consumed_pending" &&
+                    this.validRetireIdentity(entry.delivery) &&
+                    this.validRetireCompletion(entry.completion) &&
+                    this.validRetireAck(entry.ack, entry) &&
+                    typeof entry.ack_connection_id === "string" && entry.ack_connection_id &&
+                    typeof entry.consumed_request_id === "string" &&
+                    entry.consumed_request_id) {
+                this.retireConsumedPending.set(identity.retire_id, entry);
+            } else if (entry.phase === "server_confirmed" &&
+                    this.validRetireIdentity(entry.delivery) &&
+                    this.validRetireCompletion(entry.completion) &&
+                    this.validRetireAck(entry.ack, entry) &&
+                    typeof entry.ack_connection_id === "string" && entry.ack_connection_id &&
+                    typeof entry.consumed_request_id === "string" &&
+                    entry.consumed_request_id && this.validRetireConsumedAck(
+                        entry.consumed_ack, entry)) {
+                this.retireServerConfirmed.set(identity.retire_id, entry);
             } else {
                 dirty = true;
             }
@@ -3272,7 +3384,10 @@ class WorkspaceExecutor {
         const known = this.retirePending.get(identity.retire_id) ||
             this.retireEffectStarted.get(identity.retire_id)?.identity ||
             this.retireCompleted.get(identity.retire_id)?.identity ||
-            this.retireAckReceived.get(identity.retire_id)?.identity;
+            this.retireResponseReceived.get(identity.retire_id)?.identity ||
+            this.retireConsumedPending.get(identity.retire_id)?.identity ||
+            this.retireServerConfirmed.get(identity.retire_id)?.identity ||
+            this.retireConfirmedIdentities.get(identity.retire_id);
         if (known && !this.stableRetireMatches(known, identity)) {
             throw new Error("conflicting duplicate retire request");
         }
@@ -3280,8 +3395,14 @@ class WorkspaceExecutor {
             this.retirePending.set(identity.retire_id, identity);
             await this.persistRetireLedger();
         }
-        if (this.retireAckReceived.has(identity.retire_id)) {
-            await this.consumeRetireAck(this.retireAckReceived.get(identity.retire_id));
+        if (this.retireConfirmedIdentities.has(identity.retire_id)) return true;
+        if (this.retireServerConfirmed.has(identity.retire_id)) {
+            await this.removeConfirmedRetire(identity.retire_id);
+            return true;
+        }
+        if (this.retireResponseReceived.has(identity.retire_id) ||
+                this.retireConsumedPending.has(identity.retire_id)) {
+            await this.flushRetireLedger();
             return true;
         }
         if (this.retireEffectStarted.has(identity.retire_id)) {
@@ -3324,8 +3445,17 @@ class WorkspaceExecutor {
     }
 
     async flushRetireLedger() {
+        const flush = this.retireFlushTail.catch(() => {}).then(
+            () => this.flushRetireLedgerOnce());
+        this.retireFlushTail = flush;
+        return flush;
+    }
+
+    async flushRetireLedgerOnce() {
         const state = this.retireRecoveryState;
         if (!state) return;
+        const responseRetries = [...this.retireResponseReceived.values()];
+        const consumedRetries = [...this.retireConsumedPending.values()];
         for (const [retireId, original] of [...this.retireCompleted]) {
             if (original.identity.remote_key !== state.remote_key ||
                     original.identity.principal_id !== state.principal_id) continue;
@@ -3351,9 +3481,10 @@ class WorkspaceExecutor {
                 if (!this.validRetireAck(ack, entry)) {
                     throw new Error("retire acknowledgement was not canonical");
                 }
-                const received = {...entry, ack};
+                const received = {...entry,
+                    ack_connection_id: entry.delivery.connection_id, ack};
                 this.retireCompleted.delete(retireId);
-                this.retireAckReceived.set(retireId, received);
+                this.retireResponseReceived.set(retireId, received);
                 await this.persistRetireLedger();
                 await this.consumeRetireAck(received);
             } catch (error) {
@@ -3361,45 +3492,76 @@ class WorkspaceExecutor {
                     "retire completion remains pending acknowledgement"));
             }
         }
-        for (const entry of [...this.retireAckReceived.values()]) {
+        for (const entry of [...responseRetries, ...consumedRetries]) {
             if (entry.identity.remote_key !== state.remote_key ||
                     entry.identity.principal_id !== state.principal_id) continue;
             try {
-                await this.consumeRetireAck(entry);
+                if (this.retireResponseReceived.get(entry.identity.retire_id) === entry ||
+                        this.retireConsumedPending.get(entry.identity.retire_id) === entry) {
+                    await this.consumeRetireAck(entry);
+                }
             } catch (error) {
                 this.reportAdvisoryError(new AggregateError([error],
                     "retire acknowledgement remains pending consumption"));
             }
         }
+        for (const retireId of [...this.retireServerConfirmed.keys()]) {
+            await this.removeConfirmedRetire(retireId);
+        }
     }
 
-    async consumeRetireAck(entry) {
-        const state = this.remoteAuthorities.get(entry.identity.remote_key);
-        if (!state || state.principal_id !== entry.identity.principal_id ||
-                state.connection_id !== entry.delivery.connection_id ||
-                !sameRef(state.executor_fence, entry.ack.executor_fence)) {
+    async removeConfirmedRetire(retireId) {
+        const entry = this.retireServerConfirmed.get(retireId);
+        if (!entry) return;
+        await this.persistRetireLedger();
+        if (this.retireServerConfirmed.get(retireId) !== entry) return;
+        this.retireConfirmedIdentities.set(retireId, entry.identity);
+        while (this.retireConfirmedIdentities.size > 256) {
+            this.retireConfirmedIdentities.delete(this.retireConfirmedIdentities.keys().next().value);
+        }
+        this.retireServerConfirmed.delete(retireId);
+        try {
+            await this.persistRetireLedger();
+        } catch (error) {
+            this.retireServerConfirmed.set(retireId, entry);
+            throw error;
+        }
+    }
+
+    async consumeRetireAck(original) {
+        const state = this.remoteAuthorities.get(original.identity.remote_key);
+        if (!state || state.principal_id !== original.identity.principal_id ||
+                state.connection_id !== original.ack_connection_id ||
+                !sameRef(state.executor_fence, original.ack.executor_fence)) {
             throw new Error("retire acknowledgement has no current peer authority");
         }
+        let entry = original;
+        if (this.retireResponseReceived.get(entry.identity.retire_id) === entry) {
+            entry = {...entry, consumed_request_id: crypto.randomUUID()};
+            this.retireResponseReceived.delete(entry.identity.retire_id);
+            this.retireConsumedPending.set(entry.identity.retire_id, entry);
+            await this.persistRetireLedger();
+        }
+        if (this.retireConsumedPending.get(entry.identity.retire_id) !== entry) return;
         const confirmation = await this.nativeRequest(
             "abush_browser", "retire_managed_page_ack_consumed", {
                 remote_key: entry.identity.remote_key,
-                connection_id: entry.delivery.connection_id,
+                connection_id: entry.ack_connection_id,
                 principal_id: entry.identity.principal_id,
-                request_id: entry.ack.request_id,
+                request_id: entry.consumed_request_id,
                 retire_id: entry.ack.retire_id,
                 executor_fence: entry.ack.executor_fence,
                 response_delivery_id: entry.ack.response_delivery_id,
             });
-        if (!exactFields(confirmation,
-            ["accepted", "request_id", "retire_id", "response_delivery_id"]) ||
-                confirmation.accepted !== true ||
-                confirmation.request_id !== entry.ack.request_id ||
-                confirmation.retire_id !== entry.ack.retire_id ||
-                confirmation.response_delivery_id !== entry.ack.response_delivery_id) {
+        if (!this.validRetireConsumedAck(confirmation, entry)) {
             throw new Error("retire acknowledgement consumption was not confirmed");
         }
-        this.retireAckReceived.delete(entry.identity.retire_id);
+        if (this.retireConsumedPending.get(entry.identity.retire_id) !== entry) return;
+        const confirmed = {...entry, consumed_ack: confirmation};
+        this.retireConsumedPending.delete(entry.identity.retire_id);
+        this.retireServerConfirmed.set(entry.identity.retire_id, confirmed);
         await this.persistRetireLedger();
+        await this.removeConfirmedRetire(entry.identity.retire_id);
     }
 
     async retireManagedPageAck(payload) {
@@ -3415,28 +3577,35 @@ class WorkspaceExecutor {
             completion: payload.completion,
         };
         const entry = this.retireCompleted.get(ack.retire_id) ||
-            this.retireAckReceived.get(ack.retire_id);
+            this.retireResponseReceived.get(ack.retire_id) ||
+            this.retireConsumedPending.get(ack.retire_id);
         if (!entry || payload.remote_key !== entry.identity.remote_key ||
                 payload.principal_id !== entry.identity.principal_id ||
                 !this.validRetireAck(ack, entry, false) ||
                 (entry.ack && entry.ack.response_delivery_id !== ack.response_delivery_id)) {
             return false;
         }
+        if (entry.consumed_request_id) {
+            const pending = {
+                ...entry,
+                ack_connection_id: payload.connection_id,
+                ack,
+            };
+            this.retireConsumedPending.set(ack.retire_id, pending);
+            await this.persistRetireLedger();
+            await this.consumeRetireAck(pending);
+            return true;
+        }
         const state = this.remoteAuthorities.get(payload.remote_key);
         if (!state || state.connection_id !== payload.connection_id ||
                 !sameRef(state.executor_fence, payload.executor_fence)) return false;
         const received = {
             ...entry,
-            delivery: {
-                ...entry.delivery,
-                connection_id: payload.connection_id,
-                request_id: payload.request_id,
-                executor_fence: payload.executor_fence,
-            },
+            ack_connection_id: payload.connection_id,
             ack,
         };
         this.retireCompleted.delete(ack.retire_id);
-        this.retireAckReceived.set(ack.retire_id, received);
+        this.retireResponseReceived.set(ack.retire_id, received);
         await this.persistRetireLedger();
         await this.consumeRetireAck(received);
         return true;
@@ -4500,17 +4669,27 @@ class WorkspaceExecutor {
         }
     }
 
+    stableCleanupOwnershipMatches(ownership, record) {
+        return Boolean(ownership && ownership.version === 2 &&
+            ownership.nonce === record.nonce &&
+            ownership.logical_window_id === record.logicalWindowId &&
+            ownership.logical_page_id === record.logicalPageId &&
+            ownership.window_generation === (record.windowGeneration ?? record.generation) &&
+            ownership.page_generation === (record.pageGeneration ?? record.generation) &&
+            ownership.binding?.nonce === record.nonce &&
+            ownership.binding?.remote_key === record.remoteKey &&
+            ownership.binding?.workspace_id === record.workspaceId &&
+            ownership.binding?.generation ===
+                (record.windowGeneration ?? record.generation));
+    }
+
     async relocateCleanupBatchRecord(record) {
         if (!record || typeof record.nonce !== "string" ||
                 !STATUS_NONCE_RE.test(record.nonce)) return null;
         const ownership = await this.currentOwnedMarker(record.nonce);
-        if (ownership?.version !== 2 || ownership.nonce !== record.nonce ||
-                !Array.isArray(ownership.status_tab_ids) ||
-                ownership.status_tab_ids.length !== MARKER_IDS.length ||
-                !ownership.status_tab_ids.every(Number.isInteger) ||
-                !Number.isInteger(ownership.page_tab_id) ||
-                !Number.isInteger(ownership.window_id) || !Number.isInteger(ownership.xid) ||
-                ownership.xid <= 0 || !ownership.binding) return null;
+        if (ownership?.version !== 2 || !this.stableCleanupOwnershipMatches(ownership, record)) {
+            return null;
+        }
         const matches = [];
         const tabs = await this.chrome.tabs.query({});
         const windowIds = new Set(tabs.filter(tab => {
@@ -4539,24 +4718,36 @@ class WorkspaceExecutor {
             windowId: match.windowId,
             statusTabIds: match.statusTabIds,
             pageTabId: match.pageTabId,
-            x11WindowId: ownership.xid,
+            x11WindowId: null,
             remoteKey: ownership.binding.remote_key,
             workspaceId: ownership.binding.workspace_id,
-            windowGeneration: ownership.binding.generation,
+            windowGeneration: ownership.window_generation,
+            pageGeneration: ownership.page_generation,
             connectionDisplayName: ownership.binding.display_title,
         };
-        if (!this.savedOwnershipMatches(ownership, candidate) ||
-                !await this.isLive(candidate)) return null;
-        let verified;
+        if (!await this.isLive(candidate)) return null;
         try {
-            verified = await this.verifyCleanupX11({
-                xid: candidate.x11WindowId,
-                binding: ownership.binding,
+            await this.bind(candidate);
+            if (!await this.isLive(candidate)) {
+                throw new Error("relocated managed topology changed during X11 binding");
+            }
+            const currentOwnership = this.markerOwnership(candidate);
+            if (!this.stableCleanupOwnershipMatches(currentOwnership, record)) {
+                throw new Error("relocated managed ownership changed stable identity");
+            }
+            await this.updateOwnedMarkers(markers => {
+                markers[candidate.nonce] = currentOwnership;
             });
-        } catch (_) {
-            return null;
+            return candidate;
+        } catch (error) {
+            const cleanupErrors = [];
+            await this.clearManagedX11(candidate, cleanupErrors);
+            if (cleanupErrors.length > 0) {
+                throw new AggregateError([error, ...cleanupErrors],
+                    "relocated X11 binding could not be rolled back");
+            }
+            throw error;
         }
-        return verified ? candidate : null;
     }
 
     async restoreManagedCleanupBatch() {
@@ -4571,7 +4762,6 @@ class WorkspaceExecutor {
             if (entry.phase === "removed" || !entry.record) continue;
             let record = {...entry.record, debuggerAttached: false};
             if (crossBoot) {
-                const cleanupRecord = record;
                 let relocationError = null;
                 try {
                     record = await this.relocateCleanupBatchRecord(record);
@@ -4584,11 +4774,6 @@ class WorkspaceExecutor {
                         "managed cleanup identity could not be uniquely relocated after restart");
                     entry.phase = "pending";
                     entry.error = error.message;
-                    try {
-                        await this.recordCleanupTombstone(cleanupRecord, [error]);
-                    } catch (tombstoneError) {
-                        failures.push(tombstoneError);
-                    }
                     failures.push(error);
                     await this.persistManagedCleanupBatch(batch);
                     continue;
