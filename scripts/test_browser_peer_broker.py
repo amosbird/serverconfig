@@ -385,6 +385,47 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         finally:
             broker.close()
 
+    def test_retire_replay_updates_exact_host_command_fields(self):
+        peer = host.RemotePeer(None, {
+            "remote_key": "r_12345678", "connection_id": "c_12345678",
+        })
+        peer.principal_id = "principal-one"
+        peer.executor_fence = {"executor_id": "executor", "epoch": 2}
+        peer.broker = type("Broker", (), {"outbound": queue.Queue()})()
+        base = {
+            "type": "retire_managed_page", "request_id": "retire-old-command",
+            "retire_id": "stable-retire", "ensure_id": "stable-ensure",
+            "executor_fence": peer.executor_fence,
+            "origin_executor_fence": {"executor_id": "origin", "epoch": 1},
+            "window_id": "window", "page_id": "page",
+        }
+        peer._handle_retire_managed_page(base)
+        replay = {**base, "request_id": "retire-new-command"}
+        peer._handle_retire_managed_page(replay)
+        forwarded = peer.broker.outbound.get_nowait()["payload"]
+        forwarded = peer.broker.outbound.get_nowait()["payload"]
+        self.assertEqual(forwarded, {
+            "remote_key": "r_12345678", "connection_id": "c_12345678",
+            "principal_id": "principal-one", "request_id": "retire-new-command",
+            "retire_id": "stable-retire", "ensure_id": "stable-ensure",
+            "executor_fence": peer.executor_fence,
+            "origin_executor_fence": {"executor_id": "origin", "epoch": 1},
+            "window_id": "window", "page_id": "page",
+        })
+        sent = []
+        peer.send = sent.append
+        with self.assertRaises(TimeoutError):
+            peer.complete_retire(
+                "retire-new-command", "stable-retire", peer.executor_fence,
+                base["origin_executor_fence"], {"outcome": "already_retired"}, timeout=0.01)
+        self.assertEqual(sent, [{
+            "type": "retire_managed_page_completed",
+            "request_id": "retire-new-command", "retire_id": "stable-retire",
+            "executor_fence": peer.executor_fence,
+            "origin_executor_fence": base["origin_executor_fence"],
+            "completion": {"outcome": "already_retired"},
+        }])
+
     def test_retire_completed_ack_and_consumed_use_canonical_v7_messages(self):
         server = self.peer()
         broker = host.BrowserBroker(self.root)
@@ -401,7 +442,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "remote_key": retire["remote_key"],
                 "connection_id": retire["connection_id"],
                 "principal_id": retire["principal_id"],
-                "request_id": "retire-completion-delivery",
+                "request_id": retire["request_id"],
                 "retire_id": retire["retire_id"],
                 "executor_fence": retire["executor_fence"],
                 "origin_executor_fence": retire["origin_executor_fence"],
@@ -417,13 +458,13 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             worker.start()
             self.assertEqual(server.wait_for("retire_managed_page_completed"), {
                 "type": "retire_managed_page_completed",
-                "request_id": "retire-completion-delivery", "retire_id": "stable-retire",
+                "request_id": "retire-command-delivery", "retire_id": "stable-retire",
                 "executor_fence": server.fence, "origin_executor_fence": server.fence,
                 "completion": {"outcome": "already_retired"},
             })
             server.send({
                 "type": "retire_managed_page_ack",
-                "request_id": "retire-completion-delivery", "retire_id": "stable-retire",
+                "request_id": "retire-command-delivery", "retire_id": "stable-retire",
                 "executor_fence": server.fence, "response_delivery_id": "retire-response",
                 "origin_executor_fence": server.fence,
                 "completion": {"outcome": "already_retired"},
@@ -436,7 +477,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "connection_id": retire["connection_id"],
                 "principal_id": retire["principal_id"],
                 "request_id": "retire-consumed-request",
-                "delivery_request_id": "retire-completion-delivery",
+                "delivery_request_id": "retire-command-delivery",
                 "retire_id": "stable-retire", "executor_fence": server.fence,
                 "response_delivery_id": "retire-response",
             }
@@ -455,7 +496,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             self.assertEqual(server.wait_for("retire_managed_page_ack_consumed"), {
                 "type": "retire_managed_page_ack_consumed",
                 "request_id": "retire-consumed-request",
-                "delivery_request_id": "retire-completion-delivery",
+                "delivery_request_id": "retire-command-delivery",
                 "retire_id": "stable-retire", "executor_fence": server.fence,
                 "response_delivery_id": "retire-response",
             })

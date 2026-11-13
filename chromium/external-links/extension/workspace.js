@@ -88,6 +88,7 @@ class WorkspaceExecutor {
         this.outboxTail = Promise.resolve();
         this.retirePending = new Map();
         this.retireEffectStarted = new Map();
+        this.retireFlights = new Map();
         this.retireCompleted = new Map();
         this.retireResponseReceived = new Map();
         this.retireConsumedPending = new Map();
@@ -903,13 +904,12 @@ class WorkspaceExecutor {
                         continue;
                     }
                     if (!["response_received", "consumed_pending"].includes(report.phase)) {
-                        report = {...report, request_id: crypto.randomUUID(), phase: "pending"};
-                        this.topologyOutbox.set(key, report);
-                        await this.persistTopologyOutbox();
+                        const delivery = {...report, request_id: crypto.randomUUID(),
+                            phase: "pending"};
                         const response = await this.nativeRequest(
                             "abush_browser", "managed_page_moved_outside",
-                            this.topologyWireReport(report));
-                        if (!this.validTopologyResponse(response, report)) {
+                            this.topologyWireReport(delivery));
+                        if (!this.validTopologyResponse(response, delivery)) {
                             throw new Error("managed topology response was not canonical");
                         }
                         report = await this.recordTopologyResponse(key, report, response);
@@ -1064,7 +1064,6 @@ class WorkspaceExecutor {
                 ...report,
                 connection_id: state.connection_id,
                 executor_fence: state.executor_fence,
-                request_id: needsDeliveryRotation ? crypto.randomUUID() : report.request_id,
                 phase: needsDeliveryRotation ? "pending" : report.phase,
                 response: needsDeliveryRotation ? null : report.response,
                 consumed_request_id: report.consumed_request_id,
@@ -3275,12 +3274,12 @@ class WorkspaceExecutor {
             sameRef(left.origin_executor_fence, right.origin_executor_fence));
     }
 
-    retireDelivery(identity, state) {
+    retireDelivery(identity, state = null) {
         return {
             ...identity,
-            connection_id: state.connection_id,
-            request_id: crypto.randomUUID(),
-            executor_fence: state.executor_fence,
+            connection_id: state?.connection_id || identity.connection_id,
+            request_id: identity.request_id,
+            executor_fence: state?.executor_fence || identity.executor_fence,
         };
     }
 
@@ -3516,9 +3515,12 @@ class WorkspaceExecutor {
             this.retireResponseReceived.get(identity.retire_id)?.identity ||
             this.retireConsumedPending.get(identity.retire_id)?.identity ||
             this.retireServerConfirmed.get(identity.retire_id)?.identity ||
-            this.retireConfirmedIdentities.get(identity.retire_id);
+            this.retireConfirmedIdentities.get(identity.retire_id)?.identity;
         if (known && !this.stableRetireMatches(known, identity)) {
             throw new Error("conflicting duplicate retire request");
+        }
+        if (known && known.request_id !== identity.request_id) {
+            await this.replaceRetireDelivery(identity);
         }
         if (!known) {
             this.retirePending.set(identity.retire_id, identity);
@@ -3543,12 +3545,55 @@ class WorkspaceExecutor {
             await this.flushRetireLedger();
             return true;
         }
-        await this.finishRetire(identity);
+        const flight = this.retireFlights.get(identity.retire_id);
+        if (flight) {
+            await flight;
+        } else {
+            await this.finishRetire(identity);
+        }
         await this.flushRetireLedger();
         return true;
     }
 
+    async replaceRetireDelivery(identity) {
+        const retireId = identity.retire_id;
+        const pending = this.retirePending.get(retireId);
+        if (pending) this.retirePending.set(retireId, identity);
+        const started = this.retireEffectStarted.get(retireId);
+        if (started) this.retireEffectStarted.set(retireId, {...started, identity,
+            delivery: this.retireDelivery(identity)});
+        const terminal = this.retireCompleted.get(retireId) ||
+            this.retireResponseReceived.get(retireId) ||
+            this.retireConsumedPending.get(retireId) ||
+            this.retireServerConfirmed.get(retireId) ||
+            this.retireConfirmedIdentities.get(retireId);
+        if (terminal) {
+            this.retireCompleted.set(retireId, {
+                identity,
+                delivery: this.retireDelivery(identity),
+                completion: terminal.completion,
+            });
+            this.retireResponseReceived.delete(retireId);
+            this.retireConsumedPending.delete(retireId);
+            this.retireServerConfirmed.delete(retireId);
+            this.retireConfirmedIdentities.delete(retireId);
+        }
+        await this.persistRetireLedger();
+    }
+
     async finishRetire(identity) {
+        const existing = this.retireFlights.get(identity.retire_id);
+        if (existing) return existing;
+        const flight = this.finishRetireOnce(identity).finally(() => {
+            if (this.retireFlights.get(identity.retire_id) === flight) {
+                this.retireFlights.delete(identity.retire_id);
+            }
+        });
+        this.retireFlights.set(identity.retire_id, flight);
+        return flight;
+    }
+
+    async finishRetireOnce(identity) {
         const record = this.workspaces.get(this.key(identity.remote_key, identity.principal_id));
         let completion = {outcome: "already_retired"};
         if (record && record.logicalWindowId === identity.window_id &&
@@ -3588,30 +3633,26 @@ class WorkspaceExecutor {
         for (const [retireId, original] of [...this.retireCompleted]) {
             if (original.identity.remote_key !== state.remote_key ||
                     original.identity.principal_id !== state.principal_id) continue;
-            let entry = original;
-            if (entry.delivery.connection_id !== state.connection_id ||
-                    !sameRef(entry.delivery.executor_fence, state.executor_fence)) {
-                entry = {...entry, delivery: this.retireDelivery(entry.identity, state)};
-                this.retireCompleted.set(retireId, entry);
-                await this.persistRetireLedger();
-            }
+            const entry = original;
             try {
                 const ack = await this.nativeRequest(
                     "abush_browser", "retire_managed_page_completion", {
                         remote_key: entry.delivery.remote_key,
-                        connection_id: entry.delivery.connection_id,
+                        connection_id: state.connection_id,
                         principal_id: entry.delivery.principal_id,
                         request_id: entry.delivery.request_id,
                         retire_id: entry.delivery.retire_id,
-                        executor_fence: entry.delivery.executor_fence,
+                        executor_fence: state.executor_fence,
                         origin_executor_fence: entry.identity.origin_executor_fence,
                         completion: entry.completion,
                     });
-                if (!this.validRetireAck(ack, entry)) {
+                const ackEntry = {...entry, delivery: {...entry.delivery,
+                    connection_id: state.connection_id, executor_fence: state.executor_fence}};
+                if (!this.validRetireAck(ack, ackEntry)) {
                     throw new Error("retire acknowledgement was not canonical");
                 }
-                const received = {...entry,
-                    ack_connection_id: entry.delivery.connection_id, ack};
+                const received = {...ackEntry,
+                    ack_connection_id: state.connection_id, ack};
                 this.retireCompleted.delete(retireId);
                 this.retireResponseReceived.set(retireId, received);
                 await this.persistRetireLedger();
@@ -3644,7 +3685,7 @@ class WorkspaceExecutor {
         if (!entry) return;
         await this.persistRetireLedger();
         if (this.retireServerConfirmed.get(retireId) !== entry) return;
-        this.retireConfirmedIdentities.set(retireId, entry.identity);
+        this.retireConfirmedIdentities.set(retireId, entry);
         while (this.retireConfirmedIdentities.size > 256) {
             this.retireConfirmedIdentities.delete(this.retireConfirmedIdentities.keys().next().value);
         }

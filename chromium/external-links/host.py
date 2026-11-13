@@ -1322,6 +1322,7 @@ class RemotePeer:
         self.pending_cancellations = {}
         self.topology_requests = {}
         self.retire_requests = {}
+        self.retire_commands = {}
         self.topology_consumed_requests = {}
         self.retire_consumed_requests = {}
         self.transport_lock = threading.RLock()
@@ -1526,6 +1527,21 @@ class RemotePeer:
                 message.get("page_id"))) or not self._valid_executor_fence(fence) or \
                 fence != self.executor_fence or not self._valid_executor_fence(origin_fence):
             raise ValueError("invalid retire managed page correlation")
+        identity = {
+            "request_id": request_id,
+            "retire_id": retire_id,
+            "ensure_id": ensure_id,
+            "fence": fence,
+            "origin_fence": origin_fence,
+            "window_id": message["window_id"],
+            "page_id": message["page_id"],
+        }
+        known = self.retire_commands.get(retire_id)
+        if known is not None and any(
+                known[field] != identity[field] for field in (
+                    "retire_id", "ensure_id", "origin_fence", "window_id", "page_id")):
+            raise ValueError("conflicting duplicate retire managed page")
+        self.retire_commands[retire_id] = identity
         self.broker.outbound.put(event("abush_browser.retire_managed_page", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
             "connection_id": self.metadata["connection_id"],
@@ -1889,6 +1905,10 @@ class RemotePeer:
                 fence != self.executor_fence or not self._valid_executor_fence(origin_fence) or \
                 not self._valid_retire_completion(completion):
             raise ValueError("invalid retire managed page completion")
+        command = self.retire_commands.get(retire_id)
+        if command is None or command["request_id"] != request_id or command["fence"] != fence or \
+                command["origin_fence"] != origin_fence:
+            raise ValueError("uncorrelated retire managed page completion")
         message = {
             "type": "retire_managed_page_completed",
             "request_id": request_id,

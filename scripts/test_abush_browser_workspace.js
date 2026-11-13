@@ -3414,6 +3414,101 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     {
         beginCase();
         const localState = {};
+        const {executor} = fixture([], [], 0, false, null, localState);
+        const record = await executor.ensure(ensurePayload());
+        const originalCleanup = executor.convergeManagedTopology.bind(executor);
+        let cleanupCount = 0;
+        let releaseCleanup;
+        executor.convergeManagedTopology = async (...args) => {
+            cleanupCount += 1;
+            await new Promise(resolve => { releaseCleanup = resolve; });
+            return originalCleanup(...args);
+        };
+        executor.nativeRequest = async (_service, operation) => {
+            if (operation === "retire_managed_page_completion") throw new Error("hold completion");
+            return {};
+        };
+        const firstPayload = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", request_id: "retire-command-old",
+            retire_id: "stable-retire-singleflight", ensure_id: "ensure-retire-singleflight",
+            executor_fence: fence, origin_executor_fence: fence,
+            window_id: record.logicalWindowId, page_id: record.logicalPageId,
+        };
+        const first = executor.retireManagedPage(firstPayload);
+        await waitFor(() => releaseCleanup !== undefined, "retire physical cleanup start");
+        const secondPayload = {...firstPayload, request_id: "retire-command-new"};
+        const second = executor.retireManagedPage(secondPayload);
+        releaseCleanup();
+        await Promise.all([first, second]);
+        assert.equal(cleanupCount, 1,
+            "same stable retire ID must singleflight physical cleanup");
+        const completion = executor.retireCompleted.get(firstPayload.retire_id);
+        assert.equal(completion.identity.request_id, secondPayload.request_id,
+            "new retire delivery must replace command request correlation");
+        assert.equal(completion.delivery.request_id, secondPayload.request_id,
+            "completion must echo the received command request ID");
+        assert.equal(localState.abushRetireLedger[0].identity.request_id,
+            secondPayload.request_id);
+    }
+    {
+        beginCase();
+        const localState = {};
+        const first = fixture([], [], 0, false, null, localState);
+        const record = await first.executor.ensure(ensurePayload());
+        const payload = {
+            ...first.executor.ensureIdentity(ensurePayload()),
+            request_id: "retire-completed-old-command",
+            retire_id: "retire-completed-new-delivery",
+            origin_executor_fence: fence,
+            window_id: record.logicalWindowId,
+            page_id: record.logicalPageId,
+        };
+        first.executor.nativeRequest = async (_service, operation) => {
+            if (operation === "retire_managed_page_completion") throw new Error("offline");
+            return {};
+        };
+        let cleanupCount = 0;
+        const originalCleanup = first.executor.convergeManagedTopology.bind(first.executor);
+        first.executor.convergeManagedTopology = async (...args) => {
+            cleanupCount += 1;
+            return originalCleanup(...args);
+        };
+        await first.executor.retireManagedPage(payload);
+        assert.equal(cleanupCount, 1);
+        const second = fixture([], [], 0, false, null, localState);
+        const replay = {...payload, request_id: "retire-completed-new-command"};
+        second.executor.nativeRequest = async (_service, operation, value) => {
+            second.calls.push([operation, value]);
+            if (operation === "retire_managed_page_completion") {
+                return {
+                    request_id: value.request_id, retire_id: value.retire_id,
+                    executor_fence: value.executor_fence,
+                    response_delivery_id: "stable-retire-response",
+                    origin_executor_fence: value.origin_executor_fence,
+                    completion: value.completion,
+                };
+            }
+            if (operation === "retire_managed_page_ack_consumed") {
+                return {
+                    request_id: value.request_id, retire_id: value.retire_id,
+                    executor_fence: value.executor_fence,
+                    response_delivery_id: value.response_delivery_id,
+                };
+            }
+            return {};
+        };
+        await second.executor.restoreRetireLedger();
+        await second.executor.retireManagedPage(replay);
+        const sent = second.calls.find(call =>
+            call[0] === "retire_managed_page_completion")[1];
+        assert.equal(sent.request_id, replay.request_id,
+            "completed stable retire replay must echo the new command request ID");
+        assert.deepEqual(localState.abushRetireLedger, []);
+    }
+    {
+        beginCase();
+        const localState = {};
         const first = fixture([], [], 0, false, null, localState);
         const record = await first.executor.ensure(ensurePayload());
         const payload = {
@@ -3696,7 +3791,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await assert.rejects(first.executor.flushTopologyOutbox(), /pending retry/);
         assert.equal(localState.abushTopologyOutbox.length, 1,
             "response loss must keep the durable request for restart retry");
-        assert.notEqual(localState.abushTopologyOutbox[0].request_id, report.request_id);
+        assert.equal(localState.abushTopologyOutbox[0].request_id, report.request_id,
+            "transport failure must not persist a temporary delivery request ID");
         assert.equal(localState.abushTopologyOutbox[0].report_id, report.request_id,
             "v6 migration must preserve the stable ID as report_id");
         assert.deepEqual(localState.abushTopologyOutbox[0].page, report.page);
@@ -3706,7 +3802,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(localState.abushTopologyOutbox, []);
         assert.notEqual(second.calls.filter(call =>
             call[0] === "managed_page_moved_outside")[0][1].request_id, "ack-loss",
-            "native restart must allocate a fresh delivery request ID");
+            "native restart must allocate a fresh temporary delivery request ID");
     }
     {
         beginCase();
@@ -4014,7 +4110,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         });
         await second.executor.flushTopologyOutbox();
         const resent = second.calls.find(call => call[0] === "managed_page_moved_outside")[1];
-        assert.notEqual(resent.request_id, originalRequestId);
+        assert.notEqual(resent.request_id, originalRequestId,
+            "retry must use a temporary delivery request ID");
         assert.equal(resent.report_id, originalReportId);
         assert.equal(resent.connection_id, "c_new00000");
         assert.deepEqual(resent.executor_fence, rotatedFence);
