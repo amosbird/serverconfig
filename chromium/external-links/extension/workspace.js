@@ -13,6 +13,7 @@ const MANAGED_CLEANUP_BATCH_KEY = "abushManagedCleanupBatch";
 const CURRENT_BROWSER_BOOT_KEY = "abushCurrentBrowserBoot";
 const COLD_ORDINARY_LEDGER_KEY = "abushColdOrdinaryLedger";
 const PENDING_TRANSACTIONS_KEY = "abushPendingTransactions";
+const ENSURE_COMPLETIONS_KEY = "abushEnsureCompletions";
 const PENDING_OPERATIONS_KEY = "abushPendingOperations";
 const EXECUTION_LEDGER_KEY = "abushExecutionLedger";
 const REPLACEMENT_LEDGER_KEY = "abushReplacementLedger";
@@ -408,6 +409,24 @@ class WorkspaceExecutor {
     }
 
     consumeTransactionEvent(transaction, expected, type, payload) {
+        if (type === "tabAttached" &&
+                transaction.plannedEffect?.kind === "windows.create") {
+            if (!Number.isInteger(payload.newWindowId) ||
+                    payload.newWindowId === transaction.hostWindowId ||
+                    (Number.isInteger(transaction.windowId) &&
+                        transaction.windowId !== payload.newWindowId)) {
+                transaction.invalid = true;
+                return;
+            }
+            transaction.windowId = payload.newWindowId;
+        }
+        if (type === "windowCreated" && Number.isInteger(transaction.windowId) &&
+                transaction.windowId !== payload?.window?.id) {
+            transaction.invalid = true;
+            return;
+        }
+        if (type === "tabCreated" && Number.isInteger(payload?.tab?.id) &&
+                transaction.plannedEffect) transaction.plannedEffect.tab_id = payload.tab.id;
         expected.consumed = true;
         transaction.clock = ++this.eventTransactionClock;
         if (type === "windowCreated" && Number.isInteger(payload?.window?.id)) {
@@ -423,15 +442,15 @@ class WorkspaceExecutor {
             if (!Number.isInteger(tab?.id) || !planned ||
                     !["tabs.create.marker", "tabs.create.business"].includes(planned.kind) ||
                     tab.windowId !== planned.window_id) return false;
-            planned.tab_id = tab.id;
             const observedUrl = typeof tab.pendingUrl === "string" && tab.pendingUrl ?
                 tab.pendingUrl : tab.url;
-            if (typeof observedUrl !== "string") return true;
-            if (planned.kind === "tabs.create.marker") {
-                const marker = this.parseStatusUrl(observedUrl);
-                return marker?.nonce === transaction.nonce && marker.marker === planned.marker;
-            }
-            return observedUrl === "about:blank";
+            const marker = this.parseStatusUrl(observedUrl);
+            const valid = planned.kind === "tabs.create.marker" ?
+                marker?.nonce === transaction.nonce && marker.marker === planned.marker :
+                observedUrl === "about:blank";
+            if (!valid) return false;
+            planned.tab_id = tab.id;
+            return true;
         }
         if (type === "windowCreated") return false;
         if (type !== "tabUpdated") return false;
@@ -440,6 +459,20 @@ class WorkspaceExecutor {
         const transactionTab = transaction.statusTabIds.includes(tabId) ||
             transaction.pageTabId === tabId || transaction.plannedEffect?.tab_id === tabId;
         if (!transactionTab) return false;
+        if (Number.isInteger(payload?.tab?.windowId)) {
+            const markerIndex = transaction.statusTabIds.indexOf(tabId);
+            const moved = transaction.observedEffects.some(effect =>
+                (effect.kind === "windows.create" && markerIndex === 0) ||
+                (effect.kind === "tabs.move" && effect.tab_id === tabId));
+            const business = transaction.pageTabId === tabId ||
+                transaction.plannedEffect?.kind === "tabs.create.business";
+            const expectedWindow = moved || business ?
+                transaction.windowId : transaction.hostWindowId;
+            const moving = ["windows.create", "tabs.move"].includes(
+                transaction.plannedEffect?.kind) && transaction.plannedEffect.tab_id === tabId;
+            if (Number.isInteger(expectedWindow) && payload.tab.windowId !== expectedWindow &&
+                    !(moving && payload.tab.windowId === transaction.windowId)) return false;
+        }
         const fields = Object.keys(payload?.changeInfo || {});
         if (!fields.every(field => ["status", "title", "favIconUrl", "audible",
             "discarded", "autoDiscardable", "mutedInfo", "groupId", "url", "pinned", "index"]
@@ -449,64 +482,71 @@ class WorkspaceExecutor {
             const parsed = this.parseStatusUrl(change.url);
             const plannedBusiness = transaction.plannedEffect?.kind === "tabs.create.business" &&
                 change.url === "about:blank";
-            if (!(parsed?.nonce === transaction.nonce || plannedBusiness)) return false;
+            const markerIndex = transaction.statusTabIds.indexOf(tabId);
+            const plannedMarker = transaction.plannedEffect?.kind === "tabs.create.marker" ?
+                transaction.plannedEffect.marker : null;
+            const marker = markerIndex >= 0 ? MARKER_IDS[markerIndex] : plannedMarker;
+            if (!(parsed?.nonce === transaction.nonce && parsed.marker === marker) &&
+                    !plannedBusiness) return false;
         }
         if ("pinned" in change) {
             const plannedPin = transaction.plannedEffect?.kind === "tabs.pin" &&
                 transaction.plannedEffect.tab_id === tabId && change.pinned === true;
-            const expectedPinned = transaction.statusTabIds.includes(tabId);
-            if (!plannedPin && change.pinned !== expectedPinned) return false;
-        }
-        if ("index" in change) {
-            const expectedIndex = transaction.statusTabIds.indexOf(tabId);
-            if (expectedIndex < 0 || change.index !== expectedIndex) return false;
-        }
-        if (Number.isInteger(payload?.tab?.index)) {
-            const expectedIndex = transaction.statusTabIds.indexOf(tabId);
-            const businessPlanned = transaction.plannedEffect?.kind === "tabs.create.business" &&
-                transaction.pageTabId === tabId && payload.tab.index === 2;
-            if (!businessPlanned && expectedIndex >= 0 && payload.tab.index !== expectedIndex) {
+            if (transaction.plannedEffect?.kind === "tabs.pin" &&
+                    transaction.plannedEffect.tab_id === tabId && change.pinned !== true) {
                 return false;
             }
+            const expectedPinned = transaction.observedEffects.some(effect =>
+                effect.kind === "tabs.pin" && effect.tab_id === tabId);
+            if (!plannedPin && change.pinned !== expectedPinned) return false;
+        }
+        const physicalReady = ["physical_ready", "record_ready", "bound", "claimed",
+            "committed"].includes(transaction.phase);
+        if ("index" in change) {
+            const expectedIndex = transaction.statusTabIds.indexOf(tabId);
+            if (!physicalReady || expectedIndex < 0 || change.index !== expectedIndex) return false;
+        }
+        if (physicalReady && Number.isInteger(payload?.tab?.index)) {
+            const expectedIndex = transaction.statusTabIds.indexOf(tabId);
+            if (expectedIndex >= 0 && payload.tab.index !== expectedIndex) return false;
         }
         return true;
     }
 
     async reconcileTransactionTopology(transaction) {
-        const candidateWindowIds = new Set([transaction.windowId,
-            transaction.plannedEffect?.window_id].filter(Number.isInteger));
-        if (transaction.plannedEffect?.kind === "windows.create" ||
-                transaction.windowId === null) {
-            const tabs = await this.chrome.tabs.query({});
-            for (const tab of tabs) {
-                const marker = this.parseStatusUrl(tab.url);
-                if (marker?.nonce === transaction.nonce) candidateWindowIds.add(tab.windowId);
+        const tabs = await this.chrome.tabs.query({});
+        const markers = tabs.map(tab => ({tab, marker: this.parseStatusUrl(
+            tab.pendingUrl || tab.url)})).filter(item => item.marker?.nonce === transaction.nonce);
+        for (const marker of MARKER_IDS) {
+            const matches = markers.filter(item => item.marker.marker === marker);
+            if (matches.length > 1) throw new Error("managed transaction marker is ambiguous");
+            const tab = matches[0]?.tab;
+            if (!tab) continue;
+            const known = transaction.statusTabIds[MARKER_IDS.indexOf(marker)];
+            if (Number.isInteger(known) && known !== tab.id) {
+                throw new Error("managed transaction marker identity changed");
             }
+            transaction.statusTabIds[MARKER_IDS.indexOf(marker)] = tab.id;
         }
-        const matches = [];
-        for (const windowId of candidateWindowIds) {
-            let tabs;
-            try {
-                tabs = await this.chrome.tabs.query({windowId});
-            } catch (_) {
-                continue;
-            }
-            const markers = tabs.map(tab => ({tab, marker: this.parseStatusUrl(tab.url)}))
-                .filter(item => item.marker?.nonce === transaction.nonce);
-            if (markers.length > 0) matches.push({windowId, tabs, markers});
+        const candidateIds = new Set(markers.map(item => item.tab.windowId)
+            .filter(id => id !== transaction.hostWindowId));
+        if (candidateIds.size > 1 || (Number.isInteger(transaction.windowId) &&
+                [...candidateIds].some(id => id !== transaction.windowId))) {
+            throw new Error("managed transaction marker is ambiguous");
         }
-        if (matches.length > 1) throw new Error("managed transaction marker is ambiguous");
-        const match = matches[0];
-        if (!match) return null;
-        transaction.windowId = match.windowId;
-        transaction.statusTabIds = MARKER_IDS.map(marker => match.markers.find(item =>
-            item.marker.marker === marker)?.tab.id).filter(Number.isInteger);
-        if (!Number.isInteger(transaction.pageTabId)) {
-            const business = match.tabs.filter(tab =>
-                !transaction.statusTabIds.includes(tab.id) && tab.pinned !== true);
-            if (business.length === 1) transaction.pageTabId = business[0].id;
+        if (candidateIds.size === 1) transaction.windowId = [...candidateIds][0];
+        const hostMarkers = markers.filter(item => item.tab.windowId === transaction.hostWindowId);
+        const candidateMarkers = markers.filter(item => item.tab.windowId === transaction.windowId);
+        if (hostMarkers.length && candidateMarkers.length &&
+                !(hostMarkers.length === 1 && hostMarkers[0].marker.marker === "b" &&
+                    candidateMarkers.length === 1 && candidateMarkers[0].marker.marker === "a" &&
+                    (transaction.plannedEffect?.kind === "windows.create" ||
+                        transaction.observedEffects.some(effect => effect.kind === "windows.create")))) {
+            throw new Error("managed transaction marker split is unexpected");
         }
-        return match;
+        if (!markers.length) return null;
+        return {windowId: transaction.windowId,
+            tabs: tabs.filter(tab => tab.windowId === transaction.windowId), markers};
     }
 
     observeChromeEvent(type, payload) {
@@ -3342,6 +3382,13 @@ class WorkspaceExecutor {
 
     async ensureAuthorized(payload) {
         const requestKey = this.ensureRequestKey(payload);
+        const terminal = await this.chrome.storage.local.get([ENSURE_COMPLETIONS_KEY]);
+        if (this.remoteAuthorities.has(payload.remote_key)) this.requireCurrentAuthority(payload);
+        const completion = terminal[ENSURE_COMPLETIONS_KEY]?.[requestKey];
+        if (completion) {
+            await this.completeEnsure(payload, completion);
+            return this.workspaces.get(this.key(payload.remote_key, payload.principal_id));
+        }
         if (this.ensureWaiters.has(requestKey)) throw new Error("duplicate ensure request");
         const key = this.key(payload.remote_key, payload.principal_id);
         let flight = this.ensureFlights.get(key);
@@ -3365,6 +3412,7 @@ class WorkspaceExecutor {
         try {
             const record = await flight.promise;
             if (waiter.cancelled) return undefined;
+            waiter.terminalOutcome = "created";
             await this.completeEnsure(payload, {
                 outcome: "created",
                 window_id: record.logicalWindowId,
@@ -3373,6 +3421,8 @@ class WorkspaceExecutor {
             return record;
         } catch (error) {
             if (waiter.cancelled) return undefined;
+            if (waiter.terminalOutcome) throw error;
+            waiter.terminalOutcome = "rejected";
             try {
                 await this.completeEnsure(payload, {
                     outcome: "rejected",
@@ -4162,8 +4212,13 @@ class WorkspaceExecutor {
         if (!allowStale && this.remoteAuthorities.has(payload.remote_key)) {
             this.requireCurrentAuthority(payload);
         }
+        const terminalState = await this.chrome.storage.local.get([ENSURE_COMPLETIONS_KEY]);
+        if (!allowStale && this.remoteAuthorities.has(payload.remote_key)) {
+            this.requireCurrentAuthority(payload);
+        }
+        if (terminalState[ENSURE_COMPLETIONS_KEY]?.[this.ensureRequestKey(payload)]) return false;
         const waiter = this.ensureWaiters.get(this.ensureRequestKey(payload));
-        if (!waiter || waiter.cancelled) return false;
+        if (!waiter || waiter.cancelled || waiter.terminalOutcome) return false;
         const flight = waiter.flight;
         const terminal = this.boundedFlightTerminal(flight);
         let cancellationOwnsFlight = false;
@@ -4243,6 +4298,7 @@ class WorkspaceExecutor {
 
     async mutateTransaction(transaction, effects, effect) {
         const expectedEvents = Array.isArray(effects) ? effects : [effects];
+        if (transaction.invalid) throw new Error("managed transaction topology changed");
         for (const {type, match} of expectedEvents) {
             this.expectTransactionEvent(transaction, type, match);
         }
@@ -4269,11 +4325,19 @@ class WorkspaceExecutor {
             tab_id: result?.windowId !== undefined ? result?.id : null,
         };
         transaction.observedEffects.push(observation);
-        transaction.plannedEffect = null;
+        if (planned.kind === "tabs.create.marker") {
+            transaction.statusTabIds[MARKER_IDS.indexOf(planned.marker)] = result.id;
+        } else if (planned.kind === "tabs.create.business") {
+            transaction.pageTabId = result.id;
+        } else if (planned.kind === "windows.create") {
+            transaction.windowId = result.id;
+        }
         transaction.phase = "effect_observed";
-        await this.reconcileTransactionTopology(transaction);
         await this.persistPendingTransactions();
+        await this.reconcileTransactionTopology(transaction);
         if (transaction.invalid) throw new Error("managed transaction topology changed");
+        transaction.plannedEffect = null;
+        await this.persistPendingTransactions();
         return result;
     }
 
@@ -4349,13 +4413,14 @@ class WorkspaceExecutor {
         const nonce = crypto.randomUUID().replaceAll("-", "");
         const transaction = await this.beginEnsureTransaction(payload, nonce);
         flight.transaction = transaction;
-        await this.ownMarker(nonce);
-        const hostWindowId = await this.normalWindowId();
-        await this.updateEnsureTransaction(transaction, {hostWindowId, phase: "preparing"});
         const statusTabs = [];
         let created;
         let candidateLeaseRequested = false;
+        let hostWindowId;
         try {
+            await this.ownMarker(nonce);
+            hostWindowId = await this.normalWindowId();
+            await this.updateEnsureTransaction(transaction, {hostWindowId, phase: "preparing"});
             for (const marker of MARKER_IDS) {
                 const url = this.statusUrl({nonce}, marker);
                 const tab = await this.mutateTransaction(transaction, {
@@ -4376,11 +4441,17 @@ class WorkspaceExecutor {
             }
             candidateLeaseRequested = true;
             await this.updateCandidateLease("register", nonce);
-            created = await this.mutateTransaction(transaction, {
+            created = await this.mutateTransaction(transaction, [{
                 type: "windowCreated",
                 match: {window: {type: "normal"}, sourceTabId: statusTabs[0].id},
                 planned: {kind: "windows.create", tab_id: statusTabs[0].id},
-            }, () => this.chrome.windows.create({
+            }, {
+                type: "tabDetached",
+                match: {tabId: statusTabs[0].id, oldWindowId: hostWindowId},
+            }, {
+                type: "tabAttached",
+                match: {tabId: statusTabs[0].id},
+            }], () => this.chrome.windows.create({
                     tabId: statusTabs[0].id,
                     focused: false,
                     type: "normal",
@@ -4420,12 +4491,13 @@ class WorkspaceExecutor {
             for (const tabId of [
                 ...transaction.statusTabIds,
                 transaction.plannedEffect?.tab_id,
+                ...transaction.observedEffects.map(effect => effect.tab_id),
             ].filter(Number.isInteger)) {
                 if (!preparedTabs.has(tabId)) preparedTabs.set(tabId, {id: tabId});
             }
             try {
                 await this.cleanupPreparedWindow(
-                    created?.id, [...preparedTabs.values()], nonce);
+                    created?.id ?? transaction.windowId, [...preparedTabs.values()], nonce);
                 await this.finishEnsureTransaction(transaction, "rolled_back");
                 if (releaseErrors.length > 0) {
                     throw new AggregateError(releaseErrors,
@@ -4583,6 +4655,14 @@ class WorkspaceExecutor {
     }
 
     async completeEnsure(payload, completion) {
+        const key = this.ensureRequestKey(payload);
+        await this.localStateUpdate(ENSURE_COMPLETIONS_KEY, saved => {
+            if (saved[key] && !sameRef(saved[key], completion)) {
+                throw new Error("conflicting durable ensure terminal outcome");
+            }
+            saved[key] = structuredClone(completion);
+            return saved;
+        }, {});
         await this.nativeRequest("abush_browser", "ensure_managed_page_completion", {
             remote_key: payload.remote_key,
             connection_id: payload.connection_id,

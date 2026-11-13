@@ -399,6 +399,106 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     return {executor, calls};
 }
 
+async function managedEventFixture({windowFirst = false, lost = null} = {}) {
+    const localState = {};
+    const {executor, calls} = fixture([], [], 3, false, null, localState);
+    const chrome = executor.chrome;
+    const trace = [];
+    const query = chrome.tabs.query;
+    const create = chrome.tabs.create;
+    const createWindow = chrome.windows.create;
+    const move = chrome.tabs.move;
+    const update = chrome.tabs.update;
+    let stale = false;
+    chrome.tabs.query = async properties => structuredClone((await query(properties))
+        .filter(tab => !stale || !tab.pendingUrl));
+    const emit = (type, payload) => {
+        const owned = executor.observeChromeEvent(type, structuredClone(payload));
+        trace.push([type, owned, [...executor.pendingTransactions.values()]
+            .some(transaction => transaction.invalid)]);
+        assert(owned, `transaction must own ${type}`);
+    };
+    const reindex = async windowId => {
+        (await query({windowId})).forEach((tab, index) => tab.index = index);
+    };
+    chrome.tabs.create = async properties => {
+        const tab = await create(properties);
+        tab.pendingUrl = tab.url;
+        tab.url = "";
+        tab.status = "loading";
+        const title = tab.title;
+        delete tab.title;
+        emit("tabCreated", {tab});
+        emit("tabUpdated", {tabId: tab.id, changeInfo: {status: "loading"}, tab});
+        const marker = new URLSearchParams(properties.url.split("#")[1]).get("marker");
+        if (lost === `create-${marker}`) {
+            stale = true;
+            throw new Error("lost marker creation result");
+        }
+        if (lost === "observed-b" && marker === "b") {
+            stale = true;
+            // The API result supplies the only exact identity when query lags on pendingUrl.
+            executor.pendingTransactions.values().next().value.invalid = true;
+            return structuredClone(tab);
+        }
+        const result = structuredClone(tab);
+        const settle = () => {
+            tab.url = tab.pendingUrl;
+            delete tab.pendingUrl;
+            tab.title = title;
+            tab.status = "complete";
+            emit("tabUpdated", {tabId: tab.id,
+                changeInfo: {url: tab.url, title, status: "complete"}, tab});
+        };
+        if (properties.url === "about:blank") settle();
+        else setImmediate(settle);
+        return result;
+    };
+    chrome.windows.create = async properties => {
+        const source = await chrome.tabs.get(properties.tabId);
+        const window = await createWindow(properties);
+        await reindex(source.windowId);
+        await reindex(window.id);
+        const created = async () => {
+            const owned = await executor.observeWindowCreated(
+                structuredClone({...window, type: "normal"}));
+            trace.push(["windowCreated", owned, false]);
+            assert(owned);
+        };
+        if (windowFirst) await created();
+        emit("tabDetached", {tabId: source.id, oldWindowId: source.windowId,
+            oldPosition: source.index});
+        emit("tabAttached", {tabId: source.id, newWindowId: window.id, newPosition: 0});
+        if (!windowFirst) await created();
+        if (lost === "window") throw new Error("lost window creation result");
+        return structuredClone(window);
+    };
+    chrome.tabs.move = async (id, properties) => {
+        const source = await chrome.tabs.get(id);
+        emit("tabDetached", {tabId: id, oldWindowId: source.windowId,
+            oldPosition: source.index});
+        const result = await move(id, properties);
+        await reindex(source.windowId);
+        await reindex(properties.windowId);
+        emit("tabAttached", {tabId: id, newWindowId: properties.windowId,
+            newPosition: result.index});
+        if (lost === "move") throw new Error("lost move result");
+        return structuredClone(result);
+    };
+    chrome.tabs.update = async (id, properties) => {
+        await update(id, properties);
+        const tab = await chrome.tabs.get(id);
+        if ("pinned" in properties) {
+            emit("tabUpdated", {tabId: id, changeInfo: {pinned: properties.pinned}, tab});
+            emit("tabUpdated", {tabId: id, changeInfo: {status: "complete"}, tab});
+            if (lost === `pin-${tab.index}`) throw new Error("lost pin result");
+        }
+        return structuredClone(tab);
+    };
+    return {executor, calls, localState, trace,
+        physicalTabs: async () => structuredClone(await query({}))};
+}
+
 (async () => {
     const testDeadline = setTimeout(() => {
         console.error(timeoutError("test completion"));
@@ -411,6 +511,91 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(displayTitle("local"), "local");
         assert.equal(displayTitle("dev.example.com"), "dev.example.com");
         assert.equal(displayTitle("prod-alias"), "prod-alias");
+    for (const windowFirst of [false, true]) {
+        beginCase();
+        const {executor, calls, localState, trace} = await managedEventFixture({windowFirst});
+        const record = await exactWait(executor.ensure(ensurePayload()), "managed event ensure");
+        assert.deepEqual(record.statusTabIds, [1000, 1001]);
+        assert.equal(record.pageTabId, 1002);
+        assert(trace.length > 10 && trace.every(([, owned, invalid]) => owned && !invalid));
+        assert.deepEqual(localState.abushOwnedMarkers[record.nonce].status_tab_ids, [1000, 1001]);
+        assert.deepEqual(localState.abushPendingTransactions, []);
+        assert.equal(calls.filter(call => ["remove", "removeWindow"].includes(call[0])).length, 0);
+        assert.deepEqual((await executor.chrome.tabs.query({windowId: 1})).map(tab => tab.id),
+            [2000, 2001, 2002]);
+        assert(calls.filter(call => call[0] === "createTab")
+            .every(call => call[1].url.includes("status.html#") || call[1].url === "about:blank"));
+    }
+    for (const lost of ["create-a", "create-b", "observed-b", "window", "move", "pin-0", "pin-1"]) {
+        beginCase();
+        const {executor, calls, localState, physicalTabs} = await managedEventFixture({lost});
+        await assert.rejects(exactWait(executor.ensure(ensurePayload()), `lost ${lost}`));
+        assert.deepEqual((await executor.chrome.tabs.query({windowId: 1})).map(tab => tab.id),
+            [2000, 2001, 2002], `ordinary host survives ${lost}`);
+        assert(!calls.some(call => call[0] === "removeWindow" && call[1] === 1));
+        assert(!calls.some(call => call[0] === "remove" && call[1] >= 2000));
+        assert.deepEqual(await executor.chrome.tabs.query({}),
+            await executor.chrome.tabs.query({windowId: 1}), `no leaked candidate after ${lost}`);
+        assert.deepEqual((await physicalTabs()).map(tab => tab.id), [2000, 2001, 2002],
+            `no physical pendingUrl leak after ${lost}`);
+        assert.deepEqual(localState.abushPendingTransactions, []);
+        assert.deepEqual(localState.abushOwnedMarkers, {});
+        await exactWait(executor.lifecycleTail, `lifecycle queue after ${lost}`);
+    }
+    {
+        beginCase();
+        const {executor, calls} = fixture();
+        const native = executor.nativeRequest;
+        const accepted = deferred("created completion accepted");
+        const reply = deferred("created completion reply");
+        executor.nativeRequest = async (service, operation, payload) => {
+            if (operation === "ensure_managed_page_completion") {
+                calls.push([operation, structuredClone(payload)]);
+                accepted.resolve();
+                await reply.promise;
+                throw new Error("accepted completion reply lost");
+            }
+            return native(service, operation, payload);
+        };
+        const payload = ensurePayload();
+        const pending = executor.ensure(payload);
+        const rejected = assert.rejects(pending, /accepted completion reply lost/);
+        await accepted.promise;
+        assert.equal(await exactWait(executor.cancelEnsure(payload), "completion cancel overlap"),
+            false, "completion owns the terminal outcome before sending");
+        reply.resolve();
+        await rejected;
+        assert.deepEqual(calls.filter(call => call[0] === "ensure_managed_page_completion")
+            .map(call => call[1].completion.outcome), ["created"]);
+        assert.equal(executor.workspaces.size, 1);
+        const effects = calls.filter(call => ["createTab", "createWindow"].includes(call[0])).length;
+        await assert.rejects(exactWait(executor.ensure(payload), "terminal replay"),
+            /accepted completion reply lost/);
+        assert.equal(calls.filter(call => ["createTab", "createWindow"].includes(call[0])).length,
+            effects, "a lost terminal reply must not execute a second ensure");
+        await assert.rejects(executor.completeEnsure(payload,
+            {outcome: "rejected", code: "invalid_command"}), /conflicting durable/);
+    }
+    for (const boundary of ["ownership", "host", "preparing"]) {
+        beginCase();
+        const localState = {};
+        const {executor} = fixture([], [], 0, false, null, localState);
+        if (boundary === "ownership") {
+            const own = executor.ownMarker.bind(executor);
+            executor.ownMarker = async nonce => { await own(nonce); throw new Error(boundary); };
+        } else if (boundary === "host") {
+            executor.normalWindowId = async () => { throw new Error(boundary); };
+        } else {
+            const update = executor.updateEnsureTransaction.bind(executor);
+            executor.updateEnsureTransaction = async (transaction, value) => {
+                await update(transaction, value);
+                if (value.phase === "preparing") throw new Error(boundary);
+            };
+        }
+        await assert.rejects(exactWait(executor.ensure(ensurePayload()), boundary));
+        assert.equal(executor.pendingTransactions.size, 0);
+        assert.deepEqual(localState.abushOwnedMarkers, {});
+    }
     {
         beginCase();
         let leaseNonce;
