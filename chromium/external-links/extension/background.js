@@ -574,6 +574,83 @@ function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openI
     });
 }
 
+function registerNativeEventRouter(native, workspaces, ready, onFailure = notifyFailure) {
+    const run = (task, fallback) => ready().then(task).then(result => {
+        if (result === false) throw new Error(fallback);
+        return result;
+    }).catch(error => onFailure(error.message || fallback));
+    return native.onEvent(message => {
+        if (message.service === "native_host") {
+            if (message.event === "bootstrap") {
+                workspaces.acceptNativeBootstrap(message.payload)
+                    .then(() => ready())
+                    .catch(error => onFailure(error.message ||
+                        "Unable to accept native browser bootstrap"));
+                return;
+            }
+            ready().then(async () => {
+                await workspaces.invalidateRemote();
+                await workspaces.flushTopologyOutbox();
+            }).catch(error => onFailure(error.message ||
+                "Unable to retry managed browser topology reports"));
+            if (message.event === "reconnect_exhausted") {
+                onFailure("Native browser integration could not reconnect");
+            }
+            return;
+        }
+        if (message.service === "ordinary_open" &&
+                ["ordinary_open", "ordinary_open_bootstrap"].includes(message.event)) {
+            run(() => workspaces.ordinaryOpen(message.payload), "Unable to open ordinary URL");
+            return;
+        }
+        if (message.service === "ordinary_open" && message.event === "ordinary_open_cancel") {
+            ready().then(() => workspaces.cancelOrdinaryOpen(message.payload)).catch(() => {});
+            return;
+        }
+        if (message.service !== "abush_browser") return;
+        if (message.event === "abush_browser.remote_state") {
+            run(() => workspaces.remoteState(message.payload),
+                "Unable to apply managed browser remote state");
+            return;
+        }
+        if (message.event === "abush_browser.ensure_managed_page") {
+            run(() => workspaces.ensure(message.payload),
+                "Unable to ensure Abush browser workspace");
+            return;
+        }
+        if (message.event === "abush_browser.retire_managed_page") {
+            run(() => workspaces.retireManagedPage(message.payload),
+                "Unable to retire Abush browser workspace");
+            return;
+        }
+        if (message.event === "abush_browser.topology_report_response") {
+            run(() => workspaces.topologyReportResponse(message.payload),
+                "Unable to consume managed topology response");
+            return;
+        }
+        if (message.event === "abush_browser.retire_managed_page_ack") {
+            run(() => workspaces.retireManagedPageAck(message.payload),
+                "Unable to consume managed retire acknowledgement");
+            return;
+        }
+        if (message.event === "abush_browser.cancel_ensure_managed_page") {
+            ready().then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});
+            return;
+        }
+        if (message.event === "abush_browser.execute") {
+            run(async () => {
+                if (!await workspaces.registerOperation(message.payload)) return true;
+                await workspaces.executeRegistered(message.payload);
+                return true;
+            }, "Unable to complete Abush browser command");
+            return;
+        }
+        if (message.event === "abush_browser.cancel") {
+            ready().then(() => workspaces.cancel(message.payload)).catch(() => {});
+        }
+    });
+}
+
 if (typeof chrome !== "undefined") {
     configureSiteLanguages();
     const workspaces = workspace();
@@ -582,81 +659,7 @@ if (typeof chrome !== "undefined") {
         error.message || "Managed browser topology report is pending retry");
     const workspaceReady = createWorkspaceInitializer(workspaces, native);
     workspaceReady().catch(() => {});
-    dispatcher().onEvent(message => {
-        if (message.service === "native_host") {
-            if (message.event === "bootstrap") {
-                workspaces.acceptNativeBootstrap(message.payload)
-                    .then(() => workspaceReady())
-                    .catch(error => notifyFailure(error.message ||
-                        "Unable to accept native browser bootstrap"));
-                return;
-            }
-            workspaceReady().then(async () => {
-                await workspaces.invalidateRemote();
-                await workspaces.flushTopologyOutbox();
-            }).catch(error => notifyFailure(error.message ||
-                "Unable to retry managed browser topology reports"));
-            if (message.event === "reconnect_exhausted") {
-                notifyFailure("Native browser integration could not reconnect");
-            }
-            return;
-        }
-        if (message.service === "ordinary_open" &&
-                ["ordinary_open", "ordinary_open_bootstrap"].includes(message.event)) {
-            workspaceReady().then(() => workspaces.ordinaryOpen(message.payload))
-                .catch(error => notifyFailure(error.message || "Unable to open ordinary URL"));
-            return;
-        }
-        if (message.service === "ordinary_open" && message.event === "ordinary_open_cancel") {
-            workspaceReady().then(() => workspaces.cancelOrdinaryOpen(message.payload))
-                .catch(() => {});
-            return;
-        }
-        if (message.service !== "abush_browser") return;
-        if (message.event === "abush_browser.remote_state") {
-            workspaceReady().then(() => workspaces.remoteState(message.payload)).catch(() => {});
-            return;
-        }
-        if (message.event === "abush_browser.ensure_managed_page") {
-            workspaceReady().then(() => workspaces.ensure(message.payload))
-                .catch(error => notifyFailure(
-                    error.message || "Unable to ensure Abush browser workspace"));
-            return;
-        }
-        if (message.event === "abush_browser.retire_managed_page") {
-            workspaceReady().then(() => workspaces.retireManagedPage(message.payload))
-                .catch(error => notifyFailure(
-                    error.message || "Unable to retire Abush browser workspace"));
-            return;
-        }
-        if (message.event === "abush_browser.topology_report_response") {
-            workspaceReady().then(() => workspaces.topologyReportResponse(message.payload))
-                .catch(error => notifyFailure(
-                    error.message || "Unable to consume managed topology response"));
-            return;
-        }
-        if (message.event === "abush_browser.retire_managed_page_ack") {
-            workspaceReady().then(() => workspaces.retireManagedPageAck(message.payload))
-                .catch(error => notifyFailure(
-                    error.message || "Unable to consume managed retire acknowledgement"));
-            return;
-        }
-        if (message.event === "abush_browser.cancel_ensure_managed_page") {
-            workspaceReady().then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});
-            return;
-        }
-        if (message.event === "abush_browser.execute") {
-            workspaceReady().then(async () => {
-                if (!await workspaces.registerOperation(message.payload)) return;
-                await workspaces.executeRegistered(message.payload);
-            }).catch(error => notifyFailure(
-                error.message || "Unable to complete Abush browser command"));
-            return;
-        }
-        if (message.event === "abush_browser.cancel") {
-            workspaceReady().then(() => workspaces.cancel(message.payload)).catch(() => {});
-        }
-    });
+    registerNativeEventRouter(dispatcher(), workspaces, workspaceReady);
     registerWorkspaceWindowListeners(chrome, workspaces, workspaceReady, error =>
         notifyFailure(error.message || "Unable to retire closed Abush browser workspace"));
     chrome.debugger.onDetach.addListener(source => {
@@ -675,6 +678,6 @@ if (typeof chrome !== "undefined") {
 
 if (typeof module !== "undefined") {
     module.exports = {NativeDispatcher, ENVELOPE_VERSION, workspace,
-        connectWorkspaceAfterRestore, createWorkspaceInitializer,
+        connectWorkspaceAfterRestore, createWorkspaceInitializer, registerNativeEventRouter,
         registerWorkspaceWindowListeners, registerRuntimeMessageRouter};
 }

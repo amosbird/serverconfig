@@ -13,7 +13,8 @@ const {WorkspaceExecutor, BROWSER_ERROR_CODES, displayTitle, STATUS_PREFIX,
     MARKER_IDS} = require(
     "../chromium/external-links/extension/workspace.js");
 const {NativeDispatcher, connectWorkspaceAfterRestore, createWorkspaceInitializer,
-    registerWorkspaceWindowListeners, registerRuntimeMessageRouter} = require(
+    registerNativeEventRouter, registerWorkspaceWindowListeners, registerRuntimeMessageRouter} =
+    require(
     "../chromium/external-links/extension/background.js");
 
 const fence = {executor_id: "executor", epoch: 1};
@@ -1727,6 +1728,126 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(record.connectionId, "c_old00000");
         assert.equal(record.executorFence.epoch, 1);
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0);
+    }
+    {
+        beginCase();
+        const localState = {};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        const remoteA = ensurePayload();
+        const remoteB = ensurePayload({
+            remote_key: "r_87654321", connection_id: "c_87654321",
+            principal_id: "principal-two", request_id: "ensure-b", ensure_id: "ensure-b",
+            executor_fence: {executor_id: "executor-b", epoch: 1},
+        });
+        const record = await executor.ensure(remoteA);
+        const retire = {
+            ...executor.ensureIdentity(remoteA), request_id: "retire-interleave-a",
+            retire_id: "retire-interleave-a", origin_executor_fence: remoteA.executor_fence,
+            window_id: record.logicalWindowId, page_id: record.logicalPageId,
+        };
+        const cleanupGate = deferred("interleaved retire cleanup");
+        const cleanupStarted = deferred("interleaved retire start");
+        const originalCleanup = executor.convergeManagedTopology.bind(executor);
+        executor.convergeManagedTopology = async (...args) => {
+            cleanupStarted.resolve();
+            await cleanupGate.promise;
+            return originalCleanup(...args);
+        };
+        calls.length = 0;
+        const retiring = executor.retireManagedPage(retire);
+        await cleanupStarted.promise;
+        await executor.remoteState({...remoteB, connected: true});
+        cleanupGate.resolve();
+        await retiring;
+        assert.equal(executor.retireConfirmedIdentities.has(retire.retire_id), true,
+            "remote B state during A retire must not steal A completion authority");
+        assert.equal(calls.filter(call => call[0] ===
+            "retire_managed_page_ack_consumed").length, 1);
+        await executor.remoteState({remote_key: remoteB.remote_key,
+            connection_id: remoteB.connection_id, connected: false});
+        assert.equal(executor.remoteAuthorities.has(remoteA.remote_key), true,
+            "disconnecting B must not clear A authority");
+        assert.equal(executor.retireRecoveryStates.has(remoteA.remote_key), true);
+    }
+    {
+        beginCase();
+        const localState = {};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        const identity = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", request_id: "retire-deferred-delivery",
+            retire_id: "retire-deferred-ack", ensure_id: "ensure-deferred-ack",
+            executor_fence: fence, origin_executor_fence: fence,
+            window_id: logicalWindowId, page_id: logicalPageId,
+        };
+        const completion = {outcome: "already_retired"};
+        executor.retireCompleted.set(identity.retire_id, {identity, delivery: identity, completion});
+        await executor.persistRetireLedger();
+        const ack = {
+            remote_key: identity.remote_key, connection_id: identity.connection_id,
+            principal_id: identity.principal_id, request_id: identity.request_id,
+            retire_id: identity.retire_id, executor_fence: identity.executor_fence,
+            response_delivery_id: "deferred-retire-response",
+            origin_executor_fence: identity.origin_executor_fence, completion,
+        };
+        assert.equal(await executor.retireManagedPageAck(ack), true);
+        assert.equal(executor.retireDeferredAcks.size, 1,
+            "ACK before authority must be durably deferred");
+        assert.equal(localState.abushRetireLedger.some(entry =>
+            entry.phase === "ack_deferred"), true);
+        assert.equal(calls.some(call => call[0] === "retire_managed_page_ack_consumed"), false);
+        await executor.remoteState({...identity, connected: true});
+        assert.equal(executor.retireDeferredAcks.size, 0);
+        assert.equal(calls.filter(call => call[0] ===
+            "retire_managed_page_ack_consumed").length, 1,
+        "remote state must consume a deferred ACK exactly once");
+        await executor.remoteState({...identity, connected: true});
+        assert.equal(calls.filter(call => call[0] ===
+            "retire_managed_page_ack_consumed").length, 1);
+    }
+    {
+        beginCase();
+        const {executor} = fixture();
+        const identity = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", request_id: "retire-wrong-ack",
+            retire_id: "retire-wrong-ack", ensure_id: "ensure-wrong-ack",
+            executor_fence: fence, origin_executor_fence: fence,
+            window_id: logicalWindowId, page_id: logicalPageId,
+        };
+        const completion = {outcome: "already_retired"};
+        executor.retireCompleted.set(identity.retire_id, {identity, delivery: identity, completion});
+        await executor.remoteState({...identity, connected: true});
+        const ack = {
+            remote_key: identity.remote_key, connection_id: identity.connection_id,
+            principal_id: identity.principal_id, request_id: identity.request_id,
+            retire_id: identity.retire_id, executor_fence: identity.executor_fence,
+            response_delivery_id: "wrong-retire-response",
+            origin_executor_fence: identity.origin_executor_fence, completion,
+        };
+        assert.equal(await executor.retireManagedPageAck({...ack,
+            retire_id: "different-stable-retire"}), false);
+        assert.equal(await executor.retireManagedPageAck({...ack,
+            request_id: "wrong-retire-delivery"}), false);
+        assert.equal(await executor.retireManagedPageAck({...ack,
+            connection_id: "c_wrong0000"}), false);
+        assert.equal(await executor.retireManagedPageAck({...ack,
+            executor_fence: {executor_id: "wrong", epoch: 9}}), false);
+        assert.equal(executor.retireDeferredAcks.size, 0,
+            "wrong ACK under known authority must be rejected, not deferred");
+    }
+    {
+        beginCase();
+        let listener;
+        const failures = [];
+        registerNativeEventRouter({onEvent: callback => { listener = callback; }}, {
+            retireManagedPageAck: async () => false,
+        }, async () => {}, message => failures.push(message));
+        listener({service: "abush_browser", event: "abush_browser.retire_managed_page_ack",
+            payload: {remote_key: "r_12345678"}});
+        await waitFor(() => failures.length === 1, "rejected retire ACK notification");
+        assert.match(failures[0], /retire acknowledgement/,
+            "background must surface a rejected retire ACK for retry");
     }
     {
         beginCase();
@@ -3762,11 +3883,11 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(localState.abushRetireLedger[0].phase, "legacy_cleanup");
         assert.equal(calls.some(call => call[0] === "retire_managed_page_completion"), false,
             "legacy v6 retire state must never fabricate a v7 completion or ACK");
-        executor.retireRecoveryReady = true;
-        executor.retireRecoveryState = {
-            remote_key: legacy.remote_key, connection_id: legacy.connection_id,
-            principal_id: legacy.principal_id, executor_fence: fence, connected: true,
-        };
+        executor.retireRecoveryStates.set(legacy.remote_key,
+            executor.authoritySnapshot({
+                remote_key: legacy.remote_key, connection_id: legacy.connection_id,
+                principal_id: legacy.principal_id, executor_fence: fence, connected: true,
+            }));
         await executor.recoverRetireLedger();
         assert.deepEqual(localState.abushRetireLedger, [],
             "legacy retire state clears only after local physical convergence");

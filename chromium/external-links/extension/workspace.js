@@ -95,11 +95,12 @@ class WorkspaceExecutor {
         this.retireServerConfirmed = new Map();
         this.retireLegacyCleanup = new Map();
         this.retireConfirmedIdentities = new Map();
+        this.retireDeferredAcks = new Map();
         this.remoteAuthorities = new Map();
         this.deferredTopologyResponses = new Map();
-        this.retireRecoveryReady = false;
+        this.retireRecoveryStates = new Map();
+        this.remoteLifecycleTails = new Map();
         this.retireRecoveries = [];
-        this.retireRecoveryState = null;
         this.retireFlushTail = Promise.resolve();
         this.nativeMutationTail = Promise.resolve();
         this.advisoryErrors = [];
@@ -698,6 +699,30 @@ class WorkspaceExecutor {
         const operation = this.lifecycleTail.catch(() => {}).then(() => task(generation));
         this.lifecycleTail = operation;
         return operation;
+    }
+
+    enqueueRemoteLifecycle(remoteKey, task) {
+        const tail = this.remoteLifecycleTails.get(remoteKey) || Promise.resolve();
+        const operation = tail.catch(() => {}).then(task);
+        this.remoteLifecycleTails.set(remoteKey, operation);
+        operation.finally(() => {
+            if (this.remoteLifecycleTails.get(remoteKey) === operation) {
+                this.remoteLifecycleTails.delete(remoteKey);
+            }
+        }).catch(() => {});
+        return operation;
+    }
+
+    authoritySnapshot(state) {
+        if (!state || state.connected !== true || typeof state.remote_key !== "string" ||
+                typeof state.connection_id !== "string" ||
+                typeof state.principal_id !== "string" || !validFence(state.executor_fence)) {
+            return null;
+        }
+        return Object.freeze({
+            ...structuredClone(state),
+            executor_fence: Object.freeze(structuredClone(state.executor_fence)),
+        });
     }
 
     async persistWithoutRecords(removed, {forget = true} = {}) {
@@ -3306,6 +3331,9 @@ class WorkspaceExecutor {
         for (const [key, identity] of this.retireLegacyCleanup) {
             snapshot.push({version: 8, phase: "legacy_cleanup", key, identity});
         }
+        for (const [retireId, ack] of this.retireDeferredAcks) {
+            snapshot.push({version: 9, phase: "ack_deferred", retire_id: retireId, ack});
+        }
         return snapshot;
     }
 
@@ -3337,6 +3365,16 @@ class WorkspaceExecutor {
             ["retired", "already_retired"].includes(completion.outcome);
     }
 
+    validRetireAckPayload(payload) {
+        return exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
+            "retire_id", "executor_fence", "response_delivery_id", "origin_executor_fence",
+            "completion"]) && [payload.remote_key, payload.connection_id, payload.principal_id,
+            payload.request_id, payload.retire_id, payload.response_delivery_id].every(value =>
+            typeof value === "string" && value) && validFence(payload.executor_fence) &&
+            validFence(payload.origin_executor_fence) &&
+            this.validRetireCompletion(payload.completion);
+    }
+
     validRetireAck(ack, entry, requireDelivery = true) {
         return exactFields(ack, ["request_id", "retire_id", "executor_fence",
             "response_delivery_id", "origin_executor_fence", "completion"]) &&
@@ -3365,6 +3403,14 @@ class WorkspaceExecutor {
         let dirty = false;
         for (const entry of entries) {
             const legacyV7 = entry?.version === 7;
+            if (entry?.version === 9 && entry.phase === "ack_deferred" &&
+                    typeof entry.retire_id === "string" && entry.retire_id &&
+                    entry.retire_id === entry.ack?.retire_id &&
+                    this.validRetireAckPayload(entry.ack) &&
+                    !this.retireDeferredAcks.has(entry.retire_id)) {
+                this.retireDeferredAcks.set(entry.retire_id, entry.ack);
+                continue;
+            }
             if (legacyV7 && ["accepted", "effect_started", "completed", "legacy_cleanup"].includes(
                 entry.phase)) dirty = true;
             if (entry?.version !== 8 && !legacyV7) {
@@ -3445,10 +3491,18 @@ class WorkspaceExecutor {
         await this.persistRetireLedger();
     }
 
-    async recoverRetireLedger() {
-        if (!this.retireRecoveryReady) return;
+    async recoverRetireLedger(authority = null) {
+        if (!authority && this.retireRecoveryStates.size === 1) {
+            authority = this.retireRecoveryStates.values().next().value;
+        }
+        if (!authority) return;
         const legacy = this.retireRecoveries.splice(0);
         for (const identity of legacy) {
+            if (identity.remote_key !== authority.remote_key ||
+                    identity.principal_id !== authority.principal_id) {
+                this.retireRecoveries.push(identity);
+                continue;
+            }
             try {
                 await this.recoverLegacyRetire(identity);
             } catch (error) {
@@ -3458,8 +3512,8 @@ class WorkspaceExecutor {
             }
         }
         for (const entry of [...this.retireEffectStarted.values()]) {
-            if (entry.identity.remote_key !== this.retireRecoveryState.remote_key ||
-                    entry.identity.principal_id !== this.retireRecoveryState.principal_id) continue;
+            if (entry.identity.remote_key !== authority.remote_key ||
+                    entry.identity.principal_id !== authority.principal_id) continue;
             const record = this.workspaces.get(this.key(
                 entry.identity.remote_key, entry.identity.principal_id));
             if (record && record.logicalWindowId === entry.identity.window_id &&
@@ -3471,26 +3525,27 @@ class WorkspaceExecutor {
             this.retireEffectStarted.delete(entry.identity.retire_id);
             this.retireCompleted.set(entry.identity.retire_id, {
                 identity: entry.identity,
-                delivery: this.retireDelivery(entry.identity, this.retireRecoveryState),
+                delivery: this.retireDelivery(entry.identity, authority),
                 completion: {outcome: "retired"},
             });
             await this.persistRetireLedger();
         }
         for (const identity of [...this.retirePending.values()]) {
-            if (identity.remote_key !== this.retireRecoveryState.remote_key ||
-                    identity.principal_id !== this.retireRecoveryState.principal_id) continue;
+            if (identity.remote_key !== authority.remote_key ||
+                    identity.principal_id !== authority.principal_id) continue;
             try {
-                await this.finishRetire(identity);
+                await this.finishRetire(identity, authority);
             } catch (error) {
                 this.reportAdvisoryError(new AggregateError([error],
                     "accepted retire request remains pending recovery"));
             }
         }
-        await this.flushRetireLedger();
     }
 
     async retireManagedPage(payload) {
-        return this.enqueueLifecycle(() => this.retireManagedPageSerialized(payload));
+        if (!payload || typeof payload.remote_key !== "string") return false;
+        return this.enqueueRemoteLifecycle(payload.remote_key,
+            () => this.retireManagedPageSerialized(payload));
     }
 
     async retireManagedPageSerialized(payload) {
@@ -3499,16 +3554,15 @@ class WorkspaceExecutor {
             "page_id"])) return false;
         const identity = this.retireIdentity(payload);
         if (!this.validRetireIdentity(identity)) return false;
-        this.retireRecoveryReady = true;
-        this.retireRecoveryState = {
+        const authority = this.authoritySnapshot({
             remote_key: identity.remote_key,
             connection_id: identity.connection_id,
             principal_id: identity.principal_id,
             executor_fence: identity.executor_fence,
             connected: true,
-        };
-        this.remoteAuthorities.set(identity.remote_key,
-            structuredClone(this.retireRecoveryState));
+        });
+        this.retireRecoveryStates.set(identity.remote_key, authority);
+        this.remoteAuthorities.set(identity.remote_key, authority);
         const known = this.retirePending.get(identity.retire_id) ||
             this.retireEffectStarted.get(identity.retire_id)?.identity ||
             this.retireCompleted.get(identity.retire_id)?.identity ||
@@ -3533,25 +3587,25 @@ class WorkspaceExecutor {
         }
         if (this.retireResponseReceived.has(identity.retire_id) ||
                 this.retireConsumedPending.has(identity.retire_id)) {
-            await this.flushRetireLedger();
+            await this.flushRetireLedger(authority);
             return true;
         }
         if (this.retireEffectStarted.has(identity.retire_id)) {
-            await this.recoverRetireLedger();
-            await this.flushRetireLedger();
+            await this.recoverRetireLedger(authority);
+            await this.flushRetireLedger(authority);
             return true;
         }
         if (this.retireCompleted.has(identity.retire_id)) {
-            await this.flushRetireLedger();
+            await this.flushRetireLedger(authority);
             return true;
         }
         const flight = this.retireFlights.get(identity.retire_id);
         if (flight) {
             await flight;
         } else {
-            await this.finishRetire(identity);
+            await this.finishRetire(identity, authority);
         }
-        await this.flushRetireLedger();
+        await this.flushRetireLedger(authority);
         return true;
     }
 
@@ -3581,10 +3635,10 @@ class WorkspaceExecutor {
         await this.persistRetireLedger();
     }
 
-    async finishRetire(identity) {
+    async finishRetire(identity, authority) {
         const existing = this.retireFlights.get(identity.retire_id);
         if (existing) return existing;
-        const flight = this.finishRetireOnce(identity).finally(() => {
+        const flight = this.finishRetireOnce(identity, authority).finally(() => {
             if (this.retireFlights.get(identity.retire_id) === flight) {
                 this.retireFlights.delete(identity.retire_id);
             }
@@ -3593,15 +3647,14 @@ class WorkspaceExecutor {
         return flight;
     }
 
-    async finishRetireOnce(identity) {
+    async finishRetireOnce(identity, authority) {
+        if (!authority || authority.remote_key !== identity.remote_key ||
+                authority.principal_id !== identity.principal_id) return;
         const record = this.workspaces.get(this.key(identity.remote_key, identity.principal_id));
         let completion = {outcome: "already_retired"};
         if (record && record.logicalWindowId === identity.window_id &&
                 record.logicalPageId === identity.page_id) {
-            const state = this.retireRecoveryState;
-            if (!state || state.remote_key !== identity.remote_key ||
-                    state.principal_id !== identity.principal_id) return;
-            const delivery = this.retireDelivery(identity, state);
+            const delivery = this.retireDelivery(identity, authority);
             this.retirePending.delete(identity.retire_id);
             this.retireEffectStarted.set(identity.retire_id, {identity, delivery});
             await this.persistRetireLedger();
@@ -3609,25 +3662,23 @@ class WorkspaceExecutor {
             this.retireEffectStarted.delete(identity.retire_id);
             completion = {outcome: "retired"};
         }
-        const state = this.retireRecoveryState;
-        if (!state || state.remote_key !== identity.remote_key ||
-                state.principal_id !== identity.principal_id) return;
-        const delivery = this.retireDelivery(identity, state);
+        const delivery = this.retireDelivery(identity, authority);
         this.retirePending.delete(identity.retire_id);
         this.retireCompleted.set(identity.retire_id, {identity, delivery, completion});
         await this.persistRetireLedger();
     }
 
-    async flushRetireLedger() {
+    async flushRetireLedger(authority) {
+        if (!authority) return;
         const flush = this.retireFlushTail.catch(() => {}).then(
-            () => this.flushRetireLedgerOnce());
+            () => this.flushRetireLedgerOnce(authority));
         this.retireFlushTail = flush;
         return flush;
     }
 
-    async flushRetireLedgerOnce() {
-        const state = this.retireRecoveryState;
-        if (!state) return;
+    async flushRetireLedgerOnce(authority) {
+        if (!authority) return;
+        const state = authority;
         const responseRetries = [...this.retireResponseReceived.values()];
         const consumedRetries = [...this.retireConsumedPending.values()];
         for (const [retireId, original] of [...this.retireCompleted]) {
@@ -3656,7 +3707,7 @@ class WorkspaceExecutor {
                 this.retireCompleted.delete(retireId);
                 this.retireResponseReceived.set(retireId, received);
                 await this.persistRetireLedger();
-                await this.consumeRetireAck(received);
+                await this.consumeRetireAck(received, state);
             } catch (error) {
                 this.reportAdvisoryError(new AggregateError([error],
                     "retire completion remains pending acknowledgement"));
@@ -3668,7 +3719,7 @@ class WorkspaceExecutor {
             try {
                 if (this.retireResponseReceived.get(entry.identity.retire_id) === entry ||
                         this.retireConsumedPending.get(entry.identity.retire_id) === entry) {
-                    await this.consumeRetireAck(entry);
+                    await this.consumeRetireAck(entry, state);
                 }
             } catch (error) {
                 this.reportAdvisoryError(new AggregateError([error],
@@ -3698,8 +3749,8 @@ class WorkspaceExecutor {
         }
     }
 
-    async consumeRetireAck(original) {
-        const state = this.remoteAuthorities.get(original.identity.remote_key);
+    async consumeRetireAck(original, authority) {
+        const state = authority;
         if (!state || state.connected !== true ||
                 state.principal_id !== original.identity.principal_id ||
                 typeof state.connection_id !== "string" || !validFence(state.executor_fence)) {
@@ -3752,10 +3803,58 @@ class WorkspaceExecutor {
         await this.removeConfirmedRetire(entry.identity.retire_id);
     }
 
+    async deferRetireAck(payload) {
+        const existing = this.retireDeferredAcks.get(payload.retire_id);
+        if (existing && !sameRef(existing, payload)) {
+            throw new Error("conflicting deferred retire acknowledgement");
+        }
+        if (existing) return;
+        this.retireDeferredAcks.set(payload.retire_id, structuredClone(payload));
+        try {
+            await this.persistRetireLedger();
+        } catch (error) {
+            this.retireDeferredAcks.delete(payload.retire_id);
+            throw error;
+        }
+    }
+
+    async processDeferredRetireAcks(authority) {
+        for (const [retireId, payload] of [...this.retireDeferredAcks]) {
+            if (payload.remote_key !== authority.remote_key ||
+                    payload.principal_id !== authority.principal_id) continue;
+            if (payload.connection_id !== authority.connection_id ||
+                    !sameRef(payload.executor_fence, authority.executor_fence)) {
+                this.reportAdvisoryError(new Error(
+                    "deferred retire acknowledgement does not match current authority"));
+                continue;
+            }
+            this.retireDeferredAcks.delete(retireId);
+            try {
+                await this.persistRetireLedger();
+                if (!await this.retireManagedPageAckSerialized(payload, false)) {
+                    throw new Error("deferred retire acknowledgement was rejected");
+                }
+            } catch (error) {
+                this.retireDeferredAcks.set(retireId, payload);
+                try {
+                    await this.persistRetireLedger();
+                } catch (persistError) {
+                    throw new AggregateError([error, persistError],
+                        "deferred retire acknowledgement and persistence both failed");
+                }
+                throw error;
+            }
+        }
+    }
+
     async retireManagedPageAck(payload) {
-        if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
-            "retire_id", "executor_fence", "response_delivery_id", "origin_executor_fence",
-            "completion"])) return false;
+        if (!payload || typeof payload.remote_key !== "string") return false;
+        return this.enqueueRemoteLifecycle(payload.remote_key,
+            () => this.retireManagedPageAckSerialized(payload));
+    }
+
+    async retireManagedPageAckSerialized(payload, allowDefer = true) {
+        if (!this.validRetireAckPayload(payload)) return false;
         const ack = {
             request_id: payload.request_id,
             retire_id: payload.retire_id,
@@ -3767,16 +3866,30 @@ class WorkspaceExecutor {
         const entry = this.retireCompleted.get(ack.retire_id) ||
             this.retireResponseReceived.get(ack.retire_id) ||
             this.retireConsumedPending.get(ack.retire_id);
-        if (!entry || payload.remote_key !== entry.identity.remote_key ||
-                payload.principal_id !== entry.identity.principal_id ||
-                !this.validRetireAck(ack, entry, false) ||
+        const known = entry?.identity || this.retirePending.get(ack.retire_id) ||
+            this.retireEffectStarted.get(ack.retire_id)?.identity ||
+            this.retireServerConfirmed.get(ack.retire_id)?.identity ||
+            this.retireConfirmedIdentities.get(ack.retire_id)?.identity;
+        if (!known || payload.remote_key !== known.remote_key ||
+                payload.principal_id !== known.principal_id ||
+                payload.retire_id !== known.retire_id ||
+                !sameRef(payload.origin_executor_fence, known.origin_executor_fence)) {
+            return false;
+        }
+        const state = this.remoteAuthorities.get(payload.remote_key);
+        if (!state || state.connected !== true) {
+            if (!allowDefer) return false;
+            await this.deferRetireAck(payload);
+            return true;
+        }
+        if (state.principal_id !== payload.principal_id ||
+                state.connection_id !== payload.connection_id ||
+                !sameRef(state.executor_fence, payload.executor_fence)) return false;
+        if (!entry || !this.validRetireAck(ack, entry) ||
                 (entry.ack && entry.ack.response_delivery_id !== ack.response_delivery_id)) {
             return false;
         }
         if (entry.consumed_request_id) {
-            const state = this.remoteAuthorities.get(payload.remote_key);
-            if (!state || state.connected !== true ||
-                    state.principal_id !== payload.principal_id) return false;
             const pending = {
                 ...entry,
                 ack_connection_id: state.connection_id,
@@ -3786,12 +3899,9 @@ class WorkspaceExecutor {
             };
             this.retireConsumedPending.set(ack.retire_id, pending);
             await this.persistRetireLedger();
-            await this.consumeRetireAck(pending);
+            await this.consumeRetireAck(pending, state);
             return true;
         }
-        const state = this.remoteAuthorities.get(payload.remote_key);
-        if (!state || state.connection_id !== payload.connection_id ||
-                !sameRef(state.executor_fence, payload.executor_fence)) return false;
         const received = {
             ...entry,
             ack_connection_id: payload.connection_id,
@@ -3800,7 +3910,7 @@ class WorkspaceExecutor {
         this.retireCompleted.delete(ack.retire_id);
         this.retireResponseReceived.set(ack.retire_id, received);
         await this.persistRetireLedger();
-        await this.consumeRetireAck(received);
+        await this.consumeRetireAck(received, state);
         return true;
     }
 
@@ -4729,21 +4839,28 @@ class WorkspaceExecutor {
 
     async remoteState(state) {
         if (!state || typeof state.remote_key !== "string") return;
+        return this.enqueueRemoteLifecycle(state.remote_key,
+            () => this.remoteStateSerialized(state));
+    }
+
+    async remoteStateSerialized(state) {
         await this.authorizeTopologyOutbox(state);
-        if (state?.connected === true && typeof state.connection_id === "string" &&
-                typeof state.principal_id === "string" && validFence(state.executor_fence)) {
-            this.remoteAuthorities.set(state.remote_key, structuredClone(state));
+        const authority = this.authoritySnapshot(state);
+        if (authority) {
+            this.remoteAuthorities.set(state.remote_key, authority);
+            this.retireRecoveryStates.set(state.remote_key, authority);
         } else {
             this.remoteAuthorities.delete(state.remote_key);
+            this.retireRecoveryStates.delete(state.remote_key);
         }
-        this.retireRecoveryReady = state?.connected === true;
-        this.retireRecoveryState = state?.connected === true ? state : null;
-        if (state?.connected === true) {
+        if (authority) {
             await this.restoreQuarantinedCleanupReports();
-            await this.processDeferredTopologyResponses(state);
+            await this.processDeferredTopologyResponses(authority);
+            await this.recoverRetireLedger(authority);
+            await this.processDeferredRetireAcks(authority);
+            await this.flushRetireLedger(authority);
+            await this.flushTopologyOutbox();
         }
-        await this.recoverRetireLedger();
-        if (state?.connected === true) await this.flushTopologyOutbox();
         const disconnected = state.connected === false;
         await this.cancelMatching(identity => identity.remote_key === state.remote_key &&
             (disconnected || (typeof state.connection_id === "string" &&
