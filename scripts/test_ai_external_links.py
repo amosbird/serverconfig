@@ -177,11 +177,16 @@ for (const [page, link, expected] of cases) {{
             packaged_manifest = json.loads(archive.read("manifest.json"))
             self.assertEqual(packaged_manifest["version"], version)
             self.assertEqual(packaged_manifest["background"]["service_worker"], worker)
+            names = set(archive.namelist())
+            self.assertNotIn("background.js", names)
+            self.assertNotIn("workspace.js", names)
             self.assertEqual(archive.read(workspace),
                              MANIFEST.with_name("workspace.js").read_bytes())
-            self.assertEqual(archive.read(worker).decode(),
-                             f'importScripts("{workspace}");\n'
-                             'importScripts("background.js");\n')
+            worker_source = archive.read(worker).decode()
+            self.assertIn(f'importScripts("{workspace}")', worker_source)
+            self.assertNotIn('importScripts("workspace.js")', worker_source)
+            self.assertNotIn('importScripts("background.js")', worker_source)
+            self.assertIn('requestBootstrap(port)', worker_source)
 
     def test_runai_uses_installed_extension_and_registers_native_host(self):
         launcher = RUNAI.read_text()
@@ -208,10 +213,13 @@ for (const [page, link, expected] of cases) {{
         self.assertIn('source_hash=$(', packager)
         self.assertIn('if [[ $source_hash != "$previous_hash"', packager)
         self.assertIn('manifest["version"] = version', packager)
+        self.assertIn('versioned_background = background.replace(', packager)
+        self.assertIn("f'importScripts(\"{versioned_workspace}\")'", packager)
+        self.assertIn('background_path.unlink()', packager)
+        self.assertIn('(root / "workspace.js").unlink()', packager)
         self.assertIn('manifest["background"]["service_worker"] = versioned_worker', packager)
         self.assertIn('versioned_workspace = f"workspace-{suffix}.js"', packager)
         self.assertIn('versioned_worker = f"background-{suffix}.js"', packager)
-        self.assertIn('importScripts("{versioned_workspace}")', packager)
         self.assertIn('"external_crx": "$output/extension.crx"', packager)
         self.assertIn('"external_version": "$version"', packager)
         self.assertNotIn("<gupdate", packager)

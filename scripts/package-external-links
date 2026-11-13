@@ -85,15 +85,19 @@ manifest = json.loads(manifest_path.read_text())
 worker = manifest.get("background", {}).get("service_worker")
 if worker != "background.js":
     raise SystemExit("External Links manifest must use the canonical background.js source")
-background = (root / "background.js").read_text()
+background_path = root / "background.js"
+background = background_path.read_text()
 match = re.search(r'importScripts\("([^"]+)"\)', background)
 if not match or match.group(1) != "workspace.js":
     raise SystemExit("External Links background must import the canonical workspace.js source")
 versioned_workspace = f"workspace-{suffix}.js"
 versioned_worker = f"background-{suffix}.js"
+versioned_background = background.replace(
+    'importScripts("workspace.js")', f'importScripts("{versioned_workspace}")', 1)
 (root / versioned_workspace).write_bytes((root / "workspace.js").read_bytes())
-(root / versioned_worker).write_text(
-    f'importScripts("{versioned_workspace}");\nimportScripts("background.js");\n')
+(root / versioned_worker).write_text(versioned_background)
+background_path.unlink()
+(root / "workspace.js").unlink()
 manifest["version"] = version
 manifest["background"]["service_worker"] = versioned_worker
 manifest_path.write_text(json.dumps(manifest, separators=(",", ":")))
