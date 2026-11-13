@@ -833,25 +833,38 @@ class LauncherTest(unittest.TestCase):
                 self.log.unlink()
                 self.chrome_ready.unlink(missing_ok=True)
 
-    def test_luakit_argument_count_and_file_uri_encoding(self):
+    def test_luakit_zero_argument_launch_and_file_uri_encoding(self):
         env = self.environment()
         capture = self.base / "capture"
+        count = self.base / "count"
         launcher = self.bin / "capture"
         launcher.write_text(
-            "#!/usr/bin/env bash\nprintf '%s' \"$1\" > \"$ABUSH_TEST_CAPTURE\"\n"
+            "#!/usr/bin/env bash\n"
+            "printf '%s' \"$#\" > \"$ABUSH_TEST_COUNT\"\n"
+            "if [[ $# -eq 1 ]]; then printf '%s' \"$1\" > \"$ABUSH_TEST_CAPTURE\"; fi\n"
         )
         launcher.chmod(0o755)
         env.update({"ABUSH_CHROMIUM_LAUNCHER": str(launcher),
-                    "ABUSH_TEST_CAPTURE": str(capture)})
-        for arguments in ([], ["one", "two"]):
-            result = subprocess.run([ROOT / "scripts/luakit", *arguments], env=env,
-                                    capture_output=True, text=True)
-            self.assertEqual(result.returncode, 2)
+                    "ABUSH_TEST_CAPTURE": str(capture),
+                    "ABUSH_TEST_COUNT": str(count)})
+
+        result = subprocess.run([ROOT / "scripts/luakit"], env=env,
+                                capture_output=True, text=True, timeout=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(count.read_text(), "0")
+        self.assertFalse(capture.exists())
+
+        result = subprocess.run([ROOT / "scripts/luakit", "one", "two"], env=env,
+                                capture_output=True, text=True, timeout=2)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage: luakit [URL_OR_PATH]", result.stderr)
+
         target = self.base / "file with space#hash.txt"
         target.write_text("x")
         result = subprocess.run([ROOT / "scripts/luakit", str(target)], env=env,
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(count.read_text(), "1")
         self.assertEqual(capture.read_text(), target.resolve().as_uri())
 
 

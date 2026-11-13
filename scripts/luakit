@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 
-if [[ $# -ne 1 ]]; then
-    printf 'usage: luakit URL_OR_PATH\n' >&2
+if [[ $# -gt 1 ]]; then
+    printf 'usage: luakit [URL_OR_PATH]\n' >&2
     exit 2
+fi
+
+if [[ $# -eq 0 ]]; then
+    exec "${ABUSH_CHROMIUM_LAUNCHER:-"$HOME"/scripts/chromium}"
 fi
 
 value=$1
