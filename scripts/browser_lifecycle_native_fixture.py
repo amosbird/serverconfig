@@ -37,12 +37,24 @@ class Window:
         self.wid = xid
         self.name = ""
         self.props = {"WM_CLASS": "google-chrome\0Google-chrome", "WM_WINDOW_ROLE": "browser"}
-        self.group = model.groups_map["f"]
+        self.group = None
+        self.qtile = model
         self.can_steal_focus = True
         self.window = self
 
     def get_property(self, name, *_args, **_kwargs):
         return self.props.get(name, "")
+
+    def get_pid(self):
+        return 4242
+
+    def get_name(self):
+        return self.name
+
+    def set_property(self, name, value, property_type, format):
+        assert property_type in {"UTF8_STRING", "STRING"} and format == 8
+        self.props[name] = value
+        self.model.record("property:" + name, self.wid)
 
     def get_wm_class(self):
         return self.props["WM_CLASS"].split("\0")
@@ -93,6 +105,8 @@ class Model:
             "claim_abush_browser_candidate", "is_chrome_window", "x11_text_property",
             "abush_browser_metadata", "is_abush_browser_verified", "has_abush_candidate_title",
             "is_abush_browser_candidate", "prevent_abush_browser_focus_steal",
+            "abush_candidate_claim", "save_abush_candidate_claim", "abush_browser_incarnation",
+            "before_window_created", "release_abush_candidate_window",
             "reclassify_abush_browser", "place_abush_browser", "install_browser_commands",
         }
         nodes = []
@@ -105,6 +119,8 @@ class Model:
                 node.decorator_list = []
                 nodes.append(node)
         exec(compile(ast.Module(nodes, []), "qtile-browser-helpers", "exec"), self.ns)
+        self.ns["abush_browser_incarnation"] = (
+            lambda window: ["offline-boot", window.get_pid(), "1234"])
         self.ns["install_browser_commands"]()
         self.adapter = Adapter(self)
         self.completions = []
@@ -113,19 +129,34 @@ class Model:
                                          outbound=queue.Queue(), ordinary_open=ordinary)
         self.broker.x11_binding = lambda: binding
         peer = SimpleNamespace(connected=True, metadata={"connection_id": "c_12345678"},
-                               principal_id="principal-one", complete_ensure=self.complete_ensure)
+                               principal_id="principal-one", complete_ensure=self.complete_ensure,
+                               complete_ensure_cancellation=self.complete_ensure_cancellation)
         self.broker.peers["r_12345678"] = peer
         self.fault = None
 
-    def complete_ensure(self, *args):
-        self.completions.append({"ensure": args})
+    def complete_ensure(self, principal, workspace, request, ensure, fence, completion):
+        assert principal == "principal-one" and workspace == "workspace-authoritative"
+        assert host.RemotePeer._valid_ensure_completion(completion)
+        receipt = {"type": "ensure_managed_page_completion_accepted", "request_id": request,
+                   "ensure_id": ensure, "executor_fence": fence, "completion": completion}
+        if self.completions:
+            assert self.completions[-1] == receipt, "conflicting terminal retry"
+        else:
+            self.completions.append(receipt)
+        return receipt
+
+    def complete_ensure_cancellation(self, principal, request, ensure, fence):
+        assert principal == "principal-one"
+        return {"type": "ensure_managed_page_cancellation_accepted", "request_id": request,
+                "ensure_id": ensure, "executor_fence": fence}
 
     def record(self, action, xid=None):
         self.trace.append({"action": action, "xid": xid,
                            "desktop": self.current_screen.group.name,
                            "focus": self.current_window.wid,
                            "chrome": self.chrome,
-                           "windows": {str(wid): {"group": win.group.name, "title": win.name,
+                           "windows": {str(wid): {"group": win.group.name if win.group else None,
+                                                   "title": win.name,
                                                    "props": dict(win.props)}
                                        for wid, win in self.windows_map.items()}})
         self.trace[-1] = json.loads(json.dumps(self.trace[-1]))
@@ -134,11 +165,12 @@ class Model:
         self.chrome = message["windows"]
         present = {win["id"] + 100 for win in self.chrome}
         for xid in set(self.windows_map) - present:
+            self.ns["release_abush_candidate_window"](self.windows_map[xid])
             del self.windows_map[xid]
         for chrome in self.chrome:
             xid = chrome["id"] + 100
             fresh = xid not in self.windows_map
-            window = self.windows_map.setdefault(xid, Window(self, xid))
+            window = Window(self, xid) if fresh else self.windows_map[xid]
             active = next((tab for tab in chrome["tabs"] if tab["active"]), None)
             title = (active or {}).get("title", "") + " - Google Chrome"
             if window.name != title:
@@ -147,9 +179,14 @@ class Model:
                 if not fresh:
                     self.ns["reclassify_abush_browser"](window)
             if fresh:
-                claimed = self.ns["claim_abush_browser_candidate"](window)
-                window.togroup("__abush_quarantine" if claimed else "f")
-                self.record("map:claimed" if claimed else "map:ordinary", xid)
+                self.ns["before_window_created"](window)
+                # client_new precedes dgroups and windows_map insertion. A claimed
+                # window already has a group; never consume the rule a second time.
+                if window.group is None:
+                    window.togroup("f")
+                self.windows_map[xid] = window
+                self.record("map:claimed" if self.ns["is_abush_browser_candidate"](window)
+                            else "map:ordinary", xid)
         self.record(message["action"])
         return {}
 
@@ -171,7 +208,9 @@ class Model:
         if self.fault == operation:
             self.fault = None
             raise RuntimeError("injected " + operation)
-        return self.broker.handle_request(request)
+        result = self.broker.handle_request(request)
+        self.record("native:validated:" + operation)
+        return result
 
 
 class Adapter:
@@ -197,7 +236,11 @@ class Adapter:
         return self.model.current_window.wid
 
     def set_text(self, xid, name, value, property_type="UTF8_STRING"):
-        self.model.windows_map[xid].props[name] = str(value)
+        window = self.model.windows_map[xid]
+        window.props[name] = str(value)
+        if name == "_NET_WM_NAME":
+            window.name = str(value)
+            self.model.ns["reclassify_abush_browser"](window)
         self.model.record("property:" + name, xid)
 
     def delete_property(self, xid, name):
@@ -205,17 +248,20 @@ class Adapter:
         self.model.record("delete:" + name, xid)
 
     def finish(self):
-        pass
+        self.model.record("roundtrip")
 
 
 def main():
     model = Model()
     with mock.patch.object(binding, "XcffibAdapter", return_value=model.adapter), \
             mock.patch.object(binding, "browser_process", return_value=True), \
+            mock.patch.object(binding, "browser_incarnation",
+                              side_effect=lambda pid: ["offline-boot", pid, "1234"]), \
             mock.patch.object(binding, "qtile_ipc_call", side_effect=model.ipc), \
             mock.patch.object(binding.time, "sleep", side_effect=AssertionError("unexpected poll")), \
             mock.patch.object(host.socket, "socket", side_effect=AssertionError("live socket")), \
-            mock.patch.object(host.subprocess, "run", side_effect=AssertionError("live process")):
+            mock.patch.object(host.subprocess, "run", side_effect=AssertionError("live process")), \
+            mock.patch.object(host.subprocess, "Popen", side_effect=AssertionError("live process")):
         for line in sys.stdin:
             message = json.loads(line)
             try:
@@ -229,6 +275,18 @@ def main():
                     result = model.sync(message)
                 elif kind == "fault":
                     model.fault = message["operation"]
+                    result = {}
+                elif kind == "recover_claims":
+                    # Simulate config reload: only the X11 property survives.
+                    model.ns["ABUSH_CANDIDATE_WINDOWS"].clear()
+                    model.ns["ABUSH_CANDIDATE_USED"].clear()
+                    model.ns["expire_abush_browser_candidate_leases"](time.monotonic() + 60)
+                    for window in model.windows_map.values():
+                        model.ns["place_abush_browser"](window)
+                    model.record("recover_claims")
+                    result = {}
+                elif kind == "expire_admission":
+                    model.ns["expire_abush_browser_candidate_leases"](time.monotonic() + 60)
                     result = {}
                 elif kind == "state":
                     result = {"trace": model.trace, "completions": model.completions}

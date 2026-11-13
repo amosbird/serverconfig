@@ -294,6 +294,9 @@ async function fixture(bridge, fault, pendingCreated) {
         nativeCalls.push(clone({service, operation, payload}));
         const result = await bridge.call("native", {request: {version: 1,
             id: `native-${nativeCalls.length}`, service, operation, payload}});
+        if (fault === "cancel" && operation === "register_candidate_lease") {
+            model.cancellation = executor.cancelEnsure(executor.ensureIdentity(ensurePayload()));
+        }
         if (fault === "terminal-loss" && !terminalReplyLost &&
                 operation === "ensure_managed_page_completion") {
             terminalReplyLost = true;
@@ -310,6 +313,7 @@ async function fixture(bridge, fault, pendingCreated) {
     await model.sync("initial");
     if (fault === "register") await bridge.call("fault", {operation: "register_candidate_lease"});
     if (fault === "bind") await bridge.call("fault", {operation: "bind_x11_window"});
+    if (fault === "release") await bridge.call("fault", {operation: "release_candidate_lease"});
     return {model, executor, nativeCalls};
 }
 
@@ -330,17 +334,48 @@ async function managedCase(bridge, fault = null, pendingCreated = false) {
     let failure;
     try { await executor.ensure(payload); } catch (error) { failure = error; }
     await drain(executor);
+    if (model.cancellation) await model.cancellation;
     assert.deepEqual(model.windows.get(1).tabs, model.original, "ordinary host changed");
     assert.equal(model.errors.length, 0, model.errors.map(error => error.stack).join("\n"));
+    if (fault === "terminal-loss") {
+        assert(failure, "accepted terminal reply loss must reject this delivery");
+        const effects = model.createdAttempts;
+        await executor.ensure(payload); // One retry may only replay the immutable terminal result.
+        await drain(executor);
+        assert.equal(model.createdAttempts, effects);
+        const completions = nativeCalls.filter(call =>
+            call.operation === "ensure_managed_page_completion");
+        assert.equal(completions.length, 2);
+        assert.deepEqual(completions[0].payload, completions[1].payload);
+        assert.equal(completions[0].payload.completion.outcome, "created");
+    }
     const state = await bridge.call("state");
     for (const frame of state.trace) {
         assert.equal(frame.desktop, "e", `desktop changed at ${frame.action}`);
         assert.equal(frame.focus, 900, `focus changed at ${frame.action}`);
-        assert.equal(frame.windows[101]?.group, "f", `ordinary host moved at ${frame.action}`);
+        if (!frame.windows[101]) continue; // client_new precedes windows_map insertion.
+        assert.equal(frame.windows[101].group, "f", `ordinary host moved at ${frame.action}`);
         assert.equal(frame.windows[101]?.title, "Ordinary one - Google Chrome",
             `ordinary host title changed at ${frame.action}`);
         assert(!Object.keys(frame.windows[101]?.props || {}).some(name =>
             name.startsWith("_ABUSH_")), `ordinary host metadata contaminated at ${frame.action}`);
+    }
+    assert.equal(nativeCalls.filter(call => call.operation === "release_candidate_lease").length,
+        1, "every requested admission gets one release attempt");
+    if (fault === "cancel") {
+        assert.equal(executor.workspaces.size, 0);
+        assert.equal(executor.pendingTransactions.size, 0);
+        assert.equal(model.windows.size, 1);
+        return;
+    }
+    if (fault === "release") {
+        assert(failure, "release failure must remain observable");
+        assert.equal(executor.workspaces.size, 0);
+        assert.equal(executor.pendingTransactions.size, 1, "retain durable pending cleanup");
+        await executor.restorePendingTransactions();
+        assert.equal(executor.pendingTransactions.size, 0, "idempotent recovery releases claim");
+        assert.equal(model.windows.size, 1);
+        return;
     }
     if (["register", "create", "bind"].includes(fault)) {
         const reached = fault === "create" ? model.createdAttempts === 1 : nativeCalls.some(call =>
@@ -368,6 +403,25 @@ async function managedCase(bridge, fault = null, pendingCreated = false) {
     const bindIndex = nativeCalls.findIndex(call => call.operation === "bind_x11_window");
     assert(releaseIndex > bindIndex,
         "launch lease release before bind invalidates the claimed Qtile candidate");
+    const registered = state.trace.findIndex(frame =>
+        frame.action === "native:validated:register_candidate_lease");
+    const quarantined = state.trace.findIndex(frame => frame.action === "map:claimed");
+    const metadataValidated = state.trace.findIndex(frame => frame.action === "roundtrip" &&
+        frame.windows[record.x11WindowId]?.props._ABUSH_BINDING_NONCE === record.nonce &&
+        frame.windows[record.x11WindowId]?.group === "__abush_quarantine");
+    const promoted = state.trace.findIndex(frame =>
+        frame.windows[record.x11WindowId]?.group === "c");
+    const bindValidated = state.trace.findIndex(frame =>
+        frame.action === "native:validated:bind_x11_window");
+    const released = state.trace.findIndex(frame =>
+        frame.action === "native:release_candidate_lease");
+    assert.deepEqual([registered, quarantined, metadataValidated, promoted, bindValidated, released]
+        .map((index, i, indices) => index >= 0 && (i === 0 || index > indices[i - 1])),
+    [true, true, true, true, true, true],
+    "register -> initial quarantine -> metadata roundtrip -> c -> validated bind -> release");
+    assert(state.trace.slice(quarantined, promoted).every(frame =>
+        frame.windows[record.x11WindowId]?.group === "__abush_quarantine"),
+    "title and tab changes must not release an admitted candidate");
     const final = state.trace.at(-1).windows[record.x11WindowId];
     assert.equal(final.group, "c");
     assert.equal(final.props._ABUSH_BINDING_NONCE, record.nonce);
@@ -402,6 +456,12 @@ async function binderCase(bridge, releaseBeforeBind = false) {
     const record = {nonce, remoteKey: "r_12345678", workspaceId: "workspace-authoritative",
         windowGeneration: 1, connectionDisplayName: "local", statusTabIds: [a.id, b.id],
         pageTabId: page.id, windowId: window.id};
+    // Admitted claims outlive admission TTL and survive a config reload from X11 properties.
+    await bridge.call("recover_claims");
+    await model.updateTab(page.id, {url: "https://delayed-candidate.test/", active: true});
+    let state = await bridge.call("state");
+    assert.equal(state.trace.at(-1).windows[window.id + 100].group, "__abush_quarantine");
+    await model.updateTab(a.id, {active: true});
     if (releaseBeforeBind) {
         await executor.updateCandidateLease("release", nonce);
         await assert.rejects(executor.bind(record),
@@ -436,6 +496,20 @@ async function binderCase(bridge, releaseBeforeBind = false) {
         "marker titles alone do not prove the exact physical index fingerprint");
 }
 
+async function expiredAdmissionCase(bridge) {
+    const {model, executor} = await fixture(bridge);
+    const nonce = "b".repeat(32);
+    const a = await model.createTab({windowId: 1, url: executor.statusUrl({nonce}, "a"),
+        active: false});
+    await executor.updateCandidateLease("register", nonce);
+    await bridge.call("expire_admission");
+    const window = await model.createWindow({tabId: a.id, type: "normal", focused: false});
+    const {trace} = await bridge.call("state");
+    assert.equal(trace.at(-1).windows[window.id + 100].group, "f",
+        "unadmitted leases expire, unlike admitted durable claims");
+    await executor.updateCandidateLease("release", nonce);
+}
+
 async function ordinaryCase(bridge) {
     const {model, executor} = await fixture(bridge);
     const payload = {version: 1, request_id: "ordinary-request", operation: "ordinary_open",
@@ -450,7 +524,8 @@ async function ordinaryCase(bridge) {
     assert.equal(state.completions.length, 1);
     assert.equal(state.trace.at(-1).desktop, "f");
     assert.equal(state.trace.at(-1).focus, 101);
-    assert(state.trace.every(frame => frame.windows[101]?.group === "f"));
+    assert(state.trace.filter(frame => frame.windows[101])
+        .every(frame => frame.windows[101].group === "f"));
 }
 
 (async () => {
@@ -460,10 +535,11 @@ async function ordinaryCase(bridge) {
         for (const [name, run] of [
             ["ordinary open", () => ordinaryCase(bridge)],
             ["exact binder and Qtile argument casting", () => binderCase(bridge)],
+            ["unadmitted admission expires", () => expiredAdmissionCase(bridge)],
             ["released candidate cannot bind", () => binderCase(bridge, true)],
             ["managed URL event before promise", () => managedCase(bridge)],
             ["managed pendingUrl event before promise", () => managedCase(bridge, null, true)],
-            ...["register", "create", "bind", "terminal-loss"].map(fault =>
+            ...["register", "create", "bind", "release", "cancel", "terminal-loss"].map(fault =>
                 [`managed ${fault}`, () => managedCase(bridge, fault,
                     ["register", "create"].includes(fault))]),
         ]) {

@@ -2171,9 +2171,14 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         const releaseLeaseIndex = calls.findIndex(call =>
             call[0] === "release_candidate_lease");
         const bindIndex = calls.findIndex(call => call[0] === "bind_x11_window");
+        const ownershipIndex = calls.findIndex(call => call[0] === "persistLocal" &&
+            call[1].abushOwnedMarkers?.[first.nonce]?.version === 2);
+        const commitIndex = calls.findIndex(call => call[0] === "persist" &&
+            call[1].abushWorkspaces?.some(record => record.nonce === first.nonce));
         assert(registerLeaseIndex >= 0 && registerLeaseIndex < createWindowIndex &&
-            createWindowIndex < releaseLeaseIndex && releaseLeaseIndex < bindIndex,
-        "candidate lease must enclose only the unfenced window creation interval");
+            createWindowIndex < bindIndex && bindIndex < ownershipIndex &&
+            ownershipIndex < commitIndex && commitIndex < releaseLeaseIndex,
+        "candidate lease must survive verified promotion and ownership commit");
         assert.equal(calls[registerLeaseIndex][1].nonce, first.nonce);
         assert.equal(calls[releaseLeaseIndex][1].nonce, first.nonce);
         assert.equal(calls.filter(call => call[0] === "register_candidate_lease").length, 1);

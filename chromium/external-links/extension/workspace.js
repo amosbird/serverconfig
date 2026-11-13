@@ -692,6 +692,7 @@ class WorkspaceExecutor {
                     if (!this.savedOwnershipMatches(ownership, committed)) {
                         await this.claimMarker(committed);
                     }
+                    await this.updateCandidateLease("release", transaction.nonce);
                     this.pendingTransactions.delete(transaction.id);
                     this.eventTransactions.delete(transaction.id);
                     continue;
@@ -702,6 +703,7 @@ class WorkspaceExecutor {
             }
             try {
                 await this.retryPendingTransaction(transaction);
+                await this.updateCandidateLease("release", transaction.nonce);
                 this.pendingTransactions.delete(transaction.id);
             } catch (error) {
                 failures.push(error);
@@ -4383,6 +4385,17 @@ class WorkspaceExecutor {
         const statusTabs = [];
         let created;
         let candidateLeaseRequested = false;
+        let candidateLeaseReleaseError = null;
+        const releaseCandidateLease = async () => {
+            if (!candidateLeaseRequested) return;
+            candidateLeaseRequested = false;
+            try {
+                await this.updateCandidateLease("release", nonce);
+            } catch (error) {
+                candidateLeaseReleaseError = error;
+                throw error;
+            }
+        };
         let hostWindowId;
         try {
             await this.ownMarker(nonce);
@@ -4446,14 +4459,9 @@ class WorkspaceExecutor {
                 index: -1,
             }));
             statusTabs[1].windowId = created.id;
-            await this.updateCandidateLease("release", nonce);
-            candidateLeaseRequested = false;
         } catch (error) {
             const releaseErrors = [];
-            if (candidateLeaseRequested) {
-                await this.appendCleanupError(releaseErrors,
-                    () => this.updateCandidateLease("release", nonce));
-            }
+            await this.appendCleanupError(releaseErrors, releaseCandidateLease);
             const preparedTabs = new Map(statusTabs.map(tab => [tab.id, tab]));
             for (const tabId of [
                 ...transaction.statusTabIds,
@@ -4465,11 +4473,11 @@ class WorkspaceExecutor {
             try {
                 await this.cleanupPreparedWindow(
                     created?.id ?? transaction.windowId, [...preparedTabs.values()], nonce);
-                await this.finishEnsureTransaction(transaction, "rolled_back");
                 if (releaseErrors.length > 0) {
                     throw new AggregateError(releaseErrors,
                         "managed candidate lease cleanup failed");
                 }
+                await this.finishEnsureTransaction(transaction, "rolled_back");
             } catch (cleanupError) {
                 const errors = cleanupError instanceof AggregateError ?
                     cleanupError.errors : [cleanupError];
@@ -4562,6 +4570,8 @@ class WorkspaceExecutor {
                     if (transaction.invalid) throw new Error("managed transaction changed");
                     await this.commitRecord(record);
                     flight.committed = true;
+                    await releaseCandidateLease();
+                    this.ensureActive(flight);
                     await this.finishEnsureTransaction(transaction);
                 });
                 return record;
@@ -4585,6 +4595,10 @@ class WorkspaceExecutor {
             }
         } catch (error) {
             const cleanupErrors = [];
+            await this.appendCleanupError(cleanupErrors, releaseCandidateLease);
+            if (candidateLeaseReleaseError && !cleanupErrors.includes(candidateLeaseReleaseError)) {
+                cleanupErrors.push(candidateLeaseReleaseError);
+            }
             try {
                 await this.cleanupFlightWindow(flight);
             } catch (cleanupError) {
@@ -4596,7 +4610,9 @@ class WorkspaceExecutor {
                 cleanupErrors.push(cleanupError);
             }
             try {
-                await this.finishEnsureTransaction(transaction, "rolled_back");
+                if (!candidateLeaseReleaseError) {
+                    await this.finishEnsureTransaction(transaction, "rolled_back");
+                }
             } catch (cleanupError) {
                 cleanupErrors.push(cleanupError);
             }
