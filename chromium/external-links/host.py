@@ -2470,7 +2470,14 @@ class BrowserBroker:
         payload = request["payload"]
         if service == "ordinary_open" and operation == "prepare":
             _ordinary_deadline(payload, {"nonce"})
-            return self.x11_binding().prepare_ordinary_window(_without_deadline(payload))
+            binding = self.x11_binding()
+            if self.browser is None:
+                raise ValueError("trusted ordinary browser identity is unavailable")
+            identity = binding.browser_incarnation(self.browser["pid"])
+            if identity is None or identity[2] != self.browser["starttime"]:
+                raise ValueError("ordinary browser incarnation changed")
+            return binding.prepare_ordinary_window(_without_deadline(payload),
+                                                   expected_identity=identity)
         if service == "ordinary_open" and operation == "ordinary_file_navigate":
             deadline_ms = _ordinary_deadline(payload, {"nonce", "xid", "url"})
             binding = self.x11_binding()
@@ -2581,9 +2588,21 @@ class BrowserBroker:
             return self.peer(payload, "cancellation_completed").complete_cancellation(
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"))
+        if service == "abush_browser" and operation == "finish_candidate_lease":
+            fields = {"version", "nonce", "operation_token", "outcome", "window_id"}
+            if set(payload) != fields or self.browser is None:
+                raise ValueError("invalid candidate terminal payload")
+            binding = self.x11_binding()
+            identity = binding.browser_incarnation(self.browser["pid"])
+            if identity is None or identity[2] != self.browser["starttime"]:
+                raise ValueError("native browser incarnation changed")
+            return json.loads(binding.run_qtile(binding.qtile_command(
+                "finish_abush_browser_candidate", json.dumps({**payload, "identity": identity}))))
         if service == "abush_browser" and operation in {
                 "register_candidate_lease", "arm_candidate_lease", "admit_candidate"}:
-            if not isinstance(payload, dict) or set(payload) != {"nonce"}:
+            if not isinstance(payload, dict) or set(payload) not in (
+                    {"nonce"}, {"nonce", "operation_token"} if
+                    operation == "register_candidate_lease" else {"nonce"}):
                 raise ValueError("invalid candidate admission payload")
             if self.browser is None:
                 raise ValueError("trusted native browser identity is unavailable")
@@ -2594,6 +2613,8 @@ class BrowserBroker:
             if operation == "admit_candidate":
                 return binding.admit_candidate(payload["nonce"], identity)
             action = "register" if operation == "register_candidate_lease" else "arm"
+            if "operation_token" in payload:
+                identity = {"identity": identity, "operation_token": payload["operation_token"]}
             return binding.update_candidate_lease(action, payload["nonce"], identity=identity)
         if service == "abush_browser" and operation == "release_candidate_lease":
             if not isinstance(payload, dict) or set(payload) != {"nonce"}:

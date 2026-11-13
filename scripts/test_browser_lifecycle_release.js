@@ -224,6 +224,7 @@ class ChromeModel {
 
     async createWindow(properties) {
         this.createdAttempts++;
+        if (this.fault === "unknown-create") return new Promise(() => {});
         if (this.fault === "create") throw new Error("injected create");
         assert.equal(properties.focused, false);
         assert.equal(properties.type, "normal");
@@ -294,7 +295,8 @@ async function fixture(bridge, fault, pendingCreated) {
         nativeCalls.push(clone({service, operation, payload}));
         const result = await bridge.call("native", {request: {version: 1,
             id: `native-${nativeCalls.length}`, service, operation, payload}});
-        if (fault === "cancel" && operation === "register_candidate_lease") {
+        if (["cancel", "post-arm-cancel"].includes(fault) && operation ===
+                (fault === "cancel" ? "register_candidate_lease" : "arm_candidate_lease")) {
             model.cancellation = executor.cancelEnsure(executor.ensureIdentity(ensurePayload()));
         }
         if (fault === "terminal-loss" && !terminalReplyLost &&
@@ -363,10 +365,15 @@ async function managedCase(bridge, fault = null, pendingCreated = false) {
     assert.equal(nativeCalls.filter(call => call.operation === "release_candidate_lease").length,
         fault === "release" ? 2 : 1,
         "failed release is retried only after physical cleanup");
-    if (fault === "cancel") {
+    if (["cancel", "post-arm-cancel"].includes(fault)) {
         assert.equal(executor.workspaces.size, 0);
         assert.equal(executor.pendingTransactions.size, 0);
         assert.equal(model.windows.size, 1);
+        if (fault === "post-arm-cancel") {
+            const terminal = nativeCalls.find(call => call.operation === "finish_candidate_lease");
+            assert.equal(terminal.payload.outcome, "not_invoked");
+            assert.equal(model.createdAttempts, 0);
+        }
         return;
     }
     if (fault === "release") {
@@ -386,6 +393,11 @@ async function managedCase(bridge, fault = null, pendingCreated = false) {
         assert(failure, `${fault} must reject ensure`);
         assert.equal(executor.workspaces.size, 0);
         assert.equal(model.windows.size, 1);
+        if (fault === "create") {
+            assert.equal(executor.pendingTransactions.size, 0);
+            assert.equal(nativeCalls.find(call => call.operation === "finish_candidate_lease")
+                .payload.outcome, "rejected");
+        }
         return;
     }
     if (fault !== "terminal-loss") assert.ifError(failure);
@@ -514,6 +526,120 @@ async function expiredAdmissionCase(bridge) {
     await executor.updateCandidateLease("release", nonce);
 }
 
+async function unknownTerminalCase(bridge) {
+    const {model, executor, nativeCalls} = await fixture(bridge, "unknown-create");
+    await assert.rejects(executor.ensure(ensurePayload()));
+    assert.equal(model.createdAttempts, 1);
+    assert.equal(executor.pendingTransactions.size, 1);
+    assert(!nativeCalls.some(call => call.operation === "finish_candidate_lease"));
+    assert(!nativeCalls.some(call => call.operation === "release_candidate_lease"));
+    const transaction = [...executor.pendingTransactions.values()][0];
+    assert.equal(transaction.admissionSettlement, undefined);
+    assert.equal(transaction.admission.chrome, "unknown");
+    const restarted = new WorkspaceExecutor(model.api, executor.nativeRequest);
+    await restarted.restorePendingTransactions();
+    assert.equal(restarted.pendingTransactions.size, 1);
+    assert(restarted.advisoryErrors.length > 0);
+}
+
+async function terminalRecoveryCase(bridge, fault) {
+    const {model, executor} = await fixture(bridge,
+        ["finish-loss", "terminal-wal"].includes(fault) ? "create" : null);
+    const originalNative = executor.nativeRequest;
+    let injected = false;
+    if (fault === "terminal-wal") {
+        const set = model.api.storage.local.set;
+        model.api.storage.local.set = async value => {
+            if (!injected && value.abushPendingTransactions?.some(transaction =>
+                transaction.admission_terminal)) {
+                injected = true;
+                throw new Error("terminal WAL failed after persisted settlement");
+            }
+            return set(value);
+        };
+    }
+    if (fault === "fulfilled-cleanup") {
+        await bridge.call("fault", {operation: "admit_candidate"});
+    }
+    executor.nativeRequest = async (service, operation, payload) => {
+        const result = await originalNative(service, operation, payload);
+        if (fault === "wal-before-call" && operation === "arm_candidate_lease") {
+            const set = model.api.storage.local.set;
+            model.api.storage.local.set = async value => {
+                if (!injected && value.abushPendingTransactions?.some(transaction =>
+                    transaction.admission?.chrome === "unknown")) {
+                    injected = true;
+                    throw new Error("injected pre-call WAL failure");
+                }
+                return set(value);
+            };
+        }
+        if (fault === "finish-loss" && operation === "finish_candidate_lease" && !injected) {
+            injected = true;
+            throw new Error("finish ACK lost after durable terminal");
+        }
+        return result;
+    };
+    await assert.rejects(executor.ensure(ensurePayload()));
+    assert(injected || fault === "fulfilled-cleanup");
+    if (fault === "fulfilled-cleanup") {
+        assert.equal(model.createdAttempts, 1);
+        assert.equal(executor.pendingTransactions.size, 0);
+        assert.equal(model.windows.size, 1);
+    } else if (fault === "wal-before-call") {
+        assert.equal(model.createdAttempts, 0);
+        assert.equal(executor.pendingTransactions.size, 0);
+    } else {
+        assert.equal(executor.pendingTransactions.size, 1);
+        const restarted = new WorkspaceExecutor(model.api, originalNative);
+        await restarted.restorePendingTransactions();
+        assert.equal(restarted.pendingTransactions.size, 0);
+        assert.equal(model.createdAttempts, 1);
+    }
+    const state = await bridge.call("state");
+    assert(state.trace.every(frame => frame.desktop === "e" && frame.focus === 900));
+    await originalNative("abush_browser", "register_candidate_lease",
+        {nonce: "e".repeat(32), operation_token: "f".repeat(32)});
+}
+
+async function unknownOrdinaryCase(bridge) {
+    const {model, executor} = await fixture(bridge);
+    const nonce = "a".repeat(32);
+    await executor.updateCandidateLease("register", nonce);
+    await executor.updateCandidateLease("arm", nonce);
+    const candidateId = 40;
+    model.windows.set(candidateId, {id: candidateId, type: "normal", focused: false,
+        tabs: [{id: 4000, windowId: candidateId, index: 0, url: "about:blank",
+            title: "New Tab", active: true, pinned: false, groupId: -1}]});
+    await model.sync("unknown-candidate");
+    const ordinaryNonce = "b".repeat(32);
+    const ordinaryId = 41;
+    const url = executor.chrome.runtime.getURL("ordinary-staging.html") + "#" + ordinaryNonce;
+    model.windows.set(ordinaryId, {id: ordinaryId, type: "normal", focused: false,
+        tabs: [{id: 4100, windowId: ordinaryId, index: 0, url,
+            title: `__ABUSH_ORDINARY__:${ordinaryNonce}`, active: true, pinned: false, groupId: -1}]});
+    await model.sync("explicit-ordinary");
+    const prepared = await executor.nativeRequest("ordinary_open", "prepare",
+        {nonce: ordinaryNonce, deadline_ms: Date.now() + 10000});
+    assert.deepEqual(prepared, {nonce: ordinaryNonce, xid: 141});
+    await executor.nativeRequest("ordinary_open", "prepare",
+        {nonce: ordinaryNonce, deadline_ms: Date.now() + 10000});
+    let state = await bridge.call("state");
+    assert(state.trace.every(frame => !frame.windows[140]), "unknown candidate stays unmapped");
+    assert(state.trace.every(frame => frame.desktop === "e" && frame.focus === 900));
+    assert.equal(state.trace.filter(frame => frame.action === "constructor:set_group" &&
+        frame.xid === 141).length, 1);
+    assert(state.trace.filter(frame => frame.windows[141]).every(frame =>
+        frame.windows[141].group === "f"));
+    await assert.rejects(executor.updateCandidateLease("release", nonce), /unknown|not fully verified/);
+    await executor.nativeRequest("ordinary_open", "activate", {...prepared,
+        deadline_ms: Date.now() + 10000});
+    state = await bridge.call("state");
+    assert.equal(state.trace.at(-1).focus, 141);
+    assert.equal(state.trace.at(-1).desktop, "f");
+    assert(state.trace.every(frame => !frame.windows[140]));
+}
+
 async function ordinaryCase(bridge) {
     const {model, executor} = await fixture(bridge);
     const payload = {version: 1, request_id: "ordinary-request", operation: "ordinary_open",
@@ -538,6 +664,13 @@ async function ordinaryCase(bridge) {
     try {
         for (const [name, run] of [
             ["ordinary open", () => ordinaryCase(bridge)],
+            ["unknown candidate exact ordinary", () => unknownOrdinaryCase(bridge)],
+            ["unknown API bounded durable denial", () => unknownTerminalCase(bridge)],
+            ["terminal ACK loss worker restart", () => terminalRecoveryCase(bridge, "finish-loss")],
+            ["pre-call WAL failure", () => terminalRecoveryCase(bridge, "wal-before-call")],
+            ["terminal WAL failure restart", () => terminalRecoveryCase(bridge, "terminal-wal")],
+            ["fulfilled exact candidate cleanup", () => terminalRecoveryCase(bridge, "fulfilled-cleanup")],
+            ["managed post-arm cancel", () => managedCase(bridge, "post-arm-cancel")],
             ["exact binder and Qtile argument casting", () => binderCase(bridge)],
             ["unadmitted admission expires", () => expiredAdmissionCase(bridge)],
             ["released candidate cannot bind", () => binderCase(bridge, true)],

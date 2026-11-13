@@ -118,6 +118,9 @@ function typedResponse(operation, payload) {
 }
 
 function candidateLeaseResponse(operation, payload) {
+    if (operation === "finish_candidate_lease") {
+        return {finished: true, version: 1, nonce: payload.nonce, outcome: payload.outcome};
+    }
     if (operation === "register_candidate_lease") {
         return {accepted: true, nonce: payload.nonce, admission_version: 2, phase: "reserved"};
     }

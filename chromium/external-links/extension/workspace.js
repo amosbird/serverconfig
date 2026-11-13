@@ -287,7 +287,7 @@ class WorkspaceExecutor {
 
     pendingTransactionSnapshot() {
         return [...this.pendingTransactions.values()].map(transaction => ({
-            version: 2,
+            version: 3,
             transaction_id: transaction.id,
             phase: transaction.phase,
             remote_key: transaction.remoteKey,
@@ -303,6 +303,9 @@ class WorkspaceExecutor {
             planned_effect: transaction.plannedEffect || null,
             observed_effects: structuredClone(transaction.observedEffects || []),
             admission: structuredClone(transaction.admission || null),
+            admission_token: transaction.admissionToken || null,
+            admission_terminal: structuredClone(transaction.admissionTerminal || null),
+            admission_settlement: structuredClone(transaction.admissionSettlement || null),
         }));
     }
 
@@ -614,7 +617,7 @@ class WorkspaceExecutor {
     }
 
     validPendingTransaction(transaction) {
-        return transaction?.version >= 1 && transaction?.version <= 2 &&
+        return transaction?.version >= 1 && transaction?.version <= 3 &&
             typeof transaction.transaction_id === "string" && transaction.transaction_id &&
             typeof transaction.nonce === "string" && STATUS_NONCE_RE.test(transaction.nonce) &&
             Array.isArray(transaction.status_tab_ids) &&
@@ -640,6 +643,9 @@ class WorkspaceExecutor {
             record: saved.record || null,
             plannedEffect: saved.planned_effect || null,
             admission: saved.admission || null,
+            admissionToken: saved.admission_token || null,
+            admissionTerminal: saved.admission_terminal || null,
+            admissionSettlement: saved.admission_settlement || null,
             observedEffects: Array.isArray(saved.observed_effects) ?
                 structuredClone(saved.observed_effects) : [],
             expectedEvents: [],
@@ -707,6 +713,10 @@ class WorkspaceExecutor {
             }
             try {
                 await this.retryPendingTransaction(transaction);
+                if (!transaction.admissionTerminal && transaction.admissionSettlement) {
+                    await this.stageCandidateTerminal(transaction);
+                }
+                if (transaction.admissionTerminal) await this.finishCandidateAdmission(transaction);
                 await this.updateCandidateLease("release", transaction.nonce);
                 this.pendingTransactions.delete(transaction.id);
             } catch (error) {
@@ -3222,12 +3232,41 @@ class WorkspaceExecutor {
             observed._ABUSH_DISPLAY_TITLE === payload.display_title;
     }
 
-    async updateCandidateLease(operation, nonce) {
+    async stageCandidateTerminal(transaction) {
+        const settlement = transaction.admissionSettlement;
+        if (!settlement || !["not_invoked", "rejected", "fulfilled_cleaned"]
+            .includes(settlement.outcome)) throw new Error("candidate API terminal remains unknown");
+        transaction.admissionTerminal = {version: 1, nonce: transaction.nonce,
+            operation_token: transaction.admissionToken, ...settlement};
+        await this.persistPendingTransactions();
+    }
+
+    async finishCandidateAdmission(transaction) {
+        const terminal = transaction.admissionTerminal;
+        if (!terminal) throw new Error("candidate API terminal remains unknown");
+        const tabs = await this.chrome.tabs.query({});
+        if (tabs.some(tab => transaction.statusTabIds.includes(tab.id) ||
+                this.parseStatusUrl(tab.pendingUrl || tab.url)?.nonce === transaction.nonce) ||
+                (Number.isInteger(terminal.window_id) &&
+                    !await this.windowIsMissing(terminal.window_id))) {
+            throw new Error("candidate terminal cleanup physical evidence changed");
+        }
+        const result = await this.nativeRequest("abush_browser", "finish_candidate_lease", terminal);
+        if (!exactFields(result, ["finished", "version", "nonce", "outcome"]) ||
+                result.finished !== true || result.version !== 1 ||
+                result.nonce !== terminal.nonce || result.outcome !== terminal.outcome) {
+            throw new Error("candidate API terminal was not durably confirmed");
+        }
+    }
+
+    async updateCandidateLease(operation, nonce, operationToken = null) {
         if (!new Set(["register", "arm", "release"]).has(operation)) {
             throw new Error("invalid candidate lease operation");
         }
         const result = await this.nativeRequest(
-            "abush_browser", `${operation}_candidate_lease`, {nonce});
+            "abush_browser", `${operation}_candidate_lease`,
+            operation === "register" && operationToken ?
+                {nonce, operation_token: operationToken} : {nonce});
         const field = {register: "accepted", arm: "armed", release: "released"}[operation];
         const fields = [field, "nonce", "admission_version", "phase"];
         if (operation === "release") fields.push("denial_retained");
@@ -4399,7 +4438,10 @@ class WorkspaceExecutor {
         flight.transaction = transaction;
         const statusTabs = [];
         let created;
+        const dispatch = {invoked: false, settled: null, sealed: false};
+        transaction.admissionToken = crypto.randomUUID().replaceAll("-", "");
         let candidateLeaseRequested = false;
+        let candidateArmRequested = false;
         let candidateLeaseReleaseError = null;
         const releaseCandidateLease = async () => {
             if (!candidateLeaseRequested) return;
@@ -4438,7 +4480,7 @@ class WorkspaceExecutor {
             await this.updateEnsureTransaction(transaction, {
                 admission: {nonce, phase: "reserving", chrome: "not_invoked"},
             });
-            await this.updateCandidateLease("register", nonce);
+            await this.updateCandidateLease("register", nonce, transaction.admissionToken);
             await this.updateEnsureTransaction(transaction, {
                 admission: {nonce, phase: "reserved", chrome: "not_invoked"},
             });
@@ -4446,6 +4488,7 @@ class WorkspaceExecutor {
             await this.updateEnsureTransaction(transaction, {
                 admission: {nonce, phase: "arming", chrome: "not_invoked"},
             });
+            candidateArmRequested = true;
             await this.updateCandidateLease("arm", nonce);
             this.ensureActive(flight);
             await this.updateEnsureTransaction(transaction, {
@@ -4461,11 +4504,34 @@ class WorkspaceExecutor {
             }, {
                 type: "tabAttached",
                 match: {tabId: statusTabs[0].id},
-            }], () => this.chrome.windows.create({
-                    tabId: statusTabs[0].id,
-                    focused: false,
-                    type: "normal",
-                }));
+            }], async () => {
+                this.ensureActive(flight);
+                if (dispatch.sealed) throw new Error("candidate dispatch already sealed");
+                dispatch.invoked = true;
+                let timer;
+                try {
+                    const pending = this.chrome.windows.create({
+                        tabId: statusTabs[0].id, focused: false, type: "normal",
+                    });
+                    const settled = Promise.resolve(pending).then(result => {
+                        dispatch.settled = "fulfilled_cleaned";
+                        transaction.windowId = result.id;
+                        return result;
+                    }, error => {
+                        dispatch.settled = "rejected";
+                        throw error;
+                    });
+                    return await Promise.race([settled, new Promise((_, reject) => {
+                        timer = setTimeout(() => {
+                            const error = new Error("candidate API terminal remains unknown");
+                            error.browserCode = "unknown_effect";
+                            reject(error);
+                        }, TRANSACTION_WAIT_MS);
+                    })]);
+                } finally {
+                    clearTimeout(timer);
+                }
+            });
             statusTabs[0].windowId = created.id;
             const firstStatus = await this.chrome.tabs.get(statusTabs[0].id);
             if (firstStatus.windowId !== created.id ||
@@ -4509,6 +4575,7 @@ class WorkspaceExecutor {
             }));
             statusTabs[1].windowId = created.id;
         } catch (error) {
+            dispatch.sealed = true;
             const releaseErrors = [];
             const preparedTabs = new Map(statusTabs.map(tab => [tab.id, tab]));
             for (const tabId of [
@@ -4519,8 +4586,20 @@ class WorkspaceExecutor {
                 if (!preparedTabs.has(tabId)) preparedTabs.set(tabId, {id: tabId});
             }
             try {
+                if (candidateArmRequested) {
+                    const outcome = dispatch.invoked ? dispatch.settled : "not_invoked";
+                    if (outcome) {
+                        transaction.admissionSettlement = {outcome,
+                            window_id: outcome === "fulfilled_cleaned" ? transaction.windowId : null};
+                        await this.persistPendingTransactions();
+                    }
+                }
                 await this.cleanupPreparedWindow(
                     created?.id ?? transaction.windowId, [...preparedTabs.values()], nonce);
+                if (candidateArmRequested && transaction.admissionToken) {
+                    await this.stageCandidateTerminal(transaction);
+                    await this.finishCandidateAdmission(transaction);
+                }
                 await this.appendCleanupError(releaseErrors, releaseCandidateLease);
                 if (releaseErrors.length > 0) {
                     throw new AggregateError(releaseErrors,

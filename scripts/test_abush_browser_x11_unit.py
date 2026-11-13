@@ -663,7 +663,9 @@ class X11BindingTest(unittest.TestCase):
             {"nonce": nonce}, adapter=adapter, attempts=1, run=run)
         self.assertEqual(result, {"xid": 11, "nonce": nonce})
         self.assertEqual(adapter.values[(11, "_ABUSH_ORDINARY_NONCE")], nonce)
-        self.assertEqual(commands, [binding.qtile_move_command(11, "f")])
+        self.assertEqual(commands[0][:-1], binding.qtile_move_command(11, "f"))
+        self.assertEqual(json.loads(commands[0][-1]), {
+            "version": 1, "nonce": nonce, "identity": ["boot", 4242, "start"]})
         self.assertNotIn("focus", commands[0])
         self.assertNotIn("toscreen", commands[0])
 

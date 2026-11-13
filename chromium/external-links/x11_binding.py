@@ -499,7 +499,10 @@ def managed_window(adapter, window):
 def ordinary_candidate(adapter, window, nonce):
     return ordinary_title_matches(adapter.title(window), nonce) and \
         any("chrom" in value.lower() for value in adapter.wm_class(window)) and \
-        chrome_process_window(adapter, window) and not managed_window(adapter, window)
+        chrome_process_window(adapter, window) and not managed_window(adapter, window) and \
+        not adapter.property(window, CANDIDATE_CLAIM_PROPERTY) and \
+        not adapter.property(window, CANDIDATE_NONCE_PROPERTY) and \
+        adapter.property(window, "WM_WINDOW_ROLE", "STRING") != "abush-browser"
 
 
 def find_ordinary_window(adapter, nonce, attempts=100, interval=0.05):
@@ -515,7 +518,8 @@ def find_ordinary_window(adapter, nonce, attempts=100, interval=0.05):
     raise X11Unavailable("matching ordinary Chrome X11 window was not found")
 
 
-def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, run=None):
+def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, run=None,
+                            expected_identity=None):
     if not isinstance(payload, dict) or set(payload) != {"nonce"} or \
             not isinstance(payload["nonce"], str) or not NONCE_RE.fullmatch(payload["nonce"]):
         raise ValueError("invalid ordinary prepare payload")
@@ -523,13 +527,22 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
     window = find_ordinary_window(adapter, payload["nonce"], attempts, interval)
     if managed_window(adapter, window):
         raise ValueError("ordinary staging window is managed")
+    identity = browser_incarnation(adapter.pid(window))
+    if identity is None or (expected_identity is not None and identity != expected_identity) or \
+            not ordinary_candidate(adapter, window, payload["nonce"]):
+        raise X11Unavailable("ordinary browser incarnation is unavailable")
     adapter.set_text(window, ORDINARY_NONCE_PROPERTY, payload["nonce"])
     adapter.finish()
     if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             managed_window(adapter, window):
         raise X11Unavailable("ordinary prepare verification failed")
-    qtile_transition(qtile_move_command(window, "f"), window, "f", run)
-    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
+    if browser_incarnation(adapter.pid(window)) != identity or \
+            not ordinary_candidate(adapter, window, payload["nonce"]):
+        raise X11Unavailable("ordinary browser incarnation changed before admission")
+    expected = json.dumps({"version": 1, "nonce": payload["nonce"], "identity": identity})
+    qtile_transition(qtile_command("prepare_ordinary_window", window, expected), window, "f", run)
+    if browser_incarnation(adapter.pid(window)) != identity or \
+            adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             managed_window(adapter, window):
         raise X11Unavailable("ordinary prepare changed window identity")
     return {"xid": window, "nonce": payload["nonce"]}

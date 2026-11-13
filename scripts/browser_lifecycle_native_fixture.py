@@ -132,6 +132,7 @@ class Model:
         tree = ast.parse((ROOT / ".config/qtile/config.py").read_text())
         names = {
             "qtile_window_by_xid", "prepare_ordinary_window", "activate_ordinary_window",
+            "admit_ordinary_premap", "finish_abush_browser_candidate", "abush_premap_browser_terminated",
             "passive_window_move", "register_abush_browser_candidate",
             "release_abush_browser_candidate", "quarantine_abush_browser_window",
             "place_abush_browser_window", "reclassify_ordinary_window",
@@ -161,7 +162,8 @@ class Model:
         self.journal_directory = tempfile.TemporaryDirectory(dir=TEMPORARY)
         self.ns["abush_premap_journal_path"] = lambda: \
             pathlib.Path(self.journal_directory.name) / "premap.json"
-        self.ns["abush_premap_destroyed"] = lambda core, xid: True
+        self.ns["abush_premap_browser_terminated"] = lambda identity: False
+        self.ns["abush_premap_destroyed"] = lambda core, xid: xid not in self.raw_windows
         self.ns["abush_browser_incarnation"] = (
             lambda window: ["offline-boot", window.get_pid(), "1234"])
         self.ns["abush_premap_identity"] = lambda pid: ["offline-boot", pid, "1234"]
@@ -286,7 +288,7 @@ class Adapter:
         return self.model.current_window.wid
 
     def set_text(self, xid, name, value, property_type="UTF8_STRING"):
-        window = self.model.windows_map[xid]
+        window = self.model.raw_windows[xid]
         window.props[name] = str(value)
         if name == "_NET_WM_NAME":
             window.name = str(value)
