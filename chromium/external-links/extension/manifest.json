@@ -17,7 +17,7 @@
         "default_title": "Open Abush browser workspace"
     },
     "background": {
-        "service_worker": "background.js"
+        "service_worker": "background-v7.js"
     },
     "commands": {
         "scrollToTop": {

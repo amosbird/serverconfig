@@ -145,10 +145,21 @@ for (const [page, link, expected] of cases) {{
         native_manifest = json.loads(NATIVE_MANIFEST.read_text())
         self.assertIn("key", manifest)
         self.assertNotIn("update_url", manifest)
+        worker = manifest["background"]["service_worker"]
+        self.assertRegex(worker, r"^background-v[0-9]+\.js$")
+        worker_path = MANIFEST.with_name(worker)
+        self.assertTrue(worker_path.is_file())
+        self.assertEqual(worker_path.read_text(), 'importScripts("background.js");\n')
         self.assertEqual(
             native_manifest["allowed_origins"],
             ["chrome-extension://ahonjbfnmpjgjgaabbppofphidfomgcj/"],
         )
+
+    def test_workspace_source_exposes_current_v7_lifecycle(self):
+        workspace = MANIFEST.with_name("workspace.js").read_text()
+        self.assertIn("browserBootId", workspace)
+        self.assertIn("ordinaryOpen", workspace)
+        self.assertIn("remoteAuthorities", workspace)
 
     def test_runai_uses_installed_extension_and_registers_native_host(self):
         launcher = RUNAI.read_text()
