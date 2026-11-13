@@ -1342,6 +1342,8 @@ class RemotePeer:
         self.executor_fence = None
         self.capabilities = {}
         self.pending = {}
+        self.completions = {}
+        self.transport_history = {}
         self.ensure_pending = {}
         self.ensure_cancellations = {}
         self.ensure_cancellation_completed = {}
@@ -1518,12 +1520,22 @@ class RemotePeer:
                  expected_page["window"]["workspace_id"] != workspace_id) or \
                 not self._valid_executor_fence(fence) or fence != self.executor_fence:
             raise ValueError("invalid ensure managed page correlation")
-        if ensure_id in self.ensure_pending:
-            raise ValueError("duplicate ensure managed page")
-        self.ensure_pending[ensure_id] = {
+        identity = {
             "request_id": request_id, "workspace_id": workspace_id, "fence": fence,
             "expected_page": expected_page,
         }
+        with self.transport_lock:
+            completed = self.completions.get(("ensure_managed_page_completed", ensure_id))
+            known = self.ensure_pending.get(ensure_id)
+            if completed is not None:
+                known = completed["identity"]
+            if known is not None:
+                if known != identity:
+                    raise ValueError("conflicting duplicate ensure managed page")
+                if completed is not None:
+                    self.send(completed["message"])
+                return
+            self.ensure_pending[ensure_id] = identity
         self.broker.outbound.put(event("abush_browser.ensure_managed_page", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
             "connection_id": self.metadata["connection_id"],
@@ -1642,11 +1654,6 @@ class RemotePeer:
     def complete_ensure(self, principal_id, workspace_id, request_id, ensure_id, fence, completion):
         if principal_id != self.principal_id or fence != self.executor_fence:
             raise ValueError("stale ensure managed page completion")
-        pending = self.ensure_pending.get(ensure_id)
-        if pending is None or pending != {
-                "request_id": request_id, "workspace_id": workspace_id, "fence": fence,
-                "expected_page": pending.get("expected_page")}:
-            raise ValueError("uncorrelated ensure managed page completion")
         if not isinstance(completion, dict):
             raise ValueError("invalid ensure managed page completion")
         outcome = completion.get("outcome")
@@ -1661,8 +1668,9 @@ class RemotePeer:
             valid = False
         if not valid:
             raise ValueError("invalid ensure managed page completion")
-        self.ensure_pending.pop(ensure_id)
-        self.send({
+        self._complete_request(self.ensure_pending, ensure_id, {
+            "request_id": request_id, "workspace_id": workspace_id, "fence": fence,
+        }, {
             "type": "ensure_managed_page_completed",
             "request_id": request_id,
             "ensure_id": ensure_id,
@@ -1673,33 +1681,56 @@ class RemotePeer:
     def complete_cancellation(self, request_id, effect_id, fence, completion):
         if fence != self.executor_fence or completion not in {"not_applied", "unknown"}:
             raise ValueError("invalid cancellation completion")
-        pending = self.pending_cancellations.get(effect_id)
-        if pending is None or pending["request_id"] != request_id or pending["fence"] != fence:
-            raise ValueError("uncorrelated cancellation completion")
-        self.pending_cancellations.pop(effect_id)
-        self.pending.pop(effect_id, None)
-        self.send({
+        self._complete_request(self.pending_cancellations, effect_id, {
+            "request_id": request_id, "fence": fence,
+        }, {
             "type": "cancellation_completed",
             "request_id": request_id,
             "effect_id": effect_id,
             "executor_fence": fence,
             "completion": completion,
         })
+        self.pending.pop(effect_id, None)
 
     def complete(self, request_id, effect_id, fence, completion):
         if fence != self.executor_fence or completion not in {"applied", "not_applied", "unknown"}:
             raise ValueError("invalid executor completion")
-        pending = self.pending.get(effect_id)
-        if pending is None or pending["request_id"] != request_id:
-            raise ValueError("uncorrelated executor completion")
-        self.pending.pop(effect_id)
-        self.send({
+        self._complete_request(self.pending, effect_id, {
+            "request_id": request_id, "fence": fence,
+        }, {
             "type": "completion",
             "request_id": request_id,
             "effect_id": effect_id,
             "executor_fence": fence,
             "completion": completion,
         })
+
+    @staticmethod
+    def _retain_bounded(history, key, value):
+        history[key] = value
+        while len(history) > 256:
+            history.pop(next(iter(history)))
+
+    def _complete_request(self, requests, key, identity, message):
+        with self.transport_lock:
+            history_key = (message["type"], key)
+            completed = self.completions.get(history_key)
+            if completed is not None:
+                if completed["message"] != message or any(
+                        completed["identity"].get(field) != value
+                        for field, value in identity.items()):
+                    raise ValueError("conflicting duplicate peer completion")
+            else:
+                pending = requests.get(key)
+                if pending is None or any(pending.get(field) != value
+                                          for field, value in identity.items()):
+                    raise ValueError("uncorrelated peer completion")
+                # v7 has no daemon acceptance ACK for these completions. Retain the
+                # selected outcome before writing, including ambiguous failed writes.
+                completed = json.loads(json.dumps({"identity": pending, "message": message}))
+                self._retain_bounded(self.completions, history_key, completed)
+                requests.pop(key)
+            self.send(completed["message"])
 
     def send(self, message):
         data = encode_peer_message(message)
@@ -1790,37 +1821,52 @@ class RemotePeer:
 
     def _transport_request(self, requests, message, identity, timeout, timeout_message):
         request_id = message["request_id"]
-        state = {"identity": identity, "done": threading.Event(), "response": None}
+        history_key = (id(requests), request_id)
         with self.transport_lock:
             if request_id in requests:
                 raise ValueError("duplicate in-flight peer delivery request")
+            state = self.transport_history.get(history_key)
+            if state is not None:
+                if state["message"] != message:
+                    raise ValueError("conflicting duplicate peer delivery request")
+                if state["response"] is not None:
+                    return state["response"]
+                state["done"].clear()
+            else:
+                state = {"identity": identity, "message": json.loads(json.dumps(message)),
+                         "done": threading.Event(), "response": None}
+            # Keep correlation even if sendall writes a frame and then raises.
+            self._retain_bounded(self.transport_history, history_key, state)
             requests[request_id] = state
             try:
                 self.send(message)
             except Exception:
                 requests.pop(request_id, None)
                 raise
-        if not state["done"].wait(timeout):
-            with self.transport_lock:
-                requests.pop(request_id, None)
-            raise TimeoutError(timeout_message)
+        state["done"].wait(timeout)
         with self.transport_lock:
             requests.pop(request_id, None)
             result = state["response"]
         if result is None:
-            raise TimeoutError(f"{timeout_message} was lost")
+            raise TimeoutError(timeout_message)
         return result
 
     def _resolve_transport_response(self, requests, request_id, identity, response):
         with self.transport_lock:
+            active = request_id in requests
             state = requests.get(request_id)
+            if state is None:
+                state = self.transport_history.get((id(requests), request_id))
             if state is None:
                 return False
             if state["identity"] != identity:
                 raise ValueError("uncorrelated durable peer response")
+            if state["response"] is not None and state["response"] != response:
+                raise ValueError("conflicting duplicate durable peer response")
             state["response"] = response
             state["done"].set()
-            return True
+            return active or requests is self.topology_consumed_requests or \
+                requests is self.retire_consumed_requests
 
     def report_managed_page_moved_outside(
             self, request_id, report_id, fence, origin_fence, page, timeout=None):
@@ -2072,11 +2118,18 @@ class RemotePeer:
         if not self._valid_command(command):
             raise ValueError("invalid browser command")
         correlation = {"request_id": request_id, "fence": fence, "command": command}
-        if effect_id in self.pending:
-            if self.pending[effect_id] != correlation:
-                raise ValueError("conflicting duplicate execute effect")
-            return
-        self.pending[effect_id] = correlation
+        with self.transport_lock:
+            completed = self.completions.get(("completion", effect_id))
+            known = self.pending.get(effect_id)
+            if completed is not None:
+                known = completed["identity"]
+            if known is not None:
+                if known != correlation:
+                    raise ValueError("conflicting duplicate execute effect")
+                if completed is not None:
+                    self.send(completed["message"])
+                return
+            self.pending[effect_id] = correlation
         self.broker.outbound.put(event("abush_browser.execute", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
             "connection_id": self.metadata["connection_id"],

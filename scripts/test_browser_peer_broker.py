@@ -84,6 +84,8 @@ class FakePeer:
         self.server.close()
         self.done.wait(2)
         self.thread.join(timeout=2)
+        if self.thread.is_alive():
+            raise AssertionError("fake peer did not stop")
 
 
 class BrowserPeerBrokerTest(unittest.TestCase):
@@ -334,8 +336,11 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "executor_fence": server.fence,
                 "completion": {"outcome": "created", "window_id": "10", "page_id": "20"},
             })
+            broker.handle_request(self.request("ensure_managed_page_completion", payload))
             with self.assertRaises(ValueError):
-                broker.handle_request(self.request("ensure_managed_page_completion", payload))
+                broker.handle_request(self.request("ensure_managed_page_completion", {
+                    **payload, "completion": {"outcome": "rejected", "code": "invalid_command"},
+                }))
         finally:
             broker.close()
 
@@ -793,6 +798,258 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                              extension_payload["completion"])
         finally:
             broker.close()
+
+    def test_completion_retries_survive_failed_and_lost_writes(self):
+        for kind in ("effect", "ensure", "cancel"):
+            for after_write in (False, True):
+                with self.subTest(kind=kind, after_write=after_write):
+                    peer = host.RemotePeer(None, {})
+                    fence = {"executor_id": "executor", "epoch": 1}
+                    peer.executor_fence = fence
+                    peer.principal_id = "principal"
+                    if kind == "effect":
+                        peer.pending["effect"] = {"request_id": "request", "fence": fence}
+                        complete = lambda value: peer.complete("request", "effect", fence, value)
+                        value, conflict = "applied", "unknown"
+                    elif kind == "cancel":
+                        peer.pending_cancellations["effect"] = {
+                            "request_id": "request", "fence": fence,
+                        }
+                        complete = lambda value: peer.complete_cancellation(
+                            "request", "effect", fence, value)
+                        value, conflict = "not_applied", "unknown"
+                    else:
+                        peer.ensure_pending["ensure"] = {
+                            "request_id": "request", "workspace_id": "workspace",
+                            "fence": fence, "expected_page": None,
+                        }
+                        complete = lambda value: peer.complete_ensure(
+                            "principal", "workspace", "request", "ensure", fence, value)
+                        value = {"outcome": "created", "window_id": "window", "page_id": "page"}
+                        conflict = {"outcome": "rejected", "code": "invalid_command"}
+                    writes = []
+
+                    def fail(message):
+                        if after_write:
+                            writes.append(message)
+                        raise OSError("reply lost" if after_write else "write failed")
+
+                    peer.send = fail
+                    with self.assertRaises(OSError):
+                        complete(value)
+                    peer.send = writes.append
+                    complete(value)
+                    complete(value)
+                    self.assertTrue(all(message == writes[0] for message in writes))
+                    with self.assertRaises(ValueError):
+                        complete(conflict)
+                    peer.executor_fence = {**fence, "epoch": 2}
+                    with self.assertRaises(ValueError):
+                        complete(value)
+
+    def test_late_consumed_acks_keep_reader_healthy_and_retry_is_idempotent(self):
+        for kind in ("topology", "retire"):
+            with self.subTest(kind=kind):
+                server = self.peer(connection_id="c_" + ("11111111" if kind == "topology"
+                                                         else "22222222"))
+                broker = host.BrowserBroker(self.root)
+                try:
+                    broker.refresh()
+                    peer = broker.peers["r_12345678"]
+                    peer.topology_timeout = 0
+                    consume = (peer.topology_response_consumed if kind == "topology"
+                               else peer.retire_ack_consumed)
+                    args = ("consume", "delivery-request", "stable", peer.executor_fence,
+                            "response-delivery")
+                    with self.assertRaises(TimeoutError):
+                        consume(*args)
+                    ack_type = ("topology_response_consumed_ack" if kind == "topology"
+                                else "retire_managed_page_ack_consumed_ack")
+                    ack = {"type": ack_type, "request_id": "consume",
+                           ("report_id" if kind == "topology" else "retire_id"): "stable",
+                           "executor_fence": peer.executor_fence,
+                           "response_delivery_id": "response-delivery"}
+                    server.send(ack)
+                    server.send({"type": "ping", "request_id": "barrier", "ping_id": "barrier"})
+                    server.wait_for("pong", request_id="barrier")
+                    expected = {key: value for key, value in ack.items() if key != "type"}
+                    self.assertEqual(consume(*args), expected)
+                    self.assertEqual(consume(*args), expected)
+                    for change in ({"request_id": "wrong"},
+                                   {"response_delivery_id": "wrong"},
+                                   {"executor_fence": {**peer.executor_fence, "epoch": 999}}):
+                        with self.assertRaises(ValueError):
+                            peer.handle({**ack, **change})
+                    with self.assertRaises(ValueError):
+                        consume("consume", "other-delivery", *args[2:])
+                    self.assertTrue(peer.connected)
+                finally:
+                    broker.close()
+
+    def test_consumed_ack_after_ambiguous_send_failure_is_correlated(self):
+        for after_write in (False, True):
+            with self.subTest(after_write=after_write):
+                peer = host.RemotePeer(None, {})
+                peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+                peer.topology_timeout = 0
+                writes = []
+
+                def fail(message):
+                    if after_write:
+                        writes.append(message)
+                    raise OSError("ambiguous write failure")
+
+                peer.send = fail
+                args = ("consume", "delivery", "report", peer.executor_fence, "response")
+                with self.assertRaises(OSError):
+                    peer.topology_response_consumed(*args)
+                self.assertFalse(peer.topology_consumed_requests)
+                peer.send = writes.append
+                with self.assertRaises(TimeoutError):
+                    peer.topology_response_consumed(*args)
+                ack = {"type": "topology_response_consumed_ack", "request_id": "consume",
+                       "report_id": "report", "executor_fence": peer.executor_fence,
+                       "response_delivery_id": "response"}
+                peer.handle(ack)
+                self.assertEqual(peer.topology_response_consumed(*args),
+                                 {key: value for key, value in ack.items() if key != "type"})
+                self.assertTrue(all(message == writes[0] for message in writes))
+
+    def test_late_retire_ack_is_forwarded_but_rejects_conflicting_correlation(self):
+        broker = mock.Mock()
+        broker.outbound = queue.Queue()
+        peer = host.RemotePeer(broker, {
+            "remote_key": "r_12345678", "connection_id": "c_12345678",
+        })
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        peer.retire_commands["retire"] = {
+            "request_id": "request", "fence": peer.executor_fence,
+            "origin_fence": peer.executor_fence,
+        }
+        peer.send = mock.Mock()
+        with self.assertRaises(TimeoutError):
+            peer.complete_retire("request", "retire", peer.executor_fence,
+                                 peer.executor_fence, {"outcome": "retired"}, timeout=0)
+        ack = {"type": "retire_managed_page_ack", "request_id": "request",
+               "retire_id": "retire", "executor_fence": peer.executor_fence,
+               "origin_executor_fence": peer.executor_fence,
+               "response_delivery_id": "response", "completion": {"outcome": "retired"}}
+        for change in ({"retire_id": "wrong"}, {"completion": {"outcome": "already_retired"}}):
+            with self.assertRaises(ValueError):
+                peer.handle({**ack, **change})
+        peer.handle(ack)
+        self.assertEqual(broker.outbound.get_nowait()["event"],
+                         "abush_browser.retire_managed_page_ack")
+        self.assertEqual(peer.complete_retire("request", "retire", peer.executor_fence,
+                                             peer.executor_fence, {"outcome": "retired"}, timeout=0),
+                         {key: value for key, value in ack.items() if key != "type"})
+
+    def test_completion_selection_is_serialized_before_socket_write(self):
+        peer = host.RemotePeer(None, {})
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        peer.pending["effect"] = {"request_id": "request", "fence": peer.executor_fence}
+        writing = threading.Event()
+        release = threading.Event()
+        failures = []
+        writes = []
+
+        def send(message):
+            writing.set()
+            if not release.wait(1):
+                raise TimeoutError("test write barrier was not released")
+            writes.append(message)
+
+        def complete():
+            try:
+                peer.complete("request", "effect", peer.executor_fence, "applied")
+            except Exception as error:
+                failures.append(error)
+
+        peer.send = send
+        worker = threading.Thread(target=complete, daemon=True)
+        worker.start()
+        try:
+            self.assertTrue(writing.wait(1))
+            self.assertNotIn("effect", peer.pending)
+            self.assertEqual(peer.completions[("completion", "effect")]["message"]["completion"],
+                             "applied")
+        finally:
+            release.set()
+            worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        peer.complete("request", "effect", peer.executor_fence, "applied")
+        self.assertEqual(writes, [writes[0], writes[0]])
+        for request_id, effect_id in (("wrong", "effect"), ("request", "wrong")):
+            with self.assertRaises(ValueError):
+                peer.complete(request_id, effect_id, peer.executor_fence, "applied")
+
+    def test_completion_history_is_bounded_and_evicted_retry_fails_closed(self):
+        peer = host.RemotePeer(None, {})
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        peer.send = mock.Mock()
+        for index in range(257):
+            effect_id = f"effect-{index}"
+            peer.pending[effect_id] = {"request_id": effect_id, "fence": peer.executor_fence}
+            peer.complete(effect_id, effect_id, peer.executor_fence, "applied")
+        self.assertEqual(len(peer.completions), 256)
+        with self.assertRaises(ValueError):
+            peer.complete("effect-0", "effect-0", peer.executor_fence, "applied")
+        peer.complete("effect-256", "effect-256", peer.executor_fence, "applied")
+
+    def test_consumed_history_is_bounded_and_evicted_ack_fails_closed(self):
+        peer = host.RemotePeer(None, {})
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        peer.topology_timeout = 0
+        peer.send = mock.Mock()
+        for index in range(257):
+            with self.assertRaises(TimeoutError):
+                peer.topology_response_consumed(
+                    f"request-{index}", "delivery", "report", peer.executor_fence, "response")
+        self.assertEqual(len(peer.transport_history), 256)
+        ack = {"type": "topology_response_consumed_ack", "request_id": "request-0",
+               "report_id": "report", "executor_fence": peer.executor_fence,
+               "response_delivery_id": "response"}
+        with self.assertRaises(ValueError):
+            peer.handle(ack)
+        peer.handle({**ack, "request_id": "request-256"})
+
+    def test_completed_commands_replay_result_without_second_native_execution(self):
+        broker = mock.Mock()
+        broker.outbound = queue.Queue()
+        peer = host.RemotePeer(broker, {
+            "remote_key": "r_12345678", "connection_id": "c_12345678",
+            "display_name": "remote",
+        })
+        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+        peer.principal_id = "principal"
+        peer.send = mock.Mock()
+        ensure = {"type": "ensure_managed_page", "request_id": "request",
+                  "ensure_id": "ensure", "workspace_id": "workspace", "expected_page": None,
+                  "executor_fence": peer.executor_fence}
+        peer.handle(ensure)
+        broker.outbound.get_nowait()
+        peer.complete_ensure("principal", "workspace", "request", "ensure", peer.executor_fence,
+                             {"outcome": "created", "window_id": "window", "page_id": "page"})
+        peer.handle(ensure)
+        self.assertEqual(peer.send.call_count, 2)
+        with self.assertRaises(queue.Empty):
+            broker.outbound.get_nowait()
+        with self.assertRaises(ValueError):
+            peer.handle({**ensure, "workspace_id": "wrong"})
+        execute = {"type": "execute", "request_id": "execute", "effect_id": "effect",
+                   "executor_fence": peer.executor_fence, "command": {"command": "close_window",
+                   "window": {"workspace_id": "workspace", "window_id": "window",
+                              "generation": 1}}}
+        peer.handle(execute)
+        broker.outbound.get_nowait()
+        peer.complete("execute", "effect", peer.executor_fence, "applied")
+        peer.handle(execute)
+        self.assertEqual(peer.send.call_count, 4)
+        with self.assertRaises(queue.Empty):
+            broker.outbound.get_nowait()
+        with self.assertRaises(ValueError):
+            peer.handle({**execute, "request_id": "wrong"})
 
     def test_uncorrelated_completion_does_not_consume_pending_effect(self):
         peer = host.RemotePeer(None, {})
