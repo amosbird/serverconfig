@@ -397,6 +397,180 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(displayTitle("prod-alias"), "prod-alias");
     {
         beginCase();
+        let listener;
+        const failures = [];
+        const order = [];
+        let authority = null;
+        const oldExecute = {
+            ...executePayload(), effect_id: "old-buffered-effect", command: {command: "x"},
+        };
+        const replacement = {
+            ...ensurePayload({connection_id: "c_replaced", executor_fence: {
+                executor_id: "executor-replaced", epoch: 2,
+            }}),
+            connected: true,
+        };
+        const workspaces = {
+            tail: Promise.resolve(),
+            enqueueRemoteLifecycle(_remoteKey, task) {
+                const next = this.tail.catch(() => {}).then(task);
+                this.tail = next;
+                return next;
+            },
+            async executeQueued(payload) {
+                order.push(`execute:${payload.connection_id}`);
+                if (!authority || payload.connection_id !== authority.connection_id ||
+                        JSON.stringify(payload.executor_fence) !==
+                            JSON.stringify(authority.executor_fence)) {
+                    throw new Error("stale remote authority");
+                }
+                order.push("mutated");
+                return {deferred: Promise.resolve()};
+            },
+            async remoteStateSerialized(payload) {
+                authority = payload;
+                order.push(`state:${payload.connection_id}`);
+            },
+        };
+        registerNativeEventRouter({onEvent: callback => { listener = callback; }}, workspaces,
+            async () => {}, message => failures.push(message));
+        const hold = deferred("old buffered execute barrier");
+        workspaces.tail = hold.promise;
+        listener({service: "abush_browser", event: "abush_browser.execute", payload: oldExecute});
+        listener({service: "abush_browser", event: "abush_browser.remote_state",
+            payload: replacement});
+        hold.resolve();
+        await waitFor(() => order.includes(`state:${replacement.connection_id}`),
+            "replacement remote state commit");
+        await exactWait(workspaces.tail.catch(() => {}), "remote authority queue");
+        assert.deepEqual(order, [
+            `execute:${oldExecute.connection_id}`,
+            `state:${replacement.connection_id}`,
+        ]);
+        assert.equal(order.includes("mutated"), false,
+            "an old buffered frame must have zero mutation after replacement authority");
+        assert(failures.some(message => /stale remote authority/.test(message)),
+            "stale buffered execution must surface a retryable failure");
+    }
+    {
+        beginCase();
+        let listener;
+        let authority = null;
+        let mutated = 0;
+        const failures = [];
+        const started = deferred("old execute started");
+        const release = deferred("old execute release");
+        const old = {...executePayload(), effect_id: "old-running-effect", command: {command: "x"}};
+        const replacement = {
+            ...ensurePayload({connection_id: "c_running_replacement", executor_fence: {
+                executor_id: "executor-running-replacement", epoch: 2,
+            }}),
+            connected: true,
+        };
+        const workspaces = {
+            tail: Promise.resolve(),
+            enqueueRemoteLifecycle(_remoteKey, task) {
+                const next = this.tail.catch(() => {}).then(task);
+                this.tail = next;
+                return next;
+            },
+            async executeQueued(payload) {
+                if (!authority || payload.connection_id !== authority.connection_id) {
+                    throw new Error("stale remote authority");
+                }
+                const deferredExecution = (async () => {
+                    started.resolve();
+                    await release.promise;
+                    if (payload.connection_id !== authority.connection_id) {
+                        throw new Error("stale remote authority");
+                    }
+                    mutated += 1;
+                })();
+                return {deferred: deferredExecution};
+            },
+            async remoteStateSerialized(payload) {
+                authority = payload;
+            },
+        };
+        registerNativeEventRouter({onEvent: callback => { listener = callback; }}, workspaces,
+            async () => {}, message => failures.push(message));
+        authority = {...old, connected: true};
+        listener({service: "abush_browser", event: "abush_browser.execute", payload: old});
+        await started.promise;
+        listener({service: "abush_browser", event: "abush_browser.remote_state",
+            payload: replacement});
+        await waitFor(() => authority.connection_id === replacement.connection_id,
+            "replacement authority while old execute runs");
+        release.resolve();
+        await waitFor(() => failures.some(message => /stale remote authority/.test(message)),
+            "old running execute stale completion");
+        assert.equal(mutated, 0,
+            "an old running execute must recheck authority before its browser mutation");
+    }
+    {
+        beginCase();
+        const {executor, calls} = fixture();
+        const old = ensurePayload();
+        await executor.remoteState({...old, connected: true});
+        const record = await executor.ensure(old);
+        calls.length = 0;
+        const attachStarted = deferred("old execute debugger attach");
+        const releaseAttach = deferred("old execute debugger attach release");
+        executor.chrome.debugger.attach = async target => {
+            calls.push(["attach", target]);
+            attachStarted.resolve();
+            await releaseAttach.promise;
+        };
+        const payload = {...executePayload(), effect_id: "old-execute-after-replacement",
+            command: {command: "navigate", page: executor.pageRef(record),
+                url: "https://stale-authority.test/"}};
+        const executing = executor.execute(payload);
+        await attachStarted.promise;
+        const replacement = ensurePayload({
+            connection_id: "c_execute_replacement",
+            executor_fence: {executor_id: "executor-execute-replacement", epoch: 2},
+        });
+        await executor.remoteState({...replacement, connected: true});
+        releaseAttach.resolve();
+        await executing;
+        assert.equal(calls.some(call => call[0] === "command"), false,
+            "old execute must not mutate the browser after replacement remoteState commits");
+        assert.equal(calls.find(call => call[0] === "executor_completion")[1].completion,
+            "not_applied");
+    }
+    {
+        beginCase();
+        const record = {
+            remoteKey: "r_12345678", principalId: "principal-one",
+            workspaceId: "workspace-authoritative", connectionId: "c_old00000",
+            executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
+            windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
+            nonce: "a".repeat(32), connectionDisplayName: "local",
+        };
+        const {executor, calls} = fixture([record]);
+        await executor.restore();
+        const old = ensurePayload({connection_id: record.connectionId});
+        const current = ensurePayload({
+            connection_id: "c_current0",
+            executor_fence: {executor_id: "executor-current", epoch: 2},
+        });
+        await executor.remoteState({...old, connected: true});
+        const flight = {
+            waiters: new Set(), cancelled: false, authority: executor.ensureIdentity(old),
+        };
+        await executor.remoteState({...current, connected: true});
+        calls.length = 0;
+        await assert.rejects(executor.ensureWorkspace(old, flight), /stale remote authority/);
+        assert.equal(calls.some(call => call[0] === "persist" ||
+            call[0] === "bind_x11_window"), false,
+        "an old ensure must not persist or rebind after replacement authority commits");
+        const adopted = await executor.ensure({...current, request_id: "current-ensure",
+            ensure_id: "current-ensure", expected_page: executor.pageRef(record)});
+        assert.equal(adopted.connectionId, current.connection_id,
+            "the current authority must retain existing-workspace failover");
+    }
+    {
+        beginCase();
         const {executor, calls} = fixture([], [], 1);
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -3626,6 +3800,66 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(sent.request_id, replay.request_id,
             "completed stable retire replay must echo the new command request ID");
         assert.deepEqual(localState.abushRetireLedger, []);
+    }
+    {
+        beginCase();
+        const failureCases = ["window", "x11", "marker"];
+        for (const failure of failureCases) {
+            const localState = {};
+            const first = fixture([], [], 0, false, null, localState);
+            const record = await first.executor.ensure(ensurePayload({
+                request_id: `ensure-retire-${failure}`,
+                ensure_id: `ensure-retire-${failure}`,
+            }));
+            const payload = {
+                ...first.executor.ensureIdentity(ensurePayload({
+                    request_id: `retire-${failure}`,
+                    ensure_id: `ensure-retire-${failure}`,
+                })),
+                retire_id: `retire-cleanup-${failure}`,
+                origin_executor_fence: fence,
+                window_id: record.logicalWindowId,
+                page_id: record.logicalPageId,
+            };
+            if (failure === "window") {
+                first.executor.chrome.windows.remove = async () => {
+                    throw new Error("window cleanup failed");
+                };
+            } else if (failure === "x11") {
+                first.executor.chrome.windows.remove = async () => {};
+                const originalNative = first.executor.nativeRequest;
+                first.executor.nativeRequest = async (service, operation, value) => {
+                    if (operation === "clear_x11_window") throw new Error("X11 cleanup failed");
+                    return originalNative(service, operation, value);
+                };
+            } else {
+                first.executor.disownMarker = async () => {
+                    throw new Error("marker cleanup failed");
+                };
+            }
+            await assert.rejects(first.executor.retireManagedPage(payload), /cleanup/);
+            assert.equal(localState.abushRetireLedger.some(entry =>
+                entry.phase === "effect_started" && entry.identity.retire_id ===
+                    payload.retire_id), true,
+            `${failure} failure must retain effect_started`);
+            assert.equal(first.calls.some(call => call[0] ===
+                "retire_managed_page_completion"), false,
+            `${failure} failure must not emit retire completion`);
+
+            const second = fixture([], [], 0, false, null, localState);
+            await second.executor.restoreRetireLedger();
+            const cleanupId = second.executor.retireEffectStarted
+                .get(payload.retire_id)?.cleanup?.cleanup_id;
+            second.calls.length = 0;
+            await second.executor.remoteState({...payload, connected: true});
+            assert.equal(second.calls.filter(call => call[0] ===
+                "retire_managed_page_completion").length, 1,
+            `${failure} cleanup must complete exactly once after restart retry`);
+            assert.equal(localState.abushRetireLedger.some(entry =>
+                entry.identity?.retire_id === payload.retire_id ||
+                    entry.outcome?.cleanup_id === cleanupId), false,
+            `${failure} cleanup ledger must clear after confirmed retry`);
+        }
     }
     {
         beginCase();

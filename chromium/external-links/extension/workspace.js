@@ -96,6 +96,7 @@ class WorkspaceExecutor {
         this.retireLegacyCleanup = new Map();
         this.retireConfirmedIdentities = new Map();
         this.retireDeferredAcks = new Map();
+        this.retireCleanupOutcomes = new Map();
         this.remoteAuthorities = new Map();
         this.deferredTopologyResponses = new Map();
         this.retireRecoveryStates = new Map();
@@ -685,9 +686,9 @@ class WorkspaceExecutor {
         await this.persistWithoutRecords([record], {forget: false});
     }
 
-    async persistOrForget(record) {
+    async persistOrForget(record, authority = null) {
         try {
-            await this.persistWithRemovedRecord(record);
+            await this.persistWithoutRecords([record], {forget: false, authority});
             return null;
         } catch (error) {
             return error;
@@ -725,9 +726,30 @@ class WorkspaceExecutor {
         });
     }
 
-    async persistWithoutRecords(removed, {forget = true} = {}) {
+    authorityMatches(payload, authority = this.remoteAuthorities.get(payload?.remote_key)) {
+        return Boolean(authority?.connected === true && payload &&
+            authority.remote_key === payload.remote_key &&
+            authority.connection_id === payload.connection_id &&
+            authority.principal_id === payload.principal_id &&
+            sameRef(authority.executor_fence, payload.executor_fence));
+    }
+
+    staleAuthority(message = "stale remote authority") {
+        const error = new Error(message);
+        error.browserCode = "stale_authority";
+        return error;
+    }
+
+    requireCurrentAuthority(payload) {
+        const authority = this.remoteAuthorities.get(payload?.remote_key);
+        if (!this.authorityMatches(payload, authority)) throw this.staleAuthority();
+        return authority;
+    }
+
+    async persistWithoutRecords(removed, {forget = true, authority = null} = {}) {
         const removedRecords = new Set(removed);
         const write = this.persistTail.catch(() => {}).then(async () => {
+            if (authority) this.requireCurrentAuthority(authority);
             const records = [...this.workspaces.values()]
                 .filter(saved => !removedRecords.has(saved))
                 .map(saved => this.persistedRecord(saved));
@@ -1159,7 +1181,7 @@ class WorkspaceExecutor {
             this.deferredTopologyResponses.delete(reportId);
             try {
                 await this.persistDeferredTopologyResponses();
-                if (!await this.topologyReportResponse(payload)) {
+                if (!await this.topologyReportResponseSerialized(payload)) {
                     throw new Error("deferred topology response no longer matches its report");
                 }
             } catch (error) {
@@ -1175,7 +1197,17 @@ class WorkspaceExecutor {
         }
     }
 
+    async topologyReportResponseSerializedQueued(payload) {
+        return this.topologyReportResponseSerialized(payload);
+    }
+
     async topologyReportResponse(payload) {
+        if (!payload || typeof payload.remote_key !== "string") return false;
+        return this.enqueueRemoteLifecycle(payload.remote_key,
+            () => this.topologyReportResponseSerialized(payload));
+    }
+
+    async topologyReportResponseSerialized(payload) {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
             "report_id", "executor_fence", "response_delivery_id", "result"])) return false;
         const key = payload.report_id;
@@ -1241,8 +1273,8 @@ class WorkspaceExecutor {
         };
     }
 
-    cleanupTombstone(record, errors) {
-        return {
+    cleanupTombstone(record, errors, cleanupIdentity = null) {
+        const tombstone = {
             version: 1,
             nonce: record.nonce ?? null,
             window_id: record.windowId ?? null,
@@ -1256,6 +1288,12 @@ class WorkspaceExecutor {
                 this.cleanupOwnership(record) : null,
             errors: errors.map(error => error?.message || String(error)),
         };
+        if (cleanupIdentity) {
+            tombstone.phase = "pending";
+            tombstone.cleanup_id = cleanupIdentity.cleanup_id;
+            tombstone.batch_id = cleanupIdentity.batch_id;
+        }
+        return tombstone;
     }
 
     migrateCleanupTombstone(tombstone) {
@@ -1292,10 +1330,10 @@ class WorkspaceExecutor {
             tombstone.status_tab_ids, tombstone.page_tab_id, tombstone.binding]);
     }
 
-    async recordCleanupTombstone(record, errors) {
+    async recordCleanupTombstone(record, errors, cleanupIdentity = null) {
         await this.localStateUpdate(CLEANUP_TOMBSTONES_KEY, tombstones => {
             const current = Array.isArray(tombstones) ? tombstones : [];
-            const tombstone = this.cleanupTombstone(record, errors);
+            const tombstone = this.cleanupTombstone(record, errors, cleanupIdentity);
             const key = this.tombstoneKey(tombstone);
             const next = current.filter(saved => this.tombstoneKey(saved) !== key);
             next.push(tombstone);
@@ -1304,10 +1342,16 @@ class WorkspaceExecutor {
     }
 
     validCleanupTombstone(tombstone) {
-        const allowed = new Set(["version", "nonce", "window_id", "xid", "status_tab_ids",
-            "page_tab_id", "binding", "ownership", "errors", "legacy_proof"]);
+        const allowed = new Set(["version", "phase", "cleanup_id", "batch_id", "nonce",
+            "window_id", "xid", "status_tab_ids", "page_tab_id", "binding", "ownership",
+            "errors", "legacy_proof"]);
         return tombstone && tombstone.version === 1 &&
             Object.keys(tombstone).every(key => allowed.has(key)) &&
+            (tombstone.phase === undefined || tombstone.phase === "pending") &&
+            (tombstone.cleanup_id === undefined ||
+                typeof tombstone.cleanup_id === "string" && tombstone.cleanup_id) &&
+            (tombstone.batch_id === undefined || tombstone.batch_id === null ||
+                typeof tombstone.batch_id === "string") &&
             (tombstone.nonce === null || typeof tombstone.nonce === "string") &&
             (tombstone.window_id === null || Number.isInteger(tombstone.window_id)) &&
             (tombstone.xid === null || Number.isInteger(tombstone.xid)) &&
@@ -1400,7 +1444,11 @@ class WorkspaceExecutor {
         });
     }
 
-    async retryCleanupTombstone(tombstone) {
+    async retryCleanupTombstone(tombstone, authority = null) {
+        const checkAuthority = () => {
+            if (authority) this.requireCurrentAuthority(authority);
+        };
+        checkAuthority();
         const errors = [];
         const currentOwnership = await this.currentOwnedMarker(tombstone.nonce);
         const ownershipProof = this.cleanupOwnershipProof(tombstone, currentOwnership);
@@ -1422,6 +1470,7 @@ class WorkspaceExecutor {
             await this.windowIsMissing(tombstone.window_id);
         if (!windowGone && topology && x11Verified) {
             try {
+                checkAuthority();
                 await this.chrome.windows.remove(tombstone.window_id);
             } catch (error) {
                 if (!await this.windowIsMissing(tombstone.window_id)) errors.push(error);
@@ -1435,7 +1484,10 @@ class WorkspaceExecutor {
             } catch (error) {
                 errors.push(error);
             }
-            for (const tab of markers) await this.removeKnownTab(tab.id, errors);
+            for (const tab of markers) {
+                checkAuthority();
+                await this.removeKnownTab(tab.id, errors);
+            }
         }
         let x11Cleared = tombstone.xid === null || windowGone;
         if (!x11Cleared && x11Verified && tombstone.binding) {
@@ -1448,12 +1500,14 @@ class WorkspaceExecutor {
                 connectionDisplayName: tombstone.binding.display_title,
             };
             const before = errors.length;
+            checkAuthority();
             await this.clearManagedX11(record, errors);
             x11Cleared = errors.length === before;
         }
         let markerCleared = tombstone.nonce === null;
         if (tombstone.nonce && ownershipProof) {
             try {
+                checkAuthority();
                 await this.disownMarker(tombstone.nonce);
                 markerCleared = true;
             } catch (error) {
@@ -1461,6 +1515,7 @@ class WorkspaceExecutor {
             }
         } else if (tombstone.nonce && (currentOwnership === null ||
                 currentOwnership?.version === 1 && currentOwnership.pending === true)) {
+            checkAuthority();
             await this.disownMarker(tombstone.nonce);
             markerCleared = true;
         }
@@ -1470,6 +1525,14 @@ class WorkspaceExecutor {
                 [new Error("cleanup identity remains present")],
             "managed cleanup tombstone remains pending");
         }
+        return {
+            phase: "confirmed",
+            window_gone: windowGone,
+            x11_cleared: x11Cleared,
+            marker_disowned: markerCleared,
+            ownership_removed: true,
+            confirmed: (windowGone || x11Cleared) && markerCleared,
+        };
     }
 
     async restoreCleanupTombstones() {
@@ -3131,11 +3194,18 @@ class WorkspaceExecutor {
             observed._ABUSH_DISPLAY_TITLE === payload.display_title;
     }
 
-    async bind(record, workspaceId = record.workspaceId) {
+    async bind(record, workspaceId = record.workspaceId, authority = null) {
+        const checkAuthority = () => {
+            if (authority && this.remoteAuthorities.has(authority.remote_key)) {
+                this.requireCurrentAuthority(authority);
+            }
+        };
         const payload = this.bindingPayload({...record, workspaceId});
         const operation = this.nativeMutationTail.catch(() => {}).then(async () => {
+            checkAuthority();
             await this.chrome.tabs.update(record.statusTabIds[0], {active: true});
             try {
+                checkAuthority();
                 const result = await this.nativeRequest(
                     "abush_browser", "bind_x11_window", payload);
                 if (!this.validBindResult(result, payload)) {
@@ -3144,6 +3214,7 @@ class WorkspaceExecutor {
                 record.x11WindowId = result.xid;
                 return result;
             } finally {
+                checkAuthority();
                 await this.chrome.tabs.update(record.pageTabId, {active: true});
             }
         });
@@ -3221,8 +3292,22 @@ class WorkspaceExecutor {
         }
     }
 
-    async ensure(payload) {
+    async ensureQueued(payload) {
+        if (!payload || typeof payload.remote_key !== "string") {
+            throw new Error("invalid ensure payload");
+        }
         this.validateEnsurePayload(payload);
+        const authority = this.remoteAuthorities.get(payload.remote_key);
+        if (authority) this.requireCurrentAuthority(payload);
+        return {deferred: this.ensureAuthorized(payload)};
+    }
+
+    async ensure(payload) {
+        const queued = await this.ensureQueued(payload);
+        return queued.deferred;
+    }
+
+    async ensureAuthorized(payload) {
         const requestKey = this.ensureRequestKey(payload);
         if (this.ensureWaiters.has(requestKey)) throw new Error("duplicate ensure request");
         const key = this.key(payload.remote_key, payload.principal_id);
@@ -3233,7 +3318,8 @@ class WorkspaceExecutor {
         if (!flight) {
             flight = {waiters: new Set(), cancelled: false, createdWindowId: null,
                 committed: false, cleanupCompleted: false, expectedPage: payload.expected_page,
-                transactionTail: Promise.resolve(), transaction: null};
+                authority: this.ensureIdentity(payload), transactionTail: Promise.resolve(),
+                transaction: null};
             flight.promise = this.ensureWorkspace(payload, flight);
             this.ensureFlights.set(key, flight);
             flight.promise.finally(() => {
@@ -3308,13 +3394,53 @@ class WorkspaceExecutor {
         };
     }
 
+    retireCleanupIdentity(record, cleanupId = crypto.randomUUID(), batchId = null) {
+        const cleanup = {
+            cleanup_id: cleanupId,
+            batch_id: batchId,
+            record: this.persistedRecord(record),
+        };
+        cleanup.tombstone = this.cleanupTombstone(record, [], cleanup);
+        cleanup.tombstone_key = this.tombstoneKey(cleanup.tombstone);
+        return cleanup;
+    }
+
+    validRetireCleanupIdentity(cleanup) {
+        return cleanup && typeof cleanup.cleanup_id === "string" && cleanup.cleanup_id &&
+            (cleanup.batch_id === null || typeof cleanup.batch_id === "string") &&
+            typeof cleanup.tombstone_key === "string" && cleanup.tombstone_key &&
+            this.validCleanupTombstone(cleanup.tombstone) &&
+            cleanup.tombstone.cleanup_id === cleanup.cleanup_id &&
+            cleanup.tombstone.batch_id === cleanup.batch_id &&
+            this.tombstoneKey(cleanup.tombstone) === cleanup.tombstone_key &&
+            cleanup.record && typeof cleanup.record.nonce === "string" &&
+            Number.isInteger(cleanup.record.windowId) &&
+            Array.isArray(cleanup.record.statusTabIds) &&
+            Number.isInteger(cleanup.record.pageTabId);
+    }
+
+    retireCleanupOutcome(cleanupId) {
+        return this.retireCleanupOutcomes.get(cleanupId) || null;
+    }
+
+    async persistRetireCleanupOutcome(cleanup, outcome) {
+        this.retireCleanupOutcomes.set(cleanup.cleanup_id, {
+            version: 1,
+            cleanup_id: cleanup.cleanup_id,
+            tombstone_key: cleanup.tombstone_key,
+            batch_id: cleanup.batch_id,
+            ...outcome,
+        });
+        await this.persistRetireLedger();
+    }
+
     retireLedgerSnapshot() {
         const snapshot = [];
         for (const identity of this.retirePending.values()) {
             snapshot.push({version: 8, phase: "accepted", identity});
         }
         for (const entry of this.retireEffectStarted.values()) {
-            snapshot.push({version: 8, phase: "effect_started", ...entry});
+            snapshot.push({version: 10, phase: "effect_started", ...entry});
         }
         for (const entry of this.retireCompleted.values()) {
             snapshot.push({version: 8, phase: "completed", ...entry});
@@ -3333,6 +3459,9 @@ class WorkspaceExecutor {
         }
         for (const [retireId, ack] of this.retireDeferredAcks) {
             snapshot.push({version: 9, phase: "ack_deferred", retire_id: retireId, ack});
+        }
+        for (const outcome of this.retireCleanupOutcomes.values()) {
+            snapshot.push({version: 10, phase: "cleanup_outcome", outcome});
         }
         return snapshot;
     }
@@ -3403,6 +3532,15 @@ class WorkspaceExecutor {
         let dirty = false;
         for (const entry of entries) {
             const legacyV7 = entry?.version === 7;
+            const currentV10 = entry?.version === 10;
+            if (currentV10 && entry.phase === "cleanup_outcome" &&
+                    entry.outcome?.version === 1 &&
+                    typeof entry.outcome.cleanup_id === "string" && entry.outcome.cleanup_id &&
+                    typeof entry.outcome.tombstone_key === "string" &&
+                    ["pending", "confirmed"].includes(entry.outcome.phase)) {
+                this.retireCleanupOutcomes.set(entry.outcome.cleanup_id, entry.outcome);
+                continue;
+            }
             if (entry?.version === 9 && entry.phase === "ack_deferred" &&
                     typeof entry.retire_id === "string" && entry.retire_id &&
                     entry.retire_id === entry.ack?.retire_id &&
@@ -3413,7 +3551,7 @@ class WorkspaceExecutor {
             }
             if (legacyV7 && ["accepted", "effect_started", "completed", "legacy_cleanup"].includes(
                 entry.phase)) dirty = true;
-            if (entry?.version !== 8 && !legacyV7) {
+            if (entry?.version !== 8 && !legacyV7 && !currentV10) {
                 const legacy = entry?.identity?.original || entry?.identity;
                 if (this.validLegacyRetireIdentity(legacy)) {
                     const key = this.legacyRetireKey(legacy);
@@ -3438,8 +3576,10 @@ class WorkspaceExecutor {
             if (entry.phase === "accepted") {
                 this.retirePending.set(identity.retire_id, identity);
             } else if (entry.phase === "effect_started" &&
-                    this.validRetireIdentity(entry.delivery)) {
-                this.retireEffectStarted.set(identity.retire_id, entry);
+                    this.validRetireIdentity(entry.delivery) &&
+                    (!currentV10 || this.validRetireCleanupIdentity(entry.cleanup))) {
+                const restored = currentV10 ? entry : {...entry, version: 8};
+                this.retireEffectStarted.set(identity.retire_id, restored);
             } else if (entry.phase === "completed" &&
                     this.validRetireIdentity(entry.delivery) &&
                     this.validRetireCompletion(entry.completion)) {
@@ -3491,6 +3631,23 @@ class WorkspaceExecutor {
         await this.persistRetireLedger();
     }
 
+    async recoverRetireCleanup(entry, authority) {
+        if (!this.validRetireCleanupIdentity(entry.cleanup)) {
+            this.reportAdvisoryError(new Error(
+                "retire effect has no durable cleanup identity; completion is withheld"));
+            return false;
+        }
+        try {
+            const outcome = await this.retryCleanupTombstone(entry.cleanup.tombstone, authority);
+            await this.persistRetireCleanupOutcome(entry.cleanup, outcome);
+            return this.retireCleanupOutcome(entry.cleanup.cleanup_id)?.phase === "confirmed";
+        } catch (error) {
+            this.reportAdvisoryError(new AggregateError([error],
+                "retire cleanup remains pending recovery"));
+            return false;
+        }
+    }
+
     async recoverRetireLedger(authority = null) {
         if (!authority && this.retireRecoveryStates.size === 1) {
             authority = this.retireRecoveryStates.values().next().value;
@@ -3514,19 +3671,14 @@ class WorkspaceExecutor {
         for (const entry of [...this.retireEffectStarted.values()]) {
             if (entry.identity.remote_key !== authority.remote_key ||
                     entry.identity.principal_id !== authority.principal_id) continue;
-            const record = this.workspaces.get(this.key(
-                entry.identity.remote_key, entry.identity.principal_id));
-            if (record && record.logicalWindowId === entry.identity.window_id &&
-                    record.logicalPageId === entry.identity.page_id) {
-                this.reportAdvisoryError(new Error(
-                    "retire effect started but physical topology remains; completion is withheld"));
-                continue;
-            }
+            if (!await this.recoverRetireCleanup(entry, authority)) continue;
+            this.requireCurrentAuthority(authority);
             this.retireEffectStarted.delete(entry.identity.retire_id);
             this.retireCompleted.set(entry.identity.retire_id, {
                 identity: entry.identity,
                 delivery: this.retireDelivery(entry.identity, authority),
                 completion: {outcome: "retired"},
+                cleanup: entry.cleanup,
             });
             await this.persistRetireLedger();
         }
@@ -3542,6 +3694,10 @@ class WorkspaceExecutor {
         }
     }
 
+    async retireManagedPageSerializedQueued(payload) {
+        return {deferred: this.retireManagedPageSerialized(payload)};
+    }
+
     async retireManagedPage(payload) {
         if (!payload || typeof payload.remote_key !== "string") return false;
         return this.enqueueRemoteLifecycle(payload.remote_key,
@@ -3554,15 +3710,13 @@ class WorkspaceExecutor {
             "page_id"])) return false;
         const identity = this.retireIdentity(payload);
         if (!this.validRetireIdentity(identity)) return false;
-        const authority = this.authoritySnapshot({
-            remote_key: identity.remote_key,
-            connection_id: identity.connection_id,
-            principal_id: identity.principal_id,
-            executor_fence: identity.executor_fence,
-            connected: true,
-        });
+        const authority = this.remoteAuthorities.get(identity.remote_key) ||
+            this.authoritySnapshot({...identity, connected: true});
+        if (this.remoteAuthorities.has(identity.remote_key)) this.requireCurrentAuthority(identity);
         this.retireRecoveryStates.set(identity.remote_key, authority);
-        this.remoteAuthorities.set(identity.remote_key, authority);
+        if (!this.remoteAuthorities.has(identity.remote_key)) {
+            this.remoteAuthorities.set(identity.remote_key, authority);
+        }
         const known = this.retirePending.get(identity.retire_id) ||
             this.retireEffectStarted.get(identity.retire_id)?.identity ||
             this.retireCompleted.get(identity.retire_id)?.identity ||
@@ -3626,6 +3780,7 @@ class WorkspaceExecutor {
                 identity,
                 delivery: this.retireDelivery(identity),
                 completion: terminal.completion,
+                cleanup: terminal.cleanup,
             });
             this.retireResponseReceived.delete(retireId);
             this.retireConsumedPending.delete(retireId);
@@ -3648,23 +3803,40 @@ class WorkspaceExecutor {
     }
 
     async finishRetireOnce(identity, authority) {
+        if (this.remoteAuthorities.has(authority?.remote_key)) this.requireCurrentAuthority(authority);
         if (!authority || authority.remote_key !== identity.remote_key ||
                 authority.principal_id !== identity.principal_id) return;
         const record = this.workspaces.get(this.key(identity.remote_key, identity.principal_id));
         let completion = {outcome: "already_retired"};
+        let cleanup = null;
         if (record && record.logicalWindowId === identity.window_id &&
                 record.logicalPageId === identity.page_id) {
             const delivery = this.retireDelivery(identity, authority);
+            cleanup = this.retireCleanupIdentity(record);
             this.retirePending.delete(identity.retire_id);
-            this.retireEffectStarted.set(identity.retire_id, {identity, delivery});
+            this.retireEffectStarted.set(identity.retire_id, {identity, delivery, cleanup});
             await this.persistRetireLedger();
-            await this.convergeManagedTopology(record, {closeWindow: true, report: false});
+            if (this.remoteAuthorities.has(authority.remote_key)) {
+                this.requireCurrentAuthority(authority);
+            }
+            const outcome = await this.convergeManagedTopology(record, {
+                closeWindow: true, report: false,
+                authority: this.remoteAuthorities.has(authority.remote_key) ? authority : null,
+                cleanupIdentity: cleanup,
+            });
+            if (outcome?.confirmed !== true ||
+                    this.retireCleanupOutcome(cleanup.cleanup_id)?.phase !== "confirmed") {
+                throw new Error("retire cleanup outcome was not confirmed");
+            }
+            if (this.remoteAuthorities.has(authority.remote_key)) {
+                this.requireCurrentAuthority(authority);
+            }
             this.retireEffectStarted.delete(identity.retire_id);
             completion = {outcome: "retired"};
         }
         const delivery = this.retireDelivery(identity, authority);
         this.retirePending.delete(identity.retire_id);
-        this.retireCompleted.set(identity.retire_id, {identity, delivery, completion});
+        this.retireCompleted.set(identity.retire_id, {identity, delivery, completion, cleanup});
         await this.persistRetireLedger();
     }
 
@@ -3731,20 +3903,35 @@ class WorkspaceExecutor {
         }
     }
 
+    clearRetireCleanupOutcome(entry) {
+        const cleanupId = entry?.cleanup?.cleanup_id;
+        if (typeof cleanupId === "string") this.retireCleanupOutcomes.delete(cleanupId);
+    }
+
     async removeConfirmedRetire(retireId) {
         const entry = this.retireServerConfirmed.get(retireId);
         if (!entry) return;
         await this.persistRetireLedger();
         if (this.retireServerConfirmed.get(retireId) !== entry) return;
         this.retireConfirmedIdentities.set(retireId, entry);
+        this.clearRetireCleanupOutcome(entry);
+        this.retireServerConfirmed.delete(retireId);
         while (this.retireConfirmedIdentities.size > 256) {
             this.retireConfirmedIdentities.delete(this.retireConfirmedIdentities.keys().next().value);
         }
-        this.retireServerConfirmed.delete(retireId);
         try {
             await this.persistRetireLedger();
         } catch (error) {
             this.retireServerConfirmed.set(retireId, entry);
+            if (entry.cleanup) {
+                this.retireCleanupOutcomes.set(entry.cleanup.cleanup_id, {
+                    version: 1,
+                    cleanup_id: entry.cleanup.cleanup_id,
+                    tombstone_key: entry.cleanup.tombstone_key,
+                    batch_id: entry.cleanup.batch_id,
+                    phase: "confirmed",
+                });
+            }
             throw error;
         }
     }
@@ -3847,6 +4034,10 @@ class WorkspaceExecutor {
         }
     }
 
+    async retireManagedPageAckSerializedQueued(payload) {
+        return this.retireManagedPageAckSerialized(payload);
+    }
+
     async retireManagedPageAck(payload) {
         if (!payload || typeof payload.remote_key !== "string") return false;
         return this.enqueueRemoteLifecycle(payload.remote_key,
@@ -3855,6 +4046,8 @@ class WorkspaceExecutor {
 
     async retireManagedPageAckSerialized(payload, allowDefer = true) {
         if (!this.validRetireAckPayload(payload)) return false;
+        const currentAuthority = this.remoteAuthorities.get(payload.remote_key);
+        if (currentAuthority && !this.authorityMatches(payload, currentAuthority)) return false;
         const ack = {
             request_id: payload.request_id,
             retire_id: payload.retire_id,
@@ -3914,13 +4107,30 @@ class WorkspaceExecutor {
         return true;
     }
 
+    validateEnsureCancellation(payload) {
+        return exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
+            "ensure_id", "executor_fence"]) &&
+            [payload.remote_key, payload.connection_id, payload.principal_id,
+                payload.request_id, payload.ensure_id].every(value =>
+                typeof value === "string" && value) && validFence(payload.executor_fence);
+    }
+
+    async cancelEnsureQueued(payload) {
+        if (!this.validateEnsureCancellation(payload)) return {deferred: Promise.resolve(false)};
+        if (this.remoteAuthorities.has(payload.remote_key)) this.requireCurrentAuthority(payload);
+        return {deferred: this.cancelEnsureSerialized(payload)};
+    }
+
     async cancelEnsure(payload) {
-        if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
-            "ensure_id", "executor_fence"]) ||
-                ![payload.remote_key, payload.connection_id, payload.principal_id,
-                    payload.request_id, payload.ensure_id].every(value =>
-                    typeof value === "string" && value) ||
-                !validFence(payload.executor_fence)) return false;
+        const queued = await this.cancelEnsureQueued(payload);
+        return queued.deferred;
+    }
+
+    async cancelEnsureSerialized(payload, allowStale = false) {
+        if (!this.validateEnsureCancellation(payload)) return false;
+        if (!allowStale && this.remoteAuthorities.has(payload.remote_key)) {
+            this.requireCurrentAuthority(payload);
+        }
         const waiter = this.ensureWaiters.get(this.ensureRequestKey(payload));
         if (!waiter || waiter.cancelled) return false;
         const flight = waiter.flight;
@@ -4040,6 +4250,9 @@ class WorkspaceExecutor {
         if (flight.cancelled && this.activeEnsureWaiters(flight).length === 0) {
             throw new Error("ensure cancelled");
         }
+        if (this.remoteAuthorities.has(flight.authority.remote_key)) {
+            this.requireCurrentAuthority(flight.authority);
+        }
     }
 
     async ensureWorkspace(payload, flight) {
@@ -4067,7 +4280,7 @@ class WorkspaceExecutor {
             let committed = false;
             try {
                 this.ensureActive(flight);
-                await this.bind(candidate, payload.workspace_id);
+                await this.bind(candidate, payload.workspace_id, flight.authority);
                 this.ensureActive(flight);
                 if (!await this.isLive(existing)) throw new Error("workspace changed during bind");
                 await this.withFlightLock(flight, async () => {
@@ -4237,7 +4450,8 @@ class WorkspaceExecutor {
             });
             try {
                 this.ensureActive(flight);
-                await this.bind(record);
+                await this.bind(record, record.workspaceId, flight.authority);
+                this.ensureActive(flight);
                 transaction.x11WindowId = record.x11WindowId;
                 transaction.record = this.persistedRecord(record);
                 await this.updateEnsureTransaction(transaction, {
@@ -4628,9 +4842,16 @@ class WorkspaceExecutor {
         return true;
     }
 
+    async executeQueued(payload) {
+        if (!payload || typeof payload.remote_key !== "string") return {deferred: Promise.resolve()};
+        if (this.remoteAuthorities.has(payload.remote_key)) this.requireCurrentAuthority(payload);
+        if (!await this.registerOperation(payload)) return {deferred: Promise.resolve()};
+        return {deferred: this.executeRegistered(payload)};
+    }
+
     async execute(payload) {
-        if (!await this.registerOperation(payload)) return;
-        return this.executeRegistered(payload);
+        const queued = await this.executeQueued(payload);
+        return queued.deferred;
     }
 
     async executeRegistered(payload) {
@@ -4649,6 +4870,14 @@ class WorkspaceExecutor {
         operation.mutationStarted = true;
     }
 
+    operationAuthorityIsTracked(payload) {
+        return this.remoteAuthorities.has(payload.remote_key);
+    }
+
+    requireOperationAuthority(payload) {
+        if (this.operationAuthorityIsTracked(payload)) this.requireCurrentAuthority(payload);
+    }
+
     async executeSerialized(payload) {
         const operationKey = this.operationKey(payload);
         const operation = this.operations.get(operationKey);
@@ -4656,7 +4885,9 @@ class WorkspaceExecutor {
         operation.started = true;
         let completion = "unknown";
         try {
+            this.requireOperationAuthority(payload);
             const {record} = await this.validate(payload, payload.command);
+            this.requireOperationAuthority(payload);
             operation.workspaceKey = this.key(record.remoteKey, record.principalId);
             operation.tabId = record.pageTabId;
             if (operation.cancelled) completion = "not_applied";
@@ -4664,32 +4895,44 @@ class WorkspaceExecutor {
                 const url = new URL(payload.command.url);
                 if (!["http:", "https:"].includes(url.protocol)) throw new Error("invalid URL");
                 if (!record.debuggerAttached) {
+                    this.requireOperationAuthority(payload);
                     await this.chrome.debugger.attach({tabId: record.pageTabId}, "1.3");
+                    this.requireOperationAuthority(payload);
                     record.debuggerAttached = true;
                 }
                 if (operation.cancelled) completion = "not_applied";
                 else {
+                    this.requireOperationAuthority(payload);
                     await this.markOperationEffectStarted(operation);
+                    this.requireOperationAuthority(payload);
                     await this.chrome.debugger.sendCommand(
                         {tabId: record.pageTabId}, "Page.navigate", {url: url.href});
                     operation.committed = true;
                     completion = operation.cancelled ? "unknown" : "applied";
                 }
             } else if (payload.command.command === "close_page") {
+                this.requireOperationAuthority(payload);
                 await this.detach(record.pageTabId);
+                this.requireOperationAuthority(payload);
                 if (operation.cancelled) completion = "not_applied";
                 else {
+                    this.requireOperationAuthority(payload);
                     await this.markOperationEffectStarted(operation);
-                    await this.closeOwnedWindow(record);
+                    this.requireOperationAuthority(payload);
+                    await this.closeOwnedWindow(record, payload);
                     operation.committed = true;
                     completion = operation.cancelled ? "unknown" : "applied";
                 }
             } else if (payload.command.command === "close_window") {
+                this.requireOperationAuthority(payload);
                 await this.detach(record.pageTabId);
+                this.requireOperationAuthority(payload);
                 if (operation.cancelled) completion = "not_applied";
                 else {
+                    this.requireOperationAuthority(payload);
                     await this.markOperationEffectStarted(operation);
-                    await this.closeOwnedWindow(record);
+                    this.requireOperationAuthority(payload);
+                    await this.closeOwnedWindow(record, payload);
                     operation.committed = true;
                     completion = operation.cancelled ? "unknown" : "applied";
                 }
@@ -4758,7 +5001,20 @@ class WorkspaceExecutor {
         }
     }
 
+    async cancelQueued(payload) {
+        if (!payload || typeof payload.remote_key !== "string") {
+            return {deferred: Promise.resolve(false)};
+        }
+        if (this.remoteAuthorities.has(payload.remote_key)) this.requireCurrentAuthority(payload);
+        return {deferred: this.cancelSerialized(payload)};
+    }
+
     async cancel(payload) {
+        const queued = await this.cancelQueued(payload);
+        return queued.deferred;
+    }
+
+    async cancelSerialized(payload) {
         if (!exactFields(payload, ["remote_key", "connection_id", "principal_id", "request_id",
             "execution_request_id", "effect_id", "executor_fence"]) ||
                 ![payload.remote_key, payload.connection_id, payload.principal_id,
@@ -4822,11 +5078,11 @@ class WorkspaceExecutor {
         await this.persistOperationCancels();
     }
 
-    cancelMatching(matches) {
+    cancelMatchingSerialized(matches) {
         const cancels = [];
         for (const waiter of this.ensureWaiters.values()) {
             if (matches(waiter.payload)) {
-                cancels.push(this.cancelEnsure(this.ensureIdentity(waiter.payload)));
+                cancels.push(this.cancelEnsureSerialized(this.ensureIdentity(waiter.payload), true));
             }
         }
         for (const operation of this.operations.values()) {
@@ -4837,6 +5093,10 @@ class WorkspaceExecutor {
         return Promise.all(cancels);
     }
 
+    async remoteStateSerializedQueued(state) {
+        return this.remoteStateSerialized(state);
+    }
+
     async remoteState(state) {
         if (!state || typeof state.remote_key !== "string") return;
         return this.enqueueRemoteLifecycle(state.remote_key,
@@ -4844,7 +5104,6 @@ class WorkspaceExecutor {
     }
 
     async remoteStateSerialized(state) {
-        await this.authorizeTopologyOutbox(state);
         const authority = this.authoritySnapshot(state);
         if (authority) {
             this.remoteAuthorities.set(state.remote_key, authority);
@@ -4853,6 +5112,7 @@ class WorkspaceExecutor {
             this.remoteAuthorities.delete(state.remote_key);
             this.retireRecoveryStates.delete(state.remote_key);
         }
+        await this.authorizeTopologyOutbox(state);
         if (authority) {
             await this.restoreQuarantinedCleanupReports();
             await this.processDeferredTopologyResponses(authority);
@@ -4862,16 +5122,31 @@ class WorkspaceExecutor {
             await this.flushTopologyOutbox();
         }
         const disconnected = state.connected === false;
-        await this.cancelMatching(identity => identity.remote_key === state.remote_key &&
+        await this.cancelMatchingSerialized(identity => identity.remote_key === state.remote_key &&
             (disconnected || (typeof state.connection_id === "string" &&
                 identity.connection_id !== state.connection_id)));
     }
 
     async invalidateRemote(state = null) {
-        await this.cancelMatching(identity => !state ||
-            (identity.remote_key === state.remote_key &&
-                (!state.connection_id || identity.connection_id === state.connection_id) &&
-                (!state.principal_id || identity.principal_id === state.principal_id)));
+        if (state?.remote_key) {
+            return this.enqueueRemoteLifecycle(state.remote_key,
+                () => this.invalidateRemoteSerialized(state));
+        }
+        const keys = new Set([
+            ...this.remoteAuthorities.keys(),
+            ...[...this.ensureWaiters.values()].map(waiter => waiter.payload.remote_key),
+            ...[...this.operations.values()].map(operation => operation.remote_key),
+        ]);
+        await Promise.all([...keys].map(remoteKey => this.enqueueRemoteLifecycle(remoteKey,
+            () => this.invalidateRemoteSerialized(null, remoteKey))));
+    }
+
+    async invalidateRemoteSerialized(state = null, remoteKey = state?.remote_key) {
+        if (state && this.remoteAuthorities.has(remoteKey) &&
+                !this.authorityMatches(state)) return;
+        await this.cancelMatchingSerialized(identity => (!state || identity.remote_key === remoteKey) &&
+            (!state || ((!state.connection_id || identity.connection_id === state.connection_id) &&
+                (!state.principal_id || identity.principal_id === state.principal_id))));
     }
 
     async detach(tabId) {
@@ -4911,8 +5186,8 @@ class WorkspaceExecutor {
             record.pageTabId, this.nextOwnershipGeneration());
     }
 
-    async closeOwnedWindow(record) {
-        await this.convergeManagedTopology(record, {closeWindow: true, report: false});
+    async closeOwnedWindow(record, authority = null) {
+        await this.convergeManagedTopology(record, {closeWindow: true, report: false, authority});
     }
 
     async visibleNormalWindows(removedWindowId) {
@@ -5286,41 +5561,67 @@ class WorkspaceExecutor {
     }
 
     async convergeManagedTopology(record, {closeWindow = false, report = true,
-        persisted = false} = {}) {
+        persisted = false, authority = null, cleanupIdentity = null} = {}) {
+        const checkAuthority = () => {
+            if (authority) this.requireCurrentAuthority(authority);
+        };
+        checkAuthority();
         const page = this.pageRef(record);
         const live = await this.isLive(record);
         let physicalGone = await this.windowIsMissing(record.windowId);
+        let x11Cleared = physicalGone || !Number.isInteger(record.x11WindowId) ||
+            record.x11WindowId <= 0;
+        let markerDisowned = record.nonce === null || record.nonce === undefined;
         const errors = [];
         let reportError = null;
         if (report) {
+            checkAuthority();
             const reportPayload = this.topologyReport(record, page);
             await this.queueTopologyReport(reportPayload);
         }
-        const persistError = persisted ? null : await this.persistOrForget(record);
+        checkAuthority();
+        const persistError = persisted ? null : await this.persistOrForget(record, authority);
         if (persistError) throw persistError;
+        checkAuthority();
         if (this.workspaces.get(this.key(record.remoteKey, record.principalId)) === record) {
             this.forget(record);
         }
+        checkAuthority();
         await this.appendCleanupError(errors, () => this.detach(record.pageTabId));
         if (closeWindow && live) {
+            checkAuthority();
             try {
                 await this.chrome.windows.remove(record.windowId);
             } catch (error) {
                 if (!await this.windowIsMissing(record.windowId)) errors.push(error);
             }
             physicalGone = await this.windowIsMissing(record.windowId);
+            if (physicalGone) x11Cleared = true;
         } else {
             for (const tabId of record.statusTabIds) {
+                checkAuthority();
                 await this.removeKnownTab(tabId, errors);
             }
-            if (closeWindow) await this.removeKnownTab(record.pageTabId, errors);
+            if (closeWindow) {
+                checkAuthority();
+                await this.removeKnownTab(record.pageTabId, errors);
+            }
         }
-        if (!physicalGone) await this.clearManagedX11(record, errors);
+        if (!physicalGone) {
+            checkAuthority();
+            const before = errors.length;
+            await this.clearManagedX11(record, errors);
+            if (errors.length === before) x11Cleared = true;
+        }
         if (errors.length === 0) {
+            checkAuthority();
+            const before = errors.length;
             await this.appendCleanupError(errors, () => this.disownMarker(record.nonce));
+            if (errors.length === before) markerDisowned = true;
         }
         if (report) {
             try {
+                checkAuthority();
                 await this.flushTopologyOutbox();
             } catch (error) {
                 reportError = error;
@@ -5328,7 +5629,18 @@ class WorkspaceExecutor {
         }
         if (errors.length > 0) {
             try {
-                await this.recordCleanupTombstone(record, errors);
+                checkAuthority();
+                await this.recordCleanupTombstone(record, errors, cleanupIdentity);
+                if (cleanupIdentity) {
+                    await this.persistRetireCleanupOutcome(cleanupIdentity, {
+                        phase: "pending",
+                        window_gone: physicalGone,
+                        x11_cleared: x11Cleared,
+                        marker_disowned: markerDisowned,
+                        ownership_removed: this.workspaces.get(
+                            this.key(record.remoteKey, record.principalId)) !== record,
+                    });
+                }
             } catch (error) {
                 errors.push(error);
             }
@@ -5338,11 +5650,24 @@ class WorkspaceExecutor {
             const queued = [...this.topologyOutbox.values()].find(saved =>
                 sameRef(saved.page, page));
             if (queued?.cleanup) {
+                checkAuthority();
                 queued.cleanup = {...queued.cleanup, phase: "removed"};
                 await this.persistTopologyOutbox();
             }
         }
         if (reportError) this.reportAdvisoryError(reportError);
+        const outcome = {
+            phase: "confirmed",
+            window_gone: physicalGone,
+            x11_cleared: x11Cleared,
+            marker_disowned: markerDisowned,
+            ownership_removed: this.workspaces.get(
+                this.key(record.remoteKey, record.principalId)) !== record,
+        };
+        if (cleanupIdentity) await this.persistRetireCleanupOutcome(cleanupIdentity, outcome);
+        return {...outcome, confirmed:
+            (outcome.window_gone || outcome.x11_cleared) && outcome.marker_disowned &&
+            outcome.ownership_removed};
     }
 
     recordForTopology(tabId, windowId = null) {

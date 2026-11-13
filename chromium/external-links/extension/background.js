@@ -608,45 +608,65 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
             return;
         }
         if (message.service !== "abush_browser") return;
+        const dispatch = (method, fallback, rejectFalse = true) => {
+            const payload = message.payload;
+            const remoteKey = payload?.remote_key;
+            if (typeof remoteKey !== "string") {
+                onFailure(fallback);
+                return;
+            }
+            const enqueue = typeof workspaces.enqueueRemoteLifecycle === "function" ?
+                task => workspaces.enqueueRemoteLifecycle(remoteKey, task) : task => task();
+            run(() => enqueue(async () => {
+                const target = typeof workspaces[`${method}Queued`] === "function" ?
+                    `${method}Queued` : typeof workspaces[method] === "function" ? method : {
+                    remoteStateSerialized: "remoteState",
+                    retireManagedPageSerialized: "retireManagedPage",
+                    topologyReportResponseSerialized: "topologyReportResponse",
+                    retireManagedPageAckSerialized: "retireManagedPageAck",
+                }[method];
+                if (!target || typeof workspaces[target] !== "function") throw new Error(fallback);
+                const result = await workspaces[target](payload);
+                const deferred = result?.deferred;
+                const immediate = deferred ? true : result;
+                if (deferred) Promise.resolve(deferred).catch(error =>
+                    onFailure(error.message || fallback));
+                if (rejectFalse && immediate === false) throw new Error(fallback);
+                return true;
+            }), fallback);
+        };
         if (message.event === "abush_browser.remote_state") {
-            run(() => workspaces.remoteState(message.payload),
-                "Unable to apply managed browser remote state");
+            dispatch("remoteStateSerialized", "Unable to apply managed browser remote state");
             return;
         }
         if (message.event === "abush_browser.ensure_managed_page") {
-            run(() => workspaces.ensure(message.payload),
-                "Unable to ensure Abush browser workspace");
+            dispatch("ensure", "Unable to ensure Abush browser workspace", false);
             return;
         }
         if (message.event === "abush_browser.retire_managed_page") {
-            run(() => workspaces.retireManagedPage(message.payload),
-                "Unable to retire Abush browser workspace");
+            dispatch("retireManagedPageSerialized", "Unable to retire Abush browser workspace");
             return;
         }
         if (message.event === "abush_browser.topology_report_response") {
-            run(() => workspaces.topologyReportResponse(message.payload),
+            dispatch("topologyReportResponseSerialized",
                 "Unable to consume managed topology response");
             return;
         }
         if (message.event === "abush_browser.retire_managed_page_ack") {
-            run(() => workspaces.retireManagedPageAck(message.payload),
+            dispatch("retireManagedPageAckSerialized",
                 "Unable to consume managed retire acknowledgement");
             return;
         }
         if (message.event === "abush_browser.cancel_ensure_managed_page") {
-            ready().then(() => workspaces.cancelEnsure(message.payload)).catch(() => {});
+            dispatch("cancelEnsure", "Unable to cancel Abush browser workspace", false);
             return;
         }
         if (message.event === "abush_browser.execute") {
-            run(async () => {
-                if (!await workspaces.registerOperation(message.payload)) return true;
-                await workspaces.executeRegistered(message.payload);
-                return true;
-            }, "Unable to complete Abush browser command");
+            dispatch("execute", "Unable to complete Abush browser command", false);
             return;
         }
         if (message.event === "abush_browser.cancel") {
-            ready().then(() => workspaces.cancel(message.payload)).catch(() => {});
+            dispatch("cancel", "Unable to cancel Abush browser command", false);
         }
     });
 }
