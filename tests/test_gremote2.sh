@@ -130,6 +130,7 @@ browser_socket=$(python3 -c \
     "$one_metadata")
 grep -Fxq -- '-o' "$KITTY_LOG"
 grep -Fxq -- 'StreamLocalBindUnlink=no' "$KITTY_LOG"
+grep -Fxq -- 'LogLevel=ERROR' "$KITTY_LOG"
 grep -Fxq -- "$browser_socket:/run/user/1000/abush/browser-peer.sock" "$KITTY_LOG"
 grep -Fxq -- '-p' "$SSH_LOG"
 grep -Fxq -- '2222' "$SSH_LOG"
