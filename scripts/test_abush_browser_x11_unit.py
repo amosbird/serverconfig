@@ -75,7 +75,7 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
         core.GetProperty.return_value.reply.return_value = reply
         adapter = binding.XcffibAdapter.__new__(binding.XcffibAdapter)
         adapter.xproto = mock.Mock()
-        adapter.xproto.Atom.NONE = 0
+        adapter.xproto.Atom.Any = 0
         adapter.xproto.Atom.CARDINAL = 6
         adapter.xproto.Atom.WINDOW = 33
         adapter.core = core

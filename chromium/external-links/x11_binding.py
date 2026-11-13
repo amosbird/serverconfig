@@ -60,7 +60,7 @@ class XcffibAdapter:
             type_atom = self.atom(property_type)
         reply = self.core.GetProperty(False, window, self.atom(name), type_atom, 0, 4096).reply()
         missing = None if property_type in {"CARDINAL", "WINDOW"} else ""
-        if reply.type == self.xproto.Atom.NONE or reply.type != type_atom or reply.format == 0:
+        if reply.type == self.xproto.Atom.Any or reply.type != type_atom or reply.format == 0:
             return missing
         raw = bytes(reply.value.buf())
         if property_type in {"CARDINAL", "WINDOW"}:
