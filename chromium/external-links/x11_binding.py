@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 
 import json
+import marshal
 import os
 import pathlib
 import re
 import shlex
+import socket
+import stat
 import struct
 import subprocess
 import time
@@ -17,6 +20,8 @@ MANAGED_PROPERTIES = (
     "_ABUSH_WINDOW_GENERATION", "_ABUSH_CONTROL_STATE", "_ABUSH_DISPLAY_TITLE",
 )
 CHROME_TITLE_SUFFIXES = (" - Google Chrome", " - Chromium")
+QTILE_IPC_MAX_REPLY = 1024 * 1024
+QTILE_IPC_HEADER = struct.Struct("!L")
 TEXT_FIELDS = {
     "_ABUSH_REMOTE_ID": "remote_key",
     "_ABUSH_WORKSPACE_ID": "workspace_id",
@@ -238,8 +243,112 @@ def notify_qtile(window, expected, adapter, run=None):
     }
 
 
+def qtile_socket_path():
+    injected = os.environ.get("ABUSH_QTILE_SOCKET")
+    if injected:
+        path = pathlib.Path(injected)
+        if not path.is_absolute():
+            raise X11Unavailable("Qtile socket path is not absolute")
+        return path
+    cache = pathlib.Path(os.environ.get(
+        "XDG_CACHE_HOME", pathlib.Path.home() / ".cache")) / "qtile"
+    display = os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")
+    if display:
+        return cache / f"qtilesocket.{display}"
+    for fallback in ("wayland-0", ":0"):
+        candidate = cache / f"qtilesocket.{fallback}"
+        if candidate.exists():
+            return candidate
+    raise X11Unavailable("Qtile socket path is unavailable")
+
+
+def qtile_ipc_call(selectors, function, arguments=(), path=None):
+    path = pathlib.Path(path) if path is not None else qtile_socket_path()
+    try:
+        before = path.lstat()
+    except OSError as error:
+        raise X11Unavailable("Qtile socket is unavailable") from error
+    if path.is_symlink() or not stat.S_ISSOCK(before.st_mode) or before.st_uid != os.getuid() or \
+            stat.S_IMODE(before.st_mode) != 0o600:
+        raise X11Unavailable("Qtile socket is unsafe")
+    request = marshal.dumps((selectors, function, tuple(arguments), {}, True))
+    frame = QTILE_IPC_HEADER.pack(len(request)) + request
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(2)
+            client.connect(str(path))
+            if hasattr(socket, "SO_PEERCRED"):
+                credentials = client.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+                _, peer_uid, _ = struct.unpack("3i", credentials)
+                if peer_uid != os.getuid():
+                    raise X11Unavailable("Qtile socket peer is not owned by this user")
+            after = path.lstat()
+            if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+                raise X11Unavailable("Qtile socket changed during connection")
+            client.sendall(frame)
+            client.shutdown(socket.SHUT_WR)
+            response = bytearray()
+            while len(response) <= QTILE_IPC_MAX_REPLY + QTILE_IPC_HEADER.size:
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                response.extend(chunk)
+    except X11Unavailable:
+        raise
+    except (OSError, TimeoutError) as error:
+        raise X11Unavailable("Qtile IPC command failed") from error
+    if len(response) < QTILE_IPC_HEADER.size:
+        raise X11Unavailable("Qtile IPC response is truncated")
+    size = QTILE_IPC_HEADER.unpack(response[:QTILE_IPC_HEADER.size])[0]
+    payload = response[QTILE_IPC_HEADER.size:]
+    if size > QTILE_IPC_MAX_REPLY or len(payload) != size:
+        raise X11Unavailable("Qtile IPC response has an invalid size")
+    try:
+        status, result = marshal.loads(payload)
+    except (EOFError, TypeError, ValueError) as error:
+        raise X11Unavailable("Qtile IPC response is invalid") from error
+    if status != 0:
+        raise X11Unavailable("Qtile command failed")
+    return result
+
+
+def qtile_ipc_command(command):
+    if not isinstance(command, list) or not all(isinstance(part, str) for part in command) or \
+            command[:3] != ["qtile", "cmd-obj", "--object"]:
+        raise X11Unavailable("invalid Qtile command")
+    try:
+        function_index = command.index("--function", 3)
+    except ValueError as error:
+        raise X11Unavailable("invalid Qtile command") from error
+    objects = command[3:function_index]
+    tail = command[function_index + 1:]
+    if not tail:
+        raise X11Unavailable("invalid Qtile command")
+    function = tail[0]
+    arguments = ()
+    if len(tail) > 1:
+        if tail[1] != "--args":
+            raise X11Unavailable("invalid Qtile command")
+        arguments = tuple(tail[2:])
+    if objects == ["root"]:
+        selectors = []
+    elif len(objects) == 2 and objects[0] == "window":
+        try:
+            window = int(objects[1])
+        except ValueError as error:
+            raise X11Unavailable("invalid Qtile window selector") from error
+        if window <= 0:
+            raise X11Unavailable("invalid Qtile window selector")
+        selectors = [("window", window)]
+    else:
+        raise X11Unavailable("invalid Qtile object selector")
+    return qtile_ipc_call(selectors, function, arguments)
+
+
 def run_qtile(command, run=None):
-    run = run or subprocess.run
+    if run is None:
+        return json.dumps(qtile_ipc_command(command), separators=(",", ":"))
     try:
         result = run(command, capture_output=True, text=True, check=False, timeout=2)
     except (OSError, subprocess.TimeoutExpired) as error:
