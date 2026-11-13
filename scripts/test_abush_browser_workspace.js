@@ -2025,6 +2025,124 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const identity = {
+            remote_key: "r_12345678", connection_id: "c_old00000",
+            principal_id: "principal-one", request_id: "retire-command-old",
+            retire_id: "retire-completed-ack-replay", ensure_id: "ensure-ack-replay",
+            executor_fence: fence, origin_executor_fence: fence,
+            window_id: logicalWindowId, page_id: logicalPageId,
+        };
+        const completion = {outcome: "retired"};
+        const oldAck = {
+            request_id: identity.request_id, retire_id: identity.retire_id,
+            executor_fence: fence, response_delivery_id: "stable-retire-delivery",
+            origin_executor_fence: fence, completion,
+        };
+        const localState = {abushRetireLedger: [{
+            version: 8, phase: "completed", identity,
+            delivery: identity, completion, cleanup: null,
+        }]};
+        const first = fixture([], [], 0, false, null, localState);
+        await first.executor.restoreRetireLedger();
+        const oldAuthority = {...identity, connected: true};
+        first.executor.remoteAuthorities.set(identity.remote_key, oldAuthority);
+        first.executor.nativeRequest = async (_service, operation, value) => {
+            first.calls.push([operation, value]);
+            if (operation === "retire_managed_page_ack_consumed") {
+                const error = new Error("consumed ACK lost");
+                error.nativeDispatch = "unknown";
+                throw error;
+            }
+            return {};
+        };
+        const originalPersist = first.executor.persistRetireLedger.bind(first.executor);
+        let pendingSnapshot = null;
+        first.executor.persistRetireLedger = async () => {
+            await originalPersist();
+            const pending = first.executor.retireConsumedPending.get(identity.retire_id);
+            if (pending && pendingSnapshot === null) pendingSnapshot = structuredClone(pending);
+        };
+        const oldPayload = {
+            remote_key: identity.remote_key, connection_id: identity.connection_id,
+            principal_id: identity.principal_id, ...oldAck,
+        };
+        await assert.rejects(first.executor.retireManagedPageAck(oldPayload),
+            /consumed ACK lost/);
+        const stableConsumedId = pendingSnapshot.consumed_request_id;
+        localState.abushRetireLedger = [{version: 8, phase: "consumed_pending",
+            ...pendingSnapshot}];
+
+        const second = fixture([], [], 0, false, null, localState);
+        await second.executor.restoreRetireLedger();
+        const {executor, calls} = second;
+        const currentFence = {executor_id: "executor-retire-reconnected", epoch: 2};
+        const authority = {
+            remote_key: identity.remote_key, connection_id: "c_retire_reconnect",
+            principal_id: identity.principal_id, executor_fence: currentFence, connected: true,
+        };
+        executor.remoteAuthorities.set(identity.remote_key, authority);
+        let cleanupCount = 0;
+        executor.convergeManagedTopology = async () => { cleanupCount += 1; };
+        executor.nativeRequest = async (_service, operation, value) => {
+            calls.push([operation, value]);
+            if (operation === "retire_managed_page_ack_consumed") {
+                return {
+                    request_id: value.request_id, retire_id: value.retire_id,
+                    executor_fence: value.executor_fence,
+                    response_delivery_id: value.response_delivery_id,
+                };
+            }
+            return {};
+        };
+        const replayed = {
+            remote_key: identity.remote_key, connection_id: authority.connection_id,
+            principal_id: identity.principal_id, request_id: "completed-ack-new-delivery",
+            retire_id: identity.retire_id, executor_fence: currentFence,
+            response_delivery_id: oldAck.response_delivery_id,
+            origin_executor_fence: identity.origin_executor_fence, completion,
+        };
+        assert.equal(await executor.retireManagedPageAck(replayed), true);
+        const consumed = calls.find(call => call[0] ===
+            "retire_managed_page_ack_consumed")[1];
+        assert.equal(consumed.request_id, stableConsumedId,
+            "completed ACK replay must preserve the stable consumed request ID");
+        assert.equal(consumed.delivery_request_id, replayed.request_id,
+            "completed ACK consumption must correlate the current replay request ID");
+        assert.equal(consumed.connection_id, authority.connection_id);
+        assert.deepEqual(consumed.executor_fence, currentFence);
+        assert.equal(cleanupCount, 0,
+            "a confirmed local physical effect must not be cleaned up twice");
+        assert(calls.some(call => call[0] === "persistLocal" &&
+            call[1].abushRetireLedger?.some(entry => entry.phase === "consumed_pending" &&
+                entry.consumed_request_id === stableConsumedId &&
+                entry.ack.request_id === replayed.request_id &&
+                entry.ack_connection_id === authority.connection_id &&
+                JSON.stringify(entry.delivery.executor_fence) === JSON.stringify(currentFence))),
+        "completed ACK replay correlation must be durable before consumption");
+        assert.deepEqual(localState.abushRetireLedger, [],
+            "completed ACK replay must reach server confirmation and deletion");
+
+        for (const conflicting of [
+            {...replayed, response_delivery_id: "conflicting-retire-delivery"},
+            {...replayed, completion: {outcome: "already_retired"}},
+        ]) {
+            const conflictState = {abushRetireLedger: [{
+                version: 8, phase: "consumed_pending", identity,
+                delivery: identity, completion, ack: oldAck,
+                ack_connection_id: identity.connection_id,
+                consumed_request_id: "stable-retire-consumed-replay",
+            }]};
+            const conflict = fixture([], [], 0, false, null, conflictState);
+            await conflict.executor.restoreRetireLedger();
+            conflict.executor.remoteAuthorities.set(identity.remote_key, authority);
+            assert.equal(await conflict.executor.retireManagedPageAck(conflicting), false,
+                "conflicting canonical retire ACK replay must be rejected");
+            assert.equal(conflict.calls.some(call => call[0] ===
+                "retire_managed_page_ack_consumed"), false);
+        }
+    }
+    {
+        beginCase();
         const legacy = {
             remoteKey: "r_12345678", principalId: "principal-one",
             workspaceId: "workspace-authoritative", connectionId: "c_12345678",
@@ -4279,6 +4397,73 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(consumed.executor_fence, currentFence);
         assert.deepEqual(localState.abushTopologyOutbox, [],
             "current-fence consumed ACK must remove the durable report");
+    }
+    {
+        beginCase();
+        const report = {
+            remote_key: "r_12345678", connection_id: "c_old00000",
+            principal_id: "principal-one", report_id: "consumed-canonical-replay",
+            request_id: "old-response-delivery", executor_fence: fence,
+            origin_executor_fence: fence, daemon_instance_id: "daemon-instance",
+            page: {window: {workspace_id: "workspace-authoritative",
+                window_id: logicalWindowId, generation: 1},
+            page_id: logicalPageId, generation: 1},
+            cleanup: null, phase: "consumed_pending",
+            response: {
+                request_id: "old-response-delivery", report_id: "consumed-canonical-replay",
+                executor_fence: fence, response_delivery_id: "stable-canonical-response",
+                result: {outcome: "applied"},
+            },
+            consumed_request_id: "stable-consumed-replay-id", consumed_migration: null,
+        };
+        const localState = {abushTopologyOutbox: [report]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restoreTopologyOutbox();
+        const currentFence = {executor_id: "executor-reconnected", epoch: 2};
+        const authority = {
+            remote_key: report.remote_key, connection_id: "c_reconnect0",
+            principal_id: report.principal_id, executor_fence: currentFence,
+            owner_display: ensurePayload().owner_display, connected: true,
+        };
+        await executor.authorizeTopologyOutbox(authority);
+        executor.remoteAuthorities.set(report.remote_key, authority);
+        const replayed = {
+            remote_key: report.remote_key, connection_id: authority.connection_id,
+            principal_id: report.principal_id, request_id: "new-response-delivery",
+            report_id: report.report_id, executor_fence: currentFence,
+            response_delivery_id: report.response.response_delivery_id,
+            result: report.response.result,
+        };
+        assert.equal(await executor.topologyReportResponse(replayed), true);
+        const consumed = calls.find(call => call[0] === "topology_response_consumed")[1];
+        assert.equal(consumed.request_id, report.consumed_request_id,
+            "canonical replay must preserve a sent consumed request ID");
+        assert.equal(consumed.delivery_request_id, replayed.request_id,
+            "consumption must correlate the current replay delivery request ID");
+        assert.equal(consumed.connection_id, authority.connection_id);
+        assert.deepEqual(consumed.executor_fence, currentFence);
+        assert(calls.some(call => call[0] === "persistLocal" &&
+            call[1].abushTopologyOutbox?.some(entry => entry.phase === "consumed_pending" &&
+                entry.consumed_request_id === report.consumed_request_id &&
+                entry.connection_id === authority.connection_id &&
+                entry.response.request_id === replayed.request_id &&
+                JSON.stringify(entry.response.executor_fence) === JSON.stringify(currentFence))),
+        "canonical replay delivery correlation must be durable before consumption");
+        assert.deepEqual(localState.abushTopologyOutbox, [],
+            "current canonical delivery must reach server confirmation and deletion");
+
+        const conflictState = {abushTopologyOutbox: [report]};
+        const conflict = fixture([], [], 0, false, null, conflictState);
+        await conflict.executor.restoreTopologyOutbox();
+        await conflict.executor.authorizeTopologyOutbox(authority);
+        conflict.executor.remoteAuthorities.set(report.remote_key, authority);
+        await assert.rejects(conflict.executor.topologyReportResponse({
+            ...replayed, response_delivery_id: "conflicting-response-delivery",
+        }), /conflicting canonical topology response/);
+        await assert.rejects(conflict.executor.topologyReportResponse({
+            ...replayed, result: {outcome: "already_converged"},
+        }), /conflicting canonical topology response/);
+        assert.equal(conflict.calls.some(call => call[0] === "topology_response_consumed"), false);
     }
     {
         beginCase();

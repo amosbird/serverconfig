@@ -863,7 +863,7 @@ class WorkspaceExecutor {
         };
     }
 
-    async recordTopologyResponse(key, report, response) {
+    async recordTopologyResponse(key, report, response, connectionId = report.connection_id) {
         const current = this.topologyOutbox.get(key);
         if (current && ["response_received", "consumed_pending",
             "server_confirmed"].includes(current.phase)) {
@@ -873,12 +873,27 @@ class WorkspaceExecutor {
                 (sameRef(response.executor_fence, current.response.executor_fence) ||
                     sameRef(response.executor_fence, current.executor_fence));
             if (!sameCanonical) throw new Error("conflicting canonical topology response");
-            return current;
+            const sameDelivery = current.connection_id === connectionId &&
+                current.response.request_id === response.request_id &&
+                sameRef(current.executor_fence, response.executor_fence) &&
+                sameRef(current.response.executor_fence, response.executor_fence);
+            if (sameDelivery) return current;
+            const replayed = {
+                ...current,
+                connection_id: connectionId,
+                executor_fence: response.executor_fence,
+                response: {...current.response, request_id: response.request_id,
+                    executor_fence: response.executor_fence},
+            };
+            this.topologyOutbox.set(key, replayed);
+            await this.persistTopologyOutbox();
+            return replayed;
         } else if (current && !sameRef(current, report)) {
             throw new Error("stale topology response delivery");
         }
         const received = {
             ...report,
+            connection_id: connectionId,
             request_id: response.request_id,
             executor_fence: response.executor_fence,
             phase: "response_received",
@@ -1236,7 +1251,8 @@ class WorkspaceExecutor {
             await this.authorizeTopologyOutbox(authority);
         }
         const authorized = this.topologyOutbox.get(key);
-        const received = await this.recordTopologyResponse(key, authorized, response);
+        const received = await this.recordTopologyResponse(
+            key, authorized, response, payload.connection_id);
         await this.consumeTopologyResponse(key, received);
         return true;
     }
@@ -3440,19 +3456,19 @@ class WorkspaceExecutor {
             snapshot.push({version: 8, phase: "accepted", identity});
         }
         for (const entry of this.retireEffectStarted.values()) {
-            snapshot.push({version: 10, phase: "effect_started", ...entry});
+            snapshot.push({...entry, version: 10, phase: "effect_started"});
         }
         for (const entry of this.retireCompleted.values()) {
-            snapshot.push({version: 8, phase: "completed", ...entry});
+            snapshot.push({...entry, version: 8, phase: "completed"});
         }
         for (const entry of this.retireResponseReceived.values()) {
-            snapshot.push({version: 8, phase: "response_received", ...entry});
+            snapshot.push({...entry, version: 8, phase: "response_received"});
         }
         for (const entry of this.retireConsumedPending.values()) {
-            snapshot.push({version: 8, phase: "consumed_pending", ...entry});
+            snapshot.push({...entry, version: 8, phase: "consumed_pending"});
         }
         for (const entry of this.retireServerConfirmed.values()) {
-            snapshot.push({version: 8, phase: "server_confirmed", ...entry});
+            snapshot.push({...entry, version: 8, phase: "server_confirmed"});
         }
         for (const [key, identity] of this.retireLegacyCleanup) {
             snapshot.push({version: 8, phase: "legacy_cleanup", key, identity});
@@ -4078,32 +4094,30 @@ class WorkspaceExecutor {
         if (state.principal_id !== payload.principal_id ||
                 state.connection_id !== payload.connection_id ||
                 !sameRef(state.executor_fence, payload.executor_fence)) return false;
-        if (!entry || !this.validRetireAck(ack, entry) ||
-                (entry.ack && entry.ack.response_delivery_id !== ack.response_delivery_id)) {
+        if (!entry || !this.validRetireAck(ack, entry, false) ||
+                !sameRef(ack.executor_fence, state.executor_fence) ||
+                (entry.ack && (entry.ack.response_delivery_id !== ack.response_delivery_id ||
+                    !sameRef(entry.ack.completion, ack.completion)))) {
             return false;
         }
-        if (entry.consumed_request_id) {
-            const pending = {
-                ...entry,
-                ack_connection_id: state.connection_id,
-                delivery: {...entry.delivery, connection_id: state.connection_id,
-                    executor_fence: state.executor_fence},
-                ack,
-            };
-            this.retireConsumedPending.set(ack.retire_id, pending);
-            await this.persistRetireLedger();
-            await this.consumeRetireAck(pending, state);
-            return true;
-        }
-        const received = {
+        const replayed = {
             ...entry,
-            ack_connection_id: payload.connection_id,
+            ack_connection_id: state.connection_id,
+            delivery: {...entry.delivery, connection_id: state.connection_id,
+                executor_fence: state.executor_fence},
             ack,
         };
+        this.retireResponseReceived.delete(ack.retire_id);
         this.retireCompleted.delete(ack.retire_id);
-        this.retireResponseReceived.set(ack.retire_id, received);
+        if (entry.consumed_request_id) {
+            this.retireConsumedPending.set(ack.retire_id, replayed);
+            await this.persistRetireLedger();
+            await this.consumeRetireAck(replayed, state);
+            return true;
+        }
+        this.retireResponseReceived.set(ack.retire_id, replayed);
         await this.persistRetireLedger();
-        await this.consumeRetireAck(received, state);
+        await this.consumeRetireAck(replayed, state);
         return true;
     }
 
