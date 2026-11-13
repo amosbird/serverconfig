@@ -4393,7 +4393,10 @@ class WorkspaceExecutor {
             statusTabs[1].windowId = created.id;
         } catch (error) {
             const preparedTabs = new Map(statusTabs.map(tab => [tab.id, tab]));
-            for (const tabId of transaction.statusTabIds) {
+            for (const tabId of [
+                ...transaction.statusTabIds,
+                transaction.plannedEffect?.tab_id,
+            ].filter(Number.isInteger)) {
                 if (!preparedTabs.has(tabId)) preparedTabs.set(tabId, {id: tabId});
             }
             try {

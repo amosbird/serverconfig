@@ -724,14 +724,29 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await executor.restore();
         calls.length = 0;
         let creates = 0;
+        let hiddenTabId = null;
+        let hideFromReconcile = false;
         const originalCreateTab = executor.chrome.tabs.create;
+        const originalQueryTabs = executor.chrome.tabs.query;
+        executor.chrome.tabs.query = async query => {
+            const tabs = await originalQueryTabs(query);
+            if (hideFromReconcile && query.windowId === undefined) {
+                hideFromReconcile = false;
+                return tabs.filter(tab => tab.id !== hiddenTabId);
+            }
+            return tabs;
+        };
         executor.chrome.tabs.create = async properties => {
             creates += 1;
             const tab = await originalCreateTab(properties);
             executor.observeChromeEvent("tabCreated", {tab: {
                 id: tab.id, windowId: properties.windowId, pendingUrl: properties.url,
             }});
-            if (creates === 2) throw new Error("second marker result lost");
+            if (creates === 2) {
+                hiddenTabId = tab.id;
+                hideFromReconcile = true;
+                throw new Error("second marker result lost");
+            }
             return tab;
         };
         const payload = ensurePayload({
@@ -742,6 +757,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const markerRemovals = calls.filter(call => call[0] === "remove").map(call => call[1]);
         assert.equal(markerRemovals.length, 2,
             "cleanup must remove both the returned and event-correlated marker tabs");
+        assert(markerRemovals.includes(hiddenTabId),
+            "cleanup must use the event-correlated tab ID before tabs.query sees it");
         assert.deepEqual(localState.abushPendingTransactions, [],
             "marker result loss must consume the rolled-back durable transaction");
         assert.deepEqual(localState.abushOwnedMarkers, {},
