@@ -419,7 +419,8 @@ def load_abush_premap(core):
             state["serial"] = saved["serial"]
             for xid, held in saved["pending"].items():
                 if not isinstance(held, dict) or set(held) != {"nonce", "identity", "token"} or \
-                        held["nonce"] not in state["operations"] or not isinstance(held["token"], str) or \
+                        (held["nonce"] != "" and held["nonce"] not in state["operations"]) or \
+                        not isinstance(held["token"], str) or \
                         not xid.isdecimal() or int(xid) <= 0:
                     raise ValueError("invalid candidate journal pending identity")
                 held["event"] = type("PremapEvent", (), {"window": int(xid)})()
@@ -487,29 +488,32 @@ def handle_abush_map_request(core, event):
     if event.window in core.qtile.windows_map:
         return original(core, event)
     state = load_abush_premap(core)
-    if not any(op["phase"] in {"dispatched", "unknown"}
-               for op in state["operations"].values()):
+    if event.window not in state["pending"] and not any(
+            op["phase"] in {"dispatched", "unknown"} for op in state["operations"].values()):
         return original(core, event)
     raw = x11_core.window.XWindow(core.conn, event.window)
     pid_values = raw.get_property("_NET_WM_PID", "CARDINAL", unpack=int)
     identity = abush_premap_identity(pid_values[0]) if pid_values else None
     match = ABUSH_CANDIDATE_TITLE.fullmatch(raw.get_name() or "")
     operations = [(nonce, op) for nonce, op in state["operations"].items()
-                  if op["phase"] in {"dispatched", "unknown"} and
-                  (op["identity"] == identity or
-                   (match is not None and match.group(1) == nonce) or
-                   identity is None)]
-    if not operations:
-        return original(core, event)
-    nonce, operation = operations[0]
+                  if op["phase"] in {"dispatched", "unknown"}]
+    exact = [(nonce, op) for nonce, op in operations
+             if match is not None and match.group(1) == nonce]
+    matches = exact or [(nonce, op) for nonce, op in operations
+                        if identity is not None and op["identity"] == identity]
     held = state["pending"].get(event.window)
+    if not matches and identity is not None and held is None:
+        return original(core, event)
+    # Empty nonce is an explicitly unresolved owner, never the first operation.
+    nonce, operation = matches[0] if len(matches) == 1 else ("", None)
     if held is not None and raw.get_property(
             "_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != held["token"]:
         del state["pending"][event.window]
         held = None
     if held is None:
         if len(state["pending"]) >= 128:
-            operation["overflow"] = True
+            for _, possible in operations:
+                possible["overflow"] = True
             save_abush_premap(core)
             raise ValueError("candidate pre-map pending limit reached; admission remains denied")
         state["serial"] += 1
@@ -519,7 +523,11 @@ def handle_abush_map_request(core, event):
             "nonce": nonce, "identity": identity, "event": event, "token": token,
         }
         save_abush_premap(core)
-    if match is not None and match.group(1) == nonce and identity == operation["identity"]:
+    elif match is not None and operation is not None and held["identity"] is None:
+        held["nonce"] = nonce
+        save_abush_premap(core)
+    if operation is not None and match is not None and match.group(1) == nonce and \
+            identity == operation["identity"]:
         if operation.get("candidate") not in (None, {"xid": event.window,
                 "token": state["pending"][event.window]["token"]}):
             operation["overflow"] = True
@@ -539,12 +547,13 @@ def abush_premap_destroyed(core, xid):
 
 def handle_abush_destroy_notify(core, event):
     state = load_abush_premap(core)
+    if not abush_premap_destroyed(core, event.window):
+        return None
     if event.window in state["pending"]:
         held = state["pending"].pop(event.window)
-        operation = state["operations"][held["nonce"]]
-        if not operation.get("overflow") and operation.get("candidate") == \
-                {"xid": event.window, "token": held["token"]} and \
-                abush_premap_destroyed(core, event.window):
+        operation = state["operations"].get(held["nonce"])
+        if operation is not None and not operation.get("overflow") and operation.get("candidate") == \
+                {"xid": event.window, "token": held["token"]}:
             operation["proof"] = {"kind": "destroyed", **operation["candidate"]}
         save_abush_premap(core)
         if event.window in core.qtile.windows_map:
@@ -565,23 +574,28 @@ def admit_abush_browser_candidate(manager, xid: int, nonce: str):
         if x11_text_property(window, "_ABUSH_PREMAP_TOKEN") != operation.get("token") or \
                 claim is None or claim["nonce"] != nonce:
             raise ValueError("admitted candidate token changed")
+        if not replay_abush_ordinary_pending(manager, nonce):
+            raise ValueError("ordinary replay remains denied")
         return {"admitted": True, "nonce": nonce, "xid": xid,
                 "admission_version": 2, "first_group": "__abush_quarantine"}
     if operation is None or operation["phase"] != "dispatched" or operation.get("overflow") or \
             operation.get("epoch") != abush_premap_epoch(manager.core) or \
             held is None or \
-            held["nonce"] != nonce or xid in manager.windows_map:
+            (held["nonce"] not in {"", nonce} and held["identity"] is not None) or \
+            xid in manager.windows_map:
         raise ValueError("candidate was not held by this admission")
     raw = x11_core.window.XWindow(core.conn, xid)
     pid_values = raw.get_property("_NET_WM_PID", "CARDINAL", unpack=int)
     identity = abush_premap_identity(pid_values[0]) if pid_values else None
     title = raw.get_name() or ""
     match = ABUSH_CANDIDATE_TITLE.fullmatch(title)
-    if identity != held["identity"] or identity != operation["identity"] or \
+    if identity is None or (held["identity"] is not None and identity != held["identity"]) or \
+            identity != operation["identity"] or \
             not any("chrom" in value.lower() for value in (raw.get_wm_class() or [])) or \
             raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != held["token"] or \
             match is None or match.group(1) != nonce:
         raise ValueError("held candidate identity or exact title changed")
+    held.update(nonce=nonce, identity=identity)
     operation["candidate"] = {"xid": xid, "token": held["token"]}
     save_abush_premap(core)
     claim = {"nonce": nonce, "xid": xid, "incarnation": identity,
@@ -604,23 +618,70 @@ def admit_abush_browser_candidate(manager, xid: int, nonce: str):
     del state["pending"][xid]
     operation.update(phase="admitted", xid=xid, token=held["token"])
     save_abush_premap(core)
-    # No release is safe for an ambiguous dispatched operation. Only exact admission
-    # establishes which other delayed MapRequests are ordinary.
-    for other_xid, other in list(state["pending"].items()):
-        if other["nonce"] != nonce:
-            continue
-        other_raw = x11_core.window.XWindow(core.conn, other_xid)
-        if other_raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != other["token"]:
-            raise ValueError("ordinary replay token changed")
-        core._abush_passive_map_xid = other_xid
-        try:
-            type(core)._abush_original_map_request(core, other["event"])
-        finally:
-            core._abush_passive_map_xid = None
-        del state["pending"][other_xid]
-    save_abush_premap(core)
+    if not replay_abush_ordinary_pending(manager, nonce):
+        raise ValueError("ordinary replay remains denied")
     return {"admitted": True, "nonce": nonce, "xid": xid,
             "admission_version": 2, "first_group": "__abush_quarantine"}
+
+
+def replay_abush_ordinary_pending(manager, nonce):
+    core = manager.core
+    state = load_abush_premap(core)
+    operation = state["operations"][nonce]
+    for xid, held in list(state["pending"].items()):
+        if held["nonce"] not in {"", nonce}:
+            continue
+        if abush_premap_destroyed(core, xid):
+            del state["pending"][xid]
+            save_abush_premap(core)
+            continue
+        raw = x11_core.window.XWindow(core.conn, xid)
+        if raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != held["token"]:
+            raise ValueError("ordinary replay token changed")
+        pid_values = raw.get_property("_NET_WM_PID", "CARDINAL", unpack=int)
+        identity = abush_premap_identity(pid_values[0]) if pid_values else None
+        match = ABUSH_CANDIDATE_TITLE.fullmatch(raw.get_name() or "")
+        candidate_nonce = raw.get_property(ABUSH_CANDIDATE_NONCE_PROPERTY, "UTF8_STRING", unpack=str)
+        target = next((key for key, op in state["operations"].items()
+                       if op.get("candidate") == {"xid": xid, "token": held["token"]}), None)
+        if target is None:
+            target = match.group(1) if match is not None else candidate_nonce
+        if target in state["operations"]:
+            held["nonce"] = target
+            save_abush_premap(core)
+            continue
+        if identity is None or identity != operation["identity"] or \
+                (held["identity"] is not None and held["identity"] != identity):
+            continue
+        if match is not None or any(raw.get_property(prop, "UTF8_STRING", unpack=str) for prop in
+                (ABUSH_CANDIDATE_NONCE_PROPERTY, ABUSH_CANDIDATE_CLAIM_PROPERTY,
+                 "_ABUSH_BINDING_NONCE", "_ABUSH_REMOTE_ID")) or \
+                raw.get_property("WM_WINDOW_ROLE", "STRING", unpack=str) == "abush-browser":
+            continue
+        if any(other["phase"] in {"dispatched", "unknown"} and other["identity"] == identity
+               for other in state["operations"].values()):
+            continue
+        current_group = manager.current_screen.group.name
+        active_xid = getattr(manager.current_window, "wid", None)
+        if xid not in manager.windows_map:
+            raw.set_property("_NET_WM_DESKTOP", manager.groups.index(manager.groups_map["f"]))
+            core.conn.flush()
+            if raw.get_property("_NET_WM_DESKTOP", "CARDINAL", unpack=int) != \
+                    [manager.groups.index(manager.groups_map["f"])]:
+                raise ValueError("ordinary replay desktop was not confirmed")
+            core._abush_passive_map_xid = xid
+            try:
+                type(core)._abush_original_map_request(core, held["event"])
+            finally:
+                core._abush_passive_map_xid = None
+        window = qtile_window_by_xid(manager, xid)
+        if window.group is None or window.group.name != "f" or window.can_steal_focus or \
+                manager.current_screen.group.name != current_group or \
+                getattr(manager.current_window, "wid", None) != active_xid:
+            raise ValueError("ordinary replay constructor changed group or focus")
+        del state["pending"][xid]
+        save_abush_premap(core)
+    return not any(held["nonce"] == nonce for held in state["pending"].values())
 
 
 def install_abush_premap_gate():
@@ -706,23 +767,9 @@ def release_abush_browser_candidate(manager, nonce: str):
             return {"released": False, "nonce": nonce, "admission_version": 2,
                     "phase": operation["phase"], "denial_retained": True}
         if operation["phase"] in {"aborted-resolved", "admitted"}:
-            for xid, held in list(state["pending"].items()):
-                if held["nonce"] != nonce:
-                    continue
-                if abush_premap_destroyed(manager.core, xid):
-                    del state["pending"][xid]
-                    save_abush_premap(manager.core)
-                    continue
-                raw = x11_core.window.XWindow(manager.core.conn, xid)
-                if raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != held["token"]:
-                    raise ValueError("ordinary replay token changed")
-                manager.core._abush_passive_map_xid = xid
-                try:
-                    type(manager.core)._abush_original_map_request(manager.core, held["event"])
-                finally:
-                    manager.core._abush_passive_map_xid = None
-                del state["pending"][xid]
-                save_abush_premap(manager.core)
+            if not replay_abush_ordinary_pending(manager, nonce):
+                return {"released": False, "nonce": nonce, "admission_version": 2,
+                        "phase": operation["phase"], "denial_retained": True}
         if not operation.get("terminal"):
             del state["operations"][nonce]
         save_abush_premap(manager.core)

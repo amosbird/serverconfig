@@ -150,7 +150,8 @@ def load_browser_config(namespace):
         "admit_abush_browser_candidate", "handle_abush_map_request",
         "handle_abush_destroy_notify", "install_abush_premap_gate",
         "abush_premap_epoch", "abush_premap_journal_path", "save_abush_premap",
-        "load_abush_premap", "persist_abush_premap",
+        "load_abush_premap", "persist_abush_premap", "replay_abush_ordinary_pending",
+        "abush_premap_destroyed",
     }
     nodes = []
     for node in tree.body:
@@ -168,6 +169,7 @@ def load_browser_config(namespace):
     namespace["abush_browser_incarnation"] = lambda window: window.incarnation
     namespace["abush_premap_journal_path"] = lambda: TEST_STATE / "premap.json"
     namespace["abush_premap_browser_terminated"] = lambda identity: False
+    namespace["production_premap_destroyed"] = namespace["abush_premap_destroyed"]
     namespace["abush_premap_destroyed"] = lambda core, xid: True
     return namespace
 
@@ -943,6 +945,8 @@ class PremapBarrierTest(unittest.TestCase):
                 window = FakeWindow("browser", group=None, name=raw.get_name(),
                                     metadata=raw.properties)
                 window.wid = event.window
+                pid_values = raw.properties.get("_NET_WM_PID", [])
+                window.incarnation = test.ns["abush_premap_identity"](pid_values[0]) if pid_values else None
                 window.qtile = core.qtile
                 # Window.__init__.set_group precedes client_new and reads inherited desktop.
                 group = core.qtile.groups[raw.properties["_NET_WM_DESKTOP"]]
@@ -989,6 +993,145 @@ class PremapBarrierTest(unittest.TestCase):
                     "identity": self.identity, "outcome": outcome, "window_id": window_id,
                     **changes}
         return self.ns["finish_abush_browser_candidate"](self.manager, json.dumps(terminal))
+
+    def test_multiple_browser_unknown_pid_never_replays_foreign_candidate(self):
+        for title in ("", "__ABUSH_BIND__:" + "b" * 32 + ":a"):
+            with self.subTest(initial_title=title):
+                self.setUp()
+                identity_a = self.identity
+                identity_b = ["boot", 5252, "456"]
+                self.ns["abush_premap_identity"] = lambda pid: {
+                    4242: identity_a, 5252: identity_b}.get(pid)
+                self.arm()
+                nonce_a = self.nonce
+                self.nonce = "b" * 32
+                self.identity = identity_b
+                self.arm()
+                self.Raw(self.core.conn, 33).properties.update(_NET_WM_PID=[], title=title)
+                self.request(33)
+                self.assertEqual(self.trace, [])
+                del self.core._abush_premap
+                self.request(33)
+                self.raw[33].update(_NET_WM_PID=[5252],
+                                    title=f"__ABUSH_BIND__:{self.nonce}:a")
+                self.nonce = nonce_a
+                self.request(22)
+                self.admit(22)
+                self.assertEqual(self.trace, [(22, "__abush_quarantine", False)])
+                self.assertIn(33, self.core._abush_premap["pending"])
+                self.nonce = "b" * 32
+                self.admit(33)
+                self.assertEqual(self.trace, [(22, "__abush_quarantine", False),
+                                             (33, "__abush_quarantine", False)])
+                self.assertEqual(self.core._abush_premap["pending"], {})
+
+    def test_exact_nonce_priority_and_missing_pid_upgrade_before_other_admission(self):
+        identity_a = self.identity
+        identity_b = ["boot", 5252, "456"]
+        self.ns["abush_premap_identity"] = lambda pid: {
+            4242: identity_a, 5252: identity_b}.get(pid)
+        self.arm()
+        self.nonce = "b" * 32
+        self.identity = identity_b
+        self.arm()
+        self.Raw(self.core.conn, 33).properties.update(
+            _NET_WM_PID=[], title=f"__ABUSH_BIND__:{self.nonce}:a")
+        self.request(33)
+        self.assertEqual(self.core._abush_premap["pending"][33]["nonce"], self.nonce)
+        self.raw[33]["_NET_WM_PID"] = [5252]
+        self.admit(33)
+        self.assertEqual(self.trace, [(33, "__abush_quarantine", False)])
+
+    def test_release_revalidates_current_identity_title_and_candidate_proof(self):
+        for evidence in ("missing_pid", "changed_pid", "title", "candidate_proof"):
+            with self.subTest(evidence=evidence):
+                self.setUp()
+                self.arm()
+                self.request(33)
+                if evidence == "missing_pid":
+                    self.raw[33]["_NET_WM_PID"] = []
+                elif evidence == "changed_pid":
+                    self.identity = ["boot", 4242, "replacement"]
+                elif evidence == "title":
+                    self.raw[33]["title"] = f"__ABUSH_BIND__:{self.nonce}:a"
+                else:
+                    operation = self.core._abush_premap["operations"][self.nonce]
+                    operation["candidate"] = {
+                        "xid": 33, "token": self.raw[33]["_ABUSH_PREMAP_TOKEN"]}
+                operation = self.core._abush_premap["operations"][self.nonce]
+                operation["phase"] = "aborted-resolved"
+                self.ns["save_abush_premap"](self.core)
+                receipt = self.ns["release_abush_browser_candidate"](self.manager, self.nonce)
+                self.assertFalse(receipt["released"])
+                self.assertIn(33, self.core._abush_premap["pending"])
+                self.assertEqual(self.trace, [])
+
+    def test_admitted_retry_resumes_ordinary_replay_after_failure_and_restart(self):
+        for restart in (False, True):
+            for fail_after_manage in (False, True):
+                with self.subTest(restart=restart, fail_after_manage=fail_after_manage):
+                    self.setUp()
+                    self.arm()
+                    self.request(22)
+                    self.request(33)
+                    original = self.Core._abush_original_map_request
+                    failed = False
+
+                    def one_failure(core, event):
+                        nonlocal failed
+                        if event.window == 33 and not failed:
+                            failed = True
+                            if fail_after_manage:
+                                original(core, event)
+                            raise ValueError("ordinary constructor once")
+                        return original(core, event)
+
+                    self.Core._abush_original_map_request = one_failure
+                    with self.assertRaisesRegex(ValueError, "ordinary constructor once"):
+                        self.admit(22)
+                    if restart:
+                        del self.core._abush_premap
+                    self.admit(22)
+                    self.assertEqual(self.trace, [(22, "__abush_quarantine", False),
+                                                 (33, "f", False)])
+                    self.assertEqual(self.core._abush_premap["pending"], {})
+                    self.assertEqual(json.loads((TEST_STATE / "premap.json").read_text())["pending"], {})
+
+    def test_stale_destroy_preserves_live_reused_pending_token_and_managed_window(self):
+        self.arm()
+        self.request(22)
+        self.raw[22]["_ABUSH_PREMAP_TOKEN"] = "replacement"
+        self.request(22)
+        token = self.raw[22]["_ABUSH_PREMAP_TOKEN"]
+        self.ns["abush_premap_destroyed"] = self.ns["production_premap_destroyed"]
+        self.ns["xcffib"] = mock.Mock()
+        self.ns["xcffib"].xproto.WindowError = type("WindowError", (Exception,), {})
+        attributes = self.core.conn.conn.core.GetWindowAttributes
+        attributes.return_value.reply.return_value = object()
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
+        self.assertIn(22, self.core._abush_premap["pending"])
+        self.assertEqual(self.core._abush_premap["pending"][22]["token"], token)
+        self.assertNotIn("proof", self.core._abush_premap["operations"][self.nonce])
+        self.admit(22)
+        window = self.manager.windows_map[22]
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
+        self.assertIs(self.manager.windows_map[22], window)
+        self.assertEqual(self.trace, [(22, "__abush_quarantine", False)])
+        attributes.return_value.reply.side_effect = self.ns["xcffib"].xproto.WindowError()
+        self.raw.pop(22)
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
+        self.assertNotIn(22, self.manager.windows_map)
+
+    def test_real_destroy_removes_pending_and_records_exact_proof(self):
+        self.arm()
+        self.Raw(self.core.conn, 22).properties["title"] = f"__ABUSH_BIND__:{self.nonce}:a"
+        self.request(22)
+        token = self.raw[22]["_ABUSH_PREMAP_TOKEN"]
+        self.raw.pop(22)
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
+        self.assertNotIn(22, self.core._abush_premap["pending"])
+        self.assertEqual(self.core._abush_premap["operations"][self.nonce]["proof"],
+                         {"kind": "destroyed", "xid": 22, "token": token})
 
     def test_exact_ordinary_bypasses_unknown_without_mapping_candidate(self):
         for current in ("f", "c"):
@@ -1201,8 +1344,8 @@ class PremapBarrierTest(unittest.TestCase):
         self.Raw(self.core.conn, 22).properties["title"] = f"__ABUSH_BIND__:{self.nonce}:a"
         self.request(22)
         self.request(33)
-        self.core.handle_DestroyNotify(mock.Mock(window=22))
         self.raw.pop(22)
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
         self.assertFalse(self.ns["release_abush_browser_candidate"](
             self.manager, self.nonce)["released"])
         self.finish()
@@ -1272,8 +1415,8 @@ class PremapBarrierTest(unittest.TestCase):
         self.assertFalse(self.ns["release_abush_browser_candidate"](
             self.manager, self.nonce)["released"])
         self.Core._abush_original_map_request = original
-        self.core.handle_DestroyNotify(mock.Mock(window=22))
         self.raw.pop(22)
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
         self.assertFalse(self.ns["release_abush_browser_candidate"](
             self.manager, self.nonce)["released"])
         self.finish()
@@ -1286,8 +1429,8 @@ class PremapBarrierTest(unittest.TestCase):
         self.arm()
         self.request(22)
         old_token = self.raw[22]["_ABUSH_PREMAP_TOKEN"]
-        self.core.handle_DestroyNotify(mock.Mock(window=22))
         self.raw.pop(22)
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
         with self.assertRaisesRegex(ValueError, "not held"):
             self.admit_missing(22)
         self.request(22)

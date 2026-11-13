@@ -147,7 +147,7 @@ class Model:
             "admit_abush_browser_candidate", "handle_abush_map_request",
             "handle_abush_destroy_notify", "install_abush_premap_gate",
             "abush_premap_epoch", "abush_premap_journal_path", "save_abush_premap",
-            "persist_abush_premap", "load_abush_premap",
+            "persist_abush_premap", "load_abush_premap", "replay_abush_ordinary_pending",
         }
         nodes = []
         for node in tree.body:
