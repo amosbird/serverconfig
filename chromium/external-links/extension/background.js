@@ -13,6 +13,7 @@ const NATIVE_TIMEOUTS_MS = Object.freeze({
     admit_candidate: 8000,
     register_candidate_lease: 8000,
     release_candidate_lease: 8000,
+    finish_candidate_lease: 8000,
     bind_x11_window: 15000,
     verify_x11_window: 8000,
     clear_x11_window: 8000,
@@ -23,6 +24,7 @@ const NATIVE_TIMEOUTS_MS = Object.freeze({
 });
 const SERIAL_NATIVE_OPERATIONS = new Set([
     "register_candidate_lease", "arm_candidate_lease", "admit_candidate", "release_candidate_lease",
+    "finish_candidate_lease",
     "bind_x11_window", "verify_x11_window", "clear_x11_window",
     "managed_page_moved_outside",
     "topology_response_consumed", "retire_managed_page_completion",

@@ -537,6 +537,106 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
     }, 15000);
     testDeadline.unref();
     try {
+    for (const [version, xid] of [[1, null], [2, null], [3, null], [4, null], [4, 42]]) {
+        beginCase();
+        activeCase = `pending WAL v${version} xid=${xid} cannot prove cross-boot ID ownership`;
+        const nonce = "a".repeat(32);
+        const localState = {abushOwnedMarkers: {[nonce]: {version: 1, nonce, pending: true}},
+            abushPendingTransactions: [{version, browser_boot_id: "old-browser-boot",
+                transaction_id: "old-before-bind",
+                phase: "physical_ready", nonce, host_window_id: 1, window_id: 10,
+                status_tab_ids: [1000, 1001], page_tab_id: 1002, xid,
+                planned_effect: {kind: "tabs.create.business", window_id: 10, tab_id: 1002},
+                observed_effects: [{kind: "windows.create", window_id: 10}]}]};
+        const {executor, calls} = fixture([], [], 0, false, {
+            windowId: 10, tabIds: [1000, 1001, 1002], nonce,
+            businessUrl: "https://innocent-restored.test/",
+        }, localState);
+        executor.browserBootId = "new-browser-boot";
+        localState.abushCleanupTombstones = [executor.cleanupTombstone({nonce,
+            windowId: 10, statusTabIds: [1000, 1001], pageTabId: 1002,
+            x11WindowId: xid, remoteKey: "old-remote", workspaceId: "old-workspace",
+            windowGeneration: 1, connectionDisplayName: "old"}, [])];
+        await executor.restore();
+        assert((await executor.chrome.tabs.query({})).some(tab => tab.id === 1002),
+            "old WAL with exactly reused IDs must not remove restored business content");
+        assert(!calls.some(call => ["remove", "removeWindow", "verify_x11_window", "clear_x11_window",
+            "finish_candidate_lease", "release_candidate_lease"].includes(call[0])));
+        assert.equal(executor.pendingTransactions.size, 1);
+        assert.equal(localState.abushCleanupTombstones.length, 1);
+        assert.equal(executor.eventTransactions.size, 0);
+        assert.equal(localState.abushPendingTransactions.length, 1);
+        assert.equal(localState.abushPendingTransactions[0].browser_boot_id,
+            version === 4 ? "old-browser-boot" : null);
+        assert(executor.advisoryErrors.length > 0);
+        const transaction = executor.pendingTransactions.values().next().value;
+        await assert.rejects(executor.retryPendingTransaction(transaction), /same-browser-boot/);
+        transaction.admissionTerminal = {outcome: "not_invoked", window_id: null};
+        await assert.rejects(executor.finishCandidateAdmission(transaction), /same-browser-boot/);
+        assert.equal(executor.observeChromeEvent("tabUpdated", {tabId: 1002,
+            changeInfo: {url: "https://new-live-work.test/"}}), false);
+        assert.equal(transaction.invalid, false);
+        await executor.restorePendingTransactions();
+        assert.equal(localState.abushPendingTransactions.length, 1);
+        assert.equal(localState.abushPendingTransactions[0].browser_boot_id,
+            version === 4 ? "old-browser-boot" : null);
+    }
+    {
+        beginCase();
+        activeCase = "new pending WAL waits for bootstrap and recovers in the same boot";
+        const localState = {};
+        const first = fixture([], [], 0, false, null, localState);
+        first.executor.browserBootId = null;
+        first.executor.bootstrapResolved = false;
+        first.executor.bootstrapReady = new Promise(resolve => {
+            first.executor.resolveBootstrap = resolve;
+        });
+        const pending = first.executor.beginEnsureTransaction(ensurePayload(), "b".repeat(32));
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(localState.abushPendingTransactions, undefined);
+        await first.executor.acceptNativeBootstrap({browser_boot_id: "same-boot",
+            browser_pid: 123, browser_starttime: "456", ordinary_launch_leases: []});
+        const transaction = await exactWait(pending, "boot-origin WAL creation");
+        assert.equal(localState.abushPendingTransactions[0].version, 4);
+        assert.equal(localState.abushPendingTransactions[0].browser_boot_id, "same-boot");
+        await first.executor.ownMarker(transaction.nonce);
+        await first.executor.updateEnsureTransaction(transaction, {windowId: 10,
+            hostWindowId: 1, statusTabIds: [1000, 1001], pageTabId: 1002});
+        const second = fixture([], [], 0, false, {windowId: 10,
+            tabIds: [1000, 1001, 1002], nonce: transaction.nonce,
+            businessUrl: "about:blank"}, localState);
+        second.executor.browserBootId = "same-boot";
+        await second.executor.restore();
+        assert(second.calls.some(call => call[0] === "removeWindow" && call[1] === 10));
+        assert.deepEqual(localState.abushPendingTransactions, []);
+    }
+    {
+        beginCase();
+        activeCase = "candidate finish shares cleanup mutation lane and eight-second budget";
+        const sent = [];
+        const delays = [];
+        const port = {onMessage: {addListener() {}}, onDisconnect: {addListener() {}},
+            postMessage: message => sent.push(message)};
+        const dispatcher = new NativeDispatcher(() => port);
+        dispatcher.setTimeout = (_callback, delay) => {
+            delays.push(delay);
+            return delays.length;
+        };
+        dispatcher.clearTimeout = () => {};
+        const operations = ["clear_x11_window", "finish_candidate_lease", "release_candidate_lease"];
+        const requests = operations.map(operation =>
+            dispatcher.request("abush_browser", operation, {}));
+        for (let index = 0; index < operations.length; index += 1) {
+            await waitFor(() => sent.length === index + 1, `dispatch ${operations[index]}`);
+            assert.equal(sent[index].operation, operations[index]);
+            await new Promise(resolve => setImmediate(resolve));
+            assert.equal(sent.length, index + 1, "no mutation overtakes an outstanding reply");
+            dispatcher.dispatch({version: 1, reply_to: sent[index].id, ok: true, payload: {}});
+            await requests[index];
+        }
+        assert.deepEqual(delays, [8000, 8000, 8000]);
+        dispatcher.stop();
+    }
     for (const operation of ["executor_completion", "cancellation_completion",
         "ensure_managed_page_completion", "ensure_managed_page_cancellation_completion"]) {
         for (const fault of ["empty", "undefined", "request_id", "id", "executor_fence", "type",

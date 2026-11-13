@@ -287,7 +287,8 @@ class WorkspaceExecutor {
 
     pendingTransactionSnapshot() {
         return [...this.pendingTransactions.values()].map(transaction => ({
-            version: 3,
+            version: 4,
+            browser_boot_id: transaction.browserBootId || null,
             transaction_id: transaction.id,
             phase: transaction.phase,
             remote_key: transaction.remoteKey,
@@ -315,7 +316,9 @@ class WorkspaceExecutor {
     }
 
     async beginEnsureTransaction(payload, nonce) {
+        await this.waitForNativeBootstrap();
         const transaction = {
+            browserBootId: this.browserBootId,
             authority: this.ensureIdentity(payload),
             id: crypto.randomUUID(),
             phase: "prepared",
@@ -519,7 +522,15 @@ class WorkspaceExecutor {
         return true;
     }
 
+    requireTransactionBoot(transaction) {
+        if (!this.bootstrapResolved || !this.browserBootId ||
+                transaction.browserBootId !== this.browserBootId) {
+            throw new Error("managed transaction retained without same-browser-boot proof");
+        }
+    }
+
     async reconcileTransactionTopology(transaction) {
+        this.requireTransactionBoot(transaction);
         const tabs = await this.chrome.tabs.query({});
         const markers = tabs.map(tab => ({tab, marker: this.parseStatusUrl(
             tab.pendingUrl || tab.url)})).filter(item => item.marker?.nonce === transaction.nonce);
@@ -617,7 +628,9 @@ class WorkspaceExecutor {
     }
 
     validPendingTransaction(transaction) {
-        return transaction?.version >= 1 && transaction?.version <= 3 &&
+        return transaction?.version >= 1 && transaction?.version <= 4 &&
+            (transaction.version < 4 || transaction.browser_boot_id === null ||
+                typeof transaction.browser_boot_id === "string" && transaction.browser_boot_id) &&
             typeof transaction.transaction_id === "string" && transaction.transaction_id &&
             typeof transaction.nonce === "string" && STATUS_NONCE_RE.test(transaction.nonce) &&
             Array.isArray(transaction.status_tab_ids) &&
@@ -630,6 +643,7 @@ class WorkspaceExecutor {
     transactionFromPersisted(saved) {
         return {
             id: saved.transaction_id,
+            browserBootId: saved.version >= 4 ? saved.browser_boot_id : null,
             phase: saved.phase,
             remoteKey: saved.remote_key,
             principalId: saved.principal_id,
@@ -664,6 +678,7 @@ class WorkspaceExecutor {
     }
 
     async retryPendingTransaction(transaction) {
+        this.requireTransactionBoot(transaction);
         await this.reconcileTransactionTopology(transaction);
         const record = this.transactionCleanupRecord(transaction);
         const tombstone = this.cleanupTombstone(record, []);
@@ -671,6 +686,7 @@ class WorkspaceExecutor {
     }
 
     async restorePendingTransactions() {
+        await this.waitForNativeBootstrap();
         if (!this.chrome.storage?.local) return;
         const [local, session] = await Promise.all([
             this.chrome.storage.local.get([PENDING_TRANSACTIONS_KEY]),
@@ -686,6 +702,12 @@ class WorkspaceExecutor {
             if (!this.validPendingTransaction(persisted)) continue;
             const transaction = this.transactionFromPersisted(persisted);
             this.pendingTransactions.set(transaction.id, transaction);
+            try {
+                this.requireTransactionBoot(transaction);
+            } catch (error) {
+                failures.push(error);
+                continue;
+            }
             this.eventTransactions.set(transaction.id, transaction);
             let match = null;
             try {
@@ -1527,6 +1549,9 @@ class WorkspaceExecutor {
     }
 
     async retryCleanupTombstone(tombstone, authority = null) {
+        for (const transaction of this.pendingTransactions.values()) {
+            if (transaction.nonce === tombstone.nonce) this.requireTransactionBoot(transaction);
+        }
         const checkAuthority = () => {
             if (authority) this.requireCurrentAuthority(authority);
         };
@@ -2860,6 +2885,9 @@ class WorkspaceExecutor {
             const nonces = new Set(markers.map(item => item.marker.nonce));
             const ownership = nonces.size === 1 ?
                 ownedMarkers[markers[0]?.marker.nonce] : null;
+            if ([...this.pendingTransactions.values()].some(transaction =>
+                nonces.has(transaction.nonce) &&
+                transaction.browserBootId !== this.browserBootId)) continue;
             const sameBootOwnership = currentRecords.some(record =>
                 this.savedOwnershipMatches(ownership, record));
             const stableManagedCandidate = ownership?.version === 2 &&
@@ -3233,6 +3261,7 @@ class WorkspaceExecutor {
     }
 
     async stageCandidateTerminal(transaction) {
+        this.requireTransactionBoot(transaction);
         const settlement = transaction.admissionSettlement;
         if (!settlement || !["not_invoked", "fulfilled_cleaned"]
             .includes(settlement.outcome)) throw new Error("candidate API terminal remains unknown");
@@ -3242,6 +3271,7 @@ class WorkspaceExecutor {
     }
 
     async finishCandidateAdmission(transaction) {
+        this.requireTransactionBoot(transaction);
         const terminal = transaction.admissionTerminal;
         if (!terminal || terminal.outcome === "rejected") {
             throw new Error("candidate rejection has no physical absence proof");
@@ -4316,6 +4346,7 @@ class WorkspaceExecutor {
     }
 
     async mutateTransaction(transaction, effects, effect) {
+        this.requireTransactionBoot(transaction);
         const expectedEvents = Array.isArray(effects) ? effects : [effects];
         if (transaction.invalid) throw new Error("managed transaction topology changed");
         for (const {type, match} of expectedEvents) {
