@@ -10,6 +10,7 @@ import select
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -22,21 +23,79 @@ host = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(host)
 
 
+def temporary_directory(test):
+    worktrees = next((path for path in ROOT.parents if path.name == ".worktrees"), None)
+    if worktrees is None:
+        common = subprocess.check_output(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=ROOT, text=True, timeout=2,
+        ).strip()
+        worktrees = pathlib.Path(common).parent / ".worktrees"
+    temporary_root = worktrees / ".tmp"
+    temporary_root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    directory = tempfile.TemporaryDirectory(prefix="o-", dir=temporary_root)
+    test.addCleanup(directory.cleanup)
+    return pathlib.Path(directory.name)
+
+
+def track_server(test, server):
+    def close():
+        server.close()
+        if server.thread is not None:
+            test.assertFalse(server.thread.is_alive(), "ordinary server did not stop")
+        with server.lock:
+            test.assertFalse(any(worker.is_alive() for worker in server.workers),
+                             "ordinary server worker did not stop")
+
+    test.addCleanup(close)
+    return server
+
+
+def start_worker(test, target):
+    errors = queue.Queue()
+
+    def run():
+        try:
+            target()
+        except BaseException:
+            errors.put(sys.exc_info())
+
+    worker = threading.Thread(target=run, daemon=True)
+
+    def finish():
+        worker.join(timeout=2)
+        test.assertFalse(worker.is_alive(), "fixture worker did not stop")
+        if not errors.empty():
+            _, error, traceback = errors.get_nowait()
+            raise error.with_traceback(traceback)
+
+    test.addCleanup(finish)
+    worker.start()
+    return finish
+
+
+def readiness_barrier(test, path):
+    os.mkfifo(path, 0o600)
+    descriptor = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    test.addCleanup(os.close, descriptor)
+
+    def wait():
+        readable, _, _ = select.select([descriptor], [], [], 2)
+        test.assertEqual(readable, [descriptor], "fixture readiness barrier timed out")
+        test.assertEqual(os.read(descriptor, 1), b"1")
+
+    return wait
+
+
 class OrdinaryOpenSocketTest(unittest.TestCase):
     def setUp(self):
-        self.runtime = ROOT / ".tmp" / f"ordinary-open-{os.getpid()}-{id(self):x}"
-        self.runtime.mkdir(parents=True, mode=0o700)
-        self.path = self.runtime / "ordinary-open.sock"
+        self.runtime = temporary_directory(self)
+        self.path = self.runtime / "s"
         self.outbound = queue.Queue()
-        self.server = host.OrdinaryOpenServer(
+        self.server = track_server(self, host.OrdinaryOpenServer(
             self.outbound, path=self.path, timeout=1,
-        )
+        ))
         self.server.start()
-
-    def tearDown(self):
-        self.server.close()
-        import shutil
-        shutil.rmtree(self.runtime)
 
     def request(self, request_id="request-one"):
         return {
@@ -50,6 +109,7 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
 
     def connect(self, request):
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.addCleanup(client.close)
         client.settimeout(2)
         client.connect(str(self.path))
         client.sendall(host.encode_ordinary_open_message(request))
@@ -194,18 +254,17 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
 
     def test_internal_submit_waits_for_terminal_completion(self):
         result = queue.Queue()
-        submitted = threading.Thread(
-            target=lambda: result.put(self.server.submit(
-                "https://example.test/from-extension", request_id="internal-request")),
-            daemon=True,
-        )
-        submitted.start()
+
+        def submit():
+            result.put(self.server.submit(
+                "https://example.test/from-extension", request_id="internal-request"))
+
+        finish = start_worker(self, submit)
         event = self.outbound.get(timeout=1)
         self.assertEqual(event["payload"]["request_id"], "internal-request")
-        self.assertTrue(submitted.is_alive(), "accepted is not a terminal applied result")
+        self.assertTrue(result.empty(), "accepted is not a terminal applied result")
         self.server.complete(host.ordinary_open_response("internal-request", "unknown"))
-        submitted.join(timeout=1)
-        self.assertFalse(submitted.is_alive())
+        finish()
         self.assertEqual(result.get_nowait(), "unknown")
 
     def test_real_peer_credentials_are_read_from_connected_socket(self):
@@ -217,9 +276,9 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         client.close()
 
     def test_active_socket_is_never_unlinked(self):
-        other = host.OrdinaryOpenServer(
+        other = track_server(self, host.OrdinaryOpenServer(
             self.outbound, path=self.path, timeout=1,
-        )
+        ))
         with self.assertRaisesRegex(ValueError, "already active"):
             other.start()
         self.assertTrue(self.path.exists())
@@ -231,9 +290,9 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
 
     def test_peer_uid_is_checked_before_request_delivery(self):
         with mock.patch.object(host.os, "getuid", return_value=os.getuid() + 1):
-            other = host.OrdinaryOpenServer(
+            other = track_server(self, host.OrdinaryOpenServer(
                 self.outbound, path=self.runtime / "other.sock", uid=os.getuid() + 1,
-            )
+            ))
             with self.assertRaises(ValueError):
                 other.start()
 
@@ -406,10 +465,10 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         request = host.ordinary_open_request(
             url, request_id=request_id, deadline_ms=deadline_ms)
         outbound = queue.Queue()
-        reopened = host.OrdinaryOpenServer(
+        reopened = track_server(self, host.OrdinaryOpenServer(
             outbound, path=self.runtime / "recover.sock", timeout=1,
             bootstrap_requests=[request], bootstrap_claims={request_id: claim},
-        )
+        ))
         reopened.start()
         try:
             with self.assertRaises(queue.Empty):
@@ -444,20 +503,20 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         request = host.ordinary_open_request(
             lease["url"], request_id=request_id, deadline_ms=deadline_ms)
         claim = claimed[0]["claim_path"]
-        server = host.OrdinaryOpenServer(
+        server = track_server(self, host.OrdinaryOpenServer(
             queue.Queue(), path=self.runtime / "claimed.sock", timeout=1,
             bootstrap_requests=[request], bootstrap_claims={request_id: claim},
-        )
+        ))
         server.start()
         server.close()
         self.assertTrue(claim.exists(), "nonterminal close must preserve the durable claim")
         recovered = host.claim_ordinary_launch_leases(profile, root=root)
         self.assertEqual([entry["lease"] for entry in recovered], [lease])
         outbound = queue.Queue()
-        reopened = host.OrdinaryOpenServer(
+        reopened = track_server(self, host.OrdinaryOpenServer(
             outbound, path=self.runtime / "reopened.sock", timeout=1,
             bootstrap_requests=[request], bootstrap_claims={request_id: claim},
-        )
+        ))
         reopened.start()
         try:
             with self.assertRaises(queue.Empty):
@@ -627,8 +686,7 @@ class OrdinaryFileNavigationTest(unittest.TestCase):
 
 class LauncherTest(unittest.TestCase):
     def setUp(self):
-        self.base = ROOT / ".tmp" / f"launcher-{os.getpid()}-{id(self):x}"
-        self.base.mkdir(parents=True, mode=0o700)
+        self.base = temporary_directory(self)
         self.home = self.base / "home"
         self.bin = self.base / "bin"
         self.proc = self.base / "proc"
@@ -669,13 +727,13 @@ class LauncherTest(unittest.TestCase):
         )
         self.fake_updater.chmod(0o755)
 
-    def tearDown(self):
-        import shutil
-        shutil.rmtree(self.base)
-
     def environment(self):
+        environment = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith(("ABUSH_ORDINARY_OPEN_", "ABUSH_ORDINARY_LAUNCH_"))
+        }
         return {
-            **os.environ,
+            **environment,
             "HOME": str(self.home),
             "XDG_RUNTIME_DIR": str(self.base / "runtime"),
             "ABUSH_CHROME_PROFILE": str(self.base / "profile"),
@@ -707,32 +765,29 @@ class LauncherTest(unittest.TestCase):
         runtime = self.base / "runtime"
         client = self.fake_client
         original_write_lease = (ROOT / "scripts/ordinary-open-client.py").read_text()
+        lease_return = "    return final\n\n\ndef remove_launch_lease"
+        self.assertIn(lease_return, original_write_lease)
         client.write_text(original_write_lease.replace(
-            "    return final\n\n\ndef remove_launch_lease",
+            lease_return,
             "    with open(os.environ['ABUSH_TEST_LEASE_READY'], 'w') as ready:\n"
             "        ready.write('1')\n"
             "    return final\n\n\ndef remove_launch_lease",
         ))
         client.chmod(0o755)
         environment = self.environment()
-        environment["ABUSH_ORDINARY_OPEN_TIMEOUT"] = "0.3"
+        environment["ABUSH_ORDINARY_OPEN_TIMEOUT"] = "5"
         lease_ready_path = self.base / "lease-ready"
-        os.mkfifo(lease_ready_path, 0o600)
+        wait_for_lease = readiness_barrier(self, lease_ready_path)
         environment["ABUSH_TEST_LEASE_READY"] = str(lease_ready_path)
-        socket_path = ROOT / ".tmp" / f"cold-{os.getpid():x}-{id(self):x}.sock"
+        socket_path = self.base / "s"
         environment["ABUSH_ORDINARY_OPEN_SOCKET"] = str(socket_path)
         outbound = queue.Queue()
-        server = host.OrdinaryOpenServer(outbound, path=socket_path, timeout=1)
+        server = track_server(self, host.OrdinaryOpenServer(
+            outbound, path=socket_path, timeout=1,
+        ))
 
         def delayed_server():
-            descriptor = os.open(lease_ready_path, os.O_RDONLY | os.O_NONBLOCK)
-            try:
-                readable, _, _ = select.select([descriptor], [], [], 1)
-                self.assertEqual(readable, [descriptor],
-                                 "cold lease readiness barrier timed out")
-                self.assertEqual(os.read(descriptor, 1), b"1")
-            finally:
-                os.close(descriptor)
+            wait_for_lease()
             claimed = list((runtime / "abush/ordinary-launch").glob("*.json"))
             self.assertTrue(claimed, "cold lease was not written before Chrome start")
             lease = json.loads(claimed[0].read_text())
@@ -744,13 +799,10 @@ class LauncherTest(unittest.TestCase):
             self.assertEqual(opened["payload"]["request_id"], lease["request_id"])
             server.complete(host.ordinary_open_response(lease["request_id"], "applied"))
 
-        worker = threading.Thread(target=delayed_server, daemon=True)
-        worker.start()
+        finish = start_worker(self, delayed_server)
         result = subprocess.run([ROOT / "scripts/chromium", url], env=environment,
-                                capture_output=True, text=True, timeout=2)
-        worker.join(timeout=1)
-        server.close()
-        socket_path.unlink(missing_ok=True)
+                                capture_output=True, text=True, timeout=8)
+        finish()
         self.assertEqual(result.returncode, 0, result.stderr)
         arguments = self.log.read_bytes().split(b"\0")
         self.assertNotIn(url.encode(), arguments)
@@ -850,31 +902,39 @@ class LauncherTest(unittest.TestCase):
         url = "https://example.test/delayed-server"
         for completion, expected in (("applied", 0), ("unknown", 1)):
             with self.subTest(completion=completion):
-                socket_path = self.base / f"{completion}.sock"
+                socket_path = self.base / "s"
                 environment = self.environment()
                 environment["ABUSH_SERVERCONFIG_ROOT"] = str(ROOT)
                 environment["ABUSH_ORDINARY_OPEN_SOCKET"] = str(socket_path)
                 environment["ABUSH_ORDINARY_OPEN_TIMEOUT"] = "2"
                 outbound = queue.Queue()
-                server = host.OrdinaryOpenServer(
+                server = track_server(self, host.OrdinaryOpenServer(
                     outbound, path=socket_path, timeout=2,
+                ))
+                chrome_barrier = self.base / "chrome-barrier"
+                wait_for_chrome = readiness_barrier(self, chrome_barrier)
+                self.fake_chrome.write_text(
+                    "#!/usr/bin/env bash\nprintf '%s\\0' \"$@\" > \"$ABUSH_TEST_CHROME_LOG\"\n"
+                    "touch \"$ABUSH_TEST_CHROME_READY\"\n"
+                    "printf 1 > \"$ABUSH_TEST_CHROME_BARRIER\"\n"
                 )
+                environment["ABUSH_TEST_CHROME_BARRIER"] = str(chrome_barrier)
 
                 def delayed_server():
-                    time.sleep(0.1)
+                    wait_for_chrome()
                     server.start()
                     event = outbound.get(timeout=1)
                     server.complete(host.ordinary_open_response(
                         event["payload"]["request_id"], completion))
 
-                worker = threading.Thread(target=delayed_server, daemon=True)
-                worker.start()
+                finish = start_worker(self, delayed_server)
                 result = subprocess.run(
                     [ROOT / "scripts/chromium", url], env=environment,
                     capture_output=True, text=True, timeout=3,
                 )
-                worker.join(timeout=1)
+                finish()
                 server.close()
+                chrome_barrier.unlink()
                 self.assertEqual(result.returncode, expected, result.stderr)
                 arguments = self.log.read_bytes().split(b"\0")
                 self.assertNotIn(url.encode(), arguments)
@@ -920,7 +980,7 @@ class ExternalLinksProfileUpdateTest(unittest.TestCase):
     extension_id = "ahonjbfnmpjgjgaabbppofphidfomgcj"
 
     def setUp(self):
-        self.base = ROOT / ".tmp" / f"profile-update-{os.getpid()}-{id(self):x}"
+        self.base = temporary_directory(self)
         self.profile = self.base / "google-chrome-main"
         self.preferences = self.profile / "Default/Preferences"
         self.extension = self.profile / "Default/Extensions" / self.extension_id
@@ -949,10 +1009,6 @@ class ExternalLinksProfileUpdateTest(unittest.TestCase):
             "external_crx": str(self.crx),
             "external_version": "2.0",
         }))
-
-    def tearDown(self):
-        import shutil
-        shutil.rmtree(self.base)
 
     def environment(self):
         return {
