@@ -682,6 +682,21 @@ def parent_pid(pid, proc_root="/proc"):
         return 0
 
 
+def packed_command_value(arguments, name):
+    fields = [argument for argument in arguments if argument]
+    if len(fields) != 1 or b" " not in fields[0]:
+        return None
+    pattern = re.compile(
+        rb"(?:^|\s)" + re.escape(name) + rb"(?:=([^\s]+)|\s+([^\s]+))(?=\s|$)"
+    )
+    matches = pattern.findall(fields[0])
+    if len(matches) > 1:
+        raise ValueError("process command line has conflicting values")
+    if not matches:
+        return None
+    return matches[0][0] or matches[0][1]
+
+
 def command_profile(arguments):
     prefix = b"--user-data-dir="
     for index, argument in enumerate(arguments):
@@ -689,7 +704,8 @@ def command_profile(arguments):
             return os.fsdecode(argument[len(prefix):])
         if argument == b"--user-data-dir" and index + 1 < len(arguments):
             return os.fsdecode(arguments[index + 1])
-    return None
+    packed = packed_command_value(arguments, b"--user-data-dir")
+    return os.fsdecode(packed) if packed is not None else None
 
 
 def process_starttime(pid, proc_root="/proc"):
@@ -704,6 +720,15 @@ def process_starttime(pid, proc_root="/proc"):
         return None
 
 
+def browser_process_arguments(arguments):
+    if command_profile(arguments) is None:
+        return False
+    if any(argument.startswith(b"--type=") for argument in arguments):
+        return False
+    fields = [argument for argument in arguments if argument]
+    return len(fields) != 1 or re.search(rb"(?:^|\s)--type=[^\s]+(?=\s|$)", fields[0]) is None
+
+
 def native_host_browser(pid=None, proc_root="/proc", max_depth=32):
     current = os.getppid() if pid is None else pid
     seen = set()
@@ -711,8 +736,9 @@ def native_host_browser(pid=None, proc_root="/proc", max_depth=32):
         if current <= 1 or current in seen:
             break
         seen.add(current)
-        profile = command_profile(command_line(current, proc_root))
-        if profile is not None:
+        arguments = command_line(current, proc_root)
+        profile = command_profile(arguments)
+        if profile is not None and browser_process_arguments(arguments):
             starttime = process_starttime(current, proc_root)
             if starttime is None:
                 raise ValueError("Chrome browser start time is unavailable")

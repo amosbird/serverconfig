@@ -281,6 +281,32 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         self.assertNotEqual(host.native_host_browser(30, proc)["browser_boot_id"],
                             first["browser_boot_id"])
 
+    def test_browser_identity_accepts_chrome_packed_cmdline_and_rejects_child_type(self):
+        proc = self.runtime / "packed-proc"
+        for pid, parent, command, starttime in (
+            (30, 20, b"host.py\0", 300),
+            (20, 10, b"native-host-launcher\0", 250),
+            (10, 1, b"/opt/google/chrome/chrome --user-data-dir=/profiles/main "
+             b"--remote-debugging-port=9222\0", 200),
+        ):
+            directory = proc / str(pid)
+            directory.mkdir(parents=True)
+            (directory / "cmdline").write_bytes(command)
+            fields = ["S", str(parent), *(["0"] * 17), str(starttime), "0"]
+            (directory / "stat").write_text(f"{pid} (process) {' '.join(fields)}\n")
+
+        browser = host.native_host_browser(30, proc)
+
+        self.assertEqual(browser["pid"], 10)
+        self.assertEqual(browser["profile"], pathlib.Path("/profiles/main"))
+        packed_child = [b"/opt/google/chrome/chrome --type=renderer "
+                        b"--user-data-dir=/profiles/main", b""]
+        self.assertFalse(host.browser_process_arguments(packed_child))
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            host.command_profile([
+                b"chrome --user-data-dir=/profiles/a --user-data-dir=/profiles/b", b"",
+            ])
+
     def test_launch_lease_claim_is_secure_exact_and_expiring(self):
         profile = self.runtime / "profile"
         profile.mkdir()
@@ -619,6 +645,10 @@ class LauncherTest(unittest.TestCase):
         self.fake_chrome.chmod(0o755)
         self.fake_client = self.base / "root/scripts/ordinary-open-client.py"
         self.fake_client.parent.mkdir(parents=True)
+        self.fake_scanner = self.base / "root/scripts/chrome-profile-running.py"
+        self.fake_scanner.write_text(
+            (ROOT / "scripts/chrome-profile-running.py").read_text())
+        self.fake_scanner.chmod(0o755)
         self.fake_client.write_text(
             "import json,os,sys,pathlib\n"
             "pathlib.Path(os.environ['ABUSH_TEST_CLIENT_LOG']).write_text(sys.argv[1])\n"
@@ -737,6 +767,24 @@ class LauncherTest(unittest.TestCase):
         url = "https://example.test/running"
         result = subprocess.run([ROOT / "scripts/chromium", url], env=self.environment(),
                                 capture_output=True, text=True, timeout=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.log.exists())
+        self.assertFalse(self.update_log.exists())
+        self.assertEqual((self.base / "client").read_text(), url)
+
+    def test_packed_running_chrome_skips_start_and_profile_updater_mutation(self):
+        process = self.proc / "43"
+        process.mkdir()
+        profile = self.base / "profile"
+        (process / "cmdline").write_bytes(
+            b"/opt/google/chrome/chrome --user-data-dir=" + os.fsencode(profile) +
+            b" --remote-debugging-port=9222\0"
+        )
+        url = "https://example.test/packed-running"
+
+        result = subprocess.run([ROOT / "scripts/chromium", url], env=self.environment(),
+                                capture_output=True, text=True, timeout=2)
+
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.log.exists())
         self.assertFalse(self.update_log.exists())
@@ -939,6 +987,23 @@ class ExternalLinksProfileUpdateTest(unittest.TestCase):
         )
         original = self.preferences.read_bytes()
         result = self.run_updater()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("exit Chrome and retry", result.stderr)
+        self.assertEqual(self.preferences.read_bytes(), original)
+        self.assertTrue(self.extension.exists())
+        self.assertFalse((self.profile / "external-links-backups").exists())
+
+    def test_packed_running_chrome_process_blocks_profile_mutation(self):
+        process = self.proc / "43"
+        process.mkdir()
+        (process / "cmdline").write_bytes(
+            b"/opt/google/chrome/chrome --user-data-dir=" + os.fsencode(self.profile) +
+            b" --remote-debugging-port=9222\0"
+        )
+        original = self.preferences.read_bytes()
+
+        result = self.run_updater()
+
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIn("exit Chrome and retry", result.stderr)
         self.assertEqual(self.preferences.read_bytes(), original)

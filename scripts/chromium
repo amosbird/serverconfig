@@ -49,14 +49,15 @@ if [[ $# -eq 1 && $1 != -* ]]; then
     fi
     proc_root=${ABUSH_PROC_ROOT:-/proc}
     chrome_running=false
-    for process in "$proc_root"/[0-9]*/cmdline; do
-        [[ -r $process ]] || continue
-        cmdline=$(tr '\0' '\n' < "$process" 2>/dev/null) || continue
-        if grep -Fqx -- "--user-data-dir=$profile" <<< "$cmdline"; then
-            chrome_running=true
-            break
+    if python3 "$root/scripts/chrome-profile-running.py" "$proc_root" "$profile"; then
+        chrome_running=true
+    else
+        running_status=$?
+        if [[ $running_status -ne 1 ]]; then
+            printf 'chromium: unable to inspect Chrome profile processes\n' >&2
+            exit "$running_status"
         fi
-    done
+    fi
     if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
         printf 'chromium: XDG_RUNTIME_DIR is unavailable\n' >&2
         exit 1

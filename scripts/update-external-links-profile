@@ -41,15 +41,16 @@ if wanted <= installed:
 PY
 
 profile_is_running() {
-    local argument process
-    for process in "$proc_root"/[0-9]*/cmdline; do
-        [[ -r $process ]] || continue
-        while IFS= read -r -d '' argument; do
-            if [[ $argument == "--user-data-dir=$profile" ]]; then
-                return 0
-            fi
-        done < "$process"
-    done
+    local status
+    if python3 "$(dirname "$0")/chrome-profile-running.py" "$proc_root" "$profile"; then
+        return 0
+    else
+        status=$?
+    fi
+    if [[ $status -ne 1 ]]; then
+        printf 'Unable to inspect Chrome profile processes\n' >&2
+        exit "$status"
+    fi
     return 1
 }
 
