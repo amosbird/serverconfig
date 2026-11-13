@@ -105,9 +105,31 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
         self.assertFalse(binding.browser_process(True, root),
                          "bool must not be accepted as a typed X11 PID")
         with mock.patch.object(binding.pathlib.Path, "read_bytes") as read_bytes:
-            read_bytes.return_value = b"/usr/bin/google-chrome-stable\0--type=browser\0"
-            self.assertTrue(binding.browser_process(42, root))
-            read_bytes.return_value = b"/usr/bin/python3\0script.py\0--name=chromium\0"
+            for executable in sorted(binding.BROWSER_EXECUTABLES):
+                with self.subTest(format="nul", executable=executable):
+                    read_bytes.return_value = (
+                        f"/usr/bin/{executable}\0--user-data-dir=/profile\0".encode())
+                    self.assertTrue(binding.browser_process(42, root))
+                with self.subTest(format="packed", executable=executable):
+                    read_bytes.return_value = (
+                        f"/usr/bin/{executable} --user-data-dir=/profile".encode())
+                    self.assertTrue(binding.browser_process(42, root))
+            read_bytes.return_value = b"/opt/google/chrome/chrome --type=renderer"
+            self.assertTrue(binding.browser_process(42, root),
+                            "the X11 PID check authenticates the exact executable")
+            for command in (
+                b"/usr/bin/python3\0script.py\0--name=chromium\0",
+                b"/usr/bin/python3 script.py --name=chromium",
+                b"/usr/bin/not-google-chrome --user-data-dir=/profile",
+                b"\0/usr/bin/google-chrome\0",
+                b"",
+                b"   ",
+                b"'/usr/bin/google-chrome --user-data-dir=/profile",
+            ):
+                with self.subTest(command=command):
+                    read_bytes.return_value = command
+                    self.assertFalse(binding.browser_process(42, root))
+            read_bytes.side_effect = OSError("gone")
             self.assertFalse(binding.browser_process(42, root))
 
 

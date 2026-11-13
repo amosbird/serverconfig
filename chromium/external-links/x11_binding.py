@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import struct
 import subprocess
 import time
@@ -112,18 +113,39 @@ def binding_title_matches(title, expected):
     return title == expected or any(title == expected + suffix for suffix in CHROME_TITLE_SUFFIXES)
 
 
+BROWSER_EXECUTABLES = {
+    "chrome", "chrome-wrapper", "chromium", "chromium-browser", "google-chrome",
+    "google-chrome-beta", "google-chrome-stable", "google-chrome-unstable",
+}
+
+
+def command_executable(raw):
+    fields = raw.split(b"\0")
+    while fields and not fields[-1]:
+        fields.pop()
+    if not fields or not fields[0]:
+        return ""
+    if len(fields) == 1:
+        try:
+            tokens = shlex.split(os.fsdecode(fields[0]))
+        except ValueError:
+            return ""
+        if not tokens:
+            return ""
+        executable = tokens[0]
+    else:
+        executable = os.fsdecode(fields[0])
+    return pathlib.PurePath(executable).name.lower()
+
+
 def browser_process(pid, proc_root="/proc"):
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
         return False
     try:
-        arguments = (pathlib.Path(proc_root) / str(pid) / "cmdline").read_bytes().split(b"\0")
+        raw = (pathlib.Path(proc_root) / str(pid) / "cmdline").read_bytes()
     except OSError:
         return False
-    executable = pathlib.PurePath(os.fsdecode(arguments[0])).name.lower() if arguments[0] else ""
-    return executable in {
-        "chrome", "chrome-wrapper", "chromium", "chromium-browser", "google-chrome",
-        "google-chrome-beta", "google-chrome-stable", "google-chrome-unstable",
-    }
+    return command_executable(raw) in BROWSER_EXECUTABLES
 
 
 def chrome_process_window(adapter, window):
