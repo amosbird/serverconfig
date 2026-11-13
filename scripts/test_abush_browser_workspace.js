@@ -1275,8 +1275,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         ready.resolve();
         await waitFor(() => responses.length === 2, "deferred runtime responses");
         assert.deepEqual(responses, [
-            {owned: true, ok: true, route: false},
-            {owned: true, ok: true, route: false},
+            {owned: true, ready: true, ok: true, route: false},
+            {owned: true, ready: true, ok: true, route: false},
         ]);
     }
     {
@@ -1291,8 +1291,33 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             assert.equal(listener({url: "https://outside.test/"}, {tab: {windowId: 42}},
                 resolve), true);
         });
-        assert.deepEqual(response, {owned: true, ok: false, route: false},
+        assert.deepEqual(response, {owned: null, ready: false, ok: false, route: false},
             "failed readiness must conservatively suppress routing");
+    }
+    {
+        beginCase();
+        let listener;
+        let readyAttempts = 0;
+        let routed = 0;
+        const chromeApi = {runtime: {onMessage: {
+            addListener: value => { listener = value; },
+        }}};
+        registerRuntimeMessageRouter(chromeApi, {ownsWindow: () => false}, async () => {
+            readyAttempts += 1;
+            if (readyAttempts === 1) throw new Error("restore failed");
+        }, (_url, _source, callback) => {
+            routed += 1;
+            callback({ok: true});
+        });
+        const send = message => new Promise(resolve => {
+            assert.equal(listener(message, {tab: {windowId: 42, url: "https://source.test/"}},
+                resolve), true);
+        });
+        assert.deepEqual(await send({query: "abush_owned_window"}),
+            {owned: null, ready: false, ok: false, route: false});
+        assert.deepEqual(await send({url: "https://outside.test/"}),
+            {ok: true, owned: false, ready: true, route: true});
+        assert.equal(routed, 1, "ordinary routing must recover without a content reload");
     }
     {
         beginCase();
@@ -1743,6 +1768,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             executorFence: fence, logicalWindowId, logicalPageId, generation: 1,
             windowId: 10, x11WindowId: 10010, statusTabIds: [110, 111], pageTabId: 210,
             nonce: "d".repeat(32), connectionDisplayName: "local",
+            ownerDisplay: ensurePayload().owner_display,
         };
         const localState = {abushManagedCleanupBatch: {
             version: 1,
@@ -1771,13 +1797,38 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             return [];
         };
         await executor.restoreManagedCleanupBatch();
+        executor.bootstrapLeases.set("cold-lease", {
+            version: 1, request_id: "cold-lease", operation: "ordinary_open",
+            url: "https://cold-ordinary.test/", focus: true, deadline_ms: Date.now() + 30000,
+            bootstrapContext: {windowId: 1},
+        });
+        executor.startupManagedRecords = Object.values(localState.abushOwnedMarkers)
+            .filter(ownership => ownership.trusted !== false);
+        await executor.cleanupStaleManagedBeforeBootstrap();
+        assert.equal(calls.some(call => call[0] === "removeWindow"), false,
+            "cold cleanup must not install quarantined physical ownership");
+        assert.equal(calls.some(call => call[0] === "remove"), false,
+            "cold cleanup must not remove reused tabs from quarantined ownership");
         assert.equal(calls.some(call => call[0] === "removeWindow" && call[1] === 10), false,
             "cross-boot cleanup must not remove a window by a reused numeric ID");
         assert.equal(calls.some(call => call[0] === "remove" && [110, 111, 210].includes(call[1])),
             false, "cross-boot cleanup must not remove ordinary tabs by reused numeric IDs");
-        assert.equal(localState.abushManagedCleanupBatch.records[0].phase, "pending");
+        assert.equal(localState.abushManagedCleanupBatch.records[0].phase,
+            "orphan_unresolved");
         assert.match(localState.abushManagedCleanupBatch.records[0].error, /relocated/,
             "unrelocated cross-boot cleanup must retain a durable advisory");
+        assert.equal(localState.abushManagedCleanupBatch.records[0].record.windowId, undefined,
+            "quarantined cleanup must discard stale physical window identity");
+        assert.equal(localState.abushOwnedMarkers[record.nonce].trusted, false,
+            "unresolved cross-boot ownership must be durably untrusted");
+        assert.equal(executor.workspaces.size, 0);
+        assert.equal(executor.windowOwners.size, 0);
+        assert.equal(executor.tabOwners.size, 0);
+        assert(localState.abushManagedCleanupBatch.records[0].logical_tombstone?.report_id,
+            "quarantined cleanup must retain a logical outbox identity for daemon convergence");
+        await executor.restoreQuarantinedCleanupReports();
+        assert.equal(localState.abushTopologyOutbox.length, 1);
+        assert.equal(localState.abushTopologyOutbox[0].page.page_id, logicalPageId);
     }
     {
         beginCase();
@@ -2291,8 +2342,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const {executor, calls} = fixture([], [], 1, false, null, localState);
         const tabs = await executor.chrome.tabs.query({windowId: 1});
         tabs[0].url = payload.url;
-        executor.restoreStarted = true;
-        executor.ready = Promise.resolve();
+        executor.restoreAttempt = {generation: 1, promise: Promise.resolve()};
+        executor.restoreGeneration = 1;
         const bootstrap = {
             browser_boot_id: "test-browser-boot", browser_pid: 42,
             browser_starttime: "123", ordinary_launch_leases: [payload],
@@ -2975,6 +3026,24 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const {executor} = fixture();
+        let attempts = 0;
+        executor.restore = async () => {
+            attempts += 1;
+            if (attempts === 1) throw new Error("transient storage failure");
+        };
+        const first = executor.restoreWhenReady();
+        assert.strictEqual(executor.whenReady(), first,
+            "one restore generation must remain singleflight");
+        await assert.rejects(first, /transient storage failure/);
+        assert.equal(executor.restoreAttempt, null,
+            "a rejected restore generation must release readiness");
+        await executor.restoreWhenReady();
+        assert.equal(attempts, 2, "the next bootstrap must retry restore");
+        await executor.whenReady();
+    }
+    {
+        beginCase();
         const failures = [];
         const attempts = [Promise.reject(new Error("bootstrap failed")), Promise.resolve({
             browser_boot_id: "bootstrap-retry",
@@ -3523,27 +3592,52 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             principal_id: identity.principal_id, executor_fence: replayFence,
             connected: true,
         });
-        assert.equal(localState.abushRetireLedger[0].phase, "response_received",
-            "stale ACK delivery must remain durable after fence rotation");
-        assert.equal(calls.some(call => call[0] ===
-            "retire_managed_page_ack_consumed"), false,
-            "old-fence ACK must not be consumed on the new authority");
-        const replayed = {
-            remote_key: identity.remote_key, connection_id: "c_new00000",
-            principal_id: identity.principal_id, request_id: "retire-replay-delivery",
-            retire_id: identity.retire_id, executor_fence: replayFence,
-            response_delivery_id: oldAck.response_delivery_id,
-            origin_executor_fence: fence, completion,
-        };
-        assert.equal(await executor.retireManagedPageAck(replayed), true);
         assert.deepEqual(localState.abushRetireLedger, [],
-            "current-fence ACK replay must consume durable retire state");
+            "old-authority ACK must be consumed through the current authority");
         const consumed = calls.find(call => call[0] ===
             "retire_managed_page_ack_consumed")[1];
-        assert.notEqual(consumed.request_id, replayed.request_id,
+        assert.notEqual(consumed.request_id, oldAck.request_id,
             "consumption must use a distinct durable request ID");
+        assert.equal(consumed.connection_id, "c_new00000");
         assert.equal(consumed.response_delivery_id, oldAck.response_delivery_id);
         assert.deepEqual(consumed.executor_fence, replayFence);
+    }
+    {
+        beginCase();
+        const identity = {
+            remote_key: "r_12345678", connection_id: "c_old00000",
+            principal_id: "principal-one", request_id: "retire-delivery",
+            retire_id: "retire-consumed-rotation", ensure_id: "ensure-consumed-rotation",
+            executor_fence: fence, origin_executor_fence: fence,
+            window_id: logicalWindowId, page_id: logicalPageId,
+        };
+        const completion = {outcome: "already_retired"};
+        const ack = {
+            request_id: identity.request_id, retire_id: identity.retire_id,
+            executor_fence: fence, response_delivery_id: "stable-retire-response",
+            origin_executor_fence: fence, completion,
+        };
+        const localState = {abushRetireLedger: [{
+            version: 8, phase: "consumed_pending", identity,
+            delivery: identity, completion, ack,
+            ack_connection_id: identity.connection_id,
+            consumed_request_id: "stable-retire-consumed-id",
+        }]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restoreRetireLedger();
+        const currentFence = {executor_id: "executor-current", epoch: 2};
+        await executor.remoteState({
+            remote_key: identity.remote_key, connection_id: "c_current0",
+            principal_id: identity.principal_id, executor_fence: currentFence,
+            connected: true,
+        });
+        const consumed = calls.find(call => call[0] ===
+            "retire_managed_page_ack_consumed")[1];
+        assert.equal(consumed.request_id, "stable-retire-consumed-id");
+        assert.equal(consumed.connection_id, "c_current0");
+        assert.deepEqual(consumed.executor_fence, currentFence);
+        assert.deepEqual(localState.abushRetireLedger, [],
+            "retire consumed ACK must converge after authority rotation with the same ID");
     }
     {
         beginCase();
@@ -3613,6 +3707,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 window_id: logicalWindowId, generation: 1},
             page_id: logicalPageId, generation: 1},
             phase: "pending", response: null, cleanup: null,
+            consumed_request_id: null, consumed_migration: null,
         };
         const localState = {abushTopologyOutbox: [report]};
         const {executor, calls} = fixture([], [], 0, false, null, localState);
@@ -3654,10 +3749,15 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 window_id: logicalWindowId, generation: 1},
             page_id: logicalPageId, generation: 1},
             phase: "pending", response: null, cleanup: null,
+            consumed_request_id: null, consumed_migration: null,
         };
         const localState = {abushTopologyOutbox: [report]};
         const {executor, calls} = fixture([], [], 0, false, null, localState);
         await executor.restoreTopologyOutbox();
+        executor.remoteAuthorities.set(report.remote_key, {
+            remote_key: report.remote_key, connection_id: report.connection_id,
+            principal_id: report.principal_id, executor_fence: fence, connected: true,
+        });
         const replayed = {
             remote_key: report.remote_key, connection_id: report.connection_id,
             principal_id: report.principal_id, request_id: "replayed-rejected-delivery",
@@ -3683,6 +3783,112 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     {
         beginCase();
         const report = {
+            remote_key: "r_12345678", connection_id: "c_old00000",
+            principal_id: "principal-one", report_id: "consumed-rotation",
+            request_id: "response-delivery", executor_fence: fence,
+            origin_executor_fence: fence, daemon_instance_id: "daemon-instance",
+            page: {window: {workspace_id: "workspace-authoritative",
+                window_id: logicalWindowId, generation: 1},
+            page_id: logicalPageId, generation: 1},
+            cleanup: null, phase: "consumed_pending",
+            response: {
+                request_id: "response-delivery", report_id: "consumed-rotation",
+                executor_fence: fence, response_delivery_id: "stable-response",
+                result: {outcome: "already_converged"},
+            },
+            consumed_request_id: "stable-consumed-id", consumed_migration: null,
+        };
+        const localState = {abushTopologyOutbox: [report]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restoreTopologyOutbox();
+        const currentFence = {executor_id: "executor-current", epoch: 2};
+        await executor.remoteState({
+            remote_key: report.remote_key, connection_id: "c_current0",
+            principal_id: report.principal_id, executor_fence: currentFence,
+            owner_display: ensurePayload().owner_display, connected: true,
+        });
+        const consumed = calls.find(call => call[0] === "topology_response_consumed")[1];
+        assert.equal(consumed.request_id, "stable-consumed-id",
+            "authority rotation must preserve the stable consumed request ID");
+        assert.equal(consumed.connection_id, "c_current0");
+        assert.deepEqual(consumed.executor_fence, currentFence);
+        assert.deepEqual(localState.abushTopologyOutbox, [],
+            "current-fence consumed ACK must remove the durable report");
+    }
+    {
+        beginCase();
+        const legacyResponse = {
+            remote_key: "r_12345678", connection_id: "c_12345678",
+            principal_id: "principal-one", report_id: "legacy-response",
+            request_id: "legacy-delivery", executor_fence: fence,
+            origin_executor_fence: fence, daemon_instance_id: "daemon-instance",
+            page: {window: {workspace_id: "workspace-authoritative",
+                window_id: logicalWindowId, generation: 1},
+            page_id: logicalPageId, generation: 1}, cleanup: null,
+            phase: "response_received", response: {
+                request_id: "legacy-delivery", report_id: "legacy-response",
+                executor_fence: fence, response_delivery_id: "legacy-response-delivery",
+                result: {outcome: "already_converged"},
+            },
+        };
+        const localState = {abushTopologyOutbox: [legacyResponse]};
+        const {executor} = fixture([], [], 0, false, null, localState);
+        await executor.restoreTopologyOutbox();
+        const restored = executor.topologyOutbox.get("legacy-response");
+        assert.equal(restored.phase, "response_received",
+            "legacy unsent consumption must not be declared daemon-accepted");
+        assert.equal(restored.consumed_request_id, null);
+        assert.equal(restored.consumed_migration, "legacy_unsent");
+    }
+    {
+        beginCase();
+        const report = {
+            remote_key: "r_12345678", connection_id: "c_old00000",
+            principal_id: "principal-one", report_id: "response-before-state",
+            request_id: "old-delivery", executor_fence: fence,
+            origin_executor_fence: fence, daemon_instance_id: "daemon-instance",
+            page: {window: {workspace_id: "workspace-authoritative",
+                window_id: logicalWindowId, generation: 1},
+            page_id: logicalPageId, generation: 1},
+            phase: "pending", response: null, cleanup: null,
+            consumed_request_id: null, consumed_migration: null,
+        };
+        const localState = {abushTopologyOutbox: [report]};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        await executor.restoreTopologyOutbox();
+        const currentFence = {executor_id: "executor-current", epoch: 2};
+        const replayed = {
+            remote_key: report.remote_key, connection_id: "c_current0",
+            principal_id: report.principal_id, request_id: "current-replay-delivery",
+            report_id: report.report_id, executor_fence: currentFence,
+            response_delivery_id: "response-before-state-delivery",
+            result: {outcome: "already_converged"},
+        };
+        assert.equal(await executor.topologyReportResponse(replayed), true);
+        assert.equal(executor.deferredTopologyResponses.size, 1,
+            "valid replay before remote state must be deferred, not discarded");
+        assert.equal(localState.abushDeferredTopologyResponses.length, 1,
+            "response-before-state replay must survive a worker restart");
+        assert.equal(calls.some(call => call[0] === "topology_response_consumed"), false);
+        const second = fixture([], [], 0, false, null, localState);
+        await second.executor.restoreTopologyOutbox();
+        await second.executor.restoreDeferredTopologyResponses();
+        await second.executor.remoteState({
+            remote_key: report.remote_key, connection_id: replayed.connection_id,
+            principal_id: report.principal_id, executor_fence: currentFence,
+            owner_display: ensurePayload().owner_display, connected: true,
+        });
+        assert.equal(second.executor.deferredTopologyResponses.size, 0);
+        assert.deepEqual(localState.abushDeferredTopologyResponses, []);
+        assert.deepEqual(localState.abushTopologyOutbox, [],
+            "remote state must reprocess and consume the deferred replay response");
+        const consumed = second.calls.find(call => call[0] === "topology_response_consumed")[1];
+        assert.equal(consumed.report_id, report.report_id);
+        assert.deepEqual(consumed.executor_fence, currentFence);
+    }
+    {
+        beginCase();
+        const report = {
             remote_key: "r_12345678", connection_id: "c_12345678",
             principal_id: "principal-one", report_id: "stable-replay",
             request_id: "old-delivery", executor_fence: fence,
@@ -3691,12 +3897,18 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 window_id: logicalWindowId, generation: 1},
             page_id: logicalPageId, generation: 1},
             phase: "pending", response: null, cleanup: null,
+            consumed_request_id: null, consumed_migration: null,
         };
         const localState = {abushTopologyOutbox: [report]};
         const {executor, calls} = fixture([], [], 0, false, null, localState);
         await executor.restoreTopologyOutbox();
         const replayFence = {executor_id: "executor-restarted", epoch: 2};
         await executor.authorizeTopologyOutbox({
+            remote_key: report.remote_key, connection_id: "c_new00000",
+            principal_id: report.principal_id, executor_fence: replayFence,
+            owner_display: ensurePayload().owner_display, connected: true,
+        });
+        executor.remoteAuthorities.set(report.remote_key, {
             remote_key: report.remote_key, connection_id: "c_new00000",
             principal_id: report.principal_id, executor_fence: replayFence,
             owner_display: ensurePayload().owner_display, connected: true,

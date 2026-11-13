@@ -23,14 +23,30 @@ function shouldRouteLink(pageUrl, linkUrl) {
     }
 }
 
-let ownedWorkspace = false;
+let ownedWorkspace = null;
+let ownershipRequest = null;
+
+function refreshOwnership() {
+    if (ownedWorkspace !== null || ownershipRequest) return ownershipRequest;
+    ownershipRequest = new Promise(resolve => {
+        chrome.runtime.sendMessage({query: "abush_owned_window"}, response => {
+            if (response?.ready === true && typeof response.owned === "boolean") {
+                ownedWorkspace = response.owned;
+            }
+            ownershipRequest = null;
+            resolve(ownedWorkspace);
+        });
+    });
+    return ownershipRequest;
+}
 
 if (typeof document !== "undefined") {
-    chrome.runtime.sendMessage({query: "abush_owned_window"}, response => {
-        ownedWorkspace = response?.owned === true;
-    });
+    refreshOwnership();
     document.addEventListener("click", event => {
-        if (ownedWorkspace || event.defaultPrevented || event.button !== 0) return;
+        if (ownedWorkspace !== false || event.defaultPrevented || event.button !== 0) {
+            if (ownedWorkspace === null) refreshOwnership();
+            return;
+        }
         const link = event.target.closest("a[href]");
         if (!link || !shouldRouteLink(location.href, link.href)) return;
         event.preventDefault();
@@ -42,5 +58,5 @@ if (typeof document !== "undefined") {
 if (typeof module !== "undefined") {
     const routes = require("./routes.js");
     global.ROUTES = routes.ROUTES;
-    module.exports = {groupForHostname, isAuthHostname, shouldRouteLink};
+    module.exports = {groupForHostname, isAuthHostname, shouldRouteLink, refreshOwnership};
 }

@@ -18,6 +18,45 @@ RUNAI = ROOT / "scripts/runai"
 
 
 class ExternalLinkExtensionTest(unittest.TestCase):
+    def test_content_retries_unknown_ownership_without_reload(self):
+        script = f"""
+const path = {json.dumps(str(CONTENT))};
+const callbacks = [];
+global.ROUTES = require({json.dumps(str(CONTENT.with_name('routes.js')))}).ROUTES;
+global.document = {{
+    listener: null,
+    addEventListener(_name, listener) {{ this.listener = listener; }},
+}};
+global.location = {{href: 'https://discord.com/app'}};
+global.chrome = {{runtime: {{
+    sent: [],
+    sendMessage(message, callback) {{ this.sent.push(message); callbacks.push(callback); }},
+}}}};
+require(path);
+if (chrome.runtime.sent.length !== 1) process.exit(1);
+callbacks.shift()({{owned: null, ready: false, ok: false, route: false}});
+setImmediate(() => {{
+    let prevented = false;
+    document.listener({{
+        defaultPrevented: false, button: 0,
+        target: {{closest: () => ({{href: 'https://chatgpt.com/'}})}},
+        preventDefault() {{ prevented = true; }}, stopImmediatePropagation() {{}},
+    }});
+    if (prevented || chrome.runtime.sent.length !== 2) process.exit(2);
+    callbacks.shift()({{owned: false, ready: true, ok: true, route: false}});
+    setImmediate(() => {{
+        document.listener({{
+            defaultPrevented: false, button: 0,
+            target: {{closest: () => ({{href: 'https://chatgpt.com/'}})}},
+            preventDefault() {{ prevented = true; }}, stopImmediatePropagation() {{}},
+        }});
+        if (!prevented || chrome.runtime.sent.length !== 3 ||
+                chrome.runtime.sent[2].url !== 'https://chatgpt.com/') process.exit(3);
+    }});
+}});
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
     def test_links_only_stay_local_inside_the_same_browser_group(self):
         script = f"""
 const {{ shouldRouteLink }} = require({json.dumps(str(CONTENT))});

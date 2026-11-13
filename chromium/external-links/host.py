@@ -2080,10 +2080,12 @@ class RemotePeer:
 
 
 class BrowserBroker:
-    def __init__(self, remote_root=None, outbound=None, ordinary_open=None):
+    def __init__(self, remote_root=None, outbound=None, ordinary_open=None,
+                 write_barrier=None):
         self.remote_root = pathlib.Path(remote_root) if remote_root else None
         self.outbound = outbound or queue.Queue()
         self.ordinary_open = ordinary_open
+        self.write_barrier = write_barrier
         self.peers = {}
         self.principals = {}
         self.candidates = {}
@@ -2105,8 +2107,9 @@ class BrowserBroker:
                 return
             remote_key = peer.metadata["remote_key"]
             self.peers.pop(remote_key, None)
-            replacement = self._select(remote_key, exclude={peer.key}, publish=False)
-            self.remote_changed(replacement or peer)
+            replacement = self._select(remote_key, exclude={peer.key})
+            if replacement is None:
+                self.remote_changed(peer)
 
     @staticmethod
     def _same_principal_instance(pinned, candidate):
@@ -2141,16 +2144,25 @@ class BrowserBroker:
                          remote_key, metadata["connection_id"])
         return None
 
-    def _select(self, remote_key, exclude=frozenset(), publish=True):
+    def _activate_after_remote_state(self, peer):
+        self.remote_changed(peer)
+        barrier = getattr(self, "write_barrier", None)
+        if callable(barrier):
+            barrier = barrier()
+            self.outbound.put((None, barrier))
+        if barrier is not None and not barrier.wait(2):
+            peer.close(emit=False)
+            raise TimeoutError("remote state was not written before peer replay activation")
+        peer.activate()
+
+    def _select(self, remote_key, exclude=frozenset()):
         current = self.peers.get(remote_key)
         if current and current.connected:
             return current
         peer = self._select_candidate(remote_key, exclude)
         if peer:
             self.peers[remote_key] = peer
-            peer.activate()
-            if publish:
-                self.remote_changed(peer)
+            self._activate_after_remote_state(peer)
         return peer
 
     def refresh(self):
@@ -2171,9 +2183,8 @@ class BrowserBroker:
                     replacement = self._select_candidate(remote_key, exclude={peer.key})
                     if replacement:
                         self.peers[remote_key] = replacement
-                        replacement.activate()
+                        self._activate_after_remote_state(replacement)
                         peer.close(emit=False)
-                        self.remote_changed(replacement)
                     else:
                         self.peers.pop(remote_key, None)
                         peer.close(emit=False)
@@ -2410,7 +2421,8 @@ class NativeBrokerHost:
                 self.outbound, bootstrap_requests=self.bootstrap_requests,
                 bootstrap_claims=claims)
         self.broker = BrowserBroker(remote_root=remote_root, outbound=self.outbound,
-                                    ordinary_open=self.ordinary_open)
+                                    ordinary_open=self.ordinary_open,
+                                    write_barrier=threading.Event)
         self.refresh_stop = threading.Event()
         self.refresh_wakeup = threading.Event()
         self.refresh_interval = 1.0
@@ -2443,10 +2455,14 @@ class NativeBrokerHost:
     def _write_loop(self):
         try:
             while True:
-                message = self.outbound.get()
-                if message is None:
+                queued = self.outbound.get()
+                if queued is None:
                     return
-                send_message(message, self.output)
+                message, barrier = queued if isinstance(queued, tuple) else (queued, None)
+                if message is not None:
+                    send_message(message, self.output)
+                if barrier is not None:
+                    barrier.set()
         except (OSError, ValueError) as error:
             self.writer_error = error
 

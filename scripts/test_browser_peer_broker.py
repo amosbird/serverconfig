@@ -87,10 +87,37 @@ class FakePeer:
 
 
 class BrowserPeerBrokerTest(unittest.TestCase):
+    def test_native_host_writes_remote_state_before_activating_peer_reader(self):
+        native = host.NativeBrokerHost(
+            input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
+            ordinary_open_factory=None)
+        peer = mock.Mock()
+        peer.logical_state.return_value = {
+            "remote_key": "r_12345678", "connection_id": "c_12345678",
+            "display_name": "remote", "connected": True,
+            "principal_id": "principal-one",
+            "executor_fence": {"executor_id": "executor", "epoch": 1},
+        }
+        writes = []
+        native.writer = threading.Thread(target=native._write_loop, daemon=True)
+        try:
+            with mock.patch.object(host, "send_message",
+                                   side_effect=lambda message, _stream: writes.append(message)):
+                native.writer.start()
+                native.broker._activate_after_remote_state(peer)
+            self.assertEqual(writes[0]["event"], "abush_browser.remote_state")
+            peer.activate.assert_called_once_with()
+        finally:
+            native.outbound.put(None)
+            native.writer.join(timeout=1)
+            native.broker.close()
+        self.assertFalse(native.writer.is_alive())
+
     def test_native_host_refresh_loop_discovers_metadata_after_empty_startup(self):
         native = host.NativeBrokerHost(
             input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
             ordinary_open_factory=None)
+        native.broker.write_barrier = None
         native.refresh_interval = 60
         native.refresh_thread.start()
         try:

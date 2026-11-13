@@ -547,17 +547,19 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
 
 function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openInTargetBrowser) {
     chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        const ownedFailure = () => ({owned: true, ok: false, route: false});
+        const ownedFailure = () => ({owned: null, ready: false, ok: false, route: false});
         const respondAfterReady = async () => {
             try {
                 await ready();
                 const owned = workspaces.ownsWindow(sender.tab?.windowId);
-                if (message.query === "abush_owned_window") return {owned, ok: true, route: false};
-                if (!message.url) return {owned, ok: false, route: false};
-                if (owned) return {owned: true, ok: true, route: false};
+                if (message.query === "abush_owned_window") {
+                    return {owned, ready: true, ok: true, route: false};
+                }
+                if (!message.url) return {owned, ready: true, ok: false, route: false};
+                if (owned) return {owned: true, ready: true, ok: true, route: false};
                 return await new Promise(resolve => {
                     open(message.url, message.sourceUrl || sender.tab?.url || "", response => {
-                        resolve({...response, owned: false, route: response.ok});
+                        resolve({...response, owned: false, ready: true, route: response.ok});
                     });
                 });
             } catch (_) {
