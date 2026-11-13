@@ -23,15 +23,23 @@ function shouldRouteLink(pageUrl, linkUrl) {
     }
 }
 
+const OWNED_RECHECK_MS = 1000;
 let ownedWorkspace = null;
+let ownershipGeneration = -1;
+let ownedCheckedAt = 0;
 let ownershipRequest = null;
 
-function refreshOwnership() {
-    if (ownedWorkspace !== null || ownershipRequest) return ownershipRequest;
+function refreshOwnership({force = false} = {}) {
+    if (ownershipRequest) return ownershipRequest;
+    if (!force && ownedWorkspace !== null) return Promise.resolve(ownedWorkspace);
     ownershipRequest = new Promise(resolve => {
         chrome.runtime.sendMessage({query: "abush_owned_window"}, response => {
-            if (response?.ready === true && typeof response.owned === "boolean") {
+            if (response?.ready === true && typeof response.owned === "boolean" &&
+                    Number.isSafeInteger(response.generation) &&
+                    response.generation >= ownershipGeneration) {
                 ownedWorkspace = response.owned;
+                ownershipGeneration = response.generation;
+                ownedCheckedAt = Date.now();
             }
             ownershipRequest = null;
             resolve(ownedWorkspace);
@@ -40,11 +48,25 @@ function refreshOwnership() {
     return ownershipRequest;
 }
 
+function applyOwnershipChange(message) {
+    if (message?.type !== "abush_ownership_changed" || message.owned !== false ||
+            !Number.isSafeInteger(message.generation) ||
+            message.generation < ownershipGeneration) return false;
+    ownedWorkspace = false;
+    ownershipGeneration = message.generation;
+    ownedCheckedAt = Date.now();
+    return true;
+}
+
 if (typeof document !== "undefined") {
     refreshOwnership();
+    chrome.runtime.onMessage?.addListener?.(message => applyOwnershipChange(message));
     document.addEventListener("click", event => {
         if (ownedWorkspace !== false || event.defaultPrevented || event.button !== 0) {
-            if (ownedWorkspace === null) refreshOwnership();
+            if (ownedWorkspace === null ||
+                    ownedWorkspace === true && Date.now() - ownedCheckedAt >= OWNED_RECHECK_MS) {
+                refreshOwnership({force: true});
+            }
             return;
         }
         const link = event.target.closest("a[href]");
@@ -58,5 +80,6 @@ if (typeof document !== "undefined") {
 if (typeof module !== "undefined") {
     const routes = require("./routes.js");
     global.ROUTES = routes.ROUTES;
-    module.exports = {groupForHostname, isAuthHostname, shouldRouteLink, refreshOwnership};
+    module.exports = {groupForHostname, isAuthHostname, shouldRouteLink, refreshOwnership,
+        applyOwnershipChange};
 }

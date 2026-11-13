@@ -43,7 +43,7 @@ setImmediate(() => {{
         preventDefault() {{ prevented = true; }}, stopImmediatePropagation() {{}},
     }});
     if (prevented || chrome.runtime.sent.length !== 2) process.exit(2);
-    callbacks.shift()({{owned: false, ready: true, ok: true, route: false}});
+    callbacks.shift()({{owned: false, generation: 1, ready: true, ok: true, route: false}});
     setImmediate(() => {{
         document.listener({{
             defaultPrevented: false, button: 0,
@@ -53,6 +53,47 @@ setImmediate(() => {{
         if (!prevented || chrome.runtime.sent.length !== 3 ||
                 chrome.runtime.sent[2].url !== 'https://chatgpt.com/') process.exit(3);
     }});
+}});
+"""
+        subprocess.run(["node", "-e", script], check=True)
+
+    def test_content_invalidates_owned_cache_and_routes_next_click_without_reload(self):
+        script = f"""
+const path = {json.dumps(str(CONTENT))};
+const callbacks = [];
+let messageListener;
+global.ROUTES = require({json.dumps(str(CONTENT.with_name('routes.js')))}).ROUTES;
+global.document = {{
+    listener: null,
+    addEventListener(_name, listener) {{ this.listener = listener; }},
+}};
+global.location = {{href: 'https://discord.com/app'}};
+global.chrome = {{runtime: {{
+    sent: [],
+    onMessage: {{addListener(listener) {{ messageListener = listener; }}}},
+    sendMessage(message, callback) {{
+        this.sent.push(message);
+        if (callback) callbacks.push(callback);
+    }},
+}}}};
+require(path);
+callbacks.shift()({{owned: true, generation: 7, ready: true, ok: true, route: false}});
+setImmediate(() => {{
+    let prevented = false;
+    document.listener({{
+        defaultPrevented: false, button: 0,
+        target: {{closest: () => ({{href: 'https://chatgpt.com/'}})}},
+        preventDefault() {{ prevented = true; }}, stopImmediatePropagation() {{}},
+    }});
+    if (prevented || chrome.runtime.sent.length !== 1) process.exit(1);
+    messageListener({{type: 'abush_ownership_changed', owned: false, generation: 8}});
+    document.listener({{
+        defaultPrevented: false, button: 0,
+        target: {{closest: () => ({{href: 'https://chatgpt.com/'}})}},
+        preventDefault() {{ prevented = true; }}, stopImmediatePropagation() {{}},
+    }});
+    if (!prevented || chrome.runtime.sent.length !== 2 ||
+            chrome.runtime.sent[1].url !== 'https://chatgpt.com/') process.exit(2);
 }});
 """
         subprocess.run(["node", "-e", script], check=True)

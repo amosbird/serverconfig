@@ -436,6 +436,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "connection_id": retire["connection_id"],
                 "principal_id": retire["principal_id"],
                 "request_id": "retire-consumed-request",
+                "delivery_request_id": "retire-completion-delivery",
                 "retire_id": "stable-retire", "executor_fence": server.fence,
                 "response_delivery_id": "retire-response",
             }
@@ -453,8 +454,9 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             consumer.start()
             self.assertEqual(server.wait_for("retire_managed_page_ack_consumed"), {
                 "type": "retire_managed_page_ack_consumed",
-                "request_id": "retire-consumed-request", "retire_id": "stable-retire",
-                "executor_fence": server.fence,
+                "request_id": "retire-consumed-request",
+                "delivery_request_id": "retire-completion-delivery",
+                "retire_id": "stable-retire", "executor_fence": server.fence,
                 "response_delivery_id": "retire-response",
             })
             self.assertTrue(consumer.is_alive(), "native completion must wait for server ACK")
@@ -472,6 +474,15 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "executor_fence": server.fence,
                 "response_delivery_id": "retire-response",
             })
+            for field in ("delivery_request_id", None):
+                invalid = dict(consumed)
+                if field is None:
+                    invalid["unexpected"] = True
+                else:
+                    invalid.pop(field)
+                with self.subTest(retire_consumed_field=field), self.assertRaises(ValueError):
+                    broker.handle_request(
+                        self.request("retire_managed_page_ack_consumed", invalid))
         finally:
             broker.close()
 
@@ -950,6 +961,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             consumed = {key: value for key, value in payload.items()
                         if key not in {"page", "origin_executor_fence"}}
             consumed["request_id"] = "topology-consumed-request"
+            consumed["delivery_request_id"] = "topology-one"
             consumed["response_delivery_id"] = "topology-response"
             confirmation = {}
             failure.clear()
@@ -965,8 +977,8 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             consumer.start()
             self.assertEqual(server.wait_for("topology_response_consumed"), {
                 "type": "topology_response_consumed", "request_id": "topology-consumed-request",
-                "report_id": "stable-topology-one", "executor_fence": server.fence,
-                "response_delivery_id": "topology-response",
+                "delivery_request_id": "topology-one", "report_id": "stable-topology-one",
+                "executor_fence": server.fence, "response_delivery_id": "topology-response",
             })
             self.assertTrue(consumer.is_alive(), "native completion must wait for server ACK")
             server.send({
@@ -981,6 +993,14 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 "request_id": "topology-consumed-request", "report_id": "stable-topology-one",
                 "executor_fence": server.fence, "response_delivery_id": "topology-response",
             })
+            for field in ("delivery_request_id", None):
+                invalid = dict(consumed)
+                if field is None:
+                    invalid["unexpected"] = True
+                else:
+                    invalid.pop(field)
+                with self.subTest(topology_consumed_field=field), self.assertRaises(ValueError):
+                    broker.handle_request(self.request("topology_response_consumed", invalid))
         finally:
             broker.close()
 

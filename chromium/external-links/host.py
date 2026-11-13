@@ -1834,13 +1834,16 @@ class RemotePeer:
             return
         self._authenticated_event("abush_browser.topology_report_response", response_message)
 
-    def topology_response_consumed(self, request_id, report_id, fence, delivery_id):
+    def topology_response_consumed(
+            self, request_id, delivery_request_id, report_id, fence, delivery_id):
         if not all(isinstance(value, str) and value for value in (
-                request_id, report_id, delivery_id)) or fence != self.executor_fence:
+                request_id, delivery_request_id, report_id, delivery_id)) or \
+                fence != self.executor_fence:
             raise ValueError("invalid topology response consumption")
         message = {
             "type": "topology_response_consumed",
             "request_id": request_id,
+            "delivery_request_id": delivery_request_id,
             "report_id": report_id,
             "executor_fence": fence,
             "response_delivery_id": delivery_id,
@@ -1936,13 +1939,16 @@ class RemotePeer:
             return
         self._authenticated_event("abush_browser.retire_managed_page_ack", response_message)
 
-    def retire_ack_consumed(self, request_id, retire_id, fence, delivery_id):
+    def retire_ack_consumed(
+            self, request_id, delivery_request_id, retire_id, fence, delivery_id):
         if not all(isinstance(value, str) and value for value in (
-                request_id, retire_id, delivery_id)) or fence != self.executor_fence:
+                request_id, delivery_request_id, retire_id, delivery_id)) or \
+                fence != self.executor_fence:
             raise ValueError("invalid retire acknowledgement consumption")
         message = {
             "type": "retire_managed_page_ack_consumed",
             "request_id": request_id,
+            "delivery_request_id": delivery_request_id,
             "retire_id": retire_id,
             "executor_fence": fence,
             "response_delivery_id": delivery_id,
@@ -2326,12 +2332,12 @@ class BrowserBroker:
             )
         if service == "abush_browser" and operation == "topology_response_consumed":
             peer = self._durable_payload(payload, {
-                "remote_key", "connection_id", "principal_id", "request_id", "report_id",
-                "executor_fence", "response_delivery_id",
+                "remote_key", "connection_id", "principal_id", "request_id",
+                "delivery_request_id", "report_id", "executor_fence", "response_delivery_id",
             }, "invalid topology response consumption payload")
             return peer.topology_response_consumed(
-                payload["request_id"], payload["report_id"], payload["executor_fence"],
-                payload["response_delivery_id"])
+                payload["request_id"], payload["delivery_request_id"], payload["report_id"],
+                payload["executor_fence"], payload["response_delivery_id"])
         if service == "abush_browser" and operation == "retire_managed_page_completion":
             peer = self._durable_payload(payload, {
                 "remote_key", "connection_id", "principal_id", "request_id", "retire_id",
@@ -2342,12 +2348,12 @@ class BrowserBroker:
                 payload["origin_executor_fence"], payload["completion"])
         if service == "abush_browser" and operation == "retire_managed_page_ack_consumed":
             peer = self._durable_payload(payload, {
-                "remote_key", "connection_id", "principal_id", "request_id", "retire_id",
-                "executor_fence", "response_delivery_id",
+                "remote_key", "connection_id", "principal_id", "request_id",
+                "delivery_request_id", "retire_id", "executor_fence", "response_delivery_id",
             }, "invalid retire acknowledgement consumption payload")
             return peer.retire_ack_consumed(
-                payload["request_id"], payload["retire_id"], payload["executor_fence"],
-                payload["response_delivery_id"])
+                payload["request_id"], payload["delivery_request_id"], payload["retire_id"],
+                payload["executor_fence"], payload["response_delivery_id"])
         if service == "abush_browser" and operation == "executor_completion":
             if set(payload) != {
                 "remote_key", "connection_id", "principal_id", "request_id", "effect_id",

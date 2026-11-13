@@ -303,6 +303,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                     if (index !== -1) tabs.splice(index, 1);
                 }
             },
+            sendMessage: async (id, message) => {
+                calls.push(["sendTabMessage", id, structuredClone(message)]);
+            },
         },
         debugger: {
             attach: async target => calls.push(["attach", target]),
@@ -1275,8 +1278,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         ready.resolve();
         await waitFor(() => responses.length === 2, "deferred runtime responses");
         assert.deepEqual(responses, [
-            {owned: true, ready: true, ok: true, route: false},
-            {owned: true, ready: true, ok: true, route: false},
+            {owned: true, generation: 0, ready: true, ok: true, route: false},
+            {owned: true, generation: 0, ready: true, ok: true, route: false},
         ]);
     }
     {
@@ -1316,7 +1319,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.deepEqual(await send({query: "abush_owned_window"}),
             {owned: null, ready: false, ok: false, route: false});
         assert.deepEqual(await send({url: "https://outside.test/"}),
-            {ok: true, owned: false, ready: true, route: true});
+            {ok: true, owned: false, generation: 0, ready: true, route: true});
         assert.equal(routed, 1, "ordinary routing must recover without a content reload");
     }
     {
@@ -3207,6 +3210,13 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         await executor.tabMoved(record.pageTabId, {windowId: 999});
         assert.equal(executor.workspaces.size, 0,
             "native report failure must not block local ownership convergence");
+        const invalidation = calls.find(call => call[0] === "sendTabMessage");
+        assert.equal(invalidation[1], record.pageTabId);
+        assert.deepEqual(invalidation[2], {
+            type: "abush_ownership_changed", owned: false,
+            generation: invalidation[2].generation,
+        });
+        assert(Number.isSafeInteger(invalidation[2].generation));
         const names = calls.map(call => call[0]);
         const outboxIndex = calls.findIndex(call => call[0] === "persistLocal" &&
             Array.isArray(call[1].abushTopologyOutbox) && call[1].abushTopologyOutbox.length === 1);
@@ -3599,6 +3609,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.notEqual(consumed.request_id, oldAck.request_id,
             "consumption must use a distinct durable request ID");
         assert.equal(consumed.connection_id, "c_new00000");
+        assert.equal(consumed.delivery_request_id, oldAck.request_id);
         assert.equal(consumed.response_delivery_id, oldAck.response_delivery_id);
         assert.deepEqual(consumed.executor_fence, replayFence);
     }
@@ -3635,6 +3646,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             "retire_managed_page_ack_consumed")[1];
         assert.equal(consumed.request_id, "stable-retire-consumed-id");
         assert.equal(consumed.connection_id, "c_current0");
+        assert.equal(consumed.delivery_request_id, ack.request_id);
         assert.deepEqual(consumed.executor_fence, currentFence);
         assert.deepEqual(localState.abushRetireLedger, [],
             "retire consumed ACK must converge after authority rotation with the same ID");
@@ -3771,6 +3783,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const consumed = calls.find(call => call[0] === "topology_response_consumed")[1];
         assert.notEqual(consumed.request_id, replayed.request_id,
             "topology consumption must use a distinct durable request ID");
+        assert.equal(consumed.delivery_request_id, replayed.request_id);
         const invalidReport = {...report, report_id: "unknown-rejected-report"};
         executor.topologyOutbox.set(invalidReport.report_id, invalidReport);
         const invalid = {...replayed,
@@ -3811,6 +3824,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert.equal(consumed.request_id, "stable-consumed-id",
             "authority rotation must preserve the stable consumed request ID");
         assert.equal(consumed.connection_id, "c_current0");
+        assert.equal(consumed.delivery_request_id, report.response.request_id);
         assert.deepEqual(consumed.executor_fence, currentFence);
         assert.deepEqual(localState.abushTopologyOutbox, [],
             "current-fence consumed ACK must remove the durable report");
@@ -3927,6 +3941,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         const consumed = calls.find(call => call[0] === "topology_response_consumed")[1];
         assert.notEqual(consumed.request_id, "daemon-replay-delivery",
             "daemon replay consumption must use its durable request ID");
+        assert.equal(consumed.delivery_request_id, "daemon-replay-delivery");
         assert.deepEqual(consumed.executor_fence, replayFence);
     }
     {

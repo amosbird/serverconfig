@@ -115,6 +115,7 @@ class WorkspaceExecutor {
         this.quarantinedCleanupNonces = new Set();
         this.windowRegistry = new Map();
         this.windowRegistryRevision = 0;
+        this.ownershipGeneration = Date.now();
         this.closingManagedWindows = new Set();
         this.browserBootId = null;
         this.bootstrapLeases = new Map();
@@ -807,6 +808,7 @@ class WorkspaceExecutor {
             connection_id: report.connection_id,
             principal_id: report.principal_id,
             request_id: report.consumed_request_id,
+            delivery_request_id: report.response.request_id,
             report_id: report.report_id,
             executor_fence: report.executor_fence,
             response_delivery_id: report.response.response_delivery_id,
@@ -3073,6 +3075,7 @@ class WorkspaceExecutor {
         });
         this.tabOwners.set(record.pageTabId, key);
         for (const tabId of record.statusTabIds) this.statusTabOwners.set(tabId, key);
+        this.nextOwnershipGeneration();
     }
 
     bindingPayload(record) {
@@ -3692,6 +3695,7 @@ class WorkspaceExecutor {
                 connection_id: entry.ack_connection_id,
                 principal_id: entry.identity.principal_id,
                 request_id: entry.consumed_request_id,
+                delivery_request_id: entry.ack.request_id,
                 retire_id: entry.ack.retire_id,
                 executor_fence: entry.delivery.executor_fence,
                 response_delivery_id: entry.ack.response_delivery_id,
@@ -4720,12 +4724,33 @@ class WorkspaceExecutor {
         }
     }
 
+    nextOwnershipGeneration() {
+        this.ownershipGeneration = Math.max(Date.now(), this.ownershipGeneration + 1);
+        return this.ownershipGeneration;
+    }
+
+    notifyOwnershipLost(tabId, generation) {
+        if (!Number.isInteger(tabId) || !this.chrome.tabs.sendMessage) return;
+        Promise.resolve(this.chrome.tabs.sendMessage(tabId, {
+            type: "abush_ownership_changed",
+            owned: false,
+            generation,
+        })).catch(() => {});
+    }
+
     forget(record) {
         const key = this.key(record.remoteKey, record.principalId);
-        this.workspaces.delete(key);
-        this.windowOwners.delete(record.windowId);
-        this.tabOwners.delete(record.pageTabId);
-        for (const tabId of record.statusTabIds) this.statusTabOwners.delete(tabId);
+        if (this.workspaces.get(key) === record) this.workspaces.delete(key);
+        if (this.windowOwners.get(record.windowId) === key) {
+            this.windowOwners.delete(record.windowId);
+        }
+        const ownedPage = this.tabOwners.get(record.pageTabId) === key;
+        if (ownedPage) this.tabOwners.delete(record.pageTabId);
+        for (const tabId of record.statusTabIds) {
+            if (this.statusTabOwners.get(tabId) === key) this.statusTabOwners.delete(tabId);
+        }
+        if (ownedPage) this.notifyOwnershipLost(
+            record.pageTabId, this.nextOwnershipGeneration());
     }
 
     async closeOwnedWindow(record) {
@@ -5329,6 +5354,13 @@ class WorkspaceExecutor {
         }
         await this.convergeManagedTopology(record);
         return true;
+    }
+
+    ownershipState(windowId) {
+        return {
+            owned: this.ownsWindow(windowId),
+            generation: this.ownershipGeneration,
+        };
     }
 
     ownsWindow(windowId) {

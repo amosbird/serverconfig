@@ -551,15 +551,18 @@ function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openI
         const respondAfterReady = async () => {
             try {
                 await ready();
-                const owned = workspaces.ownsWindow(sender.tab?.windowId);
+                const {owned, generation} = typeof workspaces.ownershipState === "function" ?
+                    workspaces.ownershipState(sender.tab?.windowId) :
+                    {owned: workspaces.ownsWindow(sender.tab?.windowId), generation: 0};
                 if (message.query === "abush_owned_window") {
-                    return {owned, ready: true, ok: true, route: false};
+                    return {owned, generation, ready: true, ok: true, route: false};
                 }
-                if (!message.url) return {owned, ready: true, ok: false, route: false};
-                if (owned) return {owned: true, ready: true, ok: true, route: false};
+                if (!message.url) return {owned, generation, ready: true, ok: false, route: false};
+                if (owned) return {owned: true, generation, ready: true, ok: true, route: false};
                 return await new Promise(resolve => {
                     open(message.url, message.sourceUrl || sender.tab?.url || "", response => {
-                        resolve({...response, owned: false, ready: true, route: response.ok});
+                        resolve({...response, owned: false, generation, ready: true,
+                            route: response.ok});
                     });
                 });
             } catch (_) {
