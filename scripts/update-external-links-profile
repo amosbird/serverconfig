@@ -2,40 +2,101 @@
 
 set -euo pipefail
 
+if [[ $# -ne 1 ]]; then
+    printf 'usage: update-external-links-profile PROFILE\n' >&2
+    exit 2
+fi
+
 profile=$1
 extension_id=ahonjbfnmpjgjgaabbppofphidfomgcj
-declaration=/opt/google/chrome/extensions/$extension_id.json
+default_declaration=/opt/google/chrome/extensions/$extension_id.json
+declaration=${ABUSH_EXTERNAL_LINKS_DECLARATION:-$default_declaration}
 preferences="$profile/Default/Preferences"
+proc_root=${ABUSH_PROC_ROOT:-/proc}
 
 [[ -r $declaration && -f $preferences ]] || exit 0
 wanted=$(jq -r '.external_version // empty' "$declaration")
-[[ -n $wanted ]] || exit 0
+crx=$(jq -r '.external_crx // empty' "$declaration")
+version_pattern='^[0-9]+(\.[0-9]+){0,3}$'
+[[ $wanted =~ $version_pattern && -n $crx && -r $crx ]] || {
+    printf 'External Links declaration does not reference a readable CRX\n' >&2
+    exit 1
+}
 installed=$(jq -r --arg id "$extension_id" \
     '.extensions.settings[$id].manifest.version // empty' "$preferences")
 [[ -z $installed || $installed == "$wanted" ]] && exit 0
+[[ $installed =~ $version_pattern ]] || {
+    printf 'Installed External Links version is invalid\n' >&2
+    exit 1
+}
+python3 - "$installed" "$wanted" <<'PY'
+import sys
 
-if ps -eo args= | grep -F -- "--user-data-dir=$profile" | grep -q '/chrome'; then
-    exit 0
+installed = tuple(int(part) for part in sys.argv[1].split("."))
+wanted = tuple(int(part) for part in sys.argv[2].split("."))
+installed += (0,) * (4 - len(installed))
+wanted += (0,) * (4 - len(wanted))
+if wanted <= installed:
+    raise SystemExit("External Links declaration is not a newer version")
+PY
+
+profile_is_running() {
+    local argument process
+    for process in "$proc_root"/[0-9]*/cmdline; do
+        [[ -r $process ]] || continue
+        while IFS= read -r -d '' argument; do
+            if [[ $argument == "--user-data-dir=$profile" ]]; then
+                return 0
+            fi
+        done < "$process"
+    done
+    return 1
+}
+
+if profile_is_running; then
+    printf 'External Links %s is installed but %s is required; exit Chrome and retry\n' \
+        "$installed" "$wanted" >&2
+    exit 1
 fi
 
 backup="$profile/external-links-backups/$installed"
 mkdir -p "$backup"
-cp -a "$preferences" "$backup/Preferences"
-if [[ -d $profile/Default/Extensions/$extension_id ]]; then
+if [[ ! -e $backup/Preferences ]]; then
+    cp -a "$preferences" "$backup/Preferences"
+fi
+if [[ -d $profile/Default/Extensions/$extension_id && \
+        ! -e $backup/$extension_id ]]; then
     cp -a "$profile/Default/Extensions/$extension_id" "$backup/"
 fi
+rm -rf "$profile/Default/Extensions/$extension_id"
 
 python3 - "$preferences" "$extension_id" <<'PY'
 import json
+import os
 import pathlib
+import stat
 import sys
+import tempfile
 
 path = pathlib.Path(sys.argv[1])
 extension_id = sys.argv[2]
 data = json.loads(path.read_text())
 data.get("extensions", {}).get("settings", {}).pop(extension_id, None)
-temporary = path.with_suffix(".tmp")
-temporary.write_text(json.dumps(data, separators=(",", ":")))
-temporary.replace(path)
+info = path.stat()
+descriptor, temporary_name = tempfile.mkstemp(prefix=".Preferences.", dir=path.parent)
+temporary = pathlib.Path(temporary_name)
+try:
+    with os.fdopen(descriptor, "w") as output:
+        json.dump(data, output, separators=(",", ":"))
+        output.flush()
+        os.fsync(output.fileno())
+    os.chmod(temporary, stat.S_IMODE(info.st_mode))
+    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+finally:
+    temporary.unlink(missing_ok=True)
 PY
-rm -rf "$profile/Default/Extensions/$extension_id"

@@ -31,6 +31,10 @@ launch_chrome() {
     exec "$chrome" "${chrome_args[@]}"
 }
 
+update_external_links_profile() {
+    "$root/scripts/update-external-links-profile" "$profile"
+}
+
 focus_group=true
 if [[ ${1:-} == --current-group ]]; then
     focus_group=false
@@ -75,6 +79,7 @@ PY
     ) || exit
     lease_path=
     if ! $chrome_running; then
+        update_external_links_profile || exit
         lease_output=${XDG_RUNTIME_DIR}/abush/ordinary-launch-metadata.$request_id
         mkdir -p "$(dirname "$lease_output")"
         chmod 700 "$(dirname "$lease_output")"
@@ -110,6 +115,7 @@ if [[ $# -gt 0 ]]; then
     exit 2
 fi
 
+update_external_links_profile || exit
 if $focus_group; then
     focus_main_group
 fi

@@ -630,6 +630,14 @@ class LauncherTest(unittest.TestCase):
             "  'lease_path':str(pathlib.Path(os.environ['XDG_RUNTIME_DIR']) /\n"
             "   'abush/ordinary-launch' / f'{request_id}.json')}))\n"
         )
+        self.update_log = self.base / "update-log"
+        self.fake_updater = self.base / "root/scripts/update-external-links-profile"
+        self.fake_updater.write_text(
+            "#!/usr/bin/env bash\n"
+            "[[ ! -e $ABUSH_TEST_CHROME_READY ]] || exit 9\n"
+            "printf '%s' \"$1\" > \"$ABUSH_TEST_UPDATE_LOG\"\n"
+        )
+        self.fake_updater.chmod(0o755)
 
     def tearDown(self):
         import shutil
@@ -647,6 +655,7 @@ class LauncherTest(unittest.TestCase):
             "ABUSH_TEST_CHROME_LOG": str(self.log),
             "ABUSH_TEST_CHROME_READY": str(self.chrome_ready),
             "ABUSH_TEST_CLIENT_LOG": str(self.base / "client"),
+            "ABUSH_TEST_UPDATE_LOG": str(self.update_log),
         }
 
     def test_chrome_start_argv_never_contains_url(self):
@@ -660,6 +669,7 @@ class LauncherTest(unittest.TestCase):
         arguments = self.log.read_bytes().split(b"\0")
         self.assertNotIn(url.encode(), arguments)
         self.assertIn(b"--remote-debugging-port=9222", arguments)
+        self.assertEqual(self.update_log.read_text(), str(self.base / "profile"))
         self.assertEqual((self.base / "client").read_text(), url)
 
     def test_cold_wrapper_writes_secure_lease_before_chrome_without_url_argv(self):
@@ -679,7 +689,7 @@ class LauncherTest(unittest.TestCase):
         lease_ready_path = self.base / "lease-ready"
         os.mkfifo(lease_ready_path, 0o600)
         environment["ABUSH_TEST_LEASE_READY"] = str(lease_ready_path)
-        socket_path = self.base / "cold.sock"
+        socket_path = ROOT / ".tmp" / f"cold-{os.getpid():x}-{id(self):x}.sock"
         environment["ABUSH_ORDINARY_OPEN_SOCKET"] = str(socket_path)
         outbound = queue.Queue()
         server = host.OrdinaryOpenServer(outbound, path=socket_path, timeout=1)
@@ -710,6 +720,7 @@ class LauncherTest(unittest.TestCase):
                                 capture_output=True, text=True, timeout=2)
         worker.join(timeout=1)
         server.close()
+        socket_path.unlink(missing_ok=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         arguments = self.log.read_bytes().split(b"\0")
         self.assertNotIn(url.encode(), arguments)
@@ -728,7 +739,18 @@ class LauncherTest(unittest.TestCase):
                                 capture_output=True, text=True, timeout=2)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.log.exists())
+        self.assertFalse(self.update_log.exists())
         self.assertEqual((self.base / "client").read_text(), url)
+
+    def test_updater_failure_blocks_chrome_and_socket_submission(self):
+        self.fake_updater.write_text("#!/usr/bin/env bash\nexit 7\n")
+        result = subprocess.run(
+            [ROOT / "scripts/chromium", "https://example.test/update-failed"],
+            env=self.environment(), capture_output=True, text=True, timeout=2,
+        )
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertFalse(self.log.exists())
+        self.assertFalse((self.base / "client").exists())
 
     def test_missing_socket_client_failure_is_nonzero_without_fallback(self):
         missing_root = self.base / "missing-root"
@@ -831,6 +853,84 @@ class LauncherTest(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(capture.read_text(), target.resolve().as_uri())
+
+
+class ExternalLinksProfileUpdateTest(unittest.TestCase):
+    extension_id = "ahonjbfnmpjgjgaabbppofphidfomgcj"
+
+    def setUp(self):
+        self.base = ROOT / ".tmp" / f"profile-update-{os.getpid()}-{id(self):x}"
+        self.profile = self.base / "google-chrome-main"
+        self.preferences = self.profile / "Default/Preferences"
+        self.extension = self.profile / "Default/Extensions" / self.extension_id
+        self.proc = self.base / "proc"
+        self.bin = self.base / "bin"
+        self.crx = self.base / "extension.crx"
+        self.declaration = self.base / "external-extension.json"
+        self.extension.mkdir(parents=True, mode=0o700)
+        self.proc.mkdir()
+        self.bin.mkdir()
+        fake_ps = self.bin / "ps"
+        fake_ps.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '%s\\n' 'grep -- --user-data-dir={self.profile} /chrome'\n"
+        )
+        fake_ps.chmod(0o755)
+        (self.extension / "old-version").mkdir()
+        self.preferences.write_text(json.dumps({
+            "extensions": {"settings": {self.extension_id: {
+                "manifest": {"version": "1.0"},
+                "path": f"{self.extension_id}/1.0_0",
+            }}},
+        }))
+        self.crx.write_bytes(b"test-crx")
+        self.declaration.write_text(json.dumps({
+            "external_crx": str(self.crx),
+            "external_version": "2.0",
+        }))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.base)
+
+    def environment(self):
+        return {
+            **os.environ,
+            "ABUSH_PROC_ROOT": str(self.proc),
+            "ABUSH_EXTERNAL_LINKS_DECLARATION": str(self.declaration),
+            "PATH": f"{self.bin}:{os.environ['PATH']}",
+        }
+
+    def run_updater(self):
+        return subprocess.run(
+            [ROOT / "scripts/update-external-links-profile", str(self.profile)],
+            env=self.environment(), capture_output=True, text=True, timeout=2,
+        )
+
+    def test_stopped_profile_is_backed_up_and_old_extension_is_removed(self):
+        result = self.run_updater()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = json.loads(self.preferences.read_text())["extensions"]["settings"]
+        self.assertNotIn(self.extension_id, settings)
+        backup = self.profile / "external-links-backups/1.0"
+        self.assertTrue((backup / "Preferences").is_file())
+        self.assertTrue((backup / self.extension_id / "old-version").is_dir())
+        self.assertFalse(self.extension.exists())
+
+    def test_exact_running_chrome_process_blocks_profile_mutation(self):
+        process = self.proc / "42"
+        process.mkdir()
+        (process / "cmdline").write_bytes(
+            b"/opt/google/chrome/chrome\0--user-data-dir="
+            + os.fsencode(self.profile) + b"\0"
+        )
+        original = self.preferences.read_bytes()
+        result = self.run_updater()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("exit Chrome and retry", result.stderr)
+        self.assertEqual(self.preferences.read_bytes(), original)
+        self.assertTrue(self.extension.exists())
+        self.assertFalse((self.profile / "external-links-backups").exists())
 
 
 if __name__ == "__main__":
