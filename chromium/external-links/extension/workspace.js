@@ -77,6 +77,8 @@ class WorkspaceExecutor {
         this.ordinaryMruClock = 0;
         this.ensureFlights = new Map();
         this.ensureWaiters = new Map();
+        this.ensureCompletions = new Map();
+        this.ensureCompletionTail = Promise.resolve();
         this.persistTail = Promise.resolve();
         this.persistRevision = 0;
         this.localStateTail = Promise.resolve();
@@ -3086,6 +3088,7 @@ class WorkspaceExecutor {
         await this.restoreReplacementLedger();
         await this.restoreExecutionLedger();
         await this.restoreOperationCancels();
+        await this.restoreEnsureCompletions();
         await this.restorePendingTransactions();
         await this.restoreManagedCleanupBatch();
         await this.restoreCleanupTombstones();
@@ -3168,6 +3171,7 @@ class WorkspaceExecutor {
         await this.primeRecentlyClosedSessions();
         await this.initializeOrdinaryMru();
         await this.flushExecutionLedger();
+        await this.flushEnsureCompletions();
     }
 
     install(record) {
@@ -3345,11 +3349,15 @@ class WorkspaceExecutor {
 
     async ensureAuthorized(payload) {
         const requestKey = this.ensureRequestKey(payload);
-        const terminal = await this.chrome.storage.local.get([ENSURE_COMPLETIONS_KEY]);
+        await this.restoreEnsureCompletions();
         if (this.remoteAuthorities.has(payload.remote_key)) this.requireCurrentAuthority(payload);
-        const completion = terminal[ENSURE_COMPLETIONS_KEY]?.[requestKey];
-        if (completion) {
-            await this.completeEnsure(payload, completion);
+        const terminal = this.ensureCompletions.get(requestKey);
+        if (terminal) {
+            if (terminal.kind === "cancellation") {
+                await this.deliverEnsureCompletion(requestKey);
+                return undefined;
+            }
+            await this.completeEnsure(payload, terminal.completion);
             return this.workspaces.get(this.key(payload.remote_key, payload.principal_id));
         }
         if (this.ensureWaiters.has(requestKey)) throw new Error("duplicate ensure request");
@@ -3404,8 +3412,8 @@ class WorkspaceExecutor {
     }
 
     async ensureCancellationCompleted(payload) {
-        await this.nativeRequest("abush_browser", "ensure_managed_page_cancellation_completion",
-            this.ensureIdentity(payload));
+        await this.stageEnsureCompletion(payload, null, "cancellation");
+        await this.deliverEnsureCompletion(this.ensureRequestKey(payload));
     }
 
     retireIdentity(payload) {
@@ -4175,11 +4183,11 @@ class WorkspaceExecutor {
         if (!allowStale && this.remoteAuthorities.has(payload.remote_key)) {
             this.requireCurrentAuthority(payload);
         }
-        const terminalState = await this.chrome.storage.local.get([ENSURE_COMPLETIONS_KEY]);
+        await this.restoreEnsureCompletions();
         if (!allowStale && this.remoteAuthorities.has(payload.remote_key)) {
             this.requireCurrentAuthority(payload);
         }
-        if (terminalState[ENSURE_COMPLETIONS_KEY]?.[this.ensureRequestKey(payload)]) return false;
+        if (this.ensureCompletions.has(this.ensureRequestKey(payload))) return false;
         const waiter = this.ensureWaiters.get(this.ensureRequestKey(payload));
         if (!waiter || waiter.cancelled || waiter.terminalOutcome) return false;
         const flight = waiter.flight;
@@ -4637,25 +4645,159 @@ class WorkspaceExecutor {
         }
     }
 
-    async completeEnsure(payload, completion) {
+    validEnsureCompletion(completion) {
+        return (exactFields(completion, ["outcome", "window_id", "page_id"]) &&
+            completion.outcome === "created" &&
+            [completion.window_id, completion.page_id].every(value =>
+                typeof value === "string" && value)) ||
+            (exactFields(completion, ["outcome", "code"]) &&
+                completion.outcome === "rejected" && BROWSER_ERROR_CODES.has(completion.code));
+    }
+
+    completionTransport(payload) {
+        const authority = this.remoteAuthorities.get(payload.remote_key);
+        return {...structuredClone(payload), connection_id:
+            authority?.connected && authority.principal_id === payload.principal_id ?
+                authority.connection_id : payload.connection_id};
+    }
+
+    requireCompletionReceipt(receipt, payload, type, idField, completion) {
+        const fields = ["type", "request_id", idField, "executor_fence"];
+        if (completion !== undefined) fields.push("completion");
+        const validCompletion = completion === undefined || (idField === "ensure_id" ?
+            this.validEnsureCompletion(completion) :
+            ["applied", "not_applied", "unknown"].includes(completion) &&
+                (type !== "cancellation_completion_accepted" || completion !== "applied"));
+        if (!validCompletion || !exactFields(receipt, fields) || receipt.type !== type ||
+                receipt.request_id !== payload.request_id || receipt[idField] !== payload[idField] ||
+                !validFence(receipt.executor_fence) ||
+                receipt.executor_fence.executor_id !== payload.executor_fence.executor_id ||
+                receipt.executor_fence.epoch !== payload.executor_fence.epoch ||
+                (completion !== undefined && (idField === "ensure_id" ?
+                    !this.validEnsureCompletion(receipt.completion) ||
+                        !Object.keys(completion).every(field =>
+                            receipt.completion[field] === completion[field]) :
+                    receipt.completion !== completion))) {
+            const error = new Error("native completion receipt was not canonical");
+            this.reportAdvisoryError(error);
+            throw error;
+        }
+    }
+
+    async restoreEnsureCompletions() {
+        const stored = await this.chrome.storage.local.get([ENSURE_COMPLETIONS_KEY]);
+        for (const [key, value] of Object.entries(stored[ENSURE_COMPLETIONS_KEY] || {})) {
+            if (this.ensureCompletions.has(key)) continue;
+            if (value?.version === 1 && ["pending_ack", "acked"].includes(value.phase) &&
+                    value.payload && this.validateEnsureCancellation(
+                        this.ensureIdentity(value.payload)) &&
+                    key === this.ensureRequestKey(value.payload) &&
+                    exactFields(value.payload, value.kind === "cancellation" ?
+                        Object.keys(this.ensureIdentity(value.payload)) :
+                        [...Object.keys(this.ensureIdentity(value.payload)), "workspace_id"]) &&
+                    (value.kind !== "terminal" || typeof value.payload.workspace_id === "string" &&
+                        value.payload.workspace_id.length > 0) &&
+                    ["terminal", "cancellation"].includes(value.kind) &&
+                    (value.kind === "cancellation" ? value.completion === null :
+                        this.validEnsureCompletion(value.completion))) {
+                this.ensureCompletions.set(key, value);
+            } else if (value?.version === 1 && value.payload === null &&
+                    value.phase === "pending_ack" && value.kind === "terminal" &&
+                    this.validEnsureCompletion(value.completion)) {
+                this.ensureCompletions.set(key, value);
+            } else if (this.validEnsureCompletion(value)) {
+                this.ensureCompletions.set(key, {version: 1, phase: "pending_ack",
+                    kind: "terminal", payload: null, completion: value});
+            } else {
+                throw new Error("invalid durable ensure completion");
+            }
+        }
+    }
+
+    async persistEnsureCompletions() {
+        await this.localStateWrite(ENSURE_COMPLETIONS_KEY,
+            () => Object.fromEntries(this.ensureCompletions));
+    }
+
+    async stageEnsureCompletion(payload, completion, kind = "terminal") {
+        await this.restoreEnsureCompletions();
         const key = this.ensureRequestKey(payload);
-        await this.localStateUpdate(ENSURE_COMPLETIONS_KEY, saved => {
-            if (saved[key] && !sameRef(saved[key], completion)) {
+        return this.enqueueLocalState(async () => {
+            const stored = await this.chrome.storage.local.get([ENSURE_COMPLETIONS_KEY]);
+            const saved = stored[ENSURE_COMPLETIONS_KEY] || {};
+            const old = this.ensureCompletions.get(key) || saved[key];
+            const oldCompletion = old?.version === 1 ? old.completion : old;
+            if (old && (!sameRef(oldCompletion, completion) ||
+                    (old.version === 1 && old.kind !== kind))) {
                 throw new Error("conflicting durable ensure terminal outcome");
             }
-            saved[key] = structuredClone(completion);
-            return saved;
-        }, {});
-        await this.nativeRequest("abush_browser", "ensure_managed_page_completion", {
-            remote_key: payload.remote_key,
-            connection_id: payload.connection_id,
-            principal_id: payload.principal_id,
-            workspace_id: payload.workspace_id,
-            request_id: payload.request_id,
-            ensure_id: payload.ensure_id,
-            executor_fence: payload.executor_fence,
-            completion,
+            const wire = structuredClone(this.ensureIdentity(payload));
+            if (kind === "terminal") wire.workspace_id = payload.workspace_id;
+            const entry = old?.version === 1 && old.payload ? old : {
+                version: 1, phase: "pending_ack", kind, payload: wire,
+                completion: structuredClone(completion),
+            };
+            // Keep the selected terminal in memory even if storage reports an ambiguous write.
+            this.ensureCompletions.set(key, entry);
+            saved[key] = entry;
+            await this.chrome.storage.local.set({[ENSURE_COMPLETIONS_KEY]: structuredClone(saved)});
         });
+    }
+
+    async deliverEnsureCompletion(key, authority = null) {
+        const entry = this.ensureCompletions.get(key);
+        if (!entry || entry.phase === "acked") return;
+        if (!entry.payload) {
+            throw new Error("legacy ensure completion needs duplicate request metadata for replay");
+        }
+        // Only transport identity changes on reconnect; receipt identity retains the origin fence.
+        const payload = this.completionTransport(entry.payload);
+        if (authority) payload.connection_id = authority.connection_id;
+        const cancelled = entry.kind === "cancellation";
+        const operation = cancelled ? "ensure_managed_page_cancellation_completion" :
+            "ensure_managed_page_completion";
+        if (!cancelled) payload.completion = structuredClone(entry.completion);
+        await this.persistEnsureCompletions();
+        const expected = structuredClone(payload);
+        const receipt = await this.nativeRequest("abush_browser", operation,
+            structuredClone(payload));
+        this.requireCompletionReceipt(receipt, expected, cancelled ?
+            "ensure_managed_page_cancellation_accepted" :
+            "ensure_managed_page_completion_accepted", "ensure_id",
+            cancelled ? undefined : entry.completion);
+        const acknowledged = {...entry, phase: "acked"};
+        this.ensureCompletions.set(key, acknowledged);
+        try {
+            await this.persistEnsureCompletions();
+        } catch (error) {
+            this.ensureCompletions.set(key, entry);
+            throw error;
+        }
+    }
+
+    flushEnsureCompletions(authority = null) {
+        const flush = this.ensureCompletionTail.catch(() => {}).then(async () => {
+            await this.restoreEnsureCompletions();
+            for (const [key, entry] of this.ensureCompletions) {
+                if (entry.phase === "acked" || (authority && entry.payload &&
+                        (entry.payload.remote_key !== authority.remote_key ||
+                            entry.payload.principal_id !== authority.principal_id))) continue;
+                try {
+                    await this.deliverEnsureCompletion(key, authority);
+                } catch (error) {
+                    this.reportAdvisoryError(new AggregateError([error],
+                        "ensure completion remains pending acknowledgement"));
+                }
+            }
+        });
+        this.ensureCompletionTail = flush;
+        return flush;
+    }
+
+    async completeEnsure(payload, completion) {
+        if (!this.validEnsureCompletion(completion)) throw new Error("invalid ensure completion");
+        await this.stageEnsureCompletion(payload, completion);
+        await this.deliverEnsureCompletion(this.ensureRequestKey(payload));
     }
 
     windowRef(record) {
@@ -4699,15 +4841,18 @@ class WorkspaceExecutor {
     }
 
     async completion(payload, completion) {
-        await this.nativeRequest("abush_browser", "executor_completion", {
+        payload = this.completionTransport(payload);
+        const receipt = await this.nativeRequest("abush_browser", "executor_completion", {
             remote_key: payload.remote_key,
             connection_id: payload.connection_id,
             principal_id: payload.principal_id,
             request_id: payload.request_id,
             effect_id: payload.effect_id,
-            executor_fence: payload.executor_fence,
+            executor_fence: structuredClone(payload.executor_fence),
             completion,
         });
+        this.requireCompletionReceipt(receipt, payload, "completion_accepted", "effect_id",
+            completion);
     }
 
     operationIdentity(payload) {
@@ -4813,9 +4958,15 @@ class WorkspaceExecutor {
                 try {
                     await this.completion(entry.identity, entry.completion);
                     if (this.executionLedger.get(effectKey) !== entry) continue;
-                    entry = {...entry, phase: "acked"};
-                    this.executionLedger.set(effectKey, entry);
-                    await this.persistExecutionLedger();
+                    const acknowledged = {...entry, phase: "acked"};
+                    this.executionLedger.set(effectKey, acknowledged);
+                    try {
+                        await this.persistExecutionLedger();
+                    } catch (error) {
+                        this.executionLedger.set(effectKey, entry);
+                        throw error;
+                    }
+                    entry = acknowledged;
                 } catch (error) {
                     this.reportAdvisoryError(new AggregateError([error],
                         "executor completion remains pending acknowledgement"));
@@ -4841,13 +4992,23 @@ class WorkspaceExecutor {
                 } else {
                     this.pendingOperationCancels.delete(operationKey);
                 }
-                await this.persistOperationCancels();
+                try {
+                    await this.persistOperationCancels();
+                } catch (error) {
+                    this.pendingOperationCancels.set(operationKey, cancellations);
+                    throw error;
+                }
                 cancellations = remaining;
             }
             if (cancellations.length > 0) continue;
             if (this.executionLedger.get(effectKey) !== entry) continue;
             this.executionLedger.delete(effectKey);
-            await this.persistExecutionLedger();
+            try {
+                await this.persistExecutionLedger();
+            } catch (error) {
+                this.executionLedger.set(effectKey, entry);
+                throw error;
+            }
             this.rememberCompletedOperation(operationKey, {
                 ...entry.identity,
                 payload: entry.identity,
@@ -5098,15 +5259,18 @@ class WorkspaceExecutor {
     }
 
     async cancellationCompletion(payload, completion) {
-        await this.nativeRequest("abush_browser", "cancellation_completion", {
+        payload = this.completionTransport(payload);
+        const receipt = await this.nativeRequest("abush_browser", "cancellation_completion", {
             remote_key: payload.remote_key,
             connection_id: payload.connection_id,
             principal_id: payload.principal_id,
             request_id: payload.request_id,
             effect_id: payload.effect_id,
-            executor_fence: payload.executor_fence,
+            executor_fence: structuredClone(payload.executor_fence),
             completion,
         });
+        this.requireCompletionReceipt(receipt, payload, "cancellation_completion_accepted",
+            "effect_id", completion);
     }
 
     async waitForOperationDone(operation) {
@@ -5184,22 +5348,16 @@ class WorkspaceExecutor {
             await this.flushExecutionLedger();
             return;
         }
-        const completion = operation &&
-            (operation.mutationStarted || operation.committed || operation.uncertain ||
-                operation.completion === "applied" || operation.completion === "unknown") ?
-            "unknown" : "not_applied";
-        await this.cancellationCompletion(payload, completion);
-        const pending = this.pendingOperationCancels.get(operationKey);
-        if (pending) {
-            const remaining = pending.filter(saved => !sameRef(saved, payload));
-            if (remaining.length > 0) this.pendingOperationCancels.set(operationKey, remaining);
-            else this.pendingOperationCancels.delete(operationKey);
-        }
-        if (operation?.cancellationPayloads) {
-            operation.cancellationPayloads = operation.cancellationPayloads
-                .filter(saved => !sameRef(saved, payload));
-        }
+        const pending = this.pendingOperationCancels.get(operationKey) || [];
+        if (!pending.some(saved => sameRef(saved, payload))) pending.push(structuredClone(payload));
+        this.pendingOperationCancels.set(operationKey, pending);
+        this.executionLedger.set(this.operationEffectKey(execution), {
+            version: 1, phase: "acked", identity: this.operationEffectIdentity(operation.payload),
+            completion: operation.completion,
+        });
+        await this.persistExecutionLedger();
         await this.persistOperationCancels();
+        await this.flushExecutionLedger();
     }
 
     cancelMatchingSerialized(matches) {
@@ -5241,6 +5399,8 @@ class WorkspaceExecutor {
         }
         await this.authorizeTopologyOutbox(state);
         if (authority) {
+            await this.flushEnsureCompletions(authority);
+            await this.flushExecutionLedger();
             await this.restoreQuarantinedCleanupReports();
             await this.processDeferredTopologyResponses(authority);
             await this.recoverRetireLedger(authority);

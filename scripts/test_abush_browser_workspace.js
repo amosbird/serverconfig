@@ -100,6 +100,23 @@ function deferred(label = "deferred promise") {
     return {promise: exactWait(pending, label), resolve, reject};
 }
 
+function typedResponse(operation, payload) {
+    const types = {
+        executor_completion: "completion_accepted",
+        cancellation_completion: "cancellation_completion_accepted",
+        ensure_managed_page_completion: "ensure_managed_page_completion_accepted",
+        ensure_managed_page_cancellation_completion: "ensure_managed_page_cancellation_accepted",
+    };
+    if (!types[operation]) return null;
+    const id = operation.startsWith("ensure_") ? "ensure_id" : "effect_id";
+    const response = {type: types[operation], request_id: payload.request_id,
+        [id]: payload[id], executor_fence: payload.executor_fence};
+    if (operation !== "ensure_managed_page_cancellation_completion") {
+        response.completion = payload.completion;
+    }
+    return structuredClone(response);
+}
+
 function candidateLeaseResponse(operation, payload) {
     if (operation === "register_candidate_lease") {
         return {accepted: true, nonce: payload.nonce};
@@ -390,7 +407,7 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
                 response_delivery_id: payload.response_delivery_id,
             };
         }
-        return {};
+        return typedResponse(operation, payload) || {};
     };
     const executor = new WorkspaceExecutor(chrome, native);
     executor.browserBootId = "test-browser-boot";
@@ -506,6 +523,186 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
     }, 15000);
     testDeadline.unref();
     try {
+    for (const operation of ["executor_completion", "cancellation_completion",
+        "ensure_managed_page_completion", "ensure_managed_page_cancellation_completion"]) {
+        for (const fault of ["empty", "undefined", "request_id", "id", "executor_fence", "type",
+            "completion", "extra"]) {
+            if (operation === "ensure_managed_page_cancellation_completion" &&
+                    fault === "completion") continue;
+            beginCase();
+            activeCase = `${operation} rejects ${fault}`;
+            const localState = {};
+            const {executor} = fixture([], [], 0, false, null, localState);
+            const payload = {...ensurePayload(), effect_id: "effect-receipt"};
+            const ensure = operation.startsWith("ensure_");
+            const cancelled = operation.includes("cancellation");
+            const completion = ensure ? {outcome: "created", window_id: logicalWindowId,
+                page_id: logicalPageId} : cancelled ? "unknown" : "applied";
+            executor.nativeRequest = async (_service, kind, value) => {
+                const receipt = typedResponse(kind, value);
+                if (fault === "empty") return {};
+                if (fault === "undefined") return undefined;
+                if (fault === "request_id") receipt.request_id = "wrong";
+                if (fault === "id") receipt[ensure ? "ensure_id" : "effect_id"] = "wrong";
+                if (fault === "executor_fence") receipt.executor_fence = {...fence, epoch: 2};
+                if (fault === "type") receipt.type = "wrong_accepted";
+                if (fault === "completion") receipt.completion = ensure ?
+                    {outcome: "rejected", code: "invalid_command"} : "not_applied";
+                if (fault === "extra") receipt.extra = true;
+                return receipt;
+            };
+            if (ensure) {
+                const pending = cancelled ? executor.ensureCancellationCompleted(payload) :
+                    executor.completeEnsure(payload, completion);
+                await assert.rejects(pending, /receipt was not canonical/);
+                assert.equal(localState.abushEnsureCompletions[
+                    executor.ensureRequestKey(payload)].phase, "pending_ack");
+            } else {
+                const identity = {...executor.operationIdentity(payload), command: {command: "x"}};
+                executor.executionLedger.set(executor.operationEffectKey(payload), {
+                    version: 1, phase: cancelled ? "acked" : "terminal_pending_ack",
+                    identity, completion: "applied",
+                });
+                if (cancelled) {
+                    executor.pendingOperationCancels.set(executor.operationKey(payload), [payload]);
+                    await executor.persistOperationCancels();
+                }
+                await executor.persistExecutionLedger();
+                await executor.flushExecutionLedger();
+                assert.equal(executor.executionLedger.size, 1);
+                if (cancelled) assert.equal(executor.pendingOperationCancels.size, 1);
+            }
+            assert(executor.advisoryErrors.length > 0);
+        }
+    }
+    for (const boundary of ["reply", "before_ack_storage", "after_ack_storage"]) {
+        for (const cancelled of [false, true]) {
+            beginCase();
+            activeCase = `ensure ${cancelled ? "cancellation" : "terminal"} loss ${boundary}`;
+            const localState = {};
+            const first = fixture([], [], 0, false, null, localState);
+            const payload = ensurePayload();
+            const completion = {outcome: "created", window_id: logicalWindowId,
+                page_id: logicalPageId};
+            const accepted = deferred("ensure acceptance barrier");
+            const release = deferred("ensure receipt release barrier");
+            const native = first.executor.nativeRequest;
+            first.executor.nativeRequest = async (service, operation, value) => {
+                const receipt = await native(service, operation, value);
+                accepted.resolve();
+                await release.promise;
+                if (boundary === "reply") throw new Error("receipt lost");
+                return receipt;
+            };
+            const set = first.executor.chrome.storage.local.set;
+            first.executor.chrome.storage.local.set = async value => {
+                const entry = Object.values(value.abushEnsureCompletions || {})[0];
+                if (entry?.phase === "acked" && boundary !== "reply") {
+                    if (boundary === "after_ack_storage") await set(value);
+                    throw new Error("ack storage lost");
+                }
+                await set(value);
+            };
+            const pending = cancelled ? first.executor.ensureCancellationCompleted(payload) :
+                first.executor.completeEnsure(payload, completion);
+            const failed = assert.rejects(pending, /lost/);
+            await accepted.promise;
+            assert.equal(localState.abushEnsureCompletions[
+                first.executor.ensureRequestKey(payload)].phase, "pending_ack");
+            release.resolve();
+            await failed;
+            const second = fixture([], [], 0, false, null, localState);
+            second.executor.browserBootId = "different-browser-boot";
+            await second.executor.restore();
+            assert.equal(localState.abushEnsureCompletions[
+                second.executor.ensureRequestKey(payload)].phase, "acked");
+            assert.equal(second.calls.some(call => ["createTab", "createWindow",
+                "bind_x11_window"].includes(call[0])), false);
+            assert.equal(await second.executor.cancelEnsure(payload), false);
+            await assert.rejects(second.executor.completeEnsure(payload,
+                {outcome: "rejected", code: "invalid_command"}), /conflicting durable/);
+        }
+    }
+    {
+        beginCase();
+        activeCase = "late cancellation receipt loss survives restart";
+        const localState = {};
+        const first = fixture([], [], 0, false, null, localState);
+        const execution = {...executePayload(), effect_id: "late-cancel-effect",
+            command: {command: "invalid"}};
+        await first.executor.execute(execution);
+        const cancel = {...first.executor.operationIdentity(execution), request_id: "late-cancel",
+            execution_request_id: execution.request_id};
+        first.executor.nativeRequest = async () => undefined;
+        await first.executor.cancel(cancel);
+        assert.equal(first.executor.pendingOperationCancels.size, 1);
+        assert.equal(localState.abushExecutionLedger[0].phase, "acked");
+        const second = fixture([], [], 0, false, null, localState);
+        await second.executor.restore();
+        assert.deepEqual(localState.abushExecutionLedger, []);
+        assert.deepEqual(localState.abushPendingOperations, []);
+        const reply = second.calls.find(call => call[0] === "cancellation_completion")[1];
+        assert.equal(reply.request_id, "late-cancel");
+        assert.equal(reply.completion, "not_applied");
+    }
+    for (const legacy of [false, true]) {
+        beginCase();
+        activeCase = `ensure legacy migration ${legacy}`;
+        const localState = {};
+        const first = fixture([], [], 0, false, null, localState);
+        const payload = ensurePayload();
+        const key = first.executor.ensureRequestKey(payload);
+        const completion = {outcome: "created", window_id: logicalWindowId, page_id: logicalPageId};
+        if (legacy) localState.abushEnsureCompletions = {[key]: completion};
+        else await first.executor.stageEnsureCompletion(payload, completion);
+        await first.executor.restoreEnsureCompletions();
+        if (legacy) {
+            await first.executor.flushEnsureCompletions();
+            assert.equal(first.executor.ensureCompletions.get(key).phase, "pending_ack");
+            assert.equal(first.calls.some(call => call[0] === "ensure_managed_page_completion"), false);
+        }
+        await first.executor.ensure(payload);
+        assert.equal(Object.values(localState.abushEnsureCompletions)[0].phase, "acked");
+        assert.equal(first.calls.some(call => ["createTab", "createWindow", "bind_x11_window"]
+            .includes(call[0])), false);
+    }
+    {
+        beginCase();
+        activeCase = "receipt object field order is not identity";
+        const {executor} = fixture();
+        const payload = ensurePayload();
+        executor.nativeRequest = async (_service, operation, value) => ({
+            completion: {page_id: value.completion.page_id, window_id: value.completion.window_id,
+                outcome: value.completion.outcome},
+            executor_fence: {epoch: value.executor_fence.epoch,
+                executor_id: value.executor_fence.executor_id},
+            ensure_id: value.ensure_id, request_id: value.request_id,
+            type: "ensure_managed_page_completion_accepted",
+        });
+        await executor.completeEnsure(payload,
+            {outcome: "created", window_id: logicalWindowId, page_id: logicalPageId});
+        assert.equal(executor.ensureCompletions.get(executor.ensureRequestKey(payload)).phase, "acked");
+    }
+    {
+        beginCase();
+        activeCase = "reconnect replays origin receipt with current transport";
+        const localState = {};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        const payload = ensurePayload();
+        const native = executor.nativeRequest;
+        executor.nativeRequest = async () => { throw new Error("disconnected"); };
+        await assert.rejects(executor.completeEnsure(payload,
+            {outcome: "created", window_id: logicalWindowId, page_id: logicalPageId}));
+        executor.nativeRequest = native;
+        await executor.remoteState({...payload, connection_id: "replacement-transport",
+            executor_fence: {...fence, epoch: 2}, connected: true});
+        const delivery = calls.find(call => call[0] === "ensure_managed_page_completion")[1];
+        assert.equal(delivery.connection_id, "replacement-transport");
+        assert.deepEqual(delivery.executor_fence, fence);
+        assert.equal(Object.values(localState.abushEnsureCompletions)[0].phase, "acked");
+        assert.equal(calls.some(call => ["createTab", "createWindow", "bind_x11_window"]
+            .includes(call[0])), false);
+    }
         beginCase();
         activeCase = "display titles";
         assert.equal(displayTitle("local"), "local");
@@ -609,7 +806,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             if (operation === "release_candidate_lease") {
                 return {released: true, nonce: payload.nonce};
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await assert.rejects(executor.ensure(ensurePayload()),
             /candidate lease was not fully verified/);
@@ -821,7 +1018,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         executor.nativeRequest = async (service, operation, payload) => {
             calls.push([operation, payload]);
             if (operation === "prepare") throw new Error("prepare failed");
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -844,7 +1041,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             calls.push([operation, payload]);
             if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
             if (operation === "activate") throw new Error("focus verification failed");
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -872,7 +1069,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         executor.nativeRequest = async (service, operation, payload) => {
             calls.push([operation, payload]);
             if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -896,7 +1093,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             if (operation === "ordinary_file_navigate") {
                 return {...payload, completion: "applied"};
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -999,7 +1196,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 error.nativeDispatch = "not_sent";
                 return Promise.reject(error);
             }
-            return Promise.resolve({});
+            return Promise.resolve(typedResponse(operation, payload) || {});
         };
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -1022,7 +1219,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 error.nativeDispatch = "unknown";
                 return Promise.reject(error);
             }
-            return Promise.resolve({});
+            return Promise.resolve(typedResponse(operation, payload) || {});
         };
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -1044,7 +1241,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             if (operation === "ordinary_file_navigate") {
                 return {...payload, nonce: "f".repeat(32), completion: "applied"};
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const completion = await executor.ordinaryOpen({
             version: 1,
@@ -1075,7 +1272,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 await gate.promise;
                 return {xid: 42, nonce: value.nonce};
             }
-            return {};
+            return typedResponse(operation, value) || {};
         };
         const first = executor.ordinaryOpen(payload);
         await waitFor(() => calls.some(call => call[0] === "prepare"),
@@ -1102,7 +1299,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 await gate.promise;
                 return {xid: 42, nonce: payload.nonce};
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const first = executor.ordinaryOpen({
             version: 1, request_id: "ordinary-serialized-one",
@@ -1154,7 +1351,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         executor.nativeRequest = async (_service, operation, payload) => {
             calls.push([operation, payload]);
             if (operation === "prepare") return {xid: 42, nonce: payload.nonce};
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const payload = {
             version: 1,
@@ -1441,7 +1638,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             if (operation === "clear_x11_window") {
                 throw new Error("unverified X11 identity must not be cleared");
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await executor.restore();
         assert.equal(calls.some(call => call[0] === "removeWindow" && call[1] === 705), false,
@@ -2076,7 +2273,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                     },
                 };
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await assert.rejects(executor.ensure(ensurePayload({
             connection_id: "c_12345678", executor_fence: {...fence, epoch: 2},
@@ -2117,7 +2314,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 binds += 1;
                 throw new Error(binds === 1 ? "candidate timed out" : "rollback failed");
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await assert.rejects(executor.ensure(ensurePayload({
             request_id: "unknown-rebind", ensure_id: "unknown-rebind",
@@ -2318,7 +2515,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 assert.equal(payload.workspace_id, "workspace-authoritative");
                 throw new Error("bind failed");
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await assert.rejects(executor.ensure(ensurePayload({
             connection_id: "c_12345678", executor_fence: {...fence, epoch: 2},
@@ -2506,7 +2703,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 error.nativeDispatch = "unknown";
                 throw error;
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const originalPersist = first.executor.persistRetireLedger.bind(first.executor);
         let pendingSnapshot = null;
@@ -2545,7 +2742,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                     response_delivery_id: value.response_delivery_id,
                 };
             }
-            return {};
+            return typedResponse(operation, value) || {};
         };
         const replayed = {
             remote_key: identity.remote_key, connection_id: authority.connection_id,
@@ -3153,7 +3350,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             if (operation === "clear_x11_window") {
                 return {cleared: true, xid: payload.xid, reclassified_group: "f"};
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await executor.restore();
         const stage = calls.findIndex(call => call[0] === "createWindow" &&
@@ -3343,7 +3540,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 const lease = candidateLeaseResponse(operation, payload);
                 if (lease !== null) return lease;
                 if (operation === "bind_x11_window") return result;
-                return {};
+                return typedResponse(operation, payload) || {};
             };
             await assert.rejects(executor.ensure(ensurePayload({
                 request_id: `strict-bind-${index}`,
@@ -3364,7 +3561,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             calls.push([operation, payload]);
             const lease = candidateLeaseResponse(operation, payload);
             if (lease !== null) return lease;
-            if (operation !== "bind_x11_window") return {};
+            if (operation !== "bind_x11_window") return typedResponse(operation, payload) || {};
             return {
                 available: true,
                 xid: 42,
@@ -3395,7 +3592,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             if (operation === "bind_x11_window" && attempts++ === 0) {
                 throw new Error("bind failed");
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await assert.rejects(executor.ensure(ensurePayload()), /bind failed/);
         assert.equal(executor.workspaces.size, 0);
@@ -3413,7 +3610,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             const lease = candidateLeaseResponse(operation, payload);
             if (lease !== null) return lease;
             if (operation === "bind_x11_window") throw new Error("bind failed");
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         executor.chrome.windows.remove = async id => {
             calls.push(["removeWindow", id]);
@@ -3681,7 +3878,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 failSecond = false;
                 throw new Error("second cancellation ACK unavailable");
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await executor.flushExecutionLedger();
         assert.deepEqual(calls.filter(call => call[0] === "cancellation_completion")
@@ -3714,7 +3911,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         first.executor.nativeRequest = async (_service, operation, value) => {
             first.calls.push([operation, value]);
             if (operation === "executor_completion") throw new Error("native ACK unavailable");
-            return {};
+            return typedResponse(operation, value) || {};
         };
         await first.executor.execute(payload);
         assert.equal(localState.abushExecutionLedger[0].phase, "terminal_pending_ack");
@@ -4086,7 +4283,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             if (operation === "clear_x11_window") {
                 return {cleared: true, xid: payload.xid, reclassified_group: "f"};
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const advisory = [];
         executor.onAdvisoryError = error => advisory.push(error);
@@ -4309,9 +4506,9 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             await new Promise(resolve => { releaseCleanup = resolve; });
             return originalCleanup(...args);
         };
-        executor.nativeRequest = async (_service, operation) => {
+        executor.nativeRequest = async (_service, operation, payload) => {
             if (operation === "retire_managed_page_completion") throw new Error("hold completion");
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const firstPayload = {
             remote_key: "r_12345678", connection_id: "c_12345678",
@@ -4349,9 +4546,9 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             window_id: record.logicalWindowId,
             page_id: record.logicalPageId,
         };
-        first.executor.nativeRequest = async (_service, operation) => {
+        first.executor.nativeRequest = async (_service, operation, payload) => {
             if (operation === "retire_managed_page_completion") throw new Error("offline");
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         let cleanupCount = 0;
         const originalCleanup = first.executor.convergeManagedTopology.bind(first.executor);
@@ -4381,7 +4578,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                     response_delivery_id: value.response_delivery_id,
                 };
             }
-            return {};
+            return typedResponse(operation, value) || {};
         };
         await second.executor.restoreRetireLedger();
         await second.executor.retireManagedPage(replay);
@@ -4517,7 +4714,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                     response_delivery_id: value.response_delivery_id,
                 };
             }
-            return {};
+            return typedResponse(operation, value) || {};
         };
         const rotated = {...payload, connection_id: "c_new00000",
             executor_fence: {executor_id: "executor-new", epoch: 2}};
@@ -4601,11 +4798,11 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             executor_fence: fence, origin_executor_fence: fence,
             window_id: logicalWindowId, page_id: logicalPageId,
         };
-        executor.nativeRequest = async (_service, operation) => {
+        executor.nativeRequest = async (_service, operation, payload) => {
             if (operation === "retire_managed_page_completion") {
                 throw new Error("hold canonical completion for conflict test");
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await executor.retireManagedPage(identity);
         await assert.rejects(executor.retireManagedPage({
@@ -4783,7 +4980,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                     response_delivery_id: payload.response_delivery_id,
                 };
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         await executor.restoreTopologyOutbox();
         await executor.flushTopologyOutbox();
@@ -5100,7 +5297,7 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             if (operation === "clear_x11_window") {
                 return {cleared: true, xid: payload.xid, reclassified_group: "f"};
             }
-            return {};
+            return typedResponse(operation, payload) || {};
         };
         const tabs = await first.executor.chrome.tabs.query({windowId: record.windowId});
         tabs.push({id: 9988, windowId: record.windowId, index: 3, pinned: false});
