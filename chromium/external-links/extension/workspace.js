@@ -302,6 +302,7 @@ class WorkspaceExecutor {
             record: transaction.record,
             planned_effect: transaction.plannedEffect || null,
             observed_effects: structuredClone(transaction.observedEffects || []),
+            admission: structuredClone(transaction.admission || null),
         }));
     }
 
@@ -638,6 +639,7 @@ class WorkspaceExecutor {
             binding: saved.binding || null,
             record: saved.record || null,
             plannedEffect: saved.planned_effect || null,
+            admission: saved.admission || null,
             observedEffects: Array.isArray(saved.observed_effects) ?
                 structuredClone(saved.observed_effects) : [],
             expectedEvents: [],
@@ -3227,12 +3229,13 @@ class WorkspaceExecutor {
         const result = await this.nativeRequest(
             "abush_browser", `${operation}_candidate_lease`, {nonce});
         const field = {register: "accepted", arm: "armed", release: "released"}[operation];
-        const fields = operation === "release" ? [field, "nonce"] :
-            [field, "nonce", "admission_version", "phase"];
+        const fields = [field, "nonce", "admission_version", "phase"];
+        if (operation === "release") fields.push("denial_retained");
         if (!exactFields(result, fields) || result[field] !== true ||
-                result.nonce !== nonce || (operation !== "release" &&
-                    (result.admission_version !== 2 || result.phase !==
-                        (operation === "register" ? "reserved" : "dispatched")))) {
+                result.nonce !== nonce || result.admission_version !== 2 ||
+                (operation === "release" ? result.phase !== "aborted-resolved" ||
+                    result.denial_retained !== false : result.phase !==
+                    (operation === "register" ? "reserved" : "dispatched"))) {
             this.fail("invalid_command", "native candidate lease was not fully verified");
         }
         return result;
@@ -4400,9 +4403,9 @@ class WorkspaceExecutor {
         let candidateLeaseReleaseError = null;
         const releaseCandidateLease = async () => {
             if (!candidateLeaseRequested) return;
-            candidateLeaseRequested = false;
             try {
                 await this.updateCandidateLease("release", nonce);
+                candidateLeaseRequested = false;
             } catch (error) {
                 candidateLeaseReleaseError = error;
                 throw error;
@@ -4432,8 +4435,22 @@ class WorkspaceExecutor {
                 await this.waitForStatusTitle(tab.id, nonce, marker);
             }
             candidateLeaseRequested = true;
+            await this.updateEnsureTransaction(transaction, {
+                admission: {nonce, phase: "reserving", chrome: "not_invoked"},
+            });
             await this.updateCandidateLease("register", nonce);
+            await this.updateEnsureTransaction(transaction, {
+                admission: {nonce, phase: "reserved", chrome: "not_invoked"},
+            });
+            this.ensureActive(flight);
+            await this.updateEnsureTransaction(transaction, {
+                admission: {nonce, phase: "arming", chrome: "not_invoked"},
+            });
             await this.updateCandidateLease("arm", nonce);
+            this.ensureActive(flight);
+            await this.updateEnsureTransaction(transaction, {
+                admission: {nonce, phase: "dispatched", chrome: "unknown"},
+            });
             created = await this.mutateTransaction(transaction, [{
                 type: "windowCreated",
                 match: {window: {type: "normal"}, sourceTabId: statusTabs[0].id},
@@ -4463,6 +4480,7 @@ class WorkspaceExecutor {
             await this.updateEnsureTransaction(transaction, {
                 windowId: created.id,
                 phase: "window_created",
+                admission: {nonce, phase: "dispatched", chrome: "fulfilled"},
             });
             await this.waitForStatusTitle(statusTabs[0].id, nonce, "a");
             const admission = await this.nativeRequest("abush_browser", "admit_candidate", {nonce});
@@ -4473,6 +4491,10 @@ class WorkspaceExecutor {
                     admission.first_group !== "__abush_quarantine") {
                 throw new Error("native pre-map candidate admission was not verified");
             }
+            await this.updateEnsureTransaction(transaction, {
+                x11WindowId: admission.xid,
+                admission: {nonce, phase: "admitted", chrome: "fulfilled", xid: admission.xid},
+            });
             await this.mutateTransaction(transaction, [{
                 type: "tabDetached",
                 match: {tabId: statusTabs[1].id, oldWindowId: hostWindowId},
@@ -4488,7 +4510,6 @@ class WorkspaceExecutor {
             statusTabs[1].windowId = created.id;
         } catch (error) {
             const releaseErrors = [];
-            await this.appendCleanupError(releaseErrors, releaseCandidateLease);
             const preparedTabs = new Map(statusTabs.map(tab => [tab.id, tab]));
             for (const tabId of [
                 ...transaction.statusTabIds,
@@ -4500,6 +4521,7 @@ class WorkspaceExecutor {
             try {
                 await this.cleanupPreparedWindow(
                     created?.id ?? transaction.windowId, [...preparedTabs.values()], nonce);
+                await this.appendCleanupError(releaseErrors, releaseCandidateLease);
                 if (releaseErrors.length > 0) {
                     throw new AggregateError(releaseErrors,
                         "managed candidate lease cleanup failed");
@@ -4622,12 +4644,12 @@ class WorkspaceExecutor {
             }
         } catch (error) {
             const cleanupErrors = [];
-            await this.appendCleanupError(cleanupErrors, releaseCandidateLease);
             if (candidateLeaseReleaseError && !cleanupErrors.includes(candidateLeaseReleaseError)) {
                 cleanupErrors.push(candidateLeaseReleaseError);
             }
             try {
                 await this.cleanupFlightWindow(flight);
+                await this.appendCleanupError(cleanupErrors, releaseCandidateLease);
             } catch (cleanupError) {
                 cleanupErrors.push(cleanupError);
             }

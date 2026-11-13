@@ -361,7 +361,8 @@ async function managedCase(bridge, fault = null, pendingCreated = false) {
             name.startsWith("_ABUSH_")), `ordinary host metadata contaminated at ${frame.action}`);
     }
     assert.equal(nativeCalls.filter(call => call.operation === "release_candidate_lease").length,
-        1, "every requested admission gets one release attempt");
+        fault === "release" ? 2 : 1,
+        "failed release is retried only after physical cleanup");
     if (fault === "cancel") {
         assert.equal(executor.workspaces.size, 0);
         assert.equal(executor.pendingTransactions.size, 0);

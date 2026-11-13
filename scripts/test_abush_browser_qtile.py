@@ -3,6 +3,8 @@
 import ast
 import importlib.util
 import json
+import os
+import tempfile
 import pathlib
 import re
 import subprocess
@@ -12,6 +14,12 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / ".config/qtile/config.py"
 BINDING_PATH = ROOT / "chromium/external-links/x11_binding.py"
+TEMP_ROOT = pathlib.Path(subprocess.check_output(
+    ["git", "rev-parse", "--git-common-dir"], cwd=ROOT, text=True).strip()).resolve() / \
+    "../.worktrees/.tmp"
+TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+TEST_DIRECTORY = tempfile.TemporaryDirectory(dir=TEMP_ROOT)
+TEST_STATE = pathlib.Path(TEST_DIRECTORY.name)
 
 spec = importlib.util.spec_from_file_location("x11_binding_for_qtile_test", BINDING_PATH)
 binding = importlib.util.module_from_spec(spec)
@@ -140,6 +148,8 @@ def load_browser_config(namespace):
         "reserve_abush_premap", "abush_premap_identity", "arm_abush_browser_candidate",
         "admit_abush_browser_candidate", "handle_abush_map_request",
         "handle_abush_destroy_notify", "install_abush_premap_gate",
+        "abush_premap_epoch", "abush_premap_journal_path", "save_abush_premap",
+        "load_abush_premap", "persist_abush_premap",
     }
     nodes = []
     for node in tree.body:
@@ -150,11 +160,13 @@ def load_browser_config(namespace):
         elif isinstance(node, ast.FunctionDef) and node.name in names:
             node.decorator_list = []
             nodes.append(node)
-    namespace.update(json=json, re=re, pathlib=pathlib, QtileWindow=FakeWindow)
+    namespace.update(json=json, os=os, re=re, pathlib=pathlib, QtileWindow=FakeWindow)
     namespace.setdefault("time", mock.Mock(monotonic=mock.Mock(return_value=100.0)))
     exec(compile(ast.fix_missing_locations(ast.Module(nodes, [])), str(CONFIG_PATH), "exec"),
          namespace)
     namespace["abush_browser_incarnation"] = lambda window: window.incarnation
+    namespace["abush_premap_journal_path"] = lambda: TEST_STATE / "premap.json"
+    namespace["abush_premap_destroyed"] = lambda core, xid: True
     return namespace
 
 
@@ -690,6 +702,7 @@ class QtileConfigTest(unittest.TestCase):
 
 class CandidateLifecycleTest(unittest.TestCase):
     def setUp(self):
+        (TEST_STATE / "premap.json").unlink(missing_ok=True)
         self.ns = load_browser_config({})
         self.nonce = "a" * 32
         self.active = FakeWindow("browser", group="e")
@@ -888,6 +901,7 @@ class CandidateLifecycleTest(unittest.TestCase):
 
 class PremapBarrierTest(unittest.TestCase):
     def setUp(self):
+        (TEST_STATE / "premap.json").unlink(missing_ok=True)
         self.ns = load_browser_config({})
         self.nonce = "a" * 32
         self.identity = ["boot", 4242, "123"]
@@ -1025,8 +1039,129 @@ class PremapBarrierTest(unittest.TestCase):
         self.ns["install_abush_premap_gate"]()
         self.assertEqual(self.core._abush_premap["operations"][self.nonce]["phase"], "dispatched")
         del self.raw[22]["fail_save"]
+        with self.assertRaisesRegex(ValueError, "not held"):
+            self.admit(22)
+        self.assertEqual(self.trace, [])
+
+    def test_release_unknown_is_truthful_and_restart_retains_barrier(self):
+        self.arm()
+        receipt = self.ns["release_abush_browser_candidate"](self.manager, self.nonce)
+        self.assertEqual(receipt, {"released": False, "nonce": self.nonce,
+            "admission_version": 2, "phase": "dispatched", "denial_retained": True})
+        del self.core._abush_premap
+        self.request(22)
+        self.assertEqual(self.trace, [])
+        self.assertIn(22, self.core._abush_premap["pending"])
         self.admit(22)
         self.assertEqual(self.trace, [(22, "__abush_quarantine", False)])
+
+    def test_missing_pid_candidate_never_reaches_constructor(self):
+        self.arm()
+        self.Raw(self.core.conn, 22).properties.update(
+            _NET_WM_PID=[], title=f"__ABUSH_BIND__:{self.nonce}:a")
+        self.request(22)
+        self.assertEqual(self.trace, [])
+        with self.assertRaisesRegex(ValueError, "identity"):
+            self.admit(22)
+
+    def test_duplicate_admission_is_exact_and_idempotent(self):
+        self.arm()
+        self.request(22)
+        first = self.admit(22)
+        self.assertEqual(self.admit(22), first)
+        self.assertEqual(len(self.trace), 1)
+        self.raw[22]["_ABUSH_PREMAP_TOKEN"] = "replacement"
+        with self.assertRaisesRegex(ValueError, "token changed"):
+            self.admit(22)
+
+    def test_reserved_abort_allows_fresh_operation(self):
+        self.reserve()
+        self.assertTrue(self.ns["release_abush_browser_candidate"](
+            self.manager, self.nonce)["released"])
+        self.nonce = "b" * 32
+        self.arm()
+        self.request(22)
+        self.admit(22)
+
+    def test_exact_destroy_resolves_and_replays_ordinary_not_quarantine(self):
+        self.arm()
+        self.Raw(self.core.conn, 22).properties["title"] = f"__ABUSH_BIND__:{self.nonce}:a"
+        self.request(22)
+        self.request(33)
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
+        self.raw.pop(22)
+        self.assertTrue(self.ns["release_abush_browser_candidate"](
+            self.manager, self.nonce)["released"])
+        self.assertEqual(self.trace, [(33, "f", False)])
+        self.nonce = "b" * 32
+        self.arm()
+        self.request(44)
+        self.admit(44)
+
+    def test_malformed_journal_fails_closed_and_surfaces_to_native(self):
+        (TEST_STATE / "premap.json").write_text("{")
+        with self.assertRaisesRegex(ValueError, "restoration failed"):
+            self.request(22)
+        with self.assertRaisesRegex(ValueError, "restoration failed"):
+            self.reserve()
+        self.assertEqual(self.trace, [])
+
+    def test_reload_between_reserve_and_arm_blocks_dispatch(self):
+        self.reserve()
+        self.ns["install_abush_premap_gate"]()
+        with self.assertRaisesRegex(ValueError, "expired before dispatch"):
+            self.ns["arm_abush_browser_candidate"](self.manager, self.nonce)
+
+    def test_journal_write_failure_blocks_dispatch_and_map(self):
+        self.reserve()
+        with mock.patch.object(os, "replace", side_effect=OSError("disk failure")):
+            with self.assertRaisesRegex(OSError, "disk failure"):
+                self.ns["arm_abush_browser_candidate"](self.manager, self.nonce)
+            with self.assertRaisesRegex(ValueError, "persistence failed"):
+                self.request(22)
+        self.assertEqual(self.trace, [])
+
+    def test_process_epoch_reset_blocks_admit_but_never_releases_late_candidate(self):
+        self.arm()
+        self.request(22)
+        del self.core._abush_premap
+        original_epoch = self.ns["abush_premap_epoch"]
+        self.ns["abush_premap_epoch"] = lambda core: ["new-process", 1]
+        self.request(33)
+        with self.assertRaisesRegex(ValueError, "not held"):
+            self.admit(22)
+        self.assertFalse(self.ns["release_abush_browser_candidate"](
+            self.manager, self.nonce)["released"])
+        self.assertEqual(self.trace, [])
+        self.ns["abush_premap_epoch"] = original_epoch
+
+    def test_destroy_reused_xid_does_not_resolve_old_candidate(self):
+        self.arm()
+        self.Raw(self.core.conn, 22).properties["title"] = f"__ABUSH_BIND__:{self.nonce}:a"
+        self.request(22)
+        self.ns["abush_premap_destroyed"] = lambda core, xid: False
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
+        self.assertFalse(self.ns["release_abush_browser_candidate"](
+            self.manager, self.nonce)["released"])
+        self.request(22)
+        self.assertEqual(self.trace, [])
+
+    def test_constructor_failure_retains_exact_candidate_for_destroy_cleanup(self):
+        self.arm()
+        self.request(22)
+        original = self.Core._abush_original_map_request
+        self.Core._abush_original_map_request = mock.Mock(side_effect=ValueError("constructor"))
+        with self.assertRaisesRegex(ValueError, "constructor"):
+            self.admit(22)
+        self.assertFalse(self.ns["release_abush_browser_candidate"](
+            self.manager, self.nonce)["released"])
+        self.Core._abush_original_map_request = original
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
+        self.raw.pop(22)
+        self.assertTrue(self.ns["release_abush_browser_candidate"](
+            self.manager, self.nonce)["released"])
+        self.request(33)
+        self.assertEqual(self.trace, [(33, "f", True)])
 
     def test_destroy_xid_reuse_and_incarnation_replacement_reject_old_admit(self):
         self.arm()

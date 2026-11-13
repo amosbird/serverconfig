@@ -260,6 +260,88 @@ def abush_premap_identity(pid):
         return None
 
 
+def abush_premap_epoch(core):
+    return [abush_premap_identity(os.getpid()), type(core)._abush_gate_generation]
+
+
+def abush_premap_journal_path():
+    directory = pathlib.Path(os.environ.get("XDG_STATE_HOME", str(pathlib.Path.home() / ".local/state")))
+    display = re.sub(r"[^a-zA-Z0-9_.-]", "_", os.environ.get("DISPLAY", "unknown"))
+    return directory / "abush-browser" / f"premap-{display}.json"
+
+
+def save_abush_premap(core):
+    try:
+        persist_abush_premap(core)
+    except (OSError, ValueError, TypeError) as error:
+        core._abush_premap["error"] = f"candidate journal persistence failed: {error}"
+        raise
+
+
+def persist_abush_premap(core):
+    state = core._abush_premap
+    durable = {"version": 1, "operations": state["operations"], "serial": state["serial"],
+               "pending": {str(xid): {key: value for key, value in held.items() if key != "event"}
+                           for xid, held in state["pending"].items()}}
+    path = abush_premap_journal_path()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_suffix(".new")
+    with temporary.open("w") as stream:
+        os.chmod(temporary, 0o600)
+        json.dump(durable, stream, sort_keys=True)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    if json.loads(path.read_text()) != durable:
+        raise ValueError("candidate journal persistence was not confirmed")
+
+
+def load_abush_premap(core):
+    state = getattr(core, "_abush_premap", None)
+    if isinstance(state, dict):
+        if state.get("error"):
+            raise ValueError(state["error"])
+        return state
+    state = {"operations": {}, "pending": {}, "serial": 0}
+    core._abush_premap = state
+    path = abush_premap_journal_path()
+    try:
+        if path.exists():
+            saved = json.loads(path.read_text())
+            if set(saved) != {"version", "operations", "pending", "serial"} or \
+                    saved["version"] != 1 or type(saved["serial"]) is not int or \
+                    not isinstance(saved["operations"], dict) or \
+                    not isinstance(saved["pending"], dict):
+                raise ValueError("invalid candidate journal schema")
+            for nonce, operation in saved["operations"].items():
+                if not ABUSH_NONCE.fullmatch(nonce) or \
+                        operation["phase"] not in {"reserved", "dispatched", "admitted", \
+                                                   "aborted-resolved", "unknown"} or \
+                        not isinstance(operation["identity"], list) or \
+                        len(operation["identity"]) != 3 or \
+                        not isinstance(operation["identity"][0], str) or \
+                        type(operation["identity"][1]) is not int or \
+                        operation["identity"][1] <= 0 or \
+                        not isinstance(operation["identity"][2], str):
+                    raise ValueError("invalid candidate journal operation")
+            state["operations"] = saved["operations"]
+            state["serial"] = saved["serial"]
+            for xid, held in saved["pending"].items():
+                if held["nonce"] not in state["operations"] or not isinstance(held["token"], str):
+                    raise ValueError("invalid candidate journal pending identity")
+                held["event"] = type("PremapEvent", (), {"window": int(xid)})()
+                state["pending"][int(xid)] = held
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        state["error"] = f"candidate journal restoration failed: {error}"
+        raise ValueError(state["error"]) from error
+    return state
+
+
 def reserve_abush_premap(manager, nonce, identity_json):
     core = manager.core
     if not getattr(type(core).handle_MapRequest, "_abush_gate", False) or \
@@ -270,15 +352,15 @@ def reserve_abush_premap(manager, nonce, identity_json):
             not isinstance(identity, list) or len(identity) != 3 or \
             identity != abush_premap_identity(identity[1]):
         raise ValueError("invalid candidate browser incarnation")
-    state = getattr(core, "_abush_premap", None)
-    if state is None:
-        state = core._abush_premap = {"operations": {}, "pending": {}, "serial": 0}
+    state = load_abush_premap(core)
     for key, operation in list(state["operations"].items()):
-        if operation["identity"] != abush_premap_identity(operation["identity"][1]):
+        current_identity = abush_premap_identity(operation["identity"][1])
+        if current_identity is not None and operation["identity"] != current_identity:
             state["pending"] = {xid: held for xid, held in state["pending"].items()
                                 if held["nonce"] != key}
             del state["operations"][key]
-        elif operation["phase"] == "reserved" and operation["deadline"] < time.monotonic():
+        elif operation["phase"] == "reserved" and (operation["deadline"] < time.monotonic() or
+                operation.get("epoch") != abush_premap_epoch(core)):
             del state["operations"][key]
     if nonce in state["operations"] or nonce in ABUSH_CANDIDATE_USED or \
             any(op["identity"] == identity for op in state["operations"].values()) or \
@@ -286,40 +368,54 @@ def reserve_abush_premap(manager, nonce, identity_json):
         raise ValueError("candidate browser already has an unresolved admission")
     state["operations"][nonce] = {
         "identity": identity, "phase": "reserved", "deadline": time.monotonic() + 10,
+        "epoch": abush_premap_epoch(core),
     }
+    save_abush_premap(core)
     return {"accepted": True, "nonce": nonce, "admission_version": 2, "phase": "reserved"}
 
 
 def arm_abush_browser_candidate(manager, nonce: str):
-    state = getattr(manager.core, "_abush_premap", {})
+    state = load_abush_premap(manager.core)
     operation = state.get("operations", {}).get(nonce)
     if operation is None or operation["phase"] != "reserved" or \
+            operation.get("epoch") != abush_premap_epoch(manager.core) or \
             operation["deadline"] < time.monotonic() or \
             operation["identity"] != abush_premap_identity(operation["identity"][1]):
         raise ValueError("candidate reservation expired before dispatch")
     operation["phase"] = "dispatched"
+    save_abush_premap(manager.core)
     return {"armed": True, "nonce": nonce, "admission_version": 2, "phase": "dispatched"}
 
 
 def handle_abush_map_request(core, event):
     original = type(core)._abush_original_map_request
-    state = getattr(core, "_abush_premap", None)
-    if not state or not any(op["phase"] == "dispatched"
-                            for op in state["operations"].values()) or \
-            event.window in core.qtile.windows_map:
+    if event.window in core.qtile.windows_map:
+        return original(core, event)
+    state = load_abush_premap(core)
+    if not any(op["phase"] in {"dispatched", "unknown"}
+               for op in state["operations"].values()):
         return original(core, event)
     raw = x11_core.window.XWindow(core.conn, event.window)
     pid_values = raw.get_property("_NET_WM_PID", "CARDINAL", unpack=int)
     identity = abush_premap_identity(pid_values[0]) if pid_values else None
+    match = ABUSH_CANDIDATE_TITLE.fullmatch(raw.get_name() or "")
     operations = [(nonce, op) for nonce, op in state["operations"].items()
-                  if op["phase"] == "dispatched" and op["identity"] == identity]
+                  if op["phase"] in {"dispatched", "unknown"} and
+                  (op["identity"] == identity or
+                   (match is not None and match.group(1) == nonce) or
+                   identity is None)]
     if not operations:
         return original(core, event)
     nonce, operation = operations[0]
     held = state["pending"].get(event.window)
+    if held is not None and raw.get_property(
+            "_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != held["token"]:
+        del state["pending"][event.window]
+        held = None
     if held is None:
         if len(state["pending"]) >= 128:
             operation["overflow"] = True
+            save_abush_premap(core)
             raise ValueError("candidate pre-map pending limit reached; admission remains denied")
         state["serial"] += 1
         token = f"{nonce}:{state['serial']}"
@@ -327,23 +423,58 @@ def handle_abush_map_request(core, event):
         state["pending"][event.window] = {
             "nonce": nonce, "identity": identity, "event": event, "token": token,
         }
+        save_abush_premap(core)
+    if match is not None and match.group(1) == nonce and identity == operation["identity"]:
+        if operation.get("candidate") not in (None, {"xid": event.window,
+                "token": state["pending"][event.window]["token"]}):
+            operation["overflow"] = True
+        operation["candidate"] = {"xid": event.window,
+                                  "token": state["pending"][event.window]["token"]}
+        save_abush_premap(core)
     return None
 
 
+def abush_premap_destroyed(core, xid):
+    try:
+        core.conn.conn.core.GetWindowAttributes(xid).reply()
+    except xcffib.xproto.WindowError:
+        return True
+    return False
+
+
 def handle_abush_destroy_notify(core, event):
-    state = getattr(core, "_abush_premap", None)
-    if state and event.window in state["pending"]:
-        state["pending"].pop(event.window)
+    state = load_abush_premap(core)
+    if event.window in state["pending"]:
+        held = state["pending"].pop(event.window)
+        operation = state["operations"][held["nonce"]]
+        if not operation.get("overflow") and operation.get("candidate") == \
+                {"xid": event.window, "token": held["token"]} and \
+                abush_premap_destroyed(core, event.window):
+            operation["phase"] = "aborted-resolved"
+            operation["proof"] = {"kind": "destroyed", **operation["candidate"]}
+        save_abush_premap(core)
+        if event.window in core.qtile.windows_map:
+            return type(core)._abush_original_destroy_notify(core, event)
         return None
     return type(core)._abush_original_destroy_notify(core, event)
 
 
 def admit_abush_browser_candidate(manager, xid: int, nonce: str):
     core = manager.core
-    state = getattr(core, "_abush_premap", {})
+    state = load_abush_premap(core)
     operation = state.get("operations", {}).get(nonce)
     held = state.get("pending", {}).get(xid)
+    if operation is not None and operation["phase"] == "admitted" and \
+            operation.get("xid") == xid:
+        window = qtile_window_by_xid(manager, xid)
+        claim = abush_candidate_claim(window)
+        if x11_text_property(window, "_ABUSH_PREMAP_TOKEN") != operation.get("token") or \
+                claim is None or claim["nonce"] != nonce:
+            raise ValueError("admitted candidate token changed")
+        return {"admitted": True, "nonce": nonce, "xid": xid,
+                "admission_version": 2, "first_group": "__abush_quarantine"}
     if operation is None or operation["phase"] != "dispatched" or operation.get("overflow") or \
+            operation.get("epoch") != abush_premap_epoch(manager.core) or \
             held is None or \
             held["nonce"] != nonce or xid in manager.windows_map:
         raise ValueError("candidate was not held by this admission")
@@ -357,6 +488,8 @@ def admit_abush_browser_candidate(manager, xid: int, nonce: str):
             raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != held["token"] or \
             match is None or match.group(1) != nonce:
         raise ValueError("held candidate identity or exact title changed")
+    operation["candidate"] = {"xid": xid, "token": held["token"]}
+    save_abush_premap(core)
     claim = {"nonce": nonce, "xid": xid, "incarnation": identity,
              "released": False, "placed": False}
     raw.set_property(ABUSH_CANDIDATE_CLAIM_PROPERTY, json.dumps(claim), "UTF8_STRING", 8)
@@ -375,20 +508,23 @@ def admit_abush_browser_candidate(manager, xid: int, nonce: str):
             window.can_steal_focus:
         raise ValueError("candidate constructor did not preserve quarantine")
     del state["pending"][xid]
-    operation["phase"] = "admitted"
+    operation.update(phase="admitted", xid=xid, token=held["token"])
+    save_abush_premap(core)
     # No release is safe for an ambiguous dispatched operation. Only exact admission
     # establishes which other delayed MapRequests are ordinary.
     for other_xid, other in list(state["pending"].items()):
         if other["nonce"] != nonce:
             continue
         other_raw = x11_core.window.XWindow(core.conn, other_xid)
-        if other_raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) == other["token"]:
-            core._abush_passive_map_xid = other_xid
-            try:
-                type(core)._abush_original_map_request(core, other["event"])
-            finally:
-                core._abush_passive_map_xid = None
+        if other_raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != other["token"]:
+            raise ValueError("ordinary replay token changed")
+        core._abush_passive_map_xid = other_xid
+        try:
+            type(core)._abush_original_map_request(core, other["event"])
+        finally:
+            core._abush_passive_map_xid = None
         del state["pending"][other_xid]
+    save_abush_premap(core)
     return {"admitted": True, "nonce": nonce, "xid": xid,
             "admission_version": 2, "first_group": "__abush_quarantine"}
 
@@ -398,6 +534,7 @@ def install_abush_premap_gate():
     if not hasattr(cls, "_abush_original_map_request"):
         cls._abush_original_map_request = cls.handle_MapRequest
         cls._abush_original_destroy_notify = cls.handle_DestroyNotify
+    cls._abush_gate_generation = getattr(cls, "_abush_gate_generation", 0) + 1
     handle_abush_map_request._abush_gate = True
     cls.handle_MapRequest = handle_abush_map_request
     cls.handle_DestroyNotify = handle_abush_destroy_notify
@@ -412,12 +549,28 @@ def register_abush_browser_candidate(manager, nonce: str, identity_json: str = "
 def release_abush_browser_candidate(manager, nonce: str):
     if not isinstance(nonce, str) or ABUSH_NONCE.fullmatch(nonce) is None:
         raise ValueError("invalid Abush browser candidate nonce")
-    state = getattr(manager.core, "_abush_premap", None)
-    if state is not None and nonce in state["operations"]:
+    state = load_abush_premap(manager.core)
+    if nonce in state["operations"]:
         operation = state["operations"][nonce]
-        if operation["phase"] == "dispatched":
-            return {"released": True, "nonce": nonce}
+        if operation["phase"] in {"dispatched", "unknown"}:
+            return {"released": False, "nonce": nonce, "admission_version": 2,
+                    "phase": operation["phase"], "denial_retained": True}
+        if operation["phase"] in {"aborted-resolved", "admitted"}:
+            for xid, held in list(state["pending"].items()):
+                if held["nonce"] != nonce:
+                    continue
+                raw = x11_core.window.XWindow(manager.core.conn, xid)
+                if raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != held["token"]:
+                    raise ValueError("ordinary replay token changed")
+                manager.core._abush_passive_map_xid = xid
+                try:
+                    type(manager.core)._abush_original_map_request(manager.core, held["event"])
+                finally:
+                    manager.core._abush_passive_map_xid = None
+                del state["pending"][xid]
+                save_abush_premap(manager.core)
         del state["operations"][nonce]
+        save_abush_premap(manager.core)
     ABUSH_CANDIDATE_LEASES.pop(nonce, None)
     for window in manager.windows_map.values():
         if is_chrome_window(window):
@@ -427,7 +580,8 @@ def release_abush_browser_candidate(manager, nonce: str):
                 manager.windows_map.get(claim["xid"]) is claim["window"]:
             claim["released"] = True
             save_abush_candidate_claim(claim["window"], claim)
-    return {"released": True, "nonce": nonce}
+    return {"released": True, "nonce": nonce, "admission_version": 2,
+            "phase": "aborted-resolved", "denial_retained": False}
 
 
 def quarantine_abush_browser_window(manager, xid: int, nonce: str):

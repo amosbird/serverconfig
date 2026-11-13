@@ -567,8 +567,11 @@ class NativeHostTest(unittest.TestCase):
             self.host.validate_request({**request, "extra": True})
 
     def test_native_broker_routes_strict_x11_bind_and_cleanup_contracts(self):
-        broker = self.host.BrowserBroker(ordinary_open=None)
+        broker = self.host.BrowserBroker(ordinary_open=None,
+                                        browser={"pid": 4242, "starttime": "123"})
         binding = mock.Mock()
+        identity = ["boot", 4242, "123"]
+        binding.browser_incarnation.return_value = identity
         binding.bind_workspace_window.return_value = {
             "available": True,
             "xid": 42,
@@ -579,9 +582,10 @@ class NativeHostTest(unittest.TestCase):
         binding.clear_workspace_window.return_value = {
             "cleared": True, "xid": 42, "reclassified_group": "f"}
         binding.verify_workspace_window.return_value = {"verified": True, "xid": 42}
-        binding.update_candidate_lease.side_effect = lambda operation, nonce: {
-            "accepted": True, "nonce": nonce,
-        } if operation == "register" else {"released": True, "nonce": nonce}
+        binding.update_candidate_lease.side_effect = lambda operation, nonce, **_kwargs: {
+            "accepted": True, "nonce": nonce, "admission_version": 2, "phase": "reserved",
+        } if operation == "register" else {"released": True, "nonce": nonce,
+            "admission_version": 2, "phase": "aborted-resolved", "denial_retained": False}
         payload = {
             "nonce": "a" * 32,
             "remote_key": "r_12345678",
@@ -604,11 +608,13 @@ class NativeHostTest(unittest.TestCase):
             self.assertEqual(broker.handle_request({
                 **request, "id": "register", "operation": "register_candidate_lease",
                 "payload": nonce_payload,
-            }), {"accepted": True, "nonce": payload["nonce"]})
+            }), {"accepted": True, "nonce": payload["nonce"],
+                 "admission_version": 2, "phase": "reserved"})
             self.assertEqual(broker.handle_request({
                 **request, "id": "release", "operation": "release_candidate_lease",
                 "payload": nonce_payload,
-            }), {"released": True, "nonce": payload["nonce"]})
+            }), {"released": True, "nonce": payload["nonce"], "admission_version": 2,
+                 "phase": "aborted-resolved", "denial_retained": False})
             cleanup = {"xid": 42, **payload}
             self.assertEqual(broker.handle_request({
                 **request, "id": "verify", "operation": "verify_x11_window",
@@ -620,7 +626,7 @@ class NativeHostTest(unittest.TestCase):
             }), {"cleared": True, "xid": 42, "reclassified_group": "f"})
         binding.bind_workspace_window.assert_called_once_with(payload)
         self.assertEqual(binding.update_candidate_lease.call_args_list, [
-            mock.call("register", payload["nonce"]),
+            mock.call("register", payload["nonce"], identity=identity),
             mock.call("release", payload["nonce"]),
         ])
         binding.verify_workspace_window.assert_called_once_with(cleanup)

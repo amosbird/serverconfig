@@ -5,6 +5,9 @@ import ast
 import importlib.util
 import json
 import logging
+import os
+import tempfile
+import subprocess
 import pathlib
 import queue
 import re
@@ -17,6 +20,10 @@ from libqtile.command.base import expose_command
 from libqtile.command.interface import lift_args
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+COMMON = pathlib.Path(subprocess.check_output(
+    ["git", "rev-parse", "--git-common-dir"], cwd=ROOT, text=True).strip()).resolve()
+TEMPORARY = COMMON.parent / ".worktrees/.tmp"
+TEMPORARY.mkdir(parents=True, exist_ok=True)
 
 
 def load(name, relative):
@@ -119,7 +126,8 @@ class Model:
         self.core.conn = SimpleNamespace(flush=lambda: None)
         self.chrome = []
         self.command_root = type("OfflineQtile", (), {"_commands": {}})
-        self.ns = {"re": re, "json": json, "time": time, "QtileWindow": Window,
+        self.ns = {"re": re, "json": json, "time": time, "os": os, "pathlib": pathlib,
+                   "QtileWindow": Window,
                    "Qtile": self.command_root, "expose_command": expose_command}
         tree = ast.parse((ROOT / ".config/qtile/config.py").read_text())
         names = {
@@ -137,6 +145,8 @@ class Model:
             "reserve_abush_premap", "abush_premap_identity", "arm_abush_browser_candidate",
             "admit_abush_browser_candidate", "handle_abush_map_request",
             "handle_abush_destroy_notify", "install_abush_premap_gate",
+            "abush_premap_epoch", "abush_premap_journal_path", "save_abush_premap",
+            "persist_abush_premap", "load_abush_premap",
         }
         nodes = []
         for node in tree.body:
@@ -148,6 +158,10 @@ class Model:
                 node.decorator_list = []
                 nodes.append(node)
         exec(compile(ast.Module(nodes, []), "qtile-browser-helpers", "exec"), self.ns)
+        self.journal_directory = tempfile.TemporaryDirectory(dir=TEMPORARY)
+        self.ns["abush_premap_journal_path"] = lambda: \
+            pathlib.Path(self.journal_directory.name) / "premap.json"
+        self.ns["abush_premap_destroyed"] = lambda core, xid: True
         self.ns["abush_browser_incarnation"] = (
             lambda window: ["offline-boot", window.get_pid(), "1234"])
         self.ns["abush_premap_identity"] = lambda pid: ["offline-boot", pid, "1234"]

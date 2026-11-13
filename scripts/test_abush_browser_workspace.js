@@ -129,7 +129,8 @@ function candidateLeaseResponse(operation, payload) {
             first_group: "__abush_quarantine"};
     }
     if (operation === "release_candidate_lease") {
-        return {released: true, nonce: payload.nonce};
+        return {released: true, nonce: payload.nonce, admission_version: 2,
+            phase: "aborted-resolved", denial_retained: false};
     }
     return null;
 }
@@ -356,7 +357,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             return {accepted: true, nonce: payload.nonce, admission_version: 2, phase: "reserved"};
         }
         if (operation === "release_candidate_lease") {
-            return {released: true, nonce: payload.nonce};
+            return {released: true, nonce: payload.nonce, admission_version: 2,
+            phase: "aborted-resolved", denial_retained: false};
         }
         if (operation === "bind_x11_window") {
             return {
@@ -583,6 +585,52 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             }
             assert(executor.advisoryErrors.length > 0);
         }
+    }
+    {
+        beginCase();
+        activeCase = "unknown create retains WAL after cleanup and worker reconciliation";
+        const localState = {};
+        const {executor, calls} = fixture([], [], 0, false, null, localState);
+        const native = executor.nativeRequest;
+        let invoked = false;
+        executor.chrome.windows.create = async () => {
+            invoked = true;
+            const wal = localState.abushPendingTransactions[0];
+            assert.equal(wal.admission.nonce, wal.nonce);
+            assert.equal(wal.admission.phase, "dispatched");
+            assert.equal(wal.admission.chrome, "unknown");
+            throw new Error("Chrome create outcome unknown");
+        };
+        executor.nativeRequest = async (service, operation, payload) => {
+            if (operation === "release_candidate_lease" && invoked) {
+                assert(calls.some(call => call[0] === "remove"),
+                    "physical tab cleanup precedes native finish");
+                throw new Error("candidate cleanup remains unknown; admission denial retained");
+            }
+            return native(service, operation, payload);
+        };
+        await assert.rejects(executor.ensure(ensurePayload()),
+            error => error.browserCode === "unknown_effect");
+        assert.equal(executor.pendingTransactions.size, 1);
+        assert.equal(localState.abushPendingTransactions.length, 1);
+        const restarted = fixture([], [], 0, false, null, localState).executor;
+        restarted.nativeRequest = executor.nativeRequest;
+        await restarted.restorePendingTransactions();
+        assert.equal(restarted.pendingTransactions.size, 1);
+        assert(restarted.advisoryErrors.length > 0);
+    }
+    for (const receipt of [
+        {released: true, nonce: "a".repeat(32)},
+        {released: false, nonce: "a".repeat(32), admission_version: 2,
+            phase: "dispatched", denial_retained: true},
+        {released: true, nonce: "a".repeat(32), admission_version: 2,
+            phase: "aborted-resolved", denial_retained: true},
+    ]) {
+        beginCase();
+        const {executor} = fixture();
+        executor.nativeRequest = async () => receipt;
+        await assert.rejects(executor.updateCandidateLease("release", "a".repeat(32)),
+            /not fully verified/);
     }
     for (const boundary of ["reply", "before_ack_storage", "after_ack_storage"]) {
         for (const cancelled of [false, true]) {
@@ -813,7 +861,8 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
                 return {accepted: true, nonce: "b".repeat(32)};
             }
             if (operation === "release_candidate_lease") {
-                return {released: true, nonce: payload.nonce};
+                return {released: true, nonce: payload.nonce, admission_version: 2,
+            phase: "aborted-resolved", denial_retained: false};
             }
             return typedResponse(operation, payload) || {};
         };

@@ -218,6 +218,13 @@ def update_candidate_lease(operation, nonce, run=None, identity=None):
     if operation != "release":
         expected.update(admission_version=2,
                         phase="reserved" if operation == "register" else "dispatched")
+    else:
+        expected.update(admission_version=2, phase="aborted-resolved", denial_retained=False)
+        if isinstance(result, dict) and result == {"released": False, "nonce": nonce,
+                      "admission_version": 2,
+                      "phase": result.get("phase"), "denial_retained": True} and \
+                result["phase"] in {"dispatched", "unknown"}:
+            raise X11Unavailable("candidate cleanup remains unknown; admission denial retained")
     if result != expected:
         raise X11Unavailable("candidate admission v2 was not confirmed")
     return result
