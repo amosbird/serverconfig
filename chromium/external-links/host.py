@@ -2268,7 +2268,8 @@ class RemotePeer:
 
 class BrowserBroker:
     def __init__(self, remote_root=None, outbound=None, ordinary_open=None,
-                 write_barrier=None):
+                 write_barrier=None, browser=None):
+        self.browser = browser
         self.remote_root = pathlib.Path(remote_root) if remote_root else None
         self.outbound = outbound or queue.Queue()
         self.ordinary_open = ordinary_open
@@ -2580,10 +2581,20 @@ class BrowserBroker:
             return self.peer(payload, "cancellation_completed").complete_cancellation(
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"))
-        if service == "abush_browser" and operation == "register_candidate_lease":
+        if service == "abush_browser" and operation in {
+                "register_candidate_lease", "arm_candidate_lease", "admit_candidate"}:
             if not isinstance(payload, dict) or set(payload) != {"nonce"}:
-                raise ValueError("invalid candidate lease payload")
-            return self.x11_binding().update_candidate_lease("register", payload["nonce"])
+                raise ValueError("invalid candidate admission payload")
+            if self.browser is None:
+                raise ValueError("trusted native browser identity is unavailable")
+            binding = self.x11_binding()
+            identity = binding.browser_incarnation(self.browser["pid"])
+            if identity is None or identity[2] != self.browser["starttime"]:
+                raise ValueError("native browser incarnation changed")
+            if operation == "admit_candidate":
+                return binding.admit_candidate(payload["nonce"], identity)
+            action = "register" if operation == "register_candidate_lease" else "arm"
+            return binding.update_candidate_lease(action, payload["nonce"], identity=identity)
         if service == "abush_browser" and operation == "release_candidate_lease":
             if not isinstance(payload, dict) or set(payload) != {"nonce"}:
                 raise ValueError("invalid candidate lease payload")
@@ -2641,7 +2652,7 @@ class NativeBrokerHost:
                 bootstrap_claims=claims)
         self.broker = BrowserBroker(remote_root=remote_root, outbound=self.outbound,
                                     ordinary_open=self.ordinary_open,
-                                    write_barrier=threading.Event)
+                                    write_barrier=threading.Event, browser=self.browser)
         self.refresh_stop = threading.Event()
         self.refresh_wakeup = threading.Event()
         self.refresh_interval = 1.0

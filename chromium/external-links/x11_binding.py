@@ -193,25 +193,53 @@ def qtile_move_command(window, group="c", expected=None):
     return qtile_command("place_abush_browser_window", window, encoded)
 
 
-def qtile_candidate_lease_command(operation, nonce):
-    if operation not in {"register", "release"} or not isinstance(nonce, str) or \
+def qtile_candidate_lease_command(operation, nonce, identity=None):
+    if operation not in {"register", "arm", "release"} or not isinstance(nonce, str) or \
             not NONCE_RE.fullmatch(nonce):
         raise ValueError("invalid candidate lease request")
-    function = "register_abush_browser_candidate" if operation == "register" else \
-        "release_abush_browser_candidate"
+    function = {"register": "register_abush_browser_candidate",
+                "arm": "arm_abush_browser_candidate",
+                "release": "release_abush_browser_candidate"}[operation]
+    if operation == "register":
+        if identity is None:
+            raise X11Unavailable("candidate admission v2 browser identity is required")
+        return qtile_command(function, nonce, json.dumps(identity))
     return qtile_command(function, nonce)
 
 
-def update_candidate_lease(operation, nonce, run=None):
-    output = run_qtile(qtile_candidate_lease_command(operation, nonce), run)
+def update_candidate_lease(operation, nonce, run=None, identity=None):
+    output = run_qtile(qtile_candidate_lease_command(operation, nonce, identity), run)
     try:
         result = json.loads(output)
     except (json.JSONDecodeError, TypeError) as error:
         raise X11Unavailable("invalid candidate lease response") from error
-    expected = {"accepted": True, "nonce": nonce} if operation == "register" else \
-        {"released": True, "nonce": nonce}
+    field = {"register": "accepted", "arm": "armed", "release": "released"}[operation]
+    expected = {field: True, "nonce": nonce}
+    if operation != "release":
+        expected.update(admission_version=2,
+                        phase="reserved" if operation == "register" else "dispatched")
     if result != expected:
-        raise X11Unavailable("candidate lease was not confirmed")
+        raise X11Unavailable("candidate admission v2 was not confirmed")
+    return result
+
+
+def admit_candidate(nonce, identity, adapter=None, run=None):
+    if not isinstance(nonce, str) or not NONCE_RE.fullmatch(nonce):
+        raise ValueError("invalid candidate nonce")
+    adapter = adapter or XcffibAdapter()
+    expected = f"__ABUSH_BIND__:{nonce}:a"
+    matches = [xid for xid in adapter.windows()
+               if binding_title_matches(adapter.title(xid), expected) and
+               browser_incarnation(adapter.pid(xid)) == identity and
+               chrome_process_window(adapter, xid)]
+    if len(matches) != 1:
+        raise X11Unavailable("candidate admission requires one exact X11 title and incarnation")
+    xid = matches[0]
+    result = json.loads(run_qtile(qtile_command(
+        "admit_abush_browser_candidate", xid, nonce), run))
+    if result != {"admitted": True, "nonce": nonce, "xid": xid,
+                  "admission_version": 2, "first_group": "__abush_quarantine"}:
+        raise X11Unavailable("pre-map candidate admission was not confirmed")
     return result
 
 

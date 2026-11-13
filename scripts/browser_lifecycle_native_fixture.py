@@ -36,14 +36,16 @@ class Window:
         self.model = model
         self.wid = xid
         self.name = ""
-        self.props = {"WM_CLASS": "google-chrome\0Google-chrome", "WM_WINDOW_ROLE": "browser"}
+        self.props = {"WM_CLASS": "google-chrome\0Google-chrome", "WM_WINDOW_ROLE": "browser",
+                      "_NET_WM_PID": [4242], "_NET_WM_DESKTOP": 0}
         self.group = None
         self.qtile = model
         self.can_steal_focus = True
         self.window = self
 
     def get_property(self, name, *_args, **_kwargs):
-        return self.props.get(name, "")
+        value = self.props.get(name, "")
+        return [value] if name == "_NET_WM_DESKTOP" else value
 
     def get_pid(self):
         return 4242
@@ -51,8 +53,7 @@ class Window:
     def get_name(self):
         return self.name
 
-    def set_property(self, name, value, property_type, format):
-        assert property_type in {"UTF8_STRING", "STRING"} and format == 8
+    def set_property(self, name, value, property_type=None, format=None):
         self.props[name] = value
         self.model.record("property:" + name, self.wid)
 
@@ -91,6 +92,31 @@ class Model:
         self.current_screen = SimpleNamespace(group=self.groups_map["e"])
         self.current_window = SimpleNamespace(wid=900)
         self.windows_map = {}
+        self.raw_windows = {}
+        self.groups = list(self.groups_map.values())
+        model = self
+
+        class Core:
+            def handle_MapRequest(core, event):
+                if event.window in model.windows_map:
+                    return
+                window = model.raw_windows[event.window]
+                # Production Window.__init__.set_group runs before client_new.
+                group = model.groups[window.props["_NET_WM_DESKTOP"]]
+                model.ns["prevent_abush_browser_focus_steal"](group, window)
+                window.group = group
+                model.record("constructor:set_group", window.wid)
+                model.ns["before_window_created"](window)
+                model.windows_map[window.wid] = window
+                model.record("map:claimed" if model.ns["is_abush_browser_candidate"](window)
+                             else "map:ordinary", window.wid)
+
+            def handle_DestroyNotify(core, event):
+                model.windows_map.pop(event.window, None)
+
+        self.core = Core()
+        self.core.qtile = self
+        self.core.conn = SimpleNamespace(flush=lambda: None)
         self.chrome = []
         self.command_root = type("OfflineQtile", (), {"_commands": {}})
         self.ns = {"re": re, "json": json, "time": time, "QtileWindow": Window,
@@ -108,6 +134,9 @@ class Model:
             "abush_candidate_claim", "save_abush_candidate_claim", "abush_browser_incarnation",
             "before_window_created", "release_abush_candidate_window",
             "reclassify_abush_browser", "place_abush_browser", "install_browser_commands",
+            "reserve_abush_premap", "abush_premap_identity", "arm_abush_browser_candidate",
+            "admit_abush_browser_candidate", "handle_abush_map_request",
+            "handle_abush_destroy_notify", "install_abush_premap_gate",
         }
         nodes = []
         for node in tree.body:
@@ -121,12 +150,17 @@ class Model:
         exec(compile(ast.Module(nodes, []), "qtile-browser-helpers", "exec"), self.ns)
         self.ns["abush_browser_incarnation"] = (
             lambda window: ["offline-boot", window.get_pid(), "1234"])
+        self.ns["abush_premap_identity"] = lambda pid: ["offline-boot", pid, "1234"]
+        self.ns["x11_core"] = SimpleNamespace(Core=Core, window=SimpleNamespace(
+            XWindow=lambda _conn, xid: self.raw_windows[xid]))
+        self.ns["install_abush_premap_gate"]()
         self.ns["install_browser_commands"]()
         self.adapter = Adapter(self)
         self.completions = []
         ordinary = SimpleNamespace(complete=lambda payload: self.completions.append(payload))
         self.broker = host.BrowserBroker(remote_root=ROOT / ".absent-offline-remotes",
-                                         outbound=queue.Queue(), ordinary_open=ordinary)
+                                         outbound=queue.Queue(), ordinary_open=ordinary,
+                                         browser={"pid": 4242, "starttime": "1234"})
         self.broker.x11_binding = lambda: binding
         peer = SimpleNamespace(connected=True, metadata={"connection_id": "c_12345678"},
                                principal_id="principal-one", complete_ensure=self.complete_ensure,
@@ -164,29 +198,31 @@ class Model:
     def sync(self, message):
         self.chrome = message["windows"]
         present = {win["id"] + 100 for win in self.chrome}
-        for xid in set(self.windows_map) - present:
-            self.ns["release_abush_candidate_window"](self.windows_map[xid])
-            del self.windows_map[xid]
+        for xid in set(self.raw_windows) - present:
+            if xid in self.windows_map:
+                self.ns["release_abush_candidate_window"](self.windows_map[xid])
+            self.core.handle_DestroyNotify(SimpleNamespace(window=xid))
+            del self.raw_windows[xid]
         for chrome in self.chrome:
             xid = chrome["id"] + 100
-            fresh = xid not in self.windows_map
-            window = Window(self, xid) if fresh else self.windows_map[xid]
+            fresh = xid not in self.raw_windows
+            window = Window(self, xid) if fresh else self.raw_windows[xid]
+            self.raw_windows[xid] = window
             active = next((tab for tab in chrome["tabs"] if tab["active"]), None)
             title = (active or {}).get("title", "") + " - Google Chrome"
+            if fresh:
+                if not any(op["phase"] == "dispatched" for op in getattr(
+                        self.core, "_abush_premap", {}).get("operations", {}).values()):
+                    window.name = title
+                    window.props["_NET_WM_NAME"] = title
+                self.core.handle_MapRequest(SimpleNamespace(window=xid))
+                self.record("map_request:initial", xid)
             if window.name != title:
                 window.name = title
                 window.props["_NET_WM_NAME"] = title
-                if not fresh:
+                if xid in self.windows_map:
                     self.ns["reclassify_abush_browser"](window)
-            if fresh:
-                self.ns["before_window_created"](window)
-                # client_new precedes dgroups and windows_map insertion. A claimed
-                # window already has a group; never consume the rule a second time.
-                if window.group is None:
-                    window.togroup("f")
-                self.windows_map[xid] = window
-                self.record("map:claimed" if self.ns["is_abush_browser_candidate"](window)
-                            else "map:ordinary", xid)
+            self.record("title:published", xid)
         self.record(message["action"])
         return {}
 
@@ -218,10 +254,10 @@ class Adapter:
         self.model = model
 
     def windows(self):
-        return list(self.model.windows_map)
+        return list(self.model.raw_windows)
 
     def property(self, xid, name, property_type="UTF8_STRING"):
-        return self.model.windows_map[xid].props.get(name, "")
+        return self.model.raw_windows[xid].props.get(name, "")
 
     def title(self, xid):
         return self.property(xid, "_NET_WM_NAME")
@@ -286,6 +322,9 @@ def main():
                     model.record("recover_claims")
                     result = {}
                 elif kind == "expire_admission":
+                    for operation in model.core._abush_premap["operations"].values():
+                        if operation["phase"] == "reserved":
+                            operation["deadline"] = 0
                     model.ns["expire_abush_browser_candidate_leases"](time.monotonic() + 60)
                     result = {}
                 elif kind == "state":

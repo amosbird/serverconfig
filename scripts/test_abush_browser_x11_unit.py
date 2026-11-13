@@ -202,22 +202,24 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
 
     def test_candidate_lease_commands_are_exact_and_verified(self):
         nonce = "a" * 32
-        register = binding.qtile_candidate_lease_command("register", nonce)
+        identity = ["boot", 4242, "123"]
+        receipt = {"accepted": True, "nonce": nonce, "admission_version": 2, "phase": "reserved"}
+        register = binding.qtile_candidate_lease_command("register", nonce, identity)
         release = binding.qtile_candidate_lease_command("release", nonce)
         self.assertIn("register_abush_browser_candidate", register)
         self.assertIn("release_abush_browser_candidate", release)
-        self.assertEqual(register[-1], nonce)
+        self.assertEqual(register[-2], nonce)
+        self.assertEqual(json.loads(register[-1]), identity)
         self.assertEqual(release[-1], nonce)
         with self.assertRaises(ValueError):
             binding.qtile_candidate_lease_command("register", "bad")
 
         run = mock.Mock(return_value=mock.Mock(
             returncode=0,
-            stdout=json.dumps({"accepted": True, "nonce": nonce}),
+            stdout=json.dumps(receipt),
             stderr="",
         ))
-        self.assertEqual(binding.update_candidate_lease("register", nonce, run),
-                         {"accepted": True, "nonce": nonce})
+        self.assertEqual(binding.update_candidate_lease("register", nonce, run, identity), receipt)
         run.assert_called_once()
         wrong = mock.Mock(return_value=mock.Mock(
             returncode=0,
@@ -225,7 +227,30 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
             stderr="",
         ))
         with self.assertRaisesRegex(binding.X11Unavailable, "not confirmed"):
-            binding.update_candidate_lease("register", nonce, wrong)
+            binding.update_candidate_lease("register", nonce, wrong, identity)
+
+    def test_native_admit_requires_unique_exact_title_and_stable_incarnation(self):
+        nonce = "a" * 32
+        identity = ["boot", 4242, "123"]
+        adapter = mock.Mock()
+        adapter.windows.return_value = [22]
+        adapter.title.return_value = f"__ABUSH_BIND__:{nonce}:a"
+        adapter.pid.return_value = 4242
+        receipt = {"admitted": True, "nonce": nonce, "xid": 22,
+                   "admission_version": 2, "first_group": "__abush_quarantine"}
+        with mock.patch.object(binding, "browser_incarnation", return_value=identity), \
+                mock.patch.object(binding, "browser_process", return_value=True), \
+                mock.patch.object(binding, "run_qtile", return_value=json.dumps(receipt)) as run:
+            self.assertEqual(binding.admit_candidate(nonce, identity, adapter), receipt)
+            self.assertIn("admit_abush_browser_candidate", run.call_args.args[0])
+            adapter.windows.return_value = [22, 23]
+            with self.assertRaisesRegex(binding.X11Unavailable, "one exact"):
+                binding.admit_candidate(nonce, identity, adapter)
+            adapter.windows.return_value = [22]
+            adapter.title.return_value = "about:blank"
+            with self.assertRaisesRegex(binding.X11Unavailable, "one exact"):
+                binding.admit_candidate(nonce, identity, adapter)
+            self.assertEqual(run.call_count, 1)
 
     def test_run_qtile_uses_in_process_ipc_by_default(self):
         command = binding.qtile_move_command(22, "f")

@@ -448,7 +448,10 @@ async function binderCase(bridge, releaseBeforeBind = false) {
     const b = await model.createTab({windowId: 1, url: executor.statusUrl({nonce}, "b"),
         active: false});
     await executor.updateCandidateLease("register", nonce);
+    await executor.updateCandidateLease("arm", nonce);
     const window = await model.createWindow({tabId: a.id, type: "normal", focused: false});
+    const admission = await executor.nativeRequest("abush_browser", "admit_candidate", {nonce});
+    assert.equal(admission.first_group, "__abush_quarantine");
     await model.moveTab(b.id, {windowId: window.id, index: -1});
     await model.updateTab(a.id, {pinned: true});
     await model.updateTab(b.id, {pinned: true});
@@ -503,10 +506,10 @@ async function expiredAdmissionCase(bridge) {
         active: false});
     await executor.updateCandidateLease("register", nonce);
     await bridge.call("expire_admission");
-    const window = await model.createWindow({tabId: a.id, type: "normal", focused: false});
+    await assert.rejects(executor.updateCandidateLease("arm", nonce), /expired before dispatch/);
     const {trace} = await bridge.call("state");
-    assert.equal(trace.at(-1).windows[window.id + 100].group, "f",
-        "unadmitted leases expire, unlike admitted durable claims");
+    assert(!trace.some(frame => frame.action === "native:validated:arm_candidate_lease"),
+        "expired reservations must reject before windows.create dispatch");
     await executor.updateCandidateLease("release", nonce);
 }
 

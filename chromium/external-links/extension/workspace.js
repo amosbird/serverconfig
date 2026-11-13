@@ -3221,14 +3221,18 @@ class WorkspaceExecutor {
     }
 
     async updateCandidateLease(operation, nonce) {
-        if (!new Set(["register", "release"]).has(operation)) {
+        if (!new Set(["register", "arm", "release"]).has(operation)) {
             throw new Error("invalid candidate lease operation");
         }
         const result = await this.nativeRequest(
             "abush_browser", `${operation}_candidate_lease`, {nonce});
-        const field = operation === "register" ? "accepted" : "released";
-        if (!exactFields(result, [field, "nonce"]) || result[field] !== true ||
-                result.nonce !== nonce) {
+        const field = {register: "accepted", arm: "armed", release: "released"}[operation];
+        const fields = operation === "release" ? [field, "nonce"] :
+            [field, "nonce", "admission_version", "phase"];
+        if (!exactFields(result, fields) || result[field] !== true ||
+                result.nonce !== nonce || (operation !== "release" &&
+                    (result.admission_version !== 2 || result.phase !==
+                        (operation === "register" ? "reserved" : "dispatched")))) {
             this.fail("invalid_command", "native candidate lease was not fully verified");
         }
         return result;
@@ -4429,6 +4433,7 @@ class WorkspaceExecutor {
             }
             candidateLeaseRequested = true;
             await this.updateCandidateLease("register", nonce);
+            await this.updateCandidateLease("arm", nonce);
             created = await this.mutateTransaction(transaction, [{
                 type: "windowCreated",
                 match: {window: {type: "normal"}, sourceTabId: statusTabs[0].id},
@@ -4446,6 +4451,11 @@ class WorkspaceExecutor {
                 }));
             statusTabs[0].windowId = created.id;
             const firstStatus = await this.chrome.tabs.get(statusTabs[0].id);
+            if (firstStatus.windowId !== created.id ||
+                    (await this.chrome.windows.get(created.id)).type !== "normal" ||
+                    firstStatus.url !== this.statusUrl({nonce}, "a")) {
+                throw new Error("managed candidate physical topology was not verified");
+            }
             statusTabs[0].windowType = firstStatus.windowType;
             if (!created.tabs) created.tabs = [firstStatus];
             transaction.windowId = created.id;
@@ -4454,6 +4464,15 @@ class WorkspaceExecutor {
                 windowId: created.id,
                 phase: "window_created",
             });
+            await this.waitForStatusTitle(statusTabs[0].id, nonce, "a");
+            const admission = await this.nativeRequest("abush_browser", "admit_candidate", {nonce});
+            if (!exactFields(admission, ["admitted", "nonce", "xid", "admission_version",
+                "first_group"]) || admission.admitted !== true || admission.nonce !== nonce ||
+                    !Number.isInteger(admission.xid) || admission.xid <= 0 ||
+                    admission.admission_version !== 2 ||
+                    admission.first_group !== "__abush_quarantine") {
+                throw new Error("native pre-map candidate admission was not verified");
+            }
             await this.mutateTransaction(transaction, [{
                 type: "tabDetached",
                 match: {tabId: statusTabs[1].id, oldWindowId: hostWindowId},

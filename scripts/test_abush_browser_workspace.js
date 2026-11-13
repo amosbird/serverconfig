@@ -119,7 +119,14 @@ function typedResponse(operation, payload) {
 
 function candidateLeaseResponse(operation, payload) {
     if (operation === "register_candidate_lease") {
-        return {accepted: true, nonce: payload.nonce};
+        return {accepted: true, nonce: payload.nonce, admission_version: 2, phase: "reserved"};
+    }
+    if (operation === "arm_candidate_lease") {
+        return {armed: true, nonce: payload.nonce, admission_version: 2, phase: "dispatched"};
+    }
+    if (operation === "admit_candidate") {
+        return {admitted: true, nonce: payload.nonce, xid: 42, admission_version: 2,
+            first_group: "__abush_quarantine"};
     }
     if (operation === "release_candidate_lease") {
         return {released: true, nonce: payload.nonce};
@@ -343,8 +350,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     };
     const native = async (service, operation, payload) => {
         calls.push([operation, payload]);
+        const admission = candidateLeaseResponse(operation, payload);
+        if (admission) return admission;
         if (operation === "register_candidate_lease") {
-            return {accepted: true, nonce: payload.nonce};
+            return {accepted: true, nonce: payload.nonce, admission_version: 2, phase: "reserved"};
         }
         if (operation === "release_candidate_lease") {
             return {released: true, nonce: payload.nonce};
@@ -2372,6 +2381,14 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             call[1].abushOwnedMarkers?.[first.nonce]?.version === 2);
         const commitIndex = calls.findIndex(call => call[0] === "persist" &&
             call[1].abushWorkspaces?.some(record => record.nonce === first.nonce));
+        const armIndex = calls.findIndex(call => call[0] === "arm_candidate_lease");
+        const admitIndex = calls.findIndex(call => call[0] === "admit_candidate");
+        assert(registerLeaseIndex < armIndex && armIndex < createWindowIndex &&
+            createWindowIndex < admitIndex && admitIndex < bindIndex,
+        "reserve and arm must precede physical create, exact admission must precede bind");
+        const firstBusiness = calls.findIndex(call => call[0] === "createTab" &&
+            call[1].url === "about:blank");
+        assert(admitIndex < firstBusiness, "business tabs must wait for pre-map admission");
         assert(registerLeaseIndex >= 0 && registerLeaseIndex < createWindowIndex &&
             createWindowIndex < bindIndex && bindIndex < ownershipIndex &&
             ownershipIndex < commitIndex && commitIndex < releaseLeaseIndex,

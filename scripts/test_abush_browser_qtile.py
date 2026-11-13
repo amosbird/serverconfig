@@ -137,6 +137,9 @@ def load_browser_config(namespace):
         "is_abush_browser_candidate", "prevent_abush_browser_focus_steal",
         "place_abush_browser", "recover_abush_browsers", "reclassify_abush_browser",
         "before_window_created", "release_abush_candidate_window",
+        "reserve_abush_premap", "abush_premap_identity", "arm_abush_browser_candidate",
+        "admit_abush_browser_candidate", "handle_abush_map_request",
+        "handle_abush_destroy_notify", "install_abush_premap_gate",
     }
     nodes = []
     for node in tree.body:
@@ -274,6 +277,7 @@ class QtileConfigTest(unittest.TestCase):
         namespace["ABUSH_CANDIDATE_LEASES"][nonce] = 99.0
         clock.monotonic.return_value = 111.0
         self.assertFalse(namespace["claim_abush_browser_candidate"](marker_a))
+        namespace["expire_abush_browser_candidate_leases"]()
         self.assertNotIn(nonce, namespace["ABUSH_CANDIDATE_LEASES"])
         self.assertIn(marker_a.wid, namespace["ABUSH_CANDIDATE_WINDOWS"],
                       "admission expiry must never expire quarantine ownership")
@@ -694,6 +698,7 @@ class CandidateLifecycleTest(unittest.TestCase):
                                  current_window=self.active)
         self.manager.groups_map = {name: FakeGroup(name)
                                    for name in ("e", "f", "c", "__abush_quarantine")}
+        self.manager.core._abush_premap = None
         self.ns["qtile"] = self.manager
         self.trace = []
 
@@ -728,7 +733,7 @@ class CandidateLifecycleTest(unittest.TestCase):
         self.record("managed", window)
 
     def candidate(self, title=None, premap=False):
-        self.ns["register_abush_browser_candidate"](self.manager, self.nonce)
+        self.ns["ABUSH_CANDIDATE_LEASES"][self.nonce] = 110.0
         window = FakeWindow("browser", group=None,
                             name=title if title is not None else f"__ABUSH_BIND__:{self.nonce}:a")
         if premap:
@@ -802,7 +807,7 @@ class CandidateLifecycleTest(unittest.TestCase):
         self.ns["release_abush_candidate_window"](old)
         self.assertNotIn(22, self.ns["ABUSH_CANDIDATE_WINDOWS"])
         self.assertFalse(self.ns["is_abush_browser_candidate"](replacement))
-        with self.assertRaisesRegex(ValueError, "already admitted"):
+        with self.assertRaisesRegex(ValueError, "identity is required"):
             self.ns["register_abush_browser_candidate"](self.manager, self.nonce)
 
     def test_stale_browser_boot_property_is_not_recovered(self):
@@ -814,13 +819,10 @@ class CandidateLifecycleTest(unittest.TestCase):
         self.assertFalse(self.ns["place_abush_browser"](restored))
         restored.togroup.assert_not_called()
 
-    def test_late_expired_lease_cannot_admit_new_window(self):
-        self.ns["register_abush_browser_candidate"](self.manager, self.nonce)
-        self.ns["time"].monotonic.return_value = 111
-        window = FakeWindow("browser", group=None, name=f"__ABUSH_BIND__:{self.nonce}:a")
-        self.manage(window)
-        self.assertEqual(window.group.name, "f")
-        self.assertFalse(self.ns["is_abush_browser_candidate"](window))
+    def test_unversioned_registration_rejected_before_dispatch(self):
+        with self.assertRaisesRegex(ValueError, "identity is required"):
+            self.ns["register_abush_browser_candidate"](self.manager, self.nonce)
+        self.assertEqual(self.manager.windows_map, {})
 
     def test_passive_active_move_rejected_before_mutation_and_same_group_is_noop(self):
         self.active.togroup.reset_mock()
@@ -882,6 +884,167 @@ class CandidateLifecycleTest(unittest.TestCase):
         self.assertEqual(self.manager.current_window.wid, 99)
         self.ns["release_abush_browser_candidate"](self.manager, self.nonce)
         self.assertFalse(self.ns["ABUSH_CANDIDATE_WINDOWS"][22]["released"])
+
+
+class PremapBarrierTest(unittest.TestCase):
+    def setUp(self):
+        self.ns = load_browser_config({})
+        self.nonce = "a" * 32
+        self.identity = ["boot", 4242, "123"]
+        self.ns["abush_premap_identity"] = lambda pid: self.identity if pid == 4242 else None
+        self.raw = {}
+        self.trace = []
+        test = self
+
+        class Raw:
+            def __init__(self, _conn, xid):
+                self.wid = xid
+                self.properties = test.raw.setdefault(xid, {
+                    "_NET_WM_PID": [4242], "_NET_WM_DESKTOP": 0, "title": "",
+                })
+
+            def get_property(self, name, *_args, **_kwargs):
+                value = self.properties.get(name, "")
+                return [value] if name == "_NET_WM_DESKTOP" else value
+
+            def set_property(self, name, value, *_args):
+                if self.properties.get("fail_save") and name == "_ABUSH_CANDIDATE_CLAIM":
+                    raise ValueError("persist failed")
+                self.properties[name] = value
+
+            def get_wm_class(self):
+                return ["google-chrome", "Google-chrome"]
+
+            def get_name(self):
+                return self.properties["title"]
+
+        class Core:
+            def handle_MapRequest(core, event):
+                if event.window in core.qtile.windows_map:
+                    return
+                raw = Raw(core.conn, event.window)
+                window = FakeWindow("browser", group=None, name=raw.get_name(),
+                                    metadata=raw.properties)
+                window.wid = event.window
+                window.qtile = core.qtile
+                # Window.__init__.set_group precedes client_new and reads inherited desktop.
+                group = core.qtile.groups[raw.properties["_NET_WM_DESKTOP"]]
+                test.ns["prevent_abush_browser_focus_steal"](group, window)
+                window.group = group
+                test.trace.append((event.window, group.name, window.can_steal_focus))
+                test.ns["before_window_created"](window)
+                core.qtile.windows_map[event.window] = window
+
+            def handle_DestroyNotify(core, event):
+                core.qtile.windows_map.pop(event.window, None)
+
+        self.Core = Core
+        self.Raw = Raw
+        self.ns["x11_core"] = mock.Mock(Core=Core, window=mock.Mock(XWindow=Raw))
+        self.ns["install_abush_premap_gate"]()
+        self.core = Core()
+        self.core.conn = mock.Mock()
+        self.manager = mock.Mock(windows_map={}, core=self.core,
+                                 current_window=mock.Mock(wid=99))
+        self.manager.groups = [FakeGroup(name) for name in ("f", "c", "__abush_quarantine")]
+        self.manager.groups_map = {g.name: g for g in self.manager.groups}
+        self.manager.current_screen.group = self.manager.groups[0]
+        self.core.qtile = self.manager
+
+    def reserve(self):
+        return self.ns["register_abush_browser_candidate"](
+            self.manager, self.nonce, json.dumps(self.identity))
+
+    def arm(self):
+        self.reserve()
+        self.ns["arm_abush_browser_candidate"](self.manager, self.nonce)
+
+    def request(self, xid):
+        self.core.handle_MapRequest(mock.Mock(window=xid))
+
+    def admit(self, xid):
+        self.raw[xid]["title"] = f"__ABUSH_BIND__:{self.nonce}:a"
+        return self.ns["admit_abush_browser_candidate"](self.manager, xid, self.nonce)
+
+    def test_blank_map_late_title_expired_dispatched_and_concurrent_ordinary(self):
+        for current in ("f", "c"):
+            with self.subTest(current=current):
+                self.setUp()
+                self.manager.current_screen.group = self.manager.groups_map[current]
+                self.request(11)
+                self.assertEqual(self.trace, [(11, "f", True)])
+                self.arm()
+                self.request(11)
+                self.request(22)
+                self.request(33)
+                self.ns["time"].monotonic.return_value = 10000
+                self.assertEqual(len(self.trace), 1)
+                self.assertNotIn(22, self.manager.windows_map)
+                self.ns["release_abush_browser_candidate"](self.manager, self.nonce)
+                self.request(22)
+                self.assertEqual(len(self.trace), 1, "cancel cannot release ambiguous create")
+                result = self.admit(22)
+                self.assertEqual(result["first_group"], "__abush_quarantine")
+                self.assertEqual(self.trace, [(11, "f", True),
+                                             (22, "__abush_quarantine", False), (33, "f", False)])
+                self.assertEqual(self.manager.current_screen.group.name, current)
+                self.assertEqual(self.manager.current_window.wid, 99)
+
+    def test_pending_limit_fails_closed_and_blocks_admission(self):
+        self.arm()
+        for xid in range(1000, 1128):
+            self.request(xid)
+        with self.assertRaisesRegex(ValueError, "pending limit"):
+            self.request(1128)
+        self.assertEqual(len(self.core._abush_premap["pending"]), 128)
+        with self.assertRaisesRegex(ValueError, "not held"):
+            self.admit(1000)
+        self.assertEqual(self.trace, [])
+
+    def test_unsupported_core_rejects_registration_before_create(self):
+        self.Core.handle_MapRequest._abush_gate = False
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            self.reserve()
+        self.assertEqual(self.trace, [])
+
+    def test_reserved_expiry_rejects_before_dispatch(self):
+        self.reserve()
+        self.ns["time"].monotonic.return_value = 111
+        with self.assertRaisesRegex(ValueError, "expired before dispatch"):
+            self.ns["arm_abush_browser_candidate"](self.manager, self.nonce)
+        self.assertEqual(self.trace, [])
+
+    def test_save_error_stays_pending_and_reload_keeps_operation(self):
+        self.arm()
+        self.request(22)
+        self.raw[22]["fail_save"] = True
+        with self.assertRaisesRegex(ValueError, "persist failed"):
+            self.admit(22)
+        self.assertEqual(self.trace, [])
+        self.assertIn(22, self.core._abush_premap["pending"])
+        self.ns["install_abush_premap_gate"]()
+        self.assertEqual(self.core._abush_premap["operations"][self.nonce]["phase"], "dispatched")
+        del self.raw[22]["fail_save"]
+        self.admit(22)
+        self.assertEqual(self.trace, [(22, "__abush_quarantine", False)])
+
+    def test_destroy_xid_reuse_and_incarnation_replacement_reject_old_admit(self):
+        self.arm()
+        self.request(22)
+        old_token = self.raw[22]["_ABUSH_PREMAP_TOKEN"]
+        self.core.handle_DestroyNotify(mock.Mock(window=22))
+        self.raw.pop(22)
+        with self.assertRaisesRegex(ValueError, "not held"):
+            self.admit_missing(22)
+        self.request(22)
+        self.assertNotEqual(self.raw[22]["_ABUSH_PREMAP_TOKEN"], old_token)
+        self.identity = ["boot", 4242, "reused"]
+        with self.assertRaisesRegex(ValueError, "identity"):
+            self.admit(22)
+        self.assertEqual(self.trace, [])
+
+    def admit_missing(self, xid):
+        return self.ns["admit_abush_browser_candidate"](self.manager, xid, self.nonce)
 
 
 class BinderQtileNotificationTest(unittest.TestCase):

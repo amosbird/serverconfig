@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -245,23 +246,178 @@ def passive_window_move(manager, window, destination):
     }
 
 
-def register_abush_browser_candidate(manager, nonce: str):
-    if not isinstance(nonce, str) or ABUSH_NONCE.fullmatch(nonce) is None:
-        raise ValueError("invalid Abush browser candidate nonce")
-    now = time.monotonic()
-    expire_abush_browser_candidate_leases(now)
-    for window in manager.windows_map.values():
-        if is_chrome_window(window):
-            abush_candidate_claim(window)
-    if nonce in ABUSH_CANDIDATE_USED:
-        raise ValueError("candidate nonce was already admitted")
-    ABUSH_CANDIDATE_LEASES[nonce] = now + ABUSH_CANDIDATE_LEASE_SECONDS
-    return {"accepted": True, "nonce": nonce}
+def abush_premap_identity(pid):
+    if type(pid) is not int or pid <= 0:
+        return None
+    try:
+        proc = pathlib.Path(f"/proc/{pid}")
+        if proc.stat().st_uid != os.getuid():
+            return None
+        boot = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        fields = (proc / "stat").read_text().rsplit(")", 1)[1].split()
+        return [boot, pid, fields[19]]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def reserve_abush_premap(manager, nonce, identity_json):
+    core = manager.core
+    if not getattr(type(core).handle_MapRequest, "_abush_gate", False) or \
+            not hasattr(core, "conn") or not hasattr(x11_core.window, "XWindow"):
+        raise ValueError("Qtile pre-map admission v2 is unavailable")
+    identity = json.loads(identity_json)
+    if not isinstance(nonce, str) or not ABUSH_NONCE.fullmatch(nonce) or \
+            not isinstance(identity, list) or len(identity) != 3 or \
+            identity != abush_premap_identity(identity[1]):
+        raise ValueError("invalid candidate browser incarnation")
+    state = getattr(core, "_abush_premap", None)
+    if state is None:
+        state = core._abush_premap = {"operations": {}, "pending": {}, "serial": 0}
+    for key, operation in list(state["operations"].items()):
+        if operation["identity"] != abush_premap_identity(operation["identity"][1]):
+            state["pending"] = {xid: held for xid, held in state["pending"].items()
+                                if held["nonce"] != key}
+            del state["operations"][key]
+        elif operation["phase"] == "reserved" and operation["deadline"] < time.monotonic():
+            del state["operations"][key]
+    if nonce in state["operations"] or nonce in ABUSH_CANDIDATE_USED or \
+            any(op["identity"] == identity for op in state["operations"].values()) or \
+            len(state["operations"]) >= 16:
+        raise ValueError("candidate browser already has an unresolved admission")
+    state["operations"][nonce] = {
+        "identity": identity, "phase": "reserved", "deadline": time.monotonic() + 10,
+    }
+    return {"accepted": True, "nonce": nonce, "admission_version": 2, "phase": "reserved"}
+
+
+def arm_abush_browser_candidate(manager, nonce: str):
+    state = getattr(manager.core, "_abush_premap", {})
+    operation = state.get("operations", {}).get(nonce)
+    if operation is None or operation["phase"] != "reserved" or \
+            operation["deadline"] < time.monotonic() or \
+            operation["identity"] != abush_premap_identity(operation["identity"][1]):
+        raise ValueError("candidate reservation expired before dispatch")
+    operation["phase"] = "dispatched"
+    return {"armed": True, "nonce": nonce, "admission_version": 2, "phase": "dispatched"}
+
+
+def handle_abush_map_request(core, event):
+    original = type(core)._abush_original_map_request
+    state = getattr(core, "_abush_premap", None)
+    if not state or not any(op["phase"] == "dispatched"
+                            for op in state["operations"].values()) or \
+            event.window in core.qtile.windows_map:
+        return original(core, event)
+    raw = x11_core.window.XWindow(core.conn, event.window)
+    pid_values = raw.get_property("_NET_WM_PID", "CARDINAL", unpack=int)
+    identity = abush_premap_identity(pid_values[0]) if pid_values else None
+    operations = [(nonce, op) for nonce, op in state["operations"].items()
+                  if op["phase"] == "dispatched" and op["identity"] == identity]
+    if not operations:
+        return original(core, event)
+    nonce, operation = operations[0]
+    held = state["pending"].get(event.window)
+    if held is None:
+        if len(state["pending"]) >= 128:
+            operation["overflow"] = True
+            raise ValueError("candidate pre-map pending limit reached; admission remains denied")
+        state["serial"] += 1
+        token = f"{nonce}:{state['serial']}"
+        raw.set_property("_ABUSH_PREMAP_TOKEN", token, "UTF8_STRING", 8)
+        state["pending"][event.window] = {
+            "nonce": nonce, "identity": identity, "event": event, "token": token,
+        }
+    return None
+
+
+def handle_abush_destroy_notify(core, event):
+    state = getattr(core, "_abush_premap", None)
+    if state and event.window in state["pending"]:
+        state["pending"].pop(event.window)
+        return None
+    return type(core)._abush_original_destroy_notify(core, event)
+
+
+def admit_abush_browser_candidate(manager, xid: int, nonce: str):
+    core = manager.core
+    state = getattr(core, "_abush_premap", {})
+    operation = state.get("operations", {}).get(nonce)
+    held = state.get("pending", {}).get(xid)
+    if operation is None or operation["phase"] != "dispatched" or operation.get("overflow") or \
+            held is None or \
+            held["nonce"] != nonce or xid in manager.windows_map:
+        raise ValueError("candidate was not held by this admission")
+    raw = x11_core.window.XWindow(core.conn, xid)
+    pid_values = raw.get_property("_NET_WM_PID", "CARDINAL", unpack=int)
+    identity = abush_premap_identity(pid_values[0]) if pid_values else None
+    title = raw.get_name() or ""
+    match = ABUSH_CANDIDATE_TITLE.fullmatch(title)
+    if identity != held["identity"] or identity != operation["identity"] or \
+            not any("chrom" in value.lower() for value in (raw.get_wm_class() or [])) or \
+            raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) != held["token"] or \
+            match is None or match.group(1) != nonce:
+        raise ValueError("held candidate identity or exact title changed")
+    claim = {"nonce": nonce, "xid": xid, "incarnation": identity,
+             "released": False, "placed": False}
+    raw.set_property(ABUSH_CANDIDATE_CLAIM_PROPERTY, json.dumps(claim), "UTF8_STRING", 8)
+    raw.set_property(ABUSH_CANDIDATE_NONCE_PROPERTY, nonce, "UTF8_STRING", 8)
+    desktop = manager.groups.index(manager.groups_map["__abush_quarantine"])
+    raw.set_property("_NET_WM_DESKTOP", desktop)
+    core.conn.flush()
+    if raw.get_property(ABUSH_CANDIDATE_CLAIM_PROPERTY, "UTF8_STRING", unpack=str) != \
+            json.dumps(claim) or raw.get_property(
+                "_NET_WM_DESKTOP", "CARDINAL", unpack=int)[0] != desktop:
+        raise ValueError("candidate pre-map property persistence was not confirmed")
+    # The original constructor reads _NET_WM_DESKTOP before client_new.
+    type(core)._abush_original_map_request(core, held["event"])
+    window = qtile_window_by_xid(manager, xid)
+    if window.group is None or window.group.name != "__abush_quarantine" or \
+            window.can_steal_focus:
+        raise ValueError("candidate constructor did not preserve quarantine")
+    del state["pending"][xid]
+    operation["phase"] = "admitted"
+    # No release is safe for an ambiguous dispatched operation. Only exact admission
+    # establishes which other delayed MapRequests are ordinary.
+    for other_xid, other in list(state["pending"].items()):
+        if other["nonce"] != nonce:
+            continue
+        other_raw = x11_core.window.XWindow(core.conn, other_xid)
+        if other_raw.get_property("_ABUSH_PREMAP_TOKEN", "UTF8_STRING", unpack=str) == other["token"]:
+            core._abush_passive_map_xid = other_xid
+            try:
+                type(core)._abush_original_map_request(core, other["event"])
+            finally:
+                core._abush_passive_map_xid = None
+        del state["pending"][other_xid]
+    return {"admitted": True, "nonce": nonce, "xid": xid,
+            "admission_version": 2, "first_group": "__abush_quarantine"}
+
+
+def install_abush_premap_gate():
+    cls = x11_core.Core
+    if not hasattr(cls, "_abush_original_map_request"):
+        cls._abush_original_map_request = cls.handle_MapRequest
+        cls._abush_original_destroy_notify = cls.handle_DestroyNotify
+    handle_abush_map_request._abush_gate = True
+    cls.handle_MapRequest = handle_abush_map_request
+    cls.handle_DestroyNotify = handle_abush_destroy_notify
+
+
+def register_abush_browser_candidate(manager, nonce: str, identity_json: str = ""):
+    if identity_json:
+        return reserve_abush_premap(manager, nonce, identity_json)
+    raise ValueError("candidate admission v2 browser identity is required")
 
 
 def release_abush_browser_candidate(manager, nonce: str):
     if not isinstance(nonce, str) or ABUSH_NONCE.fullmatch(nonce) is None:
         raise ValueError("invalid Abush browser candidate nonce")
+    state = getattr(manager.core, "_abush_premap", None)
+    if state is not None and nonce in state["operations"]:
+        operation = state["operations"][nonce]
+        if operation["phase"] == "dispatched":
+            return {"released": True, "nonce": nonce}
+        del state["operations"][nonce]
     ABUSH_CANDIDATE_LEASES.pop(nonce, None)
     for window in manager.windows_map.values():
         if is_chrome_window(window):
@@ -345,6 +501,8 @@ def install_browser_commands():
     commands = {
         "prepare_ordinary_window": prepare_ordinary_window,
         "activate_ordinary_window": activate_ordinary_window,
+        "arm_abush_browser_candidate": arm_abush_browser_candidate,
+        "admit_abush_browser_candidate": admit_abush_browser_candidate,
         "register_abush_browser_candidate": register_abush_browser_candidate,
         "release_abush_browser_candidate": release_abush_browser_candidate,
         "quarantine_abush_browser_window": quarantine_abush_browser_window,
@@ -834,6 +992,11 @@ def abush_candidate_claim(window):
 
 
 def claim_abush_browser_candidate(window):
+    if is_chrome_window(window):
+        claim = abush_candidate_claim(window)
+        if claim is not None and not claim["placed"]:
+            window.can_steal_focus = False
+            return False
     if not is_chrome_window(window) or window.group is not None:
         return False
     match = ABUSH_CANDIDATE_TITLE.fullmatch(window.name or "")
@@ -981,7 +1144,8 @@ def is_abush_browser_candidate(window):
 
 @hook.subscribe.group_window_add
 def prevent_abush_browser_focus_steal(group, window):
-    if is_abush_browser_verified(window) or is_abush_browser_candidate(window) or \
+    if getattr(window.qtile.core, "_abush_passive_map_xid", None) == window.wid or \
+            is_abush_browser_verified(window) or is_abush_browser_candidate(window) or \
             has_abush_candidate_title(window):
         window.can_steal_focus = False
 
@@ -1006,6 +1170,7 @@ def place_abush_browser(window):
     return True
 
 
+install_abush_premap_gate()
 install_browser_commands()
 
 
