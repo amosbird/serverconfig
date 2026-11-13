@@ -151,7 +151,7 @@ def load_browser_config(namespace):
         "handle_abush_destroy_notify", "install_abush_premap_gate",
         "abush_premap_epoch", "abush_premap_journal_path", "save_abush_premap",
         "load_abush_premap", "persist_abush_premap", "replay_abush_ordinary_pending",
-        "abush_premap_destroyed",
+        "abush_premap_destroyed", "handle_abush_config_load",
     }
     nodes = []
     for node in tree.body:
@@ -937,6 +937,20 @@ class PremapBarrierTest(unittest.TestCase):
             def get_name(self):
                 return self.properties["title"]
 
+            def get_attributes(self):
+                return mock.Mock(override_redirect=False,
+                                 map_state=2 if self.properties.get("mapped") else 0)
+
+            def get_wm_state(self):
+                return None
+
+            def get_wm_type(self):
+                return "normal"
+
+            def unmap(self):
+                self.properties["mapped"] = False
+                test.trace.append((self.wid, "unmapped", False))
+
         class Core:
             def handle_MapRequest(core, event):
                 if event.window in core.qtile.windows_map:
@@ -956,15 +970,25 @@ class PremapBarrierTest(unittest.TestCase):
                 test.ns["before_window_created"](window)
                 core.qtile.windows_map[event.window] = window
 
+            def on_config_load(core, initial):
+                if initial:
+                    for xid in core._root.query_tree():
+                        if test.raw[xid].get("mapped", False):
+                            Core._abush_original_map_request(core, mock.Mock(window=xid))
+
             def handle_DestroyNotify(core, event):
                 core.qtile.windows_map.pop(event.window, None)
 
         self.Core = Core
         self.Raw = Raw
         self.ns["x11_core"] = mock.Mock(Core=Core, window=mock.Mock(XWindow=Raw))
+        self.ns["xcffib"] = mock.Mock()
+        self.ns["xcffib"].xproto.MapState.Unmapped = 0
         self.ns["install_abush_premap_gate"]()
         self.core = Core()
         self.core.conn = mock.Mock()
+        self.core._root = mock.Mock()
+        self.core._root.query_tree.side_effect = lambda: list(self.raw)
         self.manager = mock.Mock(windows_map={}, core=self.core,
                                  current_window=mock.Mock(wid=99))
         self.manager.groups = [FakeGroup(name) for name in ("f", "c", "__abush_quarantine")]
@@ -1174,8 +1198,106 @@ class PremapBarrierTest(unittest.TestCase):
                         {"version": 1, "nonce": nonce, "identity": self.identity}))
                 self.assertEqual(self.trace, [])
 
+    def test_partial_rejection_without_map_request_stays_denied_after_restart(self):
+        self.arm()
+        self.Raw(self.core.conn, 44).properties.update(title="", _NET_WM_PID=[])
+        with self.assertRaisesRegex(ValueError, "rejection.*absence"):
+            self.finish("rejected", None)
+        del self.core._abush_premap
+        with self.assertRaisesRegex(ValueError, "rejection.*absence"):
+            self.finish("rejected", None)
+        self.assertFalse(self.ns["release_abush_browser_candidate"](
+            self.manager, self.nonce)["released"])
+        self.request(44)
+        self.assertEqual(self.trace, [])
+        self.assertNotIn("terminal", self.core._abush_premap["operations"][self.nonce])
+
+    def test_initial_scan_holds_mapped_candidate_before_constructor_not_baseline(self):
+        self.Raw(self.core.conn, 11).properties.update(mapped=True, title="Ordinary")
+        self.arm()
+        self.Raw(self.core.conn, 22).properties.update(
+            mapped=True, title=f"__ABUSH_BIND__:{self.nonce}:a")
+        del self.core._abush_premap
+        self.Core._abush_gate_generation += 1
+        from libqtile.backend.x11.core import Core as InstalledCore
+        production = InstalledCore.on_config_load
+
+        def constructor(raw, manager):
+            self.Core._abush_original_map_request(self.core, mock.Mock(window=raw.wid))
+            window = manager.windows_map[raw.wid]
+            window.reserved_space = None
+            window.change_layer = mock.Mock()
+            return window
+
+        self.core.update_client_lists = mock.Mock()
+        self.core.fire_screen_change = mock.Mock()
+        self.manager.manage = mock.Mock()
+        self.Core._abush_original_config_load = production
+        with mock.patch.dict(production.__globals__, window=mock.Mock(
+                XWindow=self.Raw, Window=constructor, WithdrawnState=0)):
+            self.core.on_config_load(initial=True)
+        self.assertEqual(self.trace, [(22, "unmapped", False), (11, "f", True)])
+        self.assertNotIn(22, self.manager.windows_map)
+        self.assertIn(22, self.core._abush_premap["pending"])
+        self.admit(22)
+        self.assertEqual(self.trace[-1], (22, "__abush_quarantine", False))
+
+    def test_initial_scan_blank_new_same_browser_is_held_without_touching_baseline(self):
+        self.Raw(self.core.conn, 11).properties.update(mapped=True, title="Ordinary")
+        self.arm()
+        self.Raw(self.core.conn, 22).properties.update(mapped=True, title="")
+        del self.core._abush_premap
+        self.core.on_config_load(initial=True)
+        self.assertEqual(self.trace, [(22, "unmapped", False), (11, "f", True)])
+        self.assertTrue(self.raw[11]["mapped"])
+        self.assertFalse(self.raw[22]["mapped"])
+
+    def test_initial_scan_missing_identity_blocks_without_unmapping_stranger(self):
+        self.arm()
+        self.Raw(self.core.conn, 22).properties.update(mapped=True, title="", _NET_WM_PID=[])
+        with self.assertRaisesRegex(ValueError, "unidentified"):
+            self.core.on_config_load(initial=True)
+        self.assertEqual(self.trace, [])
+        self.assertTrue(self.raw[22]["mapped"])
+
+    def test_initial_scan_reused_baseline_token_does_not_authorize_constructor(self):
+        self.Raw(self.core.conn, 11).properties.update(mapped=True, title="Ordinary")
+        self.arm()
+        self.raw[11]["_ABUSH_PREMAP_BASELINE"] = "reused"
+        del self.core._abush_premap
+        self.core.on_config_load(initial=True)
+        self.assertEqual(self.trace, [(11, "unmapped", False)])
+        self.assertNotIn(11, self.manager.windows_map)
+
+    def test_initial_scan_missing_baseline_or_incarnation_blocks_without_mutation(self):
+        for missing in ("baseline", "incarnation"):
+            with self.subTest(missing=missing):
+                self.setUp()
+                self.Raw(self.core.conn, 11).properties.update(mapped=True, title="Ordinary")
+                self.arm()
+                if missing == "baseline":
+                    del self.core._abush_premap["operations"][self.nonce]["baseline"]
+                else:
+                    self.ns["abush_premap_identity"] = lambda pid: None
+                with self.assertRaisesRegex(ValueError, "baseline|incarnation"):
+                    self.core.on_config_load(initial=True)
+                self.assertEqual(self.trace, [])
+                self.assertTrue(self.raw[11]["mapped"])
+
+    def test_legacy_rejected_receipt_restores_unknown_not_resolved(self):
+        self.arm()
+        operation = self.core._abush_premap["operations"][self.nonce]
+        operation.update(phase="aborted-resolved", terminal={
+            "version": 1, "nonce": self.nonce, "operation_token": "c" * 32,
+            "identity": self.identity, "outcome": "rejected", "window_id": None})
+        self.ns["save_abush_premap"](self.core)
+        del self.core._abush_premap
+        self.assertFalse(self.ns["release_abush_browser_candidate"](
+            self.manager, self.nonce)["released"])
+        self.assertNotIn("terminal", self.core._abush_premap["operations"][self.nonce])
+
     def test_known_terminals_restart_repeat_and_new_reservation(self):
-        for outcome in ("not_invoked", "rejected", "fulfilled_cleaned"):
+        for outcome in ("not_invoked", "fulfilled_cleaned"):
             with self.subTest(outcome=outcome):
                 self.setUp()
                 self.arm()

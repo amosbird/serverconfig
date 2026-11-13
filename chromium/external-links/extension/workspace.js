@@ -3234,7 +3234,7 @@ class WorkspaceExecutor {
 
     async stageCandidateTerminal(transaction) {
         const settlement = transaction.admissionSettlement;
-        if (!settlement || !["not_invoked", "rejected", "fulfilled_cleaned"]
+        if (!settlement || !["not_invoked", "fulfilled_cleaned"]
             .includes(settlement.outcome)) throw new Error("candidate API terminal remains unknown");
         transaction.admissionTerminal = {version: 1, nonce: transaction.nonce,
             operation_token: transaction.admissionToken, ...settlement};
@@ -3243,7 +3243,9 @@ class WorkspaceExecutor {
 
     async finishCandidateAdmission(transaction) {
         const terminal = transaction.admissionTerminal;
-        if (!terminal) throw new Error("candidate API terminal remains unknown");
+        if (!terminal || terminal.outcome === "rejected") {
+            throw new Error("candidate rejection has no physical absence proof");
+        }
         const tabs = await this.chrome.tabs.query({});
         if (tabs.some(tab => transaction.statusTabIds.includes(tab.id) ||
                 this.parseStatusUrl(tab.pendingUrl || tab.url)?.nonce === transaction.nonce) ||

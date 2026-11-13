@@ -124,6 +124,7 @@ class Model:
         self.core = Core()
         self.core.qtile = self
         self.core.conn = SimpleNamespace(flush=lambda: None)
+        self.core._root = SimpleNamespace(query_tree=lambda: list(self.raw_windows))
         self.chrome = []
         self.command_root = type("OfflineQtile", (), {"_commands": {}})
         self.ns = {"re": re, "json": json, "time": time, "os": os, "pathlib": pathlib,

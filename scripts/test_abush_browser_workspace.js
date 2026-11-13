@@ -795,7 +795,13 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
             await executor.chrome.tabs.query({windowId: 1}), `no leaked candidate after ${lost}`);
         assert.deepEqual((await physicalTabs()).map(tab => tab.id), [2000, 2001, 2002],
             `no physical pendingUrl leak after ${lost}`);
-        assert.deepEqual(localState.abushPendingTransactions, []);
+        if (lost === "window") {
+            assert.equal(localState.abushPendingTransactions.length, 1);
+            assert.equal(localState.abushPendingTransactions[0].admission_settlement.outcome,
+                "rejected", "settlement does not prove allocation rollback");
+        } else {
+            assert.deepEqual(localState.abushPendingTransactions, []);
+        }
         assert.deepEqual(localState.abushOwnedMarkers, {});
         await exactWait(executor.lifecycleTail, `lifecycle queue after ${lost}`);
     }
@@ -1615,10 +1621,12 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         executor.chrome.windows.create = async () => {
             throw new Error("window creation failed");
         };
-        await assert.rejects(executor.ensure(ensurePayload()), /window creation failed/);
+        await assert.rejects(executor.ensure(ensurePayload()), error =>
+            error.browserCode === "unknown_effect");
         assert.equal(calls.filter(call => call[0] === "register_candidate_lease").length, 1);
-        assert.equal(calls.filter(call => call[0] === "release_candidate_lease").length, 1,
-            "failed window creation must release its candidate lease");
+        assert.equal(calls.filter(call => call[0] === "release_candidate_lease").length, 0,
+            "rejection cannot prove that allocation was rolled back");
+        assert.equal(executor.pendingTransactions.size, 1);
         assert.equal(calls.filter(call => call[0] === "createWindow").length, 0,
             "a failed window create must not leave a partial marker tab");
     }
