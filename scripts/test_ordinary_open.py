@@ -128,8 +128,11 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         self.assertEqual(self.path.parent.stat().st_mode & 0o777, 0o700)
 
     def test_strict_deadline_is_required_for_native_ordinary_mutations(self):
-        broker = host.BrowserBroker(outbound=queue.Queue())
+        identity = ["system-boot", 4242, "123"]
+        broker = host.BrowserBroker(outbound=queue.Queue(),
+                                    browser={"pid": 4242, "starttime": "123"})
         binding = mock.Mock()
+        binding.browser_incarnation.return_value = identity
         binding.prepare_ordinary_window.return_value = {"xid": 42, "nonce": "a" * 32}
         broker.x11_binding = mock.Mock(return_value=binding)
         envelope = {
@@ -149,7 +152,27 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
         self.assertEqual(broker.handle_request({**envelope, "payload": {
             "nonce": "a" * 32, "deadline_ms": deadline,
         }}), {"xid": 42, "nonce": "a" * 32})
-        binding.prepare_ordinary_window.assert_called_once_with({"nonce": "a" * 32})
+        binding.prepare_ordinary_window.assert_called_once_with(
+            {"nonce": "a" * 32}, expected_identity=identity)
+
+    def test_native_ordinary_prepare_requires_current_browser_incarnation(self):
+        binding = mock.Mock()
+        request = {
+            "version": 1, "id": "ordinary-identity", "service": "ordinary_open",
+            "operation": "prepare",
+            "payload": {"nonce": "a" * 32, "deadline_ms": int(time.time() * 1000) + 30_000},
+        }
+        broker = host.BrowserBroker(outbound=queue.Queue())
+        broker.x11_binding = mock.Mock(return_value=binding)
+        with self.assertRaisesRegex(ValueError, "trusted ordinary browser identity"):
+            broker.handle_request(request)
+        broker.browser = {"pid": 4242, "starttime": "123"}
+        for identity in (None, ["system-boot", 4242, "456"]):
+            binding.browser_incarnation.return_value = identity
+            with self.subTest(identity=identity), self.assertRaisesRegex(
+                    ValueError, "ordinary browser incarnation changed"):
+                broker.handle_request(request)
+        binding.prepare_ordinary_window.assert_not_called()
 
     def test_validate_request_rejects_non_web_and_non_file_schemes(self):
         request = self.request("scheme-check")
