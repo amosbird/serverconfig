@@ -1644,6 +1644,8 @@ class RemotePeer:
     def complete_ensure(self, principal_id, workspace_id, request_id, ensure_id, fence, completion):
         if principal_id != self.principal_id:
             raise ValueError("stale ensure managed page completion")
+        if not isinstance(workspace_id, str) or not workspace_id:
+            raise ValueError("invalid ensure managed page workspace")
         if not self._valid_ensure_completion(completion):
             raise ValueError("invalid ensure managed page completion")
         return self._complete_request(self.ensure_pending, ensure_id, {
@@ -1668,7 +1670,9 @@ class RemotePeer:
             "executor_fence": fence,
             "completion": completion,
         })
-        self.pending.pop(effect_id, None)
+        pending = self.pending.get(effect_id)
+        if pending is not None and pending["fence"] == fence:
+            self.pending.pop(effect_id, None)
         return receipt
 
     def complete(self, request_id, effect_id, fence, completion):
@@ -1770,9 +1774,12 @@ class RemotePeer:
                 if pending is not None and any(
                         pending.get(field) != value for field, value in identity.items()):
                     raise ValueError("uncorrelated peer completion")
-                if receipt is None and (pending is None or
-                                        message["executor_fence"] != self.executor_fence):
+                if receipt is None and pending is None and \
+                        message["executor_fence"] == self.executor_fence:
                     raise ValueError("uncorrelated peer completion")
+                # A restarted host has no origin command memory. Forward only the
+                # terminal selection; Rust checks durable command admission and
+                # returns an exact receipt before native success is possible.
                 completed = json.loads(json.dumps({
                     "identity": pending if pending is not None else identity, "message": message}))
                 completed.update(done=threading.Event(), response=receipt)

@@ -253,6 +253,144 @@ class BrowserPeerBrokerTest(unittest.TestCase):
             "operation": operation, "payload": payload,
         }
 
+    def test_fresh_host_origin_outcomes_wait_for_exact_daemon_receipt(self):
+        # FakePeer exercises transport only, not Rust durable admission validation.
+        cases = (
+            ("executor_completion", "completion", "effect_id", "applied"),
+            ("cancellation_completion", "cancellation_completed", "effect_id", "unknown"),
+            ("ensure_managed_page_completion", "ensure_managed_page_completed", "ensure_id",
+             {"outcome": "created", "window_id": "orphan-window", "page_id": "orphan-page"}),
+            ("ensure_managed_page_cancellation_completion",
+             "ensure_managed_page_cancellation_completed", "ensure_id", None),
+        )
+        for index, (operation, terminal_type, id_field, outcome) in enumerate(cases):
+            with self.subTest(operation=operation):
+                connection_id = f"c_{index:08d}"
+                server = self.peer(connection_id=connection_id, epoch=2)
+                server.accept_completions = False
+                native = host.NativeBrokerHost(
+                    input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
+                    ordinary_open_factory=None)
+                native.broker.write_barrier = None
+                worker = None
+                try:
+                    native.broker.refresh()
+                    peer = native.broker.peers["r_12345678"]
+                    # No old host state or prior native send survives this boundary.
+                    self.assertFalse(peer.pending)
+                    self.assertFalse(peer.ensure_pending)
+                    self.assertFalse(peer.completions)
+                    self.assertFalse(peer.accepted_completions)
+                    origin = {"executor_id": "old-host-executor", "epoch": 1}
+                    payload = {
+                        "remote_key": "r_12345678", "connection_id": connection_id,
+                        "principal_id": "principal-one", "request_id": "origin-request",
+                        id_field: "origin-id", "executor_fence": origin,
+                    }
+                    if outcome is not None:
+                        payload["completion"] = outcome
+                    if operation == "ensure_managed_page_completion":
+                        payload["workspace_id"] = "original-workspace"
+                    request = self.request(operation, payload)
+                    expected = {key: value for key, value in payload.items()
+                                if key not in {"remote_key", "connection_id", "principal_id",
+                                               "workspace_id"}}
+                    expected["type"] = terminal_type
+                    self.next_event(native.broker, "abush_browser.remote_state")
+                    worker = threading.Thread(target=native._respond, args=(request,), daemon=True)
+                    worker.start()
+                    self.assertEqual(server.wait_for(terminal_type), expected)
+                    self.assertTrue(worker.is_alive())
+                    self.assertTrue(native.outbound.empty(), "no synthetic native success")
+                    receipt = {**expected, "type": host.COMPLETION_RECEIPTS[terminal_type]}
+                    server.send(receipt)
+                    worker.join(timeout=2)
+                    self.assertFalse(worker.is_alive())
+                    result = native.outbound.get(timeout=1)
+                    self.assertTrue(result["ok"])
+                    self.assertEqual(result["payload"], receipt)
+                    self.assertEqual(peer.executor_fence, server.fence)
+                    self.assertFalse(peer.pending)
+                    self.assertFalse(peer.ensure_pending)
+                    self.assertTrue(native.outbound.empty(), "outcome must not execute Chrome work")
+                    # Receipt and selection identities are canonical, not input aliases.
+                    if isinstance(outcome, dict):
+                        outcome["page_id"] = "mutated-input"
+                        with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
+                            native.broker.handle_request(request)
+                finally:
+                    native.broker.close()
+                    if worker is not None:
+                        worker.join(timeout=2)
+                        self.assertFalse(worker.is_alive())
+
+    def test_fresh_host_unknown_origin_without_receipt_is_not_success(self):
+        server = self.peer(epoch=2)
+        server.accept_completions = False
+        native = host.NativeBrokerHost(
+            input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
+            ordinary_open_factory=None)
+        native.broker.write_barrier = None
+        try:
+            native.broker.refresh()
+            peer = native.broker.peers["r_12345678"]
+            peer.completion_timeout = 0
+            self.next_event(native.broker, "abush_browser.remote_state")
+            payload = {
+                "remote_key": "r_12345678", "connection_id": "c_12345678",
+                "principal_id": "principal-one", "request_id": "unadmitted-request",
+                "effect_id": "unadmitted-effect",
+                "executor_fence": {"executor_id": "old-executor", "epoch": 1},
+                "completion": "applied",
+            }
+            request = self.request("executor_completion", payload)
+            native._respond(request)
+            result = native.outbound.get(timeout=1)
+            self.assertFalse(result["ok"])
+            self.assertIn("receipt timed out", result["error"])
+            server.wait_for("completion")
+            state = peer.completions[("completion", "unadmitted-effect")]
+            self.assertIsNone(state["response"])
+            self.assertEqual(state["message"]["completion"], "applied")
+            with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
+                native.broker.handle_request(self.request("executor_completion", {
+                    **payload, "completion": "not_applied",
+                }))
+            with mock.patch.object(peer, "send") as send:
+                for change in (
+                        {"principal_id": "foreign"},
+                        {"connection_id": "c_99999999", "effect_id": "unknown-effect"},
+                        {"request_id": ""}, {"effect_id": ""},
+                        {"executor_fence": {"executor_id": "old", "epoch": True}},
+                        {"executor_fence": {"executor_id": "old", "epoch": 0}},
+                        {"executor_fence": {"executor_id": "old", "epoch": 1, "extra": 1}},
+                        {"completion": "execute"}, {"unexpected": True}):
+                    with self.subTest(change=change), self.assertRaises(ValueError):
+                        native.broker.handle_request(self.request(
+                            "executor_completion", {**payload, **change}))
+                send.assert_not_called()
+        finally:
+            native.broker.close()
+
+    def test_origin_outcome_does_not_grant_command_authority(self):
+        peer = host.RemotePeer(mock.Mock(), {})
+        peer.executor_fence = {"executor_id": "current", "epoch": 2}
+        origin = {"executor_id": "old", "epoch": 1}
+        peer.completion_timeout = 0
+        peer.send = mock.Mock()
+        with self.assertRaises(TimeoutError):
+            peer.complete("origin-request", "effect", origin, "applied")
+        for message in (
+                {"type": "execute", "request_id": "origin-request", "effect_id": "effect",
+                 "executor_fence": origin, "command": {"command": "close_window",
+                 "window": {"workspace_id": "workspace", "window_id": "window", "generation": 1}}},
+                {"type": "ensure_managed_page", "request_id": "origin-request",
+                 "ensure_id": "ensure", "executor_fence": origin,
+                 "workspace_id": "workspace", "expected_page": None}):
+            with self.assertRaises(ValueError):
+                peer.handle(message)
+        peer.broker.outbound.put.assert_not_called()
+
     def test_v7_handshake_is_rejected_by_exact_v8_peer(self):
         left, right = socket.socketpair()
 
