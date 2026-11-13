@@ -1,4 +1,5 @@
 import json
+import pathlib
 import re
 import subprocess
 import time
@@ -225,6 +226,8 @@ def activate_ordinary_window(manager, xid: int):
 def passive_window_move(manager, window, destination):
     current_group = manager.current_screen.group.name
     active_xid = getattr(manager.current_window, "wid", None)
+    if window.group is not None and window.group.name != destination and active_xid == window.wid:
+        raise ValueError("cannot passively move the active X11 window")
     window.can_steal_focus = False
     if window.group is None or window.group.name != destination:
         window.togroup(destination, switch_group=False)
@@ -247,6 +250,11 @@ def register_abush_browser_candidate(manager, nonce: str):
         raise ValueError("invalid Abush browser candidate nonce")
     now = time.monotonic()
     expire_abush_browser_candidate_leases(now)
+    for window in manager.windows_map.values():
+        if is_chrome_window(window):
+            abush_candidate_claim(window)
+    if nonce in ABUSH_CANDIDATE_USED:
+        raise ValueError("candidate nonce was already admitted")
     ABUSH_CANDIDATE_LEASES[nonce] = now + ABUSH_CANDIDATE_LEASE_SECONDS
     return {"accepted": True, "nonce": nonce}
 
@@ -255,6 +263,14 @@ def release_abush_browser_candidate(manager, nonce: str):
     if not isinstance(nonce, str) or ABUSH_NONCE.fullmatch(nonce) is None:
         raise ValueError("invalid Abush browser candidate nonce")
     ABUSH_CANDIDATE_LEASES.pop(nonce, None)
+    for window in manager.windows_map.values():
+        if is_chrome_window(window):
+            abush_candidate_claim(window)
+    for claim in ABUSH_CANDIDATE_WINDOWS.values():
+        if claim["nonce"] == nonce and not claim["placed"] and \
+                manager.windows_map.get(claim["xid"]) is claim["window"]:
+            claim["released"] = True
+            save_abush_candidate_claim(claim["window"], claim)
     return {"released": True, "nonce": nonce}
 
 
@@ -265,11 +281,10 @@ def quarantine_abush_browser_window(manager, xid: int, nonce: str):
         f"__ABUSH_BIND__:{nonce}:a - Google Chrome",
         f"__ABUSH_BIND__:{nonce}:a - Chromium",
     }
-    claim = ABUSH_CANDIDATE_WINDOWS.get(window.wid)
-    now = time.monotonic()
+    claim = abush_candidate_claim(window)
     if not isinstance(nonce, str) or ABUSH_NONCE.fullmatch(nonce) is None or \
             not is_chrome_window(window) or is_abush_browser_verified(window) or \
-            claim is None or claim["nonce"] != nonce or claim["deadline"] < now or \
+            claim is None or claim["nonce"] != nonce or claim["released"] or \
             window.group is None or window.group.name != "__abush_quarantine" or \
             x11_text_property(window, ABUSH_CANDIDATE_NONCE_PROPERTY) != nonce or \
             (window.name or "") not in expected_titles:
@@ -286,23 +301,44 @@ def place_abush_browser_window(manager, xid: int, expected_json: str):
     if not isinstance(expected, dict) or set(expected) != set(ABUSH_METADATA_PROPERTIES) or \
             not is_abush_browser_verified(window, expected):
         raise ValueError("unverified Abush browser window")
+    claim = abush_candidate_claim(window)
+    if x11_text_property(window, ABUSH_CANDIDATE_CLAIM_PROPERTY) and claim is None:
+        raise ValueError("stale Abush browser incarnation")
+    if claim is not None and (claim["released"] or claim["nonce"] != expected["nonce"]):
+        raise ValueError("stale Abush browser candidate")
     result = passive_window_move(manager, window, "c")
-    ABUSH_CANDIDATE_WINDOWS.pop(window.wid, None)
+    if claim is not None:
+        claim["placed"] = True
+        save_abush_candidate_claim(window, claim)
     return result
 
 
 def reclassify_ordinary_window(manager, xid: int):
     window = qtile_window_by_xid(manager, xid)
-    if not is_chrome_window(window) or is_abush_browser_verified(window):
+    claim = abush_candidate_claim(window)
+    if not is_chrome_window(window) or is_abush_browser_verified(window) or \
+            (claim is not None and not claim["placed"]):
         raise ValueError("managed metadata was not cleared")
-    return passive_window_move(manager, window, "f")
+    result = passive_window_move(manager, window, "f")
+    if claim is not None:
+        ABUSH_CANDIDATE_WINDOWS.pop(window.wid, None)
+        window.window.set_property(ABUSH_CANDIDATE_CLAIM_PROPERTY, "", "UTF8_STRING", 8)
+    return result
 
 
 def restore_abush_browser_window(manager, xid: int, group: str):
     window = qtile_window_by_xid(manager, xid)
     if not isinstance(group, str) or group not in manager.groups_map:
         raise ValueError("unknown rollback group")
-    return passive_window_move(manager, window, group)
+    if is_abush_browser_candidate(window) and group != "__abush_quarantine":
+        raise ValueError("cannot release an unverified candidate during rollback")
+    result = passive_window_move(manager, window, group)
+    if group == "__abush_quarantine":
+        claim = abush_candidate_claim(window)
+        if claim is not None:
+            claim["placed"] = False
+            save_abush_candidate_claim(window, claim)
+    return result
 
 
 def install_browser_commands():
@@ -640,6 +676,8 @@ ABUSH_CANDIDATE_NONCE_PROPERTY = "_ABUSH_CANDIDATE_NONCE"
 ABUSH_CANDIDATE_LEASE_SECONDS = 10.0
 ABUSH_CANDIDATE_LEASES = {}
 ABUSH_CANDIDATE_WINDOWS = {}
+ABUSH_CANDIDATE_USED = set()
+ABUSH_CANDIDATE_CLAIM_PROPERTY = "_ABUSH_CANDIDATE_CLAIM"
 ABUSH_CONTROL_STATES = {"remote", "human"}
 ABUSH_METADATA_PROPERTIES = {
     "nonce": ("_ABUSH_BINDING_NONCE", "UTF8_STRING"),
@@ -752,24 +790,73 @@ def expire_abush_browser_candidate_leases(now=None):
     for nonce, deadline in list(ABUSH_CANDIDATE_LEASES.items()):
         if deadline < now:
             del ABUSH_CANDIDATE_LEASES[nonce]
-    for xid, claim in list(ABUSH_CANDIDATE_WINDOWS.items()):
-        if claim["deadline"] < now:
-            del ABUSH_CANDIDATE_WINDOWS[xid]
+
+
+def abush_browser_incarnation(window):
+    try:
+        pid = window.get_pid()
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            return None
+        boot = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        fields = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return [boot, pid, fields[19]]
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+
+
+def save_abush_candidate_claim(window, claim):
+    durable = {key: value for key, value in claim.items() if key != "window"}
+    window.window.set_property(
+        ABUSH_CANDIDATE_CLAIM_PROPERTY, json.dumps(durable), "UTF8_STRING", 8)
+
+
+def abush_candidate_claim(window):
+    claim = ABUSH_CANDIDATE_WINDOWS.get(window.wid)
+    if claim is not None:
+        if claim["window"] is not window or claim["incarnation"] != abush_browser_incarnation(window):
+            return None
+        return claim
+    try:
+        claim = json.loads(x11_text_property(window, ABUSH_CANDIDATE_CLAIM_PROPERTY))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(claim, dict) or set(claim) != {
+        "nonce", "xid", "incarnation", "released", "placed",
+    } or not isinstance(claim["nonce"], str) or not ABUSH_NONCE.fullmatch(claim["nonce"]) or \
+            claim["xid"] != window.wid or claim["incarnation"] is None or \
+            claim["incarnation"] != abush_browser_incarnation(window) or \
+            type(claim["released"]) is not bool or type(claim["placed"]) is not bool:
+        return None
+    claim["window"] = window
+    ABUSH_CANDIDATE_WINDOWS[window.wid] = claim
+    ABUSH_CANDIDATE_USED.add(claim["nonce"])
+    return claim
 
 
 def claim_abush_browser_candidate(window):
-    if not is_chrome_window(window):
+    if not is_chrome_window(window) or window.group is not None:
         return False
     match = ABUSH_CANDIDATE_TITLE.fullmatch(window.name or "")
-    if match is None:
-        return False
-    nonce = match.group(1)
+    nonce = x11_text_property(window, ABUSH_CANDIDATE_NONCE_PROPERTY)
+    if not nonce and match is not None:
+        nonce = match.group(1)
     now = time.monotonic()
     expire_abush_browser_candidate_leases(now)
+    if nonce in ABUSH_CANDIDATE_USED or abush_candidate_claim(window) is not None:
+        return False
     deadline = ABUSH_CANDIDATE_LEASES.pop(nonce, None)
     if deadline is None or deadline < now:
         return False
-    ABUSH_CANDIDATE_WINDOWS[window.wid] = {"nonce": nonce, "deadline": deadline}
+    incarnation = abush_browser_incarnation(window)
+    if incarnation is None:
+        raise ValueError("cannot establish candidate browser incarnation")
+    claim = {"nonce": nonce, "window": window, "xid": window.wid,
+             "incarnation": incarnation, "released": False, "placed": False}
+    ABUSH_CANDIDATE_WINDOWS[window.wid] = claim
+    ABUSH_CANDIDATE_USED.add(nonce)
+    save_abush_candidate_claim(window, claim)
+    window.window.set_property(ABUSH_CANDIDATE_NONCE_PROPERTY, nonce, "UTF8_STRING", 8)
+    window.can_steal_focus = False
     return True
 
 
@@ -872,6 +959,9 @@ def is_abush_browser_verified(window, expected=None):
     if not is_chrome_window(window) or window.get_wm_role() != "abush-browser" or \
             metadata is None:
         return False
+    if x11_text_property(window, ABUSH_CANDIDATE_CLAIM_PROPERTY) and \
+            abush_candidate_claim(window) is None:
+        return False
     return expected is None or metadata == expected
 
 
@@ -881,12 +971,12 @@ def has_abush_candidate_title(window):
 
 
 def is_abush_browser_candidate(window):
-    if not is_chrome_window(window) or window.group is None or \
-            window.group.name != "__abush_quarantine" or \
-            window.get_wm_role() == "abush-browser" or is_abush_browser_verified(window):
+    if not is_chrome_window(window):
         return False
-    expire_abush_browser_candidate_leases()
-    return window.wid in ABUSH_CANDIDATE_WINDOWS
+    claim = abush_candidate_claim(window)
+    return claim is not None and not (
+        claim["placed"] and is_abush_browser_verified(window) and
+        abush_browser_metadata(window)["nonce"] == claim["nonce"])
 
 
 @hook.subscribe.group_window_add
@@ -897,11 +987,11 @@ def prevent_abush_browser_focus_steal(group, window):
 
 
 def place_abush_browser(window):
-    if is_abush_browser_verified(window):
-        destination = "c"
-        window.can_steal_focus = False
-    elif is_abush_browser_candidate(window):
+    if is_abush_browser_candidate(window):
         destination = "__abush_quarantine"
+        window.can_steal_focus = False
+    elif is_abush_browser_verified(window):
+        destination = "c"
         window.can_steal_focus = False
     elif is_chrome_window(window) and window.group is not None and window.group.name in {
         "c",
@@ -912,7 +1002,7 @@ def place_abush_browser(window):
         return False
     if window.group is not None and window.group.name == destination:
         return False
-    window.togroup(destination, switch_group=False)
+    passive_window_move(window.qtile, window, destination)
     return True
 
 
@@ -933,7 +1023,7 @@ def reclassify_abush_browser(window):
         "c",
         "__abush_quarantine",
     }:
-        window.togroup("f", switch_group=False)
+        passive_window_move(window.qtile, window, "f")
         return True
     return False
 
@@ -987,6 +1077,7 @@ qtile.show_scratchpad = show_scratchpad
 
 @hook.subscribe.client_new
 def before_window_created(client):
+    claim_abush_browser_candidate(client)
     if place_abush_browser(client):
         return
     if "copyq" in client.get_wm_class():
@@ -1014,8 +1105,17 @@ def before_window_created(client):
     # doesn't work
 
 
+def release_abush_candidate_window(client):
+    claim = ABUSH_CANDIDATE_WINDOWS.get(client.wid)
+    if claim is not None and claim["window"] is client:
+        ABUSH_CANDIDATE_WINDOWS.pop(client.wid)
+        if client.qtile.windows_map.get(client.wid) is client:
+            client.window.set_property(ABUSH_CANDIDATE_CLAIM_PROPERTY, "", "UTF8_STRING", 8)
+
+
 @hook.subscribe.client_killed
 def window_killed(client):
+    release_abush_candidate_window(client)
     shell.on_client_killed(client)
     scratchpad = qtile.groups_map.get("scratchpad")
     if scratchpad is None:

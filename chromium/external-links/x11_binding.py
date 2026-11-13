@@ -16,6 +16,7 @@ NONCE_RE = re.compile(r"[0-9a-f]{32}\Z")
 ORDINARY_TITLE_PREFIX = "__ABUSH_ORDINARY__:"
 ORDINARY_NONCE_PROPERTY = "_ABUSH_ORDINARY_NONCE"
 CANDIDATE_NONCE_PROPERTY = "_ABUSH_CANDIDATE_NONCE"
+CANDIDATE_CLAIM_PROPERTY = "_ABUSH_CANDIDATE_CLAIM"
 MANAGED_PROPERTIES = (
     "_ABUSH_BINDING_NONCE", "_ABUSH_REMOTE_ID", "_ABUSH_WORKSPACE_ID",
     "_ABUSH_WINDOW_GENERATION", "_ABUSH_CONTROL_STATE", "_ABUSH_DISPLAY_TITLE",
@@ -633,6 +634,27 @@ def rollback_binding(adapter, window, snapshot, old_group, run=None):
         raise ExceptionGroup("managed X11 binding rollback failed", errors)
 
 
+def browser_incarnation(pid):
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    try:
+        boot = pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        fields = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return [boot, pid, fields[19]]
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def binding_incarnation(adapter, window):
+    raw = adapter.property(window, CANDIDATE_CLAIM_PROPERTY)
+    try:
+        claim = json.loads(raw)
+        proof = (claim["nonce"], claim["xid"], claim["incarnation"])
+    except (ValueError, TypeError, KeyError):
+        proof = raw
+    return browser_incarnation(adapter.pid(window)), proof
+
+
 def bind_workspace_window(
     payload,
     adapter=None,
@@ -685,12 +707,23 @@ def bind_workspace_window(
         raise X11Unavailable("matching Chrome X11 window was not found")
     window = matches[0]
     is_fresh_candidate = window in fresh and window not in existing
+    previous_metadata = managed_metadata(adapter, window)
+    if not is_fresh_candidate and (previous_metadata is None or
+            payload["generation"] < previous_metadata["generation"] or
+            (payload["generation"] == previous_metadata["generation"] and
+             payload["workspace_id"] != previous_metadata["workspace_id"])):
+        raise ValueError("stale or incomplete managed X11 identity")
     old_properties = property_snapshot(adapter, window)
+    identity = binding_incarnation(adapter, window)
+    if identity[0] is None:
+        raise X11Unavailable("cannot establish browser process incarnation")
     old_group = None
     if qtile_notifier is None or run is not None:
         old_group = qtile_window_info(window, run).get("group")
         if not isinstance(old_group, str) or not old_group:
             raise X11Unavailable("Qtile window has no rollback group")
+    if is_fresh_candidate and old_group is not None and old_group != "__abush_quarantine":
+        raise X11Unavailable("candidate was not admitted by Qtile")
     try:
         if is_fresh_candidate:
             adapter.set_text(window, CANDIDATE_NONCE_PROPERTY, nonce)
@@ -707,6 +740,10 @@ def bind_workspace_window(
                     candidate_transition.get("current_group_preserved") is not True or \
                     candidate_transition.get("active_xid_preserved") is not True:
                 raise X11Unavailable("Qtile candidate quarantine verification failed")
+        if identity != binding_incarnation(adapter, window):
+            raise X11Unavailable("X11 candidate incarnation changed")
+        if not is_fresh_candidate and managed_metadata(adapter, window) != previous_metadata:
+            raise X11Unavailable("managed X11 identity changed before binding")
         adapter.set_text(window, "WM_WINDOW_ROLE", "abush-browser", "STRING")
         for prop, field in {**STABLE_FIELDS, **TEXT_FIELDS}.items():
             adapter.set_text(window, prop, payload[field])
@@ -750,8 +787,15 @@ def bind_workspace_window(
             "observed_group": transition["group"],
         }
     except Exception as error:
+        if identity != binding_incarnation(adapter, window):
+            raise X11Unavailable("X11 binding identity replaced; rollback refused") from error
+        current_metadata = managed_metadata(adapter, window)
+        if current_metadata is not None and current_metadata not in (
+                previous_metadata, expected_managed_metadata(payload)):
+            raise X11Unavailable("managed X11 identity replaced; rollback refused") from error
         try:
-            rollback_binding(adapter, window, old_properties, old_group, run)
+            rollback_binding(adapter, window, old_properties,
+                             "__abush_quarantine" if is_fresh_candidate else old_group, run)
         except Exception as rollback_error:
             raise ExceptionGroup(
                 "managed X11 binding and rollback failed", [error, rollback_error]) from error

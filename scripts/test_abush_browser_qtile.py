@@ -72,7 +72,7 @@ class FakeGroup:
 class FakeWindow:
     def __init__(self, role, group="f", name="", wm_class=None, metadata=None):
         self.role = role
-        self.group = FakeGroup(group)
+        self.group = FakeGroup(group) if group is not None else None
         self.name = name
         self.wm_class = wm_class or ["google-chrome", "Google-chrome"]
         self.can_steal_focus = True
@@ -88,6 +88,11 @@ class FakeWindow:
         self.window = mock.Mock()
         self.window.get_property.side_effect = lambda name, _type, unpack=None: \
             self.metadata.get(name)
+        self.window.set_property.side_effect = lambda name, value, *_args: \
+            self.metadata.__setitem__(name, value)
+        self.qtile = mock.Mock(current_screen=mock.Mock(group=FakeGroup("e")),
+                               current_window=mock.Mock(wid=99))
+        self.incarnation = ["boot", 4242, "123"]
         self.togroup = mock.Mock(side_effect=self._togroup)
         self.focus = mock.Mock()
 
@@ -118,11 +123,47 @@ class FakeHook:
     subscribe = Subscribe()
 
 
+def load_browser_config(namespace):
+    tree = ast.parse(CONFIG_PATH.read_text())
+    names = {
+        "qtile_window_by_xid", "prepare_ordinary_window", "activate_ordinary_window",
+        "passive_window_move", "register_abush_browser_candidate",
+        "release_abush_browser_candidate", "quarantine_abush_browser_window",
+        "place_abush_browser_window", "reclassify_ordinary_window",
+        "restore_abush_browser_window", "expire_abush_browser_candidate_leases",
+        "abush_browser_incarnation", "save_abush_candidate_claim", "abush_candidate_claim",
+        "claim_abush_browser_candidate", "x11_text_property", "is_chrome_window",
+        "abush_browser_metadata", "is_abush_browser_verified", "has_abush_candidate_title",
+        "is_abush_browser_candidate", "prevent_abush_browser_focus_steal",
+        "place_abush_browser", "recover_abush_browsers", "reclassify_abush_browser",
+        "before_window_created", "release_abush_candidate_window",
+    }
+    nodes = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id.startswith("ABUSH_")
+                for target in node.targets):
+            nodes.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name in names:
+            node.decorator_list = []
+            nodes.append(node)
+    namespace.update(json=json, re=re, pathlib=pathlib, QtileWindow=FakeWindow)
+    namespace.setdefault("time", mock.Mock(monotonic=mock.Mock(return_value=100.0)))
+    exec(compile(ast.fix_missing_locations(ast.Module(nodes, [])), str(CONFIG_PATH), "exec"),
+         namespace)
+    namespace["abush_browser_incarnation"] = lambda window: window.incarnation
+    return namespace
+
+
 class QtileConfigTest(unittest.TestCase):
     def setUp(self):
         self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
         self.process_patch.start()
         self.addCleanup(self.process_patch.stop)
+        incarnation_patch = mock.patch.object(
+            binding, "browser_incarnation", return_value=["boot", 4242, "start"])
+        incarnation_patch.start()
+        self.addCleanup(incarnation_patch.stop)
 
     @classmethod
     def setUpClass(cls):
@@ -210,13 +251,15 @@ class QtileConfigTest(unittest.TestCase):
                 for target in node.targets)
         ]
         module = ast.Module([*constants, *functions], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
         nonce = "a" * 32
         marker_a = FakeWindow("browser", group="f",
                               name=f"__ABUSH_BIND__:{nonce}:a - Google Chrome")
         marker_b = FakeWindow("browser", group="f",
                               name=f"__ABUSH_BIND__:{nonce}:b - Google Chrome")
 
+        marker_a.group = None
+        marker_b.group = None
         self.assertFalse(namespace["claim_abush_browser_candidate"](marker_a),
                          "an orphan marker title must not classify an ordinary window")
         namespace["ABUSH_CANDIDATE_LEASES"][nonce] = 110.0
@@ -232,7 +275,8 @@ class QtileConfigTest(unittest.TestCase):
         clock.monotonic.return_value = 111.0
         self.assertFalse(namespace["claim_abush_browser_candidate"](marker_a))
         self.assertNotIn(nonce, namespace["ABUSH_CANDIDATE_LEASES"])
-        self.assertNotIn(marker_a.wid, namespace["ABUSH_CANDIDATE_WINDOWS"])
+        self.assertIn(marker_a.wid, namespace["ABUSH_CANDIDATE_WINDOWS"],
+                      "admission expiry must never expire quarantine ownership")
 
     def test_group_add_guard_runs_at_focus_linearization_point(self):
         namespace = {"re": re, "QtileWindow": FakeWindow, "hook": FakeHook,
@@ -262,7 +306,7 @@ class QtileConfigTest(unittest.TestCase):
                 } for target in node.targets)
         ]
         module = ast.Module([*constants, *functions.values()], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
 
         for window in (
             FakeWindow("abush-browser"),
@@ -305,7 +349,7 @@ class QtileConfigTest(unittest.TestCase):
                 } for target in node.targets)
         ]
         module = ast.Module([*constants, *functions.values()], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
 
         verified = FakeWindow("abush-browser", wm_class=["abush-browser", "AbushBrowser"])
         self.assertTrue(namespace["place_abush_browser"](verified))
@@ -316,7 +360,8 @@ class QtileConfigTest(unittest.TestCase):
                                name="__ABUSH_BIND__:" + "a" * 32 + ":a - Google Chrome",
                                metadata={"_ABUSH_CANDIDATE_NONCE": "a" * 32})
         namespace["ABUSH_CANDIDATE_WINDOWS"][candidate.wid] = {
-            "nonce": "a" * 32, "deadline": 110.0,
+            "nonce": "a" * 32, "window": candidate, "xid": candidate.wid,
+            "incarnation": candidate.incarnation, "released": False, "placed": False,
         }
         self.assertFalse(namespace["place_abush_browser"](candidate))
         self.assertFalse(candidate.can_steal_focus)
@@ -386,7 +431,7 @@ class QtileConfigTest(unittest.TestCase):
                 } for target in node.targets)
         ]
         module = ast.Module([*constants, *functions], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
         window = FakeWindow("browser", group="__abush_quarantine",
                             name="Restored work - Google Chrome")
         namespace["reclassify_abush_browser"](window)
@@ -414,7 +459,7 @@ class QtileConfigTest(unittest.TestCase):
                 } for target in node.targets)
         ]
         module = ast.Module([*constants, *functions], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
         ordinary = FakeWindow("browser", group="f",
                               name="__ABUSH_BIND__:" + "a" * 32 + ":b - Google Chrome")
 
@@ -442,7 +487,7 @@ class QtileConfigTest(unittest.TestCase):
                 } for target in node.targets)
         ]
         module = ast.Module([*constants, *functions], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
         window = FakeWindow("browser", group="e", name="GitHub - Google Chrome")
         observed = []
 
@@ -474,7 +519,7 @@ class QtileConfigTest(unittest.TestCase):
                 } for target in node.targets)
         ]
         module = ast.Module([*constants, *functions], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
         window = FakeWindow("browser", group="e", name="GitHub - Google Chrome")
         group = FakeGroup("f")
         group.toscreen = mock.Mock()
@@ -515,7 +560,7 @@ class QtileConfigTest(unittest.TestCase):
                 } for target in node.targets)
         ]
         module = ast.Module([*constants, *functions], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
         nonce = "a" * 32
         candidate = FakeWindow("browser", group="__abush_quarantine",
                                name=f"__ABUSH_BIND__:{nonce}:a - Google Chrome",
@@ -525,7 +570,10 @@ class QtileConfigTest(unittest.TestCase):
         screen = mock.Mock(group=FakeGroup("e"))
         manager = mock.Mock(windows_map={22: candidate}, current_screen=screen,
                             current_window=current)
-        namespace["ABUSH_CANDIDATE_WINDOWS"][22] = {"nonce": nonce, "deadline": 110.0}
+        namespace["ABUSH_CANDIDATE_WINDOWS"][22] = {
+            "nonce": nonce, "window": candidate, "xid": 22,
+            "incarnation": candidate.incarnation, "released": False, "placed": False,
+        }
 
         result = namespace["quarantine_abush_browser_window"](manager, 22, nonce)
 
@@ -540,7 +588,10 @@ class QtileConfigTest(unittest.TestCase):
 
         missing_proof = FakeWindow("browser", group="f", name=candidate.name, metadata={})
         manager.windows_map[22] = missing_proof
-        namespace["ABUSH_CANDIDATE_WINDOWS"][22] = {"nonce": nonce, "deadline": 110.0}
+        namespace["ABUSH_CANDIDATE_WINDOWS"][22] = {
+            "nonce": nonce, "window": candidate, "xid": 22,
+            "incarnation": candidate.incarnation, "released": False, "placed": False,
+        }
         with self.assertRaisesRegex(ValueError, "unverified"):
             namespace["quarantine_abush_browser_window"](manager, 22, nonce)
         missing_proof.togroup.assert_not_called()
@@ -566,7 +617,7 @@ class QtileConfigTest(unittest.TestCase):
                 } for target in node.targets)
         ]
         module = ast.Module([*constants, *functions], [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
         window = FakeWindow("abush-browser", group="f")
         current = FakeWindow("browser", group="e")
         current.wid = 99
@@ -609,7 +660,7 @@ class QtileConfigTest(unittest.TestCase):
         functions = [node for node in self.tree.body if isinstance(node, ast.FunctionDef)
                      and node.name in function_names]
         module = ast.Module(functions, [])
-        exec(compile(ast.fix_missing_locations(module), str(CONFIG_PATH), "exec"), namespace)
+        load_browser_config(namespace)
         window = FakeWindow("abush-browser", group="c")
         current = FakeWindow("browser", group="e")
         current.wid = 99
@@ -633,11 +684,215 @@ class QtileConfigTest(unittest.TestCase):
             namespace["restore_abush_browser_window"](manager, 23, "f")
 
 
+class CandidateLifecycleTest(unittest.TestCase):
+    def setUp(self):
+        self.ns = load_browser_config({})
+        self.nonce = "a" * 32
+        self.active = FakeWindow("browser", group="e")
+        self.active.wid = 99
+        self.manager = mock.Mock(windows_map={}, current_screen=mock.Mock(group=FakeGroup("e")),
+                                 current_window=self.active)
+        self.manager.groups_map = {name: FakeGroup(name)
+                                   for name in ("e", "f", "c", "__abush_quarantine")}
+        self.ns["qtile"] = self.manager
+        self.trace = []
+
+    def record(self, event, window):
+        self.trace.append((event, window.group.name if window.group else None,
+                           self.manager.current_screen.group.name,
+                           self.manager.current_window.wid, window.can_steal_focus))
+
+    def manage(self, window):
+        window.qtile = self.manager
+        original_move = window._togroup
+
+        def move(group, switch_group=False):
+            self.ns["prevent_abush_browser_focus_steal"](FakeGroup(group), window)
+            original_move(group, switch_group)
+            self.record("group_add", window)
+
+        window.togroup.side_effect = move
+        self.assertNotIn(window.wid, self.manager.windows_map)
+        self.ns["before_window_created"](window)
+        self.record("client_new", window)
+        # Qtile DGroups._add skips preassigned clients before manager.manage inserts the XID.
+        if window.group is None:
+            if self.ns["claim_abush_browser_candidate"](window):
+                window.togroup("__abush_quarantine")
+            elif "Google-chrome" in window.get_wm_class():
+                window.togroup("f")
+        self.record("dgroups", window)
+        self.manager.windows_map[window.wid] = window
+        if window.group is None:
+            window.togroup(self.manager.current_screen.group.name)
+        self.record("managed", window)
+
+    def candidate(self, title=None, premap=False):
+        self.ns["register_abush_browser_candidate"](self.manager, self.nonce)
+        window = FakeWindow("browser", group=None,
+                            name=title if title is not None else f"__ABUSH_BIND__:{self.nonce}:a")
+        if premap:
+            window.metadata["_ABUSH_CANDIDATE_NONCE"] = self.nonce
+        self.manage(window)
+        return window
+
+    def assert_quarantined_trace(self):
+        self.assertTrue(self.trace)
+        for event, group, current, active, focus in self.trace:
+            self.assertEqual((group, current, active, focus),
+                             ("__abush_quarantine", "e", 99, False), event)
+
+    def test_manage_title_expiry_release_and_reload_trace(self):
+        window = self.candidate()
+        for now, title in ((105, "blank"), (111, "restored"), (1000, "new title")):
+            self.ns["time"].monotonic.return_value = now
+            window.name = title
+            self.ns["expire_abush_browser_candidate_leases"]()
+            self.ns["reclassify_abush_browser"](window)
+            self.record("title", window)
+        self.ns["release_abush_browser_candidate"](self.manager, self.nonce)
+        durable = window.metadata.copy()
+        self.ns = load_browser_config({"qtile": self.manager})
+        # A reload reconstructs Python windows but retains the exact X window properties.
+        restored = FakeWindow("browser", group="__abush_quarantine", name="restored",
+                              metadata=durable)
+        restored.qtile = self.manager
+        self.manager.windows_map[22] = restored
+        self.ns["recover_abush_browsers"]()
+        self.record("reload", restored)
+        self.assert_quarantined_trace()
+        with self.assertRaisesRegex(ValueError, "unverified"):
+            self.ns["quarantine_abush_browser_window"](self.manager, 22, self.nonce)
+        with self.assertRaisesRegex(ValueError, "cannot release"):
+            self.ns["restore_abush_browser_window"](self.manager, 22, "f")
+
+    def test_missing_or_different_title_uses_exact_premap_signal(self):
+        for title in ("", "about:blank - Google Chrome"):
+            with self.subTest(title=title):
+                self.setUp()
+                window = self.candidate(title, premap=True)
+                self.assert_quarantined_trace()
+                self.assertTrue(self.ns["is_abush_browser_candidate"](window))
+
+    def test_orphan_titles_startup_selection_and_chrome_restore_stay_ordinary(self):
+        for marker in ("a", "b"):
+            for title in (f"__ABUSH_BIND__:{self.nonce}:{marker}", "Restored ordinary"):
+                with self.subTest(title=title):
+                    self.setUp()
+                    window = FakeWindow("browser", group=None, name=title)
+                    self.manage(window)
+                    self.ns["recover_abush_browsers"]()
+                    self.ns["reclassify_abush_browser"](window)
+                    self.assertEqual(window.group.name, "f")
+                    self.assertNotIn("__abush_quarantine", [row[1] for row in self.trace])
+                    with self.assertRaises(ValueError):
+                        self.ns["quarantine_abush_browser_window"](
+                            self.manager, 22, self.nonce)
+                    self.assertEqual(window.group.name, "f")
+
+    def test_xid_reuse_does_not_inherit_claim_or_killed_authority(self):
+        old = self.candidate()
+        replacement = FakeWindow("browser", group="f", name=old.name)
+        self.manager.windows_map[22] = replacement
+        self.assertFalse(self.ns["is_abush_browser_candidate"](replacement))
+        with self.assertRaises(ValueError):
+            self.ns["quarantine_abush_browser_window"](self.manager, 22, self.nonce)
+        self.ns["release_abush_candidate_window"](replacement)
+        self.assertIs(self.ns["ABUSH_CANDIDATE_WINDOWS"][22]["window"], old)
+        self.ns["release_abush_candidate_window"](old)
+        self.assertNotIn(22, self.ns["ABUSH_CANDIDATE_WINDOWS"])
+        self.assertFalse(self.ns["is_abush_browser_candidate"](replacement))
+        with self.assertRaisesRegex(ValueError, "already admitted"):
+            self.ns["register_abush_browser_candidate"](self.manager, self.nonce)
+
+    def test_stale_browser_boot_property_is_not_recovered(self):
+        old = self.candidate()
+        self.ns = load_browser_config({"qtile": self.manager})
+        restored = FakeWindow("browser", group="f", metadata=old.metadata.copy())
+        restored.incarnation = ["boot", 4242, "new-start-time"]
+        self.assertFalse(self.ns["is_abush_browser_candidate"](restored))
+        self.assertFalse(self.ns["place_abush_browser"](restored))
+        restored.togroup.assert_not_called()
+
+    def test_late_expired_lease_cannot_admit_new_window(self):
+        self.ns["register_abush_browser_candidate"](self.manager, self.nonce)
+        self.ns["time"].monotonic.return_value = 111
+        window = FakeWindow("browser", group=None, name=f"__ABUSH_BIND__:{self.nonce}:a")
+        self.manage(window)
+        self.assertEqual(window.group.name, "f")
+        self.assertFalse(self.ns["is_abush_browser_candidate"](window))
+
+    def test_passive_active_move_rejected_before_mutation_and_same_group_is_noop(self):
+        self.active.togroup.reset_mock()
+        with self.assertRaisesRegex(ValueError, "active X11"):
+            self.ns["passive_window_move"](self.manager, self.active, "c")
+        self.active.togroup.assert_not_called()
+        self.assertTrue(self.active.can_steal_focus)
+        self.ns["passive_window_move"](self.manager, self.active, "e")
+        self.active.togroup.assert_not_called()
+        self.assertEqual(self.manager.current_window.wid, 99)
+
+    def test_expired_admission_still_allows_exact_candidate_verification(self):
+        window = self.candidate()
+        self.ns["time"].monotonic.return_value = 1000
+        self.ns["expire_abush_browser_candidate_leases"]()
+        result = self.ns["quarantine_abush_browser_window"](self.manager, 22, self.nonce)
+        self.assertEqual(result["group"], "__abush_quarantine")
+        self.assert_quarantined_trace()
+
+    def test_rollback_after_placement_resets_commit_before_title_recovery(self):
+        window = self.candidate()
+        verified = FakeWindow("abush-browser")
+        candidate_properties = window.metadata.copy()
+        window.role = verified.role
+        window.metadata.update(verified.metadata)
+        self.ns["place_abush_browser_window"](
+            self.manager, 22, json.dumps(self.ns["abush_browser_metadata"](window)))
+        window.role = "browser"
+        claim_property = window.metadata["_ABUSH_CANDIDATE_CLAIM"]
+        window.metadata = {**candidate_properties, "_ABUSH_CANDIDATE_CLAIM": claim_property}
+        self.ns["restore_abush_browser_window"](self.manager, 22, "__abush_quarantine")
+        self.ns["release_abush_browser_candidate"](self.manager, self.nonce)
+        self.ns["reclassify_abush_browser"](window)
+        self.assertEqual(window.group.name, "__abush_quarantine")
+        self.assertFalse(self.ns["ABUSH_CANDIDATE_WINDOWS"][22]["placed"])
+        self.assertTrue(self.ns["ABUSH_CANDIDATE_WINDOWS"][22]["released"])
+
+    def test_explicit_release_after_reload_recovers_exact_claim_before_revocation(self):
+        window = self.candidate()
+        self.ns = load_browser_config({"qtile": self.manager})
+        self.ns["release_abush_browser_candidate"](self.manager, self.nonce)
+        self.assertTrue(self.ns["ABUSH_CANDIDATE_WINDOWS"][22]["released"])
+        self.assertTrue(self.ns["is_abush_browser_candidate"](window))
+        with self.assertRaises(ValueError):
+            self.ns["quarantine_abush_browser_window"](self.manager, 22, self.nonce)
+
+    def test_metadata_before_exact_placement_does_not_escape_quarantine(self):
+        window = self.candidate()
+        verified = FakeWindow("abush-browser")
+        window.role = verified.role
+        window.metadata.update(verified.metadata)
+        self.ns["place_abush_browser"](window)
+        self.ns["reclassify_abush_browser"](window)
+        self.record("metadata_written", window)
+        self.assert_quarantined_trace()
+        expected = self.ns["abush_browser_metadata"](window)
+        self.ns["place_abush_browser_window"](self.manager, 22, json.dumps(expected))
+        self.assertEqual(window.group.name, "c")
+        self.assertEqual(self.manager.current_window.wid, 99)
+        self.ns["release_abush_browser_candidate"](self.manager, self.nonce)
+        self.assertFalse(self.ns["ABUSH_CANDIDATE_WINDOWS"][22]["released"])
+
+
 class BinderQtileNotificationTest(unittest.TestCase):
     def setUp(self):
         self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
         self.process_patch.start()
         self.addCleanup(self.process_patch.stop)
+        incarnation_patch = mock.patch.object(
+            binding, "browser_incarnation", return_value=["boot", 4242, "start"])
+        incarnation_patch.start()
+        self.addCleanup(incarnation_patch.stop)
         self.qtile_info_patch = mock.patch.object(
             binding, "qtile_window_info", return_value={"id": 22, "group": "f"})
         self.qtile_info_patch.start()
