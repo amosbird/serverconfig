@@ -692,6 +692,63 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
     }
     {
         beginCase();
+        const localState = {};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        await executor.restore();
+        calls.length = 0;
+        const payload = ensurePayload({
+            request_id: "marker-created-pending-url",
+            ensure_id: "marker-created-pending-url",
+        });
+        const nonce = "d".repeat(32);
+        const transaction = await executor.beginEnsureTransaction(payload, nonce);
+        transaction.hostWindowId = 1;
+        const markerUrl = executor.statusUrl({nonce}, "a");
+        transaction.plannedEffect = {
+            kind: "tabs.create.marker", window_id: 1, marker: "a", url: markerUrl,
+        };
+        const owned = executor.observeChromeEvent("tabCreated", {tab: {
+            id: 4000, windowId: 1, pendingUrl: markerUrl,
+        }});
+        assert.equal(owned, true,
+            "Chrome tabCreated pendingUrl must correlate the planned marker effect");
+        assert.equal(transaction.invalid, false,
+            "a planned marker with pendingUrl must not invalidate its transaction");
+        assert.equal(transaction.plannedEffect.tab_id, 4000,
+            "the transaction must retain the exact created marker tab ID");
+    }
+    {
+        beginCase();
+        const localState = {};
+        const {executor, calls} = fixture([], [], 1, false, null, localState);
+        await executor.restore();
+        calls.length = 0;
+        let creates = 0;
+        const originalCreateTab = executor.chrome.tabs.create;
+        executor.chrome.tabs.create = async properties => {
+            creates += 1;
+            const tab = await originalCreateTab(properties);
+            executor.observeChromeEvent("tabCreated", {tab: {
+                id: tab.id, windowId: properties.windowId, pendingUrl: properties.url,
+            }});
+            if (creates === 2) throw new Error("second marker result lost");
+            return tab;
+        };
+        const payload = ensurePayload({
+            request_id: "marker-result-loss-cleanup",
+            ensure_id: "marker-result-loss-cleanup",
+        });
+        await assert.rejects(executor.ensure(payload), /second marker result lost/);
+        const markerRemovals = calls.filter(call => call[0] === "remove").map(call => call[1]);
+        assert.equal(markerRemovals.length, 2,
+            "cleanup must remove both the returned and event-correlated marker tabs");
+        assert.deepEqual(localState.abushPendingTransactions, [],
+            "marker result loss must consume the rolled-back durable transaction");
+        assert.deepEqual(localState.abushOwnedMarkers, {},
+            "marker result loss must disown its pending nonce");
+    }
+    {
+        beginCase();
         const {executor} = fixture([], [], 1);
         executor.nativeRequest = (service, operation, payload) => {
             if (operation === "prepare") return Promise.resolve({xid: 42, nonce: payload.nonce});

@@ -424,12 +424,14 @@ class WorkspaceExecutor {
                     !["tabs.create.marker", "tabs.create.business"].includes(planned.kind) ||
                     tab.windowId !== planned.window_id) return false;
             planned.tab_id = tab.id;
-            if (typeof tab.url !== "string") return true;
+            const observedUrl = typeof tab.pendingUrl === "string" && tab.pendingUrl ?
+                tab.pendingUrl : tab.url;
+            if (typeof observedUrl !== "string") return true;
             if (planned.kind === "tabs.create.marker") {
-                const marker = this.parseStatusUrl(tab.url);
+                const marker = this.parseStatusUrl(observedUrl);
                 return marker?.nonce === transaction.nonce && marker.marker === planned.marker;
             }
-            return tab.url === "about:blank";
+            return observedUrl === "about:blank";
         }
         if (type === "windowCreated") return false;
         if (type !== "tabUpdated") return false;
@@ -4390,8 +4392,13 @@ class WorkspaceExecutor {
             }));
             statusTabs[1].windowId = created.id;
         } catch (error) {
+            const preparedTabs = new Map(statusTabs.map(tab => [tab.id, tab]));
+            for (const tabId of transaction.statusTabIds) {
+                if (!preparedTabs.has(tabId)) preparedTabs.set(tabId, {id: tabId});
+            }
             try {
-                await this.cleanupPreparedWindow(created?.id, statusTabs, nonce);
+                await this.cleanupPreparedWindow(
+                    created?.id, [...preparedTabs.values()], nonce);
                 await this.finishEnsureTransaction(transaction, "rolled_back");
             } catch (cleanupError) {
                 const errors = cleanupError instanceof AggregateError ?
