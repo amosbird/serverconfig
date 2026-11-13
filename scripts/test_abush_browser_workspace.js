@@ -5335,6 +5335,184 @@ async function managedEventFixture({windowFirst = false, lost = null} = {}) {
         assert.deepEqual(calls.map(call => call[0]), ["refresh_remotes"]);
         assert(!calls.some(call => call[0] === "createWindow"), "status must not create windows");
     }
+    for (const checkpoint of ["validate", "attach", "effect", "mutation"]) {
+        beginCase();
+        const {executor, calls} = fixture();
+        const payload = ensurePayload();
+        const record = await executor.ensure(payload);
+        await executor.remoteState({...payload, connected: true});
+        const entered = deferred(`${checkpoint} entered`);
+        const release = deferred(`${checkpoint} release`);
+        const outboxEntered = deferred("disconnect outbox entered");
+        const outboxRelease = deferred("disconnect outbox release");
+        const pause = async () => { entered.resolve(); await release.promise; };
+        if (checkpoint === "validate") {
+            const validate = executor.validate.bind(executor);
+            executor.validate = async (...args) => {
+                const result = await validate(...args);
+                await pause();
+                return result;
+            };
+        } else if (checkpoint === "attach") {
+            const attach = executor.chrome.debugger.attach;
+            executor.chrome.debugger.attach = async (...args) => {
+                await attach(...args);
+                await pause();
+            };
+        } else if (checkpoint === "effect") {
+            const mark = executor.markOperationEffectStarted.bind(executor);
+            executor.markOperationEffectStarted = async operation => {
+                await pause();
+                return mark(operation);
+            };
+        } else {
+            const send = executor.chrome.debugger.sendCommand;
+            executor.chrome.debugger.sendCommand = async (...args) => {
+                await send(...args);
+                await pause();
+            };
+        }
+        executor.authorizeTopologyOutbox = async () => {
+            outboxEntered.resolve();
+            await outboxRelease.promise;
+        };
+        calls.length = 0;
+        const executing = executor.execute(executePayload({
+            effect_id: `revoked-${checkpoint}`,
+            command: {command: "navigate", page: executor.pageRef(record),
+                url: "https://revoked.test/"},
+        }));
+        await entered.promise;
+        const disconnecting = executor.remoteState({...payload, connected: false});
+        await outboxEntered.promise;
+        assert.throws(() => executor.requireCurrentAuthority(payload),
+            error => error.browserCode === "stale_authority");
+        release.resolve();
+        await exactWait(executing, `${checkpoint} execution terminal before cancellation`);
+        const completion = calls.find(call => call[0] === "executor_completion");
+        assert(completion, `${checkpoint} must surface a terminal completion`);
+        assert.equal(completion[1].completion,
+            ["effect", "mutation"].includes(checkpoint) ? "unknown" : "not_applied");
+        assert.equal(calls.some(call => call[0] === "command" && call[2] === "Page.navigate"),
+            checkpoint === "mutation", `${checkpoint} must not start stale navigation`);
+        if (checkpoint === "validate") {
+            assert.equal(calls.some(call => call[0] === "attach"), false,
+                "revoked validation must not attach the debugger");
+        }
+        outboxRelease.resolve();
+        await disconnecting;
+    }
+    for (const checkpoint of ["admission", "effect", "bind", "rebind"]) {
+        beginCase();
+        const {executor, calls} = fixture();
+        const payload = ensurePayload();
+        if (checkpoint === "rebind") await executor.ensure(payload);
+        await executor.remoteState({...payload, connected: true});
+        const entered = deferred(`${checkpoint} ensure entered`);
+        const release = deferred(`${checkpoint} ensure release`);
+        const outboxEntered = deferred("ensure disconnect outbox entered");
+        const outboxRelease = deferred("ensure disconnect outbox release");
+        const pause = async () => { entered.resolve(); await release.promise; };
+        if (checkpoint === "admission") {
+            const get = executor.chrome.storage.local.get;
+            executor.chrome.storage.local.get = async keys => {
+                const result = await get(keys);
+                if (keys.includes("abushEnsureCompletions")) await pause();
+                return result;
+            };
+        } else if (checkpoint === "effect") {
+            const persist = executor.persistPendingTransactions.bind(executor);
+            let paused = false;
+            executor.persistPendingTransactions = async () => {
+                await persist();
+                if (!paused && [...executor.pendingTransactions.values()].some(transaction =>
+                    transaction.plannedEffect?.kind === "tabs.create.marker")) {
+                    paused = true;
+                    await pause();
+                }
+            };
+        } else {
+            executor.nativeMutationTail = release.promise;
+            const bind = executor.bind.bind(executor);
+            executor.bind = (...args) => {
+                entered.resolve();
+                return bind(...args);
+            };
+        }
+        executor.authorizeTopologyOutbox = async () => {
+            outboxEntered.resolve();
+            await outboxRelease.promise;
+        };
+        calls.length = 0;
+        const ensuring = executor.ensure(ensurePayload({request_id: `revoked-${checkpoint}`,
+            ensure_id: `revoked-${checkpoint}`}));
+        const rejected = assert.rejects(ensuring,
+            error => error.browserCode === "stale_authority");
+        await entered.promise;
+        const disconnecting = executor.remoteState({...payload, connected: false});
+        await outboxEntered.promise;
+        const beforeRelease = calls.length;
+        release.resolve();
+        await rejected;
+        assert.equal(calls.slice(beforeRelease).some(call =>
+            ["createTab", "createWindow", "move", "update", "bind_x11_window"]
+                .includes(call[0])), false,
+        `${checkpoint} must not resume stale browser/native mutations or rollback bind`);
+        if (["admission", "effect"].includes(checkpoint)) {
+            assert.equal(calls.some(call => call[0] === "createTab"), false);
+        }
+        outboxRelease.resolve();
+        await disconnecting;
+    }
+    {
+        beginCase();
+        const {executor, calls} = fixture();
+        const old = ensurePayload();
+        await executor.remoteState({...old, connected: true});
+        const entered = deferred("invalidation cancellation entered");
+        const release = deferred("invalidation cancellation release");
+        const cancel = executor.cancelMatchingSerialized.bind(executor);
+        executor.cancelMatchingSerialized = async matches => {
+            entered.resolve();
+            await release.promise;
+            return cancel(matches);
+        };
+        const invalidating = executor.invalidateRemote(old);
+        await entered.promise;
+        assert.throws(() => executor.requireCurrentAuthority(old),
+            error => error.browserCode === "stale_authority",
+            "matching invalidation must revoke before awaiting cancellation");
+        await assert.rejects(executor.ensure(old),
+            error => error.browserCode === "stale_authority");
+        release.resolve();
+        await invalidating;
+        executor.cancelMatchingSerialized = cancel;
+        const current = ensurePayload({connection_id: "c_reconnected", executor_fence: {
+            executor_id: fence.executor_id, epoch: fence.epoch + 1,
+        }});
+        await executor.remoteState({...current, connected: true});
+        const candidate = await executor.ensure(current);
+        calls.length = 0;
+        await executor.invalidateRemote(old);
+        await executor.remoteState({...old, connected: false});
+        assert(executor.authorityMatches(current),
+            "delayed old invalidation/disconnect must not revoke the newer fence");
+        assert.strictEqual(executor.workspaces.get(executor.key(
+            current.remote_key, current.principal_id)), candidate);
+        for (const stale of [old, {...current, principal_id: "visible-not-owned"},
+            {...current, connection_id: old.connection_id}]) {
+            await assert.rejects(executor.ensure(stale),
+                error => error.browserCode === "stale_authority");
+        }
+        assert.equal(calls.some(call => ["removeWindow", "bind_x11_window", "update"]
+            .includes(call[0])), false, "old background events must not clean up a newer candidate");
+        await executor.execute(executePayload({connection_id: current.connection_id,
+            executor_fence: current.executor_fence, effect_id: "reconnected-navigation",
+            command: {command: "navigate", page: executor.pageRef(candidate),
+                url: "https://current.test/"}}));
+        assert.equal(calls.find(call => call[0] === "executor_completion")[1].completion,
+            "applied", "newer committed authority must supersede revocation");
+    }
     console.log("workspace executor tests passed");
     } finally {
         clearTimeout(testDeadline);

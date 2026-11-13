@@ -310,6 +310,7 @@ class WorkspaceExecutor {
 
     async beginEnsureTransaction(payload, nonce) {
         const transaction = {
+            authority: this.ensureIdentity(payload),
             id: crypto.randomUUID(),
             phase: "prepared",
             remoteKey: payload.remote_key,
@@ -781,6 +782,14 @@ class WorkspaceExecutor {
         return error;
     }
 
+    revokeRemoteAuthority(remoteKey) {
+        const current = this.remoteAuthorities.get(remoteKey);
+        this.remoteAuthorities.set(remoteKey, Object.freeze({
+            ...current, remote_key: remoteKey, connected: false,
+        }));
+        this.retireRecoveryStates.delete(remoteKey);
+    }
+
     requireCurrentAuthority(payload) {
         const authority = this.remoteAuthorities.get(payload?.remote_key);
         if (!this.authorityMatches(payload, authority)) throw this.staleAuthority();
@@ -1209,7 +1218,7 @@ class WorkspaceExecutor {
     }
 
     topologyResponseMatchesAuthority(payload, state) {
-        return payload.remote_key === state.remote_key &&
+        return state.connected === true && payload.remote_key === state.remote_key &&
             payload.principal_id === state.principal_id &&
             payload.connection_id === state.connection_id &&
             sameRef(payload.executor_fence, state.executor_fence);
@@ -4260,6 +4269,7 @@ class WorkspaceExecutor {
         await this.persistPendingTransactions();
         let result;
         try {
+            if (transaction.authority) this.requireOperationAuthority(transaction.authority);
             result = await effect();
         } catch (error) {
             try {
@@ -4307,7 +4317,10 @@ class WorkspaceExecutor {
         this.ensureActive(flight);
         let existing = this.workspaces.get(key);
         if (existing && !await this.isLive(existing)) {
-            await this.convergeManagedTopology(existing);
+            this.ensureActive(flight);
+            await this.convergeManagedTopology(existing, {
+                authority: this.remoteAuthorities.has(payload.remote_key) ? flight.authority : null,
+            });
             existing = null;
         }
         if (existing) {
@@ -4340,6 +4353,8 @@ class WorkspaceExecutor {
                 const rollbackErrors = [];
                 const durableNew = error.durableCommit === "new";
                 if (durableNew) committed = true;
+                if (!this.authorityMatches(flight.authority) &&
+                        this.remoteAuthorities.has(flight.authority.remote_key)) throw error;
                 Object.assign(existing, previous);
                 if (committed) {
                     await this.appendCleanupError(rollbackErrors,
@@ -4959,6 +4974,10 @@ class WorkspaceExecutor {
         return this.remoteAuthorities.has(payload.remote_key);
     }
 
+    operationAuthorityIsCurrent(payload) {
+        return !this.operationAuthorityIsTracked(payload) || this.authorityMatches(payload);
+    }
+
     requireOperationAuthority(payload) {
         if (this.operationAuthorityIsTracked(payload)) this.requireCurrentAuthority(payload);
     }
@@ -5032,6 +5051,10 @@ class WorkspaceExecutor {
                 if (operation.mutationStarted || operation.committed) operation.uncertain = true;
             }
             if (operation.cancelled) {
+                completion = operation.mutationStarted || operation.committed ||
+                    operation.uncertain ? "unknown" : "not_applied";
+            }
+            if (!this.operationAuthorityIsCurrent(payload)) {
                 completion = operation.mutationStarted || operation.committed ||
                     operation.uncertain ? "unknown" : "not_applied";
             }
@@ -5189,13 +5212,16 @@ class WorkspaceExecutor {
     }
 
     async remoteStateSerialized(state) {
+        const current = this.remoteAuthorities.get(state.remote_key);
+        if (state.connected === false && current &&
+                ["connection_id", "principal_id", "executor_fence"].some(field =>
+                    state[field] !== undefined && !sameRef(state[field], current[field]))) return;
         const authority = this.authoritySnapshot(state);
         if (authority) {
             this.remoteAuthorities.set(state.remote_key, authority);
             this.retireRecoveryStates.set(state.remote_key, authority);
         } else {
-            this.remoteAuthorities.delete(state.remote_key);
-            this.retireRecoveryStates.delete(state.remote_key);
+            this.revokeRemoteAuthority(state.remote_key);
         }
         await this.authorizeTopologyOutbox(state);
         if (authority) {
@@ -5229,7 +5255,8 @@ class WorkspaceExecutor {
     async invalidateRemoteSerialized(state = null, remoteKey = state?.remote_key) {
         if (state && this.remoteAuthorities.has(remoteKey) &&
                 !this.authorityMatches(state)) return;
-        await this.cancelMatchingSerialized(identity => (!state || identity.remote_key === remoteKey) &&
+        this.revokeRemoteAuthority(remoteKey);
+        await this.cancelMatchingSerialized(identity => identity.remote_key === remoteKey &&
             (!state || ((!state.connection_id || identity.connection_id === state.connection_id) &&
                 (!state.principal_id || identity.principal_id === state.principal_id))));
     }
