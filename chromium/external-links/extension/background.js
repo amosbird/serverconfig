@@ -1,4 +1,4 @@
-if (typeof importScripts === "function") importScripts("workspace.js");
+if (typeof importScripts === "function") importScripts("workspace-v7.js");
 
 const NATIVE_HOST = "io.github.amosbird.browser_router";
 const ENVELOPE_VERSION = 1;
@@ -159,6 +159,24 @@ class NativeDispatcher {
         return this.bootstrapAttempt.promise;
     }
 
+    requestBootstrap(port) {
+        const attempt = this.bootstrapAttempt;
+        this.dispatchRequest("native_host", "bootstrap", {}).then(payload => {
+            if (this.bootstrapAttempt !== attempt || attempt.settled || this.port !== port) return;
+            this.resolveBootstrapAttempt(payload, port);
+        }).catch(error => {
+            if (this.bootstrapAttempt !== attempt || attempt.settled || this.port !== port) return;
+            this.finishBootstrapAttempt(attempt, false, error);
+            this.emitLifecycle("bootstrap_request_failed", {generation: attempt.generation});
+            this.port = null;
+            this.rejectAll(error);
+            try {
+                port.disconnect?.();
+            } catch (_) {}
+            this.scheduleReconnect();
+        });
+    }
+
     ensurePort() {
         if (this.port) return this.port;
         this.stopped = false;
@@ -176,7 +194,6 @@ class NativeDispatcher {
             }
         })();
         this.port = port;
-        if (this.bootstrapEnabled) this.createBootstrapAttempt(port);
         port.onMessage.addListener(message => this.dispatch(message, port));
         port.onDisconnect.addListener(() => {
             if (this.port !== port) return;
@@ -188,6 +205,10 @@ class NativeDispatcher {
             this.rejectAll(error);
             this.scheduleReconnect();
         });
+        if (this.bootstrapEnabled) {
+            this.createBootstrapAttempt(port);
+            this.requestBootstrap(port);
+        }
         return port;
     }
 
@@ -368,7 +389,7 @@ function dispatcher() {
 
 function workspace() {
     const Executor = typeof WorkspaceExecutor !== "undefined" ? WorkspaceExecutor :
-        require("./workspace.js").WorkspaceExecutor;
+        require("./workspace-v7.js").WorkspaceExecutor;
     workspaceExecutor ||= new Executor(chrome, sendNativeRequest);
     return workspaceExecutor;
 }

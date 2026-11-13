@@ -2521,7 +2521,13 @@ class NativeBrokerHost:
     def _respond(self, message):
         request_id = message.get("id") if isinstance(message, dict) else "invalid"
         try:
-            payload = self.broker.handle_request(message)
+            request = validate_request(message)
+            if request["service"] == "native_host" and request["operation"] == "bootstrap":
+                if request["payload"]:
+                    raise ValueError("native bootstrap request payload must be empty")
+                payload = self.bootstrap_event()["payload"]
+            else:
+                payload = self.broker.handle_request(request)
             self.outbound.put(response(request_id, payload=payload))
         except MemoryError as error:
             self.fatal_error = error

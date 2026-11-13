@@ -87,6 +87,47 @@ class FakePeer:
 
 
 class BrowserPeerBrokerTest(unittest.TestCase):
+    def test_native_bootstrap_request_replays_exact_current_browser_identity(self):
+        output = mock.Mock()
+        native = host.NativeBrokerHost(
+            input_stream=mock.Mock(), output_stream=output, remote_root=self.root,
+            ordinary_open_factory=None, browser={
+                "pid": 42,
+                "starttime": "1234",
+                "profile": pathlib.Path("/profiles/main"),
+                "browser_boot_id": "chrome-current-boot",
+            })
+        native._respond({
+            "version": 1,
+            "id": "bootstrap-request",
+            "service": "native_host",
+            "operation": "bootstrap",
+            "payload": {},
+        })
+        response = native.outbound.get(timeout=1)
+        self.assertEqual(response, {
+            "version": 1,
+            "reply_to": "bootstrap-request",
+            "ok": True,
+            "payload": {
+                "browser_boot_id": "chrome-current-boot",
+                "browser_pid": 42,
+                "browser_starttime": "1234",
+                "ordinary_launch_leases": [],
+            },
+        })
+        native._respond({
+            "version": 1,
+            "id": "invalid-bootstrap-request",
+            "service": "native_host",
+            "operation": "bootstrap",
+            "payload": {"unexpected": True},
+        })
+        rejected = native.outbound.get(timeout=1)
+        self.assertFalse(rejected["ok"])
+        self.assertIn("must be empty", rejected["error"])
+        native.broker.close()
+
     def test_native_host_writes_remote_state_before_activating_peer_reader(self):
         native = host.NativeBrokerHost(
             input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,

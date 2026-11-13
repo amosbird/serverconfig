@@ -156,7 +156,13 @@ for (const [page, link, expected] of cases) {{
         )
 
     def test_workspace_source_exposes_current_v7_lifecycle(self):
-        workspace = MANIFEST.with_name("workspace.js").read_text()
+        background = MANIFEST.with_name("background.js").read_text()
+        workspace_path = MANIFEST.with_name("workspace-v7.js")
+        self.assertIn('importScripts("workspace-v7.js")', background)
+        self.assertIn('require("./workspace-v7.js")', background)
+        self.assertTrue(workspace_path.is_file())
+        self.assertEqual(workspace_path.read_bytes(), MANIFEST.with_name("workspace.js").read_bytes())
+        workspace = workspace_path.read_text()
         self.assertIn("browserBootId", workspace)
         self.assertIn("ordinaryOpen", workspace)
         self.assertIn("remoteAuthorities", workspace)

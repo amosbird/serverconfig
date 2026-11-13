@@ -3400,9 +3400,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             const listeners = {message: [], disconnect: []};
             const port = {
                 listeners,
+                sent: [],
                 onMessage: {addListener: listener => listeners.message.push(listener)},
                 onDisconnect: {addListener: listener => listeners.disconnect.push(listener)},
-                postMessage() {},
+                postMessage(message) { this.sent.push(message); },
                 disconnect() {},
             };
             ports.push(port);
@@ -3419,6 +3420,9 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         };
         const firstBootstrap = dispatcher.bootstrap();
         assert.equal(ports.length, 1);
+        assert.equal(ports[0].sent.length, 1);
+        assert.equal(ports[0].sent[0].service, "native_host");
+        assert.equal(ports[0].sent[0].operation, "bootstrap");
         ports[0].listeners.disconnect[0]();
         await assert.rejects(exactWait(firstBootstrap, "disconnected native bootstrap"),
             /disconnected/);
@@ -3426,6 +3430,8 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
         assert(reconnect, "bootstrap disconnect must schedule a reconnect attempt");
         reconnect.callback();
         assert.equal(ports.length, 2);
+        assert.equal(ports[1].sent.length, 1,
+            "every native generation must request a replayable bootstrap");
         const secondBootstrap = dispatcher.bootstrap();
         const payload = {
             browser_boot_id: "bootstrap-reconnected",
@@ -3434,7 +3440,10 @@ function fixture(saved = [], orphanStatusNonces = [], ordinaryTabCount = 0,
             ordinary_launch_leases: [],
         };
         ports[1].listeners.message[0]({
-            version: 1, event: "bootstrap", service: "native_host", payload,
+            version: 1,
+            reply_to: ports[1].sent[0].id,
+            ok: true,
+            payload,
         });
         assert.deepEqual(await exactWait(secondBootstrap,
             "reconnected native bootstrap"), payload);
