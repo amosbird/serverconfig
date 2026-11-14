@@ -3,15 +3,21 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
+export TMPDIR="$(dirname "$common")/.worktrees/.tmp"
+mkdir -p "$TMPDIR"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 root="$tmp/external-links"
 bin="$tmp/bin"
 mkdir -p "$root" "$bin"
 cp -a "$repo/chromium/external-links/extension" "$root/extension"
+cp "$repo/chromium/external-links/package_assets.py" "$root/package_assets.py"
+source_hash=$(find "$root/extension" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum)
 
 cat > "$bin/pass" <<'EOF'
 #!/usr/bin/env bash
+[[ $# -eq 2 && $1 == show && $2 == chrome/external-links.pem ]]
 printf '%s\n' fake-private-key
 EOF
 cat > "$bin/openssl" <<'EOF'
@@ -78,6 +84,44 @@ done
 [[ ${headless:-} && ${first_run:-} && ${browser_check:-} && $profile && $extension && ${key:-} ]]
 [[ $profile == "$(dirname "$extension")"/chrome-profile ]]
 mkdir -p "$profile"
+python3 - "$extension" <<'PY'
+import json
+import os
+import pathlib
+import sys
+from html.parser import HTMLParser
+
+root = pathlib.Path(sys.argv[1])
+source = pathlib.Path(os.environ["EXTERNAL_LINKS_ROOT"]) / "extension"
+manifest = json.loads((root / "manifest.json").read_text())
+suffix = manifest["version"].replace(".", "-")
+worker = f"background-{suffix}.js"
+workspace = f"workspace-{suffix}.js"
+assert manifest["background"]["service_worker"] == worker
+assert "tabGroups" in manifest["permissions"]
+assert manifest["action"]["default_popup"] == "popup.html"
+assert (root / workspace).read_bytes() == (source / "workspace.js").read_bytes()
+background = (root / worker).read_text()
+assert f'importScripts("{workspace}")' in background
+assert f'require("./{workspace}")' in background
+assert '"workspace.js"' not in background and '"./workspace.js"' not in background
+assert not (root / "background.js").exists()
+assert not (root / "workspace.js").exists()
+for name in ("popup.html", "popup.js", "popup.css"):
+    assert (root / name).read_bytes() == (source / name).read_bytes()
+
+class CspParser(HTMLParser):
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        assert not any(name.lower().startswith("on") for name, _ in attrs)
+        if tag == "script":
+            assert attributes.get("src") and (root / attributes["src"]).is_file()
+        if tag == "link" and attributes.get("rel") == "stylesheet":
+            assert (root / attributes["href"]).is_file()
+
+for html in root.glob("*.html"):
+    CspParser().feed(html.read_text())
+PY
 case ${CHROME_MODE:-success} in
     success) printf 'Cr24\003\000\000\000payload' > "${extension}.crx" ;;
     invalid) printf 'not-a-crx' > "${extension}.crx" ;;
@@ -122,7 +166,7 @@ state_hash=$(sha256sum "$root/package/build-state.json")
 [[ $(sha256sum "$root/package/extension.crx") == "$artifact_hash" ]]
 [[ $(sha256sum "$root/package/build-state.json") == "$state_hash" ]]
 
-printf '\n' >> "$root/extension/status.js"
+printf '\n' >> "$root/extension/popup.js"
 for mode in fail invalid; do
     export CHROME_MODE=$mode
     if "$repo/scripts/package-external-links" > "$tmp/$mode.out" 2> "$tmp/$mode.err"; then
@@ -134,4 +178,14 @@ for mode in fail invalid; do
 done
 grep -q 'Chrome failed to pack External Links extension.' "$tmp/fail.err"
 grep -q 'invalid extension.crx' "$tmp/invalid.err"
+[[ $(wc -l < "$CHROME_CALLS") -eq 3 ]]
 [[ -z $(find "$root/package" -maxdepth 1 -name '.*.??????' -print -quit) ]]
+# Only the deliberate source mutation above is allowed; staging never rewrites sources.
+python3 - "$root/extension/popup.js" <<'PY'
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+path.write_bytes(path.read_bytes()[:-1])
+PY
+[[ $(find "$root/extension" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum) == "$source_hash" ]]
+printf '4 mocked packaging scenarios passed (build, cache, failure, invalid CRX)\n'

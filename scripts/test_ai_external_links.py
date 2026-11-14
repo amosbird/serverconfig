@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+from html.parser import HTMLParser
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -25,6 +26,10 @@ RUNAI = ROOT / "scripts/runai"
 
 
 class ExternalLinkExtensionTest(unittest.TestCase):
+    def run_node(self, script):
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=6)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_content_retries_unknown_ownership_without_reload(self):
         script = f"""
 const path = {json.dumps(str(CONTENT))};
@@ -62,7 +67,7 @@ setImmediate(() => {{
     }});
 }});
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_content_invalidates_owned_cache_and_routes_next_click_without_reload(self):
         script = f"""
@@ -103,7 +108,7 @@ setImmediate(() => {{
             chrome.runtime.sent[1].url !== 'https://chatgpt.com/') process.exit(2);
 }});
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_links_only_stay_local_inside_the_same_browser_group(self):
         script = f"""
@@ -124,7 +129,7 @@ for (const [page, link, expected] of cases) {{
     if (shouldRouteLink(page, link) !== expected) process.exit(1);
 }}
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_shared_route_config_drives_host_and_extension(self):
         routes = json.loads(ROUTES.read_text())
@@ -161,16 +166,30 @@ for (const [page, link, expected] of cases) {{
             ["chrome-extension://ahonjbfnmpjgjgaabbppofphidfomgcj/"],
         )
 
-    def test_workspace_source_exposes_current_v7_lifecycle(self):
-        background = MANIFEST.with_name("background.js").read_text()
-        workspace_path = MANIFEST.with_name("workspace.js")
-        self.assertIn('importScripts("workspace.js")', background)
-        self.assertIn('require("./workspace.js")', background)
-        self.assertTrue(workspace_path.is_file())
-        workspace = workspace_path.read_text()
-        self.assertIn("browserBootId", workspace)
-        self.assertIn("ordinaryOpen", workspace)
-        self.assertIn("remoteAuthorities", workspace)
+    def test_v9_consent_owns_only_the_exact_enabled_tab(self):
+        script = f"""
+const {{assert, fixture}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_groups_fixture.js'))});
+(async () => {{
+    const f = fixture();
+    await f.ready();
+    assert.equal(f.executor.state('remote').phase, 'disabled');
+    assert.equal(f.executor.records.size, 0);
+    assert.equal(f.tabs.size, 2);
+    const record = await f.enable();
+    assert.equal(f.executor.state('remote').phase, 'enabled');
+    assert.equal(f.executor.ownsTab(record.tab_id), true);
+    assert.equal(record.window_id, 1);
+    assert.equal(f.executor.ownsTab(1), false);
+    assert.equal(f.tabs.get(1).groupId, -1);
+    assert.equal(f.tabs.get(record.tab_id).groupId, record.group_id);
+    assert.equal(f.calls.filter(call => call.name === 'windows.create').length, 0);
+    assert.deepEqual(f.local.abushOwnedMarkers, {{legacy: true}});
+    await f.send({{control: 'disconnect', remote_key: 'remote'}});
+    assert.equal(f.executor.ownsTab(record.tab_id), false);
+    assert.equal(f.tabs.size, 3, 'disconnect must not close any tab');
+}})().catch(error => {{ console.error(error); process.exitCode = 1; }});
+"""
+        self.run_node(script)
 
     def asset_fixture(self):
         common = pathlib.Path(subprocess.check_output(
@@ -204,7 +223,8 @@ for (const [page, link, expected] of cases) {{
         expected["manifest.json"] = json.dumps(manifest, separators=(",", ":")).encode()
         expected[workspace] = expected.pop("workspace.js")
         expected[worker] = expected.pop("background.js").replace(
-            b'importScripts("workspace.js")', f'importScripts("{workspace}")'.encode(), 1)
+            b'importScripts("workspace.js")', f'importScripts("{workspace}")'.encode(), 1).replace(
+            b'require("./workspace.js")', f'require("./{workspace}")'.encode())
         self.assertEqual(self.asset_snapshot(staged), expected)
         self.assertEqual(self.asset_snapshot(source), original)
         self.assertEqual(self.asset_snapshot(MANIFEST.parent), original)
@@ -219,6 +239,27 @@ for (const [page, link, expected] of cases) {{
         self.assertNotIn("background.js", expected)
         self.assertNotIn("workspace.js", expected)
         self.assertIn(b'requestBootstrap(port)', expected[worker])
+        self.assertNotIn(b'"workspace.js"', expected[worker])
+        self.assertNotIn(b'"./workspace.js"', expected[worker])
+        self.assertIn("tabGroups", manifest["permissions"])
+        self.assertEqual(manifest["action"]["default_popup"], "popup.html")
+        for name in ("popup.html", "popup.js", "popup.css"):
+            self.assertEqual(expected[name], original[name])
+
+        class CspParser(HTMLParser):
+            def handle_starttag(parser, tag, attrs):
+                attributes = dict(attrs)
+                self.assertFalse(any(name.lower().startswith("on") for name, _ in attrs),
+                                 f"inline event handler in {tag}")
+                if tag == "script":
+                    self.assertIn("src", attributes, "inline script violates extension CSP")
+                    self.assertIn(attributes["src"], expected)
+                if tag == "link" and attributes.get("rel") == "stylesheet":
+                    self.assertIn(attributes["href"], expected)
+
+        for name, content in expected.items():
+            if name.endswith(".html"):
+                CspParser().feed(content.decode())
 
     def test_asset_staging_command_matches_shared_function(self):
         source, staged = self.asset_fixture()
@@ -391,14 +432,35 @@ for (const [page, link, expected] of cases) {{
         self.assertIn("runtime.onMessage.addListener", background)
         self.assertIn("chrome.notifications.create", background)
 
-    def test_background_routes_ensure_and_action_is_peer_lifecycle_noop(self):
-        background = CONTENT.with_name("background.js").read_text()
-        self.assertIn('message.event === "abush_browser.ensure_managed_page"', background)
-        self.assertIn('dispatch("ensure", "Unable to ensure Abush browser workspace", false)',
-                      background)
-        self.assertIn("workspaces.enqueueRemoteLifecycle(remoteKey, task)", background)
-        self.assertNotIn("chrome.action.onClicked", background)
-        self.assertNotIn("Browser workspaces are managed automatically.", background)
+    def test_background_routes_v9_execution_and_rejects_managed_window_events(self):
+        script = f"""
+const {{assert, fixture, execute}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_groups_fixture.js'))});
+const {{registerNativeEventRouter}} = require({json.dumps(str(CONTENT.with_name('background.js')))});
+(async () => {{
+    const f = fixture();
+    await f.ready();
+    let listener;
+    const errors = [];
+    registerNativeEventRouter({{onEvent: fn => {{ listener = fn; }}}}, f.executor,
+        async () => {{}}, message => errors.push(message));
+    const before = structuredClone(f.calls);
+    for (const event of ['ensure_managed_page', 'new_managed_page']) {{
+        listener({{service: 'abush_browser', event: `abush_browser.${{event}}`, payload: {{}}}});
+    }}
+    assert.equal(errors.length, 2);
+    assert(errors.every(message => /protocol v9/.test(message)));
+    assert.deepEqual(f.calls, before, 'retired events must not mutate browser or consent');
+    const record = await f.enable();
+    const payload = execute(f);
+    await listener({{service: 'abush_browser', event: 'abush_browser.execute', payload}});
+    assert.equal(f.tabs.get(record.tab_id).url, payload.command.url);
+    assert.equal(f.tabs.get(1).url, 'https://ordinary.test/a');
+    assert.equal(f.calls.filter(call => call.name === 'debugger.sendCommand').length, 1);
+    assert.equal(f.calls.filter(call => call.name === 'windows.create').length, 0);
+    assert.equal(f.executor.records.size, 1);
+}})().catch(error => {{ console.error(error); process.exitCode = 1; }});
+"""
+        self.run_node(script)
 
     def test_site_languages_are_managed_by_independent_config(self):
         manifest = json.loads(MANIFEST.read_text())
@@ -443,42 +505,46 @@ Promise.all([first, second]).then(values => {{
     if (dispatcher.pending.size !== 0) process.exit(2);
 }}).catch(() => process.exit(3));
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
-    def test_ordinary_staging_title_wait_has_its_own_bound(self):
-        workspace = CONTENT.with_name("workspace.js")
+    def test_ordinary_staging_title_wait_stops_at_request_deadline(self):
         script = f"""
-const assert = require('assert');
-const {{WorkspaceExecutor}} = require({json.dumps(str(workspace))});
-global.crypto = require('crypto').webcrypto;
-let reads = 0;
-const chrome = {{
-    runtime: {{getURL: path => `chrome-extension://id/${{path}}`}},
-    tabs: {{get: async id => {{
-        reads += 1;
-        return {{id, windowId: 1, active: true, title: 'Preparing ordinary Chrome window'}};
-    }}}},
-}};
-const executor = new WorkspaceExecutor(chrome, async () => {{}});
-const originalSetTimeout = global.setTimeout;
-const originalNow = Date.now;
-let now = 10000;
-global.setTimeout = callback => {{ now += 10; callback(); return 1; }};
-Date.now = () => now;
+const {{assert, fixture}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_groups_fixture.js'))});
+const {{WAL_KEY}} = require({json.dumps(str(CONTENT.with_name('workspace.js')))});
 (async () => {{
+    const f = fixture();
+    await f.ready();
+    const originalNow = Date.now;
+    let now = 10000;
+    let reads = 0;
+    Date.now = () => now;
+    f.hooks['tabs.get'] = id => {{
+        reads++;
+        now += 1000;
+        return {{...f.tabs.get(id), title: 'Preparing ordinary Chrome window'}};
+    }};
+    const payload = {{version: 1, operation: 'ordinary_open', focus: true,
+        request_id: 'title-deadline', url: 'https://ordinary.test/destination', deadline_ms: now + 5000}};
     try {{
-        await executor.waitForOrdinaryTitle(3000, 'e'.repeat(32), now + 30000);
-        process.exit(1);
-    }} catch (error) {{
-        assert.match(error.message, /title was not ready/);
-        assert(reads <= 101, `ordinary title wait followed the 30s request deadline: ${{reads}}`);
-    }} finally {{
-        global.setTimeout = originalSetTimeout;
-        Date.now = originalNow;
-    }}
-}})().catch(() => process.exit(2));
+        assert.equal(await f.executor.ordinaryOpen(payload), 'unknown');
+        assert.equal(now, payload.deadline_ms);
+        assert.equal(reads, 5, 'title polling must stop at the request deadline');
+        assert.match(f.executor.lastError, /deadline expired|staging title.*timed out/);
+        const entry = f.local[WAL_KEY].ordinary[payload.request_id];
+        assert.equal(entry.phase, 'terminal');
+        assert.equal(entry.completion, 'unknown', 'a dispatched staging tab is not false success');
+        assert.equal(f.executor.ordinaryOperations.size, 0);
+        assert.equal(f.calls.filter(call => ['native.prepare', 'native.activate', 'tabs.update']
+            .includes(call.name)).length, 0);
+        const completions = f.calls.filter(call => call.name === 'native.ordinary_open_completion');
+        assert.equal(completions.length, 1);
+        assert.equal(completions[0].args[0].completion, 'unknown');
+        assert.equal(f.executor.records.size, 0);
+        assert.equal(f.tabs.size, 3, 'deadline must not remove the ordinary staging tab');
+    }} finally {{ Date.now = originalNow; }}
+}})().catch(error => {{ console.error(error); process.exitCode = 1; }});
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_native_dispatcher_uses_receiver_safe_timers_in_a_service_worker(self):
         background = CONTENT.with_name("background.js")
@@ -510,7 +576,7 @@ assert.equal(scheduled.length, 2,
 bootstrap.catch(() => {{}});
 dispatcher.stop();
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_native_dispatcher_bounds_each_ordinary_native_phase(self):
         background = CONTENT.with_name("background.js")
@@ -535,7 +601,7 @@ assert(delays.every(delay => delay > 0 && delay <= 8000),
     `ordinary phase timeout escaped its bound: ${{JSON.stringify(delays)}}`);
 dispatcher.stop();
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_native_dispatcher_rejects_all_once_on_disconnect(self):
         background = CONTENT.with_name("background.js")
@@ -558,7 +624,7 @@ Promise.all(requests).then(() => {{
     if (rejected !== 2 || dispatcher.pending.size !== 0) process.exit(1);
 }});
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_native_dispatcher_reconnects_with_bounded_backoff(self):
         background = CONTENT.with_name("background.js")
@@ -607,7 +673,7 @@ third.onDisconnect.listeners[0]();
 assert.equal(timers[0][1], 100, 'a valid native message resets backoff');
 dispatcher.stop();
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_native_dispatcher_marks_pre_and_post_dispatch_failures(self):
         background = CONTENT.with_name("background.js")
@@ -630,7 +696,7 @@ Promise.all([notSent, unknown]).then(values => {{
     uncertain.stop();
 }}).catch(() => process.exit(1));
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
     def test_native_dispatcher_stops_reconnecting_after_bound(self):
         background = CONTENT.with_name("background.js")
@@ -658,7 +724,7 @@ dispatcher.scheduleReconnect();
 assert.equal(timers.length, 0, 'bounded reconnect must stop scheduling');
 assert.deepEqual(events, ['reconnect_exhausted'], 'exhaustion emits one lifecycle notice');
 """
-        subprocess.run(["node", "-e", script], check=True)
+        self.run_node(script)
 
 
 class NativeHostTest(unittest.TestCase):

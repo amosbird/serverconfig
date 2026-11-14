@@ -37,7 +37,8 @@ def stage_assets(source, destination, version):
     if any((source / name).exists() for name in (versioned_workspace, versioned_worker)):
         raise FileExistsError("Versioned assets already exist in the source")
     versioned_background = background.replace(
-        'importScripts("workspace.js")', f'importScripts("{versioned_workspace}")', 1)
+        'importScripts("workspace.js")', f'importScripts("{versioned_workspace}")', 1).replace(
+        'require("./workspace.js")', f'require("./{versioned_workspace}")')
 
     shutil.copytree(source, destination)
     (destination / versioned_workspace).write_bytes(workspace)
