@@ -31,9 +31,11 @@ let ownershipRequest = null;
 
 function refreshOwnership({force = false} = {}) {
     if (ownershipRequest) return ownershipRequest;
-    if (!force && ownedWorkspace !== null) return Promise.resolve(ownedWorkspace);
+    if (!force && ownedWorkspace !== null && Date.now() - ownedCheckedAt < OWNED_RECHECK_MS) {
+        return Promise.resolve(ownedWorkspace);
+    }
     ownershipRequest = new Promise(resolve => {
-        chrome.runtime.sendMessage({query: "abush_owned_window"}, response => {
+        chrome.runtime.sendMessage({query: "abush_owned_tab"}, response => {
             if (response?.ready === true && typeof response.owned === "boolean" &&
                     Number.isSafeInteger(response.generation) &&
                     response.generation >= ownershipGeneration) {
@@ -49,10 +51,10 @@ function refreshOwnership({force = false} = {}) {
 }
 
 function applyOwnershipChange(message) {
-    if (message?.type !== "abush_ownership_changed" || message.owned !== false ||
+    if (message?.type !== "abush_ownership_changed" || typeof message.owned !== "boolean" ||
             !Number.isSafeInteger(message.generation) ||
             message.generation < ownershipGeneration) return false;
-    ownedWorkspace = false;
+    ownedWorkspace = message.owned;
     ownershipGeneration = message.generation;
     ownedCheckedAt = Date.now();
     return true;
@@ -62,13 +64,10 @@ if (typeof document !== "undefined") {
     refreshOwnership();
     chrome.runtime.onMessage?.addListener?.(message => applyOwnershipChange(message));
     document.addEventListener("click", event => {
-        if (ownedWorkspace !== false || event.defaultPrevented || event.button !== 0) {
-            if (ownedWorkspace === null ||
-                    ownedWorkspace === true && Date.now() - ownedCheckedAt >= OWNED_RECHECK_MS) {
-                refreshOwnership({force: true});
-            }
-            return;
+        if (ownedWorkspace === null || Date.now() - ownedCheckedAt >= OWNED_RECHECK_MS) {
+            refreshOwnership({force: true});
         }
+        if (ownedWorkspace !== false || event.defaultPrevented || event.button !== 0) return;
         const link = event.target.closest("a[href]");
         if (!link || !shouldRouteLink(location.href, link.href)) return;
         event.preventDefault();

@@ -497,13 +497,15 @@ function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openI
                             sender.url !== chromeApi.runtime.getURL("popup.html")) {
                         return {ok: false, error: "Only the extension popup can authorize browser work"};
                     }
-                    if (!["pause", "takeover", "disconnect"].includes(message.control)) await ready();
-                    return await workspaces.control(message.control, message.remote_key);
+                    const revoke = ["pause", "takeover", "disconnect"].includes(message.control);
+                    if (!revoke) await ready();
+                    return await workspaces.control(message.control, message.remote_key,
+                        revoke ? ready : null);
                 }
                 await ready();
                 const owned = workspaces.ownsTab(sender.tab?.id);
-                const generation = 0;
-                if (message.query === "abush_owned_window") {
+                const generation = workspaces.ownershipGeneration;
+                if (message.query === "abush_owned_tab") {
                     return {owned, generation, ready: true, ok: true, route: false};
                 }
                 if (!message.url) return {owned, generation, ready: true, ok: false, route: false};
@@ -561,7 +563,7 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
             onFailure("Unsupported browser event; protocol v9 is required");
             return;
         }
-        if (method === "cancel" || (method === "remoteState" && workspaces.records.size > 0)) {
+        if (method === "cancel" || method === "remoteState") {
             Promise.resolve(workspaces[method](message.payload)).catch(error => onFailure(error.message));
         } else run(() => workspaces[method](message.payload), `Browser ${method} failed`);
     });

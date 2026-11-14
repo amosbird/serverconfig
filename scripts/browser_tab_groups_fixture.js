@@ -13,7 +13,14 @@ function event() {
 function deferred() {
     let resolve;
     let reject;
-    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    let timer;
+    const promise = new Promise((yes, no) => {
+        resolve = value => { clearTimeout(timer); yes(value); };
+        reject = error => { clearTimeout(timer); no(error); };
+        timer = setTimeout(() => no(new Error("Fixture barrier timed out")), 4000);
+        timer.unref?.();
+    });
+    promise.catch(() => {});
     return {promise, resolve, reject};
 }
 const BOOT = {browser_boot_id: "boot-one", browser_pid: 123,
@@ -36,10 +43,15 @@ function fixture() {
     const hooks = {};
     const invoke = async (name, args, run) => {
         calls.push({name, args: clone(args)});
-        if (hooks[name]) await hooks[name](...args);
-        return run();
+        if (hooks[name]) {
+            const override = await hooks[name](...args);
+            if (override !== undefined) return override;
+        }
+        const result = run();
+        if (hooks[`${name}.after`]) await hooks[`${name}.after`](result, ...args);
+        return result;
     };
-    const storage = (state, name) => ({get: async () => clone(state),
+    const storage = (state, name) => ({get: () => invoke(`${name}.get`, [], () => clone(state)),
         set: value => invoke(`${name}.set`, [value], () => Object.assign(state, clone(value)))});
     const tab = id => {
         if (!tabs.has(id)) throw new Error("No tab");
@@ -58,7 +70,8 @@ function fixture() {
                 const created = createTab({...args, windowId: 3, active: true});
                 return {...window, tabs: [created]};
             })},
-        tabs: {get: id => invoke("tabs.get", [id], () => clone(tab(id))),
+        tabs: {sendMessage: (id, message) => invoke("tabs.sendMessage", [id, message], () => {}),
+            get: id => invoke("tabs.get", [id], () => clone(tab(id))),
             create: args => invoke("tabs.create", [args], () => createTab(args)),
             group: args => invoke("tabs.group", [args], () => {
                 const group = nextGroup++;
@@ -76,7 +89,7 @@ function fixture() {
         debugger: {attach: (target, version) => invoke("debugger.attach", [target, version], () => {}),
             detach: target => invoke("debugger.detach", [target], () => {}),
             sendCommand: (target, method, args) => invoke("debugger.sendCommand", [target, method, args],
-                () => { tab(target.tabId).url = args.url; return {}; })},
+                () => { tab(target.tabId).url = args.url; return {frameId: `frame-${target.tabId}`, loaderId: "loader"}; })},
     };
     function activate(current) {
         for (const item of tabs.values()) {
@@ -122,7 +135,7 @@ function fixture() {
             effect_id: payload.effect_id, executor_fence: payload.executor_fence,
             completion: payload.completion};
         }
-        if (operation === "prepare") return {nonce: payload.nonce, xid: 42};
+        if (["prepare", "activate"].includes(operation)) return {nonce: payload.nonce, xid: 42};
         if (operation === "ordinary_file_navigate") {
             const current = [...tabs.values()].find(item => item.url.endsWith(`#${payload.nonce}`));
             current.url = payload.url;
@@ -149,6 +162,10 @@ function fixture() {
             const response = await send({control: "enable", remote_key: "remote"});
             assert.equal(response.ok, true, response.error);
             return executor.records.get("remote");
+        }, resetWorker() {
+            executor = new WorkspaceExecutor(api, native);
+            route();
+            return executor;
         }, async restart(boot = BOOT) {
             executor = new WorkspaceExecutor(api, native);
             route();
@@ -170,10 +187,17 @@ function execute(f, overrides = {}) {
             url: "https://work.test/exact?q=one#fragment"}, ...overrides};
 }
 async function runCases(cases) {
+    const failures = [];
     for (const [name, run] of cases) {
-        await bounded(run, `case ${name}`, 10000);
-        console.log(`ok ${name}`);
+        try {
+            await bounded(run, `case ${name}`, 10000);
+            console.log(`ok ${name}`);
+        } catch (error) {
+            failures.push(name);
+            console.error(`FAIL ${name}: ${error.stack}`);
+        }
     }
+    if (failures.length) throw new Error(`${failures.length}/${cases.length} cases failed`);
     console.log(`${cases.length} cases passed`);
 }
 module.exports = {assert, clone, deferred, fixture, execute, runCases, BOOT, REMOTE};

@@ -39,7 +39,7 @@ const cases = [
         const f = fixture(); await f.ready(); const record = await f.enable();
         f.tabs.get(1).groupId = record.group_id;
         assert.equal(f.executor.ownsTab(1), false); assert.equal(f.executor.ownsTab(2), false);
-        const response = await f.send({query: "abush_owned_window"}, {...f.trusted, tab: {id: 1, windowId: 1}});
+        const response = await f.send({query: "abush_owned_tab"}, {...f.trusted, tab: {id: 1, windowId: 1}});
         assert.equal(response.owned, false);
         const routed = await f.send({url: "https://external.test/"}, {...f.trusted, tab: {id: 1, windowId: 1}});
         assert.equal(routed.route, true);
@@ -71,13 +71,13 @@ const cases = [
         await assert.rejects(pending, /revoked|paused/);
         assert.equal(f.calls.filter(call => call.name === "debugger.sendCommand").length, 0);
     }],
-    ["pause after dispatch records unknown", async () => {
+    ["pause after confirmed dispatch remains applied", async () => {
         const f = fixture(); await f.ready(); await f.enable(); const payload = execute(f);
         const entered = deferred(); const gate = deferred();
         f.hooks["debugger.sendCommand"] = async () => { entered.resolve(); await gate.promise; };
         const pending = f.executor.execute(payload); pending.catch(() => {}); await entered.promise;
-        await f.executor.control("pause", "remote"); gate.resolve(); await assert.rejects(pending);
-        assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, "unknown");
+        await f.executor.control("pause", "remote"); gate.resolve(); assert.equal(await pending, "applied");
+        assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, "applied");
     }],
     ["ACK loss resends terminal only", async () => {
         const f = fixture(); await f.ready(); await f.enable(); const payload = execute(f);
@@ -165,6 +165,63 @@ const cases = [
         assert.equal(await f.executor.ordinaryOpen({version: 1, operation: "ordinary_open", focus: true,
             request_id: "file", url: "file:///home/example/a.html", deadline_ms: Date.now() + 5000}), "applied");
         assert.equal(f.calls.filter(call => call.name === "native.ordinary_file_navigate").length, 1);
+    }],
+    ["CDP semantic errors and malformed responses never Applied", async () => {
+        for (const response of [{frameId: "frame", errorText: "net::ERR_NAME_NOT_RESOLVED"}, {}]) {
+            const f = fixture(); await f.ready(); await f.enable(); const payload = execute(f);
+            f.hooks["debugger.sendCommand"] = async () => response;
+            await assert.rejects(f.executor.execute(payload), /navigate|ERR|response/i);
+            assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, "unknown");
+            delete f.hooks["debugger.sendCommand"];
+            await f.restart(); await f.executor.remoteState(REMOTE);
+            assert.equal(await f.executor.execute(payload), "unknown");
+            assert.equal(f.calls.filter(c => c.name === "debugger.sendCommand").length, 1);
+        }
+    }],
+    ["ordinary serializes prepare through activation and queued cancel", async () => {
+        const f = fixture(); await f.ready(); const entered = deferred(); const gate = deferred();
+        const payload = id => ({version: 1, operation: "ordinary_open", focus: true, request_id: id,
+            url: `https://ordinary.test/${id}`, deadline_ms: Date.now() + 5000});
+        f.hooks["native.prepare"] = async () => { entered.resolve(); await gate.promise; };
+        const a = f.executor.ordinaryOpen(payload("A")); await entered.promise;
+        const b = f.executor.ordinaryOpen(payload("B"));
+        gate.resolve(); assert.equal(await a, "applied"); assert.equal(await b, "applied");
+        const trace = f.calls.filter(c => ["tabs.create", "native.prepare", "native.activate"].includes(c.name))
+            .map(c => c.name);
+        assert.deepEqual(trace, ["tabs.create", "native.prepare", "native.activate",
+            "tabs.create", "native.prepare", "native.activate"]);
+        delete f.hooks["native.prepare"];
+        const queued = f.executor.ordinaryOpen(payload("cancelled"));
+        f.executor.cancelOrdinaryOpen({version: 1, operation: "ordinary_open_cancel", request_id: "cancelled"});
+        assert.equal(await queued, "not_applied");
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 2);
+    }],
+    ["ordinary rejects malformed activation and competing pending URL", async () => {
+        for (const mode of ["activation", "pending"]) {
+            const f = fixture(); await f.ready();
+            if (mode === "activation") f.hooks["native.activate"] = async () => ({});
+            else f.hooks["tabs.update.after"] = async result => { f.tabs.get(result.id).pendingUrl = "https://other.test/"; };
+            assert.equal(await f.executor.ordinaryOpen({version: 1, operation: "ordinary_open", focus: true,
+                request_id: mode, url: "https://ordinary.test/", deadline_ms: Date.now() + 5000}), "unknown");
+        }
+    }],
+    ["ordinary URL canonical pending destination and confirmed redirect", async () => {
+        for (const mode of ["canonical", "pending", "redirect"]) {
+            const f = fixture(); await f.ready();
+            const requested = "https://ORDINARY.test:443";
+            if (mode === "canonical") f.hooks["tabs.update.after"] = async result => {
+                f.tabs.get(result.id).url = new URL(requested).href;
+            };
+            if (mode === "pending") f.hooks["tabs.update.after"] = async result => {
+                Object.assign(f.tabs.get(result.id), {url: "about:blank", pendingUrl: new URL(requested).href});
+            };
+            if (mode === "redirect") f.hooks["native.activate"] = async () => {
+                const current = [...f.tabs.values()].find(tab => tab.url === requested);
+                current.url = "https://ordinary.test/redirected";
+            };
+            assert.equal(await f.executor.ordinaryOpen({version: 1, operation: "ordinary_open", focus: true,
+                request_id: mode, url: requested, deadline_ms: Date.now() + 5000}), "applied");
+        }
     }],
 ];
 if (require.main === module) runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });
