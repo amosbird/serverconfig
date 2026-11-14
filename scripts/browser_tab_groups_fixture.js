@@ -218,7 +218,7 @@ async function runCases(cases) {
     for (const [name, run] of cases) {
         try {
             await bounded(run, `case ${name}`, 10000);
-            console.log(`ok ${name}`);
+            if (process.env.ABUSH_BROWSER_TEST_VERBOSE === "1") console.log(`ok ${name}`);
         } catch (error) {
             failures.push(name);
             console.error(`FAIL ${name}: ${error.stack}`);
