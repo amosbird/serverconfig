@@ -1510,7 +1510,7 @@ class RemotePeer:
             return False
         binding = value["binding"]
         if binding is None:
-            return value["phase"] in {"disabled", "paused"}
+            return value["phase"] == "disabled"
         return value["phase"] in {"enabled", "paused"} and \
             self._exact_fields(binding, {"enable_id", "page"}) and \
             isinstance(binding["enable_id"], str) and bool(binding["enable_id"]) and \
@@ -1842,6 +1842,9 @@ class RemotePeer:
                     raise ValueError("conflicting duplicate cancellation")
                 return
             pending = self.pending.get(effect_id)
+            if pending is None:
+                ordinary = self.completions.get(("completion", effect_id))
+                pending = ordinary["identity"] if ordinary is not None else None
             if pending is None or pending["fence"] != fence or request_id == pending["request_id"]:
                 raise ValueError("invalid cancel correlation")
             self.pending_cancellations[effect_id] = identity

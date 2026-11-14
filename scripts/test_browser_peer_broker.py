@@ -508,6 +508,33 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             peer.handle({**cancel, "request_id": "conflict"})
 
+    def test_cancel_after_selected_completion_retains_exact_origin(self):
+        broker, peer, server = self.connected()
+        peer.handle(self.execute(peer))
+        self.event(broker, "abush_browser.execute")
+        receipt = peer.complete("execute", "effect", peer.executor_fence, "applied")
+        self.assertEqual(receipt["completion"], "applied")
+        self.assertNotIn("effect", peer.pending)
+        cancel = {"type": "cancel", "request_id": "cancel", "effect_id": "effect",
+                  "executor_fence": peer.executor_fence}
+        peer.handle(cancel)
+        self.assertEqual(self.event(broker, "abush_browser.cancel"), {
+            **self.identity(peer), "request_id": "cancel", "execution_request_id": "execute",
+            "effect_id": "effect", "executor_fence": peer.executor_fence})
+        peer.handle(cancel)
+        self.assertTrue(broker.outbound.empty())
+        self.assertEqual(peer.complete_cancellation("cancel", "effect", peer.executor_fence,
+                                                  "unknown")["completion"], "unknown")
+        self.assertEqual(peer.complete("execute", "effect", peer.executor_fence, "applied"),
+                         receipt)
+
+    def test_paused_state_requires_exact_binding(self):
+        broker, peer, server = self.connected()
+        with self.assertRaises(ValueError):
+            peer.workspace_state("paused", peer.executor_fence,
+                                 {**self.state("paused"), "binding": None})
+        self.assertFalse(peer.workspace_requests)
+
     def test_cancellation_cannot_be_applied(self):
         broker, peer, server = self.connected()
         with self.assertRaises(ValueError):
