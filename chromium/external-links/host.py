@@ -39,19 +39,10 @@ ORDINARY_LAUNCH_LEASE_MAX_SIZE = 64 * 1024
 ORDINARY_LAUNCH_LEASE_MAX_LIFETIME_MS = 60_000
 ORDINARY_LAUNCH_LEASE_DIR = "ordinary-launch"
 NATIVE_ENVELOPE_VERSION = 1
-PEER_PROTOCOL_VERSION = 8
+PEER_PROTOCOL_VERSION = 9
 COMPLETION_RECEIPTS = {
     "completion": "completion_accepted",
     "cancellation_completed": "cancellation_completion_accepted",
-    "ensure_managed_page_completed": "ensure_managed_page_completion_accepted",
-    "ensure_managed_page_cancellation_completed": "ensure_managed_page_cancellation_accepted",
-}
-BROWSER_ERROR_CODES = {
-    "unknown_principal", "unknown_connection", "stale_session", "stale_authority",
-    "human_controlled", "missing_capability", "capability_grant_mismatch", "backpressure",
-    "stale_window", "stale_page", "page_quarantined", "operation_conflict",
-    "unknown_effect", "stale_effect", "generation_exhausted", "executor_unavailable",
-    "invalid_command",
 }
 REMOTE_KEY_RE = re.compile(r"r_[A-Za-z0-9]{8,64}\Z")
 CONNECTION_ID_RE = re.compile(r"c_[A-Za-z0-9]{8,64}\Z")
@@ -85,6 +76,8 @@ def group_for_hostname(hostname):
 
 
 def reuse_tab(group, hostname, url):
+    if group == "main" or ROUTES["groups"][group]["debug_port"] == 9222:
+        return False
     try:
         pages = json.load(
             urllib.request.urlopen(
@@ -606,7 +599,7 @@ def handle_message(message, ordinary_submit=None):
         return {"ok": True}
     group = group_for_hostname(hostname)
     launcher = ROUTES["groups"].get(group, {}).get("launcher", "chromium")
-    if group and reuse_tab(group, hostname, url):
+    if group and launcher != "chromium" and reuse_tab(group, hostname, url):
         logging.info("reused group=%s url=%s", group, url)
         return {"ok": True}
     logging.info("launching launcher=%s url=%s", launcher, url)
@@ -1346,22 +1339,16 @@ class RemotePeer:
         self.principal_id = None
         self.owner_display = None
         self.executor_fence = None
-        self.capabilities = {}
+        self.workspace_id = None
+        self.hello_request_id = None
         self.pending = {}
         self.completions = {}
         self.accepted_completions = {}
         self.completion_timeout = 15
-        self.transport_history = {}
-        self.ensure_pending = {}
-        self.ensure_cancellations = {}
         self.pending_cancellations = {}
-        self.topology_requests = {}
-        self.retire_requests = {}
-        self.retire_commands = {}
-        self.topology_consumed_requests = {}
-        self.retire_consumed_requests = {}
+        self.workspace_requests = {}
         self.transport_lock = threading.RLock()
-        self.topology_timeout = 15
+        self.workspace_timeout = 15
         self.reader = None
 
     @property
@@ -1377,6 +1364,7 @@ class RemotePeer:
         }
         if self.principal_id is not None:
             state["principal_id"] = self.principal_id
+            state["workspace_id"] = self.workspace_id
             state["executor_fence"] = self.executor_fence
         if self.owner_display is not None:
             state["owner_display"] = self.owner_display
@@ -1398,7 +1386,7 @@ class RemotePeer:
                 "version": PEER_PROTOCOL_VERSION,
                 "executor_id": self.broker.executor_id(self.metadata),
                 "nonce": nonce,
-                "capabilities": {"cancellation": True},
+                "capabilities": {"cancellation": True, "owned_tab_group": True},
             })
             prepared = read_peer_message(sock)
             self._accept_prepared(prepared)
@@ -1430,7 +1418,7 @@ class RemotePeer:
 
     def _accept_prepared(self, message):
         if not self._exact_fields(message, {
-            "type", "request_id", "principal_id", "executor_fence", "owner_display"
+            "type", "request_id", "principal_id", "workspace_id", "executor_fence", "owner_display"
         }) or message.get("type") != "hello_prepared":
             raise ValueError("invalid prepared hello response")
         request_id = message.get("request_id")
@@ -1442,6 +1430,11 @@ class RemotePeer:
                 not self._valid_executor_fence(fence) or \
                 not self._valid_owner_display(owner_display):
             raise ValueError("invalid prepared hello response")
+        workspace_id = message.get("workspace_id")
+        if not isinstance(workspace_id, str) or not workspace_id:
+            raise ValueError("invalid hello workspace")
+        self.workspace_id = workspace_id
+        self.hello_request_id = request_id
         self.principal_id = principal_id
         self.owner_display = owner_display
         self.executor_fence = fence
@@ -1456,7 +1449,7 @@ class RemotePeer:
                 raise ValueError("invalid hello rejection")
             raise ValueError(f"peer rejected hello: {message['reason']}")
         if not self._exact_fields(message, {
-            "type", "request_id", "principal_id", "executor_fence", "owner_display"
+            "type", "request_id", "principal_id", "workspace_id", "executor_fence", "owner_display"
         }) or message.get("type") != "hello_accepted":
             raise ValueError("invalid hello response")
         request_id = message.get("request_id")
@@ -1471,7 +1464,8 @@ class RemotePeer:
             raise ValueError("invalid executor fence")
         if not self._valid_owner_display(owner_display):
             raise ValueError("invalid owner display")
-        if principal_id != self.principal_id or fence != self.executor_fence or \
+        if request_id != self.hello_request_id or message["workspace_id"] != self.workspace_id or \
+                principal_id != self.principal_id or fence != self.executor_fence or \
                 owner_display != self.owner_display:
             raise ValueError("hello acceptance changed prepared identity")
         self.principal_id = principal_id
@@ -1492,174 +1486,39 @@ class RemotePeer:
             0 < value["epoch"] <= 2 ** 64 - 1
 
     @staticmethod
-    def _valid_window_ref(value):
-        return isinstance(value, dict) and set(value) == {
-            "workspace_id", "window_id", "generation"
-        } and all(isinstance(value[key], str) and value[key]
-                  for key in ("workspace_id", "window_id")) and \
-            isinstance(value["generation"], int) and not isinstance(value["generation"], bool) and \
-            value["generation"] > 0
+    def _positive(value):
+        return isinstance(value, int) and not isinstance(value, bool) and 0 < value <= 2 ** 64 - 1
 
     @classmethod
     def _valid_page_ref(cls, value):
-        return isinstance(value, dict) and set(value) == {"window", "page_id", "generation"} and \
-            cls._valid_window_ref(value["window"]) and \
-            isinstance(value["page_id"], str) and value["page_id"] and \
-            isinstance(value["generation"], int) and not isinstance(value["generation"], bool) and \
-            value["generation"] > 0
+        return cls._exact_fields(value, {"workspace_id", "page_id", "generation"}) and \
+            all(isinstance(value[key], str) and value[key]
+                for key in ("workspace_id", "page_id")) and cls._positive(value["generation"])
 
-    def _handle_ensure_managed_page(self, message):
-        if not self._exact_fields(message, {
-            "type", "request_id", "ensure_id", "workspace_id", "executor_fence",
-            "expected_page"
-        }):
-            raise ValueError("invalid ensure managed page")
-        request_id = message.get("request_id")
-        ensure_id = message.get("ensure_id")
-        workspace_id = message.get("workspace_id")
-        fence = message.get("executor_fence")
-        expected_page = message.get("expected_page")
-        if not isinstance(request_id, str) or not request_id or \
-                not isinstance(ensure_id, str) or not ensure_id or \
-                not isinstance(workspace_id, str) or not workspace_id or \
-                (expected_page is not None and not self._valid_page_ref(expected_page)) or \
-                (expected_page is not None and
-                 expected_page["window"]["workspace_id"] != workspace_id) or \
-                not self._valid_executor_fence(fence) or fence != self.executor_fence:
-            raise ValueError("invalid ensure managed page correlation")
-        identity = {
-            "request_id": request_id, "workspace_id": workspace_id, "fence": fence,
-            "expected_page": expected_page,
-        }
-        with self.transport_lock:
-            completed = self.completions.get(("ensure_managed_page_completed", ensure_id))
-            known = self.ensure_pending.get(ensure_id)
-            if completed is not None:
-                known = completed["identity"]
-            if known is not None:
-                if known != identity:
-                    raise ValueError("conflicting duplicate ensure managed page")
-                if completed is not None:
-                    self.send(completed["message"])
-                return
-            self.ensure_pending[ensure_id] = identity
-        self.broker.outbound.put(event("abush_browser.ensure_managed_page", "abush_browser", {
-            "remote_key": self.metadata["remote_key"],
-            "connection_id": self.metadata["connection_id"],
-            "principal_id": self.principal_id,
-            "workspace_id": workspace_id,
-            "request_id": request_id,
-            "ensure_id": ensure_id,
-            "executor_fence": fence,
-            "owner_display": self.owner_display,
-            "connection_display_name": self.metadata["display_name"],
-            "expected_page": expected_page,
-        }))
+    @classmethod
+    def _valid_authorization(cls, value):
+        return cls._exact_fields(value, {"browser_boot_id", "enable_id", "revision"}) and \
+            all(isinstance(value[key], str) and value[key]
+                for key in ("browser_boot_id", "enable_id")) and cls._positive(value["revision"])
 
-    def _handle_retire_managed_page(self, message):
-        if not self._exact_fields(message, {
-            "type", "request_id", "retire_id", "ensure_id", "executor_fence",
-            "origin_executor_fence", "window_id", "page_id"
-        }):
-            raise ValueError("invalid retire managed page")
-        request_id = message.get("request_id")
-        retire_id = message.get("retire_id")
-        ensure_id = message.get("ensure_id")
-        fence = message.get("executor_fence")
-        origin_fence = message.get("origin_executor_fence")
-        if not all(isinstance(value, str) and value for value in (
-                request_id, retire_id, ensure_id, message.get("window_id"),
-                message.get("page_id"))) or not self._valid_executor_fence(fence) or \
-                fence != self.executor_fence or not self._valid_executor_fence(origin_fence):
-            raise ValueError("invalid retire managed page correlation")
-        identity = {
-            "request_id": request_id,
-            "retire_id": retire_id,
-            "ensure_id": ensure_id,
-            "fence": fence,
-            "origin_fence": origin_fence,
-            "window_id": message["window_id"],
-            "page_id": message["page_id"],
-        }
-        known = self.retire_commands.get(retire_id)
-        if known is not None and any(
-                known[field] != identity[field] for field in (
-                    "retire_id", "ensure_id", "origin_fence", "window_id", "page_id")):
-            raise ValueError("conflicting duplicate retire managed page")
-        self.retire_commands[retire_id] = identity
-        self.broker.outbound.put(event("abush_browser.retire_managed_page", "abush_browser", {
-            "remote_key": self.metadata["remote_key"],
-            "connection_id": self.metadata["connection_id"],
-            "principal_id": self.principal_id,
-            "request_id": request_id,
-            "retire_id": retire_id,
-            "ensure_id": ensure_id,
-            "executor_fence": fence,
-            "origin_executor_fence": origin_fence,
-            "window_id": message["window_id"],
-            "page_id": message["page_id"],
-        }))
-
-    def _handle_cancel_ensure_managed_page(self, message):
-        if not self._exact_fields(message, {
-            "type", "request_id", "ensure_id", "executor_fence"
-        }):
-            raise ValueError("invalid cancel ensure managed page")
-        request_id = message.get("request_id")
-        ensure_id = message.get("ensure_id")
-        fence = message.get("executor_fence")
-        if not isinstance(request_id, str) or not request_id or \
-                not isinstance(ensure_id, str) or not ensure_id or \
-                not self._valid_executor_fence(fence):
-            raise ValueError("invalid cancel ensure managed page correlation")
-        pending = self.ensure_pending.get(ensure_id)
-        if fence != self.executor_fence or pending is None or \
-                pending["request_id"] != request_id or \
-                pending["fence"] != fence:
-            return
-        self.ensure_pending.pop(ensure_id)
-        self.ensure_cancellations[ensure_id] = pending
-        self.broker.outbound.put(event(
-            "abush_browser.cancel_ensure_managed_page", "abush_browser", {
-                "remote_key": self.metadata["remote_key"],
-                "connection_id": self.metadata["connection_id"],
-                "principal_id": self.principal_id,
-                "request_id": request_id,
-                "ensure_id": ensure_id,
-                "executor_fence": fence,
-            }))
-
-    def complete_ensure_cancellation(self, principal_id, request_id, ensure_id, fence):
-        if principal_id != self.principal_id:
-            raise ValueError("stale ensure cancellation completion")
-        return self._complete_request(self.ensure_cancellations, ensure_id, {
-            "request_id": request_id, "fence": fence,
-        }, {
-            "type": "ensure_managed_page_cancellation_completed",
-            "request_id": request_id,
-            "ensure_id": ensure_id,
-            "executor_fence": fence,
-        })
-
-    def complete_ensure(self, principal_id, workspace_id, request_id, ensure_id, fence, completion):
-        if principal_id != self.principal_id:
-            raise ValueError("stale ensure managed page completion")
-        if not isinstance(workspace_id, str) or not workspace_id:
-            raise ValueError("invalid ensure managed page workspace")
-        if not self._valid_ensure_completion(completion):
-            raise ValueError("invalid ensure managed page completion")
-        return self._complete_request(self.ensure_pending, ensure_id, {
-            "request_id": request_id, "workspace_id": workspace_id, "fence": fence,
-        }, {
-            "type": "ensure_managed_page_completed",
-            "request_id": request_id,
-            "ensure_id": ensure_id,
-            "executor_fence": fence,
-            "completion": completion,
-        })
+    def _valid_workspace_state(self, value):
+        if not self._exact_fields(value, {"browser_boot_id", "revision", "phase", "binding"}) or \
+                not isinstance(value["browser_boot_id"], str) or not value["browser_boot_id"] or \
+                not self._positive(value["revision"]) or \
+                not isinstance(value["phase"], str) or \
+                value["phase"] not in {"disabled", "enabled", "paused"}:
+            return False
+        binding = value["binding"]
+        if binding is None:
+            return value["phase"] in {"disabled", "paused"}
+        return value["phase"] in {"enabled", "paused"} and \
+            self._exact_fields(binding, {"enable_id", "page"}) and \
+            isinstance(binding["enable_id"], str) and bool(binding["enable_id"]) and \
+            self._valid_page_ref(binding["page"]) and \
+            binding["page"]["workspace_id"] == self.workspace_id
 
     def complete_cancellation(self, request_id, effect_id, fence, completion):
-        if completion not in {"not_applied", "unknown"}:
+        if not isinstance(completion, str) or completion not in {"not_applied", "unknown"}:
             raise ValueError("invalid cancellation completion")
         receipt = self._complete_request(self.pending_cancellations, effect_id, {
             "request_id": request_id, "fence": fence,
@@ -1676,7 +1535,7 @@ class RemotePeer:
         return receipt
 
     def complete(self, request_id, effect_id, fence, completion):
-        if completion not in {"applied", "not_applied", "unknown"}:
+        if not isinstance(completion, str) or completion not in {"applied", "not_applied", "unknown"}:
             raise ValueError("invalid executor completion")
         return self._complete_request(self.pending, effect_id, {
             "request_id": request_id, "fence": fence,
@@ -1698,32 +1557,21 @@ class RemotePeer:
     def _receipt_key(message):
         fence = message["executor_fence"]
         return (message["type"], message["request_id"],
-                message.get("effect_id", message.get("ensure_id")),
+                message["effect_id"],
                 fence["executor_id"], fence["epoch"])
 
     def _handle_completion_accepted(self, message):
-        ensure = message["type"].startswith("ensure_")
-        cancelled = message["type"] == "ensure_managed_page_cancellation_accepted"
-        fields = {"type", "request_id", "executor_fence",
-                  "ensure_id" if ensure else "effect_id"}
-        if not cancelled:
-            fields.add("completion")
+        fields = {"type", "request_id", "executor_fence", "effect_id", "completion"}
         if not self._exact_fields(message, fields) or not all(
                 isinstance(message.get(field), str) and message[field]
-                for field in ("request_id", "ensure_id" if ensure else "effect_id")) or \
+                for field in ("request_id", "effect_id")) or \
                 not self._valid_executor_fence(message.get("executor_fence")):
             raise ValueError("invalid completion receipt")
-        if not cancelled:
-            completion = message["completion"]
-            if ensure:
-                valid = self._valid_ensure_completion(completion)
-            else:
-                valid = isinstance(completion, str) and completion in {
-                    "applied", "not_applied", "unknown"}
-                if message["type"] == "cancellation_completion_accepted":
-                    valid = valid and completion != "applied"
-            if not valid:
-                raise ValueError("invalid completion receipt outcome")
+        if not isinstance(message["completion"], str) or \
+                message["completion"] not in {"applied", "not_applied", "unknown"} or \
+                (message["type"] == "cancellation_completion_accepted" and
+                 message["completion"] == "applied"):
+            raise ValueError("invalid completion receipt outcome")
         receipt_key = self._receipt_key(message)
         with self.transport_lock:
             previous = self.accepted_completions.get(receipt_key)
@@ -1739,19 +1587,6 @@ class RemotePeer:
                     state["done"].set()
             self._retain_bounded(self.accepted_completions, receipt_key,
                                  json.loads(json.dumps(message)))
-
-    @staticmethod
-    def _valid_ensure_completion(completion):
-        if not isinstance(completion, dict):
-            return False
-        if completion.get("outcome") == "created":
-            return set(completion) == {"outcome", "window_id", "page_id"} and all(
-                isinstance(completion[key], str) and completion[key]
-                for key in ("window_id", "page_id"))
-        return completion.get("outcome") == "rejected" and \
-            set(completion) == {"outcome", "code"} and \
-            isinstance(completion.get("code"), str) and \
-            completion["code"] in BROWSER_ERROR_CODES
 
     def _complete_request(self, requests, key, identity, message):
         expected = {**message, "type": COMPLETION_RECEIPTS[message["type"]]}
@@ -1773,9 +1608,6 @@ class RemotePeer:
                 pending = requests.get(key)
                 if pending is not None and any(
                         pending.get(field) != value for field, value in identity.items()):
-                    raise ValueError("uncorrelated peer completion")
-                if receipt is None and pending is None and \
-                        message["executor_fence"] == self.executor_fence:
                     raise ValueError("uncorrelated peer completion")
                 # A restarted host has no origin command memory. Forward only the
                 # terminal selection; Rust checks durable command admission and
@@ -1824,7 +1656,10 @@ class RemotePeer:
                     message = read_peer_message(self.socket)
                 except socket.timeout:
                     continue
-                self.handle(message)
+                try:
+                    self.handle(message)
+                except ValueError as error:
+                    logging.warning("browser peer message rejected: %s", error)
         except (OSError, EOFError, ValueError, json.JSONDecodeError) as error:
             if not self.stop_event.is_set():
                 logging.info("browser peer closed remote=%s connection=%s error=%s",
@@ -1834,11 +1669,15 @@ class RemotePeer:
 
     def handle(self, message):
         message_type = message.get("type")
-        normalized_type = message_type.lower() if isinstance(message_type, str) else None
+        if not isinstance(message_type, str):
+            raise ValueError("invalid peer message type")
+        if message_type == "workspace_state_accepted":
+            self._handle_workspace_state_accepted(message)
+            return
         if message_type in COMPLETION_RECEIPTS.values():
             self._handle_completion_accepted(message)
             return
-        if normalized_type == "ping":
+        if message_type == "ping":
             if not self._exact_fields(message, {"type", "request_id", "ping_id"}):
                 raise ValueError("invalid ping")
             request_id = message.get("request_id")
@@ -1851,331 +1690,86 @@ class RemotePeer:
             pong["ping_id"] = ping_id
             self.send(pong)
             return
-        if normalized_type == "execute":
+        if message_type == "execute":
             self._handle_execute(message)
             return
-        if normalized_type == "cancel":
+        if message_type == "cancel":
             self._handle_cancel(message)
-            return
-        if normalized_type == "ensure_managed_page":
-            self._handle_ensure_managed_page(message)
-            return
-        if normalized_type == "retire_managed_page":
-            self._handle_retire_managed_page(message)
-            return
-        if normalized_type == "cancel_ensure_managed_page":
-            self._handle_cancel_ensure_managed_page(message)
-            return
-        if normalized_type == "topology_report_response":
-            self._handle_topology_report_response(message)
-            return
-        if normalized_type == "topology_response_consumed_ack":
-            self._handle_topology_response_consumed_ack(message)
-            return
-        if normalized_type == "retire_managed_page_ack":
-            self._handle_retire_managed_page_ack(message)
-            return
-        if normalized_type == "retire_managed_page_ack_consumed_ack":
-            self._handle_retire_managed_page_ack_consumed_ack(message)
             return
         raise ValueError("unknown peer message")
 
-    @staticmethod
-    def _valid_topology_report_result(result):
-        if not isinstance(result, dict):
-            return False
-        outcome = result.get("outcome")
-        if outcome in {"applied", "already_converged"}:
-            return set(result) == {"outcome"}
-        return outcome == "rejected" and set(result) == {"outcome", "code"} and \
-            result.get("code") in BROWSER_ERROR_CODES
-
-    @staticmethod
-    def _valid_retire_completion(completion):
-        if not isinstance(completion, dict):
-            return False
-        outcome = completion.get("outcome")
-        if outcome in {"retired", "already_retired"}:
-            return set(completion) == {"outcome"}
-        return outcome == "rejected" and set(completion) == {"outcome", "code"} and \
-            completion.get("code") in BROWSER_ERROR_CODES
-
-    def _transport_request(self, requests, message, identity, timeout, timeout_message):
-        request_id = message["request_id"]
-        history_key = (id(requests), request_id)
+    def workspace_state(self, request_id, fence, value):
+        if not isinstance(request_id, str) or not request_id or \
+                not self._valid_executor_fence(fence) or fence != self.executor_fence or \
+                not self._valid_workspace_state(value):
+            raise ValueError("invalid workspace state")
+        browser = self.broker.browser
+        if browser is None or value["browser_boot_id"] != browser["browser_boot_id"]:
+            raise ValueError("workspace state browser incarnation mismatch")
+        message = json.loads(json.dumps({
+            "type": "workspace_state", "request_id": request_id,
+            "executor_fence": fence, "state": value,
+        }))
         with self.transport_lock:
-            if request_id in requests:
-                raise ValueError("duplicate in-flight peer delivery request")
-            state = self.transport_history.get(history_key)
+            state = self.workspace_requests.get(request_id)
             if state is not None:
                 if state["message"] != message:
-                    raise ValueError("conflicting duplicate peer delivery request")
+                    raise ValueError("conflicting duplicate workspace state")
                 if state["response"] is not None:
-                    return state["response"]
-                state["done"].clear()
+                    return json.loads(json.dumps(state["response"]))
             else:
-                state = {"identity": identity, "message": json.loads(json.dumps(message)),
-                         "done": threading.Event(), "response": None}
-            # Keep correlation even if sendall writes a frame and then raises.
-            self._retain_bounded(self.transport_history, history_key, state)
-            requests[request_id] = state
-            try:
-                self.send(message)
-            except Exception:
-                requests.pop(request_id, None)
-                raise
-        state["done"].wait(timeout)
+                if len(self.workspace_requests) >= 256:
+                    evict = next((key for key, entry in self.workspace_requests.items()
+                                  if entry["response"] is not None), None)
+                    if evict is None:
+                        raise ValueError("workspace state receipt backlog is full")
+                    self.workspace_requests.pop(evict)
+                state = {"message": message, "done": threading.Event(), "response": None}
+                self.workspace_requests[request_id] = state
+        try:
+            self.send(message)
+        except OSError:
+            with self.transport_lock:
+                if state["response"] is not None:
+                    return json.loads(json.dumps(state["response"]))
+            raise
+        state["done"].wait(self.workspace_timeout)
         with self.transport_lock:
-            requests.pop(request_id, None)
-            result = state["response"]
-        if result is None:
-            raise TimeoutError(timeout_message)
-        return result
+            if state["response"] is None:
+                raise TimeoutError("workspace state receipt timed out")
+            return json.loads(json.dumps(state["response"]))
 
-    def _resolve_transport_response(self, requests, request_id, identity, response):
+    def _handle_workspace_state_accepted(self, message):
+        if not self._exact_fields(message, {"type", "request_id", "executor_fence", "state"}) or \
+                not isinstance(message["request_id"], str) or not message["request_id"] or \
+                not self._valid_executor_fence(message["executor_fence"]) or \
+                not self._valid_workspace_state(message["state"]):
+            raise ValueError("invalid workspace state receipt")
         with self.transport_lock:
-            active = request_id in requests
-            state = requests.get(request_id)
-            if state is None:
-                state = self.transport_history.get((id(requests), request_id))
-            if state is None:
-                return False
-            if state["identity"] != identity:
-                raise ValueError("uncorrelated durable peer response")
-            if state["response"] is not None and state["response"] != response:
-                raise ValueError("conflicting duplicate durable peer response")
-            state["response"] = response
+            state = self.workspace_requests.get(message["request_id"])
+            if state is None or message != {
+                    **state["message"], "type": "workspace_state_accepted"}:
+                raise ValueError("uncorrelated workspace state receipt")
+            state["response"] = json.loads(json.dumps(message))
             state["done"].set()
-            return active or requests is self.topology_consumed_requests or \
-                requests is self.retire_consumed_requests
-
-    def report_managed_page_moved_outside(
-            self, request_id, report_id, fence, origin_fence, page, timeout=None):
-        if not all(isinstance(value, str) and value for value in (request_id, report_id)) or \
-                fence != self.executor_fence or not self._valid_executor_fence(origin_fence) or \
-                not self._valid_page_ref(page):
-            raise ValueError("invalid managed page moved outside report")
-        message = {
-            "type": "managed_page_moved_outside",
-            "request_id": request_id,
-            "report_id": report_id,
-            "executor_fence": fence,
-            "origin_executor_fence": origin_fence,
-            "page": page,
-        }
-        identity = {"report_id": report_id, "fence": fence}
-        return self._transport_request(
-            self.topology_requests,
-            message,
-            identity,
-            self.topology_timeout if timeout is None else timeout,
-            "managed topology response timed out",
-        )
-
-    def _authenticated_event(self, name, payload):
-        self.broker.outbound.put(event(name, "abush_browser", {
-            "remote_key": self.metadata["remote_key"],
-            "connection_id": self.metadata["connection_id"],
-            "principal_id": self.principal_id,
-            **payload,
-        }))
-
-    def _handle_topology_report_response(self, message):
-        fields = {"type", "request_id", "report_id", "executor_fence",
-                  "response_delivery_id", "result"}
-        if not self._exact_fields(message, fields):
-            raise ValueError("invalid topology report response")
-        request_id = message.get("request_id")
-        report_id = message.get("report_id")
-        fence = message.get("executor_fence")
-        delivery_id = message.get("response_delivery_id")
-        result = message.get("result")
-        if not all(isinstance(value, str) and value for value in (
-                request_id, report_id, delivery_id)) or not self._valid_executor_fence(fence) or \
-                fence != self.executor_fence or not self._valid_topology_report_result(result):
-            raise ValueError("invalid topology report response correlation")
-        response_message = {key: message[key] for key in fields if key != "type"}
-        if self._resolve_transport_response(
-                self.topology_requests,
-                request_id,
-                {"report_id": report_id, "fence": fence},
-                response_message):
-            return
-        self._authenticated_event("abush_browser.topology_report_response", response_message)
-
-    def topology_response_consumed(
-            self, request_id, delivery_request_id, report_id, fence, delivery_id):
-        if not all(isinstance(value, str) and value for value in (
-                request_id, delivery_request_id, report_id, delivery_id)) or \
-                fence != self.executor_fence:
-            raise ValueError("invalid topology response consumption")
-        message = {
-            "type": "topology_response_consumed",
-            "request_id": request_id,
-            "delivery_request_id": delivery_request_id,
-            "report_id": report_id,
-            "executor_fence": fence,
-            "response_delivery_id": delivery_id,
-        }
-        identity = {
-            "report_id": report_id,
-            "fence": fence,
-            "response_delivery_id": delivery_id,
-        }
-        return self._transport_request(
-            self.topology_consumed_requests,
-            message,
-            identity,
-            self.topology_timeout,
-            "topology consumption acknowledgement timed out",
-        )
-
-    def _handle_topology_response_consumed_ack(self, message):
-        fields = {"type", "request_id", "report_id", "executor_fence",
-                  "response_delivery_id"}
-        if not self._exact_fields(message, fields):
-            raise ValueError("invalid topology response consumed acknowledgement")
-        request_id = message.get("request_id")
-        report_id = message.get("report_id")
-        fence = message.get("executor_fence")
-        delivery_id = message.get("response_delivery_id")
-        if not all(isinstance(value, str) and value for value in (
-                request_id, report_id, delivery_id)) or not self._valid_executor_fence(fence) or \
-                fence != self.executor_fence:
-            raise ValueError("invalid topology response consumed acknowledgement correlation")
-        response_message = {key: message[key] for key in fields if key != "type"}
-        if not self._resolve_transport_response(
-                self.topology_consumed_requests,
-                request_id,
-                {"report_id": report_id, "fence": fence,
-                 "response_delivery_id": delivery_id},
-                response_message):
-            raise ValueError("uncorrelated topology response consumed acknowledgement")
-
-    def complete_retire(
-            self, request_id, retire_id, fence, origin_fence, completion, timeout=None):
-        if not all(isinstance(value, str) and value for value in (request_id, retire_id)) or \
-                fence != self.executor_fence or not self._valid_executor_fence(origin_fence) or \
-                not self._valid_retire_completion(completion):
-            raise ValueError("invalid retire managed page completion")
-        command = self.retire_commands.get(retire_id)
-        if command is None or command["request_id"] != request_id or command["fence"] != fence or \
-                command["origin_fence"] != origin_fence:
-            raise ValueError("uncorrelated retire managed page completion")
-        message = {
-            "type": "retire_managed_page_completed",
-            "request_id": request_id,
-            "retire_id": retire_id,
-            "executor_fence": fence,
-            "origin_executor_fence": origin_fence,
-            "completion": completion,
-        }
-        identity = {
-            "retire_id": retire_id,
-            "fence": fence,
-            "origin_fence": origin_fence,
-            "completion": completion,
-        }
-        return self._transport_request(
-            self.retire_requests,
-            message,
-            identity,
-            self.topology_timeout if timeout is None else timeout,
-            "retire managed page acknowledgement timed out",
-        )
-
-    def _handle_retire_managed_page_ack(self, message):
-        fields = {"type", "request_id", "retire_id", "executor_fence",
-                  "response_delivery_id", "origin_executor_fence", "completion"}
-        if not self._exact_fields(message, fields):
-            raise ValueError("invalid retire managed page acknowledgement")
-        request_id = message.get("request_id")
-        retire_id = message.get("retire_id")
-        fence = message.get("executor_fence")
-        delivery_id = message.get("response_delivery_id")
-        origin_fence = message.get("origin_executor_fence")
-        completion = message.get("completion")
-        if not all(isinstance(value, str) and value for value in (
-                request_id, retire_id, delivery_id)) or not self._valid_executor_fence(fence) or \
-                fence != self.executor_fence or not self._valid_executor_fence(origin_fence) or \
-                not self._valid_retire_completion(completion):
-            raise ValueError("invalid retire managed page acknowledgement correlation")
-        response_message = {key: message[key] for key in fields if key != "type"}
-        expected = {
-            "retire_id": retire_id,
-            "fence": fence,
-            "origin_fence": origin_fence,
-            "completion": completion,
-        }
-        if self._resolve_transport_response(
-                self.retire_requests, request_id, expected, response_message):
-            return
-        self._authenticated_event("abush_browser.retire_managed_page_ack", response_message)
-
-    def retire_ack_consumed(
-            self, request_id, delivery_request_id, retire_id, fence, delivery_id):
-        if not all(isinstance(value, str) and value for value in (
-                request_id, delivery_request_id, retire_id, delivery_id)) or \
-                fence != self.executor_fence:
-            raise ValueError("invalid retire acknowledgement consumption")
-        message = {
-            "type": "retire_managed_page_ack_consumed",
-            "request_id": request_id,
-            "delivery_request_id": delivery_request_id,
-            "retire_id": retire_id,
-            "executor_fence": fence,
-            "response_delivery_id": delivery_id,
-        }
-        identity = {
-            "retire_id": retire_id,
-            "fence": fence,
-            "response_delivery_id": delivery_id,
-        }
-        return self._transport_request(
-            self.retire_consumed_requests,
-            message,
-            identity,
-            self.topology_timeout,
-            "retire consumption acknowledgement timed out",
-        )
-
-    def _handle_retire_managed_page_ack_consumed_ack(self, message):
-        fields = {"type", "request_id", "retire_id", "executor_fence",
-                  "response_delivery_id"}
-        if not self._exact_fields(message, fields):
-            raise ValueError("invalid retire consumed acknowledgement")
-        request_id = message.get("request_id")
-        retire_id = message.get("retire_id")
-        fence = message.get("executor_fence")
-        delivery_id = message.get("response_delivery_id")
-        if not all(isinstance(value, str) and value for value in (
-                request_id, retire_id, delivery_id)) or not self._valid_executor_fence(fence) or \
-                fence != self.executor_fence:
-            raise ValueError("invalid retire consumed acknowledgement correlation")
-        response_message = {key: message[key] for key in fields if key != "type"}
-        if not self._resolve_transport_response(
-                self.retire_consumed_requests,
-                request_id,
-                {"retire_id": retire_id, "fence": fence,
-                 "response_delivery_id": delivery_id},
-                response_message):
-            raise ValueError("uncorrelated retire consumed acknowledgement")
 
     @classmethod
     def _valid_command(cls, command):
-        if not isinstance(command, dict):
+        if not cls._exact_fields(command, {"command", "page", "url"}) or \
+                command["command"] != "navigate" or not cls._valid_page_ref(command["page"]):
             return False
-        kind = command.get("command")
-        if kind == "navigate":
-            return set(command) == {"command", "page", "url"} and \
-                cls._valid_page_ref(command["page"]) and \
-                isinstance(command["url"], str) and command["url"]
-        if kind == "close_page":
-            return set(command) == {"command", "page"} and cls._valid_page_ref(command["page"])
-        if kind == "close_window":
-            return set(command) == {"command", "window"} and \
-                cls._valid_window_ref(command["window"])
-        return False
+        url = command["url"]
+        if not isinstance(url, str) or not url or len(url.encode()) > 32768 or \
+                any(character.isspace() or ord(character) < 32 for character in url):
+            return False
+        try:
+            parsed = urlsplit(url)
+            return parsed.scheme in {"https", "http"} and bool(parsed.hostname) and \
+                not parsed.username and not parsed.password and \
+                (parsed.port is None or 0 < parsed.port < 65536) and \
+                url.startswith(f"{parsed.scheme}://")
+        except ValueError:
+            return False
 
     def _correlation(self, message, expected_fields):
         if not self._exact_fields(message, expected_fields):
@@ -2189,16 +1783,29 @@ class RemotePeer:
             raise ValueError("invalid peer correlation")
         if fence != self.executor_fence:
             raise ValueError("stale executor fence")
+        if self.broker.peer({
+                "remote_key": self.metadata["remote_key"],
+                "connection_id": self.metadata["connection_id"],
+                "principal_id": self.principal_id,
+        }) is not self:
+            raise ValueError("stale peer transport")
         return request_id, effect_id, fence
 
     def _handle_execute(self, message):
         request_id, effect_id, fence = self._correlation(message, {
-            "type", "request_id", "effect_id", "executor_fence", "command"
+            "type", "request_id", "effect_id", "executor_fence", "authorization", "command"
         })
         command = message.get("command")
-        if not self._valid_command(command):
+        authorization = message.get("authorization")
+        if not self._valid_command(command) or \
+                command["page"]["workspace_id"] != self.workspace_id or \
+                not self._valid_authorization(authorization) or self.broker.browser is None or \
+                authorization["browser_boot_id"] != self.broker.browser["browser_boot_id"]:
             raise ValueError("invalid browser command")
-        correlation = {"request_id": request_id, "fence": fence, "command": command}
+        correlation = json.loads(json.dumps({
+            "request_id": request_id, "fence": fence, "command": command,
+            "authorization": authorization,
+        }))
         with self.transport_lock:
             completed = self.completions.get(("completion", effect_id))
             known = self.pending.get(effect_id)
@@ -2207,8 +1814,6 @@ class RemotePeer:
             if known is not None:
                 if known != correlation:
                     raise ValueError("conflicting duplicate execute effect")
-                if completed is not None:
-                    self.send(completed["message"])
                 return
             self.pending[effect_id] = correlation
         self.broker.outbound.put(event("abush_browser.execute", "abush_browser", {
@@ -2218,6 +1823,7 @@ class RemotePeer:
             "request_id": request_id,
             "effect_id": effect_id,
             "executor_fence": fence,
+            "authorization": authorization,
             "command": command,
         }))
 
@@ -2225,10 +1831,20 @@ class RemotePeer:
         request_id, effect_id, fence = self._correlation(message, {
             "type", "request_id", "effect_id", "executor_fence"
         })
-        pending = self.pending.get(effect_id)
-        if pending is None or pending["fence"] != fence or request_id == pending["request_id"]:
-            raise ValueError("invalid cancel correlation")
-        self.pending_cancellations[effect_id] = {"request_id": request_id, "fence": fence}
+        identity = {"request_id": request_id, "fence": fence}
+        with self.transport_lock:
+            known = self.pending_cancellations.get(effect_id)
+            completed = self.completions.get(("cancellation_completed", effect_id))
+            if completed is not None:
+                known = completed["identity"]
+            if known is not None:
+                if known != identity:
+                    raise ValueError("conflicting duplicate cancellation")
+                return
+            pending = self.pending.get(effect_id)
+            if pending is None or pending["fence"] != fence or request_id == pending["request_id"]:
+                raise ValueError("invalid cancel correlation")
+            self.pending_cancellations[effect_id] = identity
         self.broker.outbound.put(event("abush_browser.cancel", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
             "connection_id": self.metadata["connection_id"],
@@ -2253,10 +1869,7 @@ class RemotePeer:
         with self.transport_lock:
             transport_states = [
                 *self.completions.values(),
-                *self.topology_requests.values(),
-                *self.retire_requests.values(),
-                *self.topology_consumed_requests.values(),
-                *self.retire_consumed_requests.values(),
+                *self.workspace_requests.values(),
             ]
         for state in transport_states:
             state["done"].set()
@@ -2420,29 +2033,18 @@ class BrowserBroker:
         remote_key = payload.get("remote_key")
         connection_id = payload.get("connection_id")
         principal_id = payload.get("principal_id")
+        if not isinstance(remote_key, str) or not REMOTE_KEY_RE.fullmatch(remote_key) or \
+                not isinstance(connection_id, str) or not CONNECTION_ID_RE.fullmatch(connection_id) or \
+                not isinstance(principal_id, str) or not principal_id:
+            raise ValueError("invalid native peer identity")
         with self.lock:
             peer = self.peers.get(remote_key)
         if peer is None or not peer.connected:
             raise ValueError("remote is unavailable")
         if principal_id != peer.principal_id:
             raise ValueError("principal mismatch")
-        if peer.metadata["connection_id"] != connection_id:
-            if completion_type is None:
-                raise ValueError("remote is unavailable")
-            receipt = {key: payload[key] for key in (
-                "request_id", "executor_fence", "effect_id", "ensure_id", "completion")
-                if key in payload}
-            receipt["type"] = COMPLETION_RECEIPTS[completion_type]
-            if not peer._valid_executor_fence(receipt.get("executor_fence")):
-                raise ValueError("invalid completion origin")
-            with peer.transport_lock:
-                accepted = peer.accepted_completions.get(peer._receipt_key(receipt)) == receipt
-                selected = any(
-                    {**state["message"],
-                     "type": COMPLETION_RECEIPTS[state["message"]["type"]]} == receipt
-                    for state in peer.completions.values())
-                if not accepted and not selected:
-                    raise ValueError("unknown completion origin")
+        if peer.metadata["connection_id"] != connection_id and completion_type is None:
+            raise ValueError("remote is unavailable")
         return peer
 
     def x11_binding(self):
@@ -2510,65 +2112,13 @@ class BrowserBroker:
             return {"remotes": self.list_remotes()}
         if service == "abush_browser" and operation == "refresh_remotes":
             return {"remotes": self.refresh()}
-        if service == "abush_browser" and operation == "ensure_managed_page_completion":
-            if set(payload) != {
-                "remote_key", "connection_id", "principal_id", "workspace_id", "request_id",
-                "ensure_id", "executor_fence", "completion",
-            }:
-                raise ValueError("invalid ensure managed page completion payload")
-            peer = self.peer(payload, "ensure_managed_page_completed")
-            return peer.complete_ensure(
-                payload.get("principal_id"), payload.get("workspace_id"),
-                payload.get("request_id"), payload.get("ensure_id"),
-                payload.get("executor_fence"), payload.get("completion"),
-            )
-        if service == "abush_browser" and \
-                operation == "ensure_managed_page_cancellation_completion":
-            if set(payload) != {
-                "remote_key", "connection_id", "principal_id", "request_id", "ensure_id",
-                "executor_fence",
-            }:
-                raise ValueError("invalid ensure cancellation completion payload")
-            peer = self.peer(payload, "ensure_managed_page_cancellation_completed")
-            return peer.complete_ensure_cancellation(
-                payload.get("principal_id"), payload.get("request_id"), payload.get("ensure_id"),
-                payload.get("executor_fence"))
-        if service == "abush_browser" and operation == "managed_page_moved_outside":
-            peer = self._durable_payload(payload, {
-                "remote_key", "connection_id", "principal_id", "request_id", "report_id",
-                "executor_fence", "origin_executor_fence", "page",
-            }, "invalid managed page moved outside payload")
-            return peer.report_managed_page_moved_outside(
-                payload["request_id"],
-                payload["report_id"],
-                payload["executor_fence"],
-                payload["origin_executor_fence"],
-                payload["page"],
-            )
-        if service == "abush_browser" and operation == "topology_response_consumed":
+        if service == "abush_browser" and operation == "workspace_state":
             peer = self._durable_payload(payload, {
                 "remote_key", "connection_id", "principal_id", "request_id",
-                "delivery_request_id", "report_id", "executor_fence", "response_delivery_id",
-            }, "invalid topology response consumption payload")
-            return peer.topology_response_consumed(
-                payload["request_id"], payload["delivery_request_id"], payload["report_id"],
-                payload["executor_fence"], payload["response_delivery_id"])
-        if service == "abush_browser" and operation == "retire_managed_page_completion":
-            peer = self._durable_payload(payload, {
-                "remote_key", "connection_id", "principal_id", "request_id", "retire_id",
-                "executor_fence", "origin_executor_fence", "completion",
-            }, "invalid retire managed page completion payload")
-            return peer.complete_retire(
-                payload["request_id"], payload["retire_id"], payload["executor_fence"],
-                payload["origin_executor_fence"], payload["completion"])
-        if service == "abush_browser" and operation == "retire_managed_page_ack_consumed":
-            peer = self._durable_payload(payload, {
-                "remote_key", "connection_id", "principal_id", "request_id",
-                "delivery_request_id", "retire_id", "executor_fence", "response_delivery_id",
-            }, "invalid retire acknowledgement consumption payload")
-            return peer.retire_ack_consumed(
-                payload["request_id"], payload["delivery_request_id"], payload["retire_id"],
-                payload["executor_fence"], payload["response_delivery_id"])
+                "executor_fence", "state",
+            }, "invalid workspace state payload")
+            return peer.workspace_state(
+                payload["request_id"], payload["executor_fence"], payload["state"])
         if service == "abush_browser" and operation == "executor_completion":
             if set(payload) != {
                 "remote_key", "connection_id", "principal_id", "request_id", "effect_id",
@@ -2588,54 +2138,6 @@ class BrowserBroker:
             return self.peer(payload, "cancellation_completed").complete_cancellation(
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"))
-        if service == "abush_browser" and operation == "finish_candidate_lease":
-            fields = {"version", "nonce", "operation_token", "outcome", "window_id"}
-            if set(payload) != fields or self.browser is None:
-                raise ValueError("invalid candidate terminal payload")
-            binding = self.x11_binding()
-            identity = binding.browser_incarnation(self.browser["pid"])
-            if identity is None or identity[2] != self.browser["starttime"]:
-                raise ValueError("native browser incarnation changed")
-            return json.loads(binding.run_qtile(binding.qtile_command(
-                "finish_abush_browser_candidate", json.dumps({**payload, "identity": identity}))))
-        if service == "abush_browser" and operation in {
-                "register_candidate_lease", "arm_candidate_lease", "admit_candidate"}:
-            if not isinstance(payload, dict) or set(payload) not in (
-                    {"nonce"}, {"nonce", "operation_token"} if
-                    operation == "register_candidate_lease" else {"nonce"}):
-                raise ValueError("invalid candidate admission payload")
-            if self.browser is None:
-                raise ValueError("trusted native browser identity is unavailable")
-            binding = self.x11_binding()
-            identity = binding.browser_incarnation(self.browser["pid"])
-            if identity is None or identity[2] != self.browser["starttime"]:
-                raise ValueError("native browser incarnation changed")
-            if operation == "admit_candidate":
-                return binding.admit_candidate(payload["nonce"], identity)
-            action = "register" if operation == "register_candidate_lease" else "arm"
-            if "operation_token" in payload:
-                identity = {"identity": identity, "operation_token": payload["operation_token"]}
-            return binding.update_candidate_lease(action, payload["nonce"], identity=identity)
-        if service == "abush_browser" and operation == "release_candidate_lease":
-            if not isinstance(payload, dict) or set(payload) != {"nonce"}:
-                raise ValueError("invalid candidate lease payload")
-            return self.x11_binding().update_candidate_lease("release", payload["nonce"])
-        if service == "abush_browser" and operation == "verify_x11_window":
-            return self.x11_binding().verify_workspace_window(payload)
-        if service == "abush_browser" and operation == "clear_x11_window":
-            try:
-                return self.x11_binding().clear_workspace_window(payload)
-            except Exception as error:
-                logging.info("browser X11 cleanup failed xid=%s error=%s",
-                             payload.get("xid"), error)
-                raise
-        if service == "abush_browser" and operation == "bind_x11_window":
-            try:
-                return self.x11_binding().bind_workspace_window(payload)
-            except Exception as error:
-                logging.info("browser X11 bind failed remote=%s workspace=%s error=%s",
-                             payload.get("remote_key"), payload.get("workspace_id"), error)
-                raise
         raise ValueError("unsupported native operation")
 
 
@@ -2744,10 +2246,7 @@ class NativeBrokerHost:
         operation = message.get("operation")
         return (service == "external_links" and operation == "open") or \
             (service == "abush_browser" and operation in {
-                "managed_page_moved_outside", "topology_response_consumed",
-                "retire_managed_page_completion", "retire_managed_page_ack_consumed",
-                "executor_completion", "cancellation_completion",
-                "ensure_managed_page_completion", "ensure_managed_page_cancellation_completion",
+                "workspace_state", "executor_completion", "cancellation_completion",
             })
 
     def _dispatch(self, message):
@@ -2778,11 +2277,11 @@ class NativeBrokerHost:
             self.refresh_thread.join(timeout=2)
             if self.ordinary_open is not None:
                 self.ordinary_open.close()
+            self.broker.close()
             with self.request_workers_lock:
                 workers = list(self.request_workers)
             for worker in workers:
                 worker.join(timeout=1)
-            self.broker.close()
             self.outbound.put(None)
             self.writer.join(timeout=2)
         if self.fatal_error is not None:

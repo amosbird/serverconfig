@@ -6,1868 +6,718 @@ import pathlib
 import queue
 import socket
 import threading
+import time
 import unittest
 from tempfile import TemporaryDirectory
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-HOST = ROOT / "chromium/external-links/host.py"
-spec = importlib.util.spec_from_file_location("browser_peer_host", HOST)
+spec = importlib.util.spec_from_file_location("browser_peer_host", ROOT / "chromium/external-links/host.py")
 host = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(host)
 
+BOOT = {"pid": 42, "starttime": "123", "profile": pathlib.Path("/profiles/main"),
+        "browser_boot_id": "chrome-current"}
+OWNER = {"daemon_instance_id": "instance", "daemon_boot_id": "boot", "workbench_name": "workbench"}
+PAGE = {"workspace_id": "workspace", "page_id": "page", "generation": 1}
+AUTH = {"browser_boot_id": BOOT["browser_boot_id"], "enable_id": "enable", "revision": 1}
+
+
+def clone(value):
+    return json.loads(json.dumps(value))
+
 
 class FakePeer:
-    def __init__(self, path, principal, fence, owner_display=None):
-        self.path = pathlib.Path(path)
+    def __init__(self, path, principal="principal", epoch=1, owner=None, handshake=None):
         self.principal = principal
-        self.fence = fence
-        self.owner_display = owner_display or {
-            "daemon_instance_id": "daemon-instance",
-            "daemon_boot_id": "daemon-boot",
-            "workbench_name": "workbench",
-        }
+        self.owner = owner or OWNER
+        self.fence = {"executor_id": f"executor-{path.parent.name}", "epoch": epoch}
+        self.handshake = handshake
+        self.accept = True
         self.received = []
-        self.accept_completions = True
+        self.condition = threading.Condition()
+        self.stopping = threading.Event()
         self.connected = threading.Event()
-        self.done = threading.Event()
         self.client = None
+        self.write_lock = threading.Lock()
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.server.bind(str(self.path))
+        self.server.bind(str(path))
         self.server.listen(1)
+        self.server.settimeout(0.2)
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
+    def record(self, message):
+        with self.condition:
+            self.received.append(message)
+            self.condition.notify_all()
+
     def run(self):
         try:
-            self.client, _ = self.server.accept()
-            self.received.append(host.read_peer_message(self.client))
-            self.client.sendall(host.encode_peer_message({
-                "type": "hello_prepared",
-                "request_id": "hello-request",
-                "principal_id": self.principal,
-                "executor_fence": self.fence,
-                "owner_display": self.owner_display,
-            }))
-            self.received.append(host.read_peer_message(self.client))
-            self.client.sendall(host.encode_peer_message({
-                "type": "hello_accepted",
-                "request_id": "hello-request",
-                "principal_id": self.principal,
-                "executor_fence": self.fence,
-                "owner_display": self.owner_display,
-            }))
+            while not self.stopping.is_set():
+                try:
+                    self.client, _ = self.server.accept()
+                    break
+                except socket.timeout:
+                    continue
+            if self.client is None:
+                return
+            self.client.settimeout(2)
+            hello = host.read_peer_message(self.client)
+            self.record(hello)
+            if hello["version"] != 9 or hello["capabilities"] != {
+                    "cancellation": True, "owned_tab_group": True}:
+                self.send({"type": "hello_rejected", "request_id": "hello",
+                           "reason": "unsupported_version"})
+                return
+            prepared = {"type": "hello_prepared", "request_id": "hello", "principal_id": self.principal,
+                        "workspace_id": "workspace", "executor_fence": self.fence,
+                        "owner_display": self.owner}
+            accepted = {**prepared, "type": "hello_accepted"}
+            if self.handshake:
+                prepared, accepted = self.handshake(prepared, accepted)
+            self.send(prepared)
+            self.record(host.read_peer_message(self.client))
+            self.send(accepted)
             self.connected.set()
-            while True:
+            self.client.settimeout(None)
+            while not self.stopping.is_set():
                 message = host.read_peer_message(self.client)
-                self.received.append(message)
-                if self.accept_completions and message.get("type") in host.COMPLETION_RECEIPTS:
-                    self.send({**message, "type": host.COMPLETION_RECEIPTS[message["type"]]})
+                self.record(message)
+                receipt = host.COMPLETION_RECEIPTS.get(message["type"])
+                if message["type"] == "workspace_state":
+                    receipt = "workspace_state_accepted"
+                if self.accept and receipt:
+                    self.send({**message, "type": receipt})
         except (OSError, EOFError):
             pass
-        finally:
-            self.done.set()
 
     def send(self, message):
-        self.client.sendall(host.encode_peer_message(message))
+        with self.write_lock:
+            self.client.sendall(host.encode_peer_message(message))
 
-    def wait_for(self, message_type, timeout=2, request_id=None):
-        attempts = max(1, int(timeout / 0.01))
-        for _ in range(attempts):
-            for message in self.received:
-                if message.get("type") == message_type and \
-                        (request_id is None or message.get("request_id") == request_id):
-                    return message
-            if self.done.wait(0.01):
-                break
-        raise AssertionError(f"timed out waiting for {message_type}: {self.received}")
+    def wait_for(self, kind, request_id=None):
+        deadline = time.monotonic() + 2
+        with self.condition:
+            while True:
+                found = next((message for message in self.received if message["type"] == kind and
+                              (request_id is None or message.get("request_id") == request_id)), None)
+                if found:
+                    return found
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise AssertionError(f"missing {kind}: {self.received}")
+                self.condition.wait(remaining)
 
     def close(self):
+        self.stopping.set()
         if self.client:
+            try:
+                self.client.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             self.client.close()
         self.server.close()
-        self.done.wait(2)
         self.thread.join(timeout=2)
         if self.thread.is_alive():
-            raise AssertionError("fake peer did not stop")
+            raise AssertionError("fixture reader did not stop")
 
 
 class BrowserPeerBrokerTest(unittest.TestCase):
-    def test_native_bootstrap_request_replays_exact_current_browser_identity(self):
-        output = mock.Mock()
-        native = host.NativeBrokerHost(
-            input_stream=mock.Mock(), output_stream=output, remote_root=self.root,
-            ordinary_open_factory=None, browser={
-                "pid": 42,
-                "starttime": "1234",
-                "profile": pathlib.Path("/profiles/main"),
-                "browser_boot_id": "chrome-current-boot",
-            })
-        native._respond({
-            "version": 1,
-            "id": "bootstrap-request",
-            "service": "native_host",
-            "operation": "bootstrap",
-            "payload": {},
-        })
-        response = native.outbound.get(timeout=1)
-        self.assertEqual(response, {
-            "version": 1,
-            "reply_to": "bootstrap-request",
-            "ok": True,
-            "payload": {
-                "browser_boot_id": "chrome-current-boot",
-                "browser_pid": 42,
-                "browser_starttime": "1234",
-                "ordinary_launch_leases": [],
-            },
-        })
-        native._respond({
-            "version": 1,
-            "id": "invalid-bootstrap-request",
-            "service": "native_host",
-            "operation": "bootstrap",
-            "payload": {"unexpected": True},
-        })
-        rejected = native.outbound.get(timeout=1)
-        self.assertFalse(rejected["ok"])
-        self.assertIn("must be empty", rejected["error"])
-        native.broker.close()
-
-    def test_native_host_writes_remote_state_before_activating_peer_reader(self):
-        native = host.NativeBrokerHost(
-            input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
-            ordinary_open_factory=None)
-        peer = mock.Mock()
-        peer.logical_state.return_value = {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-            "display_name": "remote", "connected": True,
-            "principal_id": "principal-one",
-            "executor_fence": {"executor_id": "executor", "epoch": 1},
-        }
-        writes = []
-        native.writer = threading.Thread(target=native._write_loop, daemon=True)
-        try:
-            with mock.patch.object(host, "send_message",
-                                   side_effect=lambda message, _stream: writes.append(message)):
-                native.writer.start()
-                native.broker._activate_after_remote_state(peer)
-            self.assertEqual(writes[0]["event"], "abush_browser.remote_state")
-            peer.activate.assert_called_once_with()
-        finally:
-            native.outbound.put(None)
-            native.writer.join(timeout=1)
-            native.broker.close()
-        self.assertFalse(native.writer.is_alive())
-
-    def test_native_host_refresh_loop_discovers_metadata_after_empty_startup(self):
-        native = host.NativeBrokerHost(
-            input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
-            ordinary_open_factory=None)
-        native.broker.write_barrier = None
-        native.refresh_interval = 60
-        native.refresh_thread.start()
-        try:
-            self.assertTrue(native.refresh_started.wait(1))
-            server = self.peer()
-            native.refresh_wakeup.set()
-            self.assertTrue(server.connected.wait(2))
-            self.assertEqual(native.broker.list_remotes(), [{
-                "remote_key": "r_12345678",
-                "connection_id": "c_12345678",
-                "display_name": "r_12345678",
-                "connected": True,
-                "principal_id": "principal-one",
-                "executor_fence": server.fence,
-                "owner_display": server.owner_display,
-            }])
-        finally:
-            native.refresh_stop.set()
-            native.refresh_wakeup.set()
-            native.refresh_thread.join(timeout=1)
-            native.broker.close()
-        self.assertFalse(native.refresh_thread.is_alive())
-
     def setUp(self):
-        temporary_root = ROOT.parent / ".tmp"
-        temporary_root.mkdir(exist_ok=True)
-        self.temporary = TemporaryDirectory(dir=temporary_root)
+        common = ROOT.parent / ".tmp"
+        common.mkdir(parents=True, exist_ok=True)
+        self.temporary = TemporaryDirectory(prefix="", dir=common)
         self.root = pathlib.Path(self.temporary.name) / "r"
         self.root.mkdir(mode=0o700)
         self.servers = []
+        self.brokers = []
 
     def tearDown(self):
+        for broker in self.brokers:
+            broker.close()
         for server in self.servers:
             server.close()
         self.temporary.cleanup()
 
-    def connection(self, remote_key, connection_id):
-        directory = self.root / remote_key / connection_id
+    def server(self, connection="c_12345678", remote="r_12345678", **kwargs):
+        directory = self.root / remote / connection
         directory.parent.mkdir(mode=0o700, exist_ok=True)
         directory.mkdir(mode=0o700)
-        socket_path = directory / "browser-peer.sock"
         path = directory / "connection.json"
-        path.write_text(json.dumps({
-            "schema_version": 1,
-            "remote_key": remote_key,
-            "connection_id": connection_id,
-            "display_name": remote_key,
-            "browser_socket": str(socket_path),
-            "remote_browser_socket": "/run/user/1000/abush/browser-peer.sock",
-        }))
+        path.write_text(json.dumps({"schema_version": 1, "remote_key": remote,
+            "connection_id": connection, "display_name": remote,
+            "browser_socket": str(directory / "browser-peer.sock"),
+            "remote_browser_socket": "/run/user/1000/abush/browser-peer.sock"}))
         path.chmod(0o600)
-        return path, socket_path
-
-    def peer(self, remote_key="r_12345678", connection_id="c_12345678",
-             principal="principal-one", epoch=11, owner_display=None):
-        _, socket_path = self.connection(remote_key, connection_id)
-        server = FakePeer(socket_path, principal, {
-            "executor_id": f"executor-{connection_id}", "epoch": epoch,
-        }, owner_display)
+        server = FakePeer(directory / "browser-peer.sock", **kwargs)
         self.servers.append(server)
         return server
 
-    def next_event(self, broker, event_name):
-        while True:
-            message = broker.outbound.get(timeout=2)
-            if message.get("event") == event_name:
-                return message
+    def broker(self):
+        broker = host.BrowserBroker(self.root, browser=BOOT)
+        self.brokers.append(broker)
+        return broker
 
-    def accept_write(self, peer, writes=None):
-        def send(message):
-            if writes is not None:
-                writes.append(message)
-            if message["type"] in host.COMPLETION_RECEIPTS:
-                peer.handle({**message, "type": host.COMPLETION_RECEIPTS[message["type"]]})
-        return send
-
-    def completion_payload(self, forwarded, completion):
-        payload = {key: value for key, value in forwarded.items()
-                   if key not in {"expected_page", "owner_display", "connection_display_name"}}
-        payload["completion"] = completion
-        return payload
+    def connected(self, **kwargs):
+        server = self.server(**kwargs)
+        broker = self.broker()
+        broker.refresh()
+        return broker, broker.peers["r_12345678"], server
 
     def request(self, operation, payload):
-        return {
-            "version": 1, "id": operation, "service": "abush_browser",
-            "operation": operation, "payload": payload,
-        }
+        return {"version": 1, "id": operation, "service": "abush_browser",
+                "operation": operation, "payload": payload}
 
-    def test_fresh_host_origin_outcomes_wait_for_exact_daemon_receipt(self):
-        # FakePeer exercises transport only, not Rust durable admission validation.
-        cases = (
-            ("executor_completion", "completion", "effect_id", "applied"),
-            ("cancellation_completion", "cancellation_completed", "effect_id", "unknown"),
-            ("ensure_managed_page_completion", "ensure_managed_page_completed", "ensure_id",
-             {"outcome": "created", "window_id": "orphan-window", "page_id": "orphan-page"}),
-            ("ensure_managed_page_cancellation_completion",
-             "ensure_managed_page_cancellation_completed", "ensure_id", None),
-        )
-        for index, (operation, terminal_type, id_field, outcome) in enumerate(cases):
-            with self.subTest(operation=operation):
-                connection_id = f"c_{index:08d}"
-                server = self.peer(connection_id=connection_id, epoch=2)
-                server.accept_completions = False
-                native = host.NativeBrokerHost(
-                    input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
-                    ordinary_open_factory=None)
-                native.broker.write_barrier = None
-                worker = None
-                try:
-                    native.broker.refresh()
-                    peer = native.broker.peers["r_12345678"]
-                    # No old host state or prior native send survives this boundary.
-                    self.assertFalse(peer.pending)
-                    self.assertFalse(peer.ensure_pending)
-                    self.assertFalse(peer.completions)
-                    self.assertFalse(peer.accepted_completions)
-                    origin = {"executor_id": "old-host-executor", "epoch": 1}
-                    payload = {
-                        "remote_key": "r_12345678", "connection_id": connection_id,
-                        "principal_id": "principal-one", "request_id": "origin-request",
-                        id_field: "origin-id", "executor_fence": origin,
-                    }
-                    if outcome is not None:
-                        payload["completion"] = outcome
-                    if operation == "ensure_managed_page_completion":
-                        payload["workspace_id"] = "original-workspace"
-                    request = self.request(operation, payload)
-                    expected = {key: value for key, value in payload.items()
-                                if key not in {"remote_key", "connection_id", "principal_id",
-                                               "workspace_id"}}
-                    expected["type"] = terminal_type
-                    self.next_event(native.broker, "abush_browser.remote_state")
-                    worker = threading.Thread(target=native._respond, args=(request,), daemon=True)
-                    worker.start()
-                    self.assertEqual(server.wait_for(terminal_type), expected)
-                    self.assertTrue(worker.is_alive())
-                    self.assertTrue(native.outbound.empty(), "no synthetic native success")
-                    receipt = {**expected, "type": host.COMPLETION_RECEIPTS[terminal_type]}
-                    server.send(receipt)
-                    worker.join(timeout=2)
-                    self.assertFalse(worker.is_alive())
-                    result = native.outbound.get(timeout=1)
-                    self.assertTrue(result["ok"])
-                    self.assertEqual(result["payload"], receipt)
-                    self.assertEqual(peer.executor_fence, server.fence)
-                    self.assertFalse(peer.pending)
-                    self.assertFalse(peer.ensure_pending)
-                    self.assertTrue(native.outbound.empty(), "outcome must not execute Chrome work")
-                    # Receipt and selection identities are canonical, not input aliases.
-                    if isinstance(outcome, dict):
-                        outcome["page_id"] = "mutated-input"
-                        with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
-                            native.broker.handle_request(request)
-                finally:
-                    native.broker.close()
-                    if worker is not None:
-                        worker.join(timeout=2)
-                        self.assertFalse(worker.is_alive())
+    def identity(self, peer):
+        return {"remote_key": peer.metadata["remote_key"],
+                "connection_id": peer.metadata["connection_id"], "principal_id": peer.principal_id}
 
-    def test_fresh_host_unknown_origin_without_receipt_is_not_success(self):
-        server = self.peer(epoch=2)
-        server.accept_completions = False
-        native = host.NativeBrokerHost(
-            input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
-            ordinary_open_factory=None)
+    def state(self, phase="enabled", revision=1):
+        return {"browser_boot_id": BOOT["browser_boot_id"], "revision": revision, "phase": phase,
+                "binding": None if phase == "disabled" else {"enable_id": "enable", "page": clone(PAGE)}}
+
+    def state_payload(self, peer, **changes):
+        return {**self.identity(peer), "request_id": "state", "executor_fence": peer.executor_fence,
+                "state": self.state(), **changes}
+
+    def execute(self, peer, **changes):
+        return {"type": "execute", "request_id": "execute", "effect_id": "effect",
+                "executor_fence": peer.executor_fence, "authorization": clone(AUTH),
+                "command": {"command": "navigate", "page": clone(PAGE), "url": "https://example.test/"},
+                **changes}
+
+    def terminal(self, peer, **changes):
+        return {**self.identity(peer), "request_id": "execute", "effect_id": "effect",
+                "executor_fence": peer.executor_fence, "completion": "applied", **changes}
+
+    def event(self, broker, name):
+        deadline = time.monotonic() + 2
+        while True:
+            message = broker.outbound.get(timeout=max(0.001, deadline - time.monotonic()))
+            if message.get("event") == name:
+                return message["payload"]
+            if time.monotonic() >= deadline:
+                self.fail(f"missing event {name}")
+
+    def barrier(self, server, request="barrier"):
+        server.send({"type": "ping", "request_id": request, "ping_id": request})
+        server.wait_for("pong", request)
+
+    def native(self):
+        native = host.NativeBrokerHost(input_stream=mock.Mock(), output_stream=mock.Mock(),
+            remote_root=self.root, ordinary_open_factory=None, browser=BOOT)
         native.broker.write_barrier = None
-        try:
-            native.broker.refresh()
-            peer = native.broker.peers["r_12345678"]
-            peer.completion_timeout = 0
-            self.next_event(native.broker, "abush_browser.remote_state")
-            payload = {
-                "remote_key": "r_12345678", "connection_id": "c_12345678",
-                "principal_id": "principal-one", "request_id": "unadmitted-request",
-                "effect_id": "unadmitted-effect",
-                "executor_fence": {"executor_id": "old-executor", "epoch": 1},
-                "completion": "applied",
-            }
-            request = self.request("executor_completion", payload)
-            native._respond(request)
-            result = native.outbound.get(timeout=1)
-            self.assertFalse(result["ok"])
-            self.assertIn("receipt timed out", result["error"])
-            server.wait_for("completion")
-            state = peer.completions[("completion", "unadmitted-effect")]
-            self.assertIsNone(state["response"])
-            self.assertEqual(state["message"]["completion"], "applied")
-            with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
-                native.broker.handle_request(self.request("executor_completion", {
-                    **payload, "completion": "not_applied",
-                }))
-            with mock.patch.object(peer, "send") as send:
-                for change in (
-                        {"principal_id": "foreign"},
-                        {"connection_id": "c_99999999", "effect_id": "unknown-effect"},
-                        {"request_id": ""}, {"effect_id": ""},
-                        {"executor_fence": {"executor_id": "old", "epoch": True}},
-                        {"executor_fence": {"executor_id": "old", "epoch": 0}},
-                        {"executor_fence": {"executor_id": "old", "epoch": 1, "extra": 1}},
-                        {"completion": "execute"}, {"unexpected": True}):
-                    with self.subTest(change=change), self.assertRaises(ValueError):
-                        native.broker.handle_request(self.request(
-                            "executor_completion", {**payload, **change}))
-                send.assert_not_called()
-        finally:
-            native.broker.close()
+        self.brokers.append(native.broker)
+        return native
 
-    def test_origin_outcome_does_not_grant_command_authority(self):
-        peer = host.RemotePeer(mock.Mock(), {})
-        peer.executor_fence = {"executor_id": "current", "epoch": 2}
-        origin = {"executor_id": "old", "epoch": 1}
-        peer.completion_timeout = 0
-        peer.send = mock.Mock()
-        with self.assertRaises(TimeoutError):
-            peer.complete("origin-request", "effect", origin, "applied")
-        for message in (
-                {"type": "execute", "request_id": "origin-request", "effect_id": "effect",
-                 "executor_fence": origin, "command": {"command": "close_window",
-                 "window": {"workspace_id": "workspace", "window_id": "window", "generation": 1}}},
-                {"type": "ensure_managed_page", "request_id": "origin-request",
-                 "ensure_id": "ensure", "executor_fence": origin,
-                 "workspace_id": "workspace", "expected_page": None}):
-            with self.assertRaises(ValueError):
-                peer.handle(message)
-        peer.broker.outbound.put.assert_not_called()
+    def test_v9_exact_handshake_and_capabilities(self):
+        broker, peer, server = self.connected()
+        hello = server.wait_for("hello")
+        self.assertEqual(set(hello), {"type", "version", "executor_id", "nonce", "capabilities"})
+        self.assertEqual(hello["version"], 9)
+        self.assertEqual(hello["capabilities"], {"cancellation": True, "owned_tab_group": True})
+        self.assertEqual(server.wait_for("hello_ready"), {"type": "hello_ready", "request_id": "hello",
+                                                        "executor_fence": peer.executor_fence})
+        self.assertEqual(broker.list_remotes()[0]["workspace_id"], "workspace")
 
-    def test_v7_handshake_is_rejected_by_exact_v8_peer(self):
-        left, right = socket.socketpair()
+    def test_v8_rejected(self):
+        server = self.server()
+        broker = self.broker()
+        with mock.patch.object(host, "PEER_PROTOCOL_VERSION", 8):
+            self.assertFalse(broker.refresh()[0]["connected"])
+        self.assertEqual(server.wait_for("hello")["version"], 8)
 
-        class ConnectedSocket:
-            def settimeout(self, value):
-                left.settimeout(value)
+    def test_mandatory_owned_group_capability(self):
+        broker, peer, server = self.connected()
+        self.assertIs(server.wait_for("hello")["capabilities"]["owned_tab_group"], True)
+        self.assertFalse(peer.workspace_requests, "transport connection does not enable workspace")
 
-            def connect(self, _path):
-                return None
+    def test_handshake_workspace_required(self):
+        self.server(handshake=lambda p, a: ({key: value for key, value in p.items()
+                                            if key != "workspace_id"}, a))
+        self.assertFalse(self.broker().refresh()[0]["connected"])
 
-            def sendall(self, value):
-                left.sendall(value)
+    def test_handshake_extra_fields_rejected(self):
+        self.server(handshake=lambda p, a: ({**p, "extra": True}, a))
+        self.assertFalse(self.broker().refresh()[0]["connected"])
 
-            def recv(self, size):
-                return left.recv(size)
+    def test_handshake_acceptance_identity_immutable(self):
+        for field, value in (("request_id", "other"), ("workspace_id", "other"),
+                             ("principal_id", "other"), ("executor_fence", {"executor_id": "e", "epoch": 9}),
+                             ("owner_display", {**OWNER, "workbench_name": "other"})):
+            with self.subTest(field=field):
+                peer = host.RemotePeer(self.broker(), {})
+                prepared = {"type": "hello_prepared", "request_id": "h", "workspace_id": "w",
+                            "principal_id": "p", "executor_fence": {"executor_id": "e", "epoch": 1},
+                            "owner_display": OWNER}
+                peer._accept_prepared(prepared)
+                with self.assertRaises(ValueError):
+                    peer._accept_hello({**prepared, "type": "hello_accepted", field: value})
 
-            def shutdown(self, how):
-                left.shutdown(how)
+    def test_workspace_state_exact_receipt(self):
+        broker, peer, server = self.connected()
+        payload = self.state_payload(peer)
+        result = broker.handle_request(self.request("workspace_state", payload))
+        sent = server.wait_for("workspace_state")
+        self.assertEqual(sent, {"type": "workspace_state", "request_id": "state",
+                               "executor_fence": peer.executor_fence, "state": payload["state"]})
+        self.assertEqual(result, {**sent, "type": "workspace_state_accepted"})
 
-            def close(self):
-                left.close()
+    def test_workspace_disabled_and_paused(self):
+        broker, peer, server = self.connected()
+        for phase in ("disabled", "paused"):
+            value = self.state(phase)
+            result = peer.workspace_state(phase, peer.executor_fence, value)
+            self.assertEqual(result["state"], value)
 
-        peer = host.RemotePeer(mock.Mock(), {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-            "browser_socket": "unused",
-        })
-        peer.broker.executor_id.return_value = "executor"
-
-        def server():
-            hello = host.read_peer_message(right)
-            self.assertEqual(hello["version"], 8)
-            right.sendall(host.encode_peer_message({
-                "type": "hello_rejected", "request_id": "hello",
-                "reason": "unsupported_version",
-            }))
-
-        worker = threading.Thread(target=server)
-        worker.start()
-        try:
-            with mock.patch.object(host.os, "lstat", return_value=mock.Mock(
-                    st_mode=host.stat.S_IFSOCK, st_uid=host.os.getuid())), \
-                    mock.patch.object(host.socket, "socket",
-                                      return_value=ConnectedSocket()):
-                self.assertFalse(peer.connect())
-        finally:
-            right.close()
-            worker.join(timeout=2)
-            self.assertFalse(worker.is_alive())
-
-    def test_v8_handshake_and_ensure_completion_are_strictly_correlated(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            hello = server.received[0]
-            self.assertEqual(hello["version"], 8)
-            self.assertEqual(server.received[1], {
-                "type": "hello_ready", "request_id": "hello-request",
-                "executor_fence": server.fence,
-            })
-            server.send({
-                "type": "ensure_managed_page",
-                "request_id": "request-one",
-                "ensure_id": "ensure-one",
-                "workspace_id": "workspace-authoritative",
-                "expected_page": None,
-                "executor_fence": server.fence,
-            })
-            forwarded = self.next_event(broker, "abush_browser.ensure_managed_page")
-            self.assertEqual(forwarded["payload"], {
-                "remote_key": "r_12345678",
-                "connection_id": "c_12345678",
-                "principal_id": "principal-one",
-                "workspace_id": "workspace-authoritative",
-                "request_id": "request-one",
-                "ensure_id": "ensure-one",
-                "executor_fence": server.fence,
-                "owner_display": server.owner_display,
-                "connection_display_name": "r_12345678",
-                "expected_page": None,
-            })
-            payload = {key: value for key, value in forwarded["payload"].items()
-                       if key not in {"expected_page", "owner_display",
-                                      "connection_display_name"}}
-            payload["completion"] = {
-                "outcome": "created", "window_id": "10", "page_id": "20",
-            }
-            broker.handle_request(self.request("ensure_managed_page_completion", payload))
-            self.assertEqual(server.wait_for("ensure_managed_page_completed"), {
-                "type": "ensure_managed_page_completed",
-                "request_id": "request-one",
-                "ensure_id": "ensure-one",
-                "executor_fence": server.fence,
-                "completion": {"outcome": "created", "window_id": "10", "page_id": "20"},
-            })
-            broker.handle_request(self.request("ensure_managed_page_completion", payload))
-            with self.assertRaises(ValueError):
-                broker.handle_request(self.request("ensure_managed_page_completion", {
-                    **payload, "completion": {"outcome": "rejected", "code": "invalid_command"},
-                }))
-        finally:
-            broker.close()
-
-    def test_cancel_ensure_forwards_exact_authenticated_event_without_closing_peer(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            server.send({
-                "type": "ensure_managed_page", "request_id": "ensure-request",
-                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
-                "expected_page": None, "executor_fence": server.fence,
-            })
-            self.next_event(broker, "abush_browser.ensure_managed_page")
-            server.send({
-                "type": "cancel_ensure_managed_page", "request_id": "ensure-request",
-                "ensure_id": "ensure-one", "executor_fence": server.fence,
-            })
-            forwarded = self.next_event(
-                broker, "abush_browser.cancel_ensure_managed_page")["payload"]
-            self.assertEqual(forwarded, {
-                "remote_key": "r_12345678", "connection_id": "c_12345678",
-                "principal_id": "principal-one", "request_id": "ensure-request",
-                "ensure_id": "ensure-one", "executor_fence": server.fence,
-            })
-            self.assertFalse(server.done.is_set())
-        finally:
-            broker.close()
-
-    def test_cancel_ensure_waits_for_cleanup_ack_and_retire_forwards_exact_identity(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            server.send({
-                "type": "ensure_managed_page", "request_id": "ensure-request",
-                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
-                "expected_page": None, "executor_fence": server.fence,
-            })
-            self.next_event(broker, "abush_browser.ensure_managed_page")
-            server.send({
-                "type": "cancel_ensure_managed_page", "request_id": "ensure-request",
-                "ensure_id": "ensure-one", "executor_fence": server.fence,
-            })
-            cancel = self.next_event(
-                broker, "abush_browser.cancel_ensure_managed_page")["payload"]
-            broker.handle_request(self.request(
-                "ensure_managed_page_cancellation_completion", cancel))
-            self.assertEqual(server.wait_for("ensure_managed_page_cancellation_completed"), {
-                "type": "ensure_managed_page_cancellation_completed",
-                "request_id": "ensure-request", "ensure_id": "ensure-one",
-                "executor_fence": server.fence,
-            })
-
-            prior_cancellations = len([message for message in server.received
-                                       if message.get("type") ==
-                                       "ensure_managed_page_cancellation_completed"])
-            server.send({
-                "type": "ensure_managed_page", "request_id": "retire-request",
-                "ensure_id": "ensure-retire", "workspace_id": "workspace-authoritative",
-                "expected_page": None, "executor_fence": server.fence,
-            })
-            self.next_event(broker, "abush_browser.ensure_managed_page")
-            server.send({
-                "type": "cancel_ensure_managed_page", "request_id": "retire-request",
-                "ensure_id": "ensure-retire", "executor_fence": server.fence,
-            })
-            self.next_event(broker, "abush_browser.cancel_ensure_managed_page")
-            server.send({
-                "type": "retire_managed_page", "request_id": "retire-cleanup-request",
-                "retire_id": "stable-retire", "ensure_id": "ensure-retire",
-                "executor_fence": server.fence, "origin_executor_fence": server.fence,
-                "window_id": "window", "page_id": "page",
-            })
-            retire = self.next_event(broker, "abush_browser.retire_managed_page")["payload"]
-            self.assertEqual(retire, {
-                "remote_key": "r_12345678", "connection_id": "c_12345678",
-                "principal_id": "principal-one", "request_id": "retire-cleanup-request",
-                "retire_id": "stable-retire", "ensure_id": "ensure-retire",
-                "executor_fence": server.fence, "origin_executor_fence": server.fence,
-                "window_id": "window", "page_id": "page",
-            })
-            self.assertEqual(len([message for message in server.received
-                                  if message.get("type") ==
-                                  "ensure_managed_page_cancellation_completed"]),
-                             prior_cancellations,
-                             "retire must not reuse ensure cancellation completion")
-        finally:
-            broker.close()
-
-    def test_retire_replay_updates_exact_host_command_fields(self):
-        peer = host.RemotePeer(None, {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-        })
-        peer.principal_id = "principal-one"
-        peer.executor_fence = {"executor_id": "executor", "epoch": 2}
-        peer.broker = type("Broker", (), {"outbound": queue.Queue()})()
-        base = {
-            "type": "retire_managed_page", "request_id": "retire-old-command",
-            "retire_id": "stable-retire", "ensure_id": "stable-ensure",
-            "executor_fence": peer.executor_fence,
-            "origin_executor_fence": {"executor_id": "origin", "epoch": 1},
-            "window_id": "window", "page_id": "page",
-        }
-        peer._handle_retire_managed_page(base)
-        replay = {**base, "request_id": "retire-new-command"}
-        peer._handle_retire_managed_page(replay)
-        forwarded = peer.broker.outbound.get_nowait()["payload"]
-        forwarded = peer.broker.outbound.get_nowait()["payload"]
-        self.assertEqual(forwarded, {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-            "principal_id": "principal-one", "request_id": "retire-new-command",
-            "retire_id": "stable-retire", "ensure_id": "stable-ensure",
-            "executor_fence": peer.executor_fence,
-            "origin_executor_fence": {"executor_id": "origin", "epoch": 1},
-            "window_id": "window", "page_id": "page",
-        })
-        sent = []
-        peer.send = sent.append
-        with self.assertRaises(TimeoutError):
-            peer.complete_retire(
-                "retire-new-command", "stable-retire", peer.executor_fence,
-                base["origin_executor_fence"], {"outcome": "already_retired"}, timeout=0.01)
-        self.assertEqual(sent, [{
-            "type": "retire_managed_page_completed",
-            "request_id": "retire-new-command", "retire_id": "stable-retire",
-            "executor_fence": peer.executor_fence,
-            "origin_executor_fence": base["origin_executor_fence"],
-            "completion": {"outcome": "already_retired"},
-        }])
-
-    def test_retire_completed_ack_and_consumed_use_canonical_v7_messages(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            server.send({
-                "type": "retire_managed_page", "request_id": "retire-command-delivery",
-                "retire_id": "stable-retire", "ensure_id": "ensure-retire",
-                "executor_fence": server.fence, "origin_executor_fence": server.fence,
-                "window_id": "window", "page_id": "page",
-            })
-            retire = self.next_event(broker, "abush_browser.retire_managed_page")["payload"]
-            completion = {
-                "remote_key": retire["remote_key"],
-                "connection_id": retire["connection_id"],
-                "principal_id": retire["principal_id"],
-                "request_id": retire["request_id"],
-                "retire_id": retire["retire_id"],
-                "executor_fence": retire["executor_fence"],
-                "origin_executor_fence": retire["origin_executor_fence"],
-                "completion": {"outcome": "already_retired"},
-            }
-            result = {}
-
-            def complete():
-                result.update(broker.handle_request(
-                    self.request("retire_managed_page_completion", completion)))
-
-            worker = threading.Thread(target=complete)
-            worker.start()
-            self.assertEqual(server.wait_for("retire_managed_page_completed"), {
-                "type": "retire_managed_page_completed",
-                "request_id": "retire-command-delivery", "retire_id": "stable-retire",
-                "executor_fence": server.fence, "origin_executor_fence": server.fence,
-                "completion": {"outcome": "already_retired"},
-            })
-            server.send({
-                "type": "retire_managed_page_ack",
-                "request_id": "retire-command-delivery", "retire_id": "stable-retire",
-                "executor_fence": server.fence, "response_delivery_id": "retire-response",
-                "origin_executor_fence": server.fence,
-                "completion": {"outcome": "already_retired"},
-            })
-            worker.join(timeout=2)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(result["response_delivery_id"], "retire-response")
-            consumed = {
-                "remote_key": retire["remote_key"],
-                "connection_id": retire["connection_id"],
-                "principal_id": retire["principal_id"],
-                "request_id": "retire-consumed-request",
-                "delivery_request_id": "retire-command-delivery",
-                "retire_id": "stable-retire", "executor_fence": server.fence,
-                "response_delivery_id": "retire-response",
-            }
-            confirmation = {}
-            failure = []
-
-            def consume():
-                try:
-                    confirmation.update(broker.handle_request(
-                        self.request("retire_managed_page_ack_consumed", consumed)))
-                except Exception as error:
-                    failure.append(error)
-
-            consumer = threading.Thread(target=consume)
-            consumer.start()
-            self.assertEqual(server.wait_for("retire_managed_page_ack_consumed"), {
-                "type": "retire_managed_page_ack_consumed",
-                "request_id": "retire-consumed-request",
-                "delivery_request_id": "retire-command-delivery",
-                "retire_id": "stable-retire", "executor_fence": server.fence,
-                "response_delivery_id": "retire-response",
-            })
-            self.assertTrue(consumer.is_alive(), "native completion must wait for server ACK")
-            server.send({
-                "type": "retire_managed_page_ack_consumed_ack",
-                "request_id": "retire-consumed-request", "retire_id": "stable-retire",
-                "executor_fence": server.fence,
-                "response_delivery_id": "retire-response",
-            })
-            consumer.join(timeout=2)
-            self.assertFalse(consumer.is_alive())
-            self.assertEqual(failure, [])
-            self.assertEqual(confirmation, {
-                "request_id": "retire-consumed-request", "retire_id": "stable-retire",
-                "executor_fence": server.fence,
-                "response_delivery_id": "retire-response",
-            })
-            for field in ("delivery_request_id", None):
-                invalid = dict(consumed)
-                if field is None:
-                    invalid["unexpected"] = True
-                else:
-                    invalid.pop(field)
-                with self.subTest(retire_consumed_field=field), self.assertRaises(ValueError):
-                    broker.handle_request(
-                        self.request("retire_managed_page_ack_consumed", invalid))
-        finally:
-            broker.close()
-
-    def test_stale_cancel_ensure_is_ignored_without_cancelling_newer_ensure(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            server.send({
-                "type": "ensure_managed_page", "request_id": "new-request",
-                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
-                "expected_page": None, "executor_fence": server.fence,
-            })
-            payload = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
-            server.send({
-                "type": "cancel_ensure_managed_page", "request_id": "old-request",
-                "ensure_id": "ensure-one", "executor_fence": server.fence,
-            })
-            broker.handle_request(self.request("ensure_managed_page_completion",
-                                               self.completion_payload(payload, {
-                "outcome": "created", "window_id": "window", "page_id": "page",
-            })))
-            self.assertEqual(server.wait_for("ensure_managed_page_completed")["request_id"],
-                             "new-request")
-            self.assertFalse(server.done.is_set())
-        finally:
-            broker.close()
-
-    def test_stale_principal_fence_and_connection_fail_closed(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            server.send({
-                "type": "ensure_managed_page", "request_id": "request-one",
-                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
-                "expected_page": None, "executor_fence": server.fence,
-            })
-            payload = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
-            completion = {"outcome": "rejected", "code": "invalid_command"}
-            for change in (
-                {"principal_id": "other"},
-                {"connection_id": "c_abcdefgh"},
-                {"executor_fence": {**server.fence, "epoch": 12}},
-                {"workspace_id": "other"},
-                {"request_id": "other"},
-                {"extra": True},
-            ):
-                with self.subTest(change=change), self.assertRaises(ValueError):
-                    completion_payload = self.completion_payload(payload, completion)
-                    completion_payload.update(change)
-                    broker.handle_request(self.request(
-                        "ensure_managed_page_completion", completion_payload))
-            broker.handle_request(self.request("ensure_managed_page_completion",
-                                               self.completion_payload(payload, completion)))
-        finally:
-            broker.close()
-
-    def test_execute_event_includes_authenticated_principal(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            page = {"window": {
-                "workspace_id": "workspace", "window_id": "window", "generation": 1,
-            }, "page_id": "20", "generation": 1}
-            server.send({
-                "type": "execute", "request_id": "request", "effect_id": "effect",
-                "executor_fence": server.fence,
-                "command": {"command": "navigate", "page": page,
-                            "url": "https://example.test/"},
-            })
-            forwarded = self.next_event(broker, "abush_browser.execute")["payload"]
-            self.assertEqual(forwarded["principal_id"], "principal-one")
-            completion = {key: value for key, value in forwarded.items() if key != "command"}
-            with self.assertRaises(ValueError):
-                broker.handle_request(self.request("executor_completion", {
-                    **completion, "principal_id": "other", "completion": "applied",
-                }))
-            broker.handle_request(self.request("executor_completion", {
-                **completion, "completion": "applied",
-            }))
-            self.assertEqual(server.wait_for("completion")["completion"], "applied")
-        finally:
-            broker.close()
-
-    def test_cancel_uses_distinct_request_and_forwards_execution_request(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            page = {"window": {
-                "workspace_id": "workspace", "window_id": "window", "generation": 1,
-            }, "page_id": "20", "generation": 1}
-            server.send({
-                "type": "execute", "request_id": "current-request", "effect_id": "effect",
-                "executor_fence": server.fence,
-                "command": {"command": "navigate", "page": page,
-                            "url": "https://example.test/"},
-            })
-            self.next_event(broker, "abush_browser.execute")
-            server.send({
-                "type": "cancel", "request_id": "current-request", "effect_id": "effect",
-                "executor_fence": server.fence,
-            })
-            server.done.wait(2)
-            self.assertTrue(server.done.is_set())
-        finally:
-            broker.close()
-
-    def test_distinct_cancel_request_is_forwarded_with_original_execute_request(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            page = {"window": {
-                "workspace_id": "workspace", "window_id": "window", "generation": 1,
-            }, "page_id": "20", "generation": 1}
-            server.send({
-                "type": "execute", "request_id": "execute-request", "effect_id": "effect",
-                "executor_fence": server.fence,
-                "command": {"command": "navigate", "page": page,
-                            "url": "https://example.test/"},
-            })
-            self.next_event(broker, "abush_browser.execute")
-            server.send({
-                "type": "cancel", "request_id": "cancel-request", "effect_id": "effect",
-                "executor_fence": server.fence,
-            })
-            forwarded = self.next_event(broker, "abush_browser.cancel")["payload"]
-            self.assertEqual(forwarded, {
-                "remote_key": "r_12345678", "connection_id": "c_12345678",
-                "principal_id": "principal-one", "request_id": "cancel-request",
-                "execution_request_id": "execute-request", "effect_id": "effect",
-                "executor_fence": server.fence,
-            })
-        finally:
-            broker.close()
-
-    def test_cancel_completion_ack_is_sent_only_after_extension_convergence(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            page = {"window": {
-                "workspace_id": "workspace", "window_id": "window", "generation": 1,
-            }, "page_id": "20", "generation": 1}
-            server.send({
-                "type": "execute", "request_id": "execute-request", "effect_id": "effect",
-                "executor_fence": server.fence,
-                "command": {"command": "navigate", "page": page,
-                            "url": "https://example.test/"},
-            })
-            self.next_event(broker, "abush_browser.execute")
-            server.send({
-                "type": "cancel", "request_id": "cancel-request", "effect_id": "effect",
-                "executor_fence": server.fence,
-            })
-            cancel = self.next_event(broker, "abush_browser.cancel")["payload"]
-            self.assertEqual(cancel["execution_request_id"], "execute-request")
-            broker.handle_request(self.request("cancellation_completion", {
-                key: value for key, value in cancel.items() if key != "execution_request_id"
-            } | {"completion": "unknown"}))
-            self.assertEqual(server.wait_for("cancellation_completed"), {
-                "type": "cancellation_completed", "request_id": "cancel-request",
-                "effect_id": "effect", "executor_fence": server.fence,
-                "completion": "unknown",
-            })
-        finally:
-            broker.close()
-
-    def test_rejected_completion_only_accepts_browser_error_codes(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            for index, code in enumerate(sorted(host.BROWSER_ERROR_CODES)):
-                request_id = f"request-{index}"
-                ensure_id = f"ensure-{index}"
-                server.send({
-                    "type": "ensure_managed_page", "request_id": request_id,
-                    "ensure_id": ensure_id, "workspace_id": f"workspace-{index}",
-                    "expected_page": None, "executor_fence": server.fence,
-                })
-                payload = self.next_event(
-                    broker, "abush_browser.ensure_managed_page")["payload"]
-                broker.handle_request(self.request("ensure_managed_page_completion",
-                                                   self.completion_payload(payload, {
-                    "outcome": "rejected", "code": code,
-                })))
-            server.send({
-                "type": "ensure_managed_page", "request_id": "invalid-request",
-                "ensure_id": "invalid-ensure", "workspace_id": "workspace-invalid",
-                "expected_page": None, "executor_fence": server.fence,
-            })
-            payload = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
-            with self.assertRaises(ValueError):
-                broker.handle_request(self.request("ensure_managed_page_completion",
-                                                   self.completion_payload(payload, {
-                    "outcome": "rejected", "code": "workspace_unavailable",
-                })))
-        finally:
-            broker.close()
-
-    def test_workspace_executor_completion_shape_is_accepted_directly(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            server.send({
-                "type": "ensure_managed_page", "request_id": "request-one",
-                "ensure_id": "ensure-one", "workspace_id": "workspace-authoritative",
-                "expected_page": None, "executor_fence": server.fence,
-            })
-            forwarded = self.next_event(broker, "abush_browser.ensure_managed_page")["payload"]
-            extension_payload = {
-                key: value for key, value in forwarded.items()
-                if key not in {"expected_page", "owner_display", "connection_display_name"}
-            }
-            extension_payload["completion"] = {
-                "outcome": "created", "window_id": "window", "page_id": "page",
-            }
-            broker.handle_request(self.request(
-                "ensure_managed_page_completion", extension_payload))
-            self.assertEqual(server.wait_for("ensure_managed_page_completed")["completion"],
-                             extension_payload["completion"])
-        finally:
-            broker.close()
-
-    def test_native_completion_dispatch_waits_for_receipt_and_keeps_exact_payload(self):
-        native = host.NativeBrokerHost(
-            input_stream=mock.Mock(), output_stream=mock.Mock(), remote_root=self.root,
-            ordinary_open_factory=None)
-        server = self.peer()
-        server.accept_completions = False
-        native.broker.write_barrier = None
-        try:
-            native.broker.refresh()
-            peer = native.broker.peers["r_12345678"]
-            peer.pending["effect"] = {"request_id": "request", "fence": server.fence}
-            while not native.outbound.empty():
-                native.outbound.get_nowait()
-            payload = {"remote_key": "r_12345678", "connection_id": "c_12345678",
-                       "principal_id": "principal-one", "request_id": "request",
-                       "effect_id": "effect", "executor_fence": server.fence,
-                       "completion": "applied"}
-            for operation in ("executor_completion", "cancellation_completion",
-                              "ensure_managed_page_completion",
-                              "ensure_managed_page_cancellation_completion"):
-                self.assertTrue(native._is_blocking_request(self.request(operation, {})))
-            native._dispatch(self.request("executor_completion", payload))
-            sent = server.wait_for("completion")
-            self.assertTrue(native.outbound.empty())
-            receipt = {**sent, "type": "completion_accepted"}
-            server.send(receipt)
-            self.assertEqual(native.outbound.get(timeout=2), {
-                "version": 1, "reply_to": "executor_completion", "ok": True,
-                "payload": receipt,
-            })
-        finally:
-            native.broker.close()
-            with native.request_workers_lock:
-                workers = list(native.request_workers)
-            for worker in workers:
-                worker.join(timeout=2)
-                self.assertFalse(worker.is_alive())
-
-    def test_completion_receipts_wait_match_and_survive_late_socket_delivery(self):
-        server = self.peer()
-        server.accept_completions = False
-        broker = host.BrowserBroker(self.root)
-        failures = []
-        results = []
-        worker = None
-        try:
-            broker.refresh()
-            peer = broker.peers["r_12345678"]
-            peer.pending["effect"] = {"request_id": "request", "fence": server.fence}
-            payload = {
-                "remote_key": "r_12345678", "connection_id": "c_12345678",
-                "principal_id": "principal-one", "request_id": "request",
-                "effect_id": "effect", "executor_fence": server.fence, "completion": "applied",
-            }
-
-            def complete():
-                try:
-                    results.append(broker.handle_request(self.request("executor_completion", payload)))
-                except Exception as error:
-                    failures.append(error)
-
-            worker = threading.Thread(target=complete, daemon=True)
-            worker.start()
-            sent = server.wait_for("completion")
-            self.assertTrue(worker.is_alive(), "socket write is not durable acceptance")
-            receipt = {**sent, "type": "completion_accepted"}
-            for change in ({"request_id": "wrong"}, {"effect_id": "wrong"},
-                           {"executor_fence": {**server.fence, "epoch": 99}}):
-                server.send({**receipt, **change})
-            server.send({"type": "ping", "request_id": "barrier", "ping_id": "barrier"})
-            server.wait_for("pong", request_id="barrier")
-            self.assertEqual(results, [])
-            server.send(receipt)
-            worker.join(timeout=2)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(failures, [])
-            self.assertEqual(results, [receipt])
-            self.assertEqual(broker.handle_request(self.request("executor_completion", payload)),
-                             receipt, "lost native reply must replay the same receipt")
-            self.assertEqual(sum(m.get("type") == "completion" for m in server.received), 1)
-            peer.pending["late"] = {"request_id": "late", "fence": server.fence}
-            peer.completion_timeout = 0
-            with self.assertRaises(TimeoutError):
-                peer.complete("late", "late", server.fence, "unknown")
-            late = {**server.wait_for("completion", request_id="late"),
-                    "type": "completion_accepted"}
-            server.send(late)
-            server.send({"type": "ping", "request_id": "late-barrier", "ping_id": "barrier"})
-            server.wait_for("pong", request_id="late-barrier")
-            self.assertEqual(peer.complete("late", "late", server.fence, "unknown"), late)
-            self.assertTrue(peer.connected)
-        finally:
-            broker.close()
-            if worker:
-                worker.join(timeout=2)
-                self.assertFalse(worker.is_alive())
-
-    def test_origin_receipt_before_registration_only_reconciles_exact_current_principal(self):
-        server = self.peer(epoch=22)
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            peer = broker.peers["r_12345678"]
-            origin = {"executor_id": "origin-executor", "epoch": 11}
-            receipt = {
-                "type": "completion_accepted", "request_id": "original-request",
-                "effect_id": "effect", "executor_fence": origin, "completion": "applied",
-            }
-            server.send(receipt)
-            server.send({"type": "ping", "request_id": "barrier", "ping_id": "barrier"})
-            server.wait_for("pong", request_id="barrier")
-            payload = {key: value for key, value in receipt.items() if key != "type"} | {
-                "remote_key": "r_12345678", "connection_id": "c_87654321",
-                "principal_id": "principal-one",
-            }
-            for change in ({"principal_id": "other"}, {"effect_id": "other"},
-                           {"request_id": "other"}, {"completion": "unknown"},
-                           {"executor_fence": server.fence}):
-                with self.subTest(change=change), self.assertRaises(ValueError):
-                    broker.handle_request(self.request("executor_completion", payload | change))
-            self.assertEqual(broker.handle_request(self.request("executor_completion", payload)),
-                             receipt)
-            self.assertEqual(peer.executor_fence, server.fence)
-            self.assertFalse(peer.pending)
-            self.assertFalse(any(m.get("type") == "completion" for m in server.received))
-            with self.assertRaises(queue.Empty):
-                while True:
-                    message = broker.outbound.get_nowait()
-                    self.assertNotEqual(message.get("event"), "abush_browser.execute")
-            with self.assertRaises(ValueError):
-                peer.handle({"type": "execute", "request_id": "original-request",
-                             "effect_id": "effect", "executor_fence": origin,
-                             "command": {"command": "close_window", "window": {
-                                 "workspace_id": "w", "window_id": "x", "generation": 1}}})
-        finally:
-            broker.close()
-
-    def test_all_receipt_shapes_are_strict_and_ambiguous_writes_preserve_selection(self):
-        for kind in host.COMPLETION_RECEIPTS:
-            for accepted in (False, True):
-                with self.subTest(kind=kind, accepted=accepted):
-                    peer = host.RemotePeer(None, {})
-                    peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-                    peer.principal_id = "principal"
-                    fence = peer.executor_fence
-                    ensure = kind.startswith("ensure_")
-                    message = {"type": kind, "request_id": "request",
-                               "ensure_id" if ensure else "effect_id": "stable",
-                               "executor_fence": fence}
-                    if kind != "ensure_managed_page_cancellation_completed":
-                        message["completion"] = ({"outcome": "created", "window_id": "window",
-                                                  "page_id": "page"} if ensure else "unknown")
-                    receipt = {**message, "type": host.COMPLETION_RECEIPTS[kind]}
-                    pending = {"stable": {"request_id": "request", "fence": fence}}
-
-                    def complete():
-                        return peer._complete_request(pending, "stable", {
-                            "request_id": "request", "fence": fence}, message)
-
-                    def fail(sent):
-                        self.assertEqual(sent, message)
-                        if accepted:
-                            peer.handle(receipt)
-                        raise OSError("ambiguous write failure")
-
-                    peer.send = fail
-                    if accepted:
-                        self.assertEqual(complete(), receipt)
-                    else:
-                        with self.assertRaises(OSError):
-                            complete()
-                    peer.send = self.accept_write(peer)
-                    self.assertEqual(complete(), receipt)
-                    self.assertEqual(complete(), receipt)
-                    with self.assertRaises(ValueError):
-                        peer.handle({**receipt, "unexpected": True})
-                    if "completion" in message:
-                        conflict = ("applied" if not ensure else
-                                    {"outcome": "rejected", "code": "invalid_command"})
-                        with self.assertRaises(ValueError):
-                            peer.handle({**receipt, "completion": conflict})
-
-    def test_reconnect_resubmits_selected_origin_without_second_execution(self):
-        first = self.peer(connection_id="c_11111111")
-        first.accept_completions = False
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            peer = broker.peers["r_12345678"]
-            peer.completion_timeout = 0
-            peer.pending["effect"] = {"request_id": "request", "fence": first.fence}
-            with self.assertRaises(TimeoutError):
-                peer.complete("request", "effect", first.fence, "applied")
-            first.wait_for("completion")
-            second = self.peer(connection_id="c_22222222", epoch=12)
-            (self.root / "r_12345678/c_11111111/connection.json").unlink()
-            broker.refresh()
-            payload = {"remote_key": "r_12345678", "connection_id": "c_11111111",
-                       "principal_id": "principal-one", "request_id": "request",
-                       "effect_id": "effect", "executor_fence": first.fence,
-                       "completion": "applied"}
-            receipt = broker.handle_request(self.request("executor_completion", payload))
-            self.assertEqual(receipt, {"type": "completion_accepted", "request_id": "request",
-                                      "effect_id": "effect", "executor_fence": first.fence,
-                                      "completion": "applied"})
-            self.assertEqual(second.wait_for("completion")["executor_fence"], first.fence)
-            self.assertEqual(broker.peers["r_12345678"].executor_fence, second.fence)
-        finally:
-            broker.close()
-
-    def test_unmatched_receipt_cache_is_bounded_and_invalid_shapes_rejected(self):
-        peer = host.RemotePeer(None, {})
-        receipt = {"type": "completion_accepted", "request_id": "request",
-                   "effect_id": "effect", "executor_fence": {"executor_id": "e", "epoch": 1},
-                   "completion": "applied"}
-        for index in range(257):
-            peer.handle({**receipt, "request_id": str(index)})
-        self.assertEqual(len(peer.accepted_completions), 256)
-        self.assertNotIn(peer._receipt_key({**receipt, "request_id": "0"}),
-                         peer.accepted_completions)
-        for change in ({"completion": {}}, {"completion": "invalid"}, {"request_id": ""},
-                       {"executor_fence": {"executor_id": "e", "epoch": True}}):
+    def test_workspace_state_current_authority(self):
+        broker, peer, server = self.connected()
+        for change in ({"principal_id": "other"}, {"connection_id": "c_99999999"},
+                       {"executor_fence": {**peer.executor_fence, "epoch": 99}}):
             with self.subTest(change=change), self.assertRaises(ValueError):
-                peer.handle({**receipt, **change})
+                broker.handle_request(self.request("workspace_state", self.state_payload(peer, **change)))
+        self.assertFalse(peer.workspace_requests)
 
-    def test_receipt_before_waiter_reconciles_all_four_types_without_sending(self):
-        for kind, accepted_type in host.COMPLETION_RECEIPTS.items():
-            with self.subTest(kind=kind):
-                peer = host.RemotePeer(None, {})
-                peer.executor_fence = {"executor_id": "new", "epoch": 2}
-                peer.principal_id = "principal"
-                origin = {"executor_id": "old", "epoch": 1}
-                ensure = kind.startswith("ensure_")
-                message = {"type": kind, "request_id": "request",
-                           "ensure_id" if ensure else "effect_id": "stable",
-                           "executor_fence": origin}
-                if kind != "ensure_managed_page_cancellation_completed":
-                    message["completion"] = ({"outcome": "created", "window_id": "window",
-                                              "page_id": "page"} if ensure else "unknown")
-                receipt = {**message, "type": accepted_type}
-                peer.handle(receipt)
-                peer.send = mock.Mock(side_effect=AssertionError("receipt is not execution"))
-                self.assertEqual(peer._complete_request({}, "stable", {
-                    "request_id": "request", "fence": origin}, message), receipt)
-                peer.send.assert_not_called()
-                if ensure and "completion" in message:
-                    with self.assertRaises(ValueError):
-                        peer.handle({**receipt, "completion": {"outcome": "created",
-                                    "window_id": "window", "page_id": "page", "extra": True}})
+    def test_workspace_state_browser_boot(self):
+        broker, peer, server = self.connected()
+        with self.assertRaises(ValueError):
+            peer.workspace_state("state", peer.executor_fence, {**self.state(), "browser_boot_id": "old"})
+        self.assertFalse(peer.workspace_requests)
 
-    def test_unaccepted_completion_backlog_is_not_silently_evicted(self):
-        peer = host.RemotePeer(None, {})
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.completion_timeout = 0
-        peer.send = mock.Mock()
-        for index in range(256):
-            key = str(index)
-            peer.pending[key] = {"request_id": key, "fence": peer.executor_fence}
-            with self.assertRaises(TimeoutError):
-                peer.complete(key, key, peer.executor_fence, "unknown")
-        peer.pending["overflow"] = {"request_id": "overflow", "fence": peer.executor_fence}
-        with self.assertRaisesRegex(ValueError, "backlog"):
-            peer.complete("overflow", "overflow", peer.executor_fence, "unknown")
-        self.assertIn("overflow", peer.pending)
-        self.assertIn(("completion", "0"), peer.completions)
-        self.assertEqual(peer.send.call_count, 256)
+    def test_workspace_state_workspace_match(self):
+        broker, peer, server = self.connected()
+        value = self.state()
+        value["binding"]["page"]["workspace_id"] = "other"
+        with self.assertRaises(ValueError):
+            peer.workspace_state("state", peer.executor_fence, value)
 
-    def test_completion_retries_survive_failed_and_lost_writes(self):
-        for kind in ("effect", "ensure", "cancel"):
-            for after_write in (False, True):
-                with self.subTest(kind=kind, after_write=after_write):
-                    peer = host.RemotePeer(None, {})
-                    fence = {"executor_id": "executor", "epoch": 1}
-                    peer.executor_fence = fence
-                    peer.principal_id = "principal"
-                    if kind == "effect":
-                        peer.pending["effect"] = {"request_id": "request", "fence": fence}
-                        complete = lambda value: peer.complete("request", "effect", fence, value)
-                        value, conflict = "applied", "unknown"
-                    elif kind == "cancel":
-                        peer.pending_cancellations["effect"] = {
-                            "request_id": "request", "fence": fence,
-                        }
-                        complete = lambda value: peer.complete_cancellation(
-                            "request", "effect", fence, value)
-                        value, conflict = "not_applied", "unknown"
-                    else:
-                        peer.ensure_pending["ensure"] = {
-                            "request_id": "request", "workspace_id": "workspace",
-                            "fence": fence, "expected_page": None,
-                        }
-                        complete = lambda value: peer.complete_ensure(
-                            "principal", "workspace", "request", "ensure", fence, value)
-                        value = {"outcome": "created", "window_id": "window", "page_id": "page"}
-                        conflict = {"outcome": "rejected", "code": "invalid_command"}
-                    writes = []
+    def test_workspace_state_strict_fields(self):
+        broker, peer, server = self.connected()
+        value = self.state()
+        for change in ({"revision": True}, {"revision": 0}, {"revision": 2 ** 64},
+                       {"phase": "remote"}, {"binding": {"enable_id": "", "page": PAGE}},
+                       {"binding": None}, {"extra": True}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                peer.workspace_state("state", peer.executor_fence, {**value, **change})
 
-                    def fail(message):
-                        if after_write:
-                            writes.append(message)
-                        raise OSError("reply lost" if after_write else "write failed")
+    def test_workspace_native_payload_exact(self):
+        broker, peer, server = self.connected()
+        payload = self.state_payload(peer)
+        for field in (*payload, "extra"):
+            invalid = {**payload, "extra": 1} if field == "extra" else {
+                key: value for key, value in payload.items() if key != field}
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                broker.handle_request(self.request("workspace_state", invalid))
 
-                    peer.send = fail
-                    with self.assertRaises(OSError):
-                        complete(value)
-                    peer.send = self.accept_write(peer, writes)
-                    complete(value)
-                    complete(value)
-                    self.assertTrue(all(message == writes[0] for message in writes))
-                    with self.assertRaises(ValueError):
-                        complete(conflict)
-                    peer.executor_fence = {**fence, "epoch": 2}
-                    complete(value)
+    def test_workspace_duplicate_exact_and_conflict(self):
+        broker, peer, server = self.connected()
+        args = ("state", peer.executor_fence, self.state())
+        result = peer.workspace_state(*args)
+        self.assertEqual(peer.workspace_state(*args), result)
+        with self.assertRaises(ValueError):
+            peer.workspace_state("state", peer.executor_fence, self.state(revision=2))
+        self.assertEqual(sum(m["type"] == "workspace_state" for m in server.received), 1)
 
-    def test_late_consumed_acks_keep_reader_healthy_and_retry_is_idempotent(self):
-        for kind in ("topology", "retire"):
-            with self.subTest(kind=kind):
-                server = self.peer(connection_id="c_" + ("11111111" if kind == "topology"
-                                                         else "22222222"))
-                broker = host.BrowserBroker(self.root)
-                try:
-                    broker.refresh()
-                    peer = broker.peers["r_12345678"]
-                    peer.topology_timeout = 0
-                    consume = (peer.topology_response_consumed if kind == "topology"
-                               else peer.retire_ack_consumed)
-                    args = ("consume", "delivery-request", "stable", peer.executor_fence,
-                            "response-delivery")
-                    with self.assertRaises(TimeoutError):
-                        consume(*args)
-                    ack_type = ("topology_response_consumed_ack" if kind == "topology"
-                                else "retire_managed_page_ack_consumed_ack")
-                    ack = {"type": ack_type, "request_id": "consume",
-                           ("report_id" if kind == "topology" else "retire_id"): "stable",
-                           "executor_fence": peer.executor_fence,
-                           "response_delivery_id": "response-delivery"}
-                    server.send(ack)
-                    server.send({"type": "ping", "request_id": "barrier", "ping_id": "barrier"})
-                    server.wait_for("pong", request_id="barrier")
-                    expected = {key: value for key, value in ack.items() if key != "type"}
-                    self.assertEqual(consume(*args), expected)
-                    self.assertEqual(consume(*args), expected)
-                    for change in ({"request_id": "wrong"},
-                                   {"response_delivery_id": "wrong"},
-                                   {"executor_fence": {**peer.executor_fence, "epoch": 999}}):
-                        with self.assertRaises(ValueError):
-                            peer.handle({**ack, **change})
-                    with self.assertRaises(ValueError):
-                        consume("consume", "other-delivery", *args[2:])
-                    self.assertTrue(peer.connected)
-                finally:
-                    broker.close()
-
-    def test_consumed_ack_after_ambiguous_send_failure_is_correlated(self):
-        for after_write in (False, True):
-            with self.subTest(after_write=after_write):
-                peer = host.RemotePeer(None, {})
-                peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-                peer.topology_timeout = 0
-                writes = []
-
-                def fail(message):
-                    if after_write:
-                        writes.append(message)
-                    raise OSError("ambiguous write failure")
-
-                peer.send = fail
-                args = ("consume", "delivery", "report", peer.executor_fence, "response")
-                with self.assertRaises(OSError):
-                    peer.topology_response_consumed(*args)
-                self.assertFalse(peer.topology_consumed_requests)
-                peer.send = writes.append
-                with self.assertRaises(TimeoutError):
-                    peer.topology_response_consumed(*args)
-                ack = {"type": "topology_response_consumed_ack", "request_id": "consume",
-                       "report_id": "report", "executor_fence": peer.executor_fence,
-                       "response_delivery_id": "response"}
-                peer.handle(ack)
-                self.assertEqual(peer.topology_response_consumed(*args),
-                                 {key: value for key, value in ack.items() if key != "type"})
-                self.assertTrue(all(message == writes[0] for message in writes))
-
-    def test_late_retire_ack_is_forwarded_but_rejects_conflicting_correlation(self):
-        broker = mock.Mock()
-        broker.outbound = queue.Queue()
-        peer = host.RemotePeer(broker, {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-        })
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.retire_commands["retire"] = {
-            "request_id": "request", "fence": peer.executor_fence,
-            "origin_fence": peer.executor_fence,
-        }
-        peer.send = mock.Mock()
+    def test_workspace_ack_loss_and_late_ack(self):
+        broker, peer, server = self.connected()
+        server.accept = False
+        peer.workspace_timeout = 0
+        args = ("state", peer.executor_fence, self.state())
         with self.assertRaises(TimeoutError):
-            peer.complete_retire("request", "retire", peer.executor_fence,
-                                 peer.executor_fence, {"outcome": "retired"}, timeout=0)
-        ack = {"type": "retire_managed_page_ack", "request_id": "request",
-               "retire_id": "retire", "executor_fence": peer.executor_fence,
-               "origin_executor_fence": peer.executor_fence,
-               "response_delivery_id": "response", "completion": {"outcome": "retired"}}
-        for change in ({"retire_id": "wrong"}, {"completion": {"outcome": "already_retired"}}):
-            with self.assertRaises(ValueError):
-                peer.handle({**ack, **change})
-        peer.handle(ack)
-        self.assertEqual(broker.outbound.get_nowait()["event"],
-                         "abush_browser.retire_managed_page_ack")
-        self.assertEqual(peer.complete_retire("request", "retire", peer.executor_fence,
-                                             peer.executor_fence, {"outcome": "retired"}, timeout=0),
-                         {key: value for key, value in ack.items() if key != "type"})
+            peer.workspace_state(*args)
+        sent = server.wait_for("workspace_state")
+        receipt = {**sent, "type": "workspace_state_accepted"}
+        server.send(receipt)
+        self.barrier(server)
+        self.assertEqual(peer.workspace_state(*args), receipt)
+        server.send(receipt)
+        self.barrier(server, "duplicate")
+        self.assertTrue(peer.connected)
 
-    def test_completion_selection_is_serialized_before_socket_write(self):
-        peer = host.RemotePeer(None, {})
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.pending["effect"] = {"request_id": "request", "fence": peer.executor_fence}
-        writing = threading.Event()
-        release = threading.Event()
-        failures = []
-        writes = []
+    def test_workspace_wrong_receipt_does_not_close_peer(self):
+        broker, peer, server = self.connected()
+        server.accept = False
+        peer.workspace_timeout = 0
+        with self.assertRaises(TimeoutError):
+            peer.workspace_state("state", peer.executor_fence, self.state())
+        sent = server.wait_for("workspace_state")
+        receipt = {**sent, "type": "workspace_state_accepted"}
+        for change in ({"request_id": "wrong"}, {"executor_fence": {**peer.executor_fence, "epoch": 99}},
+                       {"state": self.state(revision=2)}, {"extra": True}):
+            server.send({**receipt, **change})
+        self.barrier(server)
+        self.assertIsNone(peer.workspace_requests["state"]["response"])
+        self.assertTrue(peer.connected)
 
+    def test_workspace_ambiguous_write_retains_correlation(self):
+        broker, peer, server = self.connected()
+        args = ("state", peer.executor_fence, self.state())
+        with mock.patch.object(peer, "send", side_effect=OSError("write failed")):
+            with self.assertRaises(OSError):
+                peer.workspace_state(*args)
+        self.assertIn("state", peer.workspace_requests)
+        self.assertEqual(peer.workspace_state(*args)["state"], self.state())
+
+    def test_workspace_reader_not_locked_during_send(self):
+        broker, peer, server = self.connected()
+        writing, release = threading.Event(), threading.Event()
+        result = []
+        original = peer.send
         def send(message):
+            original(message)
             writing.set()
-            if not release.wait(1):
-                raise TimeoutError("test write barrier was not released")
-            writes.append(message)
-            self.accept_write(peer)(message)
-
-        def complete():
+            if not release.wait(2):
+                raise TimeoutError("send barrier")
+        def worker():
             try:
-                peer.complete("request", "effect", peer.executor_fence, "applied")
+                result.append(peer.workspace_state("state", peer.executor_fence, self.state()))
             except Exception as error:
-                failures.append(error)
+                result.append(error)
+        with mock.patch.object(peer, "send", side_effect=send):
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+            try:
+                self.assertTrue(writing.wait(1))
+                self.assertTrue(peer.workspace_requests["state"]["done"].wait(1))
+            finally:
+                release.set()
+                thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result[0]["type"], "workspace_state_accepted")
 
-        peer.send = send
-        worker = threading.Thread(target=complete, daemon=True)
-        worker.start()
-        try:
-            self.assertTrue(writing.wait(1))
-            self.assertNotIn("effect", peer.pending)
-            self.assertEqual(peer.completions[("completion", "effect")]["message"]["completion"],
-                             "applied")
-        finally:
-            release.set()
-            worker.join(timeout=2)
-        self.assertFalse(worker.is_alive())
-        self.assertEqual(failures, [])
-        peer.complete("request", "effect", peer.executor_fence, "applied")
-        self.assertEqual(writes, [writes[0]])
-        for request_id, effect_id in (("wrong", "effect"), ("request", "wrong")):
-            with self.assertRaises(ValueError):
-                peer.complete(request_id, effect_id, peer.executor_fence, "applied")
+    def test_workspace_unacked_backlog_not_evicted(self):
+        broker, peer, server = self.connected()
+        peer.workspace_timeout = 0
+        with mock.patch.object(peer, "send"):
+            for index in range(256):
+                with self.assertRaises(TimeoutError):
+                    peer.workspace_state(str(index), peer.executor_fence, self.state())
+            with self.assertRaisesRegex(ValueError, "backlog"):
+                peer.workspace_state("overflow", peer.executor_fence, self.state())
+        self.assertIn("0", peer.workspace_requests)
 
-    def test_completion_history_is_bounded_and_evicted_retry_fails_closed(self):
-        peer = host.RemotePeer(None, {})
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.send = self.accept_write(peer)
-        for index in range(257):
-            effect_id = f"effect-{index}"
-            peer.pending[effect_id] = {"request_id": effect_id, "fence": peer.executor_fence}
-            peer.complete(effect_id, effect_id, peer.executor_fence, "applied")
-        self.assertEqual(len(peer.completions), 256)
-        with self.assertRaises(ValueError):
-            peer.complete("effect-0", "effect-0", peer.executor_fence, "applied")
-        peer.complete("effect-256", "effect-256", peer.executor_fence, "applied")
+    def test_execute_background_exact_native_event(self):
+        broker, peer, server = self.connected()
+        message = self.execute(peer)
+        server.send(message)
+        payload = self.event(broker, "abush_browser.execute")
+        self.assertEqual(payload, {**self.identity(peer), **{key: value for key, value in message.items()
+                                                             if key != "type"}})
+        self.assertFalse(peer.workspace_requests, "host must not create an enable")
 
-    def test_consumed_history_is_bounded_and_evicted_ack_fails_closed(self):
-        peer = host.RemotePeer(None, {})
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.topology_timeout = 0
-        peer.send = mock.Mock()
-        for index in range(257):
-            with self.assertRaises(TimeoutError):
-                peer.topology_response_consumed(
-                    f"request-{index}", "delivery", "report", peer.executor_fence, "response")
-        self.assertEqual(len(peer.transport_history), 256)
-        ack = {"type": "topology_response_consumed_ack", "request_id": "request-0",
-               "report_id": "report", "executor_fence": peer.executor_fence,
-               "response_delivery_id": "response"}
+    def test_execute_authorization_required(self):
+        broker, peer, server = self.connected()
+        message = self.execute(peer)
+        message.pop("authorization")
         with self.assertRaises(ValueError):
-            peer.handle(ack)
-        peer.handle({**ack, "request_id": "request-256"})
+            peer.handle(message)
 
-    def test_completed_commands_replay_result_without_second_native_execution(self):
-        broker = mock.Mock()
-        broker.outbound = queue.Queue()
-        peer = host.RemotePeer(broker, {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-            "display_name": "remote",
-        })
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.principal_id = "principal"
-        peer.send = mock.Mock(side_effect=self.accept_write(peer))
-        ensure = {"type": "ensure_managed_page", "request_id": "request",
-                  "ensure_id": "ensure", "workspace_id": "workspace", "expected_page": None,
-                  "executor_fence": peer.executor_fence}
-        peer.handle(ensure)
-        broker.outbound.get_nowait()
-        peer.complete_ensure("principal", "workspace", "request", "ensure", peer.executor_fence,
-                             {"outcome": "created", "window_id": "window", "page_id": "page"})
-        peer.handle(ensure)
-        self.assertEqual(peer.send.call_count, 2)
-        with self.assertRaises(queue.Empty):
-            broker.outbound.get_nowait()
-        with self.assertRaises(ValueError):
-            peer.handle({**ensure, "workspace_id": "wrong"})
-        execute = {"type": "execute", "request_id": "execute", "effect_id": "effect",
-                   "executor_fence": peer.executor_fence, "command": {"command": "close_window",
-                   "window": {"workspace_id": "workspace", "window_id": "window",
-                              "generation": 1}}}
-        peer.handle(execute)
-        broker.outbound.get_nowait()
-        peer.complete("execute", "effect", peer.executor_fence, "applied")
-        peer.handle(execute)
-        self.assertEqual(peer.send.call_count, 4)
-        with self.assertRaises(queue.Empty):
-            broker.outbound.get_nowait()
-        with self.assertRaises(ValueError):
-            peer.handle({**execute, "request_id": "wrong"})
+    def test_execute_authorization_positive_exact(self):
+        broker, peer, server = self.connected()
+        for change in ({"revision": 0}, {"revision": True}, {"revision": 2 ** 64},
+                       {"enable_id": ""}, {"browser_boot_id": "old"}, {"extra": 1}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                peer.handle(self.execute(peer, authorization={**AUTH, **change}))
 
-    def test_uncorrelated_completion_does_not_consume_pending_effect(self):
-        peer = host.RemotePeer(None, {})
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.pending["effect"] = {"request_id": "right", "fence": peer.executor_fence}
-        with self.assertRaises(ValueError):
-            peer.complete("wrong", "effect", peer.executor_fence, "applied")
+    def test_execute_page_flat_workspace_positive(self):
+        broker, peer, server = self.connected()
+        for page in ({**PAGE, "workspace_id": "other"}, {**PAGE, "generation": True},
+                     {**PAGE, "generation": 0}, {**PAGE, "window_id": "old"},
+                     {"window": {"workspace_id": "workspace", "window_id": "w", "generation": 1},
+                      "page_id": "page", "generation": 1}):
+            message = self.execute(peer)
+            message["command"]["page"] = page
+            with self.subTest(page=page), self.assertRaises(ValueError):
+                peer.handle(message)
+
+    def test_execute_strict_http_https_urls(self):
+        broker, peer, server = self.connected()
+        for url in ("file:///etc/passwd", "javascript:alert(1)", "https:example.test", "https:///",
+                    "https://user:password@example.test/", "https://example.test:99999/",
+                    "https://example.test/\n", "https://example.test/a b", ""):
+            message = self.execute(peer)
+            message["command"]["url"] = url
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                peer.handle(message)
+        message = self.execute(peer)
+        message["command"]["url"] = "http://example.test:8080/"
+        peer.handle(message)
         self.assertIn("effect", peer.pending)
 
-    def test_duplicate_effect_rejects_different_payload_without_second_delivery(self):
-        broker = mock.Mock()
-        broker.outbound = queue.Queue()
-        peer = host.RemotePeer(broker, {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-        })
-        peer.principal_id = "principal"
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        page = {
-            "window": {"workspace_id": "workspace", "window_id": "window", "generation": 1},
-            "page_id": "page", "generation": 1,
-        }
-        message = {
-            "type": "execute", "request_id": "request", "effect_id": "effect",
-            "executor_fence": peer.executor_fence,
-            "command": {"command": "navigate", "page": page, "url": "https://one.test/"},
-        }
+    def test_execute_duplicate_is_idempotent_conflict_fails(self):
+        broker, peer, server = self.connected()
+        message = self.execute(peer)
         peer.handle(message)
-        first = broker.outbound.get_nowait()
-        self.assertEqual(first["payload"]["command"]["url"], "https://one.test/")
-        peer.handle(json.loads(json.dumps(message)))
-        with self.assertRaises(queue.Empty):
-            broker.outbound.get_nowait()
-        conflicting = json.loads(json.dumps(message))
-        conflicting["command"]["url"] = "https://two.test/"
-        with self.assertRaisesRegex(ValueError, "conflicting duplicate"):
-            peer.handle(conflicting)
-        with self.assertRaises(queue.Empty):
-            broker.outbound.get_nowait()
-
-    def test_owner_display_requires_exact_fields_and_matches_acceptance(self):
-        peer = host.RemotePeer(None, {})
-        prepared = {
-            "type": "hello_prepared", "request_id": "request",
-            "principal_id": "principal", "executor_fence": {
-                "executor_id": "executor", "epoch": 1,
-            },
-            "owner_display": {
-                "daemon_instance_id": "instance", "daemon_boot_id": "boot",
-                "workbench_name": "workbench",
-            },
-        }
-        peer._accept_prepared(prepared)
-        peer._accept_hello({**prepared, "type": "hello_accepted"})
+        self.event(broker, "abush_browser.execute")
+        peer.handle(message)
+        self.assertTrue(broker.outbound.empty())
         with self.assertRaises(ValueError):
-            peer._accept_hello({**prepared, "type": "hello_accepted", "owner_display": {
-                **prepared["owner_display"], "workbench_name": "other",
-            }})
+            peer.handle(self.execute(peer, authorization={**AUTH, "revision": 2}))
+
+    def test_execute_old_fence_never_authorized(self):
+        broker, peer, server = self.connected(epoch=2)
         with self.assertRaises(ValueError):
-            peer._accept_prepared({**prepared, "owner_display": {
-                **prepared["owner_display"], "extra": "rejected",
-            }})
+            peer.handle(self.execute(peer, executor_fence={"executor_id": "origin", "epoch": 1}))
+        self.assertFalse(peer.pending)
+        with mock.patch.dict(broker.peers, {"r_12345678": mock.Mock(connected=True,
+                             principal_id="principal", metadata={"connection_id": "c_99999999"})}):
+            with self.assertRaises(ValueError):
+                peer.handle(self.execute(peer))
 
-    def test_positive_generations_and_typed_hello_rejection(self):
-        peer = host.RemotePeer(None, {})
-        page = {"window": {"workspace_id": "w", "window_id": "x", "generation": 1},
-                "page_id": "p", "generation": 1}
-        self.assertTrue(peer._valid_page_ref(page))
-        for path in ("window", "page"):
-            invalid = json.loads(json.dumps(page))
-            if path == "window":
-                invalid["window"]["generation"] = 0
-            else:
-                invalid["generation"] = 0
-            self.assertFalse(peer._valid_page_ref(invalid))
-        with self.assertRaisesRegex(ValueError, "unsupported_version"):
-            peer._accept_hello({"type": "hello_rejected", "request_id": "hello",
-                                "reason": "unsupported_version"})
-        with self.assertRaisesRegex(ValueError, "invalid hello rejection"):
-            peer._accept_hello({"type": "hello_rejected", "request_id": "hello",
-                                "reason": "free form"})
+    def test_old_window_commands_rejected(self):
+        broker, peer, server = self.connected()
+        for command in ({"command": "close_window", "window": {"workspace_id": "workspace",
+                        "window_id": "w", "generation": 1}}, {"command": "close_page", "page": PAGE}):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                peer.handle(self.execute(peer, command=command))
 
-    def test_same_principal_new_boot_failover_updates_pinned_owner(self):
-        first = self.peer(connection_id="c_11111111")
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            replacement_owner = {
-                "daemon_instance_id": "daemon-instance",
-                "daemon_boot_id": "daemon-boot-two",
-                "workbench_name": "renamed-workbench",
-            }
-            second = self.peer(connection_id="c_22222222", owner_display=replacement_owner)
-            broker.refresh()
-            self.next_event(broker, "abush_browser.remote_state")
-            self.assertEqual(broker.principals["r_12345678"],
-                             ("principal-one", first.owner_display))
+    def test_legacy_peer_operations_rejected_without_disconnect(self):
+        broker, peer, server = self.connected()
+        for kind in ("ensure_managed_page", "cancel_ensure_managed_page", "retire_managed_page",
+                     "topology_report_response", "retire_managed_page_ack", "Execute", "Ping"):
+            server.send({"type": kind})
+        self.barrier(server)
+        self.assertTrue(peer.connected)
+        self.assertFalse(peer.pending)
 
-            broker.peers["r_12345678"].close(emit=True)
+    def test_legacy_native_operations_rejected(self):
+        broker, peer, server = self.connected()
+        for operation in ("ensure_managed_page_completion", "ensure_managed_page_cancellation_completion",
+                          "managed_page_moved_outside", "topology_response_consumed",
+                          "retire_managed_page_completion", "retire_managed_page_ack_consumed",
+                          "register_candidate_lease", "arm_candidate_lease", "admit_candidate",
+                          "finish_candidate_lease", "release_candidate_lease", "bind_x11_window",
+                          "verify_x11_window", "clear_x11_window"):
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "unsupported"):
+                broker.handle_request(self.request(operation, {}))
 
-            replacement = broker.peers["r_12345678"]
-            self.assertEqual(replacement.owner_display, replacement_owner)
-            self.assertEqual(broker.principals["r_12345678"],
-                             ("principal-one", replacement_owner))
-            state = self.next_event(broker, "abush_browser.remote_state")["payload"]
-            self.assertEqual(state["owner_display"], replacement_owner)
-            self.assertTrue(second.connected.wait(2))
-        finally:
-            broker.close()
+    def test_cancel_distinct_request_and_exact_event(self):
+        broker, peer, server = self.connected()
+        peer.handle(self.execute(peer))
+        cancel = {"type": "cancel", "request_id": "cancel", "effect_id": "effect",
+                  "executor_fence": peer.executor_fence}
+        peer.handle(cancel)
+        self.assertEqual(self.event(broker, "abush_browser.cancel"), {
+            **self.identity(peer), "request_id": "cancel", "execution_request_id": "execute",
+            "effect_id": "effect", "executor_fence": peer.executor_fence})
+        with self.assertRaises(ValueError):
+            peer.handle({**cancel, "request_id": "execute"})
+        peer.handle(cancel)
+        self.assertTrue(broker.outbound.empty())
+        with self.assertRaises(ValueError):
+            peer.handle({**cancel, "request_id": "conflict"})
 
-    def test_failover_cannot_switch_pinned_daemon_instance(self):
-        first = self.peer(connection_id="c_11111111")
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            pinned = ("principal-one", first.owner_display)
-            second = self.peer(connection_id="c_22222222", owner_display={
-                "daemon_instance_id": "other-instance",
-                "daemon_boot_id": "daemon-boot-two",
-                "workbench_name": "workbench",
-            })
-            broker.refresh()
-            broker.peers["r_12345678"].close(emit=True)
-            self.assertNotIn("r_12345678", broker.peers)
-            self.assertTrue(second.done.wait(2))
-            self.assertEqual(broker.principals["r_12345678"], pinned)
-        finally:
-            broker.close()
+    def test_cancellation_cannot_be_applied(self):
+        broker, peer, server = self.connected()
+        with self.assertRaises(ValueError):
+            peer.complete_cancellation("cancel", "effect", peer.executor_fence, "applied")
+        with self.assertRaises(ValueError):
+            peer.handle({"type": "cancellation_completion_accepted", "request_id": "cancel",
+                         "effect_id": "effect", "executor_fence": peer.executor_fence,
+                         "completion": "applied"})
 
-    def test_failover_cannot_switch_pinned_principal(self):
-        first = self.peer(connection_id="c_11111111", principal="principal-one")
-        broker = host.BrowserBroker(self.root)
-        try:
-            broker.refresh()
-            pinned = ("principal-one", first.owner_display)
-            self.assertEqual(broker.principals["r_12345678"], pinned)
-            second = self.peer(connection_id="c_22222222", principal="principal-two")
-            broker.refresh()
-            broker.peers["r_12345678"].close(emit=True)
-            self.assertNotIn("r_12345678", broker.peers)
-            self.assertTrue(second.done.wait(2))
-            self.assertEqual(broker.principals["r_12345678"], pinned)
-        finally:
-            broker.close()
-
-    def test_transport_timeout_forgets_request_and_retry_uses_new_delivery_id(self):
-        broker = mock.Mock()
-        peer = host.RemotePeer(broker, {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-        })
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
-        peer.topology_timeout = 0.01
-        sent = []
-        peer.send = sent.append
-        page = {"window": {"workspace_id": "workspace", "window_id": "window",
-                           "generation": 1}, "page_id": "page", "generation": 1}
-        with self.assertRaises(TimeoutError):
-            peer.report_managed_page_moved_outside(
-                "delivery-one", "stable-report", peer.executor_fence,
-                peer.executor_fence, page, timeout=0.01)
-        self.assertNotIn("delivery-one", peer.topology_requests)
-        with self.assertRaises(TimeoutError):
-            peer.report_managed_page_moved_outside(
-                "delivery-two", "stable-report", peer.executor_fence,
-                peer.executor_fence, page, timeout=0.01)
-        self.assertEqual([message["request_id"] for message in sent],
-                         ["delivery-one", "delivery-two"])
-        self.assertEqual({message["report_id"] for message in sent}, {"stable-report"})
-
-    def test_consumed_ack_rejects_wrong_or_old_correlation(self):
-        broker = mock.Mock()
-        broker.outbound = queue.Queue()
-        peer = host.RemotePeer(broker, {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-        })
-        peer.executor_fence = {"executor_id": "executor", "epoch": 2}
-        state = {"identity": {
-            "report_id": "stable-report", "fence": peer.executor_fence,
-            "response_delivery_id": "delivery-current",
-        }, "done": threading.Event(), "response": None}
-        peer.topology_consumed_requests["consumed-current"] = state
-        for change in (
-            {"request_id": "consumed-old"},
-            {"report_id": "other-report"},
-            {"executor_fence": {"executor_id": "executor", "epoch": 1}},
-            {"response_delivery_id": "delivery-old"},
-        ):
-            message = {
-                "type": "topology_response_consumed_ack",
-                "request_id": "consumed-current", "report_id": "stable-report",
-                "executor_fence": peer.executor_fence,
-                "response_delivery_id": "delivery-current", **change,
-            }
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                peer.handle(message)
-            self.assertFalse(state["done"].is_set())
-        peer.handle({
-            "type": "topology_response_consumed_ack",
-            "request_id": "consumed-current", "report_id": "stable-report",
-            "executor_fence": peer.executor_fence,
-            "response_delivery_id": "delivery-current",
-        })
-        self.assertTrue(state["done"].is_set())
-
-    def test_managed_page_moved_outside_round_trip_is_correlated(self):
-        server = self.peer()
-        broker = host.BrowserBroker(self.root)
-        page = {"window": {"workspace_id": "workspace", "window_id": "window",
-                           "generation": 1}, "page_id": "page", "generation": 1}
-        try:
-            broker.refresh()
-            payload = {"remote_key": "r_12345678", "connection_id": "c_12345678",
-                       "principal_id": "principal-one", "request_id": "topology-one",
-                       "report_id": "stable-topology-one",
-                       "executor_fence": server.fence,
-                       "origin_executor_fence": server.fence, "page": page}
-            result = {}
-            failure = []
-
-            def report():
-                try:
-                    result.update(broker.handle_request(
-                        self.request("managed_page_moved_outside", payload)))
-                except Exception as error:
-                    failure.append(error)
-
-            first = threading.Thread(target=report)
-            first.start()
-            self.assertEqual(server.wait_for("managed_page_moved_outside"), {
-                "type": "managed_page_moved_outside", "request_id": "topology-one",
-                "report_id": "stable-topology-one", "executor_fence": server.fence,
-                "origin_executor_fence": server.fence, "page": page,
-            })
-            server.send({
-                "type": "topology_report_response", "request_id": "topology-one",
-                "report_id": "stable-topology-one", "executor_fence": server.fence,
-                "response_delivery_id": "topology-response",
-                "result": {"outcome": "already_converged"},
-            })
-            first.join(timeout=2)
-            self.assertFalse(first.is_alive())
-            self.assertEqual(failure, [])
-            self.assertEqual(result, {
-                "request_id": "topology-one", "report_id": "stable-topology-one",
-                "executor_fence": server.fence,
-                "response_delivery_id": "topology-response",
-                "result": {"outcome": "already_converged"},
-            })
-            consumed = {key: value for key, value in payload.items()
-                        if key not in {"page", "origin_executor_fence"}}
-            consumed["request_id"] = "topology-consumed-request"
-            consumed["delivery_request_id"] = "topology-one"
-            consumed["response_delivery_id"] = "topology-response"
-            confirmation = {}
-            failure.clear()
-
-            def consume():
-                try:
-                    confirmation.update(broker.handle_request(
-                        self.request("topology_response_consumed", consumed)))
-                except Exception as error:
-                    failure.append(error)
-
-            consumer = threading.Thread(target=consume)
-            consumer.start()
-            self.assertEqual(server.wait_for("topology_response_consumed"), {
-                "type": "topology_response_consumed", "request_id": "topology-consumed-request",
-                "delivery_request_id": "topology-one", "report_id": "stable-topology-one",
-                "executor_fence": server.fence, "response_delivery_id": "topology-response",
-            })
-            self.assertTrue(consumer.is_alive(), "native completion must wait for server ACK")
-            server.send({
-                "type": "topology_response_consumed_ack",
-                "request_id": "topology-consumed-request", "report_id": "stable-topology-one",
-                "executor_fence": server.fence, "response_delivery_id": "topology-response",
-            })
-            consumer.join(timeout=2)
-            self.assertFalse(consumer.is_alive())
-            self.assertEqual(failure, [])
-            self.assertEqual(confirmation, {
-                "request_id": "topology-consumed-request", "report_id": "stable-topology-one",
-                "executor_fence": server.fence, "response_delivery_id": "topology-response",
-            })
-            for field in ("delivery_request_id", None):
-                invalid = dict(consumed)
-                if field is None:
-                    invalid["unexpected"] = True
-                else:
-                    invalid.pop(field)
-                with self.subTest(topology_consumed_field=field), self.assertRaises(ValueError):
-                    broker.handle_request(self.request("topology_response_consumed", invalid))
-        finally:
-            broker.close()
-
-    def test_topology_report_reauthorizes_rotated_fence_with_stable_identity(self):
-        old = self.peer(connection_id="c_old00000", epoch=1)
-        broker = host.BrowserBroker(self.root)
-        page = {"window": {"workspace_id": "workspace", "window_id": "window",
-                           "generation": 1}, "page_id": "page", "generation": 1}
-        try:
-            broker.refresh()
-            broker.peers["r_12345678"].topology_timeout = 0.02
-            original = {
-                "remote_key": "r_12345678", "connection_id": "c_old00000",
-                "principal_id": "principal-one", "request_id": "delivery-old",
-                "report_id": "stable-report", "executor_fence": old.fence,
-                "origin_executor_fence": old.fence, "page": page,
-            }
-            with self.assertRaises(TimeoutError):
-                broker.handle_request(self.request("managed_page_moved_outside", original))
-            self.assertEqual(old.wait_for("managed_page_moved_outside"), {
-                "type": "managed_page_moved_outside", "request_id": "delivery-old",
-                "report_id": "stable-report", "executor_fence": old.fence,
-                "origin_executor_fence": old.fence, "page": page,
-            })
-
-            replacement = self.peer(connection_id="c_new00000", epoch=2,
-                                    owner_display=old.owner_display)
-            (self.root / "r_12345678" / "c_old00000" / "connection.json").unlink()
-            broker.refresh()
-            self.assertTrue(replacement.connected.wait(1))
-            current = {
-                **original,
-                "connection_id": "c_new00000",
-                "request_id": "delivery-new",
-                "executor_fence": replacement.fence,
-            }
-            result = {}
-
-            def report():
-                result.update(broker.handle_request(
-                    self.request("managed_page_moved_outside", current)))
-
-            worker = threading.Thread(target=report)
-            worker.start()
-            self.assertEqual(replacement.wait_for("managed_page_moved_outside"), {
-                "type": "managed_page_moved_outside", "request_id": "delivery-new",
-                "report_id": "stable-report", "executor_fence": replacement.fence,
-                "origin_executor_fence": old.fence, "page": page,
-            })
-            replacement.send({
-                "type": "topology_report_response", "request_id": "delivery-new",
-                "report_id": "stable-report", "executor_fence": replacement.fence,
-                "response_delivery_id": "response-stable",
-                "result": {"outcome": "applied"},
-            })
+    def test_terminal_native_success_requires_durable_socket_receipt(self):
+        server = self.server()
+        server.accept = False
+        native = self.native()
+        native.broker.refresh()
+        peer = native.broker.peers["r_12345678"]
+        self.event(native.broker, "abush_browser.remote_state")
+        native._dispatch(self.request("executor_completion", self.terminal(peer)))
+        sent = server.wait_for("completion")
+        self.assertTrue(native.outbound.empty())
+        receipt = {**sent, "type": "completion_accepted"}
+        server.send(receipt)
+        result = native.outbound.get(timeout=2)
+        self.assertEqual(result, {"version": 1, "reply_to": "executor_completion", "ok": True,
+                                  "payload": receipt})
+        with native.request_workers_lock:
+            workers = list(native.request_workers)
+        for worker in workers:
             worker.join(timeout=2)
             self.assertFalse(worker.is_alive())
-            self.assertEqual(result, {
-                "request_id": "delivery-new",
-                "report_id": "stable-report",
-                "executor_fence": replacement.fence,
-                "response_delivery_id": "response-stable",
-                "result": {"outcome": "applied"},
-            })
-        finally:
-            broker.close()
 
-    def test_uncorrelated_durable_response_is_forwarded_for_extension_replay(self):
-        broker = mock.Mock()
-        broker.outbound = queue.Queue()
-        peer = host.RemotePeer(broker, {
-            "remote_key": "r_12345678", "connection_id": "c_12345678",
-        })
-        peer.principal_id = "principal"
-        peer.executor_fence = {"executor_id": "executor", "epoch": 2}
-        peer.handle({
-            "type": "topology_report_response", "request_id": "replayed-delivery",
-            "report_id": "stable-report", "executor_fence": peer.executor_fence,
-            "response_delivery_id": "stable-response",
-            "result": {"outcome": "already_converged"},
-        })
-        forwarded = broker.outbound.get_nowait()
-        self.assertEqual(forwarded["event"], "abush_browser.topology_report_response")
-        self.assertEqual(forwarded["payload"]["report_id"], "stable-report")
-        self.assertEqual(forwarded["payload"]["request_id"], "replayed-delivery")
-        self.assertEqual(forwarded["payload"]["executor_fence"], peer.executor_fence)
+    def test_terminal_persistence_failure_no_ack_no_success(self):
+        broker, peer, server = self.connected()
+        server.accept = False  # Daemon persistence failure withholds durable receipt.
+        peer.completion_timeout = 0
+        with self.assertRaises(TimeoutError):
+            broker.handle_request(self.request("executor_completion", self.terminal(peer)))
+        sent = server.wait_for("completion")
+        self.assertEqual(sent["completion"], "applied")
+        self.assertIsNone(peer.completions[("completion", "effect")]["response"])
 
-    def test_v6_topology_messages_and_old_fence_response_are_rejected(self):
-        peer = host.RemotePeer(None, {})
-        peer.executor_fence = {"executor_id": "executor", "epoch": 1}
+    def test_terminal_conflicting_retry_never_changes_selection(self):
+        broker, peer, server = self.connected()
+        result = broker.handle_request(self.request("executor_completion", self.terminal(peer)))
         with self.assertRaises(ValueError):
-            peer._accept_hello({
-                "type": "hello_accepted", "request_id": "hello",
-                "principal_id": "principal", "executor_fence": peer.executor_fence,
-                "default_window": {"workspace_id": "w", "window_id": "x", "generation": 1},
-            })
+            broker.handle_request(self.request("executor_completion", self.terminal(peer, completion="unknown")))
+        self.assertEqual(peer.completions[("completion", "effect")]["response"], result)
+
+    def test_terminal_old_origin_current_transport_no_host_history(self):
+        broker, peer, server = self.connected(epoch=2)
+        origin = {"executor_id": "old-host", "epoch": 1}
+        payload = self.terminal(peer, connection_id="c_99999999", executor_fence=origin)
+        self.assertFalse(peer.pending)
+        result = broker.handle_request(self.request("executor_completion", payload))
+        self.assertEqual(result["executor_fence"], origin)
+        self.assertEqual(server.wait_for("completion")["executor_fence"], origin)
+        self.assertEqual(peer.executor_fence, server.fence)
+        self.assertFalse(peer.pending)
+        self.assertFalse(peer.workspace_requests)
+
+    def test_terminal_current_principal_required(self):
+        broker, peer, server = self.connected()
+        with mock.patch.object(peer, "send") as send:
+            with self.assertRaises(ValueError):
+                broker.handle_request(self.request("executor_completion", self.terminal(peer, principal_id="other")))
+            send.assert_not_called()
+
+    def test_terminal_native_fields_and_fence_strict(self):
+        broker, peer, server = self.connected()
+        payload = self.terminal(peer)
+        for change in ({"request_id": ""}, {"effect_id": ""}, {"connection_id": "../escape"},
+                       {"executor_fence": {"executor_id": "e", "epoch": True}},
+                       {"executor_fence": {"executor_id": "e", "epoch": 0}},
+                       {"completion": "invalid"}, {"extra": 1}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                broker.handle_request(self.request("executor_completion", {**payload, **change}))
+
+    def test_terminal_late_receipt_and_duplicate_idempotent(self):
+        broker, peer, server = self.connected()
+        server.accept = False
+        peer.completion_timeout = 0
+        payload = self.terminal(peer)
+        with self.assertRaises(TimeoutError):
+            broker.handle_request(self.request("executor_completion", payload))
+        receipt = {**server.wait_for("completion"), "type": "completion_accepted"}
+        server.send(receipt)
+        self.barrier(server)
+        self.assertEqual(broker.handle_request(self.request("executor_completion", payload)), receipt)
+        server.send(receipt)
+        self.barrier(server, "late")
+        self.assertTrue(peer.connected)
+        self.assertEqual(sum(m["type"] == "completion" for m in server.received), 1)
+
+    def test_terminal_conflicting_ack_does_not_close_valid_peer(self):
+        broker, peer, server = self.connected()
+        result = broker.handle_request(self.request("executor_completion", self.terminal(peer)))
+        server.send({**result, "completion": "unknown"})
+        self.barrier(server)
+        self.assertTrue(peer.connected)
+        self.assertEqual(peer.completions[("completion", "effect")]["response"], result)
+
+    def test_terminal_write_failure_retains_selection_and_retries(self):
+        broker, peer, server = self.connected()
+        payload = self.terminal(peer)
+        with mock.patch.object(peer, "send", side_effect=OSError("ambiguous write")):
+            with self.assertRaises(OSError):
+                broker.handle_request(self.request("executor_completion", payload))
+        self.assertIn(("completion", "effect"), peer.completions)
+        self.assertEqual(broker.handle_request(self.request("executor_completion", payload))["completion"], "applied")
+
+    def test_terminal_unacked_backlog_not_evicted(self):
+        broker, peer, server = self.connected()
+        peer.completion_timeout = 0
+        with mock.patch.object(peer, "send"):
+            for index in range(256):
+                with self.assertRaises(TimeoutError):
+                    peer.complete(str(index), str(index), peer.executor_fence, "unknown")
+            with self.assertRaisesRegex(ValueError, "backlog"):
+                peer.complete("overflow", "overflow", peer.executor_fence, "unknown")
+        self.assertIn(("completion", "0"), peer.completions)
+
+    def test_terminal_receipt_before_waiter_is_exact(self):
+        broker, peer, server = self.connected()
+        receipt = {"type": "completion_accepted", "request_id": "execute", "effect_id": "effect",
+                   "executor_fence": {"executor_id": "old", "epoch": 1}, "completion": "applied"}
+        server.send(receipt)
+        self.barrier(server)
+        with mock.patch.object(peer, "send") as send:
+            self.assertEqual(peer.complete("execute", "effect", receipt["executor_fence"], "applied"), receipt)
+            send.assert_not_called()
+
+    def test_reconnect_replays_origin_terminal_not_execute(self):
+        broker, peer, first = self.connected()
+        first.accept = False
+        peer.completion_timeout = 0
+        with self.assertRaises(TimeoutError):
+            peer.complete("execute", "effect", peer.executor_fence, "applied")
+        first.wait_for("completion")
+        origin = peer.executor_fence
+        second = self.server(connection="c_22222222", epoch=2)
+        (self.root / "r_12345678/c_12345678/connection.json").unlink()
+        broker.refresh()
+        current = broker.peers["r_12345678"]
+        payload = self.terminal(current, connection_id="c_12345678", executor_fence=origin)
+        result = broker.handle_request(self.request("executor_completion", payload))
+        self.assertEqual(result["executor_fence"], origin)
+        self.assertEqual(second.wait_for("completion")["executor_fence"], origin)
+        self.assertEqual(current.executor_fence, second.fence)
+        self.assertFalse(current.pending)
+
+    def test_principal_daemon_instance_pin_allows_boot_refresh(self):
+        broker, peer, first = self.connected()
+        second = self.server(connection="c_22222222", epoch=2, owner={**OWNER, "daemon_boot_id": "new"})
+        (self.root / "r_12345678/c_12345678/connection.json").unlink()
+        broker.refresh()
+        self.assertEqual(broker.peers["r_12345678"].executor_fence, second.fence)
+
+    def test_principal_replacement_rejected(self):
+        broker, peer, first = self.connected()
+        self.server(connection="c_22222222", principal="foreign")
+        (self.root / "r_12345678/c_12345678/connection.json").unlink()
+        self.assertFalse(broker.refresh()[0]["connected"])
+
+    def test_secure_metadata_modes_and_socket_path(self):
+        self.server()
+        path = self.root / "r_12345678/c_12345678/connection.json"
+        self.assertEqual(host.validate_remote_metadata(path, self.root)["connection_id"], "c_12345678")
+        path.chmod(0o644)
         with self.assertRaises(ValueError):
-            peer.handle({"type": "topology_response", "request_id": "request", "result": {
-                "outcome": "page_moved_outside",
-            }})
-        peer.topology_requests["delivery"] = {
-            "identity": {"report_id": "report", "fence": peer.executor_fence},
-            "done": threading.Event(), "response": None,
-        }
+            host.validate_remote_metadata(path, self.root)
+        path.chmod(0o600)
+        metadata = json.loads(path.read_text())
+        metadata["browser_socket"] = "/outside/browser-peer.sock"
+        path.write_text(json.dumps(metadata))
         with self.assertRaises(ValueError):
-            peer.handle({
-                "type": "topology_report_response", "request_id": "delivery",
-                "report_id": "report",
-                "executor_fence": {"executor_id": "executor", "epoch": 2},
-                "response_delivery_id": "response", "result": {"outcome": "applied"},
-            })
+            host.validate_remote_metadata(path, self.root)
+
+    def test_native_bootstrap_current_incarnation_exact(self):
+        native = self.native()
+        request = {"version": 1, "id": "bootstrap", "service": "native_host",
+                   "operation": "bootstrap", "payload": {}}
+        native._respond(request)
+        self.assertEqual(native.outbound.get(timeout=1), {"version": 1, "reply_to": "bootstrap",
+            "ok": True, "payload": {"browser_boot_id": BOOT["browser_boot_id"], "browser_pid": 42,
+                                     "browser_starttime": "123", "ordinary_launch_leases": []}})
+        native._respond({**request, "payload": {"extra": True}})
+        self.assertFalse(native.outbound.get(timeout=1)["ok"])
+
+    def test_native_remote_snapshot_written_before_reader_activation(self):
+        native = self.native()
+        native.broker.write_barrier = threading.Event
+        peer = mock.Mock()
+        peer.logical_state.return_value = {"workspace_id": "workspace"}
+        writes = []
+        with mock.patch.object(host, "send_message", side_effect=lambda value, _stream: writes.append(value)):
+            native.writer.start()
+            try:
+                native.broker._activate_after_remote_state(peer)
+                self.assertEqual(writes[0]["event"], "abush_browser.remote_state")
+                peer.activate.assert_called_once_with()
+            finally:
+                native.outbound.put(None)
+                native.writer.join(timeout=2)
+        self.assertFalse(native.writer.is_alive())
+
+    def test_native_workspace_state_is_blocking_typed_operation(self):
+        native = self.native()
+        for operation in ("workspace_state", "executor_completion", "cancellation_completion"):
+            self.assertTrue(native._is_blocking_request(self.request(operation, {})))
+        for operation in ("ensure_managed_page_completion", "topology_response_consumed", "arbitrary"):
+            self.assertFalse(native._is_blocking_request(self.request(operation, {})))
 
 
 if __name__ == "__main__":

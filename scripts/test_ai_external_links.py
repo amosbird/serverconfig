@@ -685,71 +685,18 @@ class NativeHostTest(unittest.TestCase):
         with self.assertRaises(self.host.EnvelopeError):
             self.host.validate_request({**request, "extra": True})
 
-    def test_native_broker_routes_strict_x11_bind_and_cleanup_contracts(self):
-        broker = self.host.BrowserBroker(ordinary_open=None,
-                                        browser={"pid": 4242, "starttime": "123"})
-        binding = mock.Mock()
-        identity = ["boot", 4242, "123"]
-        binding.browser_incarnation.return_value = identity
-        binding.bind_workspace_window.return_value = {
-            "available": True,
-            "xid": 42,
-            "observed": {},
-            "qtile_moved": True,
-            "observed_group": "c",
-        }
-        binding.clear_workspace_window.return_value = {
-            "cleared": True, "xid": 42, "reclassified_group": "f"}
-        binding.verify_workspace_window.return_value = {"verified": True, "xid": 42}
-        binding.update_candidate_lease.side_effect = lambda operation, nonce, **_kwargs: {
-            "accepted": True, "nonce": nonce, "admission_version": 2, "phase": "reserved",
-        } if operation == "register" else {"released": True, "nonce": nonce,
-            "admission_version": 2, "phase": "aborted-resolved", "denial_retained": False}
-        payload = {
-            "nonce": "a" * 32,
-            "remote_key": "r_12345678",
-            "workspace_id": "workspace",
-            "generation": 7,
-            "control_state": "remote",
-            "display_title": "local",
-        }
-        with mock.patch.object(broker, "x11_binding", return_value=binding):
-            request = {
-                "version": 1,
-                "id": "bind",
-                "service": "abush_browser",
-                "operation": "bind_x11_window",
-                "payload": payload,
-            }
-            self.assertEqual(broker.handle_request(request),
-                             binding.bind_workspace_window.return_value)
-            nonce_payload = {"nonce": payload["nonce"]}
-            self.assertEqual(broker.handle_request({
-                **request, "id": "register", "operation": "register_candidate_lease",
-                "payload": nonce_payload,
-            }), {"accepted": True, "nonce": payload["nonce"],
-                 "admission_version": 2, "phase": "reserved"})
-            self.assertEqual(broker.handle_request({
-                **request, "id": "release", "operation": "release_candidate_lease",
-                "payload": nonce_payload,
-            }), {"released": True, "nonce": payload["nonce"], "admission_version": 2,
-                 "phase": "aborted-resolved", "denial_retained": False})
-            cleanup = {"xid": 42, **payload}
-            self.assertEqual(broker.handle_request({
-                **request, "id": "verify", "operation": "verify_x11_window",
-                "payload": cleanup,
-            }), {"verified": True, "xid": 42})
-            self.assertEqual(broker.handle_request({
-                **request, "id": "clear", "operation": "clear_x11_window",
-                "payload": cleanup,
-            }), {"cleared": True, "xid": 42, "reclassified_group": "f"})
-        binding.bind_workspace_window.assert_called_once_with(payload)
-        self.assertEqual(binding.update_candidate_lease.call_args_list, [
-            mock.call("register", payload["nonce"], identity=identity),
-            mock.call("release", payload["nonce"]),
-        ])
-        binding.verify_workspace_window.assert_called_once_with(cleanup)
-        binding.clear_workspace_window.assert_called_once_with(cleanup)
+    def test_native_broker_rejects_removed_window_and_candidate_operations(self):
+        broker = self.host.BrowserBroker(browser={"pid": 4242, "starttime": "123"})
+        with mock.patch.object(broker, "x11_binding") as binding:
+            for operation in ("bind_x11_window", "verify_x11_window", "clear_x11_window",
+                              "register_candidate_lease", "release_candidate_lease",
+                              "arm_candidate_lease", "admit_candidate", "finish_candidate_lease"):
+                with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "unsupported"):
+                    broker.handle_request({
+                        "version": 1, "id": operation, "service": "abush_browser",
+                        "operation": operation, "payload": {},
+                    })
+            binding.assert_not_called()
 
     def test_native_host_request_failures_do_not_stop_later_requests(self):
         class Broker:
@@ -792,6 +739,20 @@ class NativeHostTest(unittest.TestCase):
                 "version": 1, "id": "fatal", "service": "test",
                 "operation": "memory", "payload": {},
             })
+
+    def test_main_external_links_never_reuse_shared_worktab_via_cdp(self):
+        with (
+            mock.patch.object(self.host, "reuse_tab", return_value=True) as reuse,
+            mock.patch.object(self.host, "submit_ordinary_open", return_value="applied") as submit,
+            mock.patch.object(self.host, "group_for_hostname", return_value="main"),
+            mock.patch.dict(self.host.ROUTES["groups"], {"main": {"launcher": "chromium", "debug_port": 9222}}),
+        ):
+            self.assertEqual(self.host.handle_message({"url": "https://example.test/"}), {"ok": True})
+            reuse.assert_not_called()
+            submit.assert_called_once_with("https://example.test/")
+        with mock.patch.object(self.host.urllib.request, "urlopen") as opener:
+            self.assertFalse(self.host.reuse_tab("main", "example.test", "https://example.test/"))
+            opener.assert_not_called()
 
     def test_external_link_open_waits_for_terminal_ordinary_completion(self):
         class Ordinary:
