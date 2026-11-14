@@ -1,35 +1,27 @@
 #!/usr/bin/env python3
 
 import importlib.util
-import io
 import json
 import pathlib
 import socket
 import stat
 import struct
 import unittest
-from contextlib import redirect_stdout
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BINDING_PATH = ROOT / "chromium/external-links/x11_binding.py"
-ACCEPTANCE_PATH = ROOT / "scripts/test_abush_browser_x11.py"
 spec = importlib.util.spec_from_file_location("x11_binding", BINDING_PATH)
 binding = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(binding)
-spec = importlib.util.spec_from_file_location("x11_acceptance", ACCEPTANCE_PATH)
-acceptance = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(acceptance)
 
 
 class FakeAdapter:
     def __init__(self):
-        FakeAdapter.latest = self
         self.values = {
             (11, "_NET_WM_NAME"): "ordinary",
             (11, "WM_CLASS"): "chromium\0Chromium",
-            (22, "_NET_WM_NAME"):
-                "__ABUSH_BIND__:0123456789abcdef0123456789abcdef:a - Google Chrome",
+            (22, "_NET_WM_NAME"): "another ordinary window",
             (22, "WM_CLASS"): "chromium\0Chromium",
         }
         self.finished = False
@@ -51,9 +43,6 @@ class FakeAdapter:
 
     def property(self, window, name, property_type="UTF8_STRING"):
         return self.values.get((window, name), "")
-
-    def delete_property(self, window, name):
-        self.values.pop((window, name), None)
 
     def finish(self):
         self.finished = True
@@ -200,60 +189,8 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
             self.assertIsNone(binding.browser_incarnation(4242))
         self.assertIsNone(binding.browser_incarnation(True))
 
-    def test_candidate_lease_commands_are_exact_and_verified(self):
-        nonce = "a" * 32
-        identity = ["boot", 4242, "123"]
-        receipt = {"accepted": True, "nonce": nonce, "admission_version": 2, "phase": "reserved"}
-        register = binding.qtile_candidate_lease_command("register", nonce, identity)
-        release = binding.qtile_candidate_lease_command("release", nonce)
-        self.assertIn("register_abush_browser_candidate", register)
-        self.assertIn("release_abush_browser_candidate", release)
-        self.assertEqual(register[-2], nonce)
-        self.assertEqual(json.loads(register[-1]), identity)
-        self.assertEqual(release[-1], nonce)
-        with self.assertRaises(ValueError):
-            binding.qtile_candidate_lease_command("register", "bad")
-
-        run = mock.Mock(return_value=mock.Mock(
-            returncode=0,
-            stdout=json.dumps(receipt),
-            stderr="",
-        ))
-        self.assertEqual(binding.update_candidate_lease("register", nonce, run, identity), receipt)
-        run.assert_called_once()
-        wrong = mock.Mock(return_value=mock.Mock(
-            returncode=0,
-            stdout=json.dumps({"accepted": True, "nonce": "b" * 32}),
-            stderr="",
-        ))
-        with self.assertRaisesRegex(binding.X11Unavailable, "not confirmed"):
-            binding.update_candidate_lease("register", nonce, wrong, identity)
-
-    def test_native_admit_requires_unique_exact_title_and_stable_incarnation(self):
-        nonce = "a" * 32
-        identity = ["boot", 4242, "123"]
-        adapter = mock.Mock()
-        adapter.windows.return_value = [22]
-        adapter.title.return_value = f"__ABUSH_BIND__:{nonce}:a"
-        adapter.pid.return_value = 4242
-        receipt = {"admitted": True, "nonce": nonce, "xid": 22,
-                   "admission_version": 2, "first_group": "__abush_quarantine"}
-        with mock.patch.object(binding, "browser_incarnation", return_value=identity), \
-                mock.patch.object(binding, "browser_process", return_value=True), \
-                mock.patch.object(binding, "run_qtile", return_value=json.dumps(receipt)) as run:
-            self.assertEqual(binding.admit_candidate(nonce, identity, adapter), receipt)
-            self.assertIn("admit_abush_browser_candidate", run.call_args.args[0])
-            adapter.windows.return_value = [22, 23]
-            with self.assertRaisesRegex(binding.X11Unavailable, "one exact"):
-                binding.admit_candidate(nonce, identity, adapter)
-            adapter.windows.return_value = [22]
-            adapter.title.return_value = "about:blank"
-            with self.assertRaisesRegex(binding.X11Unavailable, "one exact"):
-                binding.admit_candidate(nonce, identity, adapter)
-            self.assertEqual(run.call_count, 1)
-
     def test_run_qtile_uses_in_process_ipc_by_default(self):
-        command = binding.qtile_move_command(22, "f")
+        command = binding.qtile_command("prepare_ordinary_window", 22)
         with mock.patch.object(binding, "qtile_ipc_command",
                                return_value={"id": 22, "group": "f"}) as ipc, \
                 mock.patch.object(binding.subprocess, "run") as process:
@@ -263,7 +200,7 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
         process.assert_not_called()
 
 
-class X11BindingTest(unittest.TestCase):
+class OrdinaryX11Test(unittest.TestCase):
     def setUp(self):
         self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
         self.process_patch.start()
@@ -272,381 +209,6 @@ class X11BindingTest(unittest.TestCase):
             binding, "browser_incarnation", return_value=["boot", 4242, "start"])
         incarnation_patch.start()
         self.addCleanup(incarnation_patch.stop)
-        self.candidate_patch = mock.patch.object(binding, "quarantine_qtile", return_value={
-            "id": 22,
-            "group": "__abush_quarantine",
-            "current_group_before": "e",
-            "current_group_after": "e",
-            "active_xid_before": 11,
-            "active_xid_after": 11,
-            "current_group_preserved": True,
-            "active_xid_preserved": True,
-        })
-        self.candidate_mock = self.candidate_patch.start()
-        self.addCleanup(self.candidate_patch.stop)
-        self.qtile_patch = mock.patch.object(binding, "notify_qtile", return_value={
-            "id": 22,
-            "group": "c",
-            "current_group_before": "e",
-            "current_group_after": "e",
-            "active_xid_before": 11,
-            "active_xid_after": 11,
-            "current_group_preserved": True,
-            "active_xid_preserved": True,
-        })
-        self.qtile_patch.start()
-        self.addCleanup(self.qtile_patch.stop)
-        self.qtile_info_patch = mock.patch.object(
-            binding, "qtile_window_info", side_effect=lambda window, run=None: {
-                "id": window, "group": "c" if binding.managed_window(
-                    FakeAdapter.latest, window) else "__abush_quarantine"})
-        self.qtile_info_patch.start()
-        self.addCleanup(self.qtile_info_patch.stop)
-        self.qtile_restore_patch = mock.patch.object(binding, "restore_qtile_group")
-        self.qtile_restore_patch.start()
-        self.addCleanup(self.qtile_restore_patch.stop)
-
-    def payload(self):
-        return {
-            "nonce": "0123456789abcdef0123456789abcdef", "remote_key": "r_12345678",
-            "workspace_id": "workspace", "generation": 7, "control_state": "remote",
-            "display_title": "Managed browser",
-        }
-
-    def test_title_only_ordinary_window_is_rejected_before_any_mutation(self):
-        adapter = FakeAdapter()
-        before = dict(adapter.values)
-        with mock.patch.object(binding, "qtile_window_info", return_value={
-                "id": 22, "group": "f"}), self.assertRaisesRegex(
-                    binding.X11Unavailable, "not admitted"):
-            binding.bind_workspace_window(self.payload(), adapter=adapter, attempts=1)
-        self.assertEqual(adapter.values, before)
-        self.candidate_mock.assert_not_called()
-        binding.restore_qtile_group.assert_not_called()
-
-    def test_candidate_failure_before_and_after_metadata_keeps_quarantine(self):
-        for phase in ("candidate", "managed"):
-            with self.subTest(phase=phase):
-                adapter = FakeAdapter()
-                before = binding.property_snapshot(adapter, 22)
-                function = "quarantine_qtile" if phase == "candidate" else "notify_qtile"
-                with mock.patch.object(binding, function, side_effect=RuntimeError(phase)), \
-                        self.assertRaisesRegex(RuntimeError, phase):
-                    binding.bind_workspace_window(self.payload(), adapter=adapter, attempts=1)
-                self.assertEqual(binding.property_snapshot(adapter, 22), before)
-                binding.restore_qtile_group.assert_called_with(22, "__abush_quarantine", None)
-                self.assertIsNone(binding.managed_metadata(adapter, 22))
-
-    def test_replaced_candidate_incarnation_refuses_rollback(self):
-        adapter = FakeAdapter()
-        adapter.values[(22, binding.CANDIDATE_CLAIM_PROPERTY)] = json.dumps({
-            "nonce": self.payload()["nonce"], "xid": 22, "incarnation": ["boot", 4242, "old"],
-            "released": False, "placed": False,
-        })
-
-        def replace(*_args):
-            adapter.values[(22, binding.CANDIDATE_CLAIM_PROPERTY)] = "replacement"
-            adapter.values[(22, "_NET_WM_NAME")] = "new incarnation"
-            raise RuntimeError("replaced")
-
-        with mock.patch.object(binding, "quarantine_qtile", side_effect=replace), \
-                self.assertRaisesRegex(binding.X11Unavailable, "rollback refused"):
-            binding.bind_workspace_window(self.payload(), adapter=adapter, attempts=1)
-        self.assertEqual(adapter.title(22), "new incarnation")
-        binding.restore_qtile_group.assert_not_called()
-        self.assertEqual(adapter.property(22, "WM_WINDOW_ROLE", "STRING"), "")
-
-    def test_newer_managed_generation_is_not_rolled_back_or_overwritten(self):
-        adapter = FakeAdapter()
-        payload = self.payload()
-        binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
-        before = binding.property_snapshot(adapter, 22)
-        for request in ({**payload, "generation": 6}, {**payload, "workspace_id": "other"}):
-            with self.subTest(request=request), self.assertRaisesRegex(ValueError, "stale"):
-                binding.bind_workspace_window(request, adapter=adapter, attempts=1)
-            self.assertEqual(binding.property_snapshot(adapter, 22), before)
-
-        def newer(*_args):
-            adapter.set_text(22, "_ABUSH_WINDOW_GENERATION", "99")
-            raise RuntimeError("new owner")
-
-        with mock.patch.object(binding, "notify_qtile", side_effect=newer), \
-                self.assertRaisesRegex(binding.X11Unavailable, "rollback refused"):
-            binding.bind_workspace_window({**payload, "generation": 8},
-                                          adapter=adapter, attempts=1)
-        self.assertEqual(adapter.property(22, "_ABUSH_WINDOW_GENERATION"), "99")
-        binding.restore_qtile_group.assert_not_called()
-
-    def test_browser_process_reuse_during_failure_does_not_restore_properties(self):
-        adapter = FakeAdapter()
-        boot = ["boot", 4242, "old-start"]
-
-        def replace(*_args):
-            boot[2] = "new-start"
-            adapter.values[(22, "_NET_WM_NAME")] = "replacement browser"
-            raise RuntimeError("restarted")
-
-        with mock.patch.object(binding, "browser_incarnation", side_effect=lambda _pid: boot[:]), \
-                mock.patch.object(binding, "quarantine_qtile", side_effect=replace), \
-                self.assertRaisesRegex(binding.X11Unavailable, "rollback refused"):
-            binding.bind_workspace_window(self.payload(), adapter=adapter, attempts=1)
-        self.assertEqual(adapter.title(22), "replacement browser")
-        binding.restore_qtile_group.assert_not_called()
-
-    def test_same_generation_control_update_preserves_supported_rebind(self):
-        adapter = FakeAdapter()
-        payload = self.payload()
-        binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
-        binding.bind_workspace_window({**payload, "control_state": "human", "display_title": "human"},
-                                      adapter=adapter, attempts=1)
-        self.assertEqual(binding.managed_metadata(adapter, 22)["control_state"], "human")
-
-    def test_claim_commit_flag_does_not_change_incarnation_but_boot_does(self):
-        adapter = FakeAdapter()
-        claim = {"nonce": self.payload()["nonce"], "xid": 22,
-                 "incarnation": ["boot", 4242, "start"], "released": False, "placed": False}
-        adapter.set_text(22, binding.CANDIDATE_CLAIM_PROPERTY, json.dumps(claim))
-        before = binding.binding_incarnation(adapter, 22)
-        claim["placed"] = True
-        adapter.set_text(22, binding.CANDIDATE_CLAIM_PROPERTY, json.dumps(claim))
-        self.assertEqual(binding.binding_incarnation(adapter, 22), before)
-        claim["incarnation"] = ["boot", 4242, "new-start"]
-        adapter.set_text(22, binding.CANDIDATE_CLAIM_PROPERTY, json.dumps(claim))
-        self.assertNotEqual(binding.binding_incarnation(adapter, 22), before)
-
-    def test_exact_nonce_chrome_match_and_metadata(self):
-        adapter = FakeAdapter()
-        payload = {
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678",
-            "workspace_id": "workspace",
-            "generation": 7,
-            "control_state": "remote",
-            "display_title": "Abush Browser — local · workbench",
-        }
-        result = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
-        self.assertEqual(result["xid"], 22)
-        self.assertEqual(result["observed"]["_ABUSH_REMOTE_ID"], "r_12345678")
-        self.assertEqual(result["observed"]["_ABUSH_WINDOW_GENERATION"], "7")
-        self.assertEqual(result["observed"]["WM_WINDOW_ROLE"], "abush-browser")
-        self.assertEqual(adapter.values[(22, "WM_CLASS")], "abush-browser\0AbushBrowser\0")
-        self.assertEqual(adapter.values[(11, "_NET_WM_NAME")], "ordinary")
-        self.assertNotIn((22, binding.CANDIDATE_NONCE_PROPERTY), adapter.values)
-        self.candidate_mock.assert_called_once_with(22, payload["nonce"], adapter, None)
-        self.assertTrue(adapter.finished)
-
-    def test_bind_failure_after_side_effect_restores_old_properties_and_group(self):
-        adapter = FakeAdapter()
-        old = {
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678", "workspace_id": "workspace-old",
-            "generation": 7, "control_state": "remote", "display_title": "old title",
-        }
-        binding.bind_workspace_window(old, adapter=adapter, attempts=1)
-        before = binding.property_snapshot(adapter, 22)
-        self.qtile_info_patch.stop()
-        self.qtile_restore_patch.stop()
-        groups = iter([{"id": 22, "group": "c"}, {"id": 22, "group": "f"}])
-        transitions = []
-
-        def run(command, **_kwargs):
-            if command[-1] == "info":
-                return mock.Mock(returncode=0, stdout=json.dumps(next(groups)), stderr="")
-            transitions.append(command)
-            group = "c" if "restore_abush_browser_window" in command else "f"
-            return mock.Mock(returncode=0, stdout=json.dumps({
-                "id": 22, "group": group, "current_group_before": "e",
-                "current_group_after": "e", "active_xid_before": 11,
-                "active_xid_after": 11,
-            }), stderr="")
-
-        with mock.patch.object(binding, "notify_qtile", side_effect=RuntimeError("after move")):
-            with self.assertRaisesRegex(RuntimeError, "after move"):
-                binding.bind_workspace_window(
-                    {**old, "workspace_id": "workspace-new", "generation": 8},
-                    adapter=adapter, attempts=1, run=run)
-        self.assertEqual(binding.property_snapshot(adapter, 22), before)
-        self.assertEqual(transitions[-1], binding.qtile_restore_command(22, "c"))
-
-    def test_bind_twice_uses_stable_abush_identity(self):
-        adapter = FakeAdapter()
-        payload = {
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678", "workspace_id": "workspace",
-            "generation": 7, "control_state": "remote",
-            "display_title": "Abush Browser — local · workbench",
-        }
-        first = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
-        second = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
-        self.assertEqual(first["xid"], second["xid"])
-        self.assertEqual(second["xid"], 22)
-
-    def test_bind_same_xid_from_old_to_new_workspace(self):
-        adapter = FakeAdapter()
-        old = {
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678", "workspace_id": "workspace-old",
-            "generation": 7, "control_state": "remote",
-            "display_title": "Abush Browser — local · workbench",
-        }
-        new = {**old, "workspace_id": "workspace-new", "generation": 8}
-        first = binding.bind_workspace_window(old, adapter=adapter, attempts=1)
-        self.assertEqual(adapter.values[(22, "WM_CLASS")], "abush-browser\0AbushBrowser\0")
-        self.assertEqual(adapter.values[(22, "_NET_WM_NAME")],
-                         "Abush Browser — local · workbench")
-        second = binding.bind_workspace_window(new, adapter=adapter, attempts=1)
-        self.assertEqual(first["xid"], second["xid"])
-        self.assertEqual(second["xid"], 22)
-        self.assertEqual(second["observed"]["_ABUSH_BINDING_NONCE"], old["nonce"])
-        self.assertEqual(second["observed"]["_ABUSH_WORKSPACE_ID"], "workspace-new")
-        self.assertEqual(second["observed"]["_ABUSH_WINDOW_GENERATION"], "8")
-
-    def test_existing_and_fresh_distinct_candidates_are_ambiguous(self):
-        adapter = FakeAdapter()
-        payload = {
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678", "workspace_id": "workspace",
-            "generation": 7, "control_state": "remote",
-            "display_title": "Abush Browser — local · workbench",
-        }
-        adapter.values[(11, "WM_WINDOW_ROLE")] = "abush-browser"
-        adapter.values[(11, "_ABUSH_BINDING_NONCE")] = payload["nonce"]
-        adapter.values[(11, "_ABUSH_REMOTE_ID")] = payload["remote_key"]
-        with self.assertRaisesRegex(ValueError, "ambiguous"):
-            binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
-
-    def test_duplicate_existing_and_fresh_same_xid_is_deduplicated(self):
-        adapter = FakeAdapter()
-        payload = {
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678", "workspace_id": "workspace",
-            "generation": 7, "control_state": "remote",
-            "display_title": "Abush Browser — local · workbench",
-        }
-        adapter.values[(22, "WM_WINDOW_ROLE")] = "abush-browser"
-        adapter.values[(22, "_ABUSH_BINDING_NONCE")] = payload["nonce"]
-        adapter.values[(22, "_ABUSH_REMOTE_ID")] = payload["remote_key"]
-        for prop, field in binding.TEXT_FIELDS.items():
-            adapter.values[(22, prop)] = str(payload[field])
-        result = binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
-        self.assertEqual(result["xid"], 22)
-
-    def test_rebind_preserves_pid_spoof_protection(self):
-        adapter = FakeAdapter()
-        payload = {
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678", "workspace_id": "workspace-old",
-            "generation": 7, "control_state": "remote",
-            "display_title": "Abush Browser — local · workbench",
-        }
-        binding.bind_workspace_window(payload, adapter=adapter, attempts=1)
-        adapter.pid = lambda _window: 4242
-        with mock.patch.object(binding, "browser_process", return_value=False), \
-                self.assertRaisesRegex(ValueError, "not a Chrome process"):
-            binding.bind_workspace_window({**payload, "workspace_id": "workspace-new"},
-                                          adapter=adapter, attempts=1)
-
-    def test_rejects_non_positive_generation(self):
-        for generation in (0, -1):
-            with self.subTest(generation=generation), self.assertRaises(ValueError):
-                binding.bind_workspace_window({
-                    "nonce": "0123456789abcdef0123456789abcdef",
-                    "remote_key": "r_12345678", "workspace_id": "workspace",
-                    "generation": generation, "control_state": "remote",
-                    "display_title": "Abush Browser — local · workbench",
-                }, adapter=FakeAdapter(), attempts=1)
-
-    def test_title_matching_accepts_chrome_suffix_only(self):
-        expected = "__ABUSH_BIND__:0123456789abcdef0123456789abcdef:a"
-        self.assertTrue(binding.binding_title_matches(expected, expected))
-        self.assertTrue(binding.binding_title_matches(expected + " - Google Chrome", expected))
-        self.assertTrue(binding.binding_title_matches(expected + " - Chromium", expected))
-        self.assertFalse(binding.binding_title_matches(expected + " - Firefox", expected))
-        self.assertFalse(binding.binding_title_matches("prefix " + expected, expected))
-
-    def test_verifies_required_properties_after_flushing(self):
-        adapter = FakeAdapter()
-        original = adapter.property
-
-        def missing_role(window, name, property_type="UTF8_STRING"):
-            if name == "WM_WINDOW_ROLE":
-                return ""
-            return original(window, name, property_type)
-
-        adapter.property = missing_role
-        with self.assertRaisesRegex(binding.X11Unavailable, "verification failed"):
-            binding.bind_workspace_window({
-                "nonce": "0123456789abcdef0123456789abcdef",
-                "remote_key": "r_12345678", "workspace_id": "workspace",
-                "generation": 7, "control_state": "remote",
-                "display_title": "Abush Browser — local · workbench",
-            }, adapter=adapter, attempts=1)
-
-    def test_verify_workspace_window_requires_full_exact_identity(self):
-        adapter = FakeAdapter()
-        payload = {
-            "xid": 22,
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678",
-            "workspace_id": "workspace",
-            "generation": 7,
-            "control_state": "remote",
-            "display_title": "Abush Browser — local · workbench",
-        }
-        binding.bind_workspace_window(
-            {key: value for key, value in payload.items() if key != "xid"},
-            adapter=adapter,
-            attempts=1,
-        )
-        self.assertEqual(binding.verify_workspace_window(payload, adapter=adapter),
-                         {"verified": True, "xid": 22})
-        self.assertEqual(binding.verify_workspace_window(
-            {**payload, "workspace_id": "reused"}, adapter=adapter),
-            {"verified": False, "xid": 22})
-
-    def test_clear_workspace_window_requires_exact_identity_and_verifies_cleanup(self):
-        adapter = FakeAdapter()
-        payload = {
-            "xid": 22,
-            "nonce": "0123456789abcdef0123456789abcdef",
-            "remote_key": "r_12345678",
-            "workspace_id": "workspace",
-            "generation": 7,
-            "control_state": "remote",
-            "display_title": "Abush Browser — local · workbench",
-        }
-        binding.bind_workspace_window(
-            {key: value for key, value in payload.items() if key != "xid"},
-            adapter=adapter,
-            attempts=1,
-        )
-        run = mock.Mock(return_value=mock.Mock(
-            returncode=0, stdout=json.dumps({"id": 22, "group": "f"}), stderr=""))
-        result = binding.clear_workspace_window(payload, adapter=adapter, run=run)
-        self.assertEqual(result, {"cleared": True, "xid": 22, "reclassified_group": "f"})
-        self.assertIsNone(binding.managed_metadata(adapter, 22))
-        replay = binding.clear_workspace_window(payload, adapter=adapter, run=run)
-        self.assertEqual(replay, {"cleared": True, "xid": 22, "reclassified_group": "f"})
-        adapter = FakeAdapter()
-        binding.bind_workspace_window(
-            {key: value for key, value in payload.items() if key != "xid"},
-            adapter=adapter,
-            attempts=1,
-        )
-        with self.assertRaisesRegex(ValueError, "identity mismatch"):
-            binding.clear_workspace_window({**payload, "workspace_id": "other"},
-                                           adapter=adapter, run=run)
-        self.assertIsNotNone(binding.managed_metadata(adapter, 22),
-                             "mismatched cleanup must leave the verified owner untouched")
-
-    def test_rejects_bad_nonce(self):
-        with self.assertRaises(ValueError):
-            binding.bind_workspace_window({
-                "nonce": "guessable", "remote_key": "r_12345678",
-                "workspace_id": "workspace", "generation": 1,
-                "control_state": "remote",
-                "display_title": "Abush Browser — local · workbench",
-            }, adapter=FakeAdapter(), attempts=1)
 
     def test_ordinary_prepare_uses_unique_exact_xid_without_focus(self):
         nonce = "a" * 32
@@ -663,7 +225,7 @@ class X11BindingTest(unittest.TestCase):
             {"nonce": nonce}, adapter=adapter, attempts=1, run=run)
         self.assertEqual(result, {"xid": 11, "nonce": nonce})
         self.assertEqual(adapter.values[(11, "_ABUSH_ORDINARY_NONCE")], nonce)
-        self.assertEqual(commands[0][:-1], binding.qtile_move_command(11, "f"))
+        self.assertEqual(commands[0][:-1], binding.qtile_command("prepare_ordinary_window", 11))
         self.assertEqual(json.loads(commands[0][-1]), {
             "version": 1, "nonce": nonce, "identity": ["boot", 4242, "start"]})
         self.assertNotIn("focus", commands[0])
@@ -672,7 +234,6 @@ class X11BindingTest(unittest.TestCase):
     def test_ordinary_prepare_refuses_managed_candidate(self):
         nonce = "b" * 32
         adapter = FakeAdapter()
-        adapter.values[(11, "_NET_WM_NAME")] = "ordinary"
         adapter.values[(22, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce}"
         adapter.values[(22, "WM_WINDOW_ROLE")] = "abush-browser"
         adapter.values[(22, "_ABUSH_BINDING_NONCE")] = nonce
@@ -681,11 +242,37 @@ class X11BindingTest(unittest.TestCase):
         adapter.values[(22, "_ABUSH_WINDOW_GENERATION")] = "1"
         adapter.values[(22, "_ABUSH_CONTROL_STATE")] = "remote"
         adapter.values[(22, "_ABUSH_DISPLAY_TITLE")] = "local"
+        before = adapter.values.copy()
+        run = mock.Mock()
         with self.assertRaises(binding.X11Unavailable):
-            binding.prepare_ordinary_window(
-                {"nonce": nonce}, adapter=adapter, attempts=1,
-                run=lambda *_args, **_kwargs: mock.Mock(
-                    returncode=0, stdout=json.dumps({"id": 22, "group": "f"})))
+            binding.prepare_ordinary_window({"nonce": nonce}, adapter=adapter, attempts=1, run=run)
+        self.assertEqual(adapter.values, before)
+        run.assert_not_called()
+
+    def test_incomplete_legacy_markers_exclude_prepare_verify_and_activation(self):
+        nonce = "a" * 32
+        cases = [(name, "legacy") for name in binding.LEGACY_BROWSER_PROPERTIES]
+        cases += [("WM_WINDOW_ROLE", "abush-browser"), ("WM_CLASS", "chromium\0AbushBrowser")]
+        for name, value in cases:
+            with self.subTest(marker=name):
+                adapter = FakeAdapter()
+                adapter.values[(11, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce}"
+                adapter.values[(11, binding.ORDINARY_NONCE_PROPERTY)] = nonce
+                adapter.values[(11, name)] = value
+                before = adapter.values.copy()
+                run = mock.Mock()
+                with self.assertRaises(binding.X11Unavailable):
+                    binding.prepare_ordinary_window(
+                        {"nonce": nonce}, adapter=adapter, attempts=1, run=run)
+                with self.assertRaisesRegex(ValueError, "identity mismatch"):
+                    binding.verify_prepared_ordinary_window(
+                        {"nonce": nonce, "xid": 11}, adapter=adapter)
+                with self.assertRaisesRegex(ValueError, "identity mismatch"):
+                    binding.activate_ordinary_window(
+                        {"nonce": nonce, "xid": 11}, adapter=adapter, run=run)
+                self.assertEqual(adapter.values, before)
+                self.assertFalse(adapter.finished)
+                run.assert_not_called()
 
     def test_ordinary_prepare_refuses_non_chrome_pid(self):
         nonce = "e" * 32
@@ -719,7 +306,6 @@ class X11BindingTest(unittest.TestCase):
                 {"nonce": nonce, "xid": 11}, adapter=adapter)
 
     def test_qtile_info_is_strict_json_and_activation_verifier_polls_all_fields(self):
-        self.qtile_info_patch.stop()
         nonce = "d" * 32
         adapter = FakeAdapter()
         adapter.values[(11, "_ABUSH_ORDINARY_NONCE")] = nonce
@@ -756,66 +342,48 @@ class X11BindingTest(unittest.TestCase):
             {"nonce": nonce, "xid": 11}, adapter=adapter, run=run,
             verify=lambda xid: xid == 11)
         self.assertEqual(result["xid"], 11)
-        self.assertEqual(commands[-1], binding.qtile_activate_command(11))
+        self.assertEqual(commands[-1][:-1], binding.qtile_activate_command(11))
+        self.assertEqual(json.loads(commands[-1][-1]), {
+            "version": 1, "nonce": nonce, "identity": ["boot", 4242, "start"]})
         self.assertNotIn("True", commands[-1])
         self.assertNotIn("False", commands[-1])
-        with self.assertRaises(ValueError):
-            binding.activate_ordinary_window(
-                {"nonce": nonce, "xid": True}, adapter=adapter, run=run)
+        for xid in (True, "11"):
+            with self.assertRaises(ValueError):
+                binding.activate_ordinary_window(
+                    {"nonce": nonce, "xid": xid}, adapter=adapter, run=run)
 
+    def test_duplicate_nonce_and_wrong_incarnation_fail_before_writes(self):
+        nonce = "a" * 32
+        adapter = FakeAdapter()
+        for xid in (11, 22):
+            adapter.values[(xid, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce}"
+        run = mock.Mock()
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            binding.prepare_ordinary_window({"nonce": nonce}, adapter=adapter, attempts=1, run=run)
+        adapter.values[(22, "_NET_WM_NAME")] = "unrelated"
+        with self.assertRaisesRegex(binding.X11Unavailable, "incarnation"):
+            binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, attempts=1, run=run,
+                expected_identity=["boot", 4242, "restarted"])
+        self.assertFalse(adapter.finished)
+        run.assert_not_called()
 
-class AcceptanceOutputTest(unittest.TestCase):
-    def test_parses_explicit_xprop_fields(self):
-        raw = '''WM_WINDOW_ROLE(STRING) = "abush-browser"
-_ABUSH_REMOTE_ID(UTF8_STRING) = "r_12345678"
-_ABUSH_WORKSPACE_ID(UTF8_STRING) = "workspace"
-_ABUSH_WINDOW_GENERATION(UTF8_STRING) = "7"
-_ABUSH_CONTROL_STATE(UTF8_STRING) = "remote"
-WM_CLASS(STRING) = "chromium", "Chromium"
-_NET_WM_NAME(UTF8_STRING) = "Managed page"
-'''
-        self.assertEqual(acceptance.parse_properties(raw), {
-            "wm_role": "abush-browser", "remote_id": "r_12345678",
-            "workspace_id": "workspace", "generation": "7", "control_state": "remote",
-            "wm_class": ["chromium", "Chromium"], "title": "Managed page",
-        })
+    def test_ordinary_title_matching_accepts_chrome_suffix_only(self):
+        nonce = "a" * 32
+        expected = f"__ABUSH_ORDINARY__:{nonce}"
+        for suffix in ("", " - Google Chrome", " - Chromium"):
+            self.assertTrue(binding.ordinary_title_matches(expected + suffix, nonce))
+        self.assertFalse(binding.ordinary_title_matches(expected + " - Firefox", nonce))
+        self.assertFalse(binding.ordinary_title_matches("prefix " + expected, nonce))
 
-    def test_acceptance_requires_all_qtile_properties_and_compares_focus(self):
-        values = {field: field for field in acceptance.PROPERTY_FIELDS.values()}
-        with mock.patch.object(acceptance, "focused", side_effect=["0x1", "0x1"]), \
-                mock.patch.object(acceptance, "candidates", return_value=iter(["0x2"])), \
-                mock.patch.object(acceptance, "properties", return_value=(values, "raw")):
-            output = acceptance.acceptance(0.1)
-        self.assertTrue(output["focus_preserved"])
-        self.assertTrue(output["qtile_attrs_visible"])
-        self.assertEqual(output["workspace_id"], "workspace_id")
-        values.pop("control_state")
-        with mock.patch.object(acceptance, "focused", side_effect=["0x1", "0x2"]), \
-                mock.patch.object(acceptance, "candidates", return_value=iter(["0x2"])), \
-                mock.patch.object(acceptance, "properties", return_value=(values, "raw")):
-            output = acceptance.acceptance(0.1)
-        self.assertFalse(output["focus_preserved"])
-        self.assertFalse(output["qtile_attrs_visible"])
-
-    def test_missing_xprop_or_xwininfo_is_a_json_error(self):
-        for missing in ("xprop", "xwininfo"):
-            def run(command, **_kwargs):
-                if command[0] == missing:
-                    raise FileNotFoundError(missing)
-                return mock.Mock(
-                    returncode=0,
-                    stdout="_NET_ACTIVE_WINDOW(WINDOW): window id # 0x1\n",
-                                 stderr="")
-
-            with self.subTest(missing=missing), \
-                    mock.patch.object(acceptance.subprocess, "run", side_effect=run), \
-                    mock.patch("sys.argv", ["test_abush_browser_x11.py", "--timeout", "0.01"]):
-                stream = io.StringIO()
-                with redirect_stdout(stream):
-                    acceptance.main()
-            output = json.loads(stream.getvalue())
-            self.assertEqual(output["error"], f"required command is unavailable: {missing}")
-            self.assertFalse(output["remote_available"])
+    def test_managed_protocol_functions_are_absent(self):
+        for name in (
+            "bind_workspace_window", "verify_workspace_window", "clear_workspace_window",
+            "managed_metadata", "managed_window", "admit_candidate", "update_candidate_lease",
+            "quarantine_qtile", "notify_qtile", "restore_qtile_group", "rollback_binding",
+            "qtile_move_command", "qtile_candidate_lease_command",
+        ):
+            self.assertFalse(hasattr(binding, name), name)
 
 
 if __name__ == "__main__":
