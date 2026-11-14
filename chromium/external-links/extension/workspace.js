@@ -59,6 +59,7 @@ class WorkspaceExecutor {
         this.transportGeneration = 0;
         this.ownershipGeneration = 1;
         this.pendingCreations = new Map();
+        this.attachments = new Map();
         this.ordinaryTail = Promise.resolve();
         this.browserBootId = null;
         this.remotes = new Map();
@@ -261,6 +262,8 @@ class WorkspaceExecutor {
     }
     closeAuthorization(record, phase) {
         this.bumpControl(record.remote_key);
+        const token = this.attachments.get(record.tab_id);
+        if (token) token.cleanup = true;
         record.pendingDetach = record.attachment;
         record.agreed = false;
         record.publication = null;
@@ -271,15 +274,46 @@ class WorkspaceExecutor {
             if (op.payload.remote_key === record.remote_key) op.cancelled = true;
         }
     }
+    releaseAttachment(token) {
+        if (this.attachments.get(token.record.tab_id) !== token) return;
+        this.attachments.delete(token.record.tab_id);
+        token.record.attached = false;
+        token.record.attachment = null;
+        token.record.pendingDetach = null;
+    }
     async detach(record, attachment = record?.pendingDetach || record?.attachment) {
-        if (!record || !attachment || record.attachment !== attachment) return;
+        const token = record && this.attachments.get(record.tab_id);
+        if (!token || token.record !== record || attachment && attachment !== token) return;
+        token.cleanup = true;
         record.attached = false;
-        record.attachment = null;
-        record.pendingDetach = null;
-        await this.api(() => {
-            if (record.attachment) return;
-            return this.chrome.debugger.detach({tabId: record.tab_id});
-        }, "detach work tab debugger");
+        if (token.pending) {
+            this.reportAdvisoryError(new Error("Debugger cleanup pending: waiting for attachment completion"));
+            return;
+        }
+        if (!token.detaching) {
+            const attempt = Promise.resolve().then(() =>
+                this.chrome.debugger.detach({tabId: record.tab_id}));
+            token.detaching = attempt.then(() => this.releaseAttachment(token), error => {
+                token.detaching = null;
+                this.reportAdvisoryError(error);
+                throw error;
+            });
+        }
+        try {
+            await this.api(() => token.detaching, "detach work tab debugger");
+        } catch (error) {
+            this.reportAdvisoryError(error);
+            throw error;
+        }
+    }
+    async drainAttachments(key) {
+        const tokens = [...this.attachments.values()].filter(token =>
+            token.record.remote_key === key && token.cleanup);
+        await Promise.all(tokens.map(token => this.detach(token.record, token)));
+        if ([...this.attachments.values()].some(token =>
+            token.record.remote_key === key && token.cleanup)) {
+            fail("operation_conflict", "Debugger cleanup pending; retry after attachment cleanup completes");
+        }
     }
     async publish(key) {
         const remote = this.remotes.get(key);
@@ -330,7 +364,8 @@ class WorkspaceExecutor {
         if (!this.revisions.has(key)) this.nextRevision(key);
         if (record && record.phase !== "disabled") {
             const revision = record.revision;
-            const unchanged = remote.connected && remote.principal_id === record.principal_id &&
+            const unchanged = remote.connected && remote.connection_id === record.connection_id &&
+                remote.principal_id === record.principal_id &&
                 remote.workspace_id === record.page.workspace_id &&
                 sameRef(remote.executor_fence, record.executor_fence) &&
                 sameRef(remote.owner_display, record.owner_display);
@@ -379,12 +414,16 @@ class WorkspaceExecutor {
         return this.popupState();
     }
     popupState() {
-        return {ok: true, error: this.lastError, remotes: [...this.remotes.values()].map(remote => ({
+        return {ok: true, error: this.lastError,
+            cleanup_pending: [...this.attachments.values()].some(token => token.cleanup),
+            remotes: [...this.remotes.values()].map(remote => ({
             remote_key: remote.remote_key, principal_id: remote.principal_id,
             display: remote.display_name || remote.connection_display_name || remote.owner_display?.workbench_name || "Abush",
             connected: remote.connected, state: this.state(remote.remote_key),
             creation_unknown: this.creations[`${this.browserBootId}\0${remote.remote_key}`]?.phase === "unknown",
             agreed: this.records.get(remote.remote_key)?.agreed || false,
+            cleanup_pending: [...this.attachments.values()].some(token =>
+                token.record.remote_key === remote.remote_key && token.cleanup),
         }))};
     }
     async control(action, key, ready = null) {
@@ -447,6 +486,8 @@ class WorkspaceExecutor {
             }
         };
         const existing = this.records.get(key);
+        await this.drainAttachments(key);
+        check();
         if (existing?.phase !== "disabled" && existing) {
             fail("operation_conflict", "Use Resume for the original work tab, or Disconnect first");
         }
@@ -458,6 +499,7 @@ class WorkspaceExecutor {
         check();
         if (window.type !== "normal") fail("invalid_command", "Open the popup in an existing normal Chrome window");
         const record = {remote_key: key, principal_id: remote.principal_id,
+            connection_id: remote.connection_id,
             executor_fence: clone(remote.executor_fence), owner_display: clone(remote.owner_display),
             browser_boot_id: this.browserBootId, enable_id: crypto.randomUUID(),
             revision: this.nextRevision(key), page: {workspace_id: remote.workspace_id,
@@ -536,12 +578,14 @@ class WorkspaceExecutor {
         const draining = [...this.operations.values()].filter(op => op.payload.remote_key === key);
         await bounded(() => Promise.all(draining.map(op => op.done.catch(() => {}))),
             "drain previous browser work", 5000);
+        await this.drainAttachments(key);
         await this.detach(record, record.pendingDetach);
         await this.validateTab(record);
         if (this.remotes.get(key) !== remote || this.records.get(key) !== record ||
                 record.revision !== revision) {
             fail("stale_authority", "Remote changed during resume");
         }
+        record.connection_id = remote.connection_id;
         record.executor_fence = clone(remote.executor_fence);
         record.owner_display = clone(remote.owner_display);
         record.revision = this.nextRevision(key);
@@ -581,11 +625,10 @@ class WorkspaceExecutor {
         })();
     }
     debuggerDetached(tabId) {
+        const token = this.attachments.get(tabId);
+        if (token && !token.pending && !token.detaching) this.releaseAttachment(token);
         const record = [...this.records.values()].find(record => record.tab_id === tabId);
-        if (record) {
-            record.attached = false;
-            record.attachment = null;
-        }
+        if (record) record.attached = false;
         for (const op of this.operations.values()) if (op.tab_id === tabId) op.cancelled = true;
     }
     effectKey(payload) { return `${payload.remote_key}\0${payload.principal_id}\0${payload.effect_id}`; }
@@ -620,6 +663,7 @@ class WorkspaceExecutor {
             fail("browser_disabled", "Browser is disabled or paused; use the Chrome popup");
         }
         if (!remote?.connected || remote.connection_id !== payload.connection_id ||
+                record.connection_id !== payload.connection_id ||
                 remote.principal_id !== payload.principal_id || record.principal_id !== payload.principal_id ||
                 !sameRef(remote.executor_fence, payload.executor_fence) ||
                 !sameRef(record.executor_fence, payload.executor_fence) ||
@@ -659,26 +703,41 @@ class WorkspaceExecutor {
             await this.validateTab(record);
             this.authorization(op.payload, op);
             if (!record.attached) {
-                await this.api(async () => {
+                if (this.attachments.has(record.tab_id)) {
+                    fail("operation_conflict", "Debugger attachment or cleanup is still pending");
+                }
+                const token = {record, pending: true, cleanup: false, detaching: null};
+                this.attachments.set(record.tab_id, token);
+                op.attachment = token;
+                const completion = Promise.resolve().then(() => {
                     this.authorization(op.payload, op);
-                    const token = {};
-                    record.attachment = token;
-                    const attachment = this.chrome.debugger.attach({tabId: record.tab_id}, "1.3");
-                    await attachment;
+                    return this.chrome.debugger.attach({tabId: record.tab_id}, "1.3");
+                }).then(() => {
+                    token.pending = false;
                     let authorized = false;
                     try { authorized = this.authorization(op.payload, op) === record; }
                     catch (_) {}
-                    if (!authorized || record.attachment !== token || this.records.get(op.payload.remote_key) !== record) {
-                        if (!record.attachment || record.attachment === token) {
-                            record.attachment = null;
-                            await this.api(() => {
-                                if (!record.attachment) return this.chrome.debugger.detach({tabId: record.tab_id});
-                            }, "detach superseded attachment");
-                        }
+                    if (token.cleanup || !authorized || this.records.get(op.payload.remote_key) !== record) {
+                        token.cleanup = true;
+                        // The map owns this continuation even after the bounded worker exits.
+                        this.detach(record, token).catch(error => this.reportAdvisoryError(error));
                         fail("browser_disabled", "Attachment authorization was revoked");
                     }
+                    record.attachment = token;
                     record.attached = true;
-                }, "attach exact work tab debugger");
+                }, error => {
+                    token.pending = false;
+                    this.releaseAttachment(token);
+                    throw error;
+                });
+                try {
+                    await this.api(() => completion, "attach exact work tab debugger");
+                } catch (error) {
+                    if (this.attachments.get(record.tab_id) === token) token.cleanup = true;
+                    throw error;
+                }
+            } else {
+                op.attachment = record.attachment;
             }
             this.authorization(op.payload, op);
             entry.phase = "dispatched";
@@ -709,9 +768,8 @@ class WorkspaceExecutor {
             await this.deliverEffect(key);
         } finally {
             this.operations.delete(key);
-            if (op.cancelled) {
-                const record = this.records.get(op.payload.remote_key);
-                if (record) await this.detach(record);
+            if (op.cancelled && op.attachment) {
+                await this.detach(op.attachment.record, op.attachment);
             }
         }
         if (error) throw error;

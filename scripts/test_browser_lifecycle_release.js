@@ -49,12 +49,35 @@ const cases = [
         const restored = f.executor.records.get("remote");
         assert.equal(restored.tab_id, original.tab_id); assert.equal(restored.enable_id, original.enable_id);
         assert.equal(restored.agreed, false);
-        const reconnect = {...REMOTE, connection_id: "new-transport"};
-        await f.executor.remoteState(reconnect);
+        await f.executor.remoteState(REMOTE);
         assert.equal(restored.agreed, true);
-        await f.executor.execute(execute(f, {connection_id: "new-transport"}));
+        await f.executor.execute(execute(f));
         assert.equal(f.calls.filter(call => call.name === "tabs.create").length, created);
         assert.deepEqual(f.local.abushOwnedMarkers, {legacy: true});
+    }],
+    ["changed or legacy transport consent pauses before publication until Resume", async () => {
+        for (const mode of ["active", "restored", "legacy"]) {
+            const f = fixture(); await f.ready(); const record = await f.enable();
+            const stale = execute(f); const revision = record.revision;
+            assert.equal(f.session[CONSENT_KEY].records[0].connection_id, REMOTE.connection_id);
+            if (mode === "legacy") delete f.session[CONSENT_KEY].records[0].connection_id;
+            if (mode !== "active") await f.restart();
+            const connection_id = mode === "legacy" ? REMOTE.connection_id : "new-transport";
+            const trace = [];
+            f.hooks["native.workspace_state"] = async payload => { trace.push(payload.state.phase); };
+            await f.executor.remoteState({...REMOTE, connection_id});
+            assert.deepEqual(trace, ["paused"]);
+            assert.equal(f.executor.state("remote").phase, "paused");
+            assert.ok(f.executor.state("remote").revision > revision);
+            await assert.rejects(f.executor.execute(execute(f, {connection_id})), /paused/);
+            assert.equal(f.calls.filter(c => c.name === "debugger.sendCommand").length, 0);
+            await f.executor.control("resume", "remote");
+            assert.deepEqual(trace, ["paused", "enabled"]);
+            assert.equal(f.session[CONSENT_KEY].records[0].connection_id, connection_id);
+            await assert.rejects(f.executor.execute(stale), /Stale/);
+            await f.executor.execute(execute(f, {connection_id}));
+            assert.equal(f.calls.filter(c => c.name === "debugger.sendCommand").length, 1);
+        }
     }],
     ["browser restart reused IDs never adopted", async () => {
         const f = fixture(); await f.ready(); const record = await f.enable();

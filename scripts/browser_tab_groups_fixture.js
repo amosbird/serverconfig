@@ -41,6 +41,7 @@ function fixture() {
     let nextTab = 10;
     let nextGroup = 100;
     const hooks = {};
+    const attachedTabs = new Set();
     const invoke = async (name, args, run) => {
         calls.push({name, args: clone(args)});
         if (hooks[name]) {
@@ -98,8 +99,12 @@ function fixture() {
             api.tabGroups.onUpdated.emit(clone(group));
             return group;
         })},
-        debugger: {attach: (target, version) => invoke("debugger.attach", [target, version], () => {}),
-            detach: target => invoke("debugger.detach", [target], () => {}),
+        debugger: {attach: (target, version) => invoke("debugger.attach", [target, version], () => {
+            if (attachedTabs.has(target.tabId)) throw new Error("Already attached");
+            attachedTabs.add(target.tabId);
+        }), detach: target => invoke("debugger.detach", [target], () => {
+            if (!attachedTabs.delete(target.tabId)) throw new Error("Not attached");
+        }),
             sendCommand: (target, method, args) => invoke("debugger.sendCommand", [target, method, args],
                 () => { tab(target.tabId).url = args.url; return {frameId: `frame-${target.tabId}`, loaderId: "loader"}; })},
     };
@@ -180,7 +185,7 @@ function fixture() {
     route();
     const send = (message, sender = trusted) => bounded(() => new Promise(resolve =>
         api.runtime.onMessage.emit(message, sender, resolve)), "runtime response", 4000);
-    return {api, calls, tabs, windows, local, session, hooks, trusted, send, errors,
+    return {api, calls, tabs, windows, local, session, hooks, attachedTabs, trusted, send, errors,
         emitNative: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
             event: "abush_browser.execute", payload})),
         get executor() { return executor; }, async ready() {

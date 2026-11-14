@@ -142,6 +142,80 @@ const cases = [
         await assert.rejects(pending, /revoked|paused/);
         assert.equal(f.calls.filter(call => call.name === "debugger.sendCommand").length, 0);
     }],
+    ...["timeout", "pause", "disconnect", "remove"].map(action => [
+        `late attachment cleanup remains owned across ${action} and failed detach`, async () => {
+            const f = fixture(); await f.ready(); const record = await f.enable();
+            const entered = deferred(); const attachGate = deferred();
+            f.hooks["debugger.attach"] = async () => { entered.resolve(); await attachGate.promise; };
+            const payload = execute(f);
+            const pending = f.executor.execute(payload); pending.catch(() => {});
+            await entered.promise;
+            await assert.rejects(f.api.debugger.detach({tabId: record.tab_id}), /Not attached/);
+            if (action === "remove") {
+                await f.executor.revokeTab(record.tab_id);
+                f.executor.records.delete("remote");
+            } else if (action !== "timeout") {
+                assert.equal((await f.send({control: action, remote_key: "remote"})).ok, true);
+            }
+            await assert.rejects(pending, /attach exact work tab debugger timed out/);
+            assert.equal(f.executor.operations.size, 0);
+            assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, "not_applied");
+            const token = f.executor.attachments.get(record.tab_id);
+            assert.equal(token.pending, true);
+            assert.equal(record.attachment, undefined);
+            assert.equal(f.executor.popupState().cleanup_pending, true);
+            const detachEntered = deferred(); const detachGate = deferred();
+            f.hooks["debugger.detach"] = async () => {
+                detachEntered.resolve(); await detachGate.promise;
+            };
+            attachGate.resolve(); await detachEntered.promise;
+            assert.equal(f.attachedTabs.has(record.tab_id), true);
+            assert.equal(token.pending, false);
+            const blocked = f.send({control: ["timeout", "pause"].includes(action) ? "resume" : "enable",
+                remote_key: "remote"});
+            assert.equal((await blocked).ok, false);
+            assert.equal(f.executor.attachments.get(record.tab_id), token);
+            assert.equal(f.executor.popupState().remotes[0].cleanup_pending, true);
+            if (action === "timeout") {
+                await assert.rejects(f.executor.execute(execute(f)), /cleanup is still pending/);
+            }
+            assert.equal(f.calls.filter(c => c.name === "debugger.sendCommand").length, 0);
+            detachGate.reject(new Error("late detach failed"));
+            await assert.rejects(token.detaching, /late detach failed/);
+            assert.equal(f.executor.attachments.get(record.tab_id), token);
+            assert.match(f.executor.popupState().error, /late detach failed/);
+            delete f.hooks["debugger.detach"];
+            await f.executor.detach(record, token);
+            assert.equal(f.executor.attachments.size, 0);
+            assert.equal(f.attachedTabs.size, 0);
+            assert.equal(f.executor.popupState().cleanup_pending, false);
+            if (action === "pause") {
+                await f.executor.control("resume", "remote");
+                await f.executor.execute(execute(f));
+                const newer = record.attachment;
+                await f.executor.detach(record, token);
+                assert.equal(record.attachment, newer);
+                assert.equal(f.attachedTabs.has(record.tab_id), true);
+                await f.executor.control("pause", "remote");
+                assert.equal(f.attachedTabs.size, 0);
+            }
+        },
+    ]),
+    ["rejected attachment releases obligation and successful attachment is reused", async () => {
+        const f = fixture(); await f.ready(); const record = await f.enable();
+        f.hooks["debugger.attach"] = async () => { throw new Error("attachment rejected"); };
+        await assert.rejects(f.executor.execute(execute(f)), /attachment rejected/);
+        assert.equal(f.executor.attachments.size, 0);
+        assert.equal(f.attachedTabs.size, 0);
+        delete f.hooks["debugger.attach"];
+        await f.executor.execute(execute(f));
+        await f.executor.execute(execute(f));
+        assert.equal(f.calls.filter(c => c.name === "debugger.attach").length, 2);
+        assert.equal(record.attached, true);
+        await f.executor.control("pause", "remote");
+        assert.equal(f.attachedTabs.size, 0);
+        assert.equal(f.executor.attachments.size, 0);
+    }],
     ["pause after confirmed dispatch remains applied", async () => {
         const f = fixture(); await f.ready(); await f.enable(); const payload = execute(f);
         const entered = deferred(); const gate = deferred();

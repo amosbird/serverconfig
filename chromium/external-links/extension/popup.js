@@ -5,7 +5,9 @@ let remotes = [];
 let controlGeneration = 0;
 function render() {
     const remote = remotes.find(item => item.remote_key === select.value);
-    state.textContent = remote ? remote.creation_unknown ?
+    state.textContent = remote ? remote.cleanup_pending ?
+        "Debugger cleanup pending. Browser control is blocked until cleanup is confirmed; retry Resume or Enable after Disconnect." :
+        remote.creation_unknown ?
         "Creation uncertain. Inspect the partial tab. Disconnect leaves it ordinary; Enable then creates a fresh tab." :
         `${remote.state.phase}${remote.agreed ? " · workbench agreed" : " · not authorized"}` :
         "No connected authenticated workbench. Start browser integration in Abush, then Refresh.";
