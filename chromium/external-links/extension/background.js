@@ -9,27 +9,12 @@ const NATIVE_TIMEOUTS_MS = Object.freeze({
     ordinary_open_prepare: 8000,
     ordinary_open_activate: 8000,
     ordinary_file_navigate: 8000,
-    arm_candidate_lease: 8000,
-    admit_candidate: 8000,
-    register_candidate_lease: 8000,
-    release_candidate_lease: 8000,
-    finish_candidate_lease: 8000,
-    bind_x11_window: 15000,
-    verify_x11_window: 8000,
-    clear_x11_window: 8000,
-    managed_page_moved_outside: 20000,
-    topology_response_consumed: 20000,
-    retire_managed_page_completion: 20000,
-    retire_managed_page_ack_consumed: 20000,
+    workspace_state: 8000,
+    executor_completion: 8000,
+    cancellation_completion: 8000,
+    refresh_remotes: 8000,
 });
-const SERIAL_NATIVE_OPERATIONS = new Set([
-    "register_candidate_lease", "arm_candidate_lease", "admit_candidate", "release_candidate_lease",
-    "finish_candidate_lease",
-    "bind_x11_window", "verify_x11_window", "clear_x11_window",
-    "managed_page_moved_outside",
-    "topology_response_consumed", "retire_managed_page_completion",
-    "retire_managed_page_ack_consumed",
-]);
+const SERIAL_NATIVE_OPERATIONS = new Set();
 const SERIAL_NATIVE_KEY = "native-host";
 
 class NativeDispatcher {
@@ -471,10 +456,7 @@ async function configureSiteLanguages() {
 function connectWorkspaceAfterRestore(workspaces, connect, bootstrap = null) {
     const accept = bootstrap === null ? Promise.resolve() : Promise.resolve(bootstrap)
         .then(payload => payload ? workspaces.acceptNativeBootstrap(payload) : undefined);
-    return accept.then(() => workspaces.restoreWhenReady()).then(async () => {
-        await connect();
-        return workspaces.drainAdvisoryErrors?.() || [];
-    });
+    return accept.then(() => workspaces.restoreWhenReady()).then(connect);
 }
 
 function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailure) {
@@ -483,22 +465,9 @@ function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailur
         if (initialization) return initialization;
         const attempt = connectWorkspaceAfterRestore(
             workspaces,
-            async () => {
-                native.ensurePort();
-                try {
-                    await workspaces.flushTopologyOutbox();
-                } catch (error) {
-                    workspaces.reportAdvisoryError(error);
-                }
-            },
+            () => native.ensurePort(),
             native.bootstrap(),
-        ).then(errors => {
-            if (errors.length > 0) {
-                onFailure(errors[0].message ||
-                    "Managed browser topology reports are pending retry");
-            }
-            return workspaces;
-        });
+        ).then(() => workspaces);
         const current = attempt.catch(error => {
             onFailure(error.message || "Unable to restore Abush browser workspaces");
             if (initialization === current) initialization = null;
@@ -510,75 +479,12 @@ function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailur
 }
 
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
-    const getReady = typeof ready === "function" ? ready : () => ready;
-    const run = task => getReady().then(() => workspaces.enqueueLifecycle(task)).catch(onFailure);
-    const observe = (type, payload) => workspaces.observeChromeEvent?.(type, payload) === true;
-    chromeApi.windows.onCreated.addListener(window => {
-        if (window.type !== "normal") return;
-        Promise.resolve(workspaces.observeWindowCreated?.(window)).then(owned => {
-            if (owned || observe("windowCreated", {window})) return;
-            run(async () => {
-                await workspaces.tabCreated({id: null, windowId: window.id});
-                await workspaces.rememberWindowSnapshot(window.id);
-            });
-        }).catch(onFailure);
-    });
-    chromeApi.windows.onFocusChanged.addListener(windowId => {
-        run(() => workspaces.recordOrdinaryFocus(windowId));
-    });
-    chromeApi.windows.onRemoved.addListener(windowId => {
-        workspaces.freezeClosingWindow?.(windowId);
-        run(() => workspaces.windowRemoved(windowId));
-    });
-    chromeApi.tabs.onCreated.addListener(tab => {
-        if (observe("tabCreated", {tab})) return;
-        run(async () => {
-            await workspaces.tabCreated(tab);
-            await workspaces.rememberWindowSnapshot(tab.windowId);
-        });
-    });
-    chromeApi.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-        if (observe("tabUpdated", {tabId, changeInfo, tab})) return;
-        run(async () => {
-            await workspaces.tabUpdated(tabId, changeInfo, tab);
-            await workspaces.rememberWindowSnapshot(tab.windowId);
-        });
-    });
-    chromeApi.tabs.onMoved.addListener((tabId, info) => {
-        if (observe("tabMoved", {tabId, ...info})) return;
-        run(async () => {
-            await workspaces.tabMoved(tabId, info);
-            await workspaces.rememberWindowSnapshot(info.windowId);
-        });
-    });
-    chromeApi.tabs.onRemoved.addListener((tabId, info) => {
-        if (info?.isWindowClosing) workspaces.freezeClosingWindow?.(info.windowId);
-        if (observe("tabRemoved", {tabId, ...info})) return;
-        run(async () => {
-            await workspaces.tabRemoved(tabId, info);
-            if (!info?.isWindowClosing) await workspaces.rememberWindowSnapshot(info.windowId);
-        });
-    });
-    chromeApi.tabs.onAttached.addListener((tabId, info) => {
-        if (observe("tabAttached", {tabId, ...info})) return;
-        run(async () => {
-            await workspaces.tabAttached(tabId, info);
-            await workspaces.rememberWindowSnapshot(info.newWindowId);
-        });
-    });
-    chromeApi.tabs.onDetached.addListener((tabId, info) => {
-        if (observe("tabDetached", {tabId, ...info})) return;
-        run(async () => {
-            await workspaces.tabDetached(tabId, info);
-            await workspaces.rememberWindowSnapshot(info.oldWindowId);
-        });
-    });
-    if (chromeApi.tabs.onReplaced?.addListener) {
-        chromeApi.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
-            if (observe("tabReplaced", {addedTabId, removedTabId})) return;
-            run(() => workspaces.tabReplaced(addedTabId, removedTabId));
-        });
-    }
+    const run = tabId => workspaces.revokeTab(tabId).catch(onFailure);
+    chromeApi.tabs.onRemoved.addListener(run);
+    chromeApi.tabs.onMoved.addListener(run);
+    chromeApi.tabs.onDetached.addListener(run);
+    chromeApi.tabs.onAttached.addListener(run);
+    chromeApi.tabs.onReplaced.addListener((addedTabId, removedTabId) => run(removedTabId));
 }
 
 function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openInTargetBrowser) {
@@ -586,10 +492,17 @@ function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openI
         const ownedFailure = () => ({owned: null, ready: false, ok: false, route: false});
         const respondAfterReady = async () => {
             try {
+                if (message.control !== undefined) {
+                    if (sender.id !== chromeApi.runtime.id || sender.tab !== undefined ||
+                            sender.url !== chromeApi.runtime.getURL("popup.html")) {
+                        return {ok: false, error: "Only the extension popup can authorize browser work"};
+                    }
+                    if (!["pause", "takeover", "disconnect"].includes(message.control)) await ready();
+                    return await workspaces.control(message.control, message.remote_key);
+                }
                 await ready();
-                const {owned, generation} = typeof workspaces.ownershipState === "function" ?
-                    workspaces.ownershipState(sender.tab?.windowId) :
-                    {owned: workspaces.ownsWindow(sender.tab?.windowId), generation: 0};
+                const owned = workspaces.ownsTab(sender.tab?.id);
+                const generation = 0;
                 if (message.query === "abush_owned_window") {
                     return {owned, generation, ready: true, ok: true, route: false};
                 }
@@ -601,8 +514,8 @@ function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openI
                             route: response.ok});
                     });
                 });
-            } catch (_) {
-                return ownedFailure();
+            } catch (error) {
+                return {...ownedFailure(), error: error.message, code: error.browserCode};
             }
         };
         respondAfterReady().then(sendResponse, () => sendResponse(ownedFailure()));
@@ -624,11 +537,7 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
                         "Unable to accept native browser bootstrap"));
                 return;
             }
-            ready().then(async () => {
-                await workspaces.invalidateRemote();
-                await workspaces.flushTopologyOutbox();
-            }).catch(error => onFailure(error.message ||
-                "Unable to retry managed browser topology reports"));
+            workspaces.invalidateRemote().catch(error => onFailure(error.message));
             if (message.event === "reconnect_exhausted") {
                 onFailure("Native browser integration could not reconnect");
             }
@@ -640,87 +549,38 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
             return;
         }
         if (message.service === "ordinary_open" && message.event === "ordinary_open_cancel") {
-            ready().then(() => workspaces.cancelOrdinaryOpen(message.payload)).catch(() => {});
+            try { workspaces.cancelOrdinaryOpen(message.payload); }
+            catch (error) { onFailure(error.message); }
             return;
         }
         if (message.service !== "abush_browser") return;
-        const dispatch = (method, fallback, rejectFalse = true) => {
-            const payload = message.payload;
-            const remoteKey = payload?.remote_key;
-            if (typeof remoteKey !== "string") {
-                onFailure(fallback);
-                return;
-            }
-            const enqueue = typeof workspaces.enqueueRemoteLifecycle === "function" ?
-                task => workspaces.enqueueRemoteLifecycle(remoteKey, task) : task => task();
-            run(() => enqueue(async () => {
-                const target = typeof workspaces[`${method}Queued`] === "function" ?
-                    `${method}Queued` : typeof workspaces[method] === "function" ? method : {
-                    remoteStateSerialized: "remoteState",
-                    retireManagedPageSerialized: "retireManagedPage",
-                    topologyReportResponseSerialized: "topologyReportResponse",
-                    retireManagedPageAckSerialized: "retireManagedPageAck",
-                }[method];
-                if (!target || typeof workspaces[target] !== "function") throw new Error(fallback);
-                const result = await workspaces[target](payload);
-                const deferred = result?.deferred;
-                const immediate = deferred ? true : result;
-                if (deferred) Promise.resolve(deferred).catch(error =>
-                    onFailure(error.message || fallback));
-                if (rejectFalse && immediate === false) throw new Error(fallback);
-                return true;
-            }), fallback);
-        };
-        if (message.event === "abush_browser.remote_state") {
-            dispatch("remoteStateSerialized", "Unable to apply managed browser remote state");
+        const methods = {"abush_browser.remote_state": "remoteState",
+            "abush_browser.execute": "execute", "abush_browser.cancel": "cancel"};
+        const method = methods[message.event];
+        if (!method) {
+            onFailure("Unsupported browser event; protocol v9 is required");
             return;
         }
-        if (message.event === "abush_browser.ensure_managed_page") {
-            dispatch("ensure", "Unable to ensure Abush browser workspace", false);
-            return;
-        }
-        if (message.event === "abush_browser.retire_managed_page") {
-            dispatch("retireManagedPageSerialized", "Unable to retire Abush browser workspace");
-            return;
-        }
-        if (message.event === "abush_browser.topology_report_response") {
-            dispatch("topologyReportResponseSerialized",
-                "Unable to consume managed topology response");
-            return;
-        }
-        if (message.event === "abush_browser.retire_managed_page_ack") {
-            dispatch("retireManagedPageAckSerialized",
-                "Unable to consume managed retire acknowledgement");
-            return;
-        }
-        if (message.event === "abush_browser.cancel_ensure_managed_page") {
-            dispatch("cancelEnsure", "Unable to cancel Abush browser workspace", false);
-            return;
-        }
-        if (message.event === "abush_browser.execute") {
-            dispatch("execute", "Unable to complete Abush browser command", false);
-            return;
-        }
-        if (message.event === "abush_browser.cancel") {
-            dispatch("cancel", "Unable to cancel Abush browser command", false);
-        }
+        if (method === "cancel" || (method === "remoteState" && workspaces.records.size > 0)) {
+            Promise.resolve(workspaces[method](message.payload)).catch(error => onFailure(error.message));
+        } else run(() => workspaces[method](message.payload), `Browser ${method} failed`);
     });
 }
 
 if (typeof chrome !== "undefined") {
-    configureSiteLanguages();
+    configureSiteLanguages().catch(error => notifyFailure(error.message));
     const workspaces = workspace();
     const native = dispatcher();
     workspaces.onAdvisoryError = error => notifyFailure(
-        error.message || "Managed browser topology report is pending retry");
+        error.message || "Browser state is pending retry");
     const workspaceReady = createWorkspaceInitializer(workspaces, native);
     workspaceReady().catch(() => {});
     registerNativeEventRouter(dispatcher(), workspaces, workspaceReady);
     registerWorkspaceWindowListeners(chrome, workspaces, workspaceReady, error =>
-        notifyFailure(error.message || "Unable to retire closed Abush browser workspace"));
+        notifyFailure(error.message || "Unable to revoke changed work tab"));
     chrome.debugger.onDetach.addListener(source => {
         if (source.tabId) {
-            workspaceReady().then(() => workspaces.debuggerDetached(source.tabId)).catch(() => {});
+            workspaces.debuggerDetached(source.tabId);
         }
     });
     chrome.commands.onCommand.addListener((command, tab) => {

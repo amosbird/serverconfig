@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Abush browser work tab</title>
+<link rel="stylesheet" href="popup.css">
+<body>
+<h1>Abush browser work tab</h1>
+<p>Enable one inactive tab in this window. Other tabs are never controlled.</p>
+<label>Authenticated workbench <select id="remote"></select></label>
+<p id="state" aria-live="polite">Connecting…</p>
+<div id="actions">
+<button data-action="enable">Enable work tab</button>
+<button data-action="pause">Pause</button>
+<button data-action="takeover">Take over</button>
+<button data-action="resume">Resume</button>
+<button data-action="disconnect">Disconnect</button>
+<button data-action="refresh">Refresh</button>
+</div>
+<p>Pause / Take over stops automation. Resume requires this popup. Disconnect leaves the tab and group open. Restarting Chrome requires Enable again.</p>
+<p id="error" role="alert"></p>
+<script src="popup.js"></script>
+</body>
+</html>

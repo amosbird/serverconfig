@@ -7,14 +7,15 @@
     "permissions": [
         "nativeMessaging",
         "notifications",
-        "sessions",
         "storage",
         "tabs",
+        "tabGroups",
         "debugger",
         "declarativeNetRequest"
     ],
     "action": {
-        "default_title": "Open Abush browser workspace"
+        "default_title": "Abush browser work tab",
+        "default_popup": "popup.html"
     },
     "background": {
         "service_worker": "background.js"
