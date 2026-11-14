@@ -295,6 +295,10 @@ class WorkspaceExecutor {
                 this.chrome.debugger.detach({tabId: record.tab_id}));
             token.detaching = attempt.then(() => this.releaseAttachment(token), error => {
                 token.detaching = null;
+                if (token.detached) {
+                    this.releaseAttachment(token);
+                    return;
+                }
                 this.reportAdvisoryError(error);
                 throw error;
             });
@@ -626,7 +630,10 @@ class WorkspaceExecutor {
     }
     debuggerDetached(tabId) {
         const token = this.attachments.get(tabId);
-        if (token && !token.pending && !token.detaching) this.releaseAttachment(token);
+        if (token && !token.pending) {
+            token.detached = true;
+            if (!token.detaching) this.releaseAttachment(token);
+        }
         const record = [...this.records.values()].find(record => record.tab_id === tabId);
         if (record) record.attached = false;
         for (const op of this.operations.values()) if (op.tab_id === tabId) op.cancelled = true;

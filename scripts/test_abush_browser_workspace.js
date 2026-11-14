@@ -201,6 +201,35 @@ const cases = [
             }
         },
     ]),
+    ...[false, true].map(timedOut => [
+        `external detach confirmation releases cleanup after ${timedOut ? "timed-out" : "pending"} request rejects`, async () => {
+            const f = fixture(); await f.ready(); const record = await f.enable();
+            await f.executor.execute(execute(f));
+            const entered = deferred(); const gate = deferred();
+            f.hooks["debugger.detach"] = async () => { entered.resolve(); await gate.promise; };
+            const pause = f.executor.control("pause", "remote"); pause.catch(() => {});
+            await entered.promise;
+            const token = f.executor.attachments.get(record.tab_id);
+            const detaching = token.detaching;
+            if (timedOut) await assert.rejects(pause, /detach work tab debugger timed out/);
+            f.attachedTabs.delete(record.tab_id);
+            f.executor.debuggerDetached(record.tab_id);
+            assert.equal(f.executor.attachments.get(record.tab_id), token);
+            assert.equal(f.executor.popupState().cleanup_pending, true);
+            await assert.rejects(f.executor.execute(execute(f)), /paused/);
+            gate.reject(new Error("Not attached"));
+            await detaching;
+            if (!timedOut) await pause;
+            assert.equal(f.executor.attachments.size, 0);
+            assert.equal(f.executor.popupState().cleanup_pending, false);
+            delete f.hooks["debugger.detach"];
+            await f.executor.control("resume", "remote");
+            await f.executor.execute(execute(f));
+            assert.equal(f.attachedTabs.has(record.tab_id), true);
+            await f.executor.control("pause", "remote");
+            assert.equal(f.attachedTabs.size, 0);
+        },
+    ]),
     ["rejected attachment releases obligation and successful attachment is reused", async () => {
         const f = fixture(); await f.ready(); const record = await f.enable();
         f.hooks["debugger.attach"] = async () => { throw new Error("attachment rejected"); };
