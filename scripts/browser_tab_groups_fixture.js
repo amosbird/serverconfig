@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 global.crypto ||= require("node:crypto").webcrypto;
 const {WorkspaceExecutor, bounded, ORDINARY_PREFIX} =
     require("../chromium/external-links/extension/workspace.js");
-const {registerRuntimeMessageRouter, registerWorkspaceWindowListeners} =
+const {registerRuntimeMessageRouter, registerWorkspaceWindowListeners, registerNativeEventRouter} =
     require("../chromium/external-links/extension/background.js");
 const clone = value => structuredClone(value);
 function event() {
@@ -74,18 +74,30 @@ function fixture() {
             get: id => invoke("tabs.get", [id], () => clone(tab(id))),
             create: args => invoke("tabs.create", [args], () => createTab(args)),
             group: args => invoke("tabs.group", [args], () => {
-                const group = nextGroup++;
-                args.tabIds.forEach(id => { tab(id).groupId = group; });
+                const group = args.groupId ?? nextGroup++;
+                args.tabIds.forEach(id => {
+                    tab(id).groupId = group;
+                    api.tabs.onMoved.emit(id, {windowId: tab(id).windowId, fromIndex: 0, toIndex: 1});
+                    api.tabs.onUpdated.emit(id, {groupId: group}, clone(tab(id)));
+                });
                 return group;
             }), ungroup: ids => invoke("tabs.ungroup", [ids], () => {
-                ids.forEach(id => { tab(id).groupId = -1; });
+                ids.forEach(id => {
+                    tab(id).groupId = -1;
+                    api.tabs.onUpdated.emit(id, {groupId: -1}, clone(tab(id)));
+                    api.tabs.onMoved.emit(id, {windowId: tab(id).windowId, fromIndex: 1, toIndex: 0});
+                });
             }), update: (id, args) => invoke("tabs.update", [id, args], () => {
                 if (args.active) activate(tab(id));
                 Object.assign(tab(id), args);
                 return clone(tab(id));
             }), onRemoved: event(), onMoved: event(), onDetached: event(), onAttached: event(),
             onReplaced: event(), onCreated: event(), onUpdated: event()},
-        tabGroups: {update: (id, args) => invoke("tabGroups.update", [id, args], () => ({id, ...args}))},
+        tabGroups: {onUpdated: event(), update: (id, args) => invoke("tabGroups.update", [id, args], () => {
+            const group = {id, ...args};
+            api.tabGroups.onUpdated.emit(clone(group));
+            return group;
+        })},
         debugger: {attach: (target, version) => invoke("debugger.attach", [target, version], () => {}),
             detach: target => invoke("debugger.detach", [target], () => {}),
             sendCommand: (target, method, args) => invoke("debugger.sendCommand", [target, method, args],
@@ -105,6 +117,12 @@ function fixture() {
         }
         tabs.set(current.id, current);
         if (current.active) activate(current);
+        api.tabs.onCreated.emit(clone(current));
+        for (const item of tabs.values()) {
+            if (item.id !== current.id && item.windowId === current.windowId) {
+                api.tabs.onMoved.emit(item.id, {windowId: item.windowId, fromIndex: 0, toIndex: 1});
+            }
+        }
         return clone(current);
     }
     const native = (service, operation, payload) => invoke(`native.${operation}`, [payload], () => {
@@ -145,15 +163,26 @@ function fixture() {
     });
     let executor = new WorkspaceExecutor(api, native);
     const trusted = {id: api.runtime.id, url: api.runtime.getURL("popup.html")};
+    const nativeEvents = event();
+    const errors = [];
     function route() {
         api.runtime.onMessage.listeners.length = 0;
+        nativeEvents.listeners.length = 0;
+        for (const name of ["onRemoved", "onMoved", "onDetached", "onAttached", "onReplaced"]) {
+            api.tabs[name].listeners.length = 0;
+        }
+        registerWorkspaceWindowListeners(api, executor, async () => {}, error => errors.push(error.message));
+        registerNativeEventRouter({onEvent: nativeEvents.addListener}, executor,
+            async () => {}, message => errors.push(message));
         registerRuntimeMessageRouter(api, executor, async () => {},
             (url, source, cb) => cb({ok: true}));
     }
     route();
     const send = (message, sender = trusted) => bounded(() => new Promise(resolve =>
         api.runtime.onMessage.emit(message, sender, resolve)), "runtime response", 4000);
-    return {api, calls, tabs, windows, local, session, hooks, trusted, send,
+    return {api, calls, tabs, windows, local, session, hooks, trusted, send, errors,
+        emitNative: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
+            event: "abush_browser.execute", payload})),
         get executor() { return executor; }, async ready() {
             await executor.acceptNativeBootstrap(BOOT);
             await executor.restoreWhenReady();
@@ -172,8 +201,6 @@ function fixture() {
             await executor.acceptNativeBootstrap(boot);
             await executor.restoreWhenReady();
             return executor;
-        }, listeners() {
-            registerWorkspaceWindowListeners(api, executor, async () => {}, error => { throw error; });
         }};
 }
 function execute(f, overrides = {}) {

@@ -6,6 +6,42 @@ const {WAL_KEY, CONSENT_KEY} = require("../chromium/external-links/extension/wor
 const {NativeDispatcher, registerNativeEventRouter} =
     require("../chromium/external-links/extension/background.js");
 const cases = [
+    ["late timed-out create stays ordinary across same-browser transport restart", async () => {
+        const f = fixture(); await f.ready(); const entered = deferred(); const gate = deferred();
+        const returned = deferred(); let created;
+        f.hooks["tabs.create.after"] = async tab => {
+            created = tab; entered.resolve(); await gate.promise; returned.resolve();
+        };
+        const trace = () => [f.executor.state("remote").phase, f.executor.records.size,
+            f.calls.filter(c => c.name === "tabs.group").length];
+        const enable = f.send({control: "enable", remote_key: "remote"}); await entered.promise;
+        assert.deepEqual(trace(), ["disabled", 0, 0]);
+        assert.equal((await enable).ok, false);
+        assert.deepEqual(trace(), ["disabled", 0, 0]);
+        await f.executor.invalidateRemote(); await f.executor.acceptNativeBootstrap(BOOT);
+        await f.executor.remoteState({...REMOTE, connection_id: "same-browser-new-transport"});
+        assert.deepEqual(trace(), ["disabled", 0, 0]);
+        gate.resolve(); await returned.promise;
+        await Promise.resolve(); await Promise.resolve();
+        assert.deepEqual(trace(), ["disabled", 0, 0]);
+        assert.equal(f.executor.pendingCreations.size, 0);
+        assert.equal(f.executor.ownsTab(created.id), false);
+        assert.equal(f.tabs.get(created.id).groupId, -1);
+        assert.equal(f.executor.popupState().remotes[0].creation_unknown, true);
+    }],
+    ["unrelated tab events do not retain unbounded revocation history", async () => {
+        const f = fixture(); await f.ready(); const record = await f.enable();
+        for (let id = 1000; id < 1100; id++) {
+            await Promise.all(f.api.tabs.onRemoved.emit(id));
+            await Promise.all(f.api.tabs.onDetached.emit(id, {oldWindowId: 1}));
+        }
+        assert.equal(f.executor.revokedTabs.size, 0);
+        assert.equal(f.executor.ownsTab(record.tab_id), true);
+        await Promise.all(f.api.tabs.onDetached.emit(record.tab_id, {oldWindowId: 1}));
+        assert.equal(f.executor.state("remote").phase, "disabled");
+        assert.equal(f.executor.revokedTabs.size, 0);
+        assert.equal(f.executor.ownsTab(record.tab_id), false);
+    }],
     ["same boot worker restore revalidates exact tab before agreement", async () => {
         const f = fixture(); await f.ready(); const original = clone(await f.enable());
         const created = f.calls.filter(call => call.name === "tabs.create").length;
@@ -61,9 +97,9 @@ const cases = [
         assert.equal(f.calls.filter(call => call.name === "debugger.sendCommand").length, 0);
         assert.equal(f.executor.state("remote").phase, "paused");
     }],
-    ["close move detach replace revoke synchronously without recreate", async () => {
-        for (const name of ["onRemoved", "onMoved", "onDetached", "onReplaced"]) {
-            const f = fixture(); await f.ready(); const record = await f.enable(); f.listeners();
+    ["close cross-window detach attach replace revoke without recreate", async () => {
+        for (const name of ["onRemoved", "onDetached", "onAttached", "onReplaced"]) {
+            const f = fixture(); await f.ready(); const record = await f.enable();
             const before = f.tabs.size;
             const jobs = name === "onReplaced" ? f.api.tabs[name].emit(99, record.tab_id) :
                 f.api.tabs[name].emit(record.tab_id, {windowId: 1});
@@ -218,12 +254,12 @@ const cases = [
         }
     }],
     ["create callback revocation prevents group and authorization", async () => {
-        for (const action of ["pause", "disconnect", "move"]) {
-            const f = fixture(); await f.ready(); f.listeners();
+        for (const action of ["pause", "disconnect", "detach"]) {
+            const f = fixture(); await f.ready();
             const entered = deferred(); const gate = deferred(); let created;
             f.hooks["tabs.create.after"] = async tab => { created = tab; entered.resolve(); await gate.promise; };
             const enable = f.send({control: "enable", remote_key: "remote"}); await entered.promise;
-            if (action === "move") await Promise.all(f.api.tabs.onMoved.emit(created.id, {windowId: 1}));
+            if (action === "detach") await Promise.all(f.api.tabs.onDetached.emit(created.id, {oldWindowId: 1}));
             else await f.executor.control(action, "remote");
             gate.resolve(); assert.equal((await enable).ok, false);
             assert.equal(f.calls.filter(c => ["tabs.group", "tabGroups.update"].includes(c.name)).length, 0);
@@ -302,14 +338,14 @@ const cases = [
         }
     }],
     ["group callback revocation prevents label without deleting partial group", async () => {
-        for (const action of ["pause", "disconnect", "move"]) {
-            const f = fixture(); await f.ready(); f.listeners();
+        for (const action of ["pause", "disconnect", "detach"]) {
+            const f = fixture(); await f.ready();
             const entered = deferred(); const gate = deferred(); let tabId;
             f.hooks["tabs.group.after"] = async (group, args) => {
                 tabId = args.tabIds[0]; entered.resolve(); await gate.promise;
             };
             const enable = f.send({control: "enable", remote_key: "remote"}); await entered.promise;
-            if (action === "move") await Promise.all(f.api.tabs.onMoved.emit(tabId));
+            if (action === "detach") await Promise.all(f.api.tabs.onDetached.emit(tabId, {oldWindowId: 1}));
             else await f.executor.control(action, "remote");
             gate.resolve(); assert.equal((await enable).ok, false);
             assert.equal(f.calls.filter(c => c.name === "tabGroups.update").length, 0);
@@ -349,14 +385,28 @@ const cases = [
             const pending = deferred(); responses.push(pending); return pending.promise;
         }}}});
         vm.runInContext(fs.readFileSync(require.resolve("../chromium/external-links/extension/popup.js"), "utf8"), context);
-        assert.equal(buttons[1].disabled, false); assert.equal(buttons[2].disabled, false);
+        const trace = () => [state.textContent, error.textContent, buttons.map(button => button.disabled)];
+        assert.deepEqual(trace(), ["", "", [true, false, false]]);
         const pause = vm.runInContext("control('pause')", context);
+        assert.deepEqual(trace(), ["", "", [true, false, false]]);
         responses[1].resolve({ok: true, remotes: [{remote_key: "remote", display: "local",
             state: {phase: "paused"}, agreed: false}]}); await pause;
+        const paused = trace();
+        assert.match(paused[0], /^paused/);
+        assert.deepEqual(paused[2], [false, false, false]);
         responses[0].resolve({ok: true, remotes: [{remote_key: "remote", display: "old",
             state: {phase: "enabled"}, agreed: true}]});
         await vm.runInContext("Promise.resolve()", context);
-        assert.match(state.textContent, /^paused/);
+        assert.deepEqual(trace(), paused);
+        const refresh = vm.runInContext("control('refresh')", context);
+        const disconnect = vm.runInContext("control('disconnect')", context);
+        assert.deepEqual(trace()[2], [true, false, false]);
+        responses[3].resolve({ok: true, remotes: [{remote_key: "remote", display: "local",
+            state: {phase: "disabled"}, agreed: false}]}); await disconnect;
+        const disabled = trace();
+        assert.match(disabled[0], /^disabled/);
+        responses[2].reject(new Error("stale refresh failed")); await refresh;
+        assert.deepEqual(trace(), disabled);
     }],
 ];
 if (require.main === module) runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

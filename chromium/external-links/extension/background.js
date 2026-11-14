@@ -481,7 +481,6 @@ function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailur
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
     const run = tabId => workspaces.revokeTab(tabId).catch(onFailure);
     chromeApi.tabs.onRemoved.addListener(run);
-    chromeApi.tabs.onMoved.addListener(run);
     chromeApi.tabs.onDetached.addListener(run);
     chromeApi.tabs.onAttached.addListener(run);
     chromeApi.tabs.onReplaced.addListener((addedTabId, removedTabId) => run(removedTabId));
@@ -565,7 +564,7 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
         }
         if (method === "cancel" || method === "remoteState") {
             Promise.resolve(workspaces[method](message.payload)).catch(error => onFailure(error.message));
-        } else run(() => workspaces[method](message.payload), `Browser ${method} failed`);
+        } else return run(() => workspaces[method](message.payload), `Browser ${method} failed`);
     });
 }
 

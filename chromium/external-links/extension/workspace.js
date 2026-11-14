@@ -173,7 +173,7 @@ class WorkspaceExecutor {
                         [...this.records.values()].some(record => record.tab_id === candidate.tab_id)) continue;
                 this.revisions.set(candidate.remote_key, Math.max(candidate.revision,
                     this.revisions.get(candidate.remote_key) || 1));
-                const record = {...candidate, agreed: false, attached: false};
+                const record = {...candidate, agreed: false, publication: null, attached: false};
                 this.records.set(record.remote_key, record);
                 try {
                     await this.validateTab(record);
@@ -193,6 +193,7 @@ class WorkspaceExecutor {
         for (const lease of this.bootstrapLeases) await this.ordinaryOpen(lease);
         this.bootstrapLeases = [];
         this.restored = true;
+        if (!this.controls.size) this.revokedTabs.clear();
     }
     persistWal() {
         const write = this.localTail.catch(() => {}).then(() => this.api(() =>
@@ -206,7 +207,7 @@ class WorkspaceExecutor {
     persistConsent() {
         const write = this.sessionTail.catch(() => {}).then(() => {
             const records = [...this.records.values()].filter(record => record.phase !== "disabled")
-                .map(({agreed, attached, attachment, pendingDetach, ...record}) => record);
+                .map(({agreed, publication, attached, attachment, pendingDetach, ...record}) => record);
             return this.api(() => this.chrome.storage.session.set({[CONSENT_KEY]: {
                 version: 9, browser_boot_id: this.browserBootId,
                 ownership_generation: this.ownershipGeneration,
@@ -262,6 +263,7 @@ class WorkspaceExecutor {
         this.bumpControl(record.remote_key);
         record.pendingDetach = record.attachment;
         record.agreed = false;
+        record.publication = null;
         record.phase = phase;
         record.revision = this.nextRevision(record.remote_key);
         this.ownershipChanged(record.tab_id);
@@ -287,10 +289,25 @@ class WorkspaceExecutor {
         const payload = {remote_key: key, connection_id: remote.connection_id,
             principal_id: remote.principal_id, request_id: crypto.randomUUID(),
             executor_fence: clone(remote.executor_fence), state};
-        const receipt = await this.native("abush_browser", "workspace_state", payload);
+        const receipt = await bounded(() => {
+            if (this.remotes.get(key) !== remote || this.records.get(key) !== record ||
+                    !sameRef(this.state(key), state)) {
+                fail("stale_authority", "Browser authorization changed before publication");
+            }
+            if (record?.phase === "enabled") record.publication = {remote, state: clone(state)};
+            return this.nativeRequest("abush_browser", "workspace_state", clone(payload));
+        }, "abush_browser.workspace_state", 8000).catch(error => {
+            if (record?.publication?.remote === remote &&
+                    sameRef(record.publication.state, state)) record.publication = null;
+            throw error;
+        });
         const expected = {type: "workspace_state_accepted", request_id: payload.request_id,
             executor_fence: payload.executor_fence, state};
-        if (!sameRef(receipt, expected)) fail("stale_authority", "Workbench did not accept browser state");
+        if (!sameRef(receipt, expected)) {
+            if (record?.publication?.remote === remote &&
+                    sameRef(record.publication.state, state)) record.publication = null;
+            fail("stale_authority", "Workbench did not accept browser state");
+        }
         if (this.remotes.get(key) !== remote || this.records.get(key) !== record ||
                 !sameRef(this.state(key), state)) fail("stale_authority", "Browser authorization changed");
         if (record && record.phase === "enabled") record.agreed = true;
@@ -324,6 +341,7 @@ class WorkspaceExecutor {
                 await this.detach(record, attachment);
             } else {
                 record.agreed = false;
+                record.publication = null;
                 try { await this.validateTab(record); }
                 catch (error) {
                     if (this.remotes.get(key) !== acceptedRemote || record.revision !== revision) return false;
@@ -406,7 +424,10 @@ class WorkspaceExecutor {
         } catch (error) {
             this.reportAdvisoryError(error);
             throw error;
-        } finally { this.controls.delete(key); }
+        } finally {
+            this.controls.delete(key);
+            if (!this.controls.size && this.restored) this.revokedTabs.clear();
+        }
     }
     selectedRemote(key) {
         const remote = this.remotes.get(key);
@@ -526,6 +547,7 @@ class WorkspaceExecutor {
         record.revision = this.nextRevision(key);
         record.phase = "enabled";
         record.agreed = false;
+        record.publication = null;
         const enableRevision = record.revision;
         try {
             await this.persistConsent();
@@ -543,11 +565,12 @@ class WorkspaceExecutor {
         }
     }
     revokeTab(tabId) {
-        this.revokedTabs.add(tabId);
+        if (!Number.isSafeInteger(tabId)) return Promise.resolve();
         const pending = this.pendingCreations.get(tabId);
-        if (pending) this.bumpControl(pending.remote_key);
         const record = [...this.records.values()].find(record =>
             record.tab_id === tabId && record.phase !== "disabled");
+        if (this.controls.size || !this.restored) this.revokedTabs.add(tabId);
+        if (pending) this.bumpControl(pending.remote_key);
         if (!record) return Promise.resolve();
         const attachment = record.attachment;
         this.closeAuthorization(record, "disabled");
@@ -590,7 +613,10 @@ class WorkspaceExecutor {
     authorization(payload, op) {
         const record = this.records.get(payload.remote_key);
         const remote = this.remotes.get(payload.remote_key);
-        if (op.cancelled || !record || record.phase !== "enabled" || !record.agreed) {
+        // Exact Execute is daemon acceptance proof after persisted consent starts publication.
+        const published = record?.publication && record.publication.remote === remote &&
+            sameRef(record.publication.state, this.state(payload.remote_key));
+        if (op.cancelled || !record || record.phase !== "enabled" || (!record.agreed && !published)) {
             fail("browser_disabled", "Browser is disabled or paused; use the Chrome popup");
         }
         if (!remote?.connected || remote.connection_id !== payload.connection_id ||
@@ -639,8 +665,10 @@ class WorkspaceExecutor {
                     record.attachment = token;
                     const attachment = this.chrome.debugger.attach({tabId: record.tab_id}, "1.3");
                     await attachment;
-                    if (op.cancelled || record.attachment !== token || this.records.get(op.payload.remote_key) !== record ||
-                            !record.agreed || record.revision !== op.payload.authorization.revision) {
+                    let authorized = false;
+                    try { authorized = this.authorization(op.payload, op) === record; }
+                    catch (_) {}
+                    if (!authorized || record.attachment !== token || this.records.get(op.payload.remote_key) !== record) {
                         if (!record.attachment || record.attachment === token) {
                             record.attachment = null;
                             await this.api(() => {

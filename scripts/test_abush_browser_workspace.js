@@ -1,8 +1,75 @@
 #!/usr/bin/env node
 const {assert, clone, deferred, fixture, execute, runCases, REMOTE} =
     require("./browser_tab_groups_fixture.js");
-const {WAL_KEY, RECEIPTS_KEY} = require("../chromium/external-links/extension/workspace.js");
+const {WAL_KEY, RECEIPTS_KEY, CONSENT_KEY} = require("../chromium/external-links/extension/workspace.js");
 const cases = [
+    ["exact Execute before state ACK applies once with pending UI", async () => {
+        for (const outcome of ["accept", "fail", "malformed", "pause"]) {
+            const f = fixture(); await f.ready();
+            const entered = deferred(); const gate = deferred();
+            f.hooks["native.workspace_state"] = async payload => {
+                if (payload.state.phase === "enabled") {
+                    entered.resolve(); await gate.promise;
+                    if (outcome === "fail") throw new Error("state ACK lost");
+                    if (outcome === "malformed") return {type: "workspace_state_accepted", extra: true};
+                }
+            };
+            const enable = f.send({control: "enable", remote_key: "remote"});
+            await entered.promise;
+            const payload = execute(f);
+            const trace = () => [f.executor.state("remote").phase,
+                f.executor.popupState().remotes[0].agreed,
+                f.calls.filter(c => c.name === "debugger.sendCommand").length];
+            assert.deepEqual(trace(), ["enabled", false, 0]);
+            assert.equal(f.session[CONSENT_KEY].records[0].phase, "enabled");
+            for (const invalid of [
+                execute(f, {authorization: {...payload.authorization, revision: payload.authorization.revision - 1}}),
+                execute(f, {executor_fence: {executor_id: "old", epoch: 1}}),
+                {...execute(f), extra: true},
+            ]) await f.emitNative(invalid);
+            assert.deepEqual(trace(), ["enabled", false, 0]);
+            if (outcome === "pause") await f.executor.control("pause", "remote");
+            await f.emitNative(payload);
+            await f.emitNative(payload);
+            const expected = outcome === "pause" ? "not_applied" : "applied";
+            assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, expected);
+            assert.deepEqual(trace(), outcome === "pause" ? ["paused", false, 0] : ["enabled", false, 1]);
+            assert.equal(f.calls.filter(c => c.name === "native.executor_completion" &&
+                c.args[0].effect_id === payload.effect_id).at(-1).args[0].completion, expected);
+            gate.resolve(); const response = await enable;
+            assert.equal(response.ok, outcome === "accept");
+            assert.deepEqual(trace(), outcome === "accept" ? ["enabled", true, 1] :
+                ["paused", false, outcome === "pause" ? 0 : 1]);
+            assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, expected);
+        }
+    }],
+    ["Execute cannot bypass pending local consent persistence", async () => {
+        const f = fixture(); await f.ready(); const entered = deferred(); const gate = deferred();
+        f.hooks["session.set"] = async value => {
+            if (value[CONSENT_KEY]?.records[0]?.phase === "enabled") {
+                entered.resolve(); await gate.promise;
+            }
+        };
+        const enable = f.send({control: "enable", remote_key: "remote"}); await entered.promise;
+        await f.emitNative(execute(f));
+        assert.equal(f.calls.filter(c => c.name === "debugger.sendCommand").length, 0);
+        assert.equal(f.calls.filter(c => c.name === "native.workspace_state" &&
+            c.args[0].state.phase === "enabled").length, 0);
+        gate.resolve(); assert.equal((await enable).ok, true);
+    }],
+    ["native reorder insert and ungroup preserve exact tab only", async () => {
+        const f = fixture(); await f.ready(); const record = await f.enable();
+        const original = clone(record.page);
+        await f.api.tabs.group({tabIds: [1], groupId: record.group_id});
+        await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: false});
+        f.api.tabs.onMoved.emit(record.tab_id, {windowId: 1, fromIndex: 2, toIndex: 0});
+        await f.api.tabs.ungroup([record.tab_id]);
+        assert.equal(f.executor.ownsTab(record.tab_id), true);
+        assert.equal(f.executor.ownsTab(1), false);
+        assert.deepEqual(record.page, original);
+        assert.equal(await f.executor.execute(execute(f)), "applied");
+        assert.equal(f.executor.revokedTabs.size, 0);
+    }],
     ["disabled at bootstrap and peer connect", async () => {
         const f = fixture(); await f.ready();
         assert.equal(f.executor.state("remote").phase, "disabled");
@@ -13,8 +80,12 @@ const cases = [
     ["trusted popup routing only", async () => {
         const f = fixture(); await f.ready();
         for (const sender of [{...f.trusted, id: "external"}, {...f.trusted, tab: {id: 1}},
+            {...f.trusted, tab: null}, {...f.trusted, tab: false}, null,
             {...f.trusted, url: f.trusted.url + "#fake"}, {id: f.trusted.id, url: "https://content/"}]) {
             assert.equal((await f.send({control: "enable", remote_key: "remote"}, sender)).ok, false);
+        }
+        for (const message of [null, [], {}, {control: null, remote_key: "remote"}]) {
+            assert.equal((await f.send(message)).ok, false);
         }
         assert.equal(f.tabs.size, 2);
         await f.enable();
