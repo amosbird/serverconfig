@@ -32,7 +32,7 @@ case $(hostname) in
         # monitormove DP-1-2 eDP-1
         ;;
     abx1gen3)
-        dp=$(xrandr | awk '/^DP.* connected/{print $1; exit}')
+        dp=$(xrandr | awk '/ connected/ && $1 !~ /^eDP/{print $1; exit}')
         onlyscreen "${dp:-DP-1}"
         ;;
     t450s)
