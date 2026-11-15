@@ -481,13 +481,11 @@ function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailur
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
     const run = tabId => workspaces.revokeTab(tabId).catch(onFailure);
     chromeApi.tabs.onCreated.addListener(tab => Promise.resolve(workspaces.newPersonalCandidate(tab)).catch(onFailure));
-    chromeApi.tabs.onUpdated.addListener((tabId, change) => {
-        if (change.groupId !== undefined) return workspaces.isolateNewPersonalTab(tabId).catch(onFailure);
-    });
-    chromeApi.tabs.onRemoved.addListener(tabId => {
-        clearTimeout(workspaces.personalCandidates.get(tabId)?.timer);
-        workspaces.personalCandidates.delete(tabId);
-    });
+    chromeApi.tabs.onUpdated.addListener((tabId, change, tab) =>
+        Promise.resolve(workspaces.personalTabChanged(tabId, change, tab)).catch(onFailure));
+    chromeApi.tabs.onRemoved.addListener(tabId => workspaces.forgetPersonalCandidate(tabId));
+    chromeApi.tabs.onDetached.addListener(tabId => workspaces.forgetPersonalCandidate(tabId));
+    chromeApi.tabs.onAttached.addListener(tabId => workspaces.forgetPersonalCandidate(tabId));
     chromeApi.tabs.onRemoved.addListener(run);
     chromeApi.tabs.onDetached.addListener(run);
     chromeApi.tabs.onAttached.addListener(run);

@@ -3,6 +3,7 @@ const AUTOMATION_KEY = "abushBrowserAutomationV9";
 const CONSENT_KEY = "abushBrowserConsentV9";
 const WAL_KEY = "abushBrowserEffectsV9";
 const RECEIPTS_KEY = "abushBrowserReceiptsV9";
+const INHERITANCE_KEY = "abushBrowserInheritanceV9";
 const API_TIMEOUT_MS = 2000;
 const BROWSER_ERROR_CODES = new Set([
     "browser_disabled", "unknown_principal", "unknown_connection", "stale_session",
@@ -93,6 +94,8 @@ class WorkspaceExecutor {
         this.aliases = new Map();
         this.currentExecutors = new Map();
         this.personalCandidates = new Map();
+        this.workCreations = new Map();
+        this.inheritanceTail = Promise.resolve();
         this.workCreatesInFlight = 0;
         this.manualControls = false;
     }
@@ -123,10 +126,16 @@ class WorkspaceExecutor {
             this.remotes.clear();
             this.aliases.clear();
             this.currentExecutors.clear();
+            for (const candidate of this.personalCandidates.values()) clearTimeout(candidate.timer);
+            this.personalCandidates.clear();
+            this.workCreations.clear();
             this.restoreAttempt = null;
             this.restored = false;
         }
         this.browserBootId = payload.browser_boot_id;
+        for (const candidate of this.personalCandidates.values()) {
+            if (candidate.browser_boot_id === null) candidate.browser_boot_id = this.browserBootId;
+        }
         this.bootstrapLeases = clone(payload.ordinary_launch_leases);
         if (this.restored) {
             for (const lease of this.bootstrapLeases) await this.ordinaryOpen(lease);
@@ -240,6 +249,7 @@ class WorkspaceExecutor {
                 }
             }
         }
+        await this.restoreInheritance();
         if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
         await this.persistWal();
         await this.persistConsent();
@@ -836,23 +846,33 @@ class WorkspaceExecutor {
         try {
             await this.persistWal();
             check();
+            const staging = {url: `about:blank#abush-work-${record.enable_id}`,
+                browser_boot_id: boot, window_id: window.id, tab_id: null,
+                group_id: null, stage: "creating", generation: creationRevision};
+            this.workCreations.set(staging.url, staging);
+            await this.persistInheritance();
+            check();
             this.workCreatesInFlight++;
-            const tab = await this.api(async () => {
+            const rawCreation = Promise.resolve().then(() => {
                 check();
-                const created = await this.chrome.tabs.create({windowId: window.id,
-                    url: "about:blank", active: false});
-                clearTimeout(this.personalCandidates.get(created.id)?.timer);
-                this.personalCandidates.delete(created.id);
+                return this.chrome.tabs.create({windowId: window.id, url: staging.url, active: false});
+            }).then(async created => {
+                staging.tab_id = created.id;
+                staging.stage = "created";
+                this.forgetPersonalCandidate(created.id);
+                await this.persistInheritance();
                 check();
                 record.tab_id = created.id;
                 this.pendingCreations.set(created.id, record);
                 return created;
-            }, "create inactive work tab").finally(() => {
+            }).catch(error => {
+                this.reportAdvisoryError(error);
+                throw error;
+            }).finally(() => {
                 this.workCreatesInFlight--;
-                for (const id of this.personalCandidates.keys()) {
-                    this.isolateNewPersonalTab(id).catch(error => this.reportAdvisoryError(error));
-                }
+                this.drainPersonalCandidates();
             });
+            const tab = await this.api(() => rawCreation, "create inactive work tab");
             const checkTab = () => {
                 check();
                 if (this.revokedTabs.has(tab.id) || this.revisions.get(key) !== creationRevision) {
@@ -863,8 +883,14 @@ class WorkspaceExecutor {
             await this.validateTab(record);
             record.group_id = await this.api(() => {
                 checkTab();
+                record.grouping = true;
                 return this.chrome.tabs.group({tabIds: [tab.id]});
             }, "group exact work tab");
+            delete record.grouping;
+            staging.group_id = record.group_id;
+            staging.stage = "grouped";
+            await this.persistInheritance();
+            this.drainPersonalCandidates();
             await this.api(() => {
                 checkTab();
                 return this.chrome.tabGroups.update(record.group_id, {
@@ -875,6 +901,7 @@ class WorkspaceExecutor {
             await this.validateTab(record);
             checkTab();
             this.records.set(key, record);
+            this.drainPersonalCandidates();
             this.ownershipChanged(record.tab_id);
             await this.persistConsent();
             if (this.revisions.get(key) !== creationRevision || record.phase !== "paused") {
@@ -887,6 +914,8 @@ class WorkspaceExecutor {
                 fail("stale_authority", "Consent changed before initial resume");
             }
             await this.resume(key);
+            this.workCreations.delete(staging.url);
+            await this.persistInheritance();
         } catch (error) {
             abandoned = true;
             if (record.revision === this.revisions.get(key) && record.phase !== "disabled") {
@@ -898,35 +927,145 @@ class WorkspaceExecutor {
             this.pendingCreations.delete(record.tab_id);
         }
     }
+    persistInheritance() {
+        const snapshot = {browser_boot_id: this.browserBootId,
+            candidates: [...this.personalCandidates.values()].map(({timer, ...value}) => value),
+            creations: [...this.workCreations.values()].map(clone)};
+        const write = this.inheritanceTail.catch(() => {}).then(() =>
+            this.chrome.storage.session.set({[INHERITANCE_KEY]: snapshot}));
+        this.inheritanceTail = write;
+        return this.api(() => write, "persist personal inheritance obligations")
+            .catch(error => this.reportAdvisoryError(error));
+    }
+    async restoreInheritance() {
+        try {
+            const boot = this.browserBootId;
+            const saved = (await this.api(() => this.chrome.storage.session.get(INHERITANCE_KEY),
+                "read personal inheritance obligations"))[INHERITANCE_KEY];
+            if (boot !== this.browserBootId || saved?.browser_boot_id !== boot) return;
+            for (const value of saved.creations || []) {
+                if (value.browser_boot_id !== boot || !text(value.url) ||
+                        !value.url.startsWith("about:blank#abush-work-") ||
+                        !Number.isSafeInteger(value.window_id) || !Number.isSafeInteger(value.generation) ||
+                        !["creating", "created", "grouped"].includes(value.stage)) continue;
+                if (Number.isSafeInteger(value.tab_id)) {
+                    try {
+                        const tab = await this.api(() => this.chrome.tabs.get(value.tab_id),
+                            "verify partial work creation identity");
+                        if (tab.windowId !== value.window_id ||
+                                value.group_id !== null && tab.groupId !== value.group_id) continue;
+                    } catch (error) { this.reportAdvisoryError(error); continue; }
+                } else if (value.stage !== "creating" || value.group_id !== null) continue;
+                if (boot !== this.browserBootId) return;
+                this.workCreations.set(value.url, value);
+            }
+            for (const value of saved.candidates || []) {
+                if (!Number.isSafeInteger(value.tab_id) || !Number.isSafeInteger(value.window_id) ||
+                        !Number.isSafeInteger(value.group_id) || !Number.isSafeInteger(value.generation) ||
+                        value.browser_boot_id !== boot || this.personalCandidates.has(value.tab_id)) continue;
+                this.personalCandidates.set(value.tab_id, value);
+                const generation = value.generation;
+                try {
+                    const tab = await this.api(() => this.chrome.tabs.get(value.tab_id),
+                        "verify pending personal inheritance");
+                    if (this.personalCandidates.get(value.tab_id) !== value ||
+                            generation !== value.generation) continue;
+                    if (boot !== this.browserBootId || tab.windowId !== value.window_id ||
+                            tab.groupId !== value.group_id) this.forgetPersonalCandidate(value.tab_id);
+                } catch (error) {
+                    this.forgetPersonalCandidate(value.tab_id);
+                    this.reportAdvisoryError(error);
+                }
+            }
+            await this.persistInheritance();
+            this.drainPersonalCandidates();
+        } catch (error) { this.reportAdvisoryError(error); }
+    }
+    workGroups() {
+        return new Set([...this.records.values(), ...this.pendingCreations.values(),
+            ...this.workCreations.values()].map(value => value.group_id).filter(id => id >= 0 && id !== null));
+    }
+    forgetPersonalCandidate(tabId) {
+        clearTimeout(this.personalCandidates.get(tabId)?.timer);
+        if (this.personalCandidates.delete(tabId)) return this.persistInheritance();
+    }
+    drainPersonalCandidates() {
+        for (const id of this.personalCandidates.keys()) {
+            this.isolateNewPersonalTab(id).catch(error => this.reportAdvisoryError(error));
+        }
+    }
     newPersonalCandidate(tab) {
         if (!Number.isSafeInteger(tab.id)) return;
-        const candidate = {expires: Date.now() + 30000};
+        const candidate = {tab_id: tab.id, window_id: tab.windowId, group_id: tab.groupId ?? -1,
+            initial_group: tab.groupId ?? -1, browser_boot_id: this.browserBootId,
+            stage: "created", generation: 1};
         this.personalCandidates.set(tab.id, candidate);
-        while (this.personalCandidates.size > 128) {
-            const oldest = this.personalCandidates.keys().next().value;
-            clearTimeout(this.personalCandidates.get(oldest).timer);
-            this.personalCandidates.delete(oldest);
+        if (this.personalCandidates.size > 128) {
+            this.reportAdvisoryError(new Error("Personal inheritance backlog exceeds 128 tabs; obligations retained"));
         }
+        // Expiration is advisory, never a reclassification of an unresolved tab.
         candidate.timer = setTimeout(() => {
-            if (this.personalCandidates.get(tab.id) === candidate) this.personalCandidates.delete(tab.id);
+            if (this.personalCandidates.get(tab.id) === candidate) {
+                this.reportAdvisoryError(new Error("Personal inheritance remains unresolved after 30 seconds"));
+            }
         }, 30000);
         candidate.timer.unref?.();
+        this.persistInheritance();
         return this.isolateNewPersonalTab(tab.id);
+    }
+    personalTabChanged(tabId, change, tab) {
+        const pending = this.pendingCreations.get(tabId);
+        if (pending?.grouping && change.groupId >= 0 && pending.group_id === null) {
+            pending.group_id = change.groupId;
+            const staging = [...this.workCreations.values()].find(value => value.tab_id === tabId);
+            if (staging) { staging.group_id = change.groupId; staging.stage = "grouped"; }
+            this.persistInheritance();
+            this.drainPersonalCandidates();
+        }
+        const candidate = this.personalCandidates.get(tabId);
+        if (!candidate) return;
+        if (change.groupId !== undefined || change.windowId !== undefined) {
+            candidate.generation++;
+            candidate.group_id = change.groupId ?? candidate.group_id;
+            candidate.window_id = change.windowId ?? candidate.window_id;
+            if ((candidate.window_id !== tab?.windowId && tab?.windowId !== undefined) ||
+                    (change.windowId !== undefined) || change.groupId === -1 ||
+                    (candidate.group_id >= 0 && !this.workGroups().has(candidate.group_id))) {
+                return this.forgetPersonalCandidate(tabId);
+            }
+            this.persistInheritance();
+        }
+        return this.isolateNewPersonalTab(tabId);
     }
     async isolateNewPersonalTab(tabId) {
         const candidate = this.personalCandidates.get(tabId);
-        if (!candidate || candidate.expires <= Date.now() || this.workCreatesInFlight ||
-                this.pendingCreations.has(tabId) || [...this.records.values()].some(record => record.tab_id === tabId)) return;
+        const generation = candidate?.generation;
+        const exempt = () => this.pendingCreations.has(tabId) ||
+            [...this.records.values(), ...this.workCreations.values()].some(value => value.tab_id === tabId);
+        if (!candidate || candidate.browser_boot_id !== this.browserBootId || exempt()) return;
         const tab = await this.api(() => this.chrome.tabs.get(tabId), "inspect new personal tab");
-        if (this.personalCandidates.get(tabId) !== candidate || this.workCreatesInFlight ||
-                this.pendingCreations.has(tabId) || [...this.records.values()].some(record => record.tab_id === tabId)) return;
-        if ([...this.records.values()].some(record => record.group_id === tab.groupId && tab.groupId >= 0)) {
+        const current = () => this.personalCandidates.get(tabId) === candidate &&
+            candidate.generation === generation && candidate.browser_boot_id === this.browserBootId &&
+            candidate.window_id === tab.windowId && candidate.group_id === tab.groupId && !exempt();
+        if (!current()) return;
+        const staging = this.workCreations.get(tab.pendingUrl || tab.url);
+        if (staging && staging.browser_boot_id === this.browserBootId &&
+                staging.stage === "creating" && staging.window_id === tab.windowId) {
+            // A matching pending request exempts this tab, but never grants control from a URL.
+            await this.persistInheritance();
+            return;
+        }
+        const pendingUnknown = [...this.workCreations.values()].some(value =>
+            value.browser_boot_id === this.browserBootId && value.stage === "creating");
+        if (!tab.url && !tab.pendingUrl && (this.workCreatesInFlight || pendingUnknown)) return;
+        if (this.workGroups().has(tab.groupId)) {
             await this.api(() => {
-                if (this.personalCandidates.get(tabId) !== candidate || this.workCreatesInFlight ||
-                        this.pendingCreations.has(tabId) || [...this.records.values()].some(record => record.tab_id === tabId)) return;
+                // Chrome has no conditional ungroup API: event identity fences the last synchronous step.
+                if (!current()) return;
                 return this.chrome.tabs.ungroup([tabId]);
             }, "remove new personal tab inheritance");
-        }
+            if (this.personalCandidates.get(tabId) === candidate) await this.forgetPersonalCandidate(tabId);
+        } else if (tab.groupId >= 0) await this.forgetPersonalCandidate(tabId);
     }
     async resume(key) {
         const remote = this.selectedRemote(key);
@@ -973,6 +1112,12 @@ class WorkspaceExecutor {
     }
     revokeTab(tabId) {
         if (!Number.isSafeInteger(tabId)) return Promise.resolve();
+        for (const [url, value] of this.workCreations) {
+            if (value.tab_id === tabId) {
+                this.workCreations.delete(url);
+                this.persistInheritance();
+            }
+        }
         const pending = this.pendingCreations.get(tabId);
         const record = [...this.records.values()].find(record =>
             record.tab_id === tabId && record.phase !== "disabled");
