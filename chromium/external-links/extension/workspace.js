@@ -928,6 +928,8 @@ class WorkspaceExecutor {
         }
     }
     persistInheritance() {
+        // Events can arrive before bootstrap and before the previous worker's journal is read.
+        if (!this.browserBootId || this.inheritanceBoot !== this.browserBootId) return Promise.resolve();
         const snapshot = {browser_boot_id: this.browserBootId,
             candidates: [...this.personalCandidates.values()].map(({timer, ...value}) => value),
             creations: [...this.workCreations.values()].map(clone)};
@@ -942,8 +944,8 @@ class WorkspaceExecutor {
             const boot = this.browserBootId;
             const saved = (await this.api(() => this.chrome.storage.session.get(INHERITANCE_KEY),
                 "read personal inheritance obligations"))[INHERITANCE_KEY];
-            if (boot !== this.browserBootId || saved?.browser_boot_id !== boot) return;
-            for (const value of saved.creations || []) {
+            if (boot !== this.browserBootId) return;
+            for (const value of saved?.browser_boot_id === boot ? saved.creations || [] : []) {
                 if (value.browser_boot_id !== boot || !text(value.url) ||
                         !value.url.startsWith("about:blank#abush-work-") ||
                         !Number.isSafeInteger(value.window_id) || !Number.isSafeInteger(value.generation) ||
@@ -957,13 +959,14 @@ class WorkspaceExecutor {
                     } catch (error) { this.reportAdvisoryError(error); continue; }
                 } else if (value.stage !== "creating" || value.group_id !== null) continue;
                 if (boot !== this.browserBootId) return;
-                this.workCreations.set(value.url, value);
+                if (!this.workCreations.has(value.url)) this.workCreations.set(value.url, value);
             }
-            for (const value of saved.candidates || []) {
+            for (const value of saved?.browser_boot_id === boot ? saved.candidates || [] : []) {
                 if (!Number.isSafeInteger(value.tab_id) || !Number.isSafeInteger(value.window_id) ||
                         !Number.isSafeInteger(value.group_id) || !Number.isSafeInteger(value.generation) ||
                         value.browser_boot_id !== boot || this.personalCandidates.has(value.tab_id)) continue;
                 this.personalCandidates.set(value.tab_id, value);
+                if (value.stage !== "expired") this.schedulePersonalExpiry(value);
                 const generation = value.generation;
                 try {
                     const tab = await this.api(() => this.chrome.tabs.get(value.tab_id),
@@ -977,6 +980,8 @@ class WorkspaceExecutor {
                     this.reportAdvisoryError(error);
                 }
             }
+            if (boot !== this.browserBootId) return;
+            this.inheritanceBoot = boot;
             await this.persistInheritance();
             this.drainPersonalCandidates();
         } catch (error) { this.reportAdvisoryError(error); }
@@ -1000,18 +1005,19 @@ class WorkspaceExecutor {
             initial_group: tab.groupId ?? -1, browser_boot_id: this.browserBootId,
             stage: "created", generation: 1};
         this.personalCandidates.set(tab.id, candidate);
-        if (this.personalCandidates.size > 128) {
-            this.reportAdvisoryError(new Error("Personal inheritance backlog exceeds 128 tabs; obligations retained"));
-        }
-        // Expiration is advisory, never a reclassification of an unresolved tab.
-        candidate.timer = setTimeout(() => {
-            if (this.personalCandidates.get(tab.id) === candidate) {
-                this.reportAdvisoryError(new Error("Personal inheritance remains unresolved after 30 seconds"));
-            }
-        }, 30000);
-        candidate.timer.unref?.();
+        this.schedulePersonalExpiry(candidate);
         this.persistInheritance();
         return this.isolateNewPersonalTab(tab.id);
+    }
+    schedulePersonalExpiry(candidate) {
+        // The first creation generation allows Chrome's delayed initial group update.
+        candidate.timer = setTimeout(() => {
+            if (this.personalCandidates.get(candidate.tab_id) !== candidate) return;
+            candidate.stage = "expired";
+            return this.persistInheritance().then(() => this.isolateNewPersonalTab(candidate.tab_id))
+                .catch(error => this.reportAdvisoryError(error));
+        }, 30000);
+        candidate.timer.unref?.();
     }
     personalTabChanged(tabId, change, tab) {
         const pending = this.pendingCreations.get(tabId);
@@ -1039,11 +1045,27 @@ class WorkspaceExecutor {
     }
     async isolateNewPersonalTab(tabId) {
         const candidate = this.personalCandidates.get(tabId);
-        const generation = candidate?.generation;
+        let generation = candidate?.generation;
         const exempt = () => this.pendingCreations.has(tabId) ||
             [...this.records.values(), ...this.workCreations.values()].some(value => value.tab_id === tabId);
-        if (!candidate || candidate.browser_boot_id !== this.browserBootId || exempt()) return;
+        if (!candidate || candidate.browser_boot_id !== this.browserBootId ||
+                this.inheritanceBoot !== this.browserBootId || exempt()) return;
         const tab = await this.api(() => this.chrome.tabs.get(tabId), "inspect new personal tab");
+        if (candidate.stage === "expired" && this.personalCandidates.get(tabId) === candidate &&
+                generation === candidate.generation && candidate.browser_boot_id === this.browserBootId && !exempt()) {
+            if (candidate.window_id !== tab.windowId) return this.forgetPersonalCandidate(tabId);
+            if (candidate.group_id !== tab.groupId) {
+                candidate.group_id = tab.groupId;
+                generation = ++candidate.generation;
+                await this.persistInheritance();
+            }
+        }
+        const unresolved = () => {
+            if (candidate.stage === "expired") this.reportAdvisoryError(new Error(
+                this.personalCandidates.size > 128 ?
+                    "Personal inheritance backlog exceeds 128 tabs; unresolved obligations retained" :
+                    "Personal inheritance remains unresolved after 30 seconds"));
+        };
         const current = () => this.personalCandidates.get(tabId) === candidate &&
             candidate.generation === generation && candidate.browser_boot_id === this.browserBootId &&
             candidate.window_id === tab.windowId && candidate.group_id === tab.groupId && !exempt();
@@ -1052,12 +1074,15 @@ class WorkspaceExecutor {
         if (staging && staging.browser_boot_id === this.browserBootId &&
                 staging.stage === "creating" && staging.window_id === tab.windowId) {
             // A matching pending request exempts this tab, but never grants control from a URL.
-            await this.persistInheritance();
+            unresolved();
             return;
         }
         const pendingUnknown = [...this.workCreations.values()].some(value =>
             value.browser_boot_id === this.browserBootId && value.stage === "creating");
-        if (!tab.url && !tab.pendingUrl && (this.workCreatesInFlight || pendingUnknown)) return;
+        if (!tab.url && !tab.pendingUrl && (this.workCreatesInFlight || pendingUnknown)) {
+            unresolved();
+            return;
+        }
         if (this.workGroups().has(tab.groupId)) {
             await this.api(() => {
                 // Chrome has no conditional ungroup API: event identity fences the last synchronous step.
@@ -1065,7 +1090,9 @@ class WorkspaceExecutor {
                 return this.chrome.tabs.ungroup([tabId]);
             }, "remove new personal tab inheritance");
             if (this.personalCandidates.get(tabId) === candidate) await this.forgetPersonalCandidate(tabId);
-        } else if (tab.groupId >= 0) await this.forgetPersonalCandidate(tabId);
+        } else if (tab.groupId >= 0 || candidate.stage === "expired") {
+            await this.forgetPersonalCandidate(tabId);
+        }
     }
     async resume(key) {
         const remote = this.selectedRemote(key);

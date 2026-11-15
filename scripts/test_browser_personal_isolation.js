@@ -163,26 +163,180 @@ const cases = [
     }],
     ["pending backlog above cap retains obligations instead of reclassifying", async () => {
         const f = fixture({globalAutomation: true}); await f.ready();
+        f.executor.workCreations.set("unknown", {browser_boot_id: f.executor.browserBootId,
+            window_id: 1, stage: "creating", tab_id: null, group_id: null});
         for (let index = 0; index < 130; index++) {
-            await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
+            const personal = await f.api.tabs.create({windowId: 1, url: "", active: true});
+            await settle();
+            await f.executor.personalCandidates.get(personal.id).timer._onTimeout();
         }
         await settle(); await f.executor.inheritanceTail;
         assert.equal(f.executor.personalCandidates.size, 130);
         assert.match(f.executor.lastError, /backlog/);
         assert.equal(f.session.abushBrowserInheritanceV9.candidates.length, 130);
+        f.executor.workCreations.delete("unknown");
+        f.tabs.get(11).url = "https://human.test/";
+        f.tabs.get(11).groupId = 100;
+        await Promise.all(f.api.tabs.onUpdated.emit(11, {groupId: 100}, clone(f.tabs.get(11))));
+        assert.equal(f.tabs.get(11).groupId, -1);
+        for (const candidate of f.executor.personalCandidates.values()) clearTimeout(candidate.timer);
     }],
     ["advisory expiry retains unresolved delayed inheritance", async () => {
         const f = fixture({globalAutomation: true}); await f.ready();
-        const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
+        const personal = await f.api.tabs.create({windowId: 1, url: "", active: true});
         await settle();
+        f.executor.workCreations.set("unknown", {browser_boot_id: f.executor.browserBootId,
+            window_id: 1, stage: "creating", tab_id: null, group_id: null});
         const candidate = f.executor.personalCandidates.get(personal.id);
-        candidate.timer._onTimeout();
+        await candidate.timer._onTimeout(); await settle();
         assert.equal(f.executor.personalCandidates.get(personal.id), candidate);
         assert.match(f.executor.lastError, /unresolved/);
+        f.executor.workCreations.delete("unknown");
+        f.tabs.get(personal.id).url = "https://human.test/";
         f.tabs.get(personal.id).groupId = 100;
         await Promise.all(f.api.tabs.onUpdated.emit(personal.id, {groupId: 100}, clone(f.tabs.get(personal.id))));
         assert.equal(f.tabs.get(personal.id).groupId, -1);
     }],
+    ["groupless creation expiry is quiet, bounded and ends inheritance authority", async () => {
+        const f = fixture({globalAutomation: true}); await f.ready();
+        const authority = clone(f.executor.state("remote"));
+        for (let index = 0; index < 140; index++) {
+            const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
+            await settle();
+            const candidate = f.executor.personalCandidates.get(personal.id);
+            await candidate.timer._onTimeout(); await settle(); await f.executor.inheritanceTail;
+            assert.equal(f.executor.personalCandidates.has(personal.id), false);
+            assert.equal(f.session.abushBrowserInheritanceV9.candidates.length, 0);
+            assert.equal(f.executor.lastError, null);
+            assert.equal(f.executor.ownsTab(personal.id), false);
+        }
+        const personal = [...f.tabs.values()].at(-1);
+        personal.groupId = 100;
+        await Promise.all(f.api.tabs.onUpdated.emit(personal.id, {groupId: 100}, clone(personal)));
+        assert.equal(personal.groupId, 100);
+        assert.deepEqual(f.executor.state("remote"), authority);
+        assert.equal(f.calls.filter(call => call.name === "tabs.ungroup").length, 0);
+    }],
+    ["completed ordinary-open guardian expires without browsing warning or journal growth", async () => {
+        const f = fixture({globalAutomation: true}); await f.ready();
+        assert.equal(await f.executor.ordinaryOpen({version: 1, operation: "ordinary_open",
+            request_id: "personal-open", url: "https://ordinary.test/new", focus: true,
+            deadline_ms: Date.now() + 3000}), "applied");
+        await settle();
+        const personal = [...f.tabs.values()].find(tab => tab.url === "https://ordinary.test/new");
+        const candidate = f.executor.personalCandidates.get(personal.id);
+        if (candidate) await candidate.timer._onTimeout();
+        await settle(); await f.executor.inheritanceTail;
+        assert.equal(f.tabs.get(personal.id).groupId, -1);
+        assert.equal(f.executor.personalCandidates.size, 0);
+        assert.equal(f.session.abushBrowserInheritanceV9.candidates.length, 0);
+        assert.equal(f.executor.lastError, null);
+        assert.equal(f.executor.ownsTab(personal.id), false);
+    }],
+    ["pending personal URL retires despite unrelated unknown blank work request", async () => {
+        const f = fixture({globalAutomation: true}); await f.ready();
+        f.executor.workCreations.set("unknown", {browser_boot_id: f.executor.browserBootId,
+            window_id: 1, stage: "creating", tab_id: null, group_id: null});
+        const personal = await f.api.tabs.create({windowId: 1, url: "", active: true});
+        await settle();
+        f.tabs.get(personal.id).pendingUrl = "https://human.test/";
+        const candidate = f.executor.personalCandidates.get(personal.id);
+        await candidate.timer._onTimeout(); await settle(); await f.executor.inheritanceTail;
+        assert.equal(f.executor.personalCandidates.has(personal.id), false);
+        assert.equal(f.tabs.get(personal.id).groupId, -1);
+        assert.equal(f.executor.lastError, null);
+    }],
+    ["expiry leaves unrelated manual group movement alone", async () => {
+        const f = fixture({globalAutomation: true}); await f.ready();
+        const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
+        await settle();
+        const candidate = f.executor.personalCandidates.get(personal.id);
+        f.tabs.get(personal.id).groupId = 700;
+        await candidate.timer._onTimeout(); await settle(); await f.executor.inheritanceTail;
+        assert.equal(f.tabs.get(personal.id).groupId, 700);
+        assert.equal(f.executor.personalCandidates.has(personal.id), false);
+        assert.equal(f.executor.lastError, null);
+        assert.equal(f.calls.filter(call => call.name === "tabs.ungroup").length, 0);
+    }],
+    ["expiry stale read cannot undo a newer manual movement", async () => {
+        const f = fixture({globalAutomation: true}); await f.ready();
+        const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
+        await settle();
+        const candidate = f.executor.personalCandidates.get(personal.id);
+        const entered = deferred(); const gate = deferred();
+        f.tabs.get(personal.id).groupId = 100;
+        f.hooks["tabs.get.after"] = async tab => {
+            if (tab.id !== personal.id) return;
+            entered.resolve(); await gate.promise;
+        };
+        const expiry = candidate.timer._onTimeout(); await entered.promise;
+        f.tabs.get(personal.id).groupId = 700;
+        await Promise.all(f.api.tabs.onUpdated.emit(personal.id, {groupId: 700}, clone(f.tabs.get(personal.id))));
+        gate.resolve(); await expiry; delete f.hooks["tabs.get.after"];
+        assert.equal(f.tabs.get(personal.id).groupId, 700);
+        assert.equal(f.executor.lastError, null);
+        assert.equal(f.calls.filter(call => call.name === "tabs.ungroup").length, 0);
+    }],
+    ["initial groupless generation still guards delayed work group before expiry", async () => {
+        const f = fixture({globalAutomation: true}); await f.ready();
+        const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
+        await settle();
+        assert.equal(f.executor.personalCandidates.get(personal.id).generation, 1);
+        f.tabs.get(personal.id).groupId = 100;
+        await Promise.all(f.api.tabs.onUpdated.emit(personal.id, {groupId: 100}, clone(f.tabs.get(personal.id))));
+        await settle();
+        assert.equal(f.tabs.get(personal.id).groupId, -1);
+        assert.equal(f.executor.personalCandidates.has(personal.id), false);
+        assert.equal(f.executor.lastError, null);
+    }],
+    ["expiry rereads actual inherited work group rather than dropping cleanup", async () => {
+        const f = fixture({globalAutomation: true}); await f.ready();
+        const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
+        await settle();
+        const candidate = f.executor.personalCandidates.get(personal.id);
+        // Chrome's group change is visible to tabs.get before its onUpdated delivery.
+        f.tabs.get(personal.id).groupId = 100;
+        await candidate.timer._onTimeout(); await settle();
+        assert.equal(f.tabs.get(personal.id).groupId, -1);
+        assert.equal(f.executor.personalCandidates.has(personal.id), false);
+        assert.equal(f.executor.lastError, null);
+    }],
+    ...[false, true].map(foreignBoot => [`early onCreated cannot erase ${foreignBoot ? "foreign" : "same"}-boot journal`, async () => {
+        const {BOOT} = require("./browser_tab_groups_fixture.js");
+        const f = fixture({globalAutomation: true}); await f.ready();
+        f.local.abushBrowserAutomationV9 = false;
+        const url = "about:blank#abush-work-unresolved";
+        f.executor.workCreations.set(url, {url, browser_boot_id: BOOT.browser_boot_id,
+            window_id: 1, tab_id: 900, group_id: 300, stage: "grouped", generation: 1});
+        f.tabs.set(900, {id: 900, windowId: 1, groupId: 300, url, active: false});
+        f.tabs.set(901, {id: 901, windowId: 1, groupId: 300, url: "https://human.test/", active: false});
+        f.executor.personalCandidates.set(901, {tab_id: 901, window_id: 1, group_id: 300,
+            initial_group: 300, browser_boot_id: BOOT.browser_boot_id, stage: "created", generation: 1});
+        await f.executor.persistInheritance();
+        const saved = clone(f.session.abushBrowserInheritanceV9);
+        for (const candidate of f.executor.personalCandidates.values()) clearTimeout(candidate.timer);
+        f.executor.personalCandidates.clear();
+        f.resetWorker();
+        const personal = await f.api.tabs.create({windowId: 1, url: "https://unrelated.test/", active: true});
+        await settle(); await f.executor.inheritanceTail;
+        assert.deepEqual(f.session.abushBrowserInheritanceV9, saved);
+        await f.executor.acceptNativeBootstrap({...BOOT, browser_boot_id: foreignBoot ? "new-boot" : BOOT.browser_boot_id});
+        // A known staging write before restore must also preserve the unread journal.
+        await f.executor.persistInheritance();
+        assert.deepEqual(f.session.abushBrowserInheritanceV9, saved);
+        await f.executor.restoreWhenReady(); await settle(); await f.executor.inheritanceTail;
+        assert.equal(f.tabs.get(901).groupId, foreignBoot ? 300 : -1);
+        assert.equal(f.tabs.get(900).groupId, 300);
+        assert.equal(f.tabs.get(personal.id).groupId, -1);
+        assert.equal(f.executor.ownsTab(900), false);
+        assert.equal(f.executor.ownsTab(901), false);
+        assert.equal(f.executor.ownsTab(personal.id), false);
+        const candidate = f.executor.personalCandidates.get(personal.id);
+        await candidate.timer._onTimeout(); await settle(); await f.executor.inheritanceTail;
+        assert.equal(f.executor.personalCandidates.size, 0);
+        assert.equal(f.executor.lastError, null);
+        assert.equal(f.executor.workCreations.has(url), !foreignBoot);
+    }]),
     ["unknown initial onCreated URL protects exact pending own tab until URL arrives", async () => {
         const f = fixture({globalAutomation: true}); await f.ready();
         await f.api.tabs.update(f.executor.recordFor("remote").tab_id, {active: true});
