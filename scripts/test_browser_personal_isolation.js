@@ -337,29 +337,46 @@ const cases = [
         assert.equal(f.executor.lastError, null);
         assert.equal(f.executor.workCreations.has(url), !foreignBoot);
     }]),
-    ["unknown initial onCreated URL protects exact pending own tab until URL arrives", async () => {
+    ...[undefined, "about:blank"].map(initialUrl => [
+        `initial ${initialUrl || "missing"} onCreated URL protects exact pending work tab`, async () => {
         const f = fixture({globalAutomation: true}); await f.ready();
         await f.api.tabs.update(f.executor.recordFor("remote").tab_id, {active: true});
         const entered = deferred(); const gate = deferred();
         const second = {...require("./browser_tab_groups_fixture.js").REMOTE, remote_key: "second",
             principal_id: "second-principal", workspace_id: "second-workspace"};
         f.hooks["tabs.create"] = async args => {
-            const tab = {id: 99, windowId: 1, active: false, groupId: 100};
-            f.tabs.set(99, tab);
-            await Promise.all(f.api.tabs.onCreated.emit(clone(tab)));
-            assert.equal(tab.groupId, 100);
-            tab.pendingUrl = args.url;
-            await Promise.all(f.api.tabs.onUpdated.emit(99, {pendingUrl: args.url}, clone(tab)));
-            assert.equal(tab.groupId, 100);
-            entered.resolve(); await gate.promise;
-            return clone(tab);
+            try {
+                const tab = {id: 99, windowId: 1, active: false, groupId: 100, url: initialUrl};
+                f.tabs.set(99, tab);
+                await Promise.all(f.api.tabs.onCreated.emit(clone(tab)));
+                assert.equal(tab.groupId, 100);
+                const personal = {id: 98, windowId: 1, active: true, groupId: 100,
+                    url: "https://human-during-creation.test/"};
+                f.tabs.set(personal.id, personal);
+                await Promise.all(f.api.tabs.onCreated.emit(clone(personal)));
+                assert.equal(personal.groupId, -1);
+                assert.equal(f.executor.ownsTab(personal.id), false);
+                tab.pendingUrl = args.url;
+                await Promise.all(f.api.tabs.onUpdated.emit(99, {pendingUrl: args.url}, clone(tab)));
+                assert.equal(tab.groupId, 100);
+                entered.resolve(); await gate.promise;
+                return clone(tab);
+            } catch (error) {
+                entered.reject(error);
+                throw error;
+            }
         };
-        const enabling = f.emitRemote(second); await entered.promise;
-        assert.equal(f.calls.filter(call => call.name === "tabs.ungroup").length, 0);
-        gate.resolve(); await enabling;
+        const enabling = f.emitRemote(second);
+        try {
+            await entered.promise;
+            assert.ok(f.calls.filter(call => call.name === "tabs.ungroup")
+                .every(call => call.args[0].includes(98) && !call.args[0].includes(99)));
+        } finally {
+            gate.resolve(); await enabling;
+        }
         assert.equal(f.executor.recordFor("second").tab_id, 99);
         assert.equal(f.executor.recordFor("second").agreed, true);
-    }],
+    }]),
     ["pending creation identity survives worker termination without control adoption", async () => {
         const f = fixture({globalAutomation: true});
         const originalApi = f.executor.api.bind(f.executor);

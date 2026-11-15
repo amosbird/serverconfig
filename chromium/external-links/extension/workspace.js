@@ -1079,7 +1079,8 @@ class WorkspaceExecutor {
         }
         const pendingUnknown = [...this.workCreations.values()].some(value =>
             value.browser_boot_id === this.browserBootId && value.stage === "creating");
-        if (!tab.url && !tab.pendingUrl && (this.workCreatesInFlight || pendingUnknown)) {
+        const initialPlaceholder = !tab.url || tab.url === "about:blank";
+        if (initialPlaceholder && !tab.pendingUrl && (this.workCreatesInFlight || pendingUnknown)) {
             unresolved();
             return;
         }
