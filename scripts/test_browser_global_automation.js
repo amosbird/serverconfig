@@ -7,6 +7,64 @@ const trace = f => [f.executor.automationOn, f.executor.state("remote").phase,
     f.executor.records.get("remote")?.agreed || false, f.tabs.get(1).active,
     f.calls.filter(c => c.name === "debugger.sendCommand").length];
 const cases = [
+    ["daemon boot resets epoch, preserves exact tab and rejects superseded boot", async () => {
+        const f = fresh(); await f.ready();
+        const a = {...REMOTE, executor_fence: {executor_id: "a", epoch: 3}};
+        await f.emitRemote(a);
+        const original = f.executor.recordFor("remote");
+        const tabId = original.tab_id; const enableId = original.enable_id;
+        await f.executor.invalidateRemote();
+        assert.equal(original.phase, "paused");
+        const b = {...REMOTE, remote_key: "new-alias", connection_id: "b",
+            executor_fence: {executor_id: "b", epoch: 1},
+            owner_display: {...REMOTE.owner_display, daemon_boot_id: "boot-b"}};
+        await f.emitRemote(b);
+        assert.equal(f.executor.recordFor("new-alias"), original);
+        assert.equal(original.tab_id, tabId); assert.equal(original.enable_id, enableId);
+        assert.equal(f.executor.recordEnabledAgreed("new-alias"), true);
+        const state = clone(f.executor.state("new-alias"));
+        const beforeErrors = f.errors.length;
+        await f.emitRemote({...a, executor_fence: {executor_id: "late-a", epoch: 4}});
+        assert.match(f.errors[beforeErrors], /Old executor/);
+        assert.deepEqual(f.executor.state("new-alias"), state);
+        assert.equal(f.executor.recordEnabledAgreed("remote"), false);
+        assert.throws(() => f.executor.selectedRemote("remote"), /connected|old executor/);
+        const payload = execute(f, {remote_key: b.remote_key, connection_id: b.connection_id,
+            executor_fence: b.executor_fence, authorization: {browser_boot_id: BOOT.browser_boot_id,
+                enable_id: enableId, revision: state.revision}});
+        await f.emitNative(payload);
+        assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, "applied");
+        await assert.rejects(f.executor.execute(execute(f, {executor_fence: a.executor_fence})), /authorization|disabled/);
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
+        await f.executor.acceptNativeBootstrap({...BOOT, browser_boot_id: "new-browser"});
+        assert.equal(f.executor.currentExecutors.size, 0);
+        await f.emitRemote(a);
+        assert.equal(f.executor.currentExecutor(a), true);
+    }],
+    ...["principal", "instance"].map(difference => [
+        `distinct ${difference} has independent lineage and cannot hijack exact work`, async () => {
+            const f = fresh(); await f.ready();
+            await f.emitRemote({...REMOTE, executor_fence: {executor_id: "first", epoch: 3}});
+            const first = f.executor.recordFor("remote");
+            const other = {...REMOTE, remote_key: "other", connection_id: "other-connection",
+                principal_id: difference === "principal" ? "other-principal" : REMOTE.principal_id,
+                owner_display: {...REMOTE.owner_display,
+                    daemon_instance_id: difference === "instance" ? "other-instance" : REMOTE.owner_display.daemon_instance_id}};
+            await f.emitRemote(other);
+            const second = f.executor.recordFor("other");
+            assert.ok(second); assert.notEqual(first.tab_id, second.tab_id);
+            assert.equal(first.agreed, true); assert.equal(first.phase, "enabled");
+            assert.equal(f.executor.recordEnabledAgreed("other"), true);
+            await f.emitNative(execute(f, {remote_key: "other", connection_id: other.connection_id,
+                principal_id: other.principal_id, executor_fence: other.executor_fence}));
+            assert.match(f.errors.at(-1), /authorization/);
+            await f.emitNative(execute(f, {executor_fence: {executor_id: "first", epoch: 3},
+                authorization: {browser_boot_id: BOOT.browser_boot_id, enable_id: second.enable_id,
+                    revision: second.revision}, command: {command: "navigate", page: second.page,
+                    url: "https://foreign.test/"}}));
+            assert.match(f.errors.at(-1), /authorization/);
+            assert.equal(f.calls.some(c => c.name === "debugger.attach"), false);
+        }]),
     ...["debugger.attach", "debugger.sendCommand"].map(boundary => [
         `duplicate state and window creation preserve live episode at ${boundary}`, async () => {
             const f = fresh(); await f.ready();

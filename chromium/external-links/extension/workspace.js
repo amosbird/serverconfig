@@ -408,7 +408,7 @@ class WorkspaceExecutor {
             for (const [alias, canonical] of this.aliases) {
                 const peer = this.remotes.get(alias);
                 if (canonical !== key || !peer?.connected || !this.recordFor(alias) ||
-                        !sameRef(peer.executor_fence, remote.executor_fence)) continue;
+                        !sameRef(this.executorIdentity(peer), this.executorIdentity(remote))) continue;
                 const aliasPayload = {...payload, remote_key: alias, connection_id: peer.connection_id,
                     request_id: crypto.randomUUID()};
                 const accepted = await this.native("abush_browser", "workspace_state", aliasPayload);
@@ -430,8 +430,29 @@ class WorkspaceExecutor {
                 text(remote.owner_display?.daemon_instance_id) &&
                 text(remote.owner_display?.daemon_boot_id));
     }
+    executorKey(remote) {
+        return JSON.stringify([remote.principal_id, remote.owner_display?.daemon_instance_id]);
+    }
+    executorIdentity(remote) {
+        return {daemon_boot_id: remote.owner_display?.daemon_boot_id,
+            executor_fence: remote.executor_fence};
+    }
+    currentExecutor(remote) {
+        const current = this.currentExecutors.get(this.executorKey(remote));
+        return !current || sameRef(current.identity, this.executorIdentity(remote));
+    }
     async remoteState(remote) {
         if (!this.validRemote(remote)) fail("invalid_command", "Invalid authenticated remote state");
+        if (remote.connected && !this.manualControls) {
+            const current = this.currentExecutors.get(this.executorKey(remote));
+            const identity = this.executorIdentity(remote);
+            if (current && (current.superseded.has(identity.daemon_boot_id) ||
+                    current.identity.daemon_boot_id === identity.daemon_boot_id &&
+                    !sameRef(current.identity, identity) &&
+                    identity.executor_fence.epoch <= current.identity.executor_fence.epoch)) {
+                fail("stale_authority", "Old executor cannot replace current executor");
+            }
+        }
         const key = remote.remote_key;
         const previous = this.remotes.get(key);
         if (sameRef(previous, remote)) {
@@ -448,16 +469,17 @@ class WorkspaceExecutor {
             return true;
         }
         if (remote.connected && !this.manualControls) {
-            const executorKey = remote.principal_id;
+            const executorKey = this.executorKey(remote);
             const current = this.currentExecutors.get(executorKey);
-            if (current && !sameRef(current, remote.executor_fence) &&
-                    remote.executor_fence.epoch <= current.epoch) {
-                fail("stale_authority", "Old executor cannot replace current executor");
+            const identity = clone(this.executorIdentity(remote));
+            const superseded = current?.superseded || new Set();
+            if (current && current.identity.daemon_boot_id !== identity.daemon_boot_id) {
+                superseded.add(current.identity.daemon_boot_id);
             }
-            this.currentExecutors.set(executorKey, clone(remote.executor_fence));
+            this.currentExecutors.set(executorKey, {identity, superseded});
             for (const other of this.records.values()) {
-                if (other.principal_id === remote.principal_id &&
-                        !sameRef(other.executor_fence, remote.executor_fence) && other.phase === "enabled") {
+                if (this.executorKey(other) === executorKey &&
+                        !sameRef(this.executorIdentity(other), identity) && other.phase === "enabled") {
                     this.closeAuthorization(other, "paused");
                     await this.persistConsent();
                     await this.detach(other);
@@ -469,7 +491,7 @@ class WorkspaceExecutor {
                     this.stableIdentity(remote));
             if (!record) {
                 const peer = [...this.remotes.values()].find(other => other.remote_key !== key &&
-                    other.connected && sameRef(other.executor_fence, remote.executor_fence) &&
+                    other.connected && sameRef(this.executorIdentity(other), this.executorIdentity(remote)) &&
                     this.stableIdentity(other) === this.stableIdentity(remote));
                 if (peer) {
                     const canonical = this.aliases.get(peer.remote_key) || peer.remote_key;
@@ -664,8 +686,7 @@ class WorkspaceExecutor {
             record.principal_id === remote.principal_id && record.page.workspace_id === remote.workspace_id &&
             sameRef(record.owner_display, remote.owner_display) &&
             sameRef(record.executor_fence, remote.executor_fence) &&
-            (!this.currentExecutors.has(remote.principal_id) ||
-                sameRef(this.currentExecutors.get(remote.principal_id), remote.executor_fence)));
+            this.currentExecutor(remote));
     }
     async reconcileAll() {
         await Promise.all([...this.remotes.keys()].map(key => this.reconcile(key)));
@@ -743,8 +764,7 @@ class WorkspaceExecutor {
     selectedRemote(key) {
         const remote = this.remotes.get(key);
         if (!remote?.connected) fail("executor_unavailable", "Select a connected authenticated workbench");
-        if (!this.manualControls && this.currentExecutors.has(remote.principal_id) &&
-                !sameRef(this.currentExecutors.get(remote.principal_id), remote.executor_fence)) {
+        if (!this.manualControls && !this.currentExecutor(remote)) {
             fail("stale_authority", "Selected alias has an old executor");
         }
         return remote;
@@ -990,8 +1010,7 @@ class WorkspaceExecutor {
             fail("browser_disabled", "Browser is disabled or paused; use the Chrome popup");
         }
         if (!remote?.connected || remote.connection_id !== payload.connection_id ||
-                this.currentExecutors.has(payload.principal_id) &&
-                    !sameRef(this.currentExecutors.get(payload.principal_id), payload.executor_fence) ||
+                !this.currentExecutor(remote) ||
                 remote.principal_id !== payload.principal_id || record.principal_id !== payload.principal_id ||
                 !sameRef(remote.executor_fence, payload.executor_fence) ||
                 !sameRef(record.executor_fence, payload.executor_fence) ||
