@@ -35,6 +35,21 @@ update_external_links_profile() {
     "$root/scripts/update-external-links-profile" "$profile"
 }
 
+profile_is_running() {
+    local status
+    if python3 "$root/scripts/chrome-profile-running.py" \
+        "${ABUSH_PROC_ROOT:-/proc}" "$profile"; then
+        return 0
+    else
+        status=$?
+    fi
+    if [[ $status -ne 1 ]]; then
+        printf 'chromium: unable to inspect Chrome profile processes\n' >&2
+        exit "$status"
+    fi
+    return 1
+}
+
 focus_group=true
 if [[ ${1:-} == --current-group ]]; then
     focus_group=false
@@ -47,16 +62,9 @@ if [[ $# -eq 1 && $1 != -* ]]; then
         printf 'chromium: unsupported URL scheme\n' >&2
         exit 2
     fi
-    proc_root=${ABUSH_PROC_ROOT:-/proc}
     chrome_running=false
-    if python3 "$root/scripts/chrome-profile-running.py" "$proc_root" "$profile"; then
+    if profile_is_running; then
         chrome_running=true
-    else
-        running_status=$?
-        if [[ $running_status -ne 1 ]]; then
-            printf 'chromium: unable to inspect Chrome profile processes\n' >&2
-            exit "$running_status"
-        fi
     fi
     if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
         printf 'chromium: XDG_RUNTIME_DIR is unavailable\n' >&2
@@ -116,14 +124,10 @@ if [[ $# -gt 0 ]]; then
     exit 2
 fi
 
-update_external_links_profile || exit
+if ! profile_is_running; then
+    update_external_links_profile || exit
+fi
 if $focus_group; then
     focus_main_group
-fi
-if chromium-remote; then
-    if $focus_group; then
-        focus_main_group
-    fi
-    exit
 fi
 launch_chrome

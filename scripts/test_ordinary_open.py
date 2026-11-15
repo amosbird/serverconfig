@@ -769,6 +769,93 @@ class LauncherTest(unittest.TestCase):
             "ABUSH_TEST_UPDATE_LOG": str(self.update_log),
         }
 
+    def no_argument_environment(self):
+        environment = self.environment()
+        environment["ABUSH_CHROMIUM_LAUNCHER"] = str(ROOT / "scripts/chromium")
+        environment["PATH"] = f"{self.bin}:{environment['PATH']}"
+        self.remote_log = self.base / "remote-log"
+        environment["ABUSH_TEST_REMOTE_LOG"] = str(self.remote_log)
+        remote = self.bin / "chromium-remote"
+        remote.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '%s' ACK > \"$ABUSH_TEST_REMOTE_LOG\"\n"
+        )
+        remote.chmod(0o755)
+        nc = self.bin / "nc"
+        nc.write_text("#!/usr/bin/env python3\nimport sys\nsys.stdin.buffer.read()\n")
+        nc.chmod(0o755)
+        return environment
+
+    def test_windowless_running_profile_with_pending_upgrade_reaches_native_chrome(self):
+        environment = self.no_argument_environment()
+        profile = self.base / "profile"
+        process = self.proc / "42"
+        process.mkdir()
+        (process / "cmdline").write_bytes(
+            b"/opt/google/chrome/chrome --user-data-dir=" + os.fsencode(profile) +
+            b" --remote-debugging-port=9222\0"
+        )
+        extension_id = ExternalLinksProfileUpdateTest.extension_id
+        preferences = profile / "Default/Preferences"
+        old_extension = profile / "Default/Extensions" / extension_id / "1.0_0"
+        old_extension.mkdir(parents=True)
+        marker = old_extension / "marker"
+        marker.write_bytes(b"old extension remains installed")
+        preferences.write_text(json.dumps({
+            "extensions": {"settings": {extension_id: {"manifest": {"version": "1.0"}}}},
+        }))
+        original = preferences.read_bytes()
+        crx = self.base / "extension.crx"
+        crx.write_bytes(b"test-crx")
+        declaration = self.base / "external-extension.json"
+        declaration.write_text(json.dumps({"external_crx": str(crx), "external_version": "2.0"}))
+        environment["ABUSH_EXTERNAL_LINKS_DECLARATION"] = str(declaration)
+        self.fake_updater.write_text((ROOT / "scripts/update-external-links-profile").read_text())
+
+        result = subprocess.run([ROOT / "scripts/luakit"], env=environment,
+                                capture_output=True, text=True, timeout=3)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        arguments = self.log.read_bytes().split(b"\0")
+        self.assertIn(b"--user-data-dir=" + os.fsencode(profile), arguments)
+        self.assertFalse(self.remote_log.exists(), "a singleton ACK is not a visible window")
+        self.assertFalse((self.base / "client").exists())
+        self.assertEqual(preferences.read_bytes(), original)
+        self.assertEqual(marker.read_bytes(), b"old extension remains installed")
+        self.assertFalse((profile / "external-links-backups").exists())
+
+    def test_cold_no_argument_launch_updates_before_native_chrome(self):
+        environment = self.no_argument_environment()
+        result = subprocess.run([ROOT / "scripts/luakit"], env=environment,
+                                capture_output=True, text=True, timeout=3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.update_log.read_text(), str(self.base / "profile"))
+        self.assertTrue(self.log.is_file())
+        self.assertFalse(self.remote_log.exists())
+        self.assertFalse((self.base / "client").exists())
+
+    def test_cold_no_argument_update_failure_stays_visible_without_launch(self):
+        environment = self.no_argument_environment()
+        self.fake_updater.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' 'profile update failed' >&2\nexit 7\n")
+        result = subprocess.run([ROOT / "scripts/luakit"], env=environment,
+                                capture_output=True, text=True, timeout=3)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertIn("profile update failed", result.stderr)
+        self.assertFalse(self.log.exists())
+        self.assertFalse(self.remote_log.exists())
+
+    def test_no_argument_profile_scan_failure_blocks_launch_and_mutation(self):
+        environment = self.no_argument_environment()
+        environment["ABUSH_PROC_ROOT"] = str(self.base / "missing-proc")
+        result = subprocess.run([ROOT / "scripts/luakit"], env=environment,
+                                capture_output=True, text=True, timeout=3)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("unable to inspect Chrome profile processes", result.stderr)
+        self.assertFalse(self.update_log.exists())
+        self.assertFalse(self.log.exists())
+        self.assertFalse(self.remote_log.exists())
+
     def test_chrome_start_argv_never_contains_url(self):
         url = "https://example.test/secret"
         result = subprocess.run([ROOT / "scripts/chromium", url], env=self.environment(),
