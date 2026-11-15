@@ -393,43 +393,35 @@ const cases = [
         assert.equal(f.executor.state("remote").phase, "paused");
         assert.equal(f.executor.records.get("remote").agreed, false);
     }],
-    ["popup late refresh cannot replace pause state or disable revocation", async () => {
+    ["popup stale status cannot replace global Stop or disable revocation", async () => {
         const vm = require("node:vm"); const fs = require("node:fs");
         const responses = [];
-        const select = {value: "remote", addEventListener: () => {}, replaceChildren: () => {}};
+        const toggle = {disabled: false, textContent: "", addEventListener: () => {}};
         const state = {textContent: ""}; const error = {textContent: ""};
-        const buttons = ["enable", "pause", "disconnect"].map(action => ({
-            dataset: {action}, disabled: false, addEventListener: () => {},
-        }));
+        const list = {replaceChildren: () => {}};
         const context = vm.createContext({document: {
-            getElementById: id => ({remote: select, state, error})[id],
-            querySelectorAll: () => buttons, createElement: () => ({}),
+            getElementById: id => ({toggle, state, error, workbenches: list})[id],
+            createElement: () => ({}),
         }, chrome: {runtime: {sendMessage: () => {
             const pending = deferred(); responses.push(pending); return pending.promise;
         }}}});
         vm.runInContext(fs.readFileSync(require.resolve("../chromium/external-links/extension/popup.js"), "utf8"), context);
-        const trace = () => [state.textContent, error.textContent, buttons.map(button => button.disabled)];
-        assert.deepEqual(trace(), ["", "", [true, false, false]]);
-        const pause = vm.runInContext("control('pause')", context);
-        assert.deepEqual(trace(), ["", "", [true, false, false]]);
-        responses[1].resolve({ok: true, remotes: [{remote_key: "remote", display: "local",
-            state: {phase: "paused"}, agreed: false}]}); await pause;
-        const paused = trace();
-        assert.match(paused[0], /^paused/);
-        assert.deepEqual(paused[2], [false, false, false]);
-        responses[0].resolve({ok: true, remotes: [{remote_key: "remote", display: "old",
-            state: {phase: "enabled"}, agreed: true}]});
+        const trace = () => [state.textContent, error.textContent, toggle.disabled];
+        assert.deepEqual(trace(), ["", "", false]);
+        const stop = vm.runInContext("control('stop')", context);
+        assert.equal(toggle.disabled, true);
+        responses[1].resolve({ok: true, automation_on: false, remotes: []}); await stop;
+        const stopped = trace();
+        assert.match(stopped[0], /^Automation off/);
+        assert.equal(stopped[2], false);
+        responses[0].resolve({ok: true, automation_on: true, remotes: []});
         await vm.runInContext("Promise.resolve()", context);
-        assert.deepEqual(trace(), paused);
-        const refresh = vm.runInContext("control('refresh')", context);
-        const disconnect = vm.runInContext("control('disconnect')", context);
-        assert.deepEqual(trace()[2], [true, false, false]);
-        responses[3].resolve({ok: true, remotes: [{remote_key: "remote", display: "local",
-            state: {phase: "disabled"}, agreed: false}]}); await disconnect;
-        const disabled = trace();
-        assert.match(disabled[0], /^disabled/);
-        responses[2].reject(new Error("stale refresh failed")); await refresh;
-        assert.deepEqual(trace(), disabled);
+        assert.deepEqual(trace(), stopped);
+        const status = vm.runInContext("control('status')", context);
+        const secondStop = vm.runInContext("control('stop')", context);
+        responses[3].resolve({ok: true, automation_on: false, remotes: []}); await secondStop;
+        responses[2].reject(new Error("stale status failed")); await status;
+        assert.deepEqual(trace(), stopped);
     }],
 ];
 if (require.main === module) runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,4 +1,5 @@
 const ORDINARY_PREFIX = "__ABUSH_ORDINARY__:";
+const AUTOMATION_KEY = "abushBrowserAutomationV9";
 const CONSENT_KEY = "abushBrowserConsentV9";
 const WAL_KEY = "abushBrowserEffectsV9";
 const RECEIPTS_KEY = "abushBrowserReceiptsV9";
@@ -80,6 +81,14 @@ class WorkspaceExecutor {
         this.restored = false;
         this.lastError = null;
         this.bootstrapLeases = [];
+        this.automationOn = false;
+        this.preferenceReady = false;
+        this.preferenceGeneration = 0;
+        this.preferenceTail = Promise.resolve();
+        this.reconciliations = new Map();
+        this.reconcileVersions = new Map();
+        this.remoteErrors = new Map();
+        this.manualControls = false;
     }
 
     api(task, label) { return bounded(task, label); }
@@ -117,15 +126,27 @@ class WorkspaceExecutor {
         }
     }
     restoreWhenReady() {
-        this.restoreAttempt ||= this.restore();
+        this.restoreAttempt ||= this.restore().catch(error => {
+            this.automationOn = false;
+            this.preferenceReady = false;
+            throw error;
+        });
         return this.restoreAttempt;
     }
     async restore() {
         if (!this.browserBootId) fail("executor_unavailable", "Native browser boot is unavailable");
         const boot = this.browserBootId;
         const generation = this.restoreGeneration;
-        const local = await this.api(() => this.chrome.storage.local.get([WAL_KEY, RECEIPTS_KEY]),
-            "read effect journal");
+        const preferenceGeneration = this.preferenceGeneration;
+        const local = await this.api(() => this.chrome.storage.local.get([WAL_KEY, RECEIPTS_KEY,
+            AUTOMATION_KEY]), "read effect journal and automation preference");
+        if (preferenceGeneration === this.preferenceGeneration) {
+            if (local[AUTOMATION_KEY] !== undefined && typeof local[AUTOMATION_KEY] !== "boolean") {
+                fail("executor_unavailable", "Invalid stored automation preference");
+            }
+            this.automationOn = local[AUTOMATION_KEY] !== false;
+            this.preferenceReady = true;
+        }
         if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
         const wal = local[WAL_KEY];
         if (wal?.version === 9) {
@@ -157,7 +178,8 @@ class WorkspaceExecutor {
                 Number.isSafeInteger(saved.ownership_generation) ? saved.ownership_generation + 1 : 1);
             for (const [key, revision] of Object.entries(saved.revisions || {})) {
                 if (!Number.isSafeInteger(revision) || revision <= 0) continue;
-                const changed = this.restoreRevoked || (this.controlTokens.get(key) || 0) > 0;
+                const changed = this.manualControls && (this.restoreRevoked ||
+                    (this.controlTokens.get(key) || 0) > 0);
                 this.revisions.set(key, Math.max(this.revisions.get(key) || 0, revision + Number(changed)));
             }
             for (const candidate of saved.records || []) {
@@ -168,13 +190,23 @@ class WorkspaceExecutor {
                         !text(candidate.owner_display?.daemon_instance_id) ||
                         !["enabled", "paused"].includes(candidate.phase)) continue;
                 if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
-                if (this.restoreRevoked || (this.controlTokens.get(candidate.remote_key) || 0) > 0 ||
-                        (this.revisions.get(candidate.remote_key) || 0) > candidate.revision) continue;
+                if (this.manualControls && (this.restoreRevoked ||
+                        (this.controlTokens.get(candidate.remote_key) || 0) > 0 ||
+                        (this.revisions.get(candidate.remote_key) || 0) > candidate.revision)) continue;
                 if (this.records.has(candidate.remote_key) ||
                         [...this.records.values()].some(record => record.tab_id === candidate.tab_id)) continue;
                 this.revisions.set(candidate.remote_key, Math.max(candidate.revision,
                     this.revisions.get(candidate.remote_key) || 1));
-                const record = {...candidate, agreed: false, publication: null, attached: false};
+                const live = [...this.remotes.values()].find(remote =>
+                    remote.principal_id === candidate.principal_id &&
+                    remote.workspace_id === candidate.page.workspace_id &&
+                    remote.owner_display.daemon_instance_id === candidate.owner_display.daemon_instance_id);
+                const record = {...candidate, remote_key: live?.remote_key || candidate.remote_key,
+                    agreed: false, publication: null, attached: false};
+                if (!this.manualControls) {
+                    record.phase = "paused";
+                    record.revision = this.nextRevision(record.remote_key);
+                }
                 this.records.set(record.remote_key, record);
                 try {
                     await this.validateTab(record);
@@ -195,28 +227,28 @@ class WorkspaceExecutor {
         this.bootstrapLeases = [];
         this.restored = true;
         if (!this.controls.size) this.revokedTabs.clear();
+        if (!this.manualControls) await Promise.all([...this.remotes.keys()].map(key => this.reconcile(key)));
     }
     persistWal() {
-        const write = this.localTail.catch(() => {}).then(() => this.api(() =>
+        const write = this.localTail.catch(() => {}).then(() =>
             this.chrome.storage.local.set({[WAL_KEY]: clone({version: 9,
                 effects: this.effects, creations: this.creations, ordinary: this.ordinary,
-                cancellations: this.cancellations})}),
-        "persist effect journal"));
+                cancellations: this.cancellations})}));
         this.localTail = write;
-        return write;
+        return this.api(() => write, "persist effect journal");
     }
     persistConsent() {
         const write = this.sessionTail.catch(() => {}).then(() => {
             const records = [...this.records.values()].filter(record => record.phase !== "disabled")
                 .map(({agreed, publication, attached, attachment, pendingDetach, ...record}) => record);
-            return this.api(() => this.chrome.storage.session.set({[CONSENT_KEY]: {
+            return this.chrome.storage.session.set({[CONSENT_KEY]: {
                 version: 9, browser_boot_id: this.browserBootId,
                 ownership_generation: this.ownershipGeneration,
                 revisions: Object.fromEntries(this.revisions), records: clone(records),
-            }}), "persist browser consent");
+            }});
         });
         this.sessionTail = write;
-        return write;
+        return this.api(() => write, "persist browser consent");
     }
     bumpControl(key) {
         this.controlTokens.set(key, (this.controlTokens.get(key) || 0) + 1);
@@ -361,11 +393,37 @@ class WorkspaceExecutor {
     async remoteState(remote) {
         if (!this.validRemote(remote)) fail("invalid_command", "Invalid authenticated remote state");
         const key = remote.remote_key;
+        if (remote.connected && !this.manualControls) {
+            const alias = [...this.remotes.values(), ...[...this.records.values()]
+                .filter(record => !this.remotes.has(record.remote_key)).map(record => ({
+                    remote_key: record.remote_key, principal_id: record.principal_id,
+                    workspace_id: record.page.workspace_id, owner_display: record.owner_display,
+                    connected: false}))].find(other => other.remote_key !== key &&
+                this.stableIdentity(other) === this.stableIdentity(remote));
+            if (alias) {
+                if (alias.connected) return true;
+                const record = this.records.get(alias.remote_key);
+                if (record) {
+                    this.closeAuthorization(record, "paused");
+                    this.records.delete(alias.remote_key);
+                    record.remote_key = key;
+                    record.revision = this.nextRevision(key);
+                    this.records.set(key, record);
+                }
+                this.remotes.delete(alias.remote_key);
+                const oldCreation = `${this.browserBootId}\0${alias.remote_key}`;
+                if (this.creations[oldCreation]) {
+                    this.creations[`${this.browserBootId}\0${key}`] = this.creations[oldCreation];
+                    delete this.creations[oldCreation];
+                }
+            }
+        }
         const record = this.records.get(key);
         if (!remote.connected || this.remotes.get(key) && !sameRef(this.remotes.get(key), remote)) this.bumpControl(key);
         const acceptedRemote = clone(remote);
         this.remotes.set(key, acceptedRemote);
         if (!this.revisions.has(key)) this.nextRevision(key);
+        if (!this.restored && !this.manualControls) return true;
         if (record && record.phase !== "disabled") {
             const revision = record.revision;
             const unchanged = remote.connected && remote.connection_id === record.connection_id &&
@@ -393,6 +451,11 @@ class WorkspaceExecutor {
         await this.persistConsent();
         if (this.remotes.get(key) !== acceptedRemote) return false;
         if (remote.connected) {
+            if (!this.preferenceReady && !this.manualControls) return true;
+            if (this.automationOn && !this.manualControls) {
+                await this.reconcile(key);
+                return true;
+            }
             await this.publish(key);
             if (this.remotes.get(key) !== acceptedRemote) return false;
             await this.flushEffects(key);
@@ -418,17 +481,95 @@ class WorkspaceExecutor {
         return this.popupState();
     }
     popupState() {
-        return {ok: true, error: this.lastError,
+        return {ok: true, automation_on: this.automationOn, error: this.lastError,
             cleanup_pending: [...this.attachments.values()].some(token => token.cleanup),
             remotes: [...this.remotes.values()].map(remote => ({
             remote_key: remote.remote_key, principal_id: remote.principal_id,
             display: remote.display_name || remote.connection_display_name || remote.owner_display?.workbench_name || "Abush",
             connected: remote.connected, state: this.state(remote.remote_key),
-            creation_unknown: this.creations[`${this.browserBootId}\0${remote.remote_key}`]?.phase === "unknown",
+            error: this.remoteErrors.get(remote.remote_key) || null,
+            creation_unknown: Object.entries(this.creations).some(([key, entry]) =>
+                entry.phase === "unknown" && (key.endsWith(`\0${remote.remote_key}`) ||
+                    entry.identity === this.stableIdentity(remote))),
             agreed: this.records.get(remote.remote_key)?.agreed || false,
             cleanup_pending: [...this.attachments.values()].some(token =>
                 token.record.remote_key === remote.remote_key && token.cleanup),
         }))};
+    }
+    async setAutomation(on, ready = null) {
+        if (typeof on !== "boolean") fail("invalid_command", "Expected global automation preference");
+        const generation = ++this.preferenceGeneration;
+        this.automationOn = false;
+        this.preferenceReady = false;
+        for (const key of new Set([...this.remotes.keys(), ...this.controls])) this.bumpControl(key);
+        for (const record of this.records.values()) {
+            if (record.phase !== "disabled") this.closeAuthorization(record, "paused");
+        }
+        const cleanup = Promise.all([...this.records.values()].map(record => this.detach(record)));
+        cleanup.catch(error => this.reportAdvisoryError(error));
+        const write = this.preferenceTail.catch(() => {}).then(() =>
+            this.chrome.storage.local.set({[AUTOMATION_KEY]: on}));
+        this.preferenceTail = write;
+        try {
+            await this.api(() => write, "persist global automation preference");
+            if (generation !== this.preferenceGeneration) return this.popupState();
+            this.preferenceReady = true;
+            this.automationOn = on;
+            if (ready) await ready();
+            if (generation !== this.preferenceGeneration) return this.popupState();
+            await this.persistConsent();
+            await cleanup;
+            if (on) await Promise.all([...this.remotes.keys()].map(key => this.reconcile(key)));
+            else {
+                await Promise.all([...this.remotes.values()].filter(remote => remote.connected)
+                    .map(remote => this.publish(remote.remote_key)));
+                await bounded(() => Promise.all([...this.operations.values()].map(op =>
+                    op.done.catch(() => {}))), "drain stopped browser work", 5000);
+            }
+            return this.popupState();
+        } catch (error) {
+            if (generation === this.preferenceGeneration) this.automationOn = false;
+            this.reportAdvisoryError(error);
+            throw error;
+        }
+    }
+    stableIdentity(remote) {
+        return JSON.stringify([remote.principal_id, remote.workspace_id,
+            remote.owner_display?.daemon_instance_id]);
+    }
+    reconcile(key) {
+        this.reconcileVersions.set(key, (this.reconcileVersions.get(key) || 0) + 1);
+        if (this.reconciliations.has(key)) return this.reconciliations.get(key);
+        const task = Promise.resolve().then(async () => {
+            let version;
+            do {
+                version = this.reconcileVersions.get(key);
+                if (!this.restored || !this.preferenceReady || !this.automationOn || this.manualControls) return;
+                const remote = this.remotes.get(key);
+                if (!remote?.connected) return;
+                try {
+                    if (this.popupState().remotes.find(item => item.remote_key === key)?.creation_unknown) {
+                        fail("unknown_effect", "Tab creation unknown: inspect partial tab; no automatic retry");
+                    }
+                    const record = this.records.get(key);
+                    if (record && record.phase !== "disabled") {
+                        await this.resume(key);
+                    } else {
+                        await this.control("enable", key);
+                    }
+                    await this.flushEffects(key);
+                    this.remoteErrors.delete(key);
+                } catch (error) {
+                    this.remoteErrors.set(key, error.message || String(error));
+                    this.reportAdvisoryError(error);
+                }
+            } while (version !== this.reconcileVersions.get(key));
+        }).finally(() => this.reconciliations.delete(key));
+        this.reconciliations.set(key, task);
+        return task;
+    }
+    async reconcileAll() {
+        await Promise.all([...this.remotes.keys()].map(key => this.reconcile(key)));
     }
     async control(action, key, ready = null) {
         if (action === "refresh") return this.refreshRemotes();
@@ -484,7 +625,9 @@ class WorkspaceExecutor {
         const token = this.controlTokens.get(key) || 0;
         let abandoned = false;
         const check = () => {
-            if (abandoned || transport !== this.transportGeneration || boot !== this.browserBootId || this.remotes.get(key) !== remote ||
+            if ((!this.manualControls && (!this.automationOn || !this.preferenceReady)) ||
+                    abandoned || transport !== this.transportGeneration || boot !== this.browserBootId ||
+                    this.remotes.get(key) !== remote ||
                     token !== (this.controlTokens.get(key) || 0)) {
                 fail("stale_authority", "Remote or consent changed during enable");
             }
@@ -496,12 +639,17 @@ class WorkspaceExecutor {
             fail("operation_conflict", "Use Resume for the original work tab, or Disconnect first");
         }
         const creationKey = `${this.browserBootId}\0${key}`;
-        if (this.creations[creationKey]?.phase === "unknown") {
-            fail("unknown_effect", "Interrupted tab creation is unknown. Inspect the partial tab; Disconnect leaves it ordinary, then Enable creates a fresh tab");
+        if (Object.entries(this.creations).some(([creationKey, entry]) => entry.phase === "unknown" &&
+                (creationKey.endsWith(`\0${key}`) || entry.identity === this.stableIdentity(remote)))) {
+            fail("unknown_effect", "Interrupted tab creation is unknown. Inspect the partial tab; automatic retry is blocked");
         }
-        const window = await this.api(() => this.chrome.windows.getCurrent(), "select current window");
+        const available = this.manualControls ?
+            [await this.api(() => this.chrome.windows.getCurrent(), "select current window")] :
+            await this.api(() => this.chrome.windows.getAll({windowTypes: ["normal"]}),
+                "find existing normal window");
         check();
-        if (window.type !== "normal") fail("invalid_command", "Open the popup in an existing normal Chrome window");
+        const window = available.find(candidate => candidate.type === "normal");
+        if (!window) fail("executor_unavailable", "Automation unavailable: no existing normal Chrome window");
         const record = {remote_key: key, principal_id: remote.principal_id,
             connection_id: remote.connection_id,
             executor_fence: clone(remote.executor_fence), owner_display: clone(remote.owner_display),
@@ -510,7 +658,8 @@ class WorkspaceExecutor {
                 page_id: crypto.randomUUID(), generation: 1}, window_id: window.id,
             tab_id: null, group_id: null, phase: "paused", agreed: false, attached: false};
         const creationRevision = record.revision;
-        const creation = {phase: "unknown", enable_id: record.enable_id};
+        const creation = {phase: "unknown", enable_id: record.enable_id,
+            identity: this.stableIdentity(remote)};
         this.creations[creationKey] = creation;
         try {
             await this.persistWal();
@@ -564,7 +713,7 @@ class WorkspaceExecutor {
                 record.agreed = false;
                 record.phase = "paused";
             }
-            throw new Error(`Enable failed; no tabs were removed. ${error.message}. Inspect the partial tab; Disconnect leaves it ordinary, then Enable creates a fresh tab`);
+            throw new Error(`Preparation failed; no tabs were removed. ${error.message}. Inspect any partial tab; unknown creation is never retried automatically`);
         } finally {
             this.pendingCreations.delete(record.tab_id);
         }
@@ -586,7 +735,7 @@ class WorkspaceExecutor {
         await this.detach(record, record.pendingDetach);
         await this.validateTab(record);
         if (this.remotes.get(key) !== remote || this.records.get(key) !== record ||
-                record.revision !== revision) {
+                record.revision !== revision || !this.manualControls && !this.automationOn) {
             fail("stale_authority", "Remote changed during resume");
         }
         record.connection_id = remote.connection_id;
@@ -626,6 +775,7 @@ class WorkspaceExecutor {
             await this.persistConsent();
             await this.detach(record, attachment);
             if (this.remotes.get(record.remote_key)?.connected) await this.publish(record.remote_key);
+            if (!this.manualControls) await this.reconcile(record.remote_key);
         })();
     }
     debuggerDetached(tabId) {
@@ -666,7 +816,7 @@ class WorkspaceExecutor {
         // Exact Execute is daemon acceptance proof after persisted consent starts publication.
         const published = record?.publication && record.publication.remote === remote &&
             sameRef(record.publication.state, this.state(payload.remote_key));
-        if (op.cancelled || !record || record.phase !== "enabled" || (!record.agreed && !published)) {
+        if ((!this.manualControls && !this.automationOn) || op.cancelled || !record || record.phase !== "enabled" || (!record.agreed && !published)) {
             fail("browser_disabled", "Browser is disabled or paused; use the Chrome popup");
         }
         if (!remote?.connected || remote.connection_id !== payload.connection_id ||
@@ -1033,4 +1183,4 @@ class WorkspaceExecutor {
     }
 }
 if (typeof module !== "undefined") module.exports = {WorkspaceExecutor, BROWSER_ERROR_CODES,
-    ORDINARY_PREFIX, CONSENT_KEY, WAL_KEY, RECEIPTS_KEY, displayTitle, bounded};
+    ORDINARY_PREFIX, AUTOMATION_KEY, CONSENT_KEY, WAL_KEY, RECEIPTS_KEY, displayTitle, bounded};

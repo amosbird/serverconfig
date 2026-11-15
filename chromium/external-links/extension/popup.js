@@ -1,45 +1,37 @@
-const select = document.getElementById("remote");
+const toggle = document.getElementById("toggle");
 const state = document.getElementById("state");
 const error = document.getElementById("error");
-let remotes = [];
-let controlGeneration = 0;
-function render() {
-    const remote = remotes.find(item => item.remote_key === select.value);
-    state.textContent = remote ? remote.cleanup_pending ?
-        "Debugger cleanup pending. Browser control is blocked until cleanup is confirmed; retry Resume or Enable after Disconnect." :
-        remote.creation_unknown ?
-        "Creation uncertain. Inspect the partial tab. Disconnect leaves it ordinary; Enable then creates a fresh tab." :
-        `${remote.state.phase}${remote.agreed ? " · workbench agreed" : " · not authorized"}` :
-        "No connected authenticated workbench. Start browser integration in Abush, then Refresh.";
-}
+const list = document.getElementById("workbenches");
+let automationOn = true;
+let generation = 0;
 async function control(action) {
-    const generation = ++controlGeneration;
-    const buttons = [...document.querySelectorAll("button")];
-    buttons.filter(button => !["pause", "takeover", "disconnect"].includes(button.dataset.action))
-        .forEach(button => { button.disabled = true; });
-    error.textContent = "";
+    const current = ++generation;
+    toggle.disabled = action === "stop";
+    if (action === "start") automationOn = true;
     try {
-        const response = await chrome.runtime.sendMessage({control: action, remote_key: select.value});
-        if (generation !== controlGeneration) return;
-        if (!response?.ok) throw new Error(response?.error || "Browser integration did not respond");
-        remotes = response.remotes;
-        const previous = select.value;
-        select.replaceChildren(...remotes.map(remote => {
-            const option = document.createElement("option");
-            option.value = remote.remote_key;
-            option.textContent = `${remote.display} (${remote.principal_id || "disconnected"})`;
-            return option;
+        const response = await chrome.runtime.sendMessage({control: action});
+        if (current !== generation) return;
+        if (!response?.ok) throw new Error(response?.error || "Browser integration unavailable");
+        automationOn = response.automation_on;
+        toggle.textContent = automationOn ? "Stop automation" : "Start automation";
+        state.textContent = automationOn ? "Automation on · workbenches prepare automatically" :
+            "Automation off · pages remain open";
+        list.replaceChildren(...response.remotes.map(remote => {
+            const item = document.createElement("li");
+            const status = remote.creation_unknown ?
+                "Error: tab creation unknown. Inspect the partial tab; no automatic retry." :
+                remote.cleanup_pending ? "Error: debugger cleanup pending" :
+                !automationOn ? "Off" : remote.error ? `Error: ${remote.error}` : remote.agreed ? "Ready" :
+                remote.connected ? "Unavailable / preparing" : "Disconnected";
+            item.textContent = `${remote.display}: ${status}`;
+            return item;
         }));
-        if (remotes.some(remote => remote.remote_key === previous)) select.value = previous;
         error.textContent = response.error || "";
-        render();
     } catch (failure) {
-        if (generation === controlGeneration) error.textContent = failure.message;
+        if (current === generation) error.textContent = failure.message;
     } finally {
-        if (generation === controlGeneration) buttons.forEach(button => { button.disabled = false; });
+        if (current === generation) toggle.disabled = false;
     }
 }
-select.addEventListener("change", render);
-document.querySelectorAll("button").forEach(button =>
-    button.addEventListener("click", () => control(button.dataset.action)));
-control("refresh");
+toggle.addEventListener("click", () => control(automationOn ? "stop" : "start"));
+control("status");

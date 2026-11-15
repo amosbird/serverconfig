@@ -29,9 +29,10 @@ const REMOTE = {remote_key: "remote", connection_id: "connection", principal_id:
     workspace_id: "workspace", connected: true, executor_fence: {executor_id: "executor", epoch: 1},
     owner_display: {daemon_instance_id: "instance", daemon_boot_id: "daemon-boot",
         workbench_name: "Workbench"}, connection_display_name: "local"};
-function fixture() {
+function fixture({globalAutomation = false} = {}) {
     const calls = [];
     const local = {abushOwnedMarkers: {legacy: true}};
+    if (!globalAutomation) local.abushBrowserAutomationV9 = false;
     const session = {};
     const windows = new Map([[1, {id: 1, type: "normal", focused: true}],
         [2, {id: 2, type: "popup", focused: false}]]);
@@ -167,6 +168,7 @@ function fixture() {
         return {};
     });
     let executor = new WorkspaceExecutor(api, native);
+    executor.manualControls = !globalAutomation;
     const trusted = {id: api.runtime.id, url: api.runtime.getURL("popup.html")};
     const nativeEvents = event();
     const errors = [];
@@ -180,12 +182,19 @@ function fixture() {
         registerNativeEventRouter({onEvent: nativeEvents.addListener}, executor,
             async () => {}, message => errors.push(message));
         registerRuntimeMessageRouter(api, executor, async () => {},
-            (url, source, cb) => cb({ok: true}));
+            (url, source, cb) => cb({ok: true}), globalAutomation ? null :
+                async (message, ready) => {
+                    const revoke = ["pause", "takeover", "disconnect"].includes(message.control);
+                    if (!revoke) await ready();
+                    return executor.control(message.control, message.remote_key, revoke ? ready : null);
+                });
     }
     route();
     const send = (message, sender = trusted) => bounded(() => new Promise(resolve =>
         api.runtime.onMessage.emit(message, sender, resolve)), "runtime response", 4000);
     return {api, calls, tabs, windows, local, session, hooks, attachedTabs, trusted, send, errors,
+        emitRemote: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
+            event: "abush_browser.remote_state", payload})),
         emitNative: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
             event: "abush_browser.execute", payload})),
         get executor() { return executor; }, async ready() {
@@ -198,10 +207,12 @@ function fixture() {
             return executor.records.get("remote");
         }, resetWorker() {
             executor = new WorkspaceExecutor(api, native);
+            executor.manualControls = !globalAutomation;
             route();
             return executor;
         }, async restart(boot = BOOT) {
             executor = new WorkspaceExecutor(api, native);
+            executor.manualControls = !globalAutomation;
             route();
             await executor.acceptNativeBootstrap(boot);
             await executor.restoreWhenReady();

@@ -483,10 +483,13 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
     chromeApi.tabs.onRemoved.addListener(run);
     chromeApi.tabs.onDetached.addListener(run);
     chromeApi.tabs.onAttached.addListener(run);
+    chromeApi.windows.onCreated?.addListener(() => ready().then(() => workspaces.reconcileAll())
+        .catch(onFailure));
     chromeApi.tabs.onReplaced.addListener((addedTabId, removedTabId) => run(removedTabId));
 }
 
-function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openInTargetBrowser) {
+function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openInTargetBrowser,
+        legacyControl = null) {
     chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const ownedFailure = () => ({owned: null, ready: false, ok: false, route: false});
         const respondAfterReady = async () => {
@@ -496,10 +499,17 @@ function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openI
                             sender.url !== chromeApi.runtime.getURL("popup.html")) {
                         return {ok: false, error: "Only the extension popup can authorize browser work"};
                     }
-                    const revoke = ["pause", "takeover", "disconnect"].includes(message.control);
-                    if (!revoke) await ready();
-                    return await workspaces.control(message.control, message.remote_key,
-                        revoke ? ready : null);
+                    if (legacyControl) return await legacyControl(message, ready);
+                    if (message.control === "stop") return await workspaces.setAutomation(false, ready);
+                    if (message.control === "start") {
+                        await ready();
+                        return await workspaces.setAutomation(true);
+                    }
+                    if (message.control === "status") {
+                        await ready();
+                        return workspaces.popupState();
+                    }
+                    throw new Error("Only global Start/Stop automation controls are supported");
                 }
                 await ready();
                 const owned = workspaces.ownsTab(sender.tab?.id);
@@ -533,6 +543,7 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
         if (message.service === "native_host") {
             if (message.event === "bootstrap") {
                 workspaces.acceptNativeBootstrap(message.payload)
+                    .then(() => workspaces.restoreWhenReady())
                     .then(() => ready())
                     .catch(error => onFailure(error.message ||
                         "Unable to accept native browser bootstrap"));
@@ -563,7 +574,7 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
             return;
         }
         if (method === "cancel" || method === "remoteState") {
-            Promise.resolve(workspaces[method](message.payload)).catch(error => onFailure(error.message));
+            return Promise.resolve(workspaces[method](message.payload)).catch(error => onFailure(error.message));
         } else return run(() => workspaces[method](message.payload), `Browser ${method} failed`);
     });
 }
