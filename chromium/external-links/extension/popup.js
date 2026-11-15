@@ -3,6 +3,7 @@ const state = document.getElementById("state");
 const error = document.getElementById("error");
 const list = document.getElementById("workbenches");
 let automationOn = true;
+let stopPending = false;
 let generation = 0;
 async function control(action, details = {}) {
     const current = ++generation;
@@ -13,8 +14,10 @@ async function control(action, details = {}) {
         if (current !== generation) return;
         if (typeof response?.automation_on !== "boolean") throw new Error(response?.error || "Browser integration unavailable");
         automationOn = response.automation_on;
-        toggle.textContent = automationOn ? "Stop automation" : "Start automation";
-        state.textContent = response.preference_pending ? "Automation preference pending · browser work blocked" :
+        stopPending = response.stop_pending === true;
+        toggle.textContent = stopPending ? "Retry Stop" : automationOn ? "Stop automation" : "Start automation";
+        state.textContent = stopPending ? "Automation off locally · Stop not saved · retry before restarting" :
+            response.preference_pending ? "Automation preference pending · browser work blocked" :
             automationOn ? "Automation on · workbenches prepare automatically" :
             "Automation off · pages remain open";
         list.replaceChildren(...response.remotes.map(remote => {
@@ -44,5 +47,5 @@ async function control(action, details = {}) {
         if (current === generation) toggle.disabled = false;
     }
 }
-toggle.addEventListener("click", () => control(automationOn ? "stop" : "start"));
+toggle.addEventListener("click", () => control(automationOn || stopPending ? "stop" : "start"));
 control("status");

@@ -82,6 +82,7 @@ class WorkspaceExecutor {
         this.lastError = null;
         this.bootstrapLeases = [];
         this.automationOn = false;
+        this.automationInhibited = false;
         this.preferenceReady = false;
         this.preferenceGeneration = 0;
         this.preferencePending = false;
@@ -133,8 +134,12 @@ class WorkspaceExecutor {
         }
     }
     restoreWhenReady() {
+        const boot = this.browserBootId;
+        const generation = this.restoreGeneration;
+        const preferenceGeneration = this.preferenceGeneration;
         this.restoreAttempt ||= this.restore().catch(error => {
-            this.reportAdvisoryError(error);
+            if (boot === this.browserBootId && generation === this.restoreGeneration &&
+                    preferenceGeneration === this.preferenceGeneration) this.reportAdvisoryError(error);
             throw error;
         });
         return this.restoreAttempt;
@@ -146,14 +151,14 @@ class WorkspaceExecutor {
         const preferenceGeneration = this.preferenceGeneration;
         const local = await this.api(() => this.chrome.storage.local.get([WAL_KEY, RECEIPTS_KEY,
             AUTOMATION_KEY]), "read effect journal and automation preference");
-        if (preferenceGeneration === this.preferenceGeneration) {
+        if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
+        if (preferenceGeneration === this.preferenceGeneration && !this.automationInhibited) {
             if (local[AUTOMATION_KEY] !== undefined && typeof local[AUTOMATION_KEY] !== "boolean") {
                 fail("executor_unavailable", "Invalid stored automation preference");
             }
             this.automationOn = local[AUTOMATION_KEY] !== false;
             this.preferenceReady = true;
         }
-        if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
         const wal = local[WAL_KEY];
         if (wal?.version === 9) {
             this.cancellations = {...(wal.cancellations || {}), ...this.cancellations};
@@ -463,7 +468,8 @@ class WorkspaceExecutor {
         }
         if (!remote.connected && previous && text(remote.connection_id) &&
                 (remote.connection_id !== previous.connection_id ||
-                remote.executor_fence && !sameRef(remote.executor_fence, previous.executor_fence))) return true;
+                remote.executor_fence && !sameRef(remote.executor_fence, previous.executor_fence) ||
+                remote.owner_display && !sameRef(this.executorIdentity(remote), this.executorIdentity(previous)))) return true;
         if (!remote.connected && this.aliases.has(key)) {
             this.remotes.set(key, clone(remote));
             return true;
@@ -573,7 +579,8 @@ class WorkspaceExecutor {
         return this.popupState();
     }
     popupState() {
-        return {ok: true, automation_on: this.automationOn, preference_pending: this.preferencePending, error: this.lastError,
+        return {ok: true, automation_on: this.automationOn, preference_pending: this.preferencePending,
+            stop_pending: this.automationInhibited && this.preferencePending, error: this.lastError,
             cleanup_pending: [...this.attachments.values()].some(token => token.cleanup),
             remotes: [...this.remotes.values()].map(remote => ({
             remote_key: remote.remote_key, principal_id: remote.principal_id,
@@ -593,6 +600,8 @@ class WorkspaceExecutor {
         const generation = ++this.preferenceGeneration;
         const previousChoice = this.automationOn;
         const previousReady = this.preferenceReady;
+        const previousPending = this.preferencePending;
+        if (!on) this.automationInhibited = true;
         this.preferencePending = true;
         this.automationOn = false;
         this.preferenceReady = false;
@@ -608,12 +617,17 @@ class WorkspaceExecutor {
                     this.preferencePending = false;
                     this.preferenceReady = true;
                     this.automationOn = on;
+                    if (on) this.automationInhibited = false;
+                    this.lastError = null;
                 }
             }, error => {
                 if (generation === this.preferenceGeneration) {
-                    this.preferencePending = false;
-                    this.automationOn = previousChoice;
-                    this.preferenceReady = previousReady;
+                    this.preferencePending = !on || previousPending;
+                    this.automationOn = this.automationInhibited ? false : previousChoice;
+                    this.preferenceReady = this.automationInhibited ? false : previousReady;
+                    if (!on) error = new Error(`Automation off locally, but Stop is not saved. Retry Stop; ` +
+                        `a browser/worker restart may restore automation while storage is unavailable. ${error.message}`);
+                    this.reportAdvisoryError(error);
                 }
                 throw error;
             });
@@ -637,7 +651,13 @@ class WorkspaceExecutor {
             }
             return this.popupState();
         } catch (error) {
-            this.reportAdvisoryError(error);
+            if (generation === this.preferenceGeneration) {
+                if (!on && this.preferencePending && !error.message.startsWith("Automation off locally")) {
+                    error = new Error(`Automation off locally, but Stop is not saved. Retry Stop; ` +
+                        `a browser/worker restart may restore automation while storage is unavailable. ${error.message}`);
+                }
+                this.reportAdvisoryError(error);
+            }
             return {...this.popupState(), ok: false};
         }
     }
@@ -1194,8 +1214,7 @@ class WorkspaceExecutor {
         if (!remote?.connected || remote.principal_id !== payload.principal_id ||
                 remote.connection_id !== payload.connection_id ||
                 !sameRef(remote.executor_fence, payload.executor_fence) ||
-                this.currentExecutors.has(payload.principal_id) &&
-                    !sameRef(this.currentExecutors.get(payload.principal_id), payload.executor_fence)) {
+                !this.currentExecutor(remote)) {
             fail("stale_authority", "Cancellation authority is stale");
         }
         const cancellationKey = `${key}\0${payload.request_id}`;
