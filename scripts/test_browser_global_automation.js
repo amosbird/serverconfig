@@ -7,6 +7,135 @@ const trace = f => [f.executor.automationOn, f.executor.state("remote").phase,
     f.executor.records.get("remote")?.agreed || false, f.tabs.get(1).active,
     f.calls.filter(c => c.name === "debugger.sendCommand").length];
 const cases = [
+    ...["debugger.attach", "debugger.sendCommand"].map(boundary => [
+        `duplicate state and window creation preserve live episode at ${boundary}`, async () => {
+            const f = fresh(); await f.ready();
+            const record = f.executor.records.get("remote");
+            const remote = f.executor.remotes.get("remote");
+            const revision = record.revision;
+            const publication = record.publication;
+            const entered = deferred(); const gate = deferred();
+            f.hooks[boundary] = async () => { entered.resolve(); await gate.promise; };
+            const running = f.executor.execute(execute(f)); running.catch(() => {}); await entered.promise;
+            try {
+                await f.emitRemote(clone(REMOTE));
+                await Promise.all(f.api.windows.onCreated.emit({id: 99, type: "normal"}));
+                assert.equal(record.agreed, true);
+                assert.equal(record.revision, revision);
+                assert.equal(record.publication, publication);
+                assert.equal(f.executor.remotes.get("remote"), remote);
+                assert.equal(f.calls.filter(c => c.name === "debugger.detach").length, 0);
+            } finally { gate.resolve(); }
+            assert.equal(await running, "applied");
+        }]),
+    ["current alias executes and delayed old disconnect cannot revoke", async () => {
+        const f = fresh(); await f.ready();
+        const original = f.executor.records.get("remote");
+        const alias = {...REMOTE, remote_key: "alias", connection_id: "connection-b"};
+        await f.emitRemote(alias);
+        assert.equal(await f.executor.execute(execute(f, {remote_key: "alias", connection_id: alias.connection_id})), "applied");
+        for (const override of [{principal_id: "foreign"}, {connection_id: "wrong"},
+            {authorization: {browser_boot_id: BOOT.browser_boot_id, enable_id: "foreign", revision: original.revision}},
+            {command: {command: "navigate", page: {...original.page, workspace_id: "foreign"}, url: "https://foreign.test/"}}]) {
+            await assert.rejects(f.executor.execute(execute(f, {remote_key: "alias", connection_id: alias.connection_id, ...override})), /authorization/);
+        }
+        assert.ok(f.calls.some(c => c.name === "native.workspace_state" && c.args[0].remote_key === "remote" &&
+            c.args[0].state.binding?.enable_id === original.enable_id));
+        const next = {...alias, executor_fence: {executor_id: "next", epoch: 2}};
+        await f.emitRemote(next);
+        const state = f.executor.state("alias");
+        await f.emitRemote({...REMOTE, connected: false});
+        assert.deepEqual(f.executor.state("alias"), state);
+        assert.equal(await f.executor.execute(execute(f, {remote_key: "alias", connection_id: next.connection_id,
+            executor_fence: next.executor_fence, authorization: {browser_boot_id: BOOT.browser_boot_id,
+                enable_id: state.binding.enable_id, revision: state.revision}, command: {
+                command: "navigate", page: state.binding.page, url: "https://current.test/"}})), "applied");
+        await assert.rejects(f.executor.execute(execute(f)), /authorization|disabled|paused/);
+        assert.equal(f.tabs.size, 3);
+        assert.equal(f.executor.ownsTab(original.tab_id), true);
+        assert.ok(f.calls.some(c => c.name === "native.workspace_state" && c.args[0].remote_key === "alias"));
+    }],
+    ...["session.set", "debugger.detach"].map(boundary => [
+        `committed ON remains observable after ${boundary} failure`, async () => {
+            const f = fresh(); await f.ready();
+            if (boundary === "debugger.detach") await f.executor.execute(execute(f));
+            await f.send({control: "stop"});
+            if (boundary === "debugger.detach") {
+                await f.send({control: "start"}); await f.executor.execute(execute(f));
+            }
+            f.hooks[boundary] = async () => { throw new Error("injected readiness failure"); };
+            const response = await f.send({control: "start"});
+            assert.equal(f.local[AUTOMATION_KEY], true);
+            assert.equal(f.executor.automationOn, true);
+            assert.equal(response.automation_on, true);
+            assert.match(response.error, /failure/);
+            delete f.hooks[boundary]; await f.restart(); await f.emitRemote(REMOTE);
+            assert.equal(f.executor.automationOn, true);
+        }]),
+    ["popup-confirmed unknown recovery preserves abandoned WAL and OFF", async () => {
+        const f = fresh(); f.hooks["tabs.create"] = async () => { throw new Error("lost result"); };
+        await f.ready(); delete f.hooks["tabs.create"];
+        assert.equal((await f.send({control: "recover", remote_key: "remote"})).ok, false);
+        await f.send({control: "stop"});
+        assert.equal((await f.send({control: "recover", remote_key: "remote", confirmed: true})).ok, true);
+        assert.equal(f.executor.automationOn, false);
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
+        assert.ok(Object.values(f.local[WAL_KEY].creations).some(c => c.phase === "abandoned" && c.outcome === "unknown"));
+        await f.send({control: "start"});
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 2);
+        assert.equal(f.executor.state("remote").phase, "enabled");
+    }],
+    ["aliases arriving before preparation create one exact work tab", async () => {
+        const f = fresh();
+        await f.emitRemote(REMOTE);
+        await f.emitRemote({...REMOTE, remote_key: "alias", connection_id: "b"});
+        await f.executor.acceptNativeBootstrap(BOOT); await f.executor.restoreWhenReady();
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
+        assert.equal(f.executor.recordFor("alias"), f.executor.recordFor("remote"));
+        assert.equal(await f.executor.execute(execute(f, {remote_key: "alias", connection_id: "b"})), "applied");
+    }],
+    ["recovery persist failure blocks fresh creation", async () => {
+        const f = fresh(); f.hooks["tabs.create"] = async () => { throw new Error("lost result"); };
+        await f.ready(); delete f.hooks["tabs.create"];
+        f.hooks["local.set"] = async value => {
+            if (Object.values(value[WAL_KEY]?.creations || {}).some(c => c.phase === "abandoned")) throw new Error("abandonment not committed");
+        };
+        assert.equal((await f.send({control: "recover", remote_key: "remote", confirmed: true})).ok, false);
+        await f.emitRemote(REMOTE); await f.send({control: "start"});
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
+        assert.equal(f.executor.popupState().remotes[0].creation_unknown, true);
+    }],
+    ["late abandoned create callback cannot rewrite fresh authority or WAL", async () => {
+        const f = fresh(); const entered = deferred(); const gate = deferred();
+        f.hooks["tabs.create.after"] = async () => { entered.resolve(); await gate.promise; };
+        const preparing = f.ready(); await entered.promise;
+        const old = clone([...f.tabs.values()].find(tab => tab.id >= 10));
+        await preparing; delete f.hooks["tabs.create.after"];
+        assert.equal((await f.send({control: "recover", remote_key: "remote", confirmed: true})).ok, true);
+        const authority = clone(f.executor.state("remote"));
+        const wal = clone(f.local[WAL_KEY]);
+        gate.resolve(); await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(f.executor.state("remote"), authority);
+        assert.deepEqual(f.local[WAL_KEY], wal);
+        assert.deepEqual(f.tabs.get(old.id), old);
+        assert.equal(f.executor.ownsTab(old.id), false);
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 2);
+    }],
+    ["timed out preference exposes pending and newer OFF dominates late ON", async () => {
+        const f = fresh(); f.local[AUTOMATION_KEY] = false; await f.ready();
+        const entered = deferred(); const gate = deferred();
+        f.hooks["local.set"] = async value => {
+            if (value[AUTOMATION_KEY] === true) { entered.resolve(); await gate.promise; }
+        };
+        const start = f.send({control: "start"}); await entered.promise;
+        const response = await start;
+        assert.equal(response.preference_pending, true);
+        assert.equal(response.automation_on, false);
+        const stop = f.send({control: "stop"}); gate.resolve(); await stop;
+        assert.equal(f.local[AUTOMATION_KEY], false);
+        assert.equal(f.executor.popupState().preference_pending, false);
+        assert.equal(f.executor.automationOn, false);
+    }],
     ...["browser-first", "workbench-first"].map(order => [
         `absent preference ${order} automatically Ready without popup`, async () => {
             const f = fresh(); const states = [trace(f)];
@@ -102,7 +231,7 @@ const cases = [
         await f.executor.remoteState({...REMOTE, remote_key: "second", workspace_id: "second-workspace"});
         assert.equal(f.tabs.size, 4);
         await f.executor.remoteState({...REMOTE, principal_id: "foreign"});
-        assert.equal(f.executor.records.get("remote").tab_id, first);
+        assert.equal(f.executor.recordFor("alias").tab_id, first);
         assert.notEqual(f.executor.state("remote").phase, "enabled");
         await f.executor.invalidateRemote();
         await f.executor.remoteState({...REMOTE, remote_key: "second-alias", workspace_id: "second-workspace"});

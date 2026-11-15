@@ -480,6 +480,14 @@ function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailur
 
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
     const run = tabId => workspaces.revokeTab(tabId).catch(onFailure);
+    chromeApi.tabs.onCreated.addListener(tab => Promise.resolve(workspaces.newPersonalCandidate(tab)).catch(onFailure));
+    chromeApi.tabs.onUpdated.addListener((tabId, change) => {
+        if (change.groupId !== undefined) return workspaces.isolateNewPersonalTab(tabId).catch(onFailure);
+    });
+    chromeApi.tabs.onRemoved.addListener(tabId => {
+        clearTimeout(workspaces.personalCandidates.get(tabId)?.timer);
+        workspaces.personalCandidates.delete(tabId);
+    });
     chromeApi.tabs.onRemoved.addListener(run);
     chromeApi.tabs.onDetached.addListener(run);
     chromeApi.tabs.onAttached.addListener(run);
@@ -504,6 +512,10 @@ function registerRuntimeMessageRouter(chromeApi, workspaces, ready, open = openI
                     if (message.control === "start") {
                         await ready();
                         return await workspaces.setAutomation(true);
+                    }
+                    if (message.control === "recover") {
+                        await ready();
+                        return await workspaces.recoverPreparation(message.remote_key, message.confirmed);
                     }
                     if (message.control === "status") {
                         await ready();

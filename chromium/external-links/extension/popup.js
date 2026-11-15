@@ -4,17 +4,18 @@ const error = document.getElementById("error");
 const list = document.getElementById("workbenches");
 let automationOn = true;
 let generation = 0;
-async function control(action) {
+async function control(action, details = {}) {
     const current = ++generation;
     toggle.disabled = action === "stop";
     if (action === "start") automationOn = true;
     try {
-        const response = await chrome.runtime.sendMessage({control: action});
+        const response = await chrome.runtime.sendMessage({control: action, ...details});
         if (current !== generation) return;
-        if (!response?.ok) throw new Error(response?.error || "Browser integration unavailable");
+        if (typeof response?.automation_on !== "boolean") throw new Error(response?.error || "Browser integration unavailable");
         automationOn = response.automation_on;
         toggle.textContent = automationOn ? "Stop automation" : "Start automation";
-        state.textContent = automationOn ? "Automation on · workbenches prepare automatically" :
+        state.textContent = response.preference_pending ? "Automation preference pending · browser work blocked" :
+            automationOn ? "Automation on · workbenches prepare automatically" :
             "Automation off · pages remain open";
         list.replaceChildren(...response.remotes.map(remote => {
             const item = document.createElement("li");
@@ -24,6 +25,16 @@ async function control(action) {
                 !automationOn ? "Off" : remote.error ? `Error: ${remote.error}` : remote.agreed ? "Ready" :
                 remote.connected ? "Unavailable / preparing" : "Disconnected";
             item.textContent = `${remote.display}: ${status}`;
+            if (remote.creation_unknown) {
+                const recover = document.createElement("button");
+                recover.textContent = "Abandon unknown preparation";
+                recover.addEventListener("click", () => {
+                    if (confirm("Leave all partial pages open and abandon this unknown preparation? A separate fresh preparation is allowed only while automation is on.")) {
+                        control("recover", {remote_key: remote.remote_key, confirmed: true});
+                    }
+                });
+                item.append(recover);
+            }
             return item;
         }));
         error.textContent = response.error || "";

@@ -66,7 +66,7 @@ function fixture({globalAutomation = false} = {}) {
         windows: {getCurrent: () => invoke("windows.getCurrent", [], () => clone(windows.get(1))),
             get: id => invoke("windows.get", [id], () => clone(windows.get(id))),
             getAll: () => invoke("windows.getAll", [], () => clone([...windows.values()])),
-            create: args => invoke("windows.create", [args], () => {
+            onCreated: event(), create: args => invoke("windows.create", [args], () => {
                 const window = {id: 3, type: "normal", focused: args.focused};
                 windows.set(3, window);
                 const created = createTab({...args, windowId: 3, active: true});
@@ -175,9 +175,10 @@ function fixture({globalAutomation = false} = {}) {
     function route() {
         api.runtime.onMessage.listeners.length = 0;
         nativeEvents.listeners.length = 0;
-        for (const name of ["onRemoved", "onMoved", "onDetached", "onAttached", "onReplaced"]) {
+        for (const name of ["onRemoved", "onMoved", "onDetached", "onAttached", "onReplaced", "onCreated", "onUpdated"]) {
             api.tabs[name].listeners.length = 0;
         }
+        api.windows.onCreated.listeners.length = 0;
         registerWorkspaceWindowListeners(api, executor, async () => {}, error => errors.push(error.message));
         registerNativeEventRouter({onEvent: nativeEvents.addListener}, executor,
             async () => {}, message => errors.push(message));
@@ -220,7 +221,7 @@ function fixture({globalAutomation = false} = {}) {
         }};
 }
 function execute(f, overrides = {}) {
-    const record = f.executor.records.get("remote");
+    const record = f.executor.recordFor("remote");
     return {remote_key: "remote", connection_id: "connection", principal_id: "principal",
         request_id: crypto.randomUUID(), effect_id: crypto.randomUUID(),
         executor_fence: clone(REMOTE.executor_fence), authorization: {
