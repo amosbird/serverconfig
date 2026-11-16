@@ -98,6 +98,8 @@ function fixture({globalAutomation = false} = {}) {
             })},
         tabs: {sendMessage: (id, message) => invoke("tabs.sendMessage", [id, message], () => {}),
             get: id => invoke("tabs.get", [id], () => clone(tab(id))),
+            query: (query = {}) => invoke("tabs.query", [query], () => clone([...tabs.values()].filter(
+                current => Object.entries(query).every(([key, value]) => current[key] === value)))),
             create: args => invoke("tabs.create", [args], () => createTab(args)),
             group: args => invoke("tabs.group", [args], () => {
                 syncGroups();
@@ -132,7 +134,7 @@ function fixture({globalAutomation = false} = {}) {
                 Object.assign(tab(id), args);
                 return clone(tab(id));
             }), onRemoved: event(), onMoved: event(), onDetached: event(), onAttached: event(),
-            onReplaced: event(), onCreated: event(), onUpdated: event()},
+            onActivated: event(), onReplaced: event(), onCreated: event(), onUpdated: event()},
         tabGroups: {onUpdated: event(), onCreated: event(), onRemoved: event(), onMoved: event(),
             get: id => invoke("tabGroups.get", [id], () => clone(group(id))),
             query: (query = {}) => invoke("tabGroups.query", [query], () => {
@@ -158,11 +160,13 @@ function fixture({globalAutomation = false} = {}) {
         for (const item of tabs.values()) {
             if (item.windowId === current.windowId) item.active = item.id === current.id;
         }
+        api.tabs.onActivated.emit({tabId: current.id, windowId: current.windowId});
     }
     function createTab(args) {
         const active = [...tabs.values()].find(item => item.windowId === args.windowId && item.active);
         const current = {id: nextTab++, windowId: args.windowId, url: args.url,
-            active: args.active, groupId: active?.groupId ?? -1};
+            active: args.active, groupId: active?.groupId ?? -1,
+            ...(args.openerTabId !== undefined ? {openerTabId: args.openerTabId} : {})};
         if (args.url.includes("ordinary-staging.html#")) {
             current.title = ORDINARY_PREFIX + args.url.split("#")[1];
         }
@@ -220,7 +224,7 @@ function fixture({globalAutomation = false} = {}) {
     function route() {
         api.runtime.onMessage.listeners.length = 0;
         nativeEvents.listeners.length = 0;
-        for (const name of ["onRemoved", "onMoved", "onDetached", "onAttached", "onReplaced", "onCreated", "onUpdated"]) {
+        for (const name of ["onRemoved", "onMoved", "onDetached", "onAttached", "onReplaced", "onCreated", "onUpdated", "onActivated"]) {
             api.tabs[name].listeners.length = 0;
         }
         api.windows.onCreated.listeners.length = 0;

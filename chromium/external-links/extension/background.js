@@ -480,6 +480,7 @@ function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailur
 
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
     const run = tabId => workspaces.revokeTab(tabId).catch(onFailure);
+    chromeApi.tabs.onActivated.addListener(info => workspaces.tabActivated(info));
     chromeApi.tabs.onCreated.addListener(tab => Promise.resolve(workspaces.newPersonalCandidate(tab)).catch(onFailure));
     chromeApi.tabs.onUpdated.addListener((tabId, change, tab) =>
         Promise.resolve(workspaces.personalTabChanged(tabId, change, tab)).catch(onFailure));

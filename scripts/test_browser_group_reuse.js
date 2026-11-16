@@ -229,7 +229,8 @@ for (const mode of ["missing", "renamed", "wrong window"]) {
             if (lookedUp || !result.some(group => group.id === 65)) return;
             lookedUp = true;
             if (mode === "missing") {
-                f.tabs.get(1).groupId = -1; f.syncGroups();
+                for (const tab of f.tabs.values()) if (tab.groupId === 65) tab.groupId = -1;
+                f.syncGroups();
             } else if (mode === "renamed") {
                 f.groups.get(65).title = "Human renamed";
             } else {
@@ -318,5 +319,89 @@ cases.push(["new personal tab inherits active work container but is isolated wit
         assert.equal(f.executor.ownsTab(old.id), false);
     }
     assert.equal(f.tabs.get(1).groupId, 45);
+}]);
+for (const activationFirst of [false, true]) cases.push([
+    `reused container isolates exact work-origin creation with activation ${activationFirst ? "before" : "after"} creation`, async () => {
+        const f = fresh(); seed(f, 44); await f.ready();
+        const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
+        const personal = {id: 500, windowId: 1, groupId: 44, active: true, url: "https://human.test/new"};
+        f.tabs.set(personal.id, personal); f.tabs.get(work.tab_id).active = false;
+        if (activationFirst) await Promise.all(f.api.tabs.onActivated.emit({tabId: personal.id, windowId: 1}));
+        await Promise.all(f.api.tabs.onCreated.emit(clone(personal)));
+        if (!activationFirst) await Promise.all(f.api.tabs.onActivated.emit({tabId: personal.id, windowId: 1}));
+        assert.equal(personal.groupId, -1);
+        assert.equal(f.tabs.get(1).groupId, 44);
+        assert.equal(f.executor.ownsTab(personal.id), false);
+        assert.deepEqual(f.calls.filter(call => call.name === "tabs.ungroup").map(call => call.args[0]), [[500]]);
+    }]);
+cases.push(["late restored group member cannot inherit cleanup authority from its container", async () => {
+    const f = fresh(); seed(f, 43); await f.ready();
+    const restored = {id: 501, windowId: 1, groupId: 43, active: false, url: "https://restored.test/"};
+    f.tabs.set(restored.id, restored);
+    const before = clone(restored);
+    await Promise.all(f.api.tabs.onCreated.emit(clone(restored)));
+    await Promise.all(f.api.tabs.onUpdated.emit(restored.id, {groupId: 43}, clone(restored)));
+    assert.deepEqual(restored, before);
+    assert.equal(f.executor.ownsTab(restored.id), false);
+    assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
+}]);
+cases.push(["source binding never follows a later manual join to another reused container", async () => {
+    const f = fresh(); seed(f, 42);
+    f.tabs.set(3, {id: 3, windowId: 1, groupId: 41, active: false, url: "https://personal.test/three"});
+    seed(f, 41, 3, {title: "Abush · second"});
+    await f.ready();
+    await f.emitRemote({...REMOTE, remote_key: "second", connection_id: "second",
+        workspace_id: "second", connection_display_name: "second"});
+    const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
+    const personal = {id: 502, windowId: 1, groupId: -1, active: true, url: "https://personal.test/new"};
+    f.tabs.set(personal.id, personal);
+    await Promise.all(f.api.tabs.onCreated.emit(clone(personal)));
+    personal.groupId = 41;
+    await Promise.all(f.api.tabs.onUpdated.emit(personal.id, {groupId: 41}, clone(personal)));
+    assert.equal(personal.groupId, 41);
+    assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
+}]);
+cases.push(["same-boot worker retains pending creation witness for a reused group", async () => {
+    const f = fresh(); seed(f, 40); await f.ready();
+    const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
+    const personal = {id: 503, windowId: 1, groupId: -1, active: false, url: "https://personal.test/pending"};
+    f.tabs.set(personal.id, personal);
+    await Promise.all(f.api.tabs.onCreated.emit(clone(personal)));
+    await f.executor.inheritanceTail;
+    for (const candidate of f.executor.personalCandidates.values()) clearTimeout(candidate.timer);
+    await f.restart(); await f.emitRemote(REMOTE);
+    assert.equal(record(f).group_reused, true);
+    personal.groupId = 40;
+    await Promise.all(f.api.tabs.onUpdated.emit(personal.id, {groupId: 40}, clone(personal)));
+    assert.equal(personal.groupId, -1);
+    assert.equal(f.tabs.get(1).groupId, 40);
+}]);
+cases.push(["expiry cannot acquire reused-group cleanup from a newer manual membership", async () => {
+    const f = fresh(); seed(f, 39); await f.ready();
+    await f.api.tabs.update(record(f).tab_id, {active: true});
+    const personal = {id: 504, windowId: 1, groupId: -1, active: false, url: "https://personal.test/expired"};
+    f.tabs.set(personal.id, personal);
+    await Promise.all(f.api.tabs.onCreated.emit(clone(personal)));
+    const candidate = f.executor.personalCandidates.get(personal.id);
+    personal.groupId = 39;
+    await candidate.timer._onTimeout();
+    assert.equal(personal.groupId, 39);
+    assert.equal(f.executor.personalCandidates.has(personal.id), false);
+}]);
+cases.push(["late active query cannot replace a newer delivered personal activation", async () => {
+    const f = fresh(); seed(f, 38); await f.ready();
+    await f.api.tabs.update(record(f).tab_id, {active: true});
+    const entered = deferred(); const release = deferred();
+    f.hooks["tabs.query.after"] = async () => { entered.resolve(); await release.promise; };
+    for (const candidate of f.executor.personalCandidates.values()) clearTimeout(candidate.timer);
+    const worker = f.resetWorker(); await worker.acceptNativeBootstrap(BOOT);
+    const restoring = worker.restoreWhenReady(); await entered.promise;
+    await f.api.tabs.update(1, {active: true});
+    release.resolve(); await restoring; delete f.hooks["tabs.query.after"];
+    await f.emitRemote(REMOTE);
+    const personal = await f.api.tabs.create({windowId: 1, active: true, url: "https://personal.test/after-query"});
+    await f.executor.inheritanceTail;
+    assert.equal(f.tabs.get(personal.id).groupId, 38);
+    assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
 }]);
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

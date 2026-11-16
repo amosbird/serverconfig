@@ -97,6 +97,10 @@ class WorkspaceExecutor {
         this.workCreations = new Map();
         this.inheritanceTail = Promise.resolve();
         this.workCreatesInFlight = 0;
+        this.presentationTail = Promise.resolve();
+        this.activeTabs = new Map();
+        this.activationGeneration = 0;
+        this.activeBoot = null;
         this.manualControls = false;
     }
 
@@ -129,6 +133,9 @@ class WorkspaceExecutor {
             for (const candidate of this.personalCandidates.values()) clearTimeout(candidate.timer);
             this.personalCandidates.clear();
             this.workCreations.clear();
+            this.activeTabs.clear();
+            this.activationGeneration++;
+            this.activeBoot = null;
             this.restoreAttempt = null;
             this.restored = false;
         }
@@ -250,6 +257,8 @@ class WorkspaceExecutor {
             }
         }
         await this.restoreInheritance();
+        if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
+        await this.seedActiveTabs();
         if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
         await this.persistWal();
         await this.persistConsent();
@@ -880,23 +889,8 @@ class WorkspaceExecutor {
                 }
             };
             checkTab();
-            await this.validateTab(record);
-            record.group_id = await this.api(() => {
-                checkTab();
-                record.grouping = true;
-                return this.chrome.tabs.group({tabIds: [tab.id]});
-            }, "group exact work tab");
-            delete record.grouping;
-            staging.group_id = record.group_id;
-            staging.stage = "grouped";
-            await this.persistInheritance();
-            this.drainPersonalCandidates();
-            await this.api(() => {
-                checkTab();
-                return this.chrome.tabGroups.update(record.group_id, {
-                    title: displayTitle(remote.display_name || remote.connection_display_name), color: "purple",
-                });
-            }, "label work tab group");
+            await this.groupWorkTab(record, staging,
+                displayTitle(remote.display_name || remote.connection_display_name), checkTab);
             checkTab();
             await this.validateTab(record);
             checkTab();
@@ -926,6 +920,89 @@ class WorkspaceExecutor {
         } finally {
             this.pendingCreations.delete(record.tab_id);
         }
+    }
+    groupWorkTab(record, staging, title, check) {
+        const task = this.presentationTail.catch(() => {}).then(async () => {
+            check();
+            const groups = await this.chrome.tabGroups.query({windowId: record.window_id, title});
+            check();
+            const candidate = groups.filter(group => Number.isSafeInteger(group.id) && group.id >= 0 &&
+                group.windowId === record.window_id && group.title === title).sort((a, b) => a.id - b.id)[0];
+            await this.validateTab(record);
+            if (candidate) {
+                const current = await this.chrome.tabGroups.get(candidate.id);
+                check();
+                if (current.id !== candidate.id || current.windowId !== record.window_id || current.title !== title) {
+                    fail("stale_page", "Presentation group changed during work tab preparation");
+                }
+            }
+            check();
+            record.group_reused = !!candidate;
+            staging.group_reused = record.group_reused;
+            record.grouping = true;
+            try {
+                // The title selects a container only; the sole mutation target is this newly created tab.
+                record.group_id = await this.chrome.tabs.group({tabIds: [record.tab_id],
+                    ...(candidate ? {groupId: candidate.id} : {})});
+            } finally {
+                delete record.grouping;
+            }
+            check();
+            staging.group_id = record.group_id;
+            staging.stage = "grouped";
+            await this.persistInheritance();
+            this.drainPersonalCandidates();
+            check();
+            if (!candidate) await this.chrome.tabGroups.update(record.group_id, {title, color: "purple"});
+            check();
+        });
+        // A caller timeout cannot release the queue while Chrome's grouping effect is unresolved.
+        this.presentationTail = task;
+        return this.api(() => task, "prepare work tab presentation group");
+    }
+    async seedActiveTabs() {
+        const boot = this.browserBootId;
+        const generation = this.activationGeneration;
+        const active = await this.api(() => this.chrome.tabs.query({active: true}), "read active tab identities");
+        if (boot !== this.browserBootId) return;
+        if (generation === this.activationGeneration) {
+            for (const tab of active) {
+                if (Number.isSafeInteger(tab.id) && Number.isSafeInteger(tab.windowId)) {
+                    this.activeTabs.set(tab.windowId, {tab_id: tab.id});
+                }
+            }
+        }
+        this.activeBoot = boot;
+    }
+    tabActivated(info) {
+        if (!Number.isSafeInteger(info.tabId) || !Number.isSafeInteger(info.windowId)) return;
+        const previous = this.activeTabs.get(info.windowId);
+        if (previous?.tab_id === info.tabId) return;
+        this.activationGeneration++;
+        this.activeTabs.set(info.windowId, {tab_id: info.tabId, previous_tab_id: previous?.tab_id});
+    }
+    personalInheritanceSource(tab) {
+        if (!this.restored || this.activeBoot !== this.browserBootId) return null;
+        const active = this.activeTabs.get(tab.windowId);
+        const sourceIds = [tab.openerTabId,
+            active?.tab_id === tab.id ? active.previous_tab_id : active?.tab_id];
+        const record = [...this.records.values(), ...this.pendingCreations.values()].find(record =>
+            sourceIds.includes(record.tab_id) && record.browser_boot_id === this.browserBootId &&
+            record.phase !== "disabled" && !this.revokedTabs.has(record.tab_id) &&
+            record.window_id === tab.windowId && record.group_id >= 0 && record.group_id !== null);
+        return record ? {tab_id: record.tab_id, enable_id: record.enable_id,
+            group_id: record.group_id, window_id: record.window_id, browser_boot_id: this.browserBootId} : null;
+    }
+    inheritedWorkGroups(candidate) {
+        const groups = this.workGroups();
+        const source = candidate?.inheritance_source;
+        if (source && source.browser_boot_id === this.browserBootId &&
+                [...this.records.values(), ...this.pendingCreations.values()].some(record =>
+                    record.browser_boot_id === this.browserBootId && record.phase !== "disabled" &&
+                    !this.revokedTabs.has(record.tab_id) && record.tab_id === source.tab_id &&
+                    record.enable_id === source.enable_id && record.window_id === source.window_id &&
+                    record.group_id === source.group_id)) groups.add(source.group_id);
+        return groups;
     }
     persistInheritance() {
         // Events can arrive before bootstrap and before the previous worker's journal is read.
@@ -988,7 +1065,8 @@ class WorkspaceExecutor {
     }
     workGroups() {
         return new Set([...this.records.values(), ...this.pendingCreations.values(),
-            ...this.workCreations.values()].map(value => value.group_id).filter(id => id >= 0 && id !== null));
+            ...this.workCreations.values()].filter(value => value.group_reused !== true)
+            .map(value => value.group_id).filter(id => id >= 0 && id !== null));
     }
     forgetPersonalCandidate(tabId) {
         clearTimeout(this.personalCandidates.get(tabId)?.timer);
@@ -1001,9 +1079,12 @@ class WorkspaceExecutor {
     }
     newPersonalCandidate(tab) {
         if (!Number.isSafeInteger(tab.id)) return;
+        const source = this.personalInheritanceSource(tab);
+        const active = this.activeTabs.get(tab.windowId);
+        if (active?.tab_id === tab.id) delete active.previous_tab_id;
         const candidate = {tab_id: tab.id, window_id: tab.windowId, group_id: tab.groupId ?? -1,
             initial_group: tab.groupId ?? -1, browser_boot_id: this.browserBootId,
-            stage: "created", generation: 1};
+            inheritance_source: source, stage: "created", generation: 1};
         this.personalCandidates.set(tab.id, candidate);
         this.schedulePersonalExpiry(candidate);
         this.persistInheritance();
@@ -1036,7 +1117,7 @@ class WorkspaceExecutor {
             candidate.window_id = change.windowId ?? candidate.window_id;
             if ((candidate.window_id !== tab?.windowId && tab?.windowId !== undefined) ||
                     (change.windowId !== undefined) || change.groupId === -1 ||
-                    (candidate.group_id >= 0 && !this.workGroups().has(candidate.group_id))) {
+                    (candidate.group_id >= 0 && !this.inheritedWorkGroups(candidate).has(candidate.group_id))) {
                 return this.forgetPersonalCandidate(tabId);
             }
             this.persistInheritance();
@@ -1055,6 +1136,7 @@ class WorkspaceExecutor {
                 generation === candidate.generation && candidate.browser_boot_id === this.browserBootId && !exempt()) {
             if (candidate.window_id !== tab.windowId) return this.forgetPersonalCandidate(tabId);
             if (candidate.group_id !== tab.groupId) {
+                if (candidate.inheritance_source) return this.forgetPersonalCandidate(tabId);
                 candidate.group_id = tab.groupId;
                 generation = ++candidate.generation;
                 await this.persistInheritance();
@@ -1084,10 +1166,10 @@ class WorkspaceExecutor {
             unresolved();
             return;
         }
-        if (this.workGroups().has(tab.groupId)) {
+        if (this.inheritedWorkGroups(candidate).has(tab.groupId)) {
             await this.api(() => {
                 // Chrome has no conditional ungroup API: event identity fences the last synchronous step.
-                if (!current()) return;
+                if (!current() || !this.inheritedWorkGroups(candidate).has(tab.groupId)) return;
                 return this.chrome.tabs.ungroup([tabId]);
             }, "remove new personal tab inheritance");
             if (this.personalCandidates.get(tabId) === candidate) await this.forgetPersonalCandidate(tabId);
@@ -1140,6 +1222,11 @@ class WorkspaceExecutor {
     }
     revokeTab(tabId) {
         if (!Number.isSafeInteger(tabId)) return Promise.resolve();
+        for (const [windowId, active] of this.activeTabs) {
+            if (active.tab_id === tabId) this.activeTabs.delete(windowId);
+            else if (active.previous_tab_id === tabId) delete active.previous_tab_id;
+        }
+        this.activationGeneration++;
         for (const [url, value] of this.workCreations) {
             if (value.tab_id === tabId) {
                 this.workCreations.delete(url);
