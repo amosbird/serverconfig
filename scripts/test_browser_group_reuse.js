@@ -364,7 +364,8 @@ cases.push(["source binding never follows a later manual join to another reused 
 cases.push(["same-boot worker retains pending creation witness for a reused group", async () => {
     const f = fresh(); seed(f, 40); await f.ready();
     const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
-    const personal = {id: 503, windowId: 1, groupId: -1, active: false, url: "https://personal.test/pending"};
+    const personal = {id: 503, windowId: 1, groupId: -1, active: false,
+        openerTabId: work.tab_id, url: "https://personal.test/pending"};
     f.tabs.set(personal.id, personal);
     await Promise.all(f.api.tabs.onCreated.emit(clone(personal)));
     await f.executor.inheritanceTail;
@@ -403,5 +404,132 @@ cases.push(["late active query cannot replace a newer delivered personal activat
     await f.executor.inheritanceTail;
     assert.equal(f.tabs.get(personal.id).groupId, 38);
     assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
+}]);
+for (const extra of [{active: false}, {active: true, openerTabId: 1}]) cases.push([
+    `${extra.active ? "explicit personal opener" : "inactive late restore"} does not borrow active work provenance`, async () => {
+    const f = fresh(); seed(f, 37); await f.ready();
+    await f.api.tabs.update(record(f).tab_id, {active: true});
+    const tab = {id: 600 + f.tabs.size, windowId: 1, groupId: 37,
+        url: "https://personal.test/no-proof", ...extra};
+    f.tabs.set(tab.id, tab);
+    await Promise.all(f.api.tabs.onCreated.emit(clone(tab)));
+    assert.equal(tab.groupId, 37);
+    assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
+}]);
+for (const delivered of [false, true]) cases.push([
+    `source manual ungroup invalidates pending cleanup (${delivered ? "delivered" : "query-only"})`, async () => {
+        const f = fresh(); seed(f, 36); await f.ready();
+        const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
+        const tab = {id: 610, windowId: 1, groupId: -1, active: true, url: "https://personal.test/pending"};
+        f.tabs.set(tab.id, tab);
+        await Promise.all(f.api.tabs.onCreated.emit(clone(tab)));
+        const authority = clone(f.executor.state("remote"));
+        f.tabs.get(work.tab_id).groupId = -1;
+        if (delivered) {
+            await Promise.all(f.api.tabs.onUpdated.emit(work.tab_id, {groupId: -1}, clone(f.tabs.get(work.tab_id))));
+            // Returning to the original group must not resurrect the old creation witness.
+            f.tabs.get(work.tab_id).groupId = 36;
+            await Promise.all(f.api.tabs.onUpdated.emit(work.tab_id, {groupId: 36}, clone(f.tabs.get(work.tab_id))));
+        }
+        tab.groupId = 36;
+        await Promise.all(f.api.tabs.onUpdated.emit(tab.id, {groupId: 36}, clone(tab)));
+        assert.equal(tab.groupId, 36);
+        assert.deepEqual(f.executor.state("remote"), authority);
+        assert.equal(f.executor.ownsTab(work.tab_id), true);
+    }]);
+for (const activationFirst of [false, true]) cases.push([
+    `same-boot pre-bootstrap foreground creation retains prior work predecessor (${activationFirst})`, async () => {
+        const f = fresh(); seed(f, 35); await f.ready();
+        const work = clone(record(f)); await f.api.tabs.update(work.tab_id, {active: true});
+        await f.executor.inheritanceTail;
+        const worker = f.resetWorker();
+        const tab = {id: 620, windowId: 1, groupId: 35, active: true, url: "https://personal.test/early"};
+        f.tabs.set(tab.id, tab); f.tabs.get(work.tab_id).active = false;
+        if (activationFirst) await Promise.all(f.api.tabs.onActivated.emit({tabId: tab.id, windowId: 1}));
+        await Promise.all(f.api.tabs.onCreated.emit(clone(tab)));
+        if (!activationFirst) await Promise.all(f.api.tabs.onActivated.emit({tabId: tab.id, windowId: 1}));
+        assert.equal(tab.groupId, 35, "unvalidated history grants no cleanup authority");
+        const isolated = deferred();
+        f.hooks["tabs.ungroup.after"] = async (result, ids) => { if (ids.includes(tab.id)) isolated.resolve(); };
+        try {
+            await worker.acceptNativeBootstrap(BOOT); await worker.restoreWhenReady();
+            await isolated.promise;
+        } finally { isolated.resolve(); }
+        assert.equal(tab.groupId, -1);
+        assert.equal(f.tabs.get(1).groupId, 35);
+    }]);
+for (const action of ["activation", "removal"]) cases.push([
+    `seed preserves unaffected windows during another window's ${action}`, async () => {
+        const f = fresh(); seed(f, 33); await f.ready();
+        await f.api.tabs.update(record(f).tab_id, {active: true});
+        const worker = f.resetWorker(); await worker.acceptNativeBootstrap(BOOT);
+        const entered = deferred(); const release = deferred();
+        f.hooks["tabs.query.after"] = async () => { entered.resolve(); await release.promise; };
+        const restoring = worker.restoreWhenReady();
+        try {
+            await entered.promise;
+            if (action === "activation") await f.api.tabs.update(2, {active: true});
+            else { f.tabs.delete(2); await Promise.all(f.api.tabs.onRemoved.emit(2, {windowId: 2})); }
+        } finally { release.resolve(); }
+        await restoring; delete f.hooks["tabs.query.after"];
+        assert.equal(worker.activeTabs.get(1)?.tab_id, record(f).tab_id);
+        if (action === "removal") assert.equal(worker.activeTabs.has(2), false);
+    }]);
+for (const mode of ["reject", "timeout"]) cases.push([
+    `transient active seed ${mode} is advisory and observation can recover`, async () => {
+        const f = fresh(); const held = deferred(); const advisories = [];
+        f.executor.onAdvisoryError = error => advisories.push(error.message);
+        f.hooks["tabs.query"] = async () => {
+            if (mode === "timeout") await held.promise;
+            throw new Error("transient active inventory failure");
+        };
+        try {
+            await f.executor.acceptNativeBootstrap(BOOT);
+            await f.executor.restoreWhenReady();
+            assert.equal(f.executor.restored, true);
+            assert.ok(advisories.some(message => /active|inventory|timed out/.test(message)));
+        } finally { held.resolve(); delete f.hooks["tabs.query"]; }
+        await f.executor.restoreWhenReady();
+        assert.equal(f.executor.activeTabs.get(1)?.tab_id, 1);
+        await f.emitRemote(REMOTE);
+        assert.equal(f.executor.recordEnabledAgreed("remote"), true);
+    }]);
+for (const activationFirst of [false, true]) cases.push([
+    `new-browser-boot early foreground restore never receives old predecessor (${activationFirst})`, async () => {
+        const f = fresh(); seed(f, 32); await f.ready();
+        await f.api.tabs.update(record(f).tab_id, {active: true});
+        await f.executor.inheritanceTail;
+        let early;
+        await f.restartBrowser({beforeBootstrap: async ids => {
+            early = {id: 9000, windowId: ids.windowIds.get(1), groupId: ids.groupIds.get(32),
+                active: true, url: "https://restored.test/early"};
+            f.tabs.set(early.id, early);
+            if (activationFirst) await Promise.all(f.api.tabs.onActivated.emit({tabId: early.id, windowId: early.windowId}));
+            await Promise.all(f.api.tabs.onCreated.emit(clone(early)));
+            if (!activationFirst) await Promise.all(f.api.tabs.onActivated.emit({tabId: early.id, windowId: early.windowId}));
+        }});
+        assert.notEqual(early.groupId, -1);
+        assert.equal(f.executor.ownsTab(early.id), false);
+        assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
+    }]);
+cases.push(["delivered source regroup during pending inspection fences cleanup", async () => {
+    const f = fresh(); seed(f, 31); await f.ready();
+    const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
+    const entered = deferred(); const release = deferred();
+    const tab = {id: 630, windowId: 1, groupId: 31, active: true, url: "https://personal.test/race"};
+    f.tabs.set(tab.id, tab);
+    f.hooks["tabs.get.after"] = async (result, id) => {
+        if (id === work.tab_id) { entered.resolve(); await release.promise; }
+    };
+    const creating = Promise.all(f.api.tabs.onCreated.emit(clone(tab)));
+    try {
+        await entered.promise;
+        await f.api.tabs.ungroup([work.tab_id]);
+        await f.api.tabs.group({tabIds: [work.tab_id], groupId: 31});
+    } finally { release.resolve(); }
+    await creating; delete f.hooks["tabs.get.after"];
+    assert.equal(tab.groupId, 31);
+    assert.equal(f.calls.some(call => call.name === "tabs.ungroup" && call.args[0].includes(tab.id)), false);
+    assert.equal(f.executor.recordEnabledAgreed("remote"), true);
 }]);
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });
