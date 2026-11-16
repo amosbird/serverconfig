@@ -39,8 +39,31 @@ function fixture({globalAutomation = false} = {}) {
     const tabs = new Map([[1, {id: 1, windowId: 1, url: "https://ordinary.test/a",
         groupId: -1, active: true}], [2, {id: 2, windowId: 2,
         url: "https://popup.test/", groupId: -1, active: true}]]);
+    const groups = new Map();
     let nextTab = 10;
     let nextGroup = 100;
+    let browserRestart = 0;
+    function syncGroups() {
+        for (const current of tabs.values()) {
+            if (current.groupId < 0) continue;
+            if (!groups.has(current.groupId)) groups.set(current.groupId, {
+                id: current.groupId, windowId: current.windowId,
+                title: "", color: "grey", collapsed: false,
+            });
+            nextGroup = Math.max(nextGroup, current.groupId + 1);
+        }
+        for (const [id, group] of groups) {
+            if (![...tabs.values()].some(current => current.groupId === id)) {
+                groups.delete(id);
+                api.tabGroups.onRemoved.emit(clone(group));
+            }
+        }
+    }
+    function group(id) {
+        syncGroups();
+        if (!groups.has(id)) throw new Error("No group");
+        return groups.get(id);
+    }
     const hooks = {};
     const attachedTabs = new Set();
     const invoke = async (name, args, run) => {
@@ -63,7 +86,8 @@ function fixture({globalAutomation = false} = {}) {
         runtime: {id: "extension", getURL: file => `chrome-extension://extension/${file}`,
             onMessage: event()}, storage: {local: storage(local, "local"),
             session: storage(session, "session")},
-        windows: {getCurrent: () => invoke("windows.getCurrent", [], () => clone(windows.get(1))),
+        windows: {getCurrent: () => invoke("windows.getCurrent", [], () =>
+            clone([...windows.values()].find(window => window.focused) || windows.values().next().value)),
             get: id => invoke("windows.get", [id], () => clone(windows.get(id))),
             getAll: () => invoke("windows.getAll", [], () => clone([...windows.values()])),
             onCreated: event(), create: args => invoke("windows.create", [args], () => {
@@ -76,30 +100,51 @@ function fixture({globalAutomation = false} = {}) {
             get: id => invoke("tabs.get", [id], () => clone(tab(id))),
             create: args => invoke("tabs.create", [args], () => createTab(args)),
             group: args => invoke("tabs.group", [args], () => {
-                const group = args.groupId ?? nextGroup++;
-                args.tabIds.forEach(id => {
-                    tab(id).groupId = group;
+                syncGroups();
+                const ids = Array.isArray(args.tabIds) ? args.tabIds : [args.tabIds];
+                const windowId = tab(ids[0]).windowId;
+                if (ids.some(id => tab(id).windowId !== windowId)) throw new Error("Different windows");
+                if (args.groupId !== undefined && group(args.groupId).windowId !== windowId) {
+                    throw new Error("Group belongs to another window");
+                }
+                const groupId = args.groupId ?? nextGroup++;
+                if (!groups.has(groupId)) {
+                    const created = {id: groupId, windowId, title: "", color: "grey", collapsed: false};
+                    groups.set(groupId, created);
+                    api.tabGroups.onCreated.emit(clone(created));
+                }
+                ids.forEach(id => {
+                    tab(id).groupId = groupId;
                     api.tabs.onMoved.emit(id, {windowId: tab(id).windowId, fromIndex: 0, toIndex: 1});
-                    api.tabs.onUpdated.emit(id, {groupId: group}, clone(tab(id)));
+                    api.tabs.onUpdated.emit(id, {groupId}, clone(tab(id)));
                 });
-                return group;
+                syncGroups();
+                return groupId;
             }), ungroup: ids => invoke("tabs.ungroup", [ids], () => {
                 ids.forEach(id => {
                     tab(id).groupId = -1;
                     api.tabs.onUpdated.emit(id, {groupId: -1}, clone(tab(id)));
                     api.tabs.onMoved.emit(id, {windowId: tab(id).windowId, fromIndex: 1, toIndex: 0});
                 });
+                syncGroups();
             }), update: (id, args) => invoke("tabs.update", [id, args], () => {
                 if (args.active) activate(tab(id));
                 Object.assign(tab(id), args);
                 return clone(tab(id));
             }), onRemoved: event(), onMoved: event(), onDetached: event(), onAttached: event(),
             onReplaced: event(), onCreated: event(), onUpdated: event()},
-        tabGroups: {onUpdated: event(), update: (id, args) => invoke("tabGroups.update", [id, args], () => {
-            const group = {id, ...args};
-            api.tabGroups.onUpdated.emit(clone(group));
-            return group;
-        })},
+        tabGroups: {onUpdated: event(), onCreated: event(), onRemoved: event(), onMoved: event(),
+            get: id => invoke("tabGroups.get", [id], () => clone(group(id))),
+            query: (query = {}) => invoke("tabGroups.query", [query], () => {
+                syncGroups();
+                return clone([...groups.values()].filter(item => Object.entries(query).every(
+                    ([key, value]) => item[key] === value)));
+            }),
+            update: (id, args) => invoke("tabGroups.update", [id, args], () => {
+                const updated = Object.assign(group(id), clone(args));
+                api.tabGroups.onUpdated.emit(clone(updated));
+                return clone(updated);
+            })},
         debugger: {attach: (target, version) => invoke("debugger.attach", [target, version], () => {
             if (attachedTabs.has(target.tabId)) throw new Error("Already attached");
             attachedTabs.add(target.tabId);
@@ -179,6 +224,9 @@ function fixture({globalAutomation = false} = {}) {
             api.tabs[name].listeners.length = 0;
         }
         api.windows.onCreated.listeners.length = 0;
+        for (const name of ["onUpdated", "onCreated", "onRemoved", "onMoved"]) {
+            api.tabGroups[name].listeners.length = 0;
+        }
         registerWorkspaceWindowListeners(api, executor, async () => {}, error => errors.push(error.message));
         registerNativeEventRouter({onEvent: nativeEvents.addListener}, executor,
             async () => {}, message => errors.push(message));
@@ -193,7 +241,7 @@ function fixture({globalAutomation = false} = {}) {
     route();
     const send = (message, sender = trusted) => bounded(() => new Promise(resolve =>
         api.runtime.onMessage.emit(message, sender, resolve)), "runtime response", 4000);
-    return {api, calls, tabs, windows, local, session, hooks, attachedTabs, trusted, send, errors,
+    return {api, calls, tabs, windows, groups, syncGroups, local, session, hooks, attachedTabs, trusted, send, errors,
         emitRemote: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
             event: "abush_browser.remote_state", payload})),
         emitNative: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
@@ -211,6 +259,37 @@ function fixture({globalAutomation = false} = {}) {
             executor.manualControls = !globalAutomation;
             route();
             return executor;
+        }, async restartBrowser({beforeBootstrap = async () => {}} = {}) {
+            for (const candidate of executor.personalCandidates.values()) clearTimeout(candidate.timer);
+            syncGroups();
+            const offset = ++browserRestart * 1000;
+            const windowIds = new Map([...windows.keys()].map(id => [id, id + offset]));
+            const tabIds = new Map([...tabs.keys()].map(id => [id, id + offset]));
+            const groupIds = new Map([...groups.keys()].map(id => [id, id + offset]));
+            const restoredWindows = [...windows.values()].map(item => ({...item,
+                id: windowIds.get(item.id)}));
+            const restoredTabs = [...tabs.values()].map(item => ({...item,
+                id: tabIds.get(item.id), windowId: windowIds.get(item.windowId),
+                groupId: item.groupId < 0 ? -1 : groupIds.get(item.groupId)}));
+            const restoredGroups = [...groups.values()].map(item => ({...item,
+                id: groupIds.get(item.id), windowId: windowIds.get(item.windowId)}));
+            windows.clear(); tabs.clear(); groups.clear(); attachedTabs.clear();
+            restoredWindows.forEach(item => windows.set(item.id, item));
+            restoredTabs.forEach(item => tabs.set(item.id, item));
+            restoredGroups.forEach(item => groups.set(item.id, item));
+            nextTab = Math.max(nextTab, ...tabs.keys()) + 1;
+            nextGroup = Math.max(nextGroup, ...groups.keys()) + 1;
+            for (const key of Object.keys(session)) delete session[key];
+            executor = new WorkspaceExecutor(api, native);
+            executor.manualControls = !globalAutomation;
+            route();
+            const boot = {...BOOT, browser_boot_id: `restored-boot-${browserRestart}`,
+                browser_pid: BOOT.browser_pid + browserRestart};
+            const restored = {windowIds, tabIds, groupIds, boot};
+            await beforeBootstrap(restored);
+            await executor.acceptNativeBootstrap(boot);
+            await executor.restoreWhenReady();
+            return restored;
         }, async restart(boot = BOOT) {
             executor = new WorkspaceExecutor(api, native);
             executor.manualControls = !globalAutomation;
@@ -225,7 +304,8 @@ function execute(f, overrides = {}) {
     return {remote_key: "remote", connection_id: "connection", principal_id: "principal",
         request_id: crypto.randomUUID(), effect_id: crypto.randomUUID(),
         executor_fence: clone(REMOTE.executor_fence), authorization: {
-            browser_boot_id: BOOT.browser_boot_id, enable_id: record?.enable_id || "disabled",
+            browser_boot_id: f.executor.browserBootId || BOOT.browser_boot_id,
+            enable_id: record?.enable_id || "disabled",
             revision: record?.revision || 1}, command: {command: "navigate",
             page: clone(record?.page || {workspace_id: "workspace", page_id: "none", generation: 1}),
             url: "https://work.test/exact?q=one#fragment"}, ...overrides};
