@@ -594,4 +594,41 @@ cases.push(["pre-hydration source group fences are bounded and discarded after s
     assert.equal(record(f).enable_id, work.enable_id);
     assert.deepEqual(record(f).page, work.page);
 }]);
+cases.push(["manual move during group journal persistence cannot relabel a personal destination", async () => {
+    const f = fresh(); seed(f, 80, 1, {title: "Personal research"});
+    const personalGroup = clone(f.groups.get(80));
+    const entered = deferred(); const release = deferred(); let held = false;
+    f.hooks["session.set"] = async value => {
+        if (held || !(value.abushBrowserInheritanceV9?.creations || []).some(item => item.stage === "grouped")) return;
+        held = true; entered.resolve(); await release.promise;
+    };
+    const preparing = f.ready();
+    try {
+        await entered.promise;
+        const workId = f.calls.find(call => call.name === "tabs.group").args[0].tabIds[0];
+        await f.api.tabs.group({tabIds: [workId], groupId: 80});
+    } finally { release.resolve(); }
+    await preparing;
+    assert.deepEqual(f.groups.get(80), personalGroup);
+    assert.equal(f.calls.some(call => call.name === "tabGroups.update" && call.args[0] === 80), false);
+    assert.equal(f.executor.recordEnabledAgreed("remote"), false);
+}]);
+for (const explicit of [false, true]) cases.push([
+    `early unresolved ${explicit ? "opener" : "active"} context cannot survive later source regroup`, async () => {
+        const f = fresh(); seed(f, 80); await f.ready();
+        const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
+        await f.executor.inheritanceTail;
+        const worker = f.resetWorker();
+        const tab = {id: 650, windowId: 1, groupId: -1, active: !explicit,
+            url: "https://personal.test/early-context", ...(explicit ? {openerTabId: work.tab_id} : {})};
+        f.tabs.set(tab.id, tab);
+        await Promise.all(f.api.tabs.onCreated.emit(clone(tab)));
+        await f.api.tabs.ungroup([work.tab_id]);
+        await f.api.tabs.group({tabIds: [work.tab_id], groupId: 80});
+        await worker.acceptNativeBootstrap(BOOT); await worker.restoreWhenReady();
+        tab.groupId = 80;
+        await Promise.all(f.api.tabs.onUpdated.emit(tab.id, {groupId: 80}, clone(tab)));
+        assert.equal(tab.groupId, 80);
+        assert.equal(f.calls.some(call => call.name === "tabs.ungroup" && call.args[0].includes(tab.id)), false);
+    }]);
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

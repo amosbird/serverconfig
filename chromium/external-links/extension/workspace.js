@@ -968,12 +968,22 @@ class WorkspaceExecutor {
                 delete record.grouping;
             }
             check();
-            staging.group_id = record.group_id;
+            const groupedId = record.group_id;
+            const groupGeneration = record.group_generation || 0;
+            staging.group_id = groupedId;
             staging.stage = "grouped";
             await this.persistInheritance();
             this.drainPersonalCandidates();
             check();
-            if (!candidate) await this.chrome.tabGroups.update(record.group_id, {title, color: "purple"});
+            if (!candidate) {
+                const tab = await this.validateTab(record);
+                check();
+                if (record.group_id !== groupedId || record.group_reused ||
+                        (record.group_generation || 0) !== groupGeneration || tab.groupId !== groupedId) {
+                    fail("stale_page", "Created presentation group changed before labeling");
+                }
+                await this.chrome.tabGroups.update(groupedId, {title, color: "purple"});
+            }
             check();
         });
         // A caller timeout cannot release the queue while Chrome's grouping effect is unresolved.
@@ -1104,9 +1114,10 @@ class WorkspaceExecutor {
                 const context = candidate.creation_context;
                 if (!context || candidate.inheritance_source) continue;
                 if (saved?.browser_boot_id === boot) {
-                    candidate.inheritance_source = context.prior_active ?
+                    const source = context.prior_active ?
                         saved.active_tabs?.find(active => active.window_id === candidate.window_id)?.inheritance_source :
                         this.inheritanceSourceForId(context.source_tab_id, candidate.window_id);
+                    if (source && !context.invalidated) candidate.inheritance_source = source;
                 }
                 delete candidate.creation_context;
             }
@@ -1159,6 +1170,13 @@ class WorkspaceExecutor {
         candidate.timer.unref?.();
     }
     personalTabChanged(tabId, change, tab) {
+        if (change.groupId !== undefined) {
+            for (const candidate of this.personalCandidates.values()) {
+                const context = candidate.creation_context;
+                if (context && (context.source_tab_id === tabId ||
+                        context.prior_active && candidate.window_id === tab?.windowId)) context.invalidated = true;
+            }
+        }
         if (!this.sourceGroupsHydrated && change.groupId !== undefined) {
             // Before consent loads, delivered group events can only revoke saved provenance.
             if (this.sourceGroupEvents.has(tabId) || this.sourceGroupEvents.size < 128) {
