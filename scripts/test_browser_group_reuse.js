@@ -532,4 +532,66 @@ cases.push(["delivered source regroup during pending inspection fences cleanup",
     assert.equal(f.calls.some(call => call.name === "tabs.ungroup" && call.args[0].includes(tab.id)), false);
     assert.equal(f.executor.recordEnabledAgreed("remote"), true);
 }]);
+for (const staging of [false, true]) cases.push([
+    `manual move from created group never transfers blanket guard (${staging ? "pending staging" : "record"})`, async () => {
+    const f = fresh(); await f.ready();
+    const work = record(f); assert.equal(work.group_reused, false);
+    if (staging) f.executor.workCreations.set("pending", {tab_id: work.tab_id,
+        group_id: work.group_id, group_reused: false});
+    seed(f, 80);
+    await f.api.tabs.group({tabIds: [work.tab_id], groupId: 80});
+    await f.api.tabs.update(1, {active: true});
+    const personal = await f.api.tabs.create({windowId: 1, active: false, openerTabId: 1,
+        url: "https://personal.test/manual-destination"});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.tabs.get(personal.id).groupId, 80);
+    assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
+    assert.equal(f.executor.ownsTab(personal.id), false);
+}]);
+for (const timing of ["pre-bootstrap", "consent read", "validation"]) cases.push([
+    `delivered source ungroup/regroup fences saved witness during ${timing}`, async () => {
+        const f = fresh(); seed(f, 80); await f.ready();
+        const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
+        const tab = {id: 640, windowId: 1, groupId: -1, active: true,
+            url: "https://personal.test/saved-witness"};
+        f.tabs.set(tab.id, tab);
+        await Promise.all(f.api.tabs.onCreated.emit(clone(tab)));
+        await f.executor.persistConsent(); await f.executor.inheritanceTail;
+        assert.equal(f.executor.personalCandidates.get(tab.id).inheritance_source.tab_id, work.tab_id);
+        for (const candidate of f.executor.personalCandidates.values()) clearTimeout(candidate.timer);
+        const worker = f.resetWorker();
+        const regroup = async () => {
+            await f.api.tabs.ungroup([work.tab_id]);
+            await f.api.tabs.group({tabIds: [work.tab_id], groupId: 80});
+        };
+        if (timing === "pre-bootstrap") await regroup();
+        else {
+            const hook = timing === "consent read" ? "session.get.after" : "tabs.get.after";
+            f.hooks[hook] = async (result, id) => {
+                if (timing === "validation" && id !== work.tab_id) return;
+                delete f.hooks[hook];
+                await regroup();
+            };
+        }
+        await worker.acceptNativeBootstrap(BOOT); await worker.restoreWhenReady();
+        tab.groupId = 80;
+        await Promise.all(f.api.tabs.onUpdated.emit(tab.id, {groupId: 80}, clone(tab)));
+        assert.equal(tab.groupId, 80);
+        assert.equal(f.calls.some(call => call.name === "tabs.ungroup" && call.args[0].includes(tab.id)), false);
+        assert.equal(worker.ownsTab(work.tab_id), true);
+    }]);
+cases.push(["pre-hydration source group fences are bounded and discarded after same-boot load", async () => {
+    const f = fresh(); await f.ready();
+    const work = clone(record(f)); const worker = f.resetWorker();
+    for (let id = 1000; id < 1300; id++) {
+        await Promise.all(f.api.tabs.onUpdated.emit(id, {groupId: -1}, {id, windowId: 1, groupId: -1}));
+    }
+    assert.equal(worker.sourceGroupEvents.size, 128);
+    await worker.acceptNativeBootstrap(BOOT); await worker.restoreWhenReady();
+    assert.equal(worker.sourceGroupEvents.size, 0);
+    assert.equal(record(f).group_reused, true);
+    assert.ok(record(f).group_generation > (work.group_generation || 0));
+    assert.equal(record(f).enable_id, work.enable_id);
+    assert.deepEqual(record(f).page, work.page);
+}]);
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

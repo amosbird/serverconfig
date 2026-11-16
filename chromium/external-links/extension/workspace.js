@@ -95,6 +95,9 @@ class WorkspaceExecutor {
         this.currentExecutors = new Map();
         this.personalCandidates = new Map();
         this.workCreations = new Map();
+        this.sourceGroupEvents = new Map();
+        this.sourceGroupEventsOverflow = false;
+        this.sourceGroupsHydrated = false;
         this.inheritanceTail = Promise.resolve();
         this.workCreatesInFlight = 0;
         this.presentationTail = Promise.resolve();
@@ -134,6 +137,9 @@ class WorkspaceExecutor {
             for (const candidate of this.personalCandidates.values()) clearTimeout(candidate.timer);
             this.personalCandidates.clear();
             this.workCreations.clear();
+            this.sourceGroupEvents.clear();
+            this.sourceGroupEventsOverflow = false;
+            this.sourceGroupsHydrated = false;
             this.activeTabs.clear();
             this.activationGenerations.clear();
             this.removedActiveTabs.clear();
@@ -235,6 +241,11 @@ class WorkspaceExecutor {
                     remote.owner_display.daemon_instance_id === candidate.owner_display.daemon_instance_id);
                 const record = {...candidate, remote_key: live?.remote_key || candidate.remote_key,
                     agreed: false, publication: null, attached: false};
+                if (this.sourceGroupEvents.has(record.tab_id) || this.sourceGroupEventsOverflow) {
+                    record.group_id = this.sourceGroupEvents.get(record.tab_id) ?? record.group_id;
+                    record.group_reused = true;
+                    record.group_generation = (record.group_generation || 0) + 1;
+                }
                 if (!this.manualControls) {
                     record.phase = "paused";
                     record.revision = this.nextRevision(record.remote_key);
@@ -261,6 +272,10 @@ class WorkspaceExecutor {
                 }
             }
         }
+        if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
+        this.sourceGroupsHydrated = true;
+        this.sourceGroupEvents.clear();
+        this.sourceGroupEventsOverflow = false;
         await this.restoreInheritance();
         if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
         await this.seedActiveTabs();
@@ -1058,6 +1073,11 @@ class WorkspaceExecutor {
                     } catch (error) { this.reportAdvisoryError(error); continue; }
                 } else if (value.stage !== "creating" || value.group_id !== null) continue;
                 if (boot !== this.browserBootId) return;
+                const record = [...this.records.values()].find(record => record.tab_id === value.tab_id);
+                if (record?.group_reused === true) {
+                    value.group_id = record.group_id;
+                    value.group_reused = true;
+                }
                 if (!this.workCreations.has(value.url)) this.workCreations.set(value.url, value);
             }
             for (const value of saved?.browser_boot_id === boot ? saved.candidates || [] : []) {
@@ -1139,6 +1159,12 @@ class WorkspaceExecutor {
         candidate.timer.unref?.();
     }
     personalTabChanged(tabId, change, tab) {
+        if (!this.sourceGroupsHydrated && change.groupId !== undefined) {
+            // Before consent loads, delivered group events can only revoke saved provenance.
+            if (this.sourceGroupEvents.has(tabId) || this.sourceGroupEvents.size < 128) {
+                this.sourceGroupEvents.set(tabId, change.groupId);
+            } else this.sourceGroupEventsOverflow = true;
+        }
         const pending = this.pendingCreations.get(tabId);
         if (pending?.grouping && change.groupId >= 0 && pending.group_id === null) {
             pending.group_id = change.groupId;
@@ -1152,8 +1178,17 @@ class WorkspaceExecutor {
             if (record.tab_id !== tabId || change.groupId === undefined || record.grouping) continue;
             if (record.group_id !== change.groupId) {
                 record.group_id = change.groupId;
+                record.group_reused = true;
                 record.group_generation = (record.group_generation || 0) + 1;
                 this.persistConsent().catch(error => this.reportAdvisoryError(error));
+                this.persistInheritance();
+            }
+        }
+        if (!pending?.grouping && change.groupId !== undefined) {
+            for (const staging of this.workCreations.values()) {
+                if (staging.tab_id !== tabId || staging.group_id === change.groupId) continue;
+                staging.group_id = change.groupId;
+                staging.group_reused = true;
                 this.persistInheritance();
             }
         }
