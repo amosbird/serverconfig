@@ -100,7 +100,7 @@ class Model:
         if selectors:
             assert function == "info" and len(selectors) == 1
             window = self.windows_map[selectors[0][1]]
-            return {"id": window.wid, "group": window.group.name}
+            return {"id": window.wid, "group": window.group.name, "name": window.name}
         if function not in self.command_root._commands:
             raise ValueError("unsupported ordinary Qtile command: " + function)
         command = self.command_root._commands[function]
@@ -162,7 +162,7 @@ def main():
             mock.patch.object(binding, "browser_process", return_value=True), \
             mock.patch.object(binding, "browser_incarnation",
                               side_effect=lambda pid: ["offline-boot", pid, "1234"]), \
-            mock.patch.object(binding, "qtile_ipc_call", side_effect=lambda *args: model.ipc(*args)), \
+            mock.patch.object(binding, "qtile_ipc_call", side_effect=lambda *args, **kwargs: model.ipc(*args, **kwargs)), \
             mock.patch.object(binding.time, "sleep", side_effect=AssertionError("unexpected poll")), \
             mock.patch.object(binding.socket, "socket", side_effect=AssertionError("live socket")), \
             mock.patch.object(binding.subprocess, "run", side_effect=AssertionError("live process")):
