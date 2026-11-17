@@ -162,8 +162,8 @@ def qtile_activate_command(window, expected=None):
     return qtile_command("activate_ordinary_window", window, *arguments)
 
 
-def qtile_transition(command, window, group, run=None):
-    output = run_qtile(command, run)
+def qtile_transition(command, window, group, run=None, deadline=None):
+    output = run_qtile(command, run, deadline=deadline)
     try:
         transition = json.loads(output)
     except (json.JSONDecodeError, TypeError) as error:
@@ -193,7 +193,45 @@ def qtile_socket_path():
     raise X11Unavailable("Qtile socket path is unavailable")
 
 
-def qtile_ipc_call(selectors, function, arguments=(), path=None):
+def deadline_remaining(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise X11Unavailable("ordinary prepare deadline expired (Qtile readiness timed out)")
+    return remaining
+
+
+def before_deadline(deadline, function, *arguments):
+    deadline_remaining(deadline)
+    result = function(*arguments)
+    deadline_remaining(deadline)
+    return result
+
+
+class DeadlineAdapter:
+    def __init__(self, adapter, deadline):
+        self.adapter = adapter
+        self.deadline = deadline
+
+    def windows(self):
+        windows = iter(before_deadline(self.deadline, self.adapter.windows))
+        while True:
+            deadline_remaining(self.deadline)
+            try:
+                window = next(windows)
+            except StopIteration:
+                return
+            deadline_remaining(self.deadline)
+            yield window
+
+    def __getattr__(self, name):
+        function = getattr(self.adapter, name)
+        return lambda *arguments: before_deadline(self.deadline, function, *arguments)
+
+
+def qtile_ipc_call(selectors, function, arguments=(), path=None, deadline=None):
+    local_deadline = time.monotonic() + 2.0
+    deadline = local_deadline if deadline is None else min(local_deadline, deadline)
+    deadline_remaining(deadline)
     path = pathlib.Path(path) if path is not None else qtile_socket_path()
     try:
         before = path.lstat()
@@ -206,28 +244,36 @@ def qtile_ipc_call(selectors, function, arguments=(), path=None):
     frame = QTILE_IPC_HEADER.pack(len(request)) + request
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(2)
+            client.settimeout(deadline_remaining(deadline))
             client.connect(str(path))
+            deadline_remaining(deadline)
             if hasattr(socket, "SO_PEERCRED"):
                 credentials = client.getsockopt(
                     socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
                 _, peer_uid, _ = struct.unpack("3i", credentials)
                 if peer_uid != os.getuid():
                     raise X11Unavailable("Qtile socket peer is not owned by this user")
+            deadline_remaining(deadline)
             after = path.lstat()
             if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
                 raise X11Unavailable("Qtile socket changed during connection")
+            client.settimeout(deadline_remaining(deadline))
             client.sendall(frame)
+            deadline_remaining(deadline)
             client.shutdown(socket.SHUT_WR)
             response = bytearray()
             while len(response) <= QTILE_IPC_MAX_REPLY + QTILE_IPC_HEADER.size:
+                client.settimeout(deadline_remaining(deadline))
                 chunk = client.recv(65536)
+                deadline_remaining(deadline)
                 if not chunk:
                     break
                 response.extend(chunk)
     except X11Unavailable:
         raise
-    except (OSError, TimeoutError) as error:
+    except TimeoutError as error:
+        raise X11Unavailable("Qtile IPC command timed out") from error
+    except OSError as error:
         raise X11Unavailable("Qtile IPC command failed") from error
     if len(response) < QTILE_IPC_HEADER.size:
         raise X11Unavailable("Qtile IPC response is truncated")
@@ -244,7 +290,7 @@ def qtile_ipc_call(selectors, function, arguments=(), path=None):
     return result
 
 
-def qtile_ipc_command(command):
+def qtile_ipc_command(command, deadline=None):
     if not isinstance(command, list) or not all(isinstance(part, str) for part in command) or \
             command[:3] != ["qtile", "cmd-obj", "--object"]:
         raise X11Unavailable("invalid Qtile command")
@@ -274,14 +320,24 @@ def qtile_ipc_command(command):
         selectors = [("window", window)]
     else:
         raise X11Unavailable("invalid Qtile object selector")
-    return qtile_ipc_call(selectors, function, arguments)
+    options = {} if deadline is None else {"deadline": deadline}
+    return qtile_ipc_call(selectors, function, arguments, **options)
 
 
-def run_qtile(command, run=None):
+def run_qtile(command, run=None, deadline=None):
+    options = {} if deadline is None else {"deadline": deadline}
+    if deadline is not None:
+        deadline_remaining(deadline)
     if run is None:
-        return json.dumps(qtile_ipc_command(command), separators=(",", ":"))
+        result = qtile_ipc_command(command, **options)
+        if deadline is not None:
+            deadline_remaining(deadline)
+        return json.dumps(result, separators=(",", ":"))
     try:
-        result = run(command, capture_output=True, text=True, check=False, timeout=2)
+        timeout = 2 if deadline is None else min(2, deadline_remaining(deadline))
+        result = run(command, capture_output=True, text=True, check=False, timeout=timeout)
+        if deadline is not None:
+            deadline_remaining(deadline)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise X11Unavailable("Qtile command failed") from error
     if result.returncode != 0:
@@ -289,10 +345,10 @@ def run_qtile(command, run=None):
     return result.stdout.strip()
 
 
-def qtile_window_info(window, run=None):
+def qtile_window_info(window, run=None, deadline=None):
     output = run_qtile([
         "qtile", "cmd-obj", "--object", "window", str(window), "--function", "info",
-    ], run)
+    ], run, deadline=deadline)
     try:
         info = json.loads(output)
     except (json.JSONDecodeError, TypeError) as error:
@@ -355,14 +411,16 @@ def find_ordinary_window(adapter, nonce, attempts=100, interval=0.05, deadline=N
 
 
 def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, run=None,
-                            expected_identity=None):
+                            expected_identity=None, deadline=None):
     if not isinstance(payload, dict) or set(payload) != {"nonce"} or \
             not isinstance(payload["nonce"], str) or not NONCE_RE.fullmatch(payload["nonce"]):
         raise ValueError("invalid ordinary prepare payload")
-    adapter = adapter or XcffibAdapter()
-    deadline = time.monotonic() + 5.0
+    local_deadline = time.monotonic() + 5.0
+    deadline = local_deadline if deadline is None else min(local_deadline, deadline)
+    deadline_remaining(deadline)
+    adapter = DeadlineAdapter(adapter or XcffibAdapter(), deadline)
     window = find_ordinary_window(adapter, payload["nonce"], attempts, interval, deadline)
-    identity = browser_incarnation(adapter.pid(window))
+    identity = before_deadline(deadline, browser_incarnation, adapter.pid(window))
     if identity is None or (expected_identity is not None and identity != expected_identity) or \
             not ordinary_candidate(adapter, window, payload["nonce"]):
         raise X11Unavailable("ordinary browser incarnation is unavailable")
@@ -374,11 +432,12 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
     for attempt in range(attempts):
         if time.monotonic() >= deadline:
             raise X11Unavailable("Qtile ordinary staging title readiness timed out")
-        if browser_incarnation(adapter.pid(window)) != identity or \
+        if before_deadline(deadline, browser_incarnation, adapter.pid(window)) != identity or \
                 adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
                 not ordinary_candidate(adapter, window, payload["nonce"]):
             raise X11Unavailable("ordinary browser identity changed during Qtile readiness")
-        info = qtile_window_info(window, run)
+        info = qtile_window_info(window, run, deadline=deadline)
+        deadline_remaining(deadline)
         if info.get("id") != window:
             raise X11Unavailable("Qtile readiness did not reach the exact window")
         if ordinary_title_matches(info.get("name"), payload["nonce"]):
@@ -391,13 +450,15 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
         raise X11Unavailable("Qtile ordinary staging title readiness timed out")
     if time.monotonic() >= deadline:
         raise X11Unavailable("Qtile ordinary staging title readiness timed out")
-    if browser_incarnation(adapter.pid(window)) != identity or \
+    if before_deadline(deadline, browser_incarnation, adapter.pid(window)) != identity or \
             adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             not ordinary_candidate(adapter, window, payload["nonce"]):
         raise X11Unavailable("ordinary browser incarnation changed before prepare")
     expected = json.dumps({"version": 1, "nonce": payload["nonce"], "identity": identity})
-    qtile_transition(qtile_command("prepare_ordinary_window", window, expected), window, "f", run)
-    if browser_incarnation(adapter.pid(window)) != identity or \
+    deadline_remaining(deadline)
+    qtile_transition(qtile_command("prepare_ordinary_window", window, expected), window, "f", run,
+                     deadline=deadline)
+    if before_deadline(deadline, browser_incarnation, adapter.pid(window)) != identity or \
             adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             has_legacy_browser_binding(adapter, window):
         raise X11Unavailable("ordinary prepare changed window identity")

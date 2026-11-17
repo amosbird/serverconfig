@@ -184,6 +184,41 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
                 self.assertRaisesRegex(binding.X11Unavailable, "invalid size"):
             binding.qtile_ipc_call([], "info", path=path)
 
+    def test_qtile_ipc_timeout_tracks_remaining_budget_and_never_sends_after_expiry(self):
+        for expire_during_connect in (False, True):
+            with self.subTest(expire_during_connect=expire_during_connect):
+                clock = [10.0]
+                path = mock.Mock()
+                path.lstat.return_value = mock.Mock(
+                    st_mode=stat.S_IFSOCK | 0o600, st_uid=binding.os.getuid(),
+                    st_dev=11, st_ino=22)
+                path.is_symlink.return_value = False
+                client = mock.MagicMock()
+                client.__enter__.return_value = client
+                client.getsockopt.return_value = struct.pack("3i", 999, binding.os.getuid(), 999)
+                client.connect.side_effect = lambda _path: clock.__setitem__(
+                    0, 10.125 if expire_during_connect else 10.0625)
+
+                def receive(_size):
+                    clock[0] = 10.125
+                    return b"late response"
+
+                client.recv.side_effect = receive
+                with mock.patch.object(binding.pathlib, "Path", return_value=path), \
+                        mock.patch.object(binding.socket, "socket", return_value=client), \
+                        mock.patch.object(binding.time, "monotonic", side_effect=lambda: clock[0]), \
+                        self.assertRaisesRegex(binding.X11Unavailable, "deadline expired"):
+                    binding.qtile_ipc_call([], "info", path="/runtime/socket", deadline=10.125)
+                timeouts = [call.args[0] for call in client.settimeout.call_args_list]
+                self.assertTrue(all(0 < timeout <= 0.125 for timeout in timeouts))
+                if expire_during_connect:
+                    client.sendall.assert_not_called()
+                    client.recv.assert_not_called()
+                else:
+                    self.assertEqual(timeouts[-1], 0.0625)
+                    client.sendall.assert_called_once()
+                    client.recv.assert_called_once()
+
     def test_browser_incarnation_parses_start_time_after_parenthesized_process_name(self):
         stat_fields = ["S"] + ["0"] * 18 + ["987654"]
         with mock.patch.object(binding.pathlib.Path, "read_text", side_effect=[
@@ -251,7 +286,8 @@ class OrdinaryX11Test(unittest.TestCase):
         namespace = qtile.load_browser_config({})
         trace = []
 
-        def ipc(selectors, function, arguments=()):
+        def ipc(selectors, function, arguments=(), deadline=None):
+            self.assertIsNotNone(deadline)
             if function == "info":
                 self.assertEqual(selectors, [("window", 22)])
                 self.assertEqual(arguments, ())
@@ -375,6 +411,47 @@ class OrdinaryX11Test(unittest.TestCase):
         self.assertEqual(len(trace), 1)
         self.assert_no_prepare_effects(window, manager, trace)
 
+    def test_prepare_caller_deadline_blocks_late_discovery_and_native_writes(self):
+        for observation in ("windows", "pid", "title", "property"):
+            with self.subTest(observation=observation):
+                clock = [10.0]
+                nonce, adapter, window, manager, trace, ipc = self.prepare_fixture()
+                original = getattr(adapter, observation)
+
+                def late(*arguments):
+                    result = original(*arguments)
+                    clock[0] = 10.1
+                    return result
+
+                setattr(adapter, observation, late)
+                with mock.patch.object(binding.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch.object(binding, "qtile_ipc_call", side_effect=ipc), \
+                        self.assertRaisesRegex(binding.X11Unavailable, "deadline expired"):
+                    binding.prepare_ordinary_window(
+                        {"nonce": nonce}, adapter=adapter, deadline=10.1)
+                self.assertNotIn((22, binding.ORDINARY_NONCE_PROPERTY), adapter.values)
+                self.assertFalse(adapter.finished)
+                self.assert_no_prepare_effects(window, manager, trace)
+
+    def test_prepare_injected_run_receives_remaining_budget_and_rejects_late_probe(self):
+        clock = [10.0]
+        nonce, adapter, window, manager, trace, _ipc = self.prepare_fixture()
+        calls = []
+
+        def run(command, **options):
+            calls.append((command, options))
+            clock[0] = 10.125
+            return mock.Mock(returncode=0, stdout=json.dumps({
+                "id": 22, "group": "e", "name": adapter.title(22)}))
+
+        with mock.patch.object(binding.time, "monotonic", side_effect=lambda: clock[0]), \
+                self.assertRaisesRegex(binding.X11Unavailable, "deadline expired"):
+            binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, deadline=10.125, run=run)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]["timeout"], 0.125)
+        self.assert_no_prepare_effects(window, manager, trace)
+
     def test_prepare_command_failure_is_not_retried(self):
         nonce, adapter, window, manager, trace, ipc = self.prepare_fixture()
         window.name = adapter.title(22)
@@ -391,8 +468,8 @@ class OrdinaryX11Test(unittest.TestCase):
         nonce, adapter, window, manager, trace, ipc = self.prepare_fixture()
         window.name = adapter.title(22)
 
-        def lose_completion(selectors, function, arguments=()):
-            result = ipc(selectors, function, arguments)
+        def lose_completion(selectors, function, arguments=(), deadline=None):
+            result = ipc(selectors, function, arguments, deadline=deadline)
             if function == "prepare_ordinary_window":
                 raise binding.X11Unavailable("modeled lost prepare completion")
             return result

@@ -153,7 +153,75 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
             "nonce": "a" * 32, "deadline_ms": deadline,
         }}), {"xid": 42, "nonce": "a" * 32})
         binding.prepare_ordinary_window.assert_called_once_with(
-            {"nonce": "a" * 32}, expected_identity=identity)
+            {"nonce": "a" * 32}, expected_identity=identity, deadline=mock.ANY)
+        self.assertLessEqual(binding.prepare_ordinary_window.call_args.kwargs["deadline"],
+                             time.monotonic() + 30)
+
+    def test_native_prepare_preserves_caller_budget_across_identity_discovery_and_probe(self):
+        spec = importlib.util.spec_from_file_location(
+            "deadline_x11", ROOT / "chromium/external-links/x11_binding.py")
+        binding = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(binding)
+        for phase in ("identity", "discovery", "probe"):
+            with self.subTest(phase=phase):
+                clock = [10.0]
+                nonce = "a" * 32
+                identity = ["boot", 4242, "123"]
+                values = {}
+                adapter = mock.Mock()
+                adapter.windows.return_value = [42]
+                adapter.title.return_value = f"__ABUSH_ORDINARY__:{nonce}"
+                adapter.wm_class.return_value = ["chromium"]
+                adapter.pid.return_value = 4242
+                adapter.property.side_effect = lambda _window, name, *_args: values.get(name, "")
+                adapter.set_text.side_effect = lambda _window, name, value: values.update({name: value})
+
+                def incarnation(_pid):
+                    if phase == "identity":
+                        clock[0] = 10.125
+                    return identity
+
+                def discover():
+                    if phase == "discovery":
+                        clock[0] = 10.125
+                    return [42]
+
+                adapter.windows.side_effect = discover
+                calls = []
+
+                def ipc(selectors, function, arguments=(), deadline=None):
+                    calls.append(function)
+                    self.assertEqual(function, "info", "late prepare must never be dispatched")
+                    self.assertEqual(deadline, 10.125)
+                    clock[0] = 10.125
+                    return {"id": 42, "group": "e", "name": adapter.title(42)}
+
+                broker = host.BrowserBroker(browser={"pid": 4242, "starttime": "123"})
+                broker.x11_binding = mock.Mock(return_value=binding)
+                native = host.NativeBrokerHost(ordinary_open_factory=None, browser={
+                    "pid": 4242, "starttime": "123", "profile": pathlib.Path(),
+                    "browser_boot_id": "test-boot"})
+                native.broker = broker
+                request = {
+                    "version": 1, "id": "deadline-native", "service": "ordinary_open",
+                    "operation": "prepare", "payload": {"nonce": nonce, "deadline_ms": 1_000_125},
+                }
+                with mock.patch.object(host.time, "time", return_value=1000.0), \
+                        mock.patch.object(host.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch.object(binding, "XcffibAdapter", return_value=adapter), \
+                        mock.patch.object(binding, "browser_process", return_value=True), \
+                        mock.patch.object(binding, "browser_incarnation", side_effect=incarnation), \
+                        mock.patch.object(binding, "qtile_ipc_call", side_effect=ipc), \
+                        mock.patch.object(host.logging, "warning") as warning:
+                    native._respond(request)
+                response = native.outbound.get_nowait()
+                self.assertIn("deadline expired", response["error"])
+                warning.assert_called_once()
+                self.assertNotIn(nonce, str(warning.call_args))
+                self.assertEqual(calls, ["info"] if phase == "probe" else [])
+                if phase != "probe":
+                    adapter.set_text.assert_not_called()
+                    adapter.finish.assert_not_called()
 
     def test_native_ordinary_prepare_requires_current_browser_incarnation(self):
         binding = mock.Mock()

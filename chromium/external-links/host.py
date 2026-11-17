@@ -2074,15 +2074,21 @@ class BrowserBroker:
         operation = request["operation"]
         payload = request["payload"]
         if service == "ordinary_open" and operation == "prepare":
-            _ordinary_deadline(payload, {"nonce"})
+            deadline_ms = _ordinary_deadline(payload, {"nonce"})
+            deadline = time.monotonic() + (deadline_ms / 1000 - time.time())
             binding = self.x11_binding()
             if self.browser is None:
                 raise ValueError("trusted ordinary browser identity is unavailable")
             identity = binding.browser_incarnation(self.browser["pid"])
             if identity is None or identity[2] != self.browser["starttime"]:
                 raise ValueError("ordinary browser incarnation changed")
-            return binding.prepare_ordinary_window(_without_deadline(payload),
-                                                   expected_identity=identity)
+            try:
+                return binding.prepare_ordinary_window(_without_deadline(payload),
+                                                       expected_identity=identity,
+                                                       deadline=deadline)
+            except binding.X11Unavailable as error:
+                logging.warning("ordinary prepare failed error=%s", error)
+                raise
         if service == "ordinary_open" and operation == "ordinary_file_navigate":
             deadline_ms = _ordinary_deadline(payload, {"nonce", "xid", "url"})
             binding = self.x11_binding()
