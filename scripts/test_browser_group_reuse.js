@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const {assert, clone, deferred, fixture, execute, runCases, BOOT, REMOTE} =
     require("./browser_tab_groups_fixture.js");
+const physicalReady = async f => { await f.ready(); await f.materialize(); };
 const fresh = () => fixture({globalAutomation: true});
 const TITLE = "Abush · local";
 const record = f => f.executor.recordFor("remote");
@@ -20,9 +21,12 @@ function onlyExactCreatedTabsGrouped(f, start = 0) {
     const calls = f.calls.slice(start);
     const created = new Set(calls.filter(call => call.name === "tabs.create")
         .map(call => call.args[0].url));
+    const createdIds = new Set([...f.executor.records.values()]
+        .filter(item => created.has(`about:blank#abush-work-${item.enable_id}`))
+        .map(item => item.tab_id));
     for (const call of calls.filter(call => call.name === "tabs.group")) {
         for (const id of call.args[0].tabIds) {
-            assert.ok(created.has(f.tabs.get(id).url), `group touched preexisting tab ${id}`);
+            assert.ok(createdIds.has(id), `group touched preexisting tab ${id}`);
         }
     }
     for (const call of calls.filter(call => call.name === "tabs.create")) {
@@ -43,7 +47,7 @@ const cases = [
         await assert.rejects(f.api.tabGroups.get(80), /No group/);
     }],
     ["worker restart keeps exact tab, enablement, PageRef and group", async () => {
-        const f = fresh(); await f.ready();
+        const f = fresh(); await physicalReady(f);
         const old = clone(record(f)); const before = groups(f).map(clone);
         const creates = f.calls.filter(call => call.name === "tabs.create").length;
         await f.restart(); await f.emitRemote(REMOTE);
@@ -54,7 +58,7 @@ const cases = [
         assert.equal(f.calls.filter(call => call.name === "tabs.create").length, creates);
     }],
     ["browser reopen keeps one presentation group and never adopts restored navigated work", async () => {
-        const f = fresh(); await f.ready();
+        const f = fresh(); await physicalReady(f);
         await f.emitNative(execute(f));
         const old = clone(record(f)); const start = f.calls.length;
         // A restored group can contain personal members; membership grants no authority.
@@ -78,12 +82,16 @@ const cases = [
         assert.notDeepEqual(next.page, old.page);
         assert.equal(next.browser_boot_id, restored.boot.browser_boot_id);
         unchanged(f, before);
+        assert.equal(next.group_id, null);
+        assert.equal(next.tab_id, null);
+        assert.equal(f.calls.slice(start).some(call => call.name === "tabs.create"), false);
+        await f.materialize();
         assert.equal(groups(f).length, 1, "reopening must not grow one group into two");
-        assert.equal(next.group_id, restored.groupIds.get(old.group_id));
+        assert.equal(record(f).group_id, restored.groupIds.get(old.group_id));
         onlyExactCreatedTabsGrouped(f, start);
     }],
     ["three browser boots preserve all old tabs without group growth", async () => {
-        const f = fresh(); await f.ready();
+        const f = fresh(); await physicalReady(f);
         const trace = [];
         const enableIds = new Set([record(f).enable_id]);
         for (let boot = 0; boot < 3; boot++) {
@@ -94,8 +102,11 @@ const cases = [
             unchanged(f, before);
             assert.equal(enableIds.has(next.enable_id), false);
             enableIds.add(next.enable_id);
-            trace.push({boot: next.browser_boot_id, tab: next.tab_id,
-                enable: next.enable_id, page: next.page.page_id, groups: groups(f).length});
+            assert.equal(next.tab_id, null);
+            assert.equal(next.group_id, null);
+            await f.materialize();
+            trace.push({boot: record(f).browser_boot_id, tab: record(f).tab_id,
+                enable: record(f).enable_id, page: record(f).page.page_id, groups: groups(f).length});
         }
         assert.deepEqual(trace.map(state => state.groups), [1, 1, 1]);
         assert.equal(new Set(trace.map(state => state.tab)).size, 3);
@@ -104,7 +115,7 @@ const cases = [
     ["personal exact-title container is presentation only and retains all properties", async () => {
         const f = fresh(); const originalGroup = seed(f, 70);
         const before = snapshot(f, [1, 2]);
-        await f.ready();
+        await physicalReady(f);
         unchanged(f, before);
         assert.deepEqual(f.groups.get(70), originalGroup);
         assert.equal(record(f).group_id, 70);
@@ -114,7 +125,7 @@ const cases = [
         await f.emitNative(execute(f, {command: {command: "navigate",
             page: {...record(f).page, page_id: "personal-tab-1"}, url: "https://forbidden.test/"}}));
         unchanged(f, before);
-        assert.equal(f.calls.some(call => call.name === "debugger.sendCommand"), false);
+        assert.equal(f.calls.filter(call => call.name === "debugger.sendCommand").length, 1);
     }],
     ["duplicate exact-title groups select lowest id without merging or growing", async () => {
         const f = fresh();
@@ -122,7 +133,7 @@ const cases = [
             groupId: 30, active: false});
         const high = seed(f, 90); const low = seed(f, 30, 3, {color: "green"});
         const before = snapshot(f, [1, 2, 3]);
-        await f.ready();
+        await physicalReady(f);
         unchanged(f, before);
         assert.equal(record(f).group_id, 30);
         assert.deepEqual(groups(f).sort((a, b) => a.id - b.id), [low, high]);
@@ -134,7 +145,7 @@ const cases = [
         f.tabs.set(3, {id: 3, windowId: 3, url: "https://other-window.test/",
             groupId: 40, active: true});
         const other = seed(f, 40, 3); const before = snapshot(f, [1, 2, 3]);
-        await f.ready();
+        await physicalReady(f);
         unchanged(f, before);
         assert.notEqual(record(f).group_id, 40);
         assert.equal(f.groups.get(record(f).group_id).windowId, 1);
@@ -143,7 +154,7 @@ const cases = [
     }],
     ["title match is exact, not prefix, case folded or workbench substring", async () => {
         const f = fresh(); seed(f, 60, 1, {title: `${TITLE} personal`});
-        const before = snapshot(f, [1]); await f.ready();
+        const before = snapshot(f, [1]); await physicalReady(f);
         unchanged(f, before);
         assert.notEqual(record(f).group_id, 60);
         assert.equal(f.groups.get(60).title, `${TITLE} personal`);
@@ -160,11 +171,18 @@ const cases = [
         f.hooks["tabs.group"] = async () => {
             if (first) { first = false; entered.resolve(); await release.promise; }
         };
-        const a = f.emitRemote(REMOTE); await entered.promise;
+        await f.emitRemote(REMOTE);
+        const a = f.materialize(); await entered.promise;
         const other = {...clone(REMOTE), remote_key: "other", connection_id: "other-connection",
             workspace_id: "other-workspace", principal_id: "other-principal",
             owner_display: {...REMOTE.owner_display, daemon_instance_id: "other-instance"}};
-        const b = f.emitRemote(other);
+        await f.emitRemote(other);
+        const otherRecord = f.executor.recordFor("other");
+        const b = f.executor.execute(execute(f, {remote_key: "other",
+            connection_id: other.connection_id, principal_id: other.principal_id,
+            authorization: {browser_boot_id: otherRecord.browser_boot_id,
+                enable_id: otherRecord.enable_id, revision: otherRecord.revision},
+            command: {command: "navigate", page: clone(otherRecord.page), url: "https://other.test/"}}));
         try { await secondCreated.promise; } finally { release.resolve(); }
         await Promise.all([a, b]);
         const one = record(f); const two = f.executor.recordFor("other");
@@ -178,13 +196,15 @@ const cases = [
         onlyExactCreatedTabsGrouped(f);
     }],
     ["renamed collapsed group is never relabeled during reconnect or next boot", async () => {
-        const f = fresh(); await f.ready(); const old = clone(record(f));
+        const f = fresh(); await physicalReady(f); const old = clone(record(f));
         await f.api.tabGroups.update(old.group_id, {title: "My research", color: "red", collapsed: true});
         const renamed = clone(f.groups.get(old.group_id));
         await f.emitRemote({...REMOTE, connection_id: "reconnected"});
         assert.deepEqual(f.groups.get(old.group_id), renamed);
         const ids = await f.restartBrowser(); const start = f.calls.length;
         await f.emitRemote(REMOTE);
+        assert.equal(record(f).group_id, null);
+        await f.materialize();
         assert.deepEqual(f.groups.get(ids.groupIds.get(old.group_id)), {
             ...renamed, id: ids.groupIds.get(old.group_id), windowId: ids.windowIds.get(old.window_id)});
         assert.notEqual(record(f).group_id, ids.groupIds.get(old.group_id));
@@ -209,6 +229,7 @@ for (const mode of ["rejected", "timed out", "applied then receipt lost"]) {
             };
         }
         await f.ready();
+        const failed = execute(f); await assert.rejects(f.executor.execute(failed));
         const count = f.calls.filter(call => call.name === "tabs.create").length;
         assert.equal(attempts, 1);
         assert.equal(f.executor.recordEnabledAgreed("remote"), false);
@@ -238,7 +259,7 @@ for (const mode of ["missing", "renamed", "wrong window"]) {
                 f.tabs.get(1).windowId = 3; f.groups.get(65).windowId = 3;
             }
         };
-        await f.ready();
+        await f.ready(); await assert.rejects(f.executor.execute(execute(f)));
         assert.equal(lookedUp, true, "production must inspect current Chrome group state");
         assert.equal(f.calls.some(call => call.name === "tabs.group" &&
             call.args[0].groupId === 65), false);
@@ -256,7 +277,7 @@ for (const mode of ["rejected", "timed out"]) {
             if (mode === "timed out") await held.promise;
             throw new Error("group lookup unavailable");
         };
-        await f.ready();
+        await f.ready(); await assert.rejects(f.executor.execute(execute(f)));
         assert.equal(queried, 1);
         assert.equal(f.executor.recordEnabledAgreed("remote"), false);
         assert.equal(groups(f).length, 1);
@@ -274,7 +295,8 @@ for (const action of ["Stop", "executor replacement", "window move"]) {
         f.hooks["tabs.group"] = async () => {
             if (first) { first = false; entered.resolve(); await release.promise; }
         };
-        const preparing = f.ready(); await entered.promise;
+        await f.ready();
+        const preparing = assert.rejects(f.executor.execute(execute(f))); await entered.promise;
         const start = f.calls.length;
         let changing;
         if (action === "Stop") changing = f.send({control: "stop"});
@@ -301,7 +323,7 @@ for (const action of ["Stop", "executor replacement", "window move"]) {
 }
 cases.push(["new personal tab inherits active work container but is isolated without touching old members", async () => {
     const f = fresh(); seed(f, 45); const before = snapshot(f, [1, 2]);
-    await f.ready();
+    await physicalReady(f);
     const work = record(f); const authority = clone(f.executor.state("remote"));
     await f.api.tabs.update(work.tab_id, {active: true});
     const isolated = deferred();
@@ -322,7 +344,7 @@ cases.push(["new personal tab inherits active work container but is isolated wit
 }]);
 for (const activationFirst of [false, true]) cases.push([
     `reused container isolates exact work-origin creation with activation ${activationFirst ? "before" : "after"} creation`, async () => {
-        const f = fresh(); seed(f, 44); await f.ready();
+        const f = fresh(); seed(f, 44); await physicalReady(f);
         const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
         const personal = {id: 500, windowId: 1, groupId: 44, active: true, url: "https://human.test/new"};
         f.tabs.set(personal.id, personal); f.tabs.get(work.tab_id).active = false;
@@ -335,7 +357,7 @@ for (const activationFirst of [false, true]) cases.push([
         assert.deepEqual(f.calls.filter(call => call.name === "tabs.ungroup").map(call => call.args[0]), [[500]]);
     }]);
 cases.push(["late restored group member cannot inherit cleanup authority from its container", async () => {
-    const f = fresh(); seed(f, 43); await f.ready();
+    const f = fresh(); seed(f, 43); await physicalReady(f);
     const restored = {id: 501, windowId: 1, groupId: 43, active: false, url: "https://restored.test/"};
     f.tabs.set(restored.id, restored);
     const before = clone(restored);
@@ -349,7 +371,7 @@ cases.push(["source binding never follows a later manual join to another reused 
     const f = fresh(); seed(f, 42);
     f.tabs.set(3, {id: 3, windowId: 1, groupId: 41, active: false, url: "https://personal.test/three"});
     seed(f, 41, 3, {title: "Abush · second"});
-    await f.ready();
+    await physicalReady(f);
     await f.emitRemote({...REMOTE, remote_key: "second", connection_id: "second",
         workspace_id: "second", connection_display_name: "second"});
     const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
@@ -362,7 +384,7 @@ cases.push(["source binding never follows a later manual join to another reused 
     assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
 }]);
 cases.push(["same-boot worker retains pending creation witness for a reused group", async () => {
-    const f = fresh(); seed(f, 40); await f.ready();
+    const f = fresh(); seed(f, 40); await physicalReady(f);
     const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
     const personal = {id: 503, windowId: 1, groupId: -1, active: false,
         openerTabId: work.tab_id, url: "https://personal.test/pending"};
@@ -378,7 +400,7 @@ cases.push(["same-boot worker retains pending creation witness for a reused grou
     assert.equal(f.tabs.get(1).groupId, 40);
 }]);
 cases.push(["expiry cannot acquire reused-group cleanup from a newer manual membership", async () => {
-    const f = fresh(); seed(f, 39); await f.ready();
+    const f = fresh(); seed(f, 39); await physicalReady(f);
     await f.api.tabs.update(record(f).tab_id, {active: true});
     const personal = {id: 504, windowId: 1, groupId: -1, active: false, url: "https://personal.test/expired"};
     f.tabs.set(personal.id, personal);
@@ -390,7 +412,7 @@ cases.push(["expiry cannot acquire reused-group cleanup from a newer manual memb
     assert.equal(f.executor.personalCandidates.has(personal.id), false);
 }]);
 cases.push(["late active query cannot replace a newer delivered personal activation", async () => {
-    const f = fresh(); seed(f, 38); await f.ready();
+    const f = fresh(); seed(f, 38); await physicalReady(f);
     await f.api.tabs.update(record(f).tab_id, {active: true});
     const entered = deferred(); const release = deferred();
     f.hooks["tabs.query.after"] = async () => { entered.resolve(); await release.promise; };
@@ -407,7 +429,7 @@ cases.push(["late active query cannot replace a newer delivered personal activat
 }]);
 for (const extra of [{active: false}, {active: true, openerTabId: 1}]) cases.push([
     `${extra.active ? "explicit personal opener" : "inactive late restore"} does not borrow active work provenance`, async () => {
-    const f = fresh(); seed(f, 37); await f.ready();
+    const f = fresh(); seed(f, 37); await physicalReady(f);
     await f.api.tabs.update(record(f).tab_id, {active: true});
     const tab = {id: 600 + f.tabs.size, windowId: 1, groupId: 37,
         url: "https://personal.test/no-proof", ...extra};
@@ -418,7 +440,7 @@ for (const extra of [{active: false}, {active: true, openerTabId: 1}]) cases.pus
 }]);
 for (const delivered of [false, true]) cases.push([
     `source manual ungroup invalidates pending cleanup (${delivered ? "delivered" : "query-only"})`, async () => {
-        const f = fresh(); seed(f, 36); await f.ready();
+        const f = fresh(); seed(f, 36); await physicalReady(f);
         const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
         const tab = {id: 610, windowId: 1, groupId: -1, active: true, url: "https://personal.test/pending"};
         f.tabs.set(tab.id, tab);
@@ -439,7 +461,7 @@ for (const delivered of [false, true]) cases.push([
     }]);
 for (const activationFirst of [false, true]) cases.push([
     `same-boot pre-bootstrap foreground creation retains prior work predecessor (${activationFirst})`, async () => {
-        const f = fresh(); seed(f, 35); await f.ready();
+        const f = fresh(); seed(f, 35); await physicalReady(f);
         const work = clone(record(f)); await f.api.tabs.update(work.tab_id, {active: true});
         await f.executor.inheritanceTail;
         const worker = f.resetWorker();
@@ -460,7 +482,7 @@ for (const activationFirst of [false, true]) cases.push([
     }]);
 for (const action of ["activation", "removal"]) cases.push([
     `seed preserves unaffected windows during another window's ${action}`, async () => {
-        const f = fresh(); seed(f, 33); await f.ready();
+        const f = fresh(); seed(f, 33); await physicalReady(f);
         await f.api.tabs.update(record(f).tab_id, {active: true});
         const worker = f.resetWorker(); await worker.acceptNativeBootstrap(BOOT);
         const entered = deferred(); const release = deferred();
@@ -496,7 +518,7 @@ for (const mode of ["reject", "timeout"]) cases.push([
     }]);
 for (const activationFirst of [false, true]) cases.push([
     `new-browser-boot early foreground restore never receives old predecessor (${activationFirst})`, async () => {
-        const f = fresh(); seed(f, 32); await f.ready();
+        const f = fresh(); seed(f, 32); await physicalReady(f);
         await f.api.tabs.update(record(f).tab_id, {active: true});
         await f.executor.inheritanceTail;
         let early;
@@ -513,7 +535,7 @@ for (const activationFirst of [false, true]) cases.push([
         assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
     }]);
 cases.push(["delivered source regroup during pending inspection fences cleanup", async () => {
-    const f = fresh(); seed(f, 31); await f.ready();
+    const f = fresh(); seed(f, 31); await physicalReady(f);
     const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
     const entered = deferred(); const release = deferred();
     const tab = {id: 630, windowId: 1, groupId: 31, active: true, url: "https://personal.test/race"};
@@ -534,7 +556,7 @@ cases.push(["delivered source regroup during pending inspection fences cleanup",
 }]);
 for (const staging of [false, true]) cases.push([
     `manual move from created group never transfers blanket guard (${staging ? "pending staging" : "record"})`, async () => {
-    const f = fresh(); await f.ready();
+    const f = fresh(); await physicalReady(f);
     const work = record(f); assert.equal(work.group_reused, false);
     if (staging) f.executor.workCreations.set("pending", {tab_id: work.tab_id,
         group_id: work.group_id, group_reused: false});
@@ -550,7 +572,7 @@ for (const staging of [false, true]) cases.push([
 }]);
 for (const timing of ["pre-bootstrap", "consent read", "validation"]) cases.push([
     `delivered source ungroup/regroup fences saved witness during ${timing}`, async () => {
-        const f = fresh(); seed(f, 80); await f.ready();
+        const f = fresh(); seed(f, 80); await physicalReady(f);
         const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
         const tab = {id: 640, windowId: 1, groupId: -1, active: true,
             url: "https://personal.test/saved-witness"};
@@ -581,7 +603,7 @@ for (const timing of ["pre-bootstrap", "consent read", "validation"]) cases.push
         assert.equal(worker.ownsTab(work.tab_id), true);
     }]);
 cases.push(["pre-hydration source group fences are bounded and discarded after same-boot load", async () => {
-    const f = fresh(); await f.ready();
+    const f = fresh(); await physicalReady(f);
     const work = clone(record(f)); const worker = f.resetWorker();
     for (let id = 1000; id < 1300; id++) {
         await Promise.all(f.api.tabs.onUpdated.emit(id, {groupId: -1}, {id, windowId: 1, groupId: -1}));
@@ -602,7 +624,8 @@ cases.push(["manual move during group journal persistence cannot relabel a perso
         if (held || !(value.abushBrowserInheritanceV9?.creations || []).some(item => item.stage === "grouped")) return;
         held = true; entered.resolve(); await release.promise;
     };
-    const preparing = f.ready();
+    await f.ready();
+    const preparing = assert.rejects(f.executor.execute(execute(f)));
     try {
         await entered.promise;
         const workId = f.calls.find(call => call.name === "tabs.group").args[0].tabIds[0];
@@ -615,7 +638,7 @@ cases.push(["manual move during group journal persistence cannot relabel a perso
 }]);
 for (const explicit of [false, true]) cases.push([
     `early unresolved ${explicit ? "opener" : "active"} context cannot survive later source regroup`, async () => {
-        const f = fresh(); seed(f, 80); await f.ready();
+        const f = fresh(); seed(f, 80); await physicalReady(f);
         const work = record(f); await f.api.tabs.update(work.tab_id, {active: true});
         await f.executor.inheritanceTail;
         const worker = f.resetWorker();

@@ -5,6 +5,7 @@ const vm = require("node:vm");
 const {assert, clone, deferred, fixture, execute, runCases} = require("./browser_tab_groups_fixture.js");
 const rofiPath = process.env.ABUSH_ROFI_EXTENSION_PATH;
 const settle = () => new Promise(resolve => setImmediate(resolve));
+const physicalReady = async f => { await f.ready(); await f.materialize(); };
 function dom() {
     const nodes = new Map();
     const node = () => ({textContent: "", value: "", children: [], dataset: {}, style: {},
@@ -31,7 +32,7 @@ function loadRofi(f, file) {
 }
 const cases = [
     ["new plain tabs same URL isolate once and later manual regroup stays human", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const work = f.executor.recordFor("remote"); const authority = clone(f.executor.state("remote"));
         await f.api.tabs.update(work.tab_id, {active: true});
         for (let i = 0; i < 3; i++) {
@@ -58,7 +59,7 @@ const cases = [
         const f = fixture({globalAutomation: true});
         const entered = deferred(); const gate = deferred();
         f.hooks["tabs.create.after"] = async () => { entered.resolve(); await gate.promise; };
-        const ready = f.ready(); await entered.promise;
+        const ready = physicalReady(f); await entered.promise;
         const pending = [...f.tabs.values()].find(tab => tab.id >= 10);
         await Promise.all(f.api.tabs.onUpdated.emit(pending.id, {groupId: 100}, clone(pending)));
         gate.resolve(); await ready; await settle();
@@ -71,7 +72,7 @@ const cases = [
         const f = fixture({globalAutomation: true});
         const entered = deferred(); const gate = deferred();
         f.hooks["tabGroups.update"] = async () => { entered.resolve(); await gate.promise; };
-        const ready = f.ready(); await entered.promise;
+        const ready = physicalReady(f); await entered.promise;
         const pending = [...f.tabs.values()].find(tab => tab.id >= 10);
         await f.api.tabs.update(pending.id, {active: true});
         const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
@@ -86,7 +87,7 @@ const cases = [
         assert.equal(f.calls.filter(call => call.name === "tabs.ungroup").length, 1);
     }],
     ...["group", "window"].map(move => [`stale read cannot strip human ${move} move`, async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         await f.api.tabs.update(f.executor.recordFor("remote").tab_id, {active: true});
         const entered = deferred(); const gate = deferred();
         f.hooks["tabs.get.after"] = async tab => {
@@ -113,7 +114,7 @@ const cases = [
         assert.equal(tab.groupId, 100);
     }]),
     ["fresh worker restores actual onCreated obligation but not manual group members", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
         await settle(); await f.executor.inheritanceTail;
         const old = f.executor;
@@ -134,7 +135,9 @@ const cases = [
         f.executor.api = (task, label) => label === "create inactive work tab" ?
             require("../chromium/external-links/extension/workspace.js").bounded(task, label, 20) : originalApi(task, label);
         f.hooks["tabs.create.after"] = async () => { entered.resolve(); await gate.promise; };
-        const ready = f.ready(); await entered.promise; await ready;
+        await f.ready();
+        const ready = assert.rejects(f.executor.execute(execute(f)), /timed out/);
+        await entered.promise; await ready;
         assert.equal(f.executor.workCreatesInFlight, 1);
         delete f.hooks["tabs.create.after"];
         const partial = [...f.tabs.values()].find(tab => tab.id >= 10);
@@ -151,7 +154,7 @@ const cases = [
         assert.equal(f.executor.popupState().remotes[0].creation_unknown, true);
     }],
     ["inheritance storage failure is advisory and leaves human usage available", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         f.hooks["session.set"] = async value => {
             if (value.abushBrowserInheritanceV9) throw new Error("inheritance storage unavailable");
         };
@@ -162,7 +165,7 @@ const cases = [
         assert.match(f.executor.lastError, /inheritance storage unavailable/);
     }],
     ["pending backlog above cap retains obligations instead of reclassifying", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         f.executor.workCreations.set("unknown", {browser_boot_id: f.executor.browserBootId,
             window_id: 1, stage: "creating", tab_id: null, group_id: null});
         for (let index = 0; index < 130; index++) {
@@ -182,7 +185,7 @@ const cases = [
         for (const candidate of f.executor.personalCandidates.values()) clearTimeout(candidate.timer);
     }],
     ["advisory expiry retains unresolved delayed inheritance", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const personal = await f.api.tabs.create({windowId: 1, url: "", active: true});
         await settle();
         f.executor.workCreations.set("unknown", {browser_boot_id: f.executor.browserBootId,
@@ -198,7 +201,7 @@ const cases = [
         assert.equal(f.tabs.get(personal.id).groupId, -1);
     }],
     ["groupless creation expiry is quiet, bounded and ends inheritance authority", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const authority = clone(f.executor.state("remote"));
         for (let index = 0; index < 140; index++) {
             const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
@@ -218,7 +221,7 @@ const cases = [
         assert.equal(f.calls.filter(call => call.name === "tabs.ungroup").length, 0);
     }],
     ["completed ordinary-open guardian expires without browsing warning or journal growth", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         assert.equal(await f.executor.ordinaryOpen({version: 1, operation: "ordinary_open",
             request_id: "personal-open", url: "https://ordinary.test/new", focus: true,
             deadline_ms: Date.now() + 3000}), "applied");
@@ -234,7 +237,7 @@ const cases = [
         assert.equal(f.executor.ownsTab(personal.id), false);
     }],
     ["pending personal URL retires despite unrelated unknown blank work request", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         f.executor.workCreations.set("unknown", {browser_boot_id: f.executor.browserBootId,
             window_id: 1, stage: "creating", tab_id: null, group_id: null});
         const personal = await f.api.tabs.create({windowId: 1, url: "", active: true});
@@ -247,7 +250,7 @@ const cases = [
         assert.equal(f.executor.lastError, null);
     }],
     ["expiry leaves unrelated manual group movement alone", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
         await settle();
         const candidate = f.executor.personalCandidates.get(personal.id);
@@ -259,7 +262,7 @@ const cases = [
         assert.equal(f.calls.filter(call => call.name === "tabs.ungroup").length, 0);
     }],
     ["expiry stale read cannot undo a newer manual movement", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
         await settle();
         const candidate = f.executor.personalCandidates.get(personal.id);
@@ -278,7 +281,7 @@ const cases = [
         assert.equal(f.calls.filter(call => call.name === "tabs.ungroup").length, 0);
     }],
     ["initial groupless generation still guards delayed work group before expiry", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
         await settle();
         assert.equal(f.executor.personalCandidates.get(personal.id).generation, 1);
@@ -290,7 +293,7 @@ const cases = [
         assert.equal(f.executor.lastError, null);
     }],
     ["expiry rereads actual inherited work group rather than dropping cleanup", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
         await settle();
         const candidate = f.executor.personalCandidates.get(personal.id);
@@ -303,7 +306,7 @@ const cases = [
     }],
     ...[false, true].map(foreignBoot => [`early onCreated cannot erase ${foreignBoot ? "foreign" : "same"}-boot journal`, async () => {
         const {BOOT} = require("./browser_tab_groups_fixture.js");
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         f.local.abushBrowserAutomationV9 = false;
         const url = "about:blank#abush-work-unresolved";
         f.executor.workCreations.set(url, {url, browser_boot_id: BOOT.browser_boot_id,
@@ -339,7 +342,7 @@ const cases = [
     }]),
     ...[undefined, "about:blank"].map(initialUrl => [
         `initial ${initialUrl || "missing"} onCreated URL protects exact pending work tab`, async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         await f.api.tabs.update(f.executor.recordFor("remote").tab_id, {active: true});
         const entered = deferred(); const gate = deferred();
         const second = {...require("./browser_tab_groups_fixture.js").REMOTE, remote_key: "second",
@@ -366,7 +369,13 @@ const cases = [
                 throw error;
             }
         };
-        const enabling = f.emitRemote(second);
+        await f.emitRemote(second);
+        const reservation = f.executor.recordFor("second");
+        const enabling = f.executor.execute(execute(f, {remote_key: "second",
+            principal_id: second.principal_id,
+            authorization: {browser_boot_id: reservation.browser_boot_id,
+                enable_id: reservation.enable_id, revision: reservation.revision},
+            command: {command: "navigate", page: clone(reservation.page), url: "https://second.test/"}}));
         try {
             await entered.promise;
             assert.ok(f.calls.filter(call => call.name === "tabs.ungroup")
@@ -384,7 +393,7 @@ const cases = [
             require("../chromium/external-links/extension/workspace.js").bounded(task, label, 20) : originalApi(task, label);
         // The raw callback is lost with the old worker, not released after restart.
         f.hooks["tabs.create"] = () => new Promise(() => {});
-        await f.ready();
+        await f.ready(); await assert.rejects(f.executor.execute(execute(f)), /timed out/);
         const old = f.executor;
         for (const candidate of old.personalCandidates.values()) clearTimeout(candidate.timer);
         const url = [...old.workCreations.keys()][0];
@@ -402,7 +411,7 @@ const cases = [
         assert.equal(f.executor.popupState().remotes[0].creation_unknown, true);
     }],
     ["different browser boot does not restore personal obligations", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const personal = await f.api.tabs.create({windowId: 1, url: "https://human.test/", active: true});
         await settle(); await f.executor.inheritanceTail;
         const old = f.executor;
@@ -414,7 +423,8 @@ const cases = [
     ["popup unknown row confirms one recovery and leaves OFF", async () => {
         const f = fixture({globalAutomation: true});
         f.hooks["tabs.create"] = async () => { throw new Error("lost result"); };
-        await f.ready(); delete f.hooks["tabs.create"]; await f.send({control: "stop"});
+        await f.ready(); await assert.rejects(f.executor.execute(execute(f)), /lost result/);
+        delete f.hooks["tabs.create"]; await f.send({control: "stop"});
         const document = dom(); let confirmed = false;
         vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../chromium/external-links/extension/popup.js"), "utf8"),
             {document, chrome: {runtime: {sendMessage: message => f.send(message)}}, confirm: () => confirmed});
@@ -430,7 +440,7 @@ const cases = [
         assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
     }],
     ["popup renders committed ON with readiness error", async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         f.hooks["session.set"] = async () => { throw new Error("consent failed"); };
         await f.send({control: "start"});
         const document = dom();
@@ -454,7 +464,7 @@ if (rofiPath) {
         ["popup.js", 'openExtensionPage("history.html")'],
         ["popup.js", 'openExtensionPage("bookmarks.html")'],
     ]) cases.push([`actual Rofi ${file}: ${entrance}`, async () => {
-        const f = fixture({globalAutomation: true}); await f.ready();
+        const f = fixture({globalAutomation: true}); await physicalReady(f);
         const work = f.executor.recordFor("remote"); const authority = clone(f.executor.state("remote"));
         await f.api.tabs.update(work.tab_id, {active: true});
         const {context, creates} = loadRofi(f, file);
