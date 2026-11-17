@@ -100,7 +100,7 @@ const cases = [
         assert.equal(f.executor.ownsTab(restoredWork), false);
     }],
 ];
-for (const intervention of ["active work", "personal member", "rename", "recolor", "expand", "move"]) {
+for (const intervention of ["active work", "personal member", "rename", "recolor", "move"]) {
     cases.push([`fresh group defaults yield to ${intervention} during journal persistence`, async () => {
         const f = fresh(); seedPersonal(f, 3); await f.ready(); const barrier = holdGroupedJournal(f);
         const preparing = f.materialize();
@@ -113,7 +113,6 @@ for (const intervention of ["active work", "personal member", "rename", "recolor
             }
             if (intervention === "rename") await f.api.tabGroups.update(work.group_id, {title: "Human research"});
             if (intervention === "recolor") await f.api.tabGroups.update(work.group_id, {color: "red"});
-            if (intervention === "expand") await f.api.tabGroups.update(work.group_id, {collapsed: false});
             if (intervention === "move") {
                 const order = f.tabStrip(1); order.splice(order.indexOf(work.tab_id), 1); order.unshift(work.tab_id);
                 await Promise.all(f.api.tabGroups.onMoved.emit(clone(f.groups.get(work.group_id))));
@@ -124,6 +123,102 @@ for (const intervention of ["active work", "personal member", "rename", "recolor
         assert.equal(f.tabs.get(1).active, intervention !== "active work");
         assert.equal(f.executor.recordEnabledAgreed("remote"), true);
         assert.equal(f.executor.ownsTab(3), false);
+    }]);
+}
+for (const initialEvent of ["membership", "visuals", "creation"]) {
+    cases.push([`delayed initial ${initialEvent} event is not a user presentation edit`, async () => {
+        const f = fresh(); await f.ready();
+        const barrier = holdGroupedJournal(f); const pending = [];
+        const source = initialEvent === "membership" ? f.api.tabs.onUpdated :
+            initialEvent === "creation" ? f.api.tabGroups.onCreated : f.api.tabGroups.onUpdated;
+        const emit = source.emit;
+        source.emit = (...args) => { pending.push(args); return []; };
+        const preparing = f.materialize();
+        try {
+            await barrier.entered.promise;
+            source.emit = emit;
+            for (const args of pending) await Promise.all(emit(...args));
+        } finally { source.emit = emit; barrier.release.resolve(); }
+        await preparing;
+        assert.equal(f.groups.get(record(f).group_id).collapsed, true);
+        assert.equal(f.groups.get(record(f).group_id).title, TITLE);
+    }]);
+}
+for (const intervention of ["rename", "recolor", "move", "collapse then expand"]) {
+    cases.push([`manual ${intervention} before grouping callback is retained without membership delivery`, async () => {
+        const f = fresh(); seedPersonal(f, 3); await f.ready();
+        const emit = f.api.tabs.onUpdated.emit; const pending = [];
+        f.api.tabs.onUpdated.emit = (...args) => { pending.push(args); return []; };
+        let humanGroup;
+        f.hooks["tabs.group.after"] = async groupId => {
+            if (intervention === "rename") await f.api.tabGroups.update(groupId, {title: "Human title"});
+            if (intervention === "recolor") await f.api.tabGroups.update(groupId, {color: "red"});
+            if (intervention === "move") {
+                const order = f.tabStrip(1); const id = order.pop(); order.unshift(id);
+                await Promise.all(f.api.tabGroups.onMoved.emit(clone(f.groups.get(groupId))));
+            }
+            if (intervention === "collapse then expand") {
+                await f.api.tabGroups.update(groupId, {collapsed: true});
+                await f.api.tabGroups.update(groupId, {collapsed: false});
+            }
+            humanGroup = clone(f.groups.get(groupId));
+        };
+        try { await f.materialize(); } finally { f.api.tabs.onUpdated.emit = emit; }
+        for (const args of pending) await Promise.all(emit(...args));
+        assert.deepEqual(f.groups.get(record(f).group_id), humanGroup);
+        assert.equal(f.calls.some(call => call.name === "tabGroups.update" && call.args[1].title === TITLE), false);
+    }]);
+}
+for (const operation of ["Stop", "cancel", "executor replacement", "removal"]) {
+    cases.push([`${operation} after fresh grouping fences initial collapse and navigation`, async () => {
+        const f = fresh(); await f.ready(); const barrier = holdGroupedJournal(f);
+        const payload = execute(f); const preparing = f.executor.execute(payload);
+        const result = preparing.then(() => null, error => error);
+        let changing;
+        try {
+            await barrier.entered.promise;
+            if (operation === "Stop") changing = f.send({control: "stop"});
+            if (operation === "cancel") {
+                const {authorization, command, ...cancellation} = payload;
+                changing = f.executor.cancel({...cancellation, request_id: "cancel-defaults",
+                    execution_request_id: payload.request_id});
+            }
+            if (operation === "executor replacement") changing = f.emitRemote({...REMOTE,
+                executor_fence: {executor_id: "replacement", epoch: 2}});
+            if (operation === "removal") {
+                const id = record(f).tab_id; f.tabs.delete(id);
+                changing = Promise.all(f.api.tabs.onRemoved.emit(id, {windowId: 1}));
+            }
+        } finally { barrier.release.resolve(); }
+        await Promise.all([result, changing]);
+        assert.equal(f.calls.some(call => call.name === "tabGroups.update"), false);
+        assert.equal(f.calls.some(call => call.name === "debugger.sendCommand"), false);
+        assert.equal(f.executor.presentationDefaults.size, 0);
+    }]);
+}
+for (const mode of ["rejected", "timed out", "applied then receipt lost"]) {
+    cases.push([`initial folding ${mode} is visible and never automatically repeated`, async () => {
+        const f = fresh(); await f.ready(); const held = deferred(); let attempts = 0;
+        const advisories = []; f.executor.onAdvisoryError = error => advisories.push(error.message);
+        if (mode === "applied then receipt lost") {
+            f.hooks["tabGroups.update.after"] = async () => { attempts++; throw new Error("fold receipt lost"); };
+        } else {
+            f.hooks["tabGroups.update"] = async () => {
+                attempts++; if (mode === "timed out") await held.promise;
+                throw new Error("initial folding unavailable");
+            };
+        }
+        try {
+            await assert.rejects(f.executor.execute(execute(f)));
+            const creates = f.calls.filter(call => call.name === "tabs.create").length;
+            await f.emitRemote(REMOTE); await f.executor.reconcileAll();
+            assert.equal(attempts, 1);
+            assert.equal(f.calls.filter(call => call.name === "tabs.create").length, creates);
+            assert.equal(f.calls.some(call => call.name === "debugger.sendCommand"), false);
+            assert.ok(f.executor.popupState().error || advisories.length);
+        } finally { held.resolve(); }
+        await f.executor.presentationTail.catch(() => {});
+        assert.equal(f.executor.presentationDefaults.size, 0);
     }]);
 }
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

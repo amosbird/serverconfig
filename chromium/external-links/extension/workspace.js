@@ -1108,7 +1108,7 @@ class WorkspaceExecutor {
                     fail("stale_page", "Presentation group changed during work tab preparation");
                 }
             }
-            const defaults = {changed: false, group_id: null};
+            const defaults = {changed: false, groups: new Map()};
             if (!candidate) this.presentationDefaults.set(record, defaults);
             try {
                 record.group_reused = !!candidate;
@@ -1124,7 +1124,6 @@ class WorkspaceExecutor {
                 check();
                 const groupedId = record.group_id;
                 const groupGeneration = record.group_generation || 0;
-                defaults.group_id = groupedId;
                 staging.group_id = groupedId;
                 staging.stage = "grouped";
                 await this.persistInheritance();
@@ -1141,7 +1140,10 @@ class WorkspaceExecutor {
                     check();
                     const members = await this.chrome.tabs.query({windowId: record.window_id, groupId: groupedId});
                     check();
-                    if (!defaults.changed && record.group_id === groupedId && !record.group_reused &&
+                    const witness = defaults.groups.get(groupedId);
+                    if (!defaults.changed && witness?.created && !witness.changed &&
+                            sameRef(this.presentationVisuals(group), witness.created) &&
+                            record.group_id === groupedId && !record.group_reused &&
                             (record.group_generation || 0) === groupGeneration &&
                             group.id === groupedId && group.windowId === record.window_id &&
                             !group.title && !group.collapsed && members.length === 1 &&
@@ -1159,9 +1161,27 @@ class WorkspaceExecutor {
         this.presentationTail = task;
         return this.api(() => task, "prepare work tab presentation group");
     }
-    presentationGroupChanged(group) {
+    presentationVisuals(group) {
+        return {windowId: group.windowId, title: group.title || "", color: group.color,
+            collapsed: group.collapsed};
+    }
+    presentationGroupChanged(group, event = "updated", memberId = null) {
+        if (!Number.isSafeInteger(group.id) || group.id < 0) return;
         for (const [record, defaults] of this.presentationDefaults) {
-            if (group.id === (defaults.group_id ?? record.group_id)) defaults.changed = true;
+            if (event === "membership" && memberId === record.tab_id ||
+                    group.windowId !== undefined && group.windowId !== record.window_id) continue;
+            if (!defaults.groups.has(group.id)) {
+                if (defaults.groups.size >= 128) { defaults.changed = true; continue; }
+                defaults.groups.set(group.id, {created: null, visual: null, changed: false});
+            }
+            const witness = defaults.groups.get(group.id);
+            if (event === "created" || event === "updated") {
+                const visual = this.presentationVisuals(group);
+                if (witness.created && !sameRef(witness.created, visual) ||
+                        witness.visual && !sameRef(witness.visual, visual)) witness.changed = true;
+                if (event === "created") witness.created = visual;
+                else witness.visual = visual;
+            } else witness.changed = true;
         }
     }
     async seedActiveTabs() {
@@ -1319,7 +1339,7 @@ class WorkspaceExecutor {
     }
     newPersonalCandidate(tab) {
         if (!Number.isSafeInteger(tab.id)) return;
-        this.presentationGroupChanged({id: tab.groupId});
+        this.presentationGroupChanged({id: tab.groupId, windowId: tab.windowId}, "membership", tab.id);
         const context = this.personalCreationContext(tab);
         const source = this.personalInheritanceSource(tab);
         const active = this.activeTabs.get(tab.windowId);
@@ -1362,8 +1382,8 @@ class WorkspaceExecutor {
             } else this.sourceGroupEventsOverflow = true;
         }
         const pending = this.pendingCreations.get(tabId);
-        if (!pending?.grouping && Number.isSafeInteger(change.groupId)) {
-            this.presentationGroupChanged({id: change.groupId});
+        if (Number.isSafeInteger(change.groupId)) {
+            this.presentationGroupChanged({id: change.groupId, windowId: tab?.windowId}, "membership", tabId);
         }
         if (pending?.grouping && change.groupId >= 0 && pending.group_id === null) {
             pending.group_id = change.groupId;

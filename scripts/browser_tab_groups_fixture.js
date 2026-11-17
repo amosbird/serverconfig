@@ -140,6 +140,7 @@ function fixture({globalAutomation = false} = {}) {
                     const created = {id: groupId, windowId, title: "", color: "grey", collapsed: false};
                     groups.set(groupId, created);
                     api.tabGroups.onCreated.emit(clone(created));
+                    api.tabGroups.onUpdated.emit(clone(created));
                 }
                 joinGroup(ids, groupId);
                 ids.forEach(id => {

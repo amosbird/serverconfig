@@ -480,8 +480,9 @@ function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailur
 
 function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailure) {
     const run = (tabId, info) => workspaces.revokeTab(tabId, info).catch(onFailure);
-    for (const event of ["onUpdated", "onMoved", "onRemoved"]) {
-        chromeApi.tabGroups?.[event]?.addListener(group => workspaces.presentationGroupChanged(group));
+    for (const [event, kind] of [["onCreated", "created"], ["onUpdated", "updated"],
+        ["onMoved", "moved"], ["onRemoved", "removed"]]) {
+        chromeApi.tabGroups?.[event]?.addListener(group => workspaces.presentationGroupChanged(group, kind));
     }
     chromeApi.tabs.onActivated.addListener(info =>
         Promise.resolve(workspaces.tabActivated(info)).catch(onFailure));
