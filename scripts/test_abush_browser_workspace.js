@@ -96,10 +96,11 @@ const cases = [
         const ordinary = clone(f.tabs.get(1)); const popup = clone(f.tabs.get(2));
         const record = await f.enable();
         assert.deepEqual(f.calls.find(call => call.name === "tabs.create").args[0],
-            {windowId: 1, url: `about:blank#abush-work-${record.enable_id}`, active: false});
+            {windowId: 1, url: `about:blank#abush-work-${record.enable_id}`,
+                active: false, index: 0x7fffffff});
         assert.deepEqual(f.calls.find(call => call.name === "tabs.group").args[0], {tabIds: [record.tab_id]});
         assert.deepEqual(f.calls.find(call => call.name === "tabGroups.update").args,
-            [record.group_id, {title: "Abush · local", color: "purple"}]);
+            [record.group_id, {title: "Abush · local", color: "purple", collapsed: true}]);
         assert.equal(record.agreed, true);
         await f.executor.execute(execute(f));
         assert.deepEqual(f.tabs.get(1), ordinary); assert.deepEqual(f.tabs.get(2), popup);

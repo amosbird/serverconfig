@@ -5,6 +5,8 @@ const WAL_KEY = "abushBrowserEffectsV9";
 const RECEIPTS_KEY = "abushBrowserReceiptsV9";
 const INHERITANCE_KEY = "abushBrowserInheritanceV9";
 const API_TIMEOUT_MS = 2000;
+// tabs.create clamps this signed API index to the current end, even after concurrent inserts.
+const RIGHT_EDGE_TAB_INDEX = 0x7fffffff;
 const BROWSER_ERROR_CODES = new Set([
     "browser_disabled", "unknown_principal", "unknown_connection", "stale_session",
     "stale_authority", "human_controlled", "missing_capability", "stale_page",
@@ -101,6 +103,7 @@ class WorkspaceExecutor {
         this.inheritanceTail = Promise.resolve();
         this.workCreatesInFlight = 0;
         this.presentationTail = Promise.resolve();
+        this.presentationDefaults = new Map();
         this.activeTabs = new Map();
         this.activationGenerations = new Map();
         this.removedActiveTabs = new Set();
@@ -130,6 +133,7 @@ class WorkspaceExecutor {
             for (const key of this.controls) this.bumpControl(key);
             for (const record of this.records.values()) this.closeAuthorization(record, "disabled");
             this.records.clear();
+            this.presentationDefaults.clear();
             this.revisions.clear();
             this.remotes.clear();
             this.aliases.clear();
@@ -915,7 +919,8 @@ class WorkspaceExecutor {
             this.workCreatesInFlight++;
             const rawCreation = Promise.resolve().then(() => {
                 check();
-                return this.chrome.tabs.create({windowId: window.id, url: staging.url, active: false});
+                return this.chrome.tabs.create({windowId: window.id, url: staging.url,
+                    active: false, index: RIGHT_EDGE_TAB_INDEX});
             }).then(async created => {
                 staging.tab_id = created.id;
                 staging.stage = "created";
@@ -1024,7 +1029,7 @@ class WorkspaceExecutor {
                 check();
                 createIssued = true;
                 return this.chrome.tabs.create({windowId: record.window_id,
-                    url: staging.url, active: false});
+                    url: staging.url, active: false, index: RIGHT_EDGE_TAB_INDEX});
             }).then(async created => {
                 check();
                 staging.tab_id = created.id;
@@ -1103,39 +1108,61 @@ class WorkspaceExecutor {
                     fail("stale_page", "Presentation group changed during work tab preparation");
                 }
             }
-            check();
-            record.group_reused = !!candidate;
-            staging.group_reused = record.group_reused;
-            record.grouping = true;
+            const defaults = {changed: false, group_id: null};
+            if (!candidate) this.presentationDefaults.set(record, defaults);
             try {
-                // The title selects a container only; the sole mutation target is this newly created tab.
-                record.group_id = await this.chrome.tabs.group({tabIds: [record.tab_id],
-                    ...(candidate ? {groupId: candidate.id} : {})});
-            } finally {
-                delete record.grouping;
-            }
-            check();
-            const groupedId = record.group_id;
-            const groupGeneration = record.group_generation || 0;
-            staging.group_id = groupedId;
-            staging.stage = "grouped";
-            await this.persistInheritance();
-            this.drainPersonalCandidates();
-            check();
-            if (!candidate) {
-                const tab = await this.validateTab(record);
-                check();
-                if (record.group_id !== groupedId || record.group_reused ||
-                        (record.group_generation || 0) !== groupGeneration || tab.groupId !== groupedId) {
-                    fail("stale_page", "Created presentation group changed before labeling");
+                record.group_reused = !!candidate;
+                staging.group_reused = record.group_reused;
+                record.grouping = true;
+                try {
+                    // The title selects a container only; the sole membership target is the new tab.
+                    record.group_id = await this.chrome.tabs.group({tabIds: [record.tab_id],
+                        ...(candidate ? {groupId: candidate.id} : {})});
+                } finally {
+                    delete record.grouping;
                 }
-                await this.chrome.tabGroups.update(groupedId, {title, color: "purple"});
+                check();
+                const groupedId = record.group_id;
+                const groupGeneration = record.group_generation || 0;
+                defaults.group_id = groupedId;
+                staging.group_id = groupedId;
+                staging.stage = "grouped";
+                await this.persistInheritance();
+                this.drainPersonalCandidates();
+                check();
+                if (!candidate) {
+                    const tab = await this.validateTab(record);
+                    check();
+                    if (record.group_id !== groupedId || record.group_reused ||
+                            (record.group_generation || 0) !== groupGeneration || tab.groupId !== groupedId) {
+                        fail("stale_page", "Created presentation group changed before labeling");
+                    }
+                    const group = await this.chrome.tabGroups.get(groupedId);
+                    check();
+                    const members = await this.chrome.tabs.query({windowId: record.window_id, groupId: groupedId});
+                    check();
+                    if (!defaults.changed && record.group_id === groupedId && !record.group_reused &&
+                            (record.group_generation || 0) === groupGeneration &&
+                            group.id === groupedId && group.windowId === record.window_id &&
+                            !group.title && !group.collapsed && members.length === 1 &&
+                            members[0].id === record.tab_id && members[0].active === false &&
+                            this.activeTabs.get(record.window_id)?.tab_id !== record.tab_id) {
+                        await this.chrome.tabGroups.update(groupedId, {title, color: "purple", collapsed: true});
+                    }
+                }
+                check();
+            } finally {
+                this.presentationDefaults.delete(record);
             }
-            check();
         });
         // A caller timeout cannot release the queue while Chrome's grouping effect is unresolved.
         this.presentationTail = task;
         return this.api(() => task, "prepare work tab presentation group");
+    }
+    presentationGroupChanged(group) {
+        for (const [record, defaults] of this.presentationDefaults) {
+            if (group.id === (defaults.group_id ?? record.group_id)) defaults.changed = true;
+        }
     }
     async seedActiveTabs() {
         const boot = this.browserBootId;
@@ -1156,6 +1183,9 @@ class WorkspaceExecutor {
     }
     tabActivated(info) {
         if (!Number.isSafeInteger(info.tabId) || !Number.isSafeInteger(info.windowId)) return;
+        for (const [record, defaults] of this.presentationDefaults) {
+            if (info.tabId === record.tab_id) defaults.changed = true;
+        }
         const previous = this.activeTabs.get(info.windowId);
         if (previous?.tab_id === info.tabId) return;
         this.activationGenerations.set(info.windowId, (this.activationGenerations.get(info.windowId) || 0) + 1);
@@ -1289,6 +1319,7 @@ class WorkspaceExecutor {
     }
     newPersonalCandidate(tab) {
         if (!Number.isSafeInteger(tab.id)) return;
+        this.presentationGroupChanged({id: tab.groupId});
         const context = this.personalCreationContext(tab);
         const source = this.personalInheritanceSource(tab);
         const active = this.activeTabs.get(tab.windowId);
@@ -1331,6 +1362,9 @@ class WorkspaceExecutor {
             } else this.sourceGroupEventsOverflow = true;
         }
         const pending = this.pendingCreations.get(tabId);
+        if (!pending?.grouping && Number.isSafeInteger(change.groupId)) {
+            this.presentationGroupChanged({id: change.groupId});
+        }
         if (pending?.grouping && change.groupId >= 0 && pending.group_id === null) {
             pending.group_id = change.groupId;
             const staging = [...this.workCreations.values()].find(value => value.tab_id === tabId);

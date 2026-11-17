@@ -40,6 +40,31 @@ function fixture({globalAutomation = false} = {}) {
         groupId: -1, active: true}], [2, {id: 2, windowId: 2,
         url: "https://popup.test/", groupId: -1, active: true}]]);
     const groups = new Map();
+    const tabOrders = new Map();
+    const presentationFrames = [];
+    function tabStrip(windowId) {
+        const order = (tabOrders.get(windowId) || []).filter(id => tabs.get(id)?.windowId === windowId);
+        for (const current of tabs.values()) {
+            if (current.windowId === windowId && !order.includes(current.id)) order.push(current.id);
+        }
+        tabOrders.set(windowId, order);
+        return order;
+    }
+    function recordPresentation(name, args) {
+        presentationFrames.push({name, args: clone(args),
+            strips: [...windows.keys()].map(windowId => ({windowId, ids: [...tabStrip(windowId)]})),
+            tabs: clone([...tabs.values()]), groups: clone([...groups.values()]),
+            windows: clone([...windows.values()])});
+    }
+    function joinGroup(ids, groupId) {
+        const windowId = tab(ids[0]).windowId;
+        const order = tabStrip(windowId);
+        const previous = order.findIndex(id => ids.includes(id));
+        const remaining = order.filter(id => !ids.includes(id));
+        const lastMember = remaining.findLastIndex(id => tab(id).groupId === groupId);
+        remaining.splice(lastMember >= 0 ? lastMember + 1 : previous, 0, ...ids);
+        tabOrders.set(windowId, remaining);
+    }
     let nextTab = 10;
     let nextGroup = 100;
     let browserRestart = 0;
@@ -73,6 +98,7 @@ function fixture({globalAutomation = false} = {}) {
             if (override !== undefined) return override;
         }
         const result = run();
+        recordPresentation(name, args);
         if (hooks[`${name}.after`]) await hooks[`${name}.after`](result, ...args);
         return result;
     };
@@ -115,6 +141,7 @@ function fixture({globalAutomation = false} = {}) {
                     groups.set(groupId, created);
                     api.tabGroups.onCreated.emit(clone(created));
                 }
+                joinGroup(ids, groupId);
                 ids.forEach(id => {
                     tab(id).groupId = groupId;
                     api.tabs.onMoved.emit(id, {windowId: tab(id).windowId, fromIndex: 0, toIndex: 1});
@@ -143,7 +170,11 @@ function fixture({globalAutomation = false} = {}) {
                     ([key, value]) => item[key] === value)));
             }),
             update: (id, args) => invoke("tabGroups.update", [id, args], () => {
-                const updated = Object.assign(group(id), clone(args));
+                const current = group(id);
+                if (args.collapsed && [...tabs.values()].some(item => item.groupId === id && item.active)) {
+                    throw new Error("Cannot collapse the active tab's group without changing selection");
+                }
+                const updated = Object.assign(current, clone(args));
                 api.tabGroups.onUpdated.emit(clone(updated));
                 return clone(updated);
             })},
@@ -170,6 +201,9 @@ function fixture({globalAutomation = false} = {}) {
         if (args.url.includes("ordinary-staging.html#")) {
             current.title = ORDINARY_PREFIX + args.url.split("#")[1];
         }
+        const order = tabStrip(args.windowId);
+        const index = args.index === undefined ? order.length : Math.max(0, Math.min(args.index, order.length));
+        order.splice(index, 0, current.id);
         tabs.set(current.id, current);
         if (current.active) activate(current);
         api.tabs.onCreated.emit(clone(current));
@@ -246,7 +280,8 @@ function fixture({globalAutomation = false} = {}) {
     const send = (message, sender = trusted) => bounded(() => new Promise(resolve =>
         api.runtime.onMessage.emit(message, sender, resolve)), "runtime response", 4000);
     const materializations = new Map();
-    const result = {api, calls, tabs, windows, groups, syncGroups, local, session, hooks, attachedTabs, trusted, send, errors,
+    const result = {api, calls, tabs, windows, groups, syncGroups, tabStrip, presentationFrames,
+        local, session, hooks, attachedTabs, trusted, send, errors,
         emitRemote: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
             event: "abush_browser.remote_state", payload})),
         emitNative: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
@@ -287,7 +322,10 @@ function fixture({globalAutomation = false} = {}) {
                 groupId: item.groupId < 0 ? -1 : groupIds.get(item.groupId)}));
             const restoredGroups = [...groups.values()].map(item => ({...item,
                 id: groupIds.get(item.id), windowId: windowIds.get(item.windowId)}));
-            windows.clear(); tabs.clear(); groups.clear(); attachedTabs.clear();
+            const restoredOrders = [...windows.keys()].map(id => [windowIds.get(id),
+                tabStrip(id).map(tabId => tabIds.get(tabId))]);
+            windows.clear(); tabs.clear(); groups.clear(); attachedTabs.clear(); tabOrders.clear();
+            restoredOrders.forEach(([id, order]) => tabOrders.set(id, order));
             restoredWindows.forEach(item => windows.set(item.id, item));
             restoredTabs.forEach(item => tabs.set(item.id, item));
             restoredGroups.forEach(item => groups.set(item.id, item));
