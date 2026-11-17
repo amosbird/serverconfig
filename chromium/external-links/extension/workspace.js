@@ -76,6 +76,7 @@ class WorkspaceExecutor {
         this.operations = new Map();
         this.executionTails = new Map();
         this.ordinaryOperations = new Map();
+        this.ordinaryCancellations = {};
         this.controls = new Set();
         this.revokedTabs = new Set();
         this.localTail = Promise.resolve();
@@ -196,6 +197,7 @@ class WorkspaceExecutor {
             this.effects = wal.effects || {};
             this.creations = wal.creations || {};
             this.ordinary = wal.ordinary || {};
+            this.ordinaryCancellations = {...(wal.ordinary_cancellations || {}), ...this.ordinaryCancellations};
             for (const entry of Object.values(this.creations)) {
                 if (!["completed", "abandoned", "not_applied"].includes(entry.phase)) entry.phase = "unknown";
             }
@@ -298,7 +300,7 @@ class WorkspaceExecutor {
         const write = this.localTail.catch(() => {}).then(() =>
             this.chrome.storage.local.set({[WAL_KEY]: clone({version: 9,
                 effects: this.effects, creations: this.creations, ordinary: this.ordinary,
-                cancellations: this.cancellations})}));
+                cancellations: this.cancellations, ordinary_cancellations: this.ordinaryCancellations})}));
         this.localTail = write;
         return this.api(() => write, "persist effect journal");
     }
@@ -1844,12 +1846,64 @@ class WorkspaceExecutor {
         if (payload?.version !== 1 || payload.operation !== "ordinary_open_cancel" || !text(payload.request_id)) {
             fail("invalid_command", "Invalid ordinary cancellation");
         }
+        this.ordinaryCancellations[payload.request_id] = true;
+        if (this.restored) this.persistWal().catch(error => this.reportAdvisoryError(error));
         const op = this.ordinaryOperations.get(payload.request_id);
         if (op) {
             op.cancelled = true;
             op.wake?.();
         }
-        return Boolean(op);
+        return true;
+    }
+    observeOrdinaryTab(url) {
+        let target = null;
+        let initialGroup = null;
+        let isolated = false;
+        let navigating = false;
+        let invalid = false;
+        const early = [];
+        const placeholder = value => !value || value === "about:blank" || value === url;
+        const observe = (kind, args) => {
+            if (!target) {
+                if (early.length >= 128) invalid = true;
+                else early.push([kind, args]);
+                return;
+            }
+            const [id, change, tab] = args;
+            if (kind === "activated") {
+                if (id.windowId === target.windowId && id.tabId !== target.id) invalid = true;
+            } else if (kind === "created") {
+                if (id.id === target.id) initialGroup = id.groupId;
+            } else if (id === target.id) {
+                if (kind !== "updated" || tab?.windowId !== target.windowId ||
+                        change.groupId !== undefined && change.groupId !== -1 &&
+                            (isolated || change.groupId !== initialGroup) ||
+                        !navigating && (change.url !== undefined && !placeholder(change.url) ||
+                            change.pendingUrl && change.pendingUrl !== url)) invalid = true;
+            }
+        };
+        const listeners = ["onCreated", "onUpdated", "onRemoved", "onDetached", "onAttached", "onActivated"]
+            .map(event => [this.chrome.tabs[event], (...args) => observe(event.slice(2).toLowerCase(), args)]);
+        for (const [event, listener] of listeners) event.addListener(listener);
+        return {
+            bind: tab => {
+                target = {id: tab.id, windowId: tab.windowId};
+                initialGroup = tab.groupId;
+                for (const [kind, args] of early) observe(kind, args);
+                early.length = 0;
+            },
+            check: () => { if (invalid) throw new Error("Ordinary tab changed during preparation"); },
+            validate: tab => {
+                if (tab.id !== target.id || tab.windowId !== target.windowId ||
+                        !placeholder(tab.url) || tab.pendingUrl && tab.pendingUrl !== url ||
+                        tab.groupId !== -1 && tab.groupId !== initialGroup) {
+                    throw new Error("Created ordinary tab no longer matches its staging request");
+                }
+            },
+            isolate: () => { isolated = true; },
+            navigate: () => { navigating = true; },
+            close: () => { for (const [event, listener] of listeners) event.removeListener(listener); },
+        };
     }
     async waitOrdinaryStaging(payload, op, tab, url, nonce, api, check) {
         let revision = 0;
@@ -1913,7 +1967,7 @@ class WorkspaceExecutor {
             if (running) return running.done;
             return this.ordinaryCompletion(payload, old.completion || "unknown");
         }
-        const op = {cancelled: false, dispatched: false};
+        const op = {cancelled: this.ordinaryCancellations[payload.request_id] === true, dispatched: false};
         const entry = {version: 9, payload: clone(payload), phase: "accepted", completion: null};
         this.ordinary[payload.request_id] = entry;
         this.ordinaryOperations.set(payload.request_id, op);
@@ -1923,7 +1977,9 @@ class WorkspaceExecutor {
         return op.done;
     }
     async performOrdinary(payload, entry, op) {
+        let observation;
         const check = () => {
+            observation?.check();
             if (op.cancelled || Date.now() >= payload.deadline_ms) {
                 fail("executor_unavailable", "Ordinary open cancelled or deadline expired");
             }
@@ -1951,6 +2007,7 @@ class WorkspaceExecutor {
             entry.phase = "dispatched";
             await this.persistWal();
             check();
+            observation = this.observeOrdinaryTab(url);
             let tab;
             if (window) tab = await api(() => {
                 check();
@@ -1970,7 +2027,13 @@ class WorkspaceExecutor {
                     window && tab.windowId !== window.id || this.ownsTab(tab.id)) {
                 throw new Error("No exact ordinary tab");
             }
+            observation.bind(tab);
+            check();
+            const created = await api(() => this.chrome.tabs.get(tab.id), "verify exact created ordinary tab");
+            observation.validate(created);
+            check();
             await api(() => this.chrome.tabs.ungroup([tab.id]), "ungroup exact ordinary tab");
+            observation.isolate();
             const isolated = await api(() => this.chrome.tabs.get(tab.id), "verify ordinary isolation");
             if (isolated.id !== tab.id || isolated.windowId !== tab.windowId ||
                     isolated.groupId !== -1 || this.ownsTab(tab.id)) {
@@ -1985,6 +2048,7 @@ class WorkspaceExecutor {
                     !Number.isSafeInteger(prepared.xid) || prepared.xid <= 0) throw new Error("Invalid ordinary prepare receipt");
             check();
             await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
+            observation.navigate();
             let navigationConfirmed = false;
             const requested = new URL(payload.url).href;
             if (new URL(payload.url).protocol === "file:") {
@@ -1997,8 +2061,8 @@ class WorkspaceExecutor {
                     check();
                     return this.chrome.tabs.update(tab.id, {url: payload.url, active: true});
                 }, "navigate exact ordinary tab");
-                navigationConfirmed = navigated?.id === tab.id &&
-                    new URL(navigated.pendingUrl || navigated.url).href === requested;
+                navigationConfirmed = navigated?.id === tab.id && !navigated.pendingUrl &&
+                    new URL(navigated.url).href === requested;
             }
             check();
             const activated = await native("activate", {...prepared, deadline_ms: payload.deadline_ms});
@@ -2020,6 +2084,8 @@ class WorkspaceExecutor {
             entry.completion = op.dispatched ? "unknown" : "not_applied";
             entry.error = error.message || String(error);
             this.reportAdvisoryError(new Error(`Ordinary open ${payload.request_id}: ${entry.error}`));
+        } finally {
+            observation?.close();
         }
         entry.phase = "terminal";
         await this.persistWal();

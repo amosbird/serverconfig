@@ -2,6 +2,7 @@
 const {assert, clone, deferred, fixture, runCases, REMOTE} =
     require("./browser_tab_groups_fixture.js");
 const {WAL_KEY, ORDINARY_PREFIX} = require("../chromium/external-links/extension/workspace.js");
+const {registerNativeEventRouter} = require("../chromium/external-links/extension/background.js");
 const request = (id, url = "https://qq.com/?ordinary=exact#fragment") => ({version: 1,
     operation: "ordinary_open", focus: true, request_id: id, url, deadline_ms: Date.now() + 5000});
 const fresh = () => fixture({globalAutomation: true});
@@ -122,7 +123,7 @@ for (const intervention of ["foreign pending", "foreign committed", "lost activa
         assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
     }]);
 }
-for (const after of ["staging", "blank", "other extension"]) {
+for (const after of ["staging", "blank", "other extension", "unrelated http"]) {
     cases.push([`accepted pending navigation returning to ${after} is never falsely applied`, async () => {
         const f = fresh(); await f.ready(); let staging;
         f.hooks["tabs.create.after"] = async result => { staging = result.url; };
@@ -135,7 +136,8 @@ for (const after of ["staging", "blank", "other extension"]) {
         f.hooks["native.activate"] = async () => {
             const tab = opened(f); delete tab.pendingUrl;
             tab.url = after === "blank" ? "about:blank" : after === "other extension" ?
-                "chrome-extension://extension/ordinary-staging.html#other" : staging;
+                "chrome-extension://extension/ordinary-staging.html#other" : after === "unrelated http" ?
+                    "https://personal.test/not-a-correlated-redirect" : staging;
         };
         assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
         const mutations = f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.activate"]
@@ -231,4 +233,66 @@ cases.push(["deadline without a staging commit drains listeners and never contin
     await commit(f, stage.id, stage.url, stage.title);
     assert.equal(f.calls.some(call => call.name === "native.prepare"), false);
 }]);
+for (const bootstrap of [false, true]) cases.push([
+    `ordinary cancellation before ${bootstrap ? "bootstrap lease" : "native event"} readiness prevents all creation`, async () => {
+        const f = fresh(); const readiness = deferred(); let route;
+        registerNativeEventRouter({onEvent: callback => { route = callback; }}, f.executor,
+            () => readiness.promise, error => { throw new Error(error); });
+        const payload = request(`cancel-before-ready-${bootstrap}`);
+        let pending;
+        if (bootstrap) {
+            f.executor.bootstrapLeases = [payload];
+        } else {
+            pending = route({service: "ordinary_open", event: "ordinary_open", payload});
+        }
+        route({service: "ordinary_open", event: "ordinary_open_cancel", payload: {
+            version: 1, operation: "ordinary_open_cancel", request_id: payload.request_id}});
+        if (bootstrap) {
+            await f.executor.acceptNativeBootstrap({...require("./browser_tab_groups_fixture.js").BOOT,
+                ordinary_launch_leases: [payload]});
+            await f.executor.restoreWhenReady();
+        } else {
+            readiness.resolve(); await pending;
+            if (f.executor.ordinaryOperations.get(payload.request_id)) {
+                await f.executor.ordinaryOperations.get(payload.request_id).done;
+            }
+        }
+        assert.equal(f.calls.some(call => call.name === "tabs.create"), false);
+        assert.equal(f.calls.some(call => call.name === "native.prepare"), false);
+        assert.equal(f.executor.ordinary[payload.request_id].completion, "not_applied");
+        assert.equal(f.local[WAL_KEY].ordinary_cancellations[payload.request_id], true);
+    }]);
+for (const intervention of ["navigation and regroup", "activation ABA", "detach ABA"]) {
+    cases.push([`operation witness fences ${intervention} across asynchronous preparation`, async () => {
+        const f = fresh(); await f.ready();
+        if (intervention === "navigation and regroup") {
+            f.hooks["tabs.create.after"] = async result => {
+                const tab = f.tabs.get(result.id);
+                tab.url = "https://personal.test/changed-before-create-return"; tab.groupId = 90;
+                f.syncGroups();
+                await Promise.all(f.api.tabs.onUpdated.emit(result.id,
+                    {url: tab.url, groupId: 90}, clone(tab)));
+            };
+        } else {
+            f.hooks["native.prepare"] = async () => {
+                const tab = opened(f);
+                if (intervention === "activation ABA") {
+                    await f.api.tabs.update(1, {active: true});
+                    await f.api.tabs.update(tab.id, {active: true});
+                } else {
+                    await Promise.all(f.api.tabs.onDetached.emit(tab.id, {oldWindowId: 1}));
+                    await Promise.all(f.api.tabs.onAttached.emit(tab.id, {newWindowId: 1}));
+                }
+            };
+        }
+        assert.equal(await f.executor.ordinaryOpen(request(`witness-${intervention}`)), "unknown");
+        if (intervention === "navigation and regroup") {
+            assert.equal(f.calls.some(call => call.name === "tabs.ungroup"), false);
+            assert.equal(f.calls.some(call => call.name === "tabs.update"), false);
+            assert.equal(f.groups.has(90), true);
+        }
+        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
+        assert.equal(f.calls.some(call => call.name === "native.activate"), false);
+    }]);
+}
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });
