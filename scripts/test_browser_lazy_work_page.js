@@ -234,4 +234,216 @@ for (const stage of ["create", "group", "navigate"]) cases.push([
         }
     },
 ]);
+for (const restart of [false, true]) cases.push([
+    `abandonment survives disabled consent failure ${restart ? "after worker restore" : "in live worker"}`, async () => {
+        const f = fresh(); await f.ready();
+        const oldEnable = record(f).enable_id;
+        f.hooks["tabs.group.after"] = async () => { throw new Error("group receipt lost"); };
+        const original = execute(f); await f.emitNative(original); delete f.hooks["tabs.group.after"];
+        const partial = record(f).tab_id; const oldTab = clone(f.tabs.get(partial));
+        assert.equal(record(f).preparation, "materializing");
+        f.hooks["session.set"] = async () => { throw new Error("consent unavailable"); };
+        await f.executor.recoverPreparation("remote", true).catch(() => {});
+        assert.ok(Object.values(f.local[WAL_KEY].creations).some(entry => entry.phase === "abandoned"));
+        delete f.hooks["session.set"];
+        if (restart) { await f.restart(); await f.emitRemote(REMOTE); }
+        else await f.executor.reconcileAll();
+        reserved(f); assert.notEqual(record(f).enable_id, oldEnable);
+        await f.emitNative(execute(f));
+        assert.notEqual(record(f).tab_id, partial);
+        assert.equal(calls(f, "tabs.create").length, 2);
+        assert.equal(calls(f, "debugger.sendCommand").length, 1);
+        assert.deepEqual(f.tabs.get(partial), oldTab);
+        const count = mutations(f).length; await f.emitNative(original);
+        assert.equal(mutations(f).length, count);
+    },
+]);
+for (const boundary of ["before", "after"]) cases.push([
+    `abandonment WAL failure ${boundary} commit stays blocked until durable recovery`, async () => {
+        const f = fresh(); await f.ready();
+        f.hooks["tabs.group.after"] = async () => { throw new Error("group receipt lost"); };
+        await f.emitNative(execute(f)); delete f.hooks["tabs.group.after"];
+        const partial = record(f).tab_id; const oldEnable = record(f).enable_id;
+        const hook = boundary === "before" ? "local.set" : "local.set.after";
+        f.hooks[hook] = async (value, args) => {
+            const saved = boundary === "before" ? value : args;
+            if (Object.values(saved[WAL_KEY]?.creations || {}).some(entry => entry.phase === "abandoned")) {
+                throw new Error("abandonment receipt lost");
+            }
+        };
+        assert.equal((await f.executor.recoverPreparation("remote", true)).ok, false);
+        delete f.hooks[hook];
+        await f.executor.reconcileAll();
+        assert.equal(f.executor.recordEnabledAgreed("remote"), false);
+        await f.restart(); await f.emitRemote(REMOTE);
+        if (boundary === "before") {
+            assert.equal(f.executor.recordEnabledAgreed("remote"), false);
+            await f.executor.recoverPreparation("remote", true);
+        }
+        reserved(f); assert.notEqual(record(f).enable_id, oldEnable);
+        await f.emitNative(execute(f));
+        assert.notEqual(record(f).tab_id, partial);
+        assert.equal(calls(f, "tabs.create").length, 2);
+        assert.equal(calls(f, "debugger.sendCommand").length, 1);
+    },
+]);
+for (const reopen of [false, true]) cases.push([
+    `unused reservation follows ${reopen ? "last normal window reopening" : "another existing normal window"}`, async () => {
+        const f = fresh(); await f.ready(); const before = identity(record(f));
+        if (!reopen) f.windows.set(3, {id: 3, type: "normal", focused: false});
+        f.windows.delete(1); f.tabs.delete(1);
+        await f.executor.reconcileAll();
+        if (reopen) {
+            assert.equal((await f.executor.setAutomation(false)).ok, true);
+            await f.executor.setAutomation(true);
+            f.windows.set(3, {id: 3, type: "normal", focused: true});
+            await Promise.all(f.api.windows.onCreated.emit(clone(f.windows.get(3))));
+            await f.executor.reconcileAll();
+        }
+        assert.deepEqual(mutations(f), []);
+        assert.equal(record(f).enable_id, before.enable_id);
+        assert.deepEqual(record(f).page, before.page);
+        if (!reopen) assert.equal(record(f).revision, before.revision);
+        assert.ok(f.executor.recordEnabledAgreed("remote"));
+        await f.emitNative(execute(f));
+        assert.equal(calls(f, "tabs.create").length, 1);
+        assert.equal(calls(f, "tabs.create")[0].args[0].windowId, 3);
+        assert.equal(calls(f, "debugger.sendCommand").length, 1);
+        assert.equal(calls(f, "windows.create").length, 0);
+        assert.equal(calls(f, "windows.update").length, 0);
+    },
+]);
+for (const action of ["cancel", "Stop"]) cases.push([
+    `${action} before Chrome create leaves durable reusable untouched reservation`, async () => {
+        const f = fresh(); await f.ready(); const before = identity(record(f));
+        const entered = deferred(); const release = deferred(); let held = false;
+        f.hooks["local.set.after"] = async (_, saved) => {
+            if (!held && Object.values(saved[WAL_KEY]?.creations || {}).some(entry => entry.phase === "unknown")) {
+                held = true; entered.resolve(); await release.promise;
+            }
+        };
+        const original = execute(f); const running = f.emitNative(original); let changing;
+        try {
+            await entered.promise;
+            changing = action === "Stop" ? f.executor.setAutomation(false) : f.executor.cancel({
+                remote_key: original.remote_key, connection_id: original.connection_id,
+                principal_id: original.principal_id, request_id: "cancel-before-create",
+                effect_id: original.effect_id, executor_fence: clone(original.executor_fence)});
+        } finally { release.resolve(); }
+        await Promise.all([running, changing]); delete f.hooks["local.set.after"];
+        assert.equal(calls(f, "tabs.create").length, 0);
+        assert.equal(completion(f, original).completion, "not_applied");
+        assert.ok(Object.values(f.local[WAL_KEY].creations).some(entry => entry.phase === "not_applied"));
+        if (action === "Stop") {
+            assert.equal(f.local[AUTOMATION_KEY], false);
+            assert.equal(f.executor.recordEnabledAgreed("remote"), false);
+            assert.equal((await f.executor.setAutomation(true)).ok, true);
+        } else assert.deepEqual(identity(record(f)), before);
+        reserved(f);
+        await f.restart(); await f.emitRemote(REMOTE); reserved(f);
+        await f.emitNative(execute(f));
+        assert.equal(calls(f, "tabs.create").length, 1);
+        assert.equal(calls(f, "debugger.sendCommand").length, 1);
+        const count = mutations(f).length; await f.emitNative(original);
+        assert.equal(mutations(f).length, count);
+        assert.equal(completion(f, original).completion, "not_applied");
+    },
+]);
+for (const stage of ["intent timeout", "not_applied failure", "raw timeout", "crashed intent"]) cases.push([
+    `${stage} distinguishes live no-dispatch proof from unknown Chrome effects`, async () => {
+        const f = fresh(); await f.ready();
+        const entered = deferred(); const release = deferred(); let held = false;
+        if (stage === "raw timeout") {
+            f.hooks["tabs.create.after"] = async () => { entered.resolve(); await release.promise; };
+        } else {
+            f.hooks["local.set.after"] = async (_, saved) => {
+                if (!held && Object.values(saved[WAL_KEY]?.creations || {}).some(entry => entry.phase === "unknown")) {
+                    held = true; entered.resolve(); await release.promise;
+                }
+            };
+        }
+        if (stage === "not_applied failure") f.hooks["local.set"] = async saved => {
+            if (Object.values(saved[WAL_KEY]?.creations || {}).some(entry => entry.phase === "not_applied")) {
+                throw new Error("no-dispatch proof not saved");
+            }
+        };
+        const originalApi = f.executor.api.bind(f.executor); let journalWrites = 0;
+        f.executor.api = (task, label) => {
+            if (label === "persist effect journal") journalWrites++;
+            if (stage === "intent timeout" && label === "persist effect journal" && journalWrites === 2) {
+                return entered.promise.then(() => { throw new Error("intent write timed out"); });
+            }
+            if (stage === "raw timeout" && label === "create inactive work tab") {
+                task().catch(() => {});
+                return entered.promise.then(() => { throw new Error("raw create timed out"); });
+            }
+            return originalApi(task, label);
+        };
+        const original = execute(f); const running = f.emitNative(original);
+        await entered.promise;
+        let changing;
+        if (stage === "not_applied failure") changing = f.executor.cancel({
+            remote_key: original.remote_key, connection_id: original.connection_id,
+            principal_id: original.principal_id, request_id: "cancel-proof-failure",
+            effect_id: original.effect_id, executor_fence: clone(original.executor_fence)});
+        if (stage === "crashed intent") {
+            const wal = clone(f.local[WAL_KEY]); const consent = clone(f.session[CONSENT_KEY]);
+            // Revoke the old worker before releasing its continuation; restore crash snapshots below.
+            f.executor.bumpControl("remote");
+            release.resolve(); await running;
+            f.local[WAL_KEY] = wal; f.session[CONSENT_KEY] = consent;
+            await f.restart(); await f.emitRemote(REMOTE);
+        } else {
+            if (stage === "raw timeout") await running;
+            release.resolve(); await running; await changing;
+        }
+        delete f.hooks["local.set"]; delete f.hooks["local.set.after"]; delete f.hooks["tabs.create.after"];
+        if (stage !== "crashed intent") f.executor.api = originalApi;
+        if (stage === "intent timeout") {
+            reserved(f);
+            assert.ok(Object.values(f.local[WAL_KEY].creations).some(entry => entry.phase === "not_applied"));
+            await f.emitNative(execute(f));
+            assert.equal(calls(f, "tabs.create").length, 1);
+            assert.equal(calls(f, "debugger.sendCommand").length, 1);
+        } else {
+            await f.executor.reconcileAll();
+            await f.emitNative(execute(f));
+            assert.equal(calls(f, "debugger.sendCommand").length, 0);
+            await f.restart(); await f.emitRemote(REMOTE);
+            await f.emitNative(execute(f));
+            assert.equal(calls(f, "tabs.create").length, stage === "raw timeout" ? 1 : 0);
+            assert.equal(calls(f, "debugger.sendCommand").length, 0);
+            assert.equal(f.executor.popupState().remotes[0].creation_unknown, true);
+        }
+        const count = mutations(f).length; await f.emitNative(original);
+        assert.equal(mutations(f).length, count);
+    },
+]);
+for (const state of ["materializing", "missing ledger", "unknown ledger", "abandoned ledger", "legacy"]) cases.push([
+    `physical ${state} eligibility is checked on restore and every Execute`, async () => {
+        const f = fresh(); await f.ready(); await f.materialize();
+        const physical = record(f); const tabId = physical.tab_id;
+        if (state === "legacy") delete physical.preparation;
+        else if (state === "materializing") physical.preparation = "materializing";
+        else {
+            for (const [key, entry] of Object.entries(f.executor.creations)) {
+                if (entry.enable_id !== physical.enable_id) continue;
+                if (state === "missing ledger") delete f.executor.creations[key];
+                else entry.phase = state === "unknown ledger" ? "unknown" : "abandoned";
+            }
+        }
+        await f.executor.persistWal(); await f.executor.persistConsent();
+        const count = calls(f, "debugger.sendCommand").length;
+        await f.emitNative(execute(f));
+        assert.equal(calls(f, "debugger.sendCommand").length, count + Number(state === "legacy"));
+        if (state === "legacy") await f.executor.detach(physical);
+        await f.restart(); await f.emitRemote(REMOTE);
+        assert.equal(record(f)?.tab_id === tabId, state === "legacy");
+        if (state === "legacy") {
+            await f.emitNative(execute(f));
+            assert.equal(calls(f, "tabs.create").length, 1);
+            assert.equal(calls(f, "debugger.sendCommand").length, count + 2);
+        }
+    },
+]);
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

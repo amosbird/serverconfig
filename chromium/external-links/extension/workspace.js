@@ -193,7 +193,7 @@ class WorkspaceExecutor {
             this.creations = wal.creations || {};
             this.ordinary = wal.ordinary || {};
             for (const entry of Object.values(this.creations)) {
-                if (!["completed", "abandoned"].includes(entry.phase)) entry.phase = "unknown";
+                if (!["completed", "abandoned", "not_applied"].includes(entry.phase)) entry.phase = "unknown";
             }
             for (const entry of [...Object.values(this.effects), ...Object.values(this.ordinary)]) {
                 if (!entry.completion) entry.completion =
@@ -346,14 +346,18 @@ class WorkspaceExecutor {
                 {enable_id: record.enable_id, page: clone(record.page)} : null};
     }
     async validateReservation(record) {
-        if (record.tab_id !== null) return this.validateTab(record);
+        if (record.tab_id !== null) {
+            if (record.preparation !== undefined && (record.preparation !== "materialized" ||
+                    !Object.values(this.creations).some(entry => entry.enable_id === record.enable_id &&
+                        entry.phase === "completed") ||
+                    Object.values(this.creations).some(entry => entry.enable_id === record.enable_id &&
+                        ["unknown", "abandoned"].includes(entry.phase)))) {
+                fail("unknown_effect", "Work page preparation is not durably completed");
+            }
+            return this.validateTab(record);
+        }
         if (record.preparation !== "reserved" || record.browser_boot_id !== this.browserBootId) {
             fail("stale_page", "Work page reservation is unavailable");
-        }
-        const window = await this.api(() => this.chrome.windows.get(record.window_id),
-            "validate reserved window");
-        if (!window || window.type !== "normal" || window.id !== record.window_id) {
-            fail("executor_unavailable", "Automation unavailable: no existing normal Chrome window");
         }
     }
     async validateTab(record) {
@@ -590,7 +594,7 @@ class WorkspaceExecutor {
                 await this.persistConsent();
                 await this.detach(record, attachment);
             } else {
-                await this.validateReservation(record);
+                if (record.phase === "enabled") await this.validateReservation(record);
                 record.connection_id = remote.connection_id;
                 if (record.phase === "enabled" && record.agreed) {
                     await this.publish(key);
@@ -784,11 +788,17 @@ class WorkspaceExecutor {
             this.reportAdvisoryError(error);
             return {...this.popupState(), ok: false};
         }
-        await this.persistConsent();
+        let consentError;
+        try {
+            await this.persistConsent();
+        } catch (error) {
+            consentError = error;
+        }
         await this.detach(record);
         this.lastError = null;
         this.remoteErrors.delete(key);
         if (this.automationOn) await this.reconcile(key);
+        if (consentError) this.reportAdvisoryError(consentError);
         return this.popupState();
     }
     async control(action, key, ready = null) {
@@ -963,7 +973,7 @@ class WorkspaceExecutor {
         }
     }
     async materialize(record, op) {
-        if (record.tab_id !== null) return;
+        if (record.tab_id !== null) return this.validateReservation(record);
         const boot = this.browserBootId;
         const transport = this.transportGeneration;
         const remote = this.remotes.get(op.payload.remote_key);
@@ -987,10 +997,19 @@ class WorkspaceExecutor {
                 entry.identity === this.stableIdentity(remote))) {
             fail("unknown_effect", "Tab creation unknown; inspect partial tab before retrying");
         }
-        const creationKey = `${boot}\0${record.enable_id}`;
+        const available = await this.api(() => this.chrome.windows.getAll({windowTypes: ["normal"]}),
+            "select existing work window");
+        check();
+        const window = available.find(candidate => candidate.type === "normal" &&
+            candidate.id === record.window_id) || available.find(candidate => candidate.type === "normal");
+        if (!window) fail("executor_unavailable", "Automation unavailable: no existing normal Chrome window");
+        record.window_id = window.id;
+        const creationKey = `${boot}\0${record.enable_id}\0${crypto.randomUUID()}`;
         const creation = {phase: "unknown", enable_id: record.enable_id,
             identity: this.stableIdentity(remote)};
         this.creations[creationKey] = creation;
+        let createIssued = false;
+        let completedDurably = false;
         const staging = {url: `about:blank#abush-work-${record.enable_id}`,
             browser_boot_id: boot, window_id: record.window_id, tab_id: null,
             group_id: null, stage: "creating", generation: revision};
@@ -1003,6 +1022,7 @@ class WorkspaceExecutor {
             this.workCreatesInFlight++;
             const rawCreation = Promise.resolve().then(() => {
                 check();
+                createIssued = true;
                 return this.chrome.tabs.create({windowId: record.window_id,
                     url: staging.url, active: false});
             }).then(async created => {
@@ -1037,14 +1057,27 @@ class WorkspaceExecutor {
             checkTab();
             creation.phase = "completed";
             await this.persistWal();
+            completedDurably = true;
             checkTab();
             this.workCreations.delete(staging.url);
             await this.persistInheritance();
             checkTab();
         } catch (error) {
             abandoned = true;
-            // A partial creation is never a new authorization or an automatic retry.
-            if (this.records.get(record.remote_key) === record && record.revision === revision) {
+            if (createIssued && !completedDurably) creation.phase = "unknown";
+            if (!createIssued) {
+                creation.phase = "not_applied";
+                try {
+                    await this.persistWal();
+                } catch (failure) {
+                    creation.phase = "unknown";
+                    throw failure;
+                }
+                this.workCreations.delete(staging.url);
+                await this.persistInheritance();
+            }
+            if (createIssued && this.records.get(record.remote_key) === record &&
+                    record.revision === revision) {
                 this.closeAuthorization(record, "paused");
                 await this.persistConsent();
             }
