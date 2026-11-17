@@ -1859,6 +1859,7 @@ class WorkspaceExecutor {
         let target = null;
         let initialGroup = null;
         let isolated = false;
+        let ungrouped = false;
         let navigating = false;
         let invalid = false;
         const early = [];
@@ -1877,9 +1878,10 @@ class WorkspaceExecutor {
             } else if (id === target.id) {
                 if (kind !== "updated" || tab?.windowId !== target.windowId ||
                         change.groupId !== undefined && change.groupId !== -1 &&
-                            (isolated || change.groupId !== initialGroup) ||
+                            (isolated || ungrouped || change.groupId !== initialGroup) ||
                         !navigating && (change.url !== undefined && !placeholder(change.url) ||
                             change.pendingUrl && change.pendingUrl !== url)) invalid = true;
+                if (kind === "updated" && change.groupId === -1) ungrouped = true;
             }
         };
         const listeners = ["onCreated", "onUpdated", "onRemoved", "onDetached", "onAttached", "onActivated"]

@@ -295,4 +295,18 @@ for (const intervention of ["navigation and regroup", "activation ABA", "detach 
         assert.equal(f.calls.some(call => call.name === "native.activate"), false);
     }]);
 }
+cases.push(["manual ungroup and regroup to the inherited work container is not automatic inheritance", async () => {
+    const f = fresh(); await f.ready(); await f.materialize();
+    const work = f.executor.recordFor("remote"); await f.api.tabs.update(work.tab_id, {active: true});
+    const start = f.calls.length;
+    f.hooks["tabs.create.after"] = async result => {
+        await f.api.tabs.ungroup([result.id]);
+        await f.api.tabs.group({tabIds: [result.id], groupId: work.group_id});
+    };
+    assert.equal(await f.executor.ordinaryOpen(request("manual-inherited-group-ABA")), "unknown");
+    const calls = f.calls.slice(start);
+    assert.equal(calls.filter(call => call.name === "tabs.ungroup").length, 1);
+    assert.equal(calls.some(call => call.name === "tabs.update"), false);
+    assert.equal(calls.some(call => call.name === "native.prepare"), false);
+}]);
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });
