@@ -245,7 +245,8 @@ function fixture({globalAutomation = false} = {}) {
     route();
     const send = (message, sender = trusted) => bounded(() => new Promise(resolve =>
         api.runtime.onMessage.emit(message, sender, resolve)), "runtime response", 4000);
-    return {api, calls, tabs, windows, groups, syncGroups, local, session, hooks, attachedTabs, trusted, send, errors,
+    const materializations = new Map();
+    const result = {api, calls, tabs, windows, groups, syncGroups, local, session, hooks, attachedTabs, trusted, send, errors,
         emitRemote: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
             event: "abush_browser.remote_state", payload})),
         emitNative: payload => Promise.all(nativeEvents.emit({service: "abush_browser",
@@ -254,6 +255,15 @@ function fixture({globalAutomation = false} = {}) {
             await executor.acceptNativeBootstrap(BOOT);
             await executor.restoreWhenReady();
             await executor.remoteState(REMOTE);
+        }, async materialize() {
+            const record = executor.recordFor("remote");
+            assert.ok(record, "ready must reserve a work page first");
+            const key = `${record.browser_boot_id}\0${record.enable_id}`;
+            if (!materializations.has(key)) {
+                materializations.set(key, executor.execute(execute(result)));
+            }
+            await materializations.get(key);
+            return record;
         }, async enable() {
             const response = await send({control: "enable", remote_key: "remote"});
             assert.equal(response.ok, true, response.error);
@@ -302,6 +312,7 @@ function fixture({globalAutomation = false} = {}) {
             await executor.restoreWhenReady();
             return executor;
         }};
+    return result;
 }
 function execute(f, overrides = {}) {
     const record = f.executor.recordFor("remote");

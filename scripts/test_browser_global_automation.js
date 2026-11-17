@@ -104,7 +104,8 @@ const cases = [
         gate.resolve(); await oldRestore;
         assert.equal(f.executor.automationOn, !oldChoice);
         await f.emitRemote(REMOTE);
-        assert.equal(f.calls.some(c => c.name === "tabs.create"), !oldChoice);
+        assert.equal(f.calls.some(c => c.name === "tabs.create"), false);
+        assert.equal(f.executor.recordEnabledAgreed("remote"), !oldChoice);
     }]),
     ...["stop", "start"].map(control => [`failed old restore cannot replace newer ${control} choice status`, async () => {
         const f = fresh(); const entered = deferred(); const gate = deferred();
@@ -217,7 +218,9 @@ const cases = [
                     daemon_instance_id: difference === "instance" ? "other-instance" : REMOTE.owner_display.daemon_instance_id}};
             await f.emitRemote(other);
             const second = f.executor.recordFor("other");
-            assert.ok(second); assert.notEqual(first.tab_id, second.tab_id);
+            assert.ok(second); assert.notEqual(first.enable_id, second.enable_id);
+            assert.notDeepEqual(first.page, second.page);
+            assert.equal(first.tab_id, null); assert.equal(second.tab_id, null);
             assert.equal(first.agreed, true); assert.equal(first.phase, "enabled");
             assert.equal(f.executor.recordEnabledAgreed("other"), true);
             await f.emitNative(execute(f, {remote_key: "other", connection_id: other.connection_id,
@@ -297,7 +300,7 @@ const cases = [
         }]),
     ["popup-confirmed unknown recovery preserves abandoned WAL and OFF", async () => {
         const f = fresh(); f.hooks["tabs.create"] = async () => { throw new Error("lost result"); };
-        await f.ready(); delete f.hooks["tabs.create"];
+        await f.ready(); await f.materialize().catch(() => {}); delete f.hooks["tabs.create"];
         assert.equal((await f.send({control: "recover", remote_key: "remote"})).ok, false);
         await f.send({control: "stop"});
         assert.equal((await f.send({control: "recover", remote_key: "remote", confirmed: true})).ok, true);
@@ -305,6 +308,8 @@ const cases = [
         assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
         assert.ok(Object.values(f.local[WAL_KEY].creations).some(c => c.phase === "abandoned" && c.outcome === "unknown"));
         await f.send({control: "start"});
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
+        await f.materialize();
         assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 2);
         assert.equal(f.executor.state("remote").phase, "enabled");
     }],
@@ -313,13 +318,13 @@ const cases = [
         await f.emitRemote(REMOTE);
         await f.emitRemote({...REMOTE, remote_key: "alias", connection_id: "b"});
         await f.executor.acceptNativeBootstrap(BOOT); await f.executor.restoreWhenReady();
-        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 0);
         assert.equal(f.executor.recordFor("alias"), f.executor.recordFor("remote"));
         assert.equal(await f.executor.execute(execute(f, {remote_key: "alias", connection_id: "b"})), "applied");
     }],
     ["recovery persist failure blocks fresh creation", async () => {
         const f = fresh(); f.hooks["tabs.create"] = async () => { throw new Error("lost result"); };
-        await f.ready(); delete f.hooks["tabs.create"];
+        await f.ready(); await f.materialize().catch(() => {}); delete f.hooks["tabs.create"];
         f.hooks["local.set"] = async value => {
             if (Object.values(value[WAL_KEY]?.creations || {}).some(c => c.phase === "abandoned")) throw new Error("abandonment not committed");
         };
@@ -331,10 +336,12 @@ const cases = [
     ["late abandoned create callback cannot rewrite fresh authority or WAL", async () => {
         const f = fresh(); const entered = deferred(); const gate = deferred();
         f.hooks["tabs.create.after"] = async () => { entered.resolve(); await gate.promise; };
-        const preparing = f.ready(); await entered.promise;
+        await f.ready();
+        const preparing = f.materialize(); preparing.catch(() => {}); await entered.promise;
         const old = clone([...f.tabs.values()].find(tab => tab.id >= 10));
-        await preparing; delete f.hooks["tabs.create.after"];
+        await preparing.catch(() => {}); delete f.hooks["tabs.create.after"];
         assert.equal((await f.send({control: "recover", remote_key: "remote", confirmed: true})).ok, true);
+        await f.materialize();
         const authority = clone(f.executor.state("remote"));
         const wal = clone(f.local[WAL_KEY]);
         gate.resolve(); await new Promise(resolve => setImmediate(resolve));
@@ -370,7 +377,9 @@ const cases = [
             states.push(trace(f));
             assert.deepEqual(states, [[false, "disabled", false, true, 0],
                 [false, "disabled", false, true, 0], [true, "enabled", true, true, 0]]);
-            assert.equal(f.tabs.size, 3);
+            assert.equal(f.tabs.size, 2);
+            assert.equal(f.executor.recordFor("remote").tab_id, null);
+            assert.equal(Object.keys(f.local[WAL_KEY].creations).length, 0);
             assert.equal(f.calls.some(c => c.name === "native.refresh_remotes"), false);
             assert.equal(f.calls.some(c => c.name === "windows.create"), false);
             assert.equal((await f.send({control: "enable", remote_key: "remote"})).ok, false);
@@ -379,7 +388,8 @@ const cases = [
         "debugger.sendCommand"].map(boundary => [`Stop during ${boundary} cannot revive authority`, async () => {
         const f = fresh();
         await f.executor.acceptNativeBootstrap(BOOT); await f.executor.restoreWhenReady();
-        if (boundary.startsWith("debugger")) await f.executor.remoteState(REMOTE);
+        const executing = !["session.set", "native.workspace_state"].includes(boundary);
+        if (executing) await f.executor.remoteState(REMOTE);
         const gate = deferred(); const entered = deferred(); let held = false;
         f.hooks[boundary] = async value => {
             if (held || boundary === "local.set" && !Object.keys(value[WAL_KEY]?.creations || {}).length ||
@@ -387,7 +397,7 @@ const cases = [
                 boundary === "native.workspace_state" && value.state.phase !== "enabled") return;
             held = true; entered.resolve(); await gate.promise;
         };
-        const running = boundary.startsWith("debugger") ? f.executor.execute(execute(f)) :
+        const running = executing ? f.executor.execute(execute(f)) :
             f.executor.remoteState(REMOTE);
         running.catch(() => {}); await entered.promise;
         const before = trace(f);
@@ -431,10 +441,10 @@ const cases = [
             assert.equal(f.executor.automationOn, false);
             assert.notEqual(f.executor.state("remote").phase, "enabled");
         }
-        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 1);
+        assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 0);
     }],
     ["global ON resumes verified exact tab across ordinary reconnects", async () => {
-        const f = fresh(); await f.ready(); const original = clone(f.executor.records.get("remote"));
+        const f = fresh(); await f.ready(); await f.materialize(); const original = clone(f.executor.records.get("remote"));
         await f.executor.invalidateRemote();
         assert.equal(f.executor.state("remote").phase, "paused");
         await f.executor.remoteState({...REMOTE, connection_id: "new", executor_fence: {executor_id: "next", epoch: 2}});
@@ -450,18 +460,18 @@ const cases = [
     ["multiple stable workbenches and aliases never duplicate or hijack", async () => {
         const f = fresh(); await f.ready(); const first = f.executor.records.get("remote").tab_id;
         await f.executor.remoteState({...REMOTE, remote_key: "alias"});
-        assert.equal(f.tabs.size, 3);
+        assert.equal(f.tabs.size, 2);
         await f.executor.remoteState({...REMOTE, remote_key: "second", workspace_id: "second-workspace"});
-        assert.equal(f.tabs.size, 4);
+        assert.equal(f.tabs.size, 2);
         await f.executor.remoteState({...REMOTE, principal_id: "foreign"});
         assert.equal(f.executor.recordFor("alias").tab_id, first);
         assert.notEqual(f.executor.state("remote").phase, "enabled");
         await f.executor.invalidateRemote();
         await f.executor.remoteState({...REMOTE, remote_key: "second-alias", workspace_id: "second-workspace"});
-        assert.equal(f.tabs.size, 4);
+        assert.equal(f.tabs.size, 2);
     }],
     ...["closed", "moved", "replaced"].map(action => [`human ${action} revokes and creates fresh not adopted`, async () => {
-        const f = fresh(); await f.ready(); const old = f.executor.records.get("remote").tab_id;
+        const f = fresh(); await f.ready(); await f.materialize(); const old = f.executor.records.get("remote").tab_id;
         if (action === "closed") f.tabs.delete(old);
         if (action === "moved") f.tabs.get(old).windowId = 2;
         const revoke = Promise.all(action === "closed" ? f.api.tabs.onRemoved.emit(old) :
@@ -485,7 +495,7 @@ const cases = [
     }],
     ["unknown creation is explicit and never retried on Start or reconnect", async () => {
         const f = fresh(); f.hooks["tabs.create"] = async () => { throw new Error("creation result lost"); };
-        await f.ready(); delete f.hooks["tabs.create"];
+        await f.ready(); await f.materialize().catch(() => {}); delete f.hooks["tabs.create"];
         assert.equal(f.executor.popupState().remotes[0].creation_unknown, true);
         await f.send({control: "stop"}); await f.send({control: "start"});
         await f.executor.invalidateRemote(); await f.executor.remoteState(REMOTE);
@@ -524,7 +534,7 @@ const cases = [
     }],
     ["worker restore transport alias reuses exact record", async () => {
         for (const early of [false, true]) {
-            const f = fresh(); await f.ready(); const old = f.executor.records.get("remote").tab_id;
+            const f = fresh(); await f.ready(); await f.materialize(); const old = f.executor.records.get("remote").tab_id;
             const worker = f.resetWorker(); await worker.acceptNativeBootstrap(BOOT);
             if (early) await worker.remoteState({...REMOTE, remote_key: "alias"});
             await worker.restoreWhenReady();
@@ -549,7 +559,7 @@ const cases = [
         assert.equal(f.calls.some(c => c.name === "tabs.create"), false);
     }],
     ["ordinary opens remain active ungrouped while automation busy and off", async () => {
-        const f = fresh(); await f.ready(); const work = f.executor.records.get("remote").tab_id;
+        const f = fresh(); await f.ready(); await f.materialize(); const work = f.executor.records.get("remote").tab_id;
         const gate = deferred(); const entered = deferred();
         f.hooks["debugger.sendCommand"] = async () => { entered.resolve(); await gate.promise; };
         const running = f.executor.execute(execute(f)); await entered.promise;

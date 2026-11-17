@@ -223,7 +223,8 @@ class WorkspaceExecutor {
             for (const candidate of saved.records || []) {
                 if (!text(candidate.remote_key) || !validPageRef(candidate.page) ||
                         !text(candidate.enable_id) || !Number.isSafeInteger(candidate.revision) || candidate.revision <= 0 ||
-                        !Number.isSafeInteger(candidate.tab_id) || !Number.isSafeInteger(candidate.window_id) ||
+                        !(Number.isSafeInteger(candidate.tab_id) || candidate.tab_id === null &&
+                            candidate.preparation === "reserved") || !Number.isSafeInteger(candidate.window_id) ||
                         !validFence(candidate.executor_fence) || !text(candidate.principal_id) ||
                         !text(candidate.owner_display?.daemon_instance_id) ||
                         !["enabled", "paused"].includes(candidate.phase)) continue;
@@ -232,7 +233,8 @@ class WorkspaceExecutor {
                         (this.controlTokens.get(candidate.remote_key) || 0) > 0 ||
                         (this.revisions.get(candidate.remote_key) || 0) > candidate.revision)) continue;
                 if (this.records.has(candidate.remote_key) ||
-                        [...this.records.values()].some(record => record.tab_id === candidate.tab_id)) continue;
+                        Number.isSafeInteger(candidate.tab_id) && [...this.records.values()].some(record =>
+                            record.tab_id === candidate.tab_id)) continue;
                 this.revisions.set(candidate.remote_key, Math.max(candidate.revision,
                     this.revisions.get(candidate.remote_key) || 1));
                 const live = [...this.remotes.values()].find(remote =>
@@ -261,7 +263,7 @@ class WorkspaceExecutor {
                     }
                 }
                 try {
-                    await this.validateTab(record);
+                    await this.validateReservation(record);
                     if (record.phase === "disabled") this.records.delete(record.remote_key);
                 } catch (error) {
                     if (this.records.get(record.remote_key) === record) {
@@ -343,8 +345,19 @@ class WorkspaceExecutor {
             phase: record?.phase || "disabled", binding: record?.phase !== "disabled" && record ?
                 {enable_id: record.enable_id, page: clone(record.page)} : null};
     }
+    async validateReservation(record) {
+        if (record.tab_id !== null) return this.validateTab(record);
+        if (record.preparation !== "reserved" || record.browser_boot_id !== this.browserBootId) {
+            fail("stale_page", "Work page reservation is unavailable");
+        }
+        const window = await this.api(() => this.chrome.windows.get(record.window_id),
+            "validate reserved window");
+        if (!window || window.type !== "normal" || window.id !== record.window_id) {
+            fail("executor_unavailable", "Automation unavailable: no existing normal Chrome window");
+        }
+    }
     async validateTab(record) {
-        if (record.browser_boot_id !== this.browserBootId || this.revokedTabs.has(record.tab_id)) {
+        if (!Number.isSafeInteger(record.tab_id) || record.browser_boot_id !== this.browserBootId || this.revokedTabs.has(record.tab_id)) {
             fail("stale_page", "Original work tab was closed, moved, or replaced");
         }
         const tab = await this.api(() => this.chrome.tabs.get(record.tab_id), "validate work tab");
@@ -356,8 +369,8 @@ class WorkspaceExecutor {
         return tab;
     }
     ownsTab(tabId) {
-        return [...this.records.values()].some(record =>
-            record.phase !== "disabled" && record.tab_id === tabId);
+        return Number.isSafeInteger(tabId) && [...this.records.values()].some(record =>
+            Number.isSafeInteger(record.tab_id) && record.phase !== "disabled" && record.tab_id === tabId);
     }
     closeAuthorization(record, phase) {
         this.bumpControl(record.remote_key);
@@ -501,7 +514,7 @@ class WorkspaceExecutor {
         const previous = this.remotes.get(key);
         if (sameRef(previous, remote)) {
             const record = this.recordFor(key);
-            if (record && this.recordEnabledAgreed(key)) await this.validateTab(record);
+            if (record && this.recordEnabledAgreed(key)) await this.validateReservation(record);
             else if (!this.manualControls) await this.reconcile(key);
             return true;
         }
@@ -577,7 +590,7 @@ class WorkspaceExecutor {
                 await this.persistConsent();
                 await this.detach(record, attachment);
             } else {
-                await this.validateTab(record);
+                await this.validateReservation(record);
                 record.connection_id = remote.connection_id;
                 if (record.phase === "enabled" && record.agreed) {
                     await this.publish(key);
@@ -720,7 +733,7 @@ class WorkspaceExecutor {
                     }
                     const record = this.records.get(key);
                     if (this.recordEnabledAgreed(key)) {
-                        await this.validateTab(record);
+                        await this.validateReservation(record);
                     } else if (record && record.phase !== "disabled") {
                         await this.resume(key);
                     } else {
@@ -868,6 +881,14 @@ class WorkspaceExecutor {
             revision: this.nextRevision(key), page: {workspace_id: remote.workspace_id,
                 page_id: crypto.randomUUID(), generation: 1}, window_id: window.id,
             tab_id: null, group_id: null, phase: "paused", agreed: false, attached: false};
+        if (!this.manualControls) {
+            record.preparation = "reserved";
+            this.records.set(key, record);
+            await this.persistConsent();
+            check();
+            await this.resume(key);
+            return;
+        }
         const creationRevision = record.revision;
         const creation = {phase: "unknown", enable_id: record.enable_id,
             identity: this.stableIdentity(remote)};
@@ -941,6 +962,98 @@ class WorkspaceExecutor {
             this.pendingCreations.delete(record.tab_id);
         }
     }
+    async materialize(record, op) {
+        if (record.tab_id !== null) return;
+        const boot = this.browserBootId;
+        const transport = this.transportGeneration;
+        const remote = this.remotes.get(op.payload.remote_key);
+        const revision = record.revision;
+        const recordKey = record.remote_key;
+        const control = this.controlTokens.get(recordKey) || 0;
+        let abandoned = false;
+        const check = () => {
+            if (abandoned || boot !== this.browserBootId || transport !== this.transportGeneration ||
+                    this.remotes.get(op.payload.remote_key) !== remote ||
+                    this.records.get(record.remote_key) !== record ||
+                    record.revision !== revision || control !== (this.controlTokens.get(recordKey) || 0) ||
+                    this.authorization(op.payload, op) !== record) {
+                fail("stale_authority", "Work page creation authorization changed");
+            }
+        };
+        check();
+        await this.validateReservation(record);
+        check();
+        if (Object.values(this.creations).some(entry => entry.phase === "unknown" &&
+                entry.identity === this.stableIdentity(remote))) {
+            fail("unknown_effect", "Tab creation unknown; inspect partial tab before retrying");
+        }
+        const creationKey = `${boot}\0${record.enable_id}`;
+        const creation = {phase: "unknown", enable_id: record.enable_id,
+            identity: this.stableIdentity(remote)};
+        this.creations[creationKey] = creation;
+        const staging = {url: `about:blank#abush-work-${record.enable_id}`,
+            browser_boot_id: boot, window_id: record.window_id, tab_id: null,
+            group_id: null, stage: "creating", generation: revision};
+        try {
+            await this.persistWal();
+            check();
+            this.workCreations.set(staging.url, staging);
+            await this.persistInheritance();
+            check();
+            this.workCreatesInFlight++;
+            const rawCreation = Promise.resolve().then(() => {
+                check();
+                return this.chrome.tabs.create({windowId: record.window_id,
+                    url: staging.url, active: false});
+            }).then(async created => {
+                check();
+                staging.tab_id = created.id;
+                staging.stage = "created";
+                this.forgetPersonalCandidate(created.id);
+                await this.persistInheritance();
+                check();
+                record.tab_id = created.id;
+                record.preparation = "materializing";
+                this.pendingCreations.set(created.id, record);
+                return created;
+            }).finally(() => {
+                this.workCreatesInFlight--;
+                this.drainPersonalCandidates();
+            });
+            const tab = await this.api(() => rawCreation, "create inactive work tab");
+            const checkTab = () => {
+                check();
+                if (this.revokedTabs.has(tab.id)) fail("stale_page", "Created work tab was revoked");
+            };
+            checkTab();
+            await this.groupWorkTab(record, staging,
+                displayTitle(remote.display_name || remote.connection_display_name), checkTab);
+            checkTab();
+            await this.validateTab(record);
+            checkTab();
+            record.preparation = "materialized";
+            this.ownershipChanged(record.tab_id);
+            await this.persistConsent();
+            checkTab();
+            creation.phase = "completed";
+            await this.persistWal();
+            checkTab();
+            this.workCreations.delete(staging.url);
+            await this.persistInheritance();
+            checkTab();
+        } catch (error) {
+            abandoned = true;
+            // A partial creation is never a new authorization or an automatic retry.
+            if (this.records.get(record.remote_key) === record && record.revision === revision) {
+                this.closeAuthorization(record, "paused");
+                await this.persistConsent();
+            }
+            throw error;
+        } finally {
+            abandoned = true;
+            this.pendingCreations.delete(record.tab_id);
+        }
+    }
     groupWorkTab(record, staging, title, check) {
         const task = this.presentationTail.catch(() => {}).then(async () => {
             check();
@@ -949,6 +1062,7 @@ class WorkspaceExecutor {
             const candidate = groups.filter(group => Number.isSafeInteger(group.id) && group.id >= 0 &&
                 group.windowId === record.window_id && group.title === title).sort((a, b) => a.id - b.id)[0];
             await this.validateTab(record);
+            check();
             if (candidate) {
                 const current = await this.chrome.tabGroups.get(candidate.id);
                 check();
@@ -1302,7 +1416,7 @@ class WorkspaceExecutor {
             "drain previous browser work", 5000);
         await this.drainAttachments(key);
         await this.detach(record, record.pendingDetach);
-        await this.validateTab(record);
+        await this.validateReservation(record);
         if (this.remotes.get(key) !== remote || this.records.get(key) !== record ||
                 record.revision !== revision || !this.manualControls && !this.automationOn) {
             fail("stale_authority", "Remote changed during resume");
@@ -1429,9 +1543,11 @@ class WorkspaceExecutor {
         this.operations.set(key, op);
         const entry = {version: 9, payload: clone(payload), phase: "accepted", completion: null};
         this.effects[key] = entry;
-        const tail = this.executionTails.get(payload.remote_key) || Promise.resolve();
+        const reservationKey = JSON.stringify([payload.authorization.browser_boot_id,
+            payload.authorization.enable_id]);
+        const tail = this.executionTails.get(reservationKey) || Promise.resolve();
         op.done = tail.catch(() => {}).then(() => this.performExecute(key, op, entry));
-        this.executionTails.set(payload.remote_key, op.done);
+        this.executionTails.set(reservationKey, op.done);
         op.done.catch(() => {});
         return op.done;
     }
@@ -1440,6 +1556,8 @@ class WorkspaceExecutor {
         try {
             await this.persistWal();
             const record = this.authorization(op.payload, op);
+            await this.materialize(record, op);
+            this.authorization(op.payload, op);
             op.tab_id = record.tab_id;
             await this.validateTab(record);
             this.authorization(op.payload, op);

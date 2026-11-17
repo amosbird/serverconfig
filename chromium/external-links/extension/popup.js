@@ -18,7 +18,7 @@ async function control(action, details = {}) {
         toggle.textContent = stopPending ? "Retry Stop" : automationOn ? "Stop automation" : "Start automation";
         state.textContent = stopPending ? "Automation off locally · Stop not saved · retry before restarting" :
             response.preference_pending ? "Automation preference pending · browser work blocked" :
-            automationOn ? "Automation on · workbenches prepare automatically" :
+            automationOn ? "Automation on · work tabs open on first navigation" :
             "Automation off · pages remain open";
         list.replaceChildren(...response.remotes.map(remote => {
             const item = document.createElement("li");
