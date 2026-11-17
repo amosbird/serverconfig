@@ -7,6 +7,7 @@ import socket
 import stat
 import struct
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -14,6 +15,10 @@ BINDING_PATH = ROOT / "chromium/external-links/x11_binding.py"
 spec = importlib.util.spec_from_file_location("x11_binding", BINDING_PATH)
 binding = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(binding)
+qtile_spec = importlib.util.spec_from_file_location(
+    "offline_qtile", ROOT / "scripts/test_abush_browser_qtile.py")
+qtile = importlib.util.module_from_spec(qtile_spec)
+qtile_spec.loader.exec_module(qtile)
 
 
 class FakeAdapter:
@@ -219,17 +224,187 @@ class OrdinaryX11Test(unittest.TestCase):
         def run(command, **_kwargs):
             commands.append(command)
             return mock.Mock(
-                returncode=0, stdout=json.dumps({"id": 11, "group": "f"}), stderr="")
+                returncode=0, stdout=json.dumps({
+                    "id": 11, "group": "f", "name": adapter.title(11)}), stderr="")
 
         result = binding.prepare_ordinary_window(
             {"nonce": nonce}, adapter=adapter, attempts=1, run=run)
         self.assertEqual(result, {"xid": 11, "nonce": nonce})
         self.assertEqual(adapter.values[(11, "_ABUSH_ORDINARY_NONCE")], nonce)
-        self.assertEqual(commands[0][:-1], binding.qtile_command("prepare_ordinary_window", 11))
-        self.assertEqual(json.loads(commands[0][-1]), {
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[0], [
+            "qtile", "cmd-obj", "--object", "window", "11", "--function", "info"])
+        self.assertEqual(commands[1][:-1], binding.qtile_command("prepare_ordinary_window", 11))
+        self.assertEqual(json.loads(commands[1][-1]), {
             "version": 1, "nonce": nonce, "identity": ["boot", 4242, "start"]})
-        self.assertNotIn("focus", commands[0])
-        self.assertNotIn("toscreen", commands[0])
+        self.assertNotIn("focus", commands[1])
+        self.assertNotIn("toscreen", commands[1])
+
+    def prepare_fixture(self, probe=None):
+        nonce = "a" * 32
+        adapter = FakeAdapter()
+        adapter.values[(22, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce} - Google Chrome"
+        window = qtile.FakeWindow(group="e", name="previous cached title")
+        window.metadata = {}
+        window.incarnation = ["boot", 4242, "start"]
+        manager = SimpleNamespace(windows_map={22: window}, groups_map={"f": qtile.FakeGroup("f")})
+        namespace = qtile.load_browser_config({})
+        trace = []
+
+        def ipc(selectors, function, arguments=()):
+            if function == "info":
+                self.assertEqual(selectors, [("window", 22)])
+                self.assertEqual(arguments, ())
+                self.assertEqual(adapter.property(22, binding.ORDINARY_NONCE_PROPERTY), nonce)
+                self.assertEqual(adapter.title(22), f"__ABUSH_ORDINARY__:{nonce} - Google Chrome")
+                info = {"id": 22, "name": window.name, "group": window.group.name}
+                trace.append(("info", window.name))
+                if probe is not None:
+                    probe(adapter, window, info, len(trace))
+                return info
+            self.assertEqual(selectors, [])
+            self.assertEqual(function, "prepare_ordinary_window")
+            self.assertEqual(arguments[0], "22")
+            trace.append(("prepare", window.name))
+            window.metadata = {name: value for (xid, name), value in adapter.values.items()
+                               if xid == 22}
+            return namespace[function](manager, 22, arguments[1])
+
+        return nonce, adapter, window, manager, trace, ipc
+
+    def assert_no_prepare_effects(self, window, manager, trace):
+        self.assertFalse(any(event == "prepare" for event, _name in trace))
+        window.togroup.assert_not_called()
+        window.focus.assert_not_called()
+        window.window.set_property.assert_not_called()
+        manager.groups_map["f"].toscreen.assert_not_called()
+        self.assertTrue(window.can_steal_focus)
+
+    def test_prepare_waits_for_cached_qtile_name_before_single_real_command(self):
+        def publish_cached_title(adapter, window, _info, count):
+            self.assertEqual(count, 1 if window.name == "previous cached title" else 2)
+            window.name = adapter.title(22)
+
+        nonce, adapter, window, manager, trace, ipc = self.prepare_fixture(publish_cached_title)
+        with mock.patch.object(binding, "qtile_ipc_call", side_effect=ipc):
+            result = binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, attempts=3, interval=0)
+        self.assertEqual(result, {"xid": 22, "nonce": nonce})
+        title = adapter.title(22)
+        self.assertEqual(trace, [("info", "previous cached title"), ("info", title),
+                                 ("prepare", title)])
+        window.togroup.assert_called_once_with("f", switch_group=False)
+        window.focus.assert_not_called()
+        manager.groups_map["f"].toscreen.assert_not_called()
+        self.assertFalse(window.can_steal_focus)
+
+    def test_prepare_readiness_failure_never_dispatches_prepare(self):
+        for failure in ("stale", "wrong_nonce", "wrong_xid", "missing_name", "ipc"):
+            with self.subTest(failure=failure):
+                def probe(_adapter, _window, info, _count):
+                    if failure == "wrong_nonce":
+                        info["name"] = f"__ABUSH_ORDINARY__:{'b' * 32}"
+                    elif failure == "wrong_xid":
+                        info["id"] = 11
+                    elif failure == "missing_name":
+                        del info["name"]
+                    elif failure == "ipc":
+                        raise binding.X11Unavailable("modeled Qtile readiness IPC failure")
+
+                nonce, adapter, window, manager, trace, ipc = self.prepare_fixture(probe)
+                with mock.patch.object(binding, "qtile_ipc_call", side_effect=ipc), \
+                        self.assertRaises(binding.X11Unavailable):
+                    binding.prepare_ordinary_window(
+                        {"nonce": nonce}, adapter=adapter, attempts=3, interval=0)
+                self.assert_no_prepare_effects(window, manager, trace)
+                self.assertLessEqual(len(trace), 3)
+                self.assertEqual(len(trace), 1 if failure in {"wrong_xid", "ipc"} else 3)
+
+    def test_prepare_revalidates_identity_before_next_observation_and_effect(self):
+        for phase in ("waiting", "ready"):
+            for change in ("nonce", "incarnation", "pid", "legacy", "tab_switch", "class"):
+                with self.subTest(phase=phase, change=change):
+                    def invalidate(adapter, window, _info, _count):
+                        if change == "nonce":
+                            adapter.values[(22, binding.ORDINARY_NONCE_PROPERTY)] = "b" * 32
+                        elif change == "incarnation":
+                            binding.browser_incarnation.return_value = ["boot", 4242, "reused"]
+                        elif change == "pid":
+                            adapter.pid = lambda _window: 4243
+                            binding.browser_incarnation.side_effect = lambda pid: [
+                                "boot", pid, "start"]
+                        elif change == "legacy":
+                            adapter.values[(22, "_ABUSH_BINDING_NONCE")] = "legacy"
+                        elif change == "tab_switch":
+                            adapter.values[(22, "_NET_WM_NAME")] = "other tab - Google Chrome"
+                        else:
+                            adapter.values[(22, "WM_CLASS")] = "unrelated"
+
+                    nonce, adapter, window, manager, trace, ipc = self.prepare_fixture(invalidate)
+                    if phase == "ready":
+                        window.name = adapter.title(22)
+                    with mock.patch.object(binding, "browser_incarnation",
+                                           return_value=["boot", 4242, "start"]), \
+                            mock.patch.object(binding, "qtile_ipc_call", side_effect=ipc), \
+                            self.assertRaisesRegex(binding.X11Unavailable, "identity|incarnation"):
+                        binding.prepare_ordinary_window(
+                            {"nonce": nonce}, adapter=adapter, attempts=3, interval=0)
+                    self.assertEqual(len(trace), 1)
+                    self.assert_no_prepare_effects(window, manager, trace)
+
+    def test_prepare_deadline_is_shared_with_raw_title_discovery(self):
+        clock = [0.0]
+
+        def exhaust_budget(_adapter, _window, info, _count):
+            info["name"] = adapter.title(22)
+            clock[0] = 5.0
+
+        nonce, adapter, window, manager, trace, ipc = self.prepare_fixture(exhaust_budget)
+        windows = adapter.windows
+
+        def discover():
+            clock[0] = 4.9
+            return windows()
+
+        adapter.windows = discover
+        with mock.patch.object(binding.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(binding, "qtile_ipc_call", side_effect=ipc), \
+                self.assertRaisesRegex(binding.X11Unavailable, "readiness timed out"):
+            binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, attempts=100, interval=0)
+        self.assertEqual(len(trace), 1)
+        self.assert_no_prepare_effects(window, manager, trace)
+
+    def test_prepare_command_failure_is_not_retried(self):
+        nonce, adapter, window, manager, trace, ipc = self.prepare_fixture()
+        window.name = adapter.title(22)
+        window.incarnation = ["boot", 4242, "different"]
+        with mock.patch.object(binding, "qtile_ipc_call", side_effect=ipc), \
+                self.assertRaises(ValueError):
+            binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, attempts=3, interval=0)
+        self.assertEqual([event for event, _name in trace], ["info", "prepare"])
+        window.togroup.assert_not_called()
+        window.focus.assert_not_called()
+
+    def test_prepare_unknown_effect_is_not_retried(self):
+        nonce, adapter, window, manager, trace, ipc = self.prepare_fixture()
+        window.name = adapter.title(22)
+
+        def lose_completion(selectors, function, arguments=()):
+            result = ipc(selectors, function, arguments)
+            if function == "prepare_ordinary_window":
+                raise binding.X11Unavailable("modeled lost prepare completion")
+            return result
+
+        with mock.patch.object(binding, "qtile_ipc_call", side_effect=lose_completion), \
+                self.assertRaisesRegex(binding.X11Unavailable, "lost prepare completion"):
+            binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, attempts=3, interval=0)
+        self.assertEqual([event for event, _name in trace], ["info", "prepare"])
+        window.togroup.assert_called_once_with("f", switch_group=False)
+        window.focus.assert_not_called()
+        manager.groups_map["f"].toscreen.assert_not_called()
 
     def test_ordinary_prepare_refuses_managed_candidate(self):
         nonce = "b" * 32

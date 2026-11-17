@@ -337,8 +337,10 @@ def ordinary_candidate(adapter, window, nonce):
         chrome_process_window(adapter, window) and not has_legacy_browser_binding(adapter, window)
 
 
-def find_ordinary_window(adapter, nonce, attempts=100, interval=0.05):
+def find_ordinary_window(adapter, nonce, attempts=100, interval=0.05, deadline=None):
     for attempt in range(attempts):
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         matches = [window for window in adapter.windows()
                    if ordinary_candidate(adapter, window, nonce)]
         if len(matches) == 1:
@@ -346,7 +348,9 @@ def find_ordinary_window(adapter, nonce, attempts=100, interval=0.05):
         if len(matches) > 1:
             raise ValueError("ambiguous ordinary staging nonce")
         if attempt + 1 < attempts:
-            time.sleep(interval)
+            delay = interval if deadline is None else min(interval, deadline - time.monotonic())
+            if delay > 0:
+                time.sleep(delay)
     raise X11Unavailable("matching ordinary Chrome X11 window was not found")
 
 
@@ -356,7 +360,8 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
             not isinstance(payload["nonce"], str) or not NONCE_RE.fullmatch(payload["nonce"]):
         raise ValueError("invalid ordinary prepare payload")
     adapter = adapter or XcffibAdapter()
-    window = find_ordinary_window(adapter, payload["nonce"], attempts, interval)
+    deadline = time.monotonic() + 5.0
+    window = find_ordinary_window(adapter, payload["nonce"], attempts, interval, deadline)
     identity = browser_incarnation(adapter.pid(window))
     if identity is None or (expected_identity is not None and identity != expected_identity) or \
             not ordinary_candidate(adapter, window, payload["nonce"]):
@@ -366,7 +371,28 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
     if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             has_legacy_browser_binding(adapter, window):
         raise X11Unavailable("ordinary prepare verification failed")
+    for attempt in range(attempts):
+        if time.monotonic() >= deadline:
+            raise X11Unavailable("Qtile ordinary staging title readiness timed out")
+        if browser_incarnation(adapter.pid(window)) != identity or \
+                adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
+                not ordinary_candidate(adapter, window, payload["nonce"]):
+            raise X11Unavailable("ordinary browser identity changed during Qtile readiness")
+        info = qtile_window_info(window, run)
+        if info.get("id") != window:
+            raise X11Unavailable("Qtile readiness did not reach the exact window")
+        if ordinary_title_matches(info.get("name"), payload["nonce"]):
+            break
+        if attempt + 1 < attempts:
+            delay = min(interval, deadline - time.monotonic())
+            if delay > 0:
+                time.sleep(delay)
+    else:
+        raise X11Unavailable("Qtile ordinary staging title readiness timed out")
+    if time.monotonic() >= deadline:
+        raise X11Unavailable("Qtile ordinary staging title readiness timed out")
     if browser_incarnation(adapter.pid(window)) != identity or \
+            adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
             not ordinary_candidate(adapter, window, payload["nonce"]):
         raise X11Unavailable("ordinary browser incarnation changed before prepare")
     expected = json.dumps({"version": 1, "nonce": payload["nonce"], "identity": identity})
