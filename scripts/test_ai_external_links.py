@@ -517,10 +517,15 @@ const {{WAL_KEY}} = require({json.dumps(str(CONTENT.with_name('workspace.js')))}
     const originalNow = Date.now;
     let now = 10000;
     let reads = 0;
+    let waitingReads = 0;
+    const listeners = f.api.tabs.onUpdated.listeners.length;
     Date.now = () => now;
     f.hooks['tabs.get'] = id => {{
         reads++;
-        now += 1000;
+        if (f.api.tabs.onUpdated.listeners.length > listeners + 1) {{
+            waitingReads++;
+            now = 15000;
+        }}
         return {{...f.tabs.get(id), title: 'Preparing ordinary Chrome window'}};
     }};
     const payload = {{version: 1, operation: 'ordinary_open', focus: true,
@@ -528,14 +533,16 @@ const {{WAL_KEY}} = require({json.dumps(str(CONTENT.with_name('workspace.js')))}
     try {{
         assert.equal(await f.executor.ordinaryOpen(payload), 'unknown');
         assert.equal(now, payload.deadline_ms);
-        assert.equal(reads, 5, 'title polling must stop at the request deadline');
-        assert.match(f.executor.lastError, /deadline expired|staging title.*timed out/);
+        assert.equal(waitingReads, 1, 'readiness observation must stop at the request deadline');
+        assert(reads < 6, 'document readiness must not busy-poll the tab title');
+        assert.equal(f.api.tabs.onUpdated.listeners.length, listeners);
+        assert.match(f.executor.lastError, /deadline expired|staging document.*timed out/);
         const entry = f.local[WAL_KEY].ordinary[payload.request_id];
         assert.equal(entry.phase, 'terminal');
         assert.equal(entry.completion, 'unknown', 'a dispatched staging tab is not false success');
         assert.equal(f.executor.ordinaryOperations.size, 0);
-        assert.equal(f.calls.filter(call => ['native.prepare', 'native.activate', 'tabs.update']
-            .includes(call.name)).length, 0);
+        assert.equal(f.calls.filter(call => ['native.prepare', 'native.activate'].includes(call.name) ||
+            call.name === 'tabs.update' && call.args[1].url).length, 0);
         const completions = f.calls.filter(call => call.name === 'native.ordinary_open_completion');
         assert.equal(completions.length, 1);
         assert.equal(completions[0].args[0].completion, 'unknown');
