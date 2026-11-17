@@ -384,11 +384,12 @@ const cases = [
         for (const mode of ["canonical", "pending", "redirect"]) {
             const f = fixture(); await f.ready();
             const requested = "https://ORDINARY.test:443";
-            if (mode === "canonical") f.hooks["tabs.update.after"] = async result => {
-                f.tabs.get(result.id).url = new URL(requested).href;
+            if (mode === "canonical") f.hooks["tabs.update.after"] = async (result, id, update) => {
+                if (update.url) f.tabs.get(result.id).url = new URL(requested).href;
             };
-            if (mode === "pending") f.hooks["tabs.update.after"] = async result => {
-                Object.assign(f.tabs.get(result.id), {url: "about:blank", pendingUrl: new URL(requested).href});
+            if (mode === "pending") f.hooks["tabs.update.after"] = async (result, id, update) => {
+                if (update.url) Object.assign(f.tabs.get(result.id),
+                    {url: "about:blank", pendingUrl: new URL(requested).href});
             };
             if (mode === "redirect") f.hooks["native.activate"] = async () => {
                 const current = [...f.tabs.values()].find(tab => tab.url === requested);

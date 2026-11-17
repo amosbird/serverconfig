@@ -1845,8 +1845,59 @@ class WorkspaceExecutor {
             fail("invalid_command", "Invalid ordinary cancellation");
         }
         const op = this.ordinaryOperations.get(payload.request_id);
-        if (op) op.cancelled = true;
+        if (op) {
+            op.cancelled = true;
+            op.wake?.();
+        }
         return Boolean(op);
+    }
+    async waitOrdinaryStaging(payload, op, tab, url, nonce, api, check) {
+        let revision = 0;
+        let stopped = false;
+        let invalid = false;
+        let signal = null;
+        const wake = () => { revision++; signal?.(); };
+        const updated = id => { if (id === tab.id) wake(); };
+        const removed = id => { if (id === tab.id) { invalid = true; wake(); } };
+        const activated = info => {
+            if (info.windowId === tab.windowId && info.tabId !== tab.id) {
+                invalid = true;
+                wake();
+            }
+        };
+        const listeners = [[this.chrome.tabs.onUpdated, updated], [this.chrome.tabs.onRemoved, removed],
+            [this.chrome.tabs.onDetached, removed], [this.chrome.tabs.onActivated, activated]];
+        for (const [event, listener] of listeners) event.addListener(listener);
+        op.wake = wake;
+        const current = () => {
+            check();
+            if (stopped || invalid) throw new Error("Ordinary staging target changed while loading");
+        };
+        try {
+            return await bounded(async () => {
+                while (true) {
+                    current();
+                    const observed = revision;
+                    const changed = new Promise(resolve => { signal = resolve; });
+                    const staging = await api(() => this.chrome.tabs.get(tab.id), "observe ordinary staging document");
+                    current();
+                    if (observed !== revision) continue;
+                    if (staging.id !== tab.id || staging.windowId !== tab.windowId ||
+                            this.ownsTab(tab.id) || staging.groupId !== -1 || !staging.active ||
+                            staging.pendingUrl && staging.pendingUrl !== url ||
+                            staging.url && !["about:blank", url].includes(staging.url)) {
+                        throw new Error("Ordinary staging target is not exact, active, and ungrouped");
+                    }
+                    if (staging.url === url && staging.title === `${ORDINARY_PREFIX}${nonce}`) return staging;
+                    await changed;
+                }
+            }, "ordinary staging document readiness", Math.max(1, payload.deadline_ms - Date.now()));
+        } finally {
+            stopped = true;
+            wake();
+            if (op.wake === wake) delete op.wake;
+            for (const [event, listener] of listeners) event.removeListener(listener);
+        }
     }
     async ordinaryCompletion(payload, completion) {
         await this.native("ordinary_open", "ordinary_open_completion", {version: 1,
@@ -1904,7 +1955,8 @@ class WorkspaceExecutor {
             if (window) tab = await api(() => {
                 check();
                 op.dispatched = true;
-                return this.chrome.tabs.create({windowId: window.id, url, active: true});
+                return this.chrome.tabs.create({windowId: window.id, url,
+                    active: false, index: RIGHT_EDGE_TAB_INDEX});
             }, "create ordinary staging tab");
             else {
                 const created = await api(() => {
@@ -1914,28 +1966,25 @@ class WorkspaceExecutor {
                 }, "explicit ordinary cold window");
                 tab = created.tabs?.[0];
             }
-            if (!Number.isSafeInteger(tab?.id) || this.ownsTab(tab.id)) throw new Error("No exact ordinary tab");
-            await api(() => this.chrome.tabs.ungroup([tab.id]), "ungroup exact ordinary tab");
-            const staging = await api(() => this.chrome.tabs.get(tab.id), "verify ordinary staging");
-            if (staging.groupId !== -1 || staging.url !== url || !staging.active) {
-                throw new Error("Ordinary staging tab must be active and ungrouped");
+            if (!Number.isSafeInteger(tab?.id) || !Number.isSafeInteger(tab.windowId) ||
+                    window && tab.windowId !== window.id || this.ownsTab(tab.id)) {
+                throw new Error("No exact ordinary tab");
             }
-            check();
-            await bounded(async () => {
-                while (true) {
-                    check();
-                    const current = await api(() => this.chrome.tabs.get(tab.id), "ordinary title");
-                    if (current.title === `${ORDINARY_PREFIX}${nonce}`) return;
-                    check();
-                    await new Promise(resolve => setTimeout(resolve,
-                        Math.min(10, Math.max(1, payload.deadline_ms - Date.now()))));
-                }
-            }, "ordinary staging title", Math.max(1, payload.deadline_ms - Date.now()));
+            await api(() => this.chrome.tabs.ungroup([tab.id]), "ungroup exact ordinary tab");
+            const isolated = await api(() => this.chrome.tabs.get(tab.id), "verify ordinary isolation");
+            if (isolated.id !== tab.id || isolated.windowId !== tab.windowId ||
+                    isolated.groupId !== -1 || this.ownsTab(tab.id)) {
+                throw new Error("Ordinary tab must be isolated before activation");
+            }
+            if (!isolated.active) await api(() => this.chrome.tabs.update(tab.id, {active: true}),
+                "activate exact isolated ordinary staging tab");
+            await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
             const prepared = await native("prepare", {nonce,
                 deadline_ms: payload.deadline_ms});
             if (!exactFields(prepared, ["nonce", "xid"]) || prepared.nonce !== nonce ||
                     !Number.isSafeInteger(prepared.xid) || prepared.xid <= 0) throw new Error("Invalid ordinary prepare receipt");
             check();
+            await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
             let navigationConfirmed = false;
             const requested = new URL(payload.url).href;
             if (new URL(payload.url).protocol === "file:") {
@@ -1955,9 +2004,13 @@ class WorkspaceExecutor {
             const activated = await native("activate", {...prepared, deadline_ms: payload.deadline_ms});
             if (!sameRef(activated, prepared)) throw new Error("Invalid ordinary activation receipt");
             const result = await api(() => this.chrome.tabs.get(tab.id), "verify ordinary result");
-            const destination = result.pendingUrl || result.url;
-            const exactDestination = new URL(destination).href === requested;
-            if ((!exactDestination && (!navigationConfirmed || result.pendingUrl)) ||
+            const destination = new URL(result.pendingUrl || result.url);
+            const exactDestination = destination.href === requested;
+            const confirmedRedirect = navigationConfirmed && !result.pendingUrl &&
+                ["http:", "https:"].includes(destination.protocol) &&
+                ["http:", "https:"].includes(new URL(payload.url).protocol);
+            if ((!exactDestination && !confirmedRedirect) || result.id !== tab.id ||
+                    result.windowId !== tab.windowId || this.ownsTab(tab.id) ||
                     result.groupId !== -1 || !result.active) {
                 throw new Error("Ordinary tab result is not exact, active, and ungrouped");
             }
@@ -1965,7 +2018,8 @@ class WorkspaceExecutor {
             entry.completion = "applied";
         } catch (error) {
             entry.completion = op.dispatched ? "unknown" : "not_applied";
-            this.reportAdvisoryError(error);
+            entry.error = error.message || String(error);
+            this.reportAdvisoryError(new Error(`Ordinary open ${payload.request_id}: ${entry.error}`));
         }
         entry.phase = "terminal";
         await this.persistWal();

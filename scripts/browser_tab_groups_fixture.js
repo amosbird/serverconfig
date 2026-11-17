@@ -8,7 +8,8 @@ const clone = value => structuredClone(value);
 function event() {
     const listeners = [];
     return {listeners, addListener: fn => listeners.push(fn),
-        emit: (...args) => listeners.map(fn => fn(...args))};
+        removeListener: fn => { const index = listeners.indexOf(fn); if (index >= 0) listeners.splice(index, 1); },
+        emit: (...args) => [...listeners].map(fn => fn(...args))};
 }
 function deferred() {
     let resolve;
