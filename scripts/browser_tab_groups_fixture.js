@@ -43,6 +43,9 @@ function fixture({globalAutomation = false} = {}) {
     const groups = new Map();
     const tabOrders = new Map();
     const presentationFrames = [];
+    function tabSnapshot(current) {
+        return {...clone(current), index: tabStrip(current.windowId).indexOf(current.id)};
+    }
     function tabStrip(windowId) {
         const order = (tabOrders.get(windowId) || []).filter(id => tabs.get(id)?.windowId === windowId);
         for (const current of tabs.values()) {
@@ -124,9 +127,9 @@ function fixture({globalAutomation = false} = {}) {
                 return {...window, tabs: [created]};
             })},
         tabs: {sendMessage: (id, message) => invoke("tabs.sendMessage", [id, message], () => {}),
-            get: id => invoke("tabs.get", [id], () => clone(tab(id))),
-            query: (query = {}) => invoke("tabs.query", [query], () => clone([...tabs.values()].filter(
-                current => Object.entries(query).every(([key, value]) => current[key] === value)))),
+            get: id => invoke("tabs.get", [id], () => tabSnapshot(tab(id))),
+            query: (query = {}) => invoke("tabs.query", [query], () => [...tabs.values()].map(tabSnapshot).filter(
+                current => Object.entries(query).every(([key, value]) => current[key] === value))),
             create: args => invoke("tabs.create", [args], () => createTab(args)),
             group: args => invoke("tabs.group", [args], () => {
                 syncGroups();
@@ -161,7 +164,14 @@ function fixture({globalAutomation = false} = {}) {
             }), update: (id, args) => invoke("tabs.update", [id, args], () => {
                 if (args.active) activate(tab(id));
                 Object.assign(tab(id), args);
-                return clone(tab(id));
+                return tabSnapshot(tab(id));
+            }), move: (id, args) => invoke("tabs.move", [id, args], () => {
+                const current = tab(id); const order = tabStrip(current.windowId);
+                const fromIndex = order.indexOf(id); order.splice(fromIndex, 1);
+                const toIndex = args.index < 0 ? order.length : Math.min(args.index, order.length);
+                order.splice(toIndex, 0, id);
+                api.tabs.onMoved.emit(id, {windowId: current.windowId, fromIndex, toIndex});
+                return tabSnapshot(current);
             }), onRemoved: event(), onMoved: event(), onDetached: event(), onAttached: event(),
             onActivated: event(), onReplaced: event(), onCreated: event(), onUpdated: event()},
         tabGroups: {onUpdated: event(), onCreated: event(), onRemoved: event(), onMoved: event(),
@@ -214,7 +224,7 @@ function fixture({globalAutomation = false} = {}) {
                 api.tabs.onMoved.emit(item.id, {windowId: item.windowId, fromIndex: 0, toIndex: 1});
             }
         }
-        return clone(current);
+        return tabSnapshot(current);
     }
     const native = (service, operation, payload) => invoke(`native.${operation}`, [payload], () => {
         if (operation === "refresh_remotes") return {remotes: [clone(REMOTE)]};

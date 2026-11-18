@@ -487,6 +487,7 @@ function registerWorkspaceWindowListeners(chromeApi, workspaces, ready, onFailur
     chromeApi.tabs.onActivated.addListener(info =>
         Promise.resolve(workspaces.tabActivated(info)).catch(onFailure));
     chromeApi.tabs.onCreated.addListener(tab => Promise.resolve(workspaces.newPersonalCandidate(tab)).catch(onFailure));
+    chromeApi.tabs.onMoved.addListener(tabId => workspaces.personalTabMoved(tabId));
     chromeApi.tabs.onUpdated.addListener((tabId, change, tab) =>
         Promise.resolve(workspaces.personalTabChanged(tabId, change, tab)).catch(onFailure));
     chromeApi.tabs.onRemoved.addListener(tabId => workspaces.forgetPersonalCandidate(tabId));

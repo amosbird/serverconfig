@@ -191,8 +191,10 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
 
                 def ipc(selectors, function, arguments=(), deadline=None):
                     calls.append(function)
-                    self.assertEqual(function, "info", "late prepare must never be dispatched")
+                    self.assertIn(function, {"doc", "info"}, "late prepare must never be dispatched")
                     self.assertEqual(deadline, 10.125)
+                    if function == "doc":
+                        return "prepare_ordinary_window(manager, xid: int, expected_json: str = '')\n"
                     clock[0] = 10.125
                     return {"id": 42, "group": "e", "name": adapter.title(42)}
 
@@ -218,7 +220,7 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
                 self.assertIn("deadline expired", response["error"])
                 warning.assert_called_once()
                 self.assertNotIn(nonce, str(warning.call_args))
-                self.assertEqual(calls, ["info"] if phase == "probe" else [])
+                self.assertEqual(calls, ["doc", "info"] if phase == "probe" else [])
                 if phase != "probe":
                     adapter.set_text.assert_not_called()
                     adapter.finish.assert_not_called()
