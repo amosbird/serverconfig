@@ -1,6 +1,6 @@
 # 方案 A：把 iOA 放进独立的网络命名空间
 
-状态：实现完成，待切换（`.tmp/cutover-ioa-netns.sh`，需扫码一次）。
+状态：2026-11-18 20:12 已切换上线，未要求重新扫码；git/iwiki、心跳、票据、本地代理、GUI、SSH 均验证通过。
 回滚点：tag `pre-ioa-netns`，系统快照 `.tmp/pre-a-20261118-000813/`。
 
 ## 目标
@@ -105,10 +105,14 @@ corkscrew SSH；浏览器 PAC；之后再做一次真实漫游。
 回滚：快照里的 `rollback.sh --apply --restart-ioa`（daemon 已在命名空间里时它会拒绝不带
 `--restart-ioa` 运行）。
 
-## 待实测的问题
+## 切换记录（2026-11-18）
 
-1. SmartGateAgent 在命名空间里能否创建 tun0 并正常工作（`/dev/net/tun` 不受 netns 影响，应可以）。
-2. 宿主机漫游时，命名空间内 iOA 是否真的收不到任何地址事件，隧道是否仍需 BPF 才能恢复。
+- 第一次启动隧道没起来：veth 原来用链路本地 `169.254.170.0/30`，SmartGateAgent 找上行网卡时跳过链路本地
+  地址（`no addr for interface:veth-ioa-ns`），随后在 `DeployRoutes` 空指针崩溃。改用 `198.18.170.0/30`
+  后再启动一次即正常，登录态保住了，没有要求扫码。沙箱测试发现不了这个问题，因为里面不是真的 SmartGateAgent。
+- 刚起来的几秒内宿主机经 UDP 查 `192.168.255.10` 会被拒绝，那时 SmartGateAgent 的 DNS 服务还没监听，随后正常。
+- SmartGateAgent 在命名空间里直接调用 `/usr/bin/ip`，按厂商原样建 table 20/230 和 tun0 默认路由，场景识别为 EXTRA。
+- 仍待观察：真实漫游后隧道的恢复情况；GUI 自身的云端连接改走出口节点后是否有异常。
 
 ## 风险核实记录（2026-11-18，只读）
 
