@@ -38,6 +38,12 @@ function validPageRef(value) {
 function displayTitle(display) {
     return display ? `Abush · ${display}` : "Abush";
 }
+function expectedUngroupMove(tab, members) {
+    const indices = members.map(member => member.index);
+    if (!Number.isSafeInteger(tab.index) || indices.some(index => !Number.isSafeInteger(index)) ||
+            tab.index <= Math.min(...indices) || tab.index >= Math.max(...indices)) return null;
+    return {windowId: tab.windowId, fromIndex: tab.index, toIndex: Math.max(...indices)};
+}
 function fail(code, message) {
     throw Object.assign(new Error(message), {browserCode: code});
 }
@@ -105,6 +111,7 @@ class WorkspaceExecutor {
         this.inheritanceTail = Promise.resolve();
         this.workCreatesInFlight = 0;
         this.presentationTail = Promise.resolve();
+        this.presentationRevision = 0;
         this.presentationDefaults = new Map();
         this.activeTabs = new Map();
         this.activationGenerations = new Map();
@@ -1171,6 +1178,7 @@ class WorkspaceExecutor {
     }
     presentationGroupChanged(group, event = "updated", memberId = null) {
         if (!Number.isSafeInteger(group.id) || group.id < 0) return;
+        this.presentationRevision++;
         for (const [record, defaults] of this.presentationDefaults) {
             if (event === "membership" && memberId === record.tab_id ||
                     group.windowId !== undefined && group.windowId !== record.window_id) continue;
@@ -1336,7 +1344,11 @@ class WorkspaceExecutor {
             .map(value => value.group_id).filter(id => id >= 0 && id !== null));
     }
     forgetPersonalCandidate(tabId, preservePlacement = false) {
-        if (!preservePlacement) this.personalPlacements.delete(tabId);
+        this.presentationRevision++;
+        if (!preservePlacement) {
+            this.personalPlacements.get(tabId)?.wake?.();
+            this.personalPlacements.delete(tabId);
+        }
         clearTimeout(this.personalCandidates.get(tabId)?.timer);
         if (this.personalCandidates.delete(tabId)) return this.persistInheritance();
     }
@@ -1347,6 +1359,7 @@ class WorkspaceExecutor {
     }
     newPersonalCandidate(tab) {
         if (!Number.isSafeInteger(tab.id)) return;
+        this.presentationRevision++;
         this.presentationGroupChanged({id: tab.groupId, windowId: tab.windowId}, "membership", tab.id);
         const context = this.personalCreationContext(tab);
         const source = this.personalInheritanceSource(tab);
@@ -1376,28 +1389,40 @@ class WorkspaceExecutor {
     positionNewPersonalTab(created, isolation) {
         const placement = {browser_boot_id: this.browserBootId, window_id: created.windowId,
             url: created.pendingUrl || created.url, deadline: Date.now() + API_TIMEOUT_MS,
-            moving: false, retired: false};
+            isolation, retired: false, expectedMove: null};
         this.personalPlacements.set(created.id, placement);
         const current = () => this.personalPlacements.get(created.id) === placement &&
             this.browserBootId === placement.browser_boot_id && !placement.retired &&
             Date.now() < placement.deadline && !this.ownsTab(created.id) &&
             !this.pendingCreations.has(created.id);
         const task = this.presentationTail.catch(() => {}).then(async () => {
-            try {
-                await isolation;
-            } finally {
-                await placement.isolationEffect;
+            while (current()) {
+                const changed = new Promise(resolve => { placement.wake = resolve; });
+                try {
+                    await placement.isolation;
+                } finally {
+                    await placement.isolationEffect;
+                }
+                if (!current()) return;
+                const {index, tab, revision} = await this.ordinaryPlacement(created.windowId,
+                    (task, label) => this.api(task, label), () => {}, created.id);
+                if (!current() || index === RIGHT_EDGE_TAB_INDEX) return;
+                if (revision !== this.presentationRevision) continue;
+                if (tab?.groupId >= 0) {
+                    const candidate = this.personalCandidates.get(created.id);
+                    if (candidate?.initial_group !== -1 || candidate.generation !== 1 ||
+                            candidate.inheritance_source?.group_id !== tab.groupId) return;
+                    await bounded(() => changed, "wait for initial personal inheritance",
+                        Math.max(1, placement.deadline - Date.now()));
+                    continue;
+                }
+                if (!tab || tab.windowId !== placement.window_id || tab.groupId !== -1 ||
+                        tab.pinned || !tab.active || tab.index <= index ||
+                        (tab.pendingUrl || tab.url) !== placement.url) return;
+                placement.expectedMove = {windowId: tab.windowId, fromIndex: tab.index, toIndex: index};
+                await this.chrome.tabs.move(created.id, {index});
+                return;
             }
-            if (!current()) return;
-            const index = await this.ordinaryInsertionIndex(created.windowId,
-                (task, label) => this.api(task, label), () => {}, created.id);
-            if (!current() || index === RIGHT_EDGE_TAB_INDEX) return;
-            const tab = await this.chrome.tabs.get(created.id);
-            if (!current() || tab.windowId !== placement.window_id || tab.groupId !== -1 ||
-                    tab.pinned || !tab.active || tab.index <= index ||
-                    (tab.pendingUrl || tab.url) !== placement.url) return;
-            placement.moving = true;
-            await this.chrome.tabs.move(created.id, {index});
         }).finally(() => {
             if (this.personalPlacements.get(created.id) === placement) this.personalPlacements.delete(created.id);
         });
@@ -1406,9 +1431,13 @@ class WorkspaceExecutor {
             placement.retired = true;
         });
     }
-    personalTabMoved(tabId) {
+    personalTabMoved(tabId, info) {
+        this.presentationRevision++;
         const placement = this.personalPlacements.get(tabId);
-        if (placement && !placement.moving && !placement.isolating) placement.retired = true;
+        if (!placement) return;
+        if (placement.expectedMove && sameRef(placement.expectedMove, info)) placement.expectedMove = null;
+        else placement.retired = true;
+        placement.wake?.();
     }
     schedulePersonalExpiry(candidate) {
         // The first creation generation allows Chrome's delayed initial group update.
@@ -1422,7 +1451,13 @@ class WorkspaceExecutor {
     }
     personalTabChanged(tabId, change, tab) {
         const placement = this.personalPlacements.get(tabId);
-        if (placement && (change.groupId !== undefined && change.groupId !== -1 ||
+        const initial = this.personalCandidates.get(tabId);
+        const initialMembership = initial?.initial_group === -1 && initial.generation === 1 &&
+            change.groupId === initial.inheritance_source?.group_id;
+        if (change.groupId !== undefined || change.pinned !== undefined || change.windowId !== undefined) {
+            this.presentationRevision++;
+        }
+        if (placement && (change.groupId !== undefined && change.groupId !== -1 && !initialMembership ||
                 change.pinned === true || change.windowId !== undefined ||
                 change.url && change.url !== placement.url ||
                 change.pendingUrl && change.pendingUrl !== placement.url)) placement.retired = true;
@@ -1482,7 +1517,12 @@ class WorkspaceExecutor {
             }
             this.persistInheritance();
         }
-        return this.isolateNewPersonalTab(tabId);
+        const isolation = this.isolateNewPersonalTab(tabId);
+        if (placement) {
+            placement.isolation = isolation;
+            placement.wake?.();
+        }
+        return isolation;
     }
     async isolateNewPersonalTab(tabId) {
         const candidate = this.personalCandidates.get(tabId);
@@ -1537,10 +1577,15 @@ class WorkspaceExecutor {
         }
         if (this.inheritedWorkGroups(candidate).has(tab.groupId)) {
             const placement = this.personalPlacements.get(tabId);
+            const members = placement ? await this.api(() => this.chrome.tabs.query({windowId: tab.windowId,
+                groupId: tab.groupId}), "inspect personal inheritance movement") : [];
             const isolationEffect = Promise.resolve().then(async () => {
                 // Chrome has no conditional ungroup API: event identity fences the last synchronous step.
                 if (!current() || !this.inheritedWorkGroups(candidate).has(tab.groupId)) return;
-                if (placement) placement.isolating = true;
+                if (placement) {
+                    placement.isolating = true;
+                    placement.expectedMove = expectedUngroupMove(tab, members);
+                }
                 try {
                     await this.chrome.tabs.ungroup([tabId]);
                 } finally {
@@ -1925,7 +1970,7 @@ class WorkspaceExecutor {
         let isolated = false;
         let ungrouped = false;
         let navigating = false;
-        let moving = false;
+        let expectedMove = null;
         let invalid = false;
         const early = [];
         const placeholder = value => !value || value === "about:blank" || value === url;
@@ -1941,7 +1986,8 @@ class WorkspaceExecutor {
             } else if (kind === "created") {
                 if (id.id === target.id) initialGroup = id.groupId;
             } else if (id === target.id && kind === "moved") {
-                if (!moving || change.windowId !== target.windowId) invalid = true;
+                if (expectedMove && sameRef(expectedMove, change)) expectedMove = null;
+                else invalid = true;
             } else if (id === target.id) {
                 if (kind !== "updated" || tab?.windowId !== target.windowId ||
                         change.groupId !== undefined && change.groupId !== -1 &&
@@ -1969,9 +2015,9 @@ class WorkspaceExecutor {
                     throw new Error("Created ordinary tab no longer matches its staging request");
                 }
             },
-            move: async task => {
-                moving = true;
-                try { return await task(); } finally { moving = false; }
+            move: async (task, expected) => {
+                expectedMove = expected;
+                return task();
             },
             isolate: () => { isolated = true; },
             navigate: () => { navigating = true; },
@@ -2049,22 +2095,29 @@ class WorkspaceExecutor {
         this.ordinaryTail = op.done;
         return op.done;
     }
-    async ordinaryInsertionIndex(windowId, api, check, excludedId = null) {
-        const titles = new Set([...this.remotes.values()].filter(remote => remote.connected)
-            .map(remote => displayTitle(remote.display_name || remote.connection_display_name)));
-        const groups = await api(() => this.chrome.tabGroups.query({windowId}), "read ordinary presentation boundaries");
-        check();
-        const displayGroups = new Set(groups.filter(group => group.windowId === windowId && titles.has(group.title))
-            .map(group => group.id));
-        const tabs = await api(() => this.chrome.tabs.query({windowId}), "read ordinary insertion indices");
-        check();
-        const members = tabs.filter(tab => tab.id !== excludedId && displayGroups.has(tab.groupId));
-        if (!members.length) return RIGHT_EDGE_TAB_INDEX;
-        if (tabs.some(tab => !Number.isSafeInteger(tab.index) || tab.index < 0)) {
-            throw new Error("Ordinary placement requires current tab-strip indices");
+    async ordinaryPlacement(windowId, api, check, excludedId = null) {
+        for (let attempt = 0; attempt < 3; attempt++) {
+            check();
+            const revision = this.presentationRevision;
+            const titles = new Set([...this.remotes.values()].filter(remote => remote.connected)
+                .map(remote => displayTitle(remote.display_name || remote.connection_display_name)));
+            const groups = await api(() => this.chrome.tabGroups.query({windowId}), "read ordinary presentation boundaries");
+            check();
+            const displayGroups = new Set(groups.filter(group => group.windowId === windowId && titles.has(group.title))
+                .map(group => group.id));
+            const tabs = await api(() => this.chrome.tabs.query({windowId}), "read ordinary insertion indices");
+            check();
+            if (revision !== this.presentationRevision) continue;
+            const members = tabs.filter(tab => tab.id !== excludedId && displayGroups.has(tab.groupId));
+            const tab = tabs.find(tab => tab.id === excludedId);
+            if (!members.length) return {index: RIGHT_EDGE_TAB_INDEX, tab, revision};
+            if (tabs.some(tab => !Number.isSafeInteger(tab.index) || tab.index < 0)) {
+                throw new Error("Ordinary placement requires current tab-strip indices");
+            }
+            const pinnedEnd = Math.max(0, ...tabs.filter(tab => tab.pinned).map(tab => tab.index + 1));
+            return {index: Math.max(pinnedEnd, Math.min(...members.map(tab => tab.index))), tab, revision};
         }
-        const pinnedEnd = Math.max(0, ...tabs.filter(tab => tab.pinned).map(tab => tab.index + 1));
-        return Math.max(pinnedEnd, Math.min(...members.map(tab => tab.index)));
+        throw new Error("Ordinary presentation changed during placement observation");
     }
     async performOrdinary(payload, entry, op) {
         let observation;
@@ -2099,8 +2152,12 @@ class WorkspaceExecutor {
             check();
             const preparation = this.presentationTail.catch(() => {}).then(async () => {
                 check();
-                const index = window ? await this.ordinaryInsertionIndex(window.id, api, check) : undefined;
+                const placement = window ? await this.ordinaryPlacement(window.id, api, check) : null;
                 check();
+                if (placement && placement.revision !== this.presentationRevision) {
+                    throw new Error("Ordinary presentation changed before creation");
+                }
+                const index = placement?.index;
                 observation = this.observeOrdinaryTab(url);
                 let tab;
                 if (window) {
@@ -2120,18 +2177,23 @@ class WorkspaceExecutor {
                 const created = await this.chrome.tabs.get(tab.id);
                 observation.validate(created);
                 check();
-                await observation.move(() => this.chrome.tabs.ungroup([tab.id]));
+                const members = created.groupId >= 0 ? await this.chrome.tabs.query({windowId: tab.windowId,
+                    groupId: created.groupId}) : [];
+                check();
+                await observation.move(() => this.chrome.tabs.ungroup([tab.id]), expectedUngroupMove(created, members));
                 observation.isolate();
                 check();
-                const indexAfterIsolation = await this.ordinaryInsertionIndex(tab.windowId, api, check, tab.id);
-                const isolated = await this.chrome.tabs.get(tab.id);
+                const {index: indexAfterIsolation, tab: isolated, revision} =
+                    await this.ordinaryPlacement(tab.windowId, api, check, tab.id);
                 check();
-                if (isolated.id !== tab.id || isolated.windowId !== tab.windowId ||
+                if (revision !== this.presentationRevision) throw new Error("Ordinary isolation placement changed");
+                if (!isolated || isolated.id !== tab.id || isolated.windowId !== tab.windowId ||
                         isolated.groupId !== -1 || this.ownsTab(tab.id)) {
                     throw new Error("Ordinary tab must be isolated before activation");
                 }
                 if (indexAfterIsolation !== RIGHT_EDGE_TAB_INDEX && isolated.index > indexAfterIsolation) {
-                    await observation.move(() => this.chrome.tabs.move(tab.id, {index: indexAfterIsolation}));
+                    await observation.move(() => this.chrome.tabs.move(tab.id, {index: indexAfterIsolation}),
+                        {windowId: tab.windowId, fromIndex: isolated.index, toIndex: indexAfterIsolation});
                     check();
                 }
                 return isolated;

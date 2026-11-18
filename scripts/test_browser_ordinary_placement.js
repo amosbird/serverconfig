@@ -269,4 +269,57 @@ for (const heldOperation of ["tabs.move", "tabs.ungroup"]) {
         assert.equal(f.executor.ownsTab(personal.id), false);
     }]);
 }
+for (const path of ["ordinary", "direct"]) {
+    cases.push([`${path} preparation yields to human movement after ungroup effect before its callback`, async () => {
+        const f = fixture({globalAutomation: true}); await f.ready(); await f.materialize();
+        const work = f.executor.recordFor("remote"); await f.api.tabs.update(work.tab_id, {active: true});
+        const entered = deferred(); const release = deferred();
+        f.hooks["tabs.ungroup.after"] = async () => { entered.resolve(); await release.promise; };
+        let pending; let id;
+        if (path === "ordinary") pending = f.executor.ordinaryOpen(request("human-after-ungroup"));
+        else id = (await f.api.tabs.create({windowId: 1, active: true, url: "https://rofi.test/human"})).id;
+        try {
+            await entered.promise;
+            id ||= [...f.tabs.values()].find(tab => tab.url.includes("ordinary-staging")).id;
+            await f.api.tabs.move(id, {index: 0}); await f.api.tabs.move(id, {index: -1});
+        } finally { release.resolve(); }
+        if (pending) assert.equal(await pending, "unknown");
+        await f.executor.presentationTail.catch(() => {});
+        assert.equal(f.calls.filter(call => call.name === "tabs.move").length, 2);
+        if (pending) {
+            assert.equal(f.calls.some(call => call.name === "native.prepare"), false);
+            assert.equal(f.calls.some(call => call.name === "native.activate"), false);
+        }
+        assert.equal(f.tabStrip(1).at(-1), id, "human's final placement wins");
+    }]);
+}
+cases.push(["delayed initial membership keeps one personal placement until exact inheritance resolves", async () => {
+    const f = fixture({globalAutomation: true}); await f.ready(); await f.materialize();
+    const work = f.executor.recordFor("remote"); await f.api.tabs.update(work.tab_id, {active: true});
+    const emitCreated = f.api.tabs.onCreated.emit;
+    f.api.tabs.onCreated.emit = tab => emitCreated({...tab, groupId: -1});
+    const personal = await f.api.tabs.create({windowId: 1, active: true, url: "https://rofi.test/delayed"});
+    f.api.tabs.onCreated.emit = emitCreated;
+    await new Promise(resolve => setImmediate(resolve));
+    await Promise.all(f.api.tabs.onUpdated.emit(personal.id, {groupId: work.group_id}, clone(f.tabs.get(personal.id))));
+    await f.executor.presentationTail;
+    assert.deepEqual(f.tabStrip(1), [1, personal.id, work.tab_id]);
+    assert.equal(f.tabs.get(personal.id).groupId, -1);
+    assert.equal(f.executor.ownsTab(personal.id), false);
+}]);
+cases.push(["closing an unrelated tab during boundary reads cannot use an outdated insertion index", async () => {
+    const f = fixture({globalAutomation: true}); seedTab(f, 3, 80); seedGroup(f, 80); await f.ready();
+    const entered = deferred(); const release = deferred(); let held = false;
+    f.hooks["tabs.query.after"] = async (result, query) => {
+        if (held || query.windowId !== 1 || !result.some(tab => tab.id >= 10)) return;
+        held = true; entered.resolve(); await release.promise;
+    };
+    const personal = await f.api.tabs.create({windowId: 1, active: true, url: "https://rofi.test/closing"});
+    try {
+        await entered.promise;
+        f.tabs.delete(1); await Promise.all(f.api.tabs.onRemoved.emit(1, {windowId: 1}));
+    } finally { release.resolve(); }
+    await f.executor.presentationTail;
+    assert.deepEqual(f.tabStrip(1), [personal.id, 3]);
+}]);
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });
