@@ -206,7 +206,8 @@ for (const heldOperation of ["tabs.create", "tabs.ungroup"]) {
         const id = await second;
         assert.ok(f.tabStrip(1).indexOf(id) < f.tabStrip(1).indexOf(3));
         assert.equal(f.calls.filter(call => call.name === "native.prepare").length, 0);
-        assert.equal(f.calls.filter(call => call.name === "tabs.update" && call.args[1].url).length, 1);
+        assert.equal(f.calls.filter(call => call.name === "tabs.update" && call.args[1].active).length, 1);
+        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
     }]);
 }
 cases.push(["ordinary creation cannot overtake an unresolved work-group membership effect", async () => {

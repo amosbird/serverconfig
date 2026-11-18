@@ -357,16 +357,15 @@ const cases = [
         const f = fixture(); await f.ready(); const entered = deferred(); const gate = deferred();
         const payload = id => ({version: 1, operation: "ordinary_open", focus: true, request_id: id,
             url: `https://ordinary.test/${id}`, deadline_ms: Date.now() + 5000});
-        f.hooks["tabs.update.after"] = async (_result, _id, update) => {
-            if (update.url) { entered.resolve(); await gate.promise; }
-        };
+        f.hooks["tabs.create.after"] = async () => { entered.resolve(); await gate.promise; };
         const a = f.executor.ordinaryOpen(payload("A")); await entered.promise;
         const b = f.executor.ordinaryOpen(payload("B"));
         gate.resolve(); assert.equal(await a, "applied"); assert.equal(await b, "applied");
         const trace = f.calls.filter(c => ["tabs.create", "tabs.update", "native.prepare", "native.activate"].includes(c.name))
             .map(c => c.name);
         assert.deepEqual(trace, ["tabs.create", "tabs.update", "tabs.create", "tabs.update"]);
-        delete f.hooks["tabs.update.after"];
+        delete f.hooks["tabs.create.after"];
+        assert.equal(f.calls.some(c => c.name === "tabs.update" && c.args[1].url), false);
         const queued = f.executor.ordinaryOpen(payload("cancelled"));
         f.executor.cancelOrdinaryOpen({version: 1, operation: "ordinary_open_cancel", request_id: "cancelled"});
         assert.equal(await queued, "not_applied");
@@ -382,23 +381,22 @@ const cases = [
                 deadline_ms: Date.now() + 5000}), "unknown");
         }
     }],
-    ["ordinary URL canonical pending destination and confirmed redirect", async () => {
+    ["ordinary URL canonical pending destination and ambiguous early redirect", async () => {
         for (const mode of ["canonical", "pending", "redirect"]) {
             const f = fixture(); await f.ready();
             const requested = "https://ORDINARY.test:443";
-            if (mode === "canonical") f.hooks["tabs.update.after"] = async (result, id, update) => {
-                if (update.url) f.tabs.get(result.id).url = new URL(requested).href;
-            };
-            if (mode === "pending") f.hooks["tabs.update.after"] = async (result, id, update) => {
-                if (update.url) Object.assign(f.tabs.get(result.id),
-                    {url: "about:blank", pendingUrl: new URL(requested).href});
-            };
-            if (mode === "redirect") f.hooks["tabs.update.after"] = async (_result, id, update) => {
-                if (update.url) f.tabs.get(id).url = "https://ordinary.test/redirected";
+            f.hooks["tabs.create.after"] = async created => {
+                const change = mode === "canonical" ? {url: new URL(requested).href} :
+                    mode === "pending" ? {url: "about:blank", pendingUrl: new URL(requested).href} :
+                        {url: "https://ordinary.test/redirected"};
+                Object.assign(created, change);
+                Object.assign(f.tabs.get(created.id), change);
             };
             assert.equal(await f.executor.ordinaryOpen({version: 1, operation: "ordinary_open", focus: true,
-                request_id: mode, url: requested, deadline_ms: Date.now() + 5000}), "applied");
+                request_id: mode, url: requested, deadline_ms: Date.now() + 5000}),
+            mode === "redirect" ? "unknown" : "applied");
             if (mode === "redirect") assert.ok([...f.tabs.values()].some(tab => tab.url === "https://ordinary.test/redirected"));
+            assert.equal(f.calls.some(c => c.name === "tabs.update" && c.args[1].url), false);
         }
     }],
 ];
