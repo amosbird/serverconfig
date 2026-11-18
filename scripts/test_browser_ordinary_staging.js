@@ -3,7 +3,7 @@ const {assert, clone, deferred, fixture, runCases, REMOTE} =
     require("./browser_tab_groups_fixture.js");
 const {WAL_KEY, ORDINARY_PREFIX} = require("../chromium/external-links/extension/workspace.js");
 const {registerNativeEventRouter} = require("../chromium/external-links/extension/background.js");
-const request = (id, url = "https://qq.com/?ordinary=exact#fragment") => ({version: 1,
+const request = (id, url = "file:///home/amos/ordinary-staging-test.html#fragment") => ({version: 1,
     operation: "ordinary_open", focus: true, request_id: id, url, deadline_ms: Date.now() + 5000});
 const fresh = () => fixture({globalAutomation: true});
 function opened(f) {
@@ -19,7 +19,7 @@ const observedListeners = f => [f.api.tabs.onUpdated, f.api.tabs.onRemoved,
     f.api.tabs.onDetached, f.api.tabs.onActivated].map(event => event.listeners.length);
 const cases = [];
 for (const initial of ["empty", "blank", "pending"]) {
-    cases.push([`ordinary ${initial} staging observation waits for its committed document`, async () => {
+    cases.push([`ordinary file ${initial} staging observation waits for its committed document`, async () => {
         const f = fresh(); await f.ready();
         const listeners = observedListeners(f);
         const firstRead = deferred(); const releaseRead = deferred();
@@ -122,19 +122,16 @@ for (const intervention of ["foreign pending", "foreign committed", "lost activa
             {url: current.url, pendingUrl: current.pendingUrl}, clone(current)));
         assert.equal(await result, "unknown");
         assert.equal(f.calls.some(call => call.name === "native.prepare"), false);
-        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
+        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url ||
+            call.name === "native.ordinary_file_navigate"), false);
     }]);
 }
 for (const after of ["staging", "blank", "other extension", "unrelated http"]) {
-    cases.push([`accepted pending navigation returning to ${after} is never falsely applied`, async () => {
+    cases.push([`confirmed file receipt returning to ${after} is never falsely applied`, async () => {
         const f = fresh(); await f.ready(); let staging;
         f.hooks["tabs.create.after"] = async result => { staging = result.url; };
         const payload = request(`reverted-${after}`);
-        f.hooks["tabs.update.after"] = async (result, id, update) => {
-            if (!update.url) return;
-            result.url = staging; result.pendingUrl = payload.url;
-            Object.assign(f.tabs.get(id), {url: staging, pendingUrl: payload.url});
-        };
+        f.hooks["native.ordinary_file_navigate"] = async wire => ({...wire, completion: "applied"});
         f.hooks["native.activate"] = async () => {
             const tab = opened(f); delete tab.pendingUrl;
             tab.url = after === "blank" ? "about:blank" : after === "other extension" ?
@@ -142,12 +139,12 @@ for (const after of ["staging", "blank", "other extension", "unrelated http"]) {
                     "https://personal.test/not-a-correlated-redirect" : staging;
         };
         assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
-        const mutations = f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.activate"]
+        const mutations = f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.ordinary_file_navigate", "native.activate"]
             .includes(call.name)).length;
         assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
         await f.restart(); await f.emitRemote(REMOTE);
         assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
-        assert.equal(f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.activate"]
+        assert.equal(f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.ordinary_file_navigate", "native.activate"]
             .includes(call.name)).length, mutations);
     }]);
 }
@@ -167,7 +164,8 @@ cases.push(["cancellation while waiting for staging commits leaves no late nativ
     assert.equal(await pending, "unknown");
     await commit(f, stage.id, stage.url, stage.title);
     assert.equal(f.calls.some(call => call.name === "native.prepare"), false);
-    assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
+    assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url ||
+        call.name === "native.ordinary_file_navigate"), false);
     assert.equal(f.local[WAL_KEY].ordinary[payload.request_id].completion, "unknown");
 }]);
 for (const timing of ["before", "during"]) {
@@ -183,7 +181,8 @@ for (const timing of ["before", "during"]) {
         }
         assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
         assert.equal(f.tabs.get(1).active, true);
-        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
+        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url ||
+            call.name === "native.ordinary_file_navigate"), false);
         assert.equal(f.calls.some(call => call.name === "native.activate"), false);
     }]);
 }
@@ -199,13 +198,13 @@ for (const mode of ["completion lost", "worker restart", "native prepare failure
         if (mode === "completion lost") await assert.rejects(f.executor.ordinaryOpen(payload));
         else assert.equal(await f.executor.ordinaryOpen(payload),
             mode === "native prepare failure" ? "unknown" : "applied");
-        const mutations = f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.activate"]
+        const mutations = f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.ordinary_file_navigate", "native.activate"]
             .includes(call.name)).length;
         delete f.hooks["native.ordinary_open_completion"];
         if (mode === "worker restart") { await f.restart(); await f.emitRemote(REMOTE); }
         assert.equal(await f.executor.ordinaryOpen(payload),
             mode === "native prepare failure" ? "unknown" : "applied");
-        assert.equal(f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.activate"]
+        assert.equal(f.calls.filter(call => ["tabs.create", "tabs.update", "native.prepare", "native.ordinary_file_navigate", "native.activate"]
             .includes(call.name)).length, mutations);
         if (mode === "native prepare failure") {
             assert.match(f.local[WAL_KEY].ordinary[payload.request_id].error, /prepare identity/);
@@ -293,7 +292,8 @@ for (const intervention of ["navigation and regroup", "activation ABA", "detach 
             assert.equal(f.calls.some(call => call.name === "tabs.update"), false);
             assert.equal(f.groups.has(90), true);
         }
-        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
+        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url ||
+            call.name === "native.ordinary_file_navigate"), false);
         assert.equal(f.calls.some(call => call.name === "native.activate"), false);
     }]);
 }

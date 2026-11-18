@@ -205,7 +205,8 @@ for (const heldOperation of ["tabs.create", "tabs.ungroup"]) {
         assert.equal(await first, "unknown");
         const id = await second;
         assert.ok(f.tabStrip(1).indexOf(id) < f.tabStrip(1).indexOf(3));
-        assert.equal(f.calls.filter(call => call.name === "native.prepare").length, 1);
+        assert.equal(f.calls.filter(call => call.name === "native.prepare").length, 0);
+        assert.equal(f.calls.filter(call => call.name === "tabs.update" && call.args[1].url).length, 1);
     }]);
 }
 cases.push(["ordinary creation cannot overtake an unresolved work-group membership effect", async () => {
@@ -274,13 +275,13 @@ for (const path of ["ordinary", "direct"]) {
         const f = fixture({globalAutomation: true}); await f.ready(); await f.materialize();
         const work = f.executor.recordFor("remote"); await f.api.tabs.update(work.tab_id, {active: true});
         const entered = deferred(); const release = deferred();
-        f.hooks["tabs.ungroup.after"] = async () => { entered.resolve(); await release.promise; };
+        f.hooks["tabs.ungroup.after"] = async (_result, ids) => { entered.resolve(ids[0]); await release.promise; };
         let pending; let id;
         if (path === "ordinary") pending = f.executor.ordinaryOpen(request("human-after-ungroup"));
         else id = (await f.api.tabs.create({windowId: 1, active: true, url: "https://rofi.test/human"})).id;
         try {
-            await entered.promise;
-            id ||= [...f.tabs.values()].find(tab => tab.url.includes("ordinary-staging")).id;
+            const isolatedId = await entered.promise;
+            id ||= isolatedId;
             await f.api.tabs.move(id, {index: 0}); await f.api.tabs.move(id, {index: -1});
         } finally { release.resolve(); }
         if (pending) assert.equal(await pending, "unknown");

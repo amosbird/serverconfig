@@ -353,31 +353,33 @@ const cases = [
             assert.equal(f.calls.filter(c => c.name === "debugger.sendCommand").length, 1);
         }
     }],
-    ["ordinary serializes prepare through activation and queued cancel", async () => {
+    ["ordinary web requests serialize through navigation and queued cancellation", async () => {
         const f = fixture(); await f.ready(); const entered = deferred(); const gate = deferred();
         const payload = id => ({version: 1, operation: "ordinary_open", focus: true, request_id: id,
             url: `https://ordinary.test/${id}`, deadline_ms: Date.now() + 5000});
-        f.hooks["native.prepare"] = async () => { entered.resolve(); await gate.promise; };
+        f.hooks["tabs.update.after"] = async (_result, _id, update) => {
+            if (update.url) { entered.resolve(); await gate.promise; }
+        };
         const a = f.executor.ordinaryOpen(payload("A")); await entered.promise;
         const b = f.executor.ordinaryOpen(payload("B"));
         gate.resolve(); assert.equal(await a, "applied"); assert.equal(await b, "applied");
-        const trace = f.calls.filter(c => ["tabs.create", "native.prepare", "native.activate"].includes(c.name))
+        const trace = f.calls.filter(c => ["tabs.create", "tabs.update", "native.prepare", "native.activate"].includes(c.name))
             .map(c => c.name);
-        assert.deepEqual(trace, ["tabs.create", "native.prepare", "native.activate",
-            "tabs.create", "native.prepare", "native.activate"]);
-        delete f.hooks["native.prepare"];
+        assert.deepEqual(trace, ["tabs.create", "tabs.update", "tabs.create", "tabs.update"]);
+        delete f.hooks["tabs.update.after"];
         const queued = f.executor.ordinaryOpen(payload("cancelled"));
         f.executor.cancelOrdinaryOpen({version: 1, operation: "ordinary_open_cancel", request_id: "cancelled"});
         assert.equal(await queued, "not_applied");
         assert.equal(f.calls.filter(c => c.name === "tabs.create").length, 2);
     }],
-    ["ordinary rejects malformed activation and competing pending URL", async () => {
+    ["ordinary rejects malformed file activation and competing web pending URL", async () => {
         for (const mode of ["activation", "pending"]) {
             const f = fixture(); await f.ready();
             if (mode === "activation") f.hooks["native.activate"] = async () => ({});
             else f.hooks["tabs.update.after"] = async result => { f.tabs.get(result.id).pendingUrl = "https://other.test/"; };
             assert.equal(await f.executor.ordinaryOpen({version: 1, operation: "ordinary_open", focus: true,
-                request_id: mode, url: "https://ordinary.test/", deadline_ms: Date.now() + 5000}), "unknown");
+                request_id: mode, url: mode === "activation" ? "file:///home/amos/ordinary-test.html" : "https://ordinary.test/",
+                deadline_ms: Date.now() + 5000}), "unknown");
         }
     }],
     ["ordinary URL canonical pending destination and confirmed redirect", async () => {
@@ -391,12 +393,12 @@ const cases = [
                 if (update.url) Object.assign(f.tabs.get(result.id),
                     {url: "about:blank", pendingUrl: new URL(requested).href});
             };
-            if (mode === "redirect") f.hooks["native.activate"] = async () => {
-                const current = [...f.tabs.values()].find(tab => tab.url === requested);
-                current.url = "https://ordinary.test/redirected";
+            if (mode === "redirect") f.hooks["tabs.update.after"] = async (_result, id, update) => {
+                if (update.url) f.tabs.get(id).url = "https://ordinary.test/redirected";
             };
             assert.equal(await f.executor.ordinaryOpen({version: 1, operation: "ordinary_open", focus: true,
                 request_id: mode, url: requested, deadline_ms: Date.now() + 5000}), "applied");
+            if (mode === "redirect") assert.ok([...f.tabs.values()].some(tab => tab.url === "https://ordinary.test/redirected"));
         }
     }],
 ];

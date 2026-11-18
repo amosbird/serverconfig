@@ -1991,6 +1991,7 @@ class WorkspaceExecutor {
                 else invalid = true;
             } else if (id === target.id) {
                 if (kind !== "updated" || tab?.windowId !== target.windowId ||
+                        change.pinned !== undefined ||
                         change.groupId !== undefined && change.groupId !== -1 &&
                             (isolated || ungrouped || change.groupId !== initialGroup) ||
                         !navigating && (change.url !== undefined && !placeholder(change.url) ||
@@ -2010,7 +2011,7 @@ class WorkspaceExecutor {
             },
             check: () => { if (invalid) throw new Error("Ordinary tab changed during preparation"); },
             validate: tab => {
-                if (tab.id !== target.id || tab.windowId !== target.windowId ||
+                if (tab.id !== target.id || tab.windowId !== target.windowId || tab.pinned ||
                         !placeholder(tab.url) || tab.pendingUrl && tab.pendingUrl !== url ||
                         tab.groupId !== -1 && tab.groupId !== initialGroup) {
                     throw new Error("Created ordinary tab no longer matches its staging request");
@@ -2146,8 +2147,9 @@ class WorkspaceExecutor {
             check();
             const window = windows.filter(item => item.type === "normal")
                 .sort((a, b) => Number(b.focused) - Number(a.focused))[0];
-            const nonce = crypto.randomUUID().replaceAll("-", "");
-            const url = this.chrome.runtime.getURL(`ordinary-staging.html#${nonce}`);
+            const file = new URL(payload.url).protocol === "file:";
+            const nonce = file ? crypto.randomUUID().replaceAll("-", "") : null;
+            const url = file ? this.chrome.runtime.getURL(`ordinary-staging.html#${nonce}`) : "about:blank";
             entry.phase = "dispatched";
             await this.persistWal();
             check();
@@ -2202,26 +2204,37 @@ class WorkspaceExecutor {
             this.presentationTail = preparation;
             let preparedTab;
             try {
-                preparedTab = await api(() => preparation, "prepare ordinary staging tab presentation");
+                preparedTab = await api(() => preparation, "prepare ordinary tab presentation");
             } catch (error) {
                 op.cancelled = true;
                 throw error;
             }
             check();
             const tab = preparedTab;
-            if (!tab.active) await api(() => this.chrome.tabs.update(tab.id, {active: true}),
-                "activate exact isolated ordinary staging tab");
-            await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
-            const prepared = await native("prepare", {nonce,
-                deadline_ms: payload.deadline_ms});
-            if (!exactFields(prepared, ["nonce", "xid"]) || prepared.nonce !== nonce ||
-                    !Number.isSafeInteger(prepared.xid) || prepared.xid <= 0) throw new Error("Invalid ordinary prepare receipt");
-            check();
-            await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
+            let prepared;
+            if (file) {
+                if (!tab.active) await api(() => this.chrome.tabs.update(tab.id, {active: true}),
+                    "activate exact isolated ordinary staging tab");
+                await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
+                prepared = await native("prepare", {nonce, deadline_ms: payload.deadline_ms});
+                if (!exactFields(prepared, ["nonce", "xid"]) || prepared.nonce !== nonce ||
+                        !Number.isSafeInteger(prepared.xid) || prepared.xid <= 0) {
+                    throw new Error("Invalid ordinary prepare receipt");
+                }
+                check();
+                await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
+            } else {
+                const current = await api(() => this.chrome.tabs.get(tab.id), "verify exact ordinary tab before navigation");
+                check();
+                observation.validate(current);
+                if (current.groupId !== -1 || this.ownsTab(tab.id)) {
+                    throw new Error("Ordinary tab must remain isolated before navigation");
+                }
+            }
             observation.navigate();
             let navigationConfirmed = false;
             const requested = new URL(payload.url).href;
-            if (new URL(payload.url).protocol === "file:") {
+            if (file) {
                 const wire = {...prepared, url: payload.url, deadline_ms: payload.deadline_ms};
                 const receipt = await native("ordinary_file_navigate", wire);
                 if (!sameRef(receipt, {...wire, completion: "applied"})) throw new Error("File navigation is not confirmed");
@@ -2235,8 +2248,10 @@ class WorkspaceExecutor {
                     new URL(navigated.url).href === requested;
             }
             check();
-            const activated = await native("activate", {...prepared, deadline_ms: payload.deadline_ms});
-            if (!sameRef(activated, prepared)) throw new Error("Invalid ordinary activation receipt");
+            if (file) {
+                const activated = await native("activate", {...prepared, deadline_ms: payload.deadline_ms});
+                if (!sameRef(activated, prepared)) throw new Error("Invalid ordinary activation receipt");
+            }
             const result = await api(() => this.chrome.tabs.get(tab.id), "verify ordinary result");
             const destination = new URL(result.pendingUrl || result.url);
             const exactDestination = destination.href === requested;
@@ -2245,12 +2260,13 @@ class WorkspaceExecutor {
                 ["http:", "https:"].includes(new URL(payload.url).protocol);
             if ((!exactDestination && !confirmedRedirect) || result.id !== tab.id ||
                     result.windowId !== tab.windowId || this.ownsTab(tab.id) ||
-                    result.groupId !== -1 || !result.active) {
+                    result.groupId !== -1 || result.pinned || !result.active) {
                 throw new Error("Ordinary tab result is not exact, active, and ungrouped");
             }
             check();
             entry.completion = "applied";
         } catch (error) {
+            op.cancelled = true;
             entry.completion = op.dispatched ? "unknown" : "not_applied";
             entry.error = error.message || String(error);
             this.reportAdvisoryError(new Error(`Ordinary open ${payload.request_id}: ${entry.error}`));

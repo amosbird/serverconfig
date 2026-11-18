@@ -264,8 +264,8 @@ function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
         const right = tabs.get(order[index]);
         // Append-only tests deliberately simulate hostile Chrome inheritance.
         const append = args.index === undefined || args.index < 0 || args.index >= order.length;
-        // Staging tests also exercise hostile inheritance at an explicit insertion boundary.
-        const hostile = append || args.url.includes("ordinary-staging.html#");
+        // Ordinary preparation also exercises hostile inheritance at an explicit insertion boundary.
+        const hostile = append || args.url === "about:blank" || args.url.includes("ordinary-staging.html#");
         const inherited = inheritActiveGroup && hostile ? active?.groupId :
             left?.groupId >= 0 && left.groupId === right?.groupId ? left.groupId : -1;
         const current = {id: nextTab++, windowId: args.windowId, url: args.url,
