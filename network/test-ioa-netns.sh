@@ -71,6 +71,7 @@ if [ "${IOA_NETNS_SANDBOX:-}" != 1 ]; then
     mutate no-host-localnet 's/net.ipv4.conf.\$HOST_IF.route_localnet=1/net.ipv4.conf.$HOST_IF.route_localnet=0/'
     mutate no-loopback-masquerade 's/postrouting ip saddr 127.0.0.0\/8 oifname "\$NS_IF" masquerade/postrouting ip saddr 127.0.0.0\/8 oifname "$NS_IF" accept/'
     mutate no-resolver-snat 's/snat ip to ip daddr$/accept/'
+    mutate no-ns-tunnel-rule 's/rule add pref "\$NS_RULE_PREF" iif "\$NS_IF" lookup "\$TUNNEL_TABLE"/rule add pref "$NS_RULE_PREF" iif "$NS_IF" lookup main/'
     ok "mutation checks: every mutant fails an assertion"
     exit 0
 fi
@@ -157,14 +158,14 @@ netns_script() {
         bash "$SCRIPT" "$@" >/dev/null
 }
 # SmartGateAgent's tunnel, inside the namespace: tun0 is a veth to `corp`, the intranet, which serves
-# 10.20.30.40:7000 and a fakeip 100.12.0.2:7000 and only routes back to the tunnel address.
+# 10.20.30.40:7000 and a fakeip 100.12.0.2:7000 and only routes back to the tunnel address. The
+# agent's only route is its default, which scripts/overrides/ip puts in table ioa (400).
 add_tunnel() {
     ip netns add corp
     ip link add tun0 netns ioa type veth peer name ct0 netns corp
     ip -n ioa addr add 192.168.255.10/24 dev tun0
     ip -n ioa link set tun0 up
-    ip -n ioa route add 10.0.0.0/8 dev tun0
-    ip -n ioa route add 100.12.0.0/16 dev tun0
+    ip -n ioa route add default dev tun0 table 400 metric 101
     ip -n corp link set lo up
     ip -n corp addr add 192.168.255.1/24 dev ct0
     ip -n corp addr add 10.20.30.40/32 dev lo
@@ -280,6 +281,14 @@ out=$(host_to 192.168.255.10)
 [ "$out" = "agentdns 192.168.255.10" ] ||
     fail "the host should reach iOA's resolver on the tunnel address, seen from it, got '$out'"
 ok "the host reaches iOA's own resolver on the tunnel address"
+# The intranet address also answers on the uplink: iOA's own connections must still take it, not
+# the tunnel, as they did on the host.
+ip -n up addr add 10.20.30.40/32 dev lo
+listen_on up 10.20.30.40 uplink
+out=$(ip netns exec ioa bash -c "$(declare -f host_to); host_to 10.20.30.40")
+[ "$out" = "uplink 192.0.2.10" ] ||
+    fail "iOA's own traffic should keep the uplink while the tunnel is up, got '$out'"
+ok "iOA's own traffic keeps the uplink while the tunnel is up"
 
 # iOA's own lookups go to 127.0.0.1:53, the host's SmartDNS. Nothing listens there in the namespace.
 serve_dns
@@ -316,9 +325,7 @@ ip route add default via 192.0.2.1 dev wl0
 ok "the path returns with the physical route without re-running up"
 
 # iOA stopped or logged out: tun0 is gone and the namespace's only route leads back to the host. The
-# uplink also answers on the intranet address, so a leak would show up as "leak ...".
-ip -n up addr add 10.20.30.40/32 dev lo
-listen_on up 10.20.30.40 leak
+# uplink also answers on the intranet address, so a leak would show up as "uplink ...".
 ip -n ioa link del tun0
 for dst in 10.20.30.40 192.168.255.1; do
     out=$(host_to "$dst")

@@ -29,6 +29,8 @@ UNDERLAY_TABLE=${IOA_NETNS_UNDERLAY_TABLE:-19}
 NFT_TABLE=${IOA_NETNS_NFT_TABLE:-ioa_netns}
 TUNNEL_TABLE=${IOA_NETNS_TUNNEL_TABLE:-ioa}
 TUN_IF=${IOA_NETNS_TUN_IF:-tun0}
+# Inside the namespace, where nothing else has rules.
+NS_RULE_PREF=${IOA_NETNS_NS_RULE_PREF:-100}
 IP=${IP_OVERRIDE:-ip}
 NFT=${NFT_OVERRIDE:-nft}
 SYSCTL=${SYSCTL_OVERRIDE:-sysctl}
@@ -50,6 +52,12 @@ up() {
     in_ns "$IP" addr replace "$NS_ADDR/$PREFIX" dev "$NS_IF"
     in_ns "$IP" link set "$NS_IF" up
     in_ns "$IP" route replace default via "$HOST_ADDR" dev "$NS_IF"
+    # SmartGateAgent's tunnel default goes to table ioa in here too (scripts/overrides/ip), so iOA's
+    # own traffic keeps the uplink, exactly as on the host before. Only what the host sends in is
+    # looked up there; with no tunnel the table is empty and that traffic falls through to the
+    # uplink default, where the forward filter below refuses it.
+    in_ns "$IP" -4 rule del pref "$NS_RULE_PREF" 2>/dev/null || true
+    in_ns "$IP" -4 rule add pref "$NS_RULE_PREF" iif "$NS_IF" lookup "$TUNNEL_TABLE"
 
     # Forwarding has to be on for the host end and for the uplink, because replies enter on the
     # uplink and are forwarded back to the namespace. Inside, the namespace forwards between the
