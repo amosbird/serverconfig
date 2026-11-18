@@ -30,7 +30,7 @@ const REMOTE = {remote_key: "remote", connection_id: "connection", principal_id:
     workspace_id: "workspace", connected: true, executor_fence: {executor_id: "executor", epoch: 1},
     owner_display: {daemon_instance_id: "instance", daemon_boot_id: "daemon-boot",
         workbench_name: "Workbench"}, connection_display_name: "local"};
-function fixture({globalAutomation = false} = {}) {
+function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
     const calls = [];
     const local = {abushOwnedMarkers: {legacy: true}};
     if (!globalAutomation) local.abushBrowserAutomationV9 = false;
@@ -57,17 +57,46 @@ function fixture({globalAutomation = false} = {}) {
     function recordPresentation(name, args) {
         presentationFrames.push({name, args: clone(args),
             strips: [...windows.keys()].map(windowId => ({windowId, ids: [...tabStrip(windowId)]})),
-            tabs: clone([...tabs.values()]), groups: clone([...groups.values()]),
+            tabs: [...tabs.values()].map(tabSnapshot), groups: clone([...groups.values()]),
             windows: clone([...windows.values()])});
     }
+    function insertionIndex(order, index, pinned = false) {
+        const prefix = order.filter(id => tab(id).pinned).length;
+        const clamped = index < 0 ? order.length : Math.max(0, Math.min(index, order.length));
+        return pinned ? Math.min(clamped, prefix) : Math.max(clamped, prefix);
+    }
+    function outsideGroup(order, index, groupId = -1) {
+        const left = tabs.get(order[index - 1]);
+        const right = tabs.get(order[index]);
+        if (left?.groupId >= 0 && left.groupId === right?.groupId &&
+            left.groupId !== groupId) {
+            while (index < order.length && tab(order[index]).groupId === left.groupId) index++;
+        }
+        return index;
+    }
+    function moveTab(id, index, groupId = tab(id).groupId, changed = null) {
+        const current = tab(id);
+        const order = tabStrip(current.windowId);
+        const fromIndex = order.indexOf(id);
+        order.splice(fromIndex, 1);
+        const toIndex = outsideGroup(order, insertionIndex(order, index, current.pinned), groupId);
+        order.splice(toIndex, 0, id);
+        current.groupId = groupId;
+        tabStrip(current.windowId);
+        changed?.();
+        if (fromIndex !== toIndex) {
+            api.tabs.onMoved.emit(id, {windowId: current.windowId, fromIndex, toIndex});
+        }
+    }
     function joinGroup(ids, groupId) {
-        const windowId = tab(ids[0]).windowId;
-        const order = tabStrip(windowId);
-        const previous = order.findIndex(id => ids.includes(id));
-        const remaining = order.filter(id => !ids.includes(id));
-        const lastMember = remaining.findLastIndex(id => tab(id).groupId === groupId);
-        remaining.splice(lastMember >= 0 ? lastMember + 1 : previous, 0, ...ids);
-        tabOrders.set(windowId, remaining);
+        for (const id of ids) {
+            const order = tabStrip(tab(id).windowId);
+            if (tab(id).groupId === groupId) continue;
+            const remaining = order.filter(other => other !== id);
+            const lastMember = remaining.findLastIndex(other => tab(other).groupId === groupId);
+            moveTab(id, lastMember < 0 ? order.indexOf(id) : lastMember + 1, groupId);
+            api.tabs.onUpdated.emit(id, {groupId}, tabSnapshot(tab(id)));
+        }
     }
     let nextTab = 10;
     let nextGroup = 100;
@@ -129,7 +158,8 @@ function fixture({globalAutomation = false} = {}) {
         tabs: {sendMessage: (id, message) => invoke("tabs.sendMessage", [id, message], () => {}),
             get: id => invoke("tabs.get", [id], () => tabSnapshot(tab(id))),
             query: (query = {}) => invoke("tabs.query", [query], () => [...tabs.values()].map(tabSnapshot).filter(
-                current => Object.entries(query).every(([key, value]) => current[key] === value))),
+                current => Object.entries(query).every(([key, value]) => current[key] === value))
+                .sort((a, b) => a.windowId - b.windowId || a.index - b.index)),
             create: args => invoke("tabs.create", [args], () => createTab(args)),
             group: args => invoke("tabs.group", [args], () => {
                 syncGroups();
@@ -139,6 +169,7 @@ function fixture({globalAutomation = false} = {}) {
                 if (args.groupId !== undefined && group(args.groupId).windowId !== windowId) {
                     throw new Error("Group belongs to another window");
                 }
+                if (ids.some(id => tab(id).pinned)) throw new Error("Cannot group pinned tabs");
                 const groupId = args.groupId ?? nextGroup++;
                 if (!groups.has(groupId)) {
                     const created = {id: groupId, windowId, title: "", color: "grey", collapsed: false};
@@ -147,30 +178,49 @@ function fixture({globalAutomation = false} = {}) {
                     api.tabGroups.onUpdated.emit(clone(created));
                 }
                 joinGroup(ids, groupId);
-                ids.forEach(id => {
-                    tab(id).groupId = groupId;
-                    api.tabs.onMoved.emit(id, {windowId: tab(id).windowId, fromIndex: 0, toIndex: 1});
-                    api.tabs.onUpdated.emit(id, {groupId}, clone(tab(id)));
-                });
                 syncGroups();
                 return groupId;
             }), ungroup: ids => invoke("tabs.ungroup", [ids], () => {
+                ids = Array.isArray(ids) ? ids : [ids];
                 ids.forEach(id => {
-                    tab(id).groupId = -1;
-                    api.tabs.onUpdated.emit(id, {groupId: -1}, clone(tab(id)));
-                    api.tabs.onMoved.emit(id, {windowId: tab(id).windowId, fromIndex: 1, toIndex: 0});
+                    const current = tab(id);
+                    if (current.groupId < 0) return;
+                    const order = tabStrip(current.windowId);
+                    const index = order.indexOf(id);
+                    moveTab(id, index, -1, () =>
+                        api.tabs.onUpdated.emit(id, {groupId: -1}, tabSnapshot(current)));
                 });
                 syncGroups();
             }), update: (id, args) => invoke("tabs.update", [id, args], () => {
-                if (args.active) activate(tab(id));
-                Object.assign(tab(id), args);
-                return tabSnapshot(tab(id));
+                const current = tab(id);
+                const wasPinned = !!current.pinned;
+                if (args.active) activate(current);
+                Object.assign(current, args);
+                if (args.pinned !== undefined && !!args.pinned !== wasPinned) {
+                    const previousGroup = current.groupId;
+                    moveTab(id, current.pinned ? -1 : 0, current.pinned ? -1 : current.groupId);
+                    api.tabs.onUpdated.emit(id, {pinned: current.pinned,
+                        ...(previousGroup !== current.groupId ? {groupId: current.groupId} : {})},
+                    tabSnapshot(current));
+                    syncGroups();
+                }
+                return tabSnapshot(current);
             }), move: (id, args) => invoke("tabs.move", [id, args], () => {
-                const current = tab(id); const order = tabStrip(current.windowId);
-                const fromIndex = order.indexOf(id); order.splice(fromIndex, 1);
-                const toIndex = args.index < 0 ? order.length : Math.min(args.index, order.length);
-                order.splice(toIndex, 0, id);
-                api.tabs.onMoved.emit(id, {windowId: current.windowId, fromIndex, toIndex});
+                const current = tab(id);
+                if (args.windowId !== undefined && args.windowId !== current.windowId) {
+                    throw new Error("Cross-window moves are not supported by this fixture");
+                }
+                const order = tabStrip(current.windowId).filter(other => other !== id);
+                const index = insertionIndex(order, args.index, current.pinned);
+                const adjacent = [tabs.get(order[index - 1]), tabs.get(order[index])];
+                const groupId = adjacent.some(item => item?.groupId === current.groupId) ?
+                    current.groupId : -1;
+                const previousGroup = current.groupId;
+                moveTab(id, args.index, groupId);
+                if (previousGroup !== groupId) {
+                    api.tabs.onUpdated.emit(id, {groupId}, tabSnapshot(current));
+                    syncGroups();
+                }
                 return tabSnapshot(current);
             }), onRemoved: event(), onMoved: event(), onDetached: event(), onAttached: event(),
             onActivated: event(), onReplaced: event(), onCreated: event(), onUpdated: event()},
@@ -206,24 +256,34 @@ function fixture({globalAutomation = false} = {}) {
         api.tabs.onActivated.emit({tabId: current.id, windowId: current.windowId});
     }
     function createTab(args) {
+        args = {windowId: 1, url: "chrome://newtab/", active: true, ...args};
         const active = [...tabs.values()].find(item => item.windowId === args.windowId && item.active);
+        const order = tabStrip(args.windowId);
+        const index = insertionIndex(order, args.index ?? -1, args.pinned);
+        const left = tabs.get(order[index - 1]);
+        const right = tabs.get(order[index]);
+        // Append-only tests deliberately simulate hostile Chrome inheritance.
+        const append = args.index === undefined || args.index < 0 || args.index >= order.length;
+        // Staging tests also exercise hostile inheritance at an explicit insertion boundary.
+        const hostile = append || args.url.includes("ordinary-staging.html#");
+        const inherited = inheritActiveGroup && hostile ? active?.groupId :
+            left?.groupId >= 0 && left.groupId === right?.groupId ? left.groupId : -1;
         const current = {id: nextTab++, windowId: args.windowId, url: args.url,
-            active: args.active, groupId: active?.groupId ?? -1,
+            active: args.active, pinned: !!args.pinned, groupId: args.pinned ? -1 : inherited ?? -1,
             ...(args.openerTabId !== undefined ? {openerTabId: args.openerTabId} : {})};
         if (args.url.includes("ordinary-staging.html#")) {
             current.title = ORDINARY_PREFIX + args.url.split("#")[1];
         }
-        const order = tabStrip(args.windowId);
-        const index = args.index === undefined ? order.length : Math.max(0, Math.min(args.index, order.length));
-        order.splice(index, 0, current.id);
-        tabs.set(current.id, current);
-        if (current.active) activate(current);
-        api.tabs.onCreated.emit(clone(current));
-        for (const item of tabs.values()) {
-            if (item.id !== current.id && item.windowId === current.windowId) {
-                api.tabs.onMoved.emit(item.id, {windowId: item.windowId, fromIndex: 0, toIndex: 1});
-            }
+        let target = outsideGroup(order, index, current.groupId);
+        if (current.groupId >= 0 && ![left, right].some(item =>
+            item?.groupId === current.groupId)) {
+            target = order.findLastIndex(id => tab(id).groupId === current.groupId) + 1;
         }
+        order.splice(target, 0, current.id);
+        tabs.set(current.id, current);
+        tabStrip(current.windowId);
+        if (current.active) activate(current);
+        api.tabs.onCreated.emit(tabSnapshot(current));
         return tabSnapshot(current);
     }
     const native = (service, operation, payload) => invoke(`native.${operation}`, [payload], () => {
