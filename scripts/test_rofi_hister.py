@@ -353,7 +353,9 @@ class RofiHisterTest(unittest.TestCase):
 
     def test_chromium_uses_installed_extensions(self):
         launcher = SCRIPT.with_name("chromium").read_text()
-        self.assertIn("if chromium-remote; then", launcher)
+        self.assertIn("profile_is_running", launcher)
+        self.assertIn('"$root/scripts/update-external-links-profile" "$profile"', launcher)
+        self.assertIn('exec python3 "$root/scripts/ordinary-open-client.py" "$url"', launcher)
         self.assertIn("launch_chrome", launcher)
         self.assertNotIn('launch_chrome "$@"', launcher)
         self.assertIn("/usr/bin/google-chrome-stable", launcher)
