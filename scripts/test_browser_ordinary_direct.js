@@ -93,6 +93,7 @@ for (const intervention of ["cancel", "navigate ABA", "pin ABA", "group ABA", "a
             id = ids[0]; entered.resolve(); await release.promise;
         };
         const pending = f.executor.ordinaryOpen(payload);
+        let updatesAfterIntervention;
         try {
             await entered.promise;
             const tab = f.tabs.get(id);
@@ -119,8 +120,11 @@ for (const intervention of ["cancel", "navigate ABA", "pin ABA", "group ABA", "a
             if (intervention === "closed") {
                 f.tabs.delete(id); await Promise.all(f.api.tabs.onRemoved.emit(id, {windowId: 1}));
             }
+            updatesAfterIntervention = f.calls.filter(call => call.name === "tabs.update").length;
         } finally { release.resolve(); }
         assert.equal(await pending, "unknown");
+        assert.equal(f.calls.filter(call => call.name === "tabs.update").length, updatesAfterIntervention);
+        assert.equal(f.tabs.get(1).active, true);
         assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
         noDesktopHandshake(f);
         assert.equal(f.local[WAL_KEY].ordinary[payload.request_id].completion, "unknown");
@@ -160,6 +164,8 @@ for (const after of ["pending destination", "blank", "other extension", "unrelat
         };
         const expected = after === "pending destination" ? "applied" : "unknown";
         assert.equal(await f.executor.ordinaryOpen(payload), expected, f.executor.lastError);
+        assert.equal(f.tabs.get(id).active, expected === "applied");
+        assert.equal(f.tabs.get(1).active, expected !== "applied");
         const count = effects(f).length;
         assert.equal(await f.executor.ordinaryOpen(payload), expected);
         assert.equal(effects(f).length, count);
@@ -289,6 +295,7 @@ for (const intervention of ["navigate ABA", "pin ABA", "group ABA", "activate AB
     cases.push([`${intervention} during the final web tab read prevents subsequent selection`, async () => {
         const f = fresh(); await f.ready();
         let verifyEntered = false;
+        let updatesAfterIntervention;
         f.hooks["tabs.get.after"] = async (_result, id) => {
             if (id < 10 || verifyEntered || !f.calls.some(call => call.name === "tabs.ungroup")) return;
             verifyEntered = true;
@@ -306,10 +313,13 @@ for (const intervention of ["navigate ABA", "pin ABA", "group ABA", "activate AB
                 await Promise.all(f.api.tabs.onDetached.emit(id, {oldWindowId: 1}));
                 await Promise.all(f.api.tabs.onAttached.emit(id, {newWindowId: 1}));
             }
+            updatesAfterIntervention = f.calls.filter(call => call.name === "tabs.update").length;
         };
         const payload = request(`final-read-${intervention}`);
         assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
         assert.equal(verifyEntered, true);
+        assert.equal(f.calls.filter(call => call.name === "tabs.update").length, updatesAfterIntervention);
+        assert.equal(f.tabs.get(1).active, true);
         assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
         noDesktopHandshake(f);
     }]);

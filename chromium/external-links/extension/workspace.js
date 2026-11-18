@@ -2238,11 +2238,13 @@ class WorkspaceExecutor {
                 check();
                 await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
             } else {
-                const current = await api(() => this.chrome.tabs.get(tab.id), "verify exact ordinary tab before navigation");
+                const current = await api(() => this.chrome.tabs.get(tab.id), "verify exact ordinary tab before activation");
                 check();
                 observation.validate(current);
-                if (current.groupId !== -1 || this.ownsTab(tab.id)) {
-                    throw new Error("Ordinary tab must remain isolated before navigation");
+                if (current.groupId !== -1 || this.ownsTab(tab.id) ||
+                        !current.pendingUrl && !current.url ||
+                        new URL(current.pendingUrl || current.url).href !== requested) {
+                    throw new Error("Ordinary loading tab no longer has its pending or committed destination");
                 }
             }
             check();
