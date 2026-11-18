@@ -109,9 +109,9 @@ class QtileScratchpadTest(unittest.TestCase):
         self.assertIn("focus_group=false", chromium)
         self.assertIn("flags and app launches require a dedicated profile", chromium)
         self.assertIn("if $focus_group; then", chromium)
-        self.assertGreater(
+        self.assertLess(
+            chromium.index('exec python3 "$root/scripts/ordinary-open-client.py" "$url"'),
             chromium.rindex("focus_main_group"),
-            chromium.index("chromium-remote"),
         )
         self.assertIn(
             'Key([ctrl, alt], "b", toggle_scratchpad("bookmarks"))',
