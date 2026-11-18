@@ -19,22 +19,16 @@ Ownership is deliberately narrow:
   the physical default route. The repository installs `ManageForeignRoutingPolicyRules=no` and
   `ManageForeignRoutes=no`, so networkd does not garbage-collect route/rule objects owned by
   Tailscale, SmartGateAgent, or `network-reconfigure`.
-- **`scripts/network-reconfigure`** owns the repository's rules at priorities 400, 401, 500, 1000,
-  1150, 1500, 1501, and 3000; the atomic `cn_direct`/`cn_direct_next` ipsets; the `NETMODE_IOA`
-  chain and its OUTPUT hook; the exact CN and IOA MASQUERADE rules; the post-srcnat source guard;
-  and the generated DHCP and office SmartDNS fragments. It owner-marks traffic from both iOA cgroups —
-  `ngnclient.service` and the `ioagui.service` user unit — as `0x1000000` before its first route
-  lookup and masquerades that traffic on the selected underlay device, correcting iOA control
-  sockets that bind to a Tailscale source address.
+- **`scripts/network-reconfigure`** owns the repository's rules at priorities 500, 1000, 1150, 1151,
+  1500, 1501, and 3000; the atomic `cn_direct`/`cn_direct_next` ipsets; the `NETMODE_IOA` chain and
+  its OUTPUT hook; the exact CN MASQUERADE rule; the post-srcnat source guard; table
+  `wired_underlay` (19); and the generated DHCP and office SmartDNS fragments.
 - **SmartDNS** owns the domain-derived `ipset ioa` membership.
-- **SmartGateAgent** owns `tun0`, mark `0xa38`, tables `20` and `230`, and the contents and
-  lifetime of table `ioa`. When table `wired_underlay` advertises the authenticated Tencent USB
-  Ethernet route, the `scripts/overrides/ip` wrapper forces SmartGateAgent's unqualified table-20/230
-  defaults onto that gateway and device, regardless of `main` route metrics. Without that
-  advertisement it uses SmartGateAgent's requested gateway only when it is a physical default in
-  `main`. The wrapper gives SmartGateAgent's mark and source rules explicit priorities 1100 and 1200,
-  and isolates its unqualified `tun0` default in table `ioa`; every other `ip` operation passes
-  through unchanged.
+- **`network/ioa-netns`** (`ioa-netns.service`) owns the `ioa` network namespace that iOA runs in,
+  the `veth-ioa` pair, host rules 600-602, its `ioa_netns` nft tables, and the default in table
+  `ioa` that hands the host's tunnel traffic to the namespace. See `network/ioa-netns.md`.
+- **SmartGateAgent**, inside the namespace, owns `tun0`, mark `0xa38`, and its tables `20` and
+  `230` there. It routes exactly as the vendor intends; nothing intercepts its `ip` calls.
 - **Tailscale** owns `tailscale0`, mark `0x80000/0xff0000`, table `52`, DERP and control-plane
   selection, the exit-node preference, and tunnel recovery. No local policy forces DERP or disables
   direct UDP.
@@ -44,129 +38,49 @@ owner state without changing it. `scripts/netfix` may force reconciliation of re
 objects, but it does not change tunnel preferences or owner-managed tables.
 
 The `/usr/lib/iOA/bin/iOA` entrypoint has two callers with different authority. The root-owned
-`ngnclient.service` waits for a physical default, reconciles policy, and then starts `iOA.bin`.
+`ngnclient.service` starts `iOA.bin` (inside the namespace, via `ngnclient.service.d/netns.conf`).
 `iOALinux` also invokes the same entrypoint as the desktop user when it cannot see the daemon.
 That path only checks whether `ngnclient.service` is active; it never attempts reconciliation or
 starts a second daemon. `ioagui.service` has the same condition, so starting the GUI while the daemon
-is absent is skipped rather than entering its restart loop. This boundary was added after the GUI
-repeatedly invoked the root-only reconciler as UID 1000, failed on its first write to `/etc`, and
-produced misleading paired line-191 errors every 21 seconds.
+is absent is skipped rather than entering its restart loop.
+
+The GUI stays in the host namespace and reaches the daemon on `127.0.0.1:56100/56101` through the
+`ioa-port@` socket proxies. It also opens its own HTTPS connections to the iOA cloud; those are
+unmarked and follow the Tailscale exit node. That is deliberate: the GUI is a status display, and
+its cloud traffic does not need the physical path.
 
 ## Effective policy
 
-The repository-owned rules use priorities 400, 401, 500, 1000, 1150, 1500, 1501, and 3000;
-the exact SmartGate command wrapper assigns priorities 1100 and 1200 to its owner-managed rules.
-
 | Priority | Match | Lookup | Purpose |
 |---:|---|---|---|
-| 400 | `fwmark 0x1000000` | `wired_underlay` while office-authorized, otherwise `main` | Prefer the authenticated office wire for iOA control traffic and fall back to the ordinary physical route everywhere else. |
-| 401 | `fwmark 0x1000000` | `prohibit` | Fail closed if no physical route exists; never fall through to Tailscale. |
 | 500 | `fwmark 0x80000/0xff0000` | `main` | Let Tailscale-owned transport packets reach the physical network. |
+| 600 | `iif veth-ioa` | `wired_underlay` | iOA's own traffic prefers the authorized office wire (`network/ioa-netns`). |
+| 601 | `iif veth-ioa`; `to 169.254.170.0/30` | `main` | Otherwise iOA uses the physical default; return path to the namespace. |
+| 602 | `iif veth-ioa` | `prohibit` | Never let iOA's traffic fall through to Tailscale. |
 | 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, declared link-local destinations, captive-portal resolvers, and the office resolvers from the wired lease | `main` | Keep the actual LAN and its required infrastructure direct. |
-| 1100 | SmartGateAgent-owned `fwmark 0xa38` | `20` | Send SmartGate control traffic through its current physical underlay. |
-| 1150 | exact `fwmark 0x1`, then unmarked `10.0.0.0/8` | `ioa` | Select DNS-classified IOA payload and retain a literal-address fallback for private Tencent destinations. |
-| 1200 | SmartGateAgent-owned physical source address | `230` | Keep its source-bound sockets on the current physical underlay. |
+| 1150 | exact `fwmark 0x1`, then unmarked `10.0.0.0/8` and `192.168.255.0/24` | `ioa` | DNS-classified IOA payload, a literal-address fallback for Tencent destinations, and iOA's own resolver network. |
+| 1151 | exact `fwmark 0x1` | `prohibit` | Fail closed if table `ioa` has no route. |
 | 1500 | exact `fwmark 0x2` | `main` | Send optional CN-accelerated traffic through the current physical default. |
 | 1501 | exact `fwmark 0x2` | `prohibit` | Fail closed if main has no route; never fall through to Tailscale. |
 | 3000 | `100.64.0.0/10` | `52` | Reach tailnet peers through Tailscale. |
 
-SmartGateAgent owns the `0xa38 -> table 20` and physical-source `-> table 230` rules. The exact
-command wrapper assigns priorities 1100 and 1200, so Tailscale's transport escape at priority 500
-always wins. Tables 20 and 230 remain SmartGateAgent-owned. An authenticated Tencent USB Ethernet
-route advertised in table `wired_underlay` has absolute preference for those two defaults, even when
-Wi-Fi has the lower `main` metric. Otherwise, the wrapper validates SmartGateAgent's requested gateway
-against physical defaults in `main`. This policy is based on the underlay advertisement made for an
-802.1X-authorized link, not on hard-coding `wlan0` or assuming every Ethernet interface is Tencent
+Table `ioa` holds a single `default via 169.254.170.2 dev veth-ioa`: whatever 1150 selects enters the
+namespace, where SmartGateAgent's own default carries it into `tun0` and the namespace masquerades it
+to the tunnel address. iOA's control traffic never touches the host's policy above 600, so it needs
+no owner mark. While the office wire is 802.1X-authorized, `network-reconfigure` keeps
+`default via <gateway> dev <wired> onlink` in `wired_underlay` and flushes it otherwise, so
+table `wired_underlay` has absolute preference for iOA's own traffic at the office. This follows
+the authorization, not on hard-coding `wlan0` or assuming every Ethernet interface is Tencent
 Ethernet.
 
-Linux evaluates lower numeric priorities first:
+tinyproxy's uid-owned upstream packets are marked `0x1` before the routefile mark, so every connection
+it opens enters table `ioa`, including literal addresses the tailnet client already resolved. Replies
+toward `100.64.0.0/10` are left unmarked so 1150 cannot pull the client return path into the tunnel.
 
-1. Every packet created by an IOA cgroup is owner-marked before its first route lookup. It uses
-   `wired_underlay` and is masqueraded on the authenticated wire in the office; otherwise it uses
-   `main` and the current physical device. The source rewrite is required because iOA can bind
-   control sockets to `tailscale0` after Tailscale starts.
-2. Tailscale owner-marked packets use `main`.
-3. Any destination that currently has a non-default route in `main` — the connected LAN and the
-   physical gateway — uses `main`, as do the explicitly pinned physical gateway, the link-local
-   destinations declared in `network/direct.conf` or named by the lease's RFC 8910 option, a DHCP
-   resolver while an RFC 8910 captive portal is advertised, and office DNS servers enabled for the
-   authenticated wired link.
-4. SmartGateAgent owner-marked packets use owner table `20`.
-5. IOA business payload uses table `ioa`; the tunnel's own underlay uses the authenticated office
-   wire through tables 20 and 230. This precedes SmartGateAgent's source rule, for the reason below.
-6. SmartGateAgent physical-source sockets use owner table `230`.
-7. An unmarked destination present in `~/.routefile` receives mark `0x2`, is rerouted through
-   the current `main` default, and is masqueraded on that physical device. If that lookup finds
-   no route, priority 1501 prohibits the packet instead of falling through to Tailscale.
-8. `100.64.0.0/10` uses Tailscale table `52`.
-9. Unmatched traffic follows Tailscale's independently managed selected exit node.
-
-tinyproxy is the exception to 7 and 9. Its uid-owned upstream packets are marked `0x1` before the
-routefile mark, so every connection it opens enters table `ioa`, including literal addresses the
-tailnet client already resolved. Replies toward `100.64.0.0/10` are left unmarked: a `0x1` on them
-would match priority 1150 before rule 3000 and pull the client return path into `tun0`. Priority
-1151 prohibits marked packets when table `ioa` has no route, so losing the tunnel cannot leak a
-proxy connection onto the physical network or a Tailscale exit node.
-
-### The IOA band has to outrank SmartGateAgent's source rule
-
-SmartGateAgent installs `from <physical address> lookup 230` at priority 1200, and table 230 is a
-default through the physical gateway. That matches on the source address, which is the part that makes
-it dangerous: an unbound socket gets its source assigned during the routing decision, and that
-decision happens *before* OUTPUT mangle applies any mark. The mark-triggered reroute reuses the source
-already chosen, so rule 1200 matches every locally originated packet regardless of its mark.
-
-The IOA band therefore has to sit above it. It did not until 2026-09-18, when it lived at priority
-2500, and the result was that iOA appeared to log in while no internal host was reachable. The failure
-is completely silent: `ipset` classification is correct, the mangle rule's counters increment, and
-`ip route get <dst> mark 0x1` reports `dev tun0` — because that form supplies no source and so never
-consults rule 1200. Adding the real source is what shows it:
-
-```console
-$ ip -4 route get 100.12.0.10 mark 0x1
-100.12.0.10 dev tun0 table ioa src 192.168.255.10
-$ ip -4 route get 100.12.0.10 mark 0x1 from 10.36.49.154
-100.12.0.10 from 10.36.49.154 via 10.36.48.1 dev wlan0 table ioa_src
-```
-
-`tun0` had carried zero packets in either direction since it came up, and `tcpdump -i tun0` saw
-nothing while internal hosts timed out. Priority 1150 fixes it: above 1200, below 1100 so
-SmartGateAgent's own `0xa38` band keeps precedence, and below 1000 so the on-link protections stay in
-front. `network/test-static-policy.sh` fails if `P_IOA` stops preceding `P_IOA_SMART_SRC`.
-
-Note that `reconcile_ioa_smartgate` deliberately leaves priorities 1100 and 1200 alone while
-`ngnclient` is active and table 230's default matches the current underlay. That is still right —
-iOA reinstalls them on every address change, so removing them is a race that cannot be won. Winning
-on priority instead of on ownership is what makes this stable.
-
-Priority 2500 was not a mistake when it was chosen on 2026-07-28; the invariant it relied on was
-removed on 2026-09-05 and never rechecked. Until then the wrapper did not intercept `ip rule` at all,
-so iOA's `rule add from <addr> table 230` carried no priority and the kernel assigned one through
-`fib_default_rule_pref`, which returns the *second* existing rule's priority minus one. That makes the
-result depend on load order, which is measurable in a namespace:
-
-```console
-# iOA adds its rule while only the default rules exist
-32765:  from 10.36.49.154 lookup ioa_src
-# iOA adds its rule after this repository's bands are installed
-399:    from 10.36.49.154 lookup ioa_src
-```
-
-In the usual boot order iOA got 32765, below 2500, and the IOA band worked. The other branch is a
-whole-machine outage, since 399 preempts even the owner-mark escape at 400, and eliminating it is why
-`fix: isolate IOA underlay from Tailscale` pinned the rule to 1200. Pinning also converted "usually
-below 2500" into "always above 2500", which is the silent failure above. The lesson is not about the
-number: giving a foreign rule a fixed priority changes every ordering relationship it previously had
-by accident, so each of those relationships has to be restated deliberately.
-
-Two adjacencies are worth stating for the same reason. The literal `10.0.0.0/8` entry at 1150
-explicitly matches full-width mark zero. A routefile destination receives mark `0x2` before the
-reroute and therefore passes it to the CN band at 1500; SmartGate's `0xa38` has already used table
-20 at 1100. Every iOA process — `iOA.bin` and `SmartGateAgent` in
-`system.slice/ngnclient.service`, `iOALinux` in `ioagui.service` — receives the owner mark, so its
-transport leaves at 400 and fails closed at 401 without ever reaching either business band. That is
-what keeps the transport from looping into its own tunnel while still allowing the whole cgroup to
-prefer the office wire.
+Earlier versions ran iOA in the host namespace and needed an `ip` shim (fixing SmartGateAgent's
+rules at 1100/1200), an owner mark `0x1000000` at 400/401 with its own MASQUERADE, and a `tun0`
+MASQUERADE. `network-reconfigure` retires pref 400/401 and the owner NAT on every run, and retires
+1100/1200, tables 20/230 and the `tun0` NAT once `tun0` is no longer on the host.
 
 ### Routefile is optional acceleration
 
@@ -205,9 +119,6 @@ an implausibly small response. It writes and fsyncs a temporary file beside `~/.
 uses `os.replace`; an interrupted download, parse failure, short response, or write failure leaves
 the previous file byte-for-byte intact. Identical output is a true no-op. The path unit watches
 the routefile, so only a successful changed replacement requests reconciliation.
-
-This authority does not take ownership of SmartGateAgent's `0xa38` control traffic. That mark
-and its table `20` path remain SmartGateAgent's responsibility.
 
 Only networks currently present as kernel `scope link` routes are considered local. Broad
 RFC1918 assumptions are intentionally absent: an unrelated private destination follows the
@@ -476,34 +387,19 @@ but never enables or starts a machine-specific instance.
 ### iOA bootstrap follows office authorization
 
 The base SmartDNS configuration maps `smartgate.oa.tencent.com`, `sgw.woa.com` and
-`ioa.tencent.com` to the public `china` group. Away from the office, priority 400 sends the owner
-mark to `main`, so iOA can bootstrap over any ordinary Wi-Fi, tether, or hotel Ethernet without
-entering Tailscale.
+`ioa.tencent.com` to the public `china` group, so iOA can bootstrap over any ordinary Wi-Fi, tether,
+or hotel Ethernet.
 
 The office fragment overrides those same names to the lease-derived `office` resolver group only while
 the wired supplicant reports `Authorized` and the link has an address and DHCP gateway. The same
-condition installs table 19, changes priority 400 to `wired_underlay`, and puts owner MASQUERADE on
-that wired device. The DNS answer and its control-plane route therefore move together. On this site
-`freeconnect.ioa.tencent.com = 10.88.202.158`; a marked TCP
-probe from `10.76.165.30` through `enp9s0u2u1u2` reaches its port 443.
-
-This coupling fixes the two half-configured states observed on 2026-09-20. Internal DNS with owner
-routing still on Wi-Fi produced unreachable SYNs forever. Public DNS after wired authorization let
-iOA log in but forced its network-location check to the public endpoint, so it remained `outer net`
-while office DNS and table 19 were otherwise active. Authorization loss removes the whole fragment,
-flushes table 19, and moves owner routing/NAT back to `main`; business payload remains on table
-`ioa` throughout. A phone tether or foreign Ethernet has no authorized
+condition fills table 19, which the namespace's traffic consults first (pref 600), so the DNS answer
+and iOA's route move together. Internal DNS with iOA still on Wi-Fi produced unreachable SYNs forever
+on 2026-09-20; public DNS after authorization left iOA `outer net`. Leaving the office publishes
+public DNS first and only then flushes table 19. A phone tether or foreign Ethernet has no authorized
 supplicant, so it can never enable any office half.
 
-The transition order is asymmetric by design. Entering office installs table 19, stages wired owner
-NAT alongside the old NAT, switches priority 400, prunes the old NAT, and only then publishes office
-DNS. Leaving publishes public DNS first, stages the new `main` NAT, switches priority 400, prunes the
-wired NAT, and only then flushes table 19. Thus neither direction has a zero-NAT window or an internal
-bootstrap answer routed onto Wi-Fi; priority 401 remains a crash backstop rather than a normal
-transition step.
-
-`network-reconfigure` records `office` or `external` in `/run` after publishing the matching routes,
-NAT, and DNS, and takes no action on that edge. iOA tracks its own location: SmartGateAgent refetches
+`network-reconfigure` records `office` or `external` in `/run` after publishing the matching routes
+and DNS, and takes no action on that edge. iOA tracks its own location: SmartGateAgent refetches
 the scene from SmartGate every five minutes and on each network-change event, and one agent process is
 observed flipping between `EXTRA` and `INTRA` in place on 2026-09-20, so a stale mode corrects itself
 without help.
@@ -555,13 +451,13 @@ them, and the resulting intranet services were reachable. `network-reconfigure` 
 the resolvers advertised by an authorized office DHCP lease and adds the subset inside
 `IOA_STATIC_CIDRS` to the `ioa` group. The addresses are learned, not checked in, because every site
 advertises its own. This site's two `21.7.x` resolvers are rejected: outside the office they route to
-Tailscale rather than iOA, while `10.76.9.15` routes through `tun0`.
+Tailscale rather than iOA, while `10.76.9.15` routes into the tunnel.
 
-Each learned upstream is configured with `-interface tun0`. With iOA logged in, SmartGateAgent proxies
-queries to it and rewrites names covered by its forward policy to the same `100.12.0.0/16` fake IPs;
-uncovered names receive the real intranet resolver's answer. With iOA logged out or `tun0` absent,
-SmartDNS returns `SERVFAIL` instead of letting the query fall through to Tailscale or a public
-resolver. The learned addresses persist across reboot in
+Pref 1150 routes each learned upstream into the namespace; there is no `-interface` binding, since
+`tun0` is not a host device. With iOA logged in, SmartGateAgent proxies queries to it and rewrites
+names covered by its forward policy to the same `100.12.0.0/16` fake IPs; uncovered names receive the
+real intranet resolver's answer. Without the tunnel the namespace refuses the query rather than
+letting it fall through to Tailscale. The learned addresses persist across reboot in
 `/var/lib/network-reconfigure/intranet-resolvers`.
 
 ## SmartDNS IOA classification
@@ -592,9 +488,9 @@ SmartDNS adds addresses resolved for configured IOA business domains to dynamic 
 That set is authoritative for domain-derived IOA classification regardless of the answer's prefix.
 `NETMODE_IOA` first returns every packet whose mark is non-zero. An unmarked packet whose
 destination is in `ioa` receives exact full-width mark `0x1`; priority 1150 routes that mark through
-table `ioa`. Its MASQUERADE is tied to `tun0` because the first lookup may have selected a Tailscale
-source before OUTPUT applied the mark. The tunnel underlay, not the payload route, moves to office
-wired. Marks such as `0xa38`, `0x80000`, or another non-zero value remain untouched.
+table `ioa`. The first lookup may have selected a Tailscale source before OUTPUT applied the mark;
+`network/ioa-netns` masquerades everything entering the namespace, so that source never reaches the
+tunnel. Marks such as `0x80000` or another non-zero value remain untouched.
 
 Broad business suffixes can contain SmartGate's own bootstrap or proxy transport names. SmartDNS
 therefore applies more-specific exclusions:
@@ -621,15 +517,10 @@ routefile rules.
 ## Tunnel independence and failure semantics
 
 There is no local tunnel-coordination state machine. Tailscale discovers and selects its own
-DERP/control paths and recovers its own link. SmartGateAgent establishes `tun0`, maintains its
-physical escapes in tables `20` and `230`, and installs or removes the IOA route in table
-`ioa`. Repository code does not discover tunnel endpoints or construct alternate transport
-paths.
-
-SmartGateAgent's table `ioa` default is `default dev tun0` without a gateway. Marked IOA traffic
-still enters the TUN device, while tailscaled's Linux all-table fallback ignores the route because
-it has no gateway. During a physical-link outage Tailscale waits for a physical underlay; it must
-never select `tun0`.
+DERP/control paths and recovers its own link. SmartGateAgent establishes `tun0` and its escapes
+inside the `ioa` namespace. Repository code does not discover tunnel endpoints or construct
+alternate transport paths. Without `tun0` the namespace rejects forwarded host traffic at once
+instead of carrying it out of the physical uplink.
 
 The selected Tailscale exit node is intentionally **fail-closed**. If the exit node is
 unavailable, unmatched/default traffic stops rather than leaking onto the physical network.
@@ -678,13 +569,11 @@ Other failures stay within ownership boundaries:
 - without a physical network, external traffic can fail;
 - LAN, routefile, and IOA traffic continue through their explicit higher-priority paths when
   those paths are available;
-- if SmartGateAgent removes the route from table `ioa`, its business lookup follows the existing
-  later policy; IOA underlay traffic remains physically pinned independently;
-- if the physical default disappears, traffic from an IOA cgroup fails with `prohibit`
-  instead of using either tunnel; when it exists, owner-marked packets are source-NATed only on
-  that physical device;
-- a reconciliation failure must not change SmartGateAgent tables `20`, `230`, or `ioa`, or
-  Tailscale table `52`, preferences, and recovery state.
+- if the tunnel is down, marked IOA traffic is refused in the namespace or prohibited at 1151;
+- if the physical default disappears, iOA's own traffic fails with `prohibit` at 602 instead of
+  using Tailscale;
+- a reconciliation failure must not change table `ioa`, the namespace, or Tailscale table `52`,
+  preferences, and recovery state.
 
 ### A dead control connection blocks TGT renewal for 10-15 minutes
 
@@ -856,8 +745,8 @@ one association starts both of them at the same instant. `network-reconfigure` s
 `flock -w 60 /run/lock/network-reconfigure.lock`, and the journal shows it taking one to five seconds
 per run. `network-dhcp-refresh` took no lock at all, and its repair for an unforwarded station is
 `iwctl station disconnect` followed by `connect`. So the repair removed the link while reconciliation
-was building policy against it, and the result is `tun0`, tables `20`, `230`, `ioa`, Tailscale table
-`52` and the pref 500 transport escape all referring to an address that had just been withdrawn.
+was building policy against it, and the result is table `ioa`, Tailscale table `52` and the pref 500
+transport escape all referring to an address that had just been withdrawn.
 
 With both tunnels stopped there is almost nothing for reconciliation to build, so the same race is
 harmless and the repair looks reliable. Starting them does not introduce a new fault; it makes an
@@ -1017,7 +906,7 @@ into table 52: the socket gets `EACCES`, and no packet or no-NAT state reaches T
 and stop are installed and removed as one band — stop first when enabling, lookup first when disabling
 — so an interrupted reconciliation can at worst leave CN traffic safely prohibited.
 
-This mirrors the existing iOA owner band at 400/401. It is not connection pinning: fixing a connection
+It is not connection pinning: fixing a connection
 at `0x2` would still let an unsuccessful main lookup fall through, so it cannot repair this incident.
 
 NAT reconciliation also used to delete every owned rule before adding the desired one. It now ensures
@@ -1035,9 +924,9 @@ retransmissions of the same source port. `network/test-static-policy.sh` now fai
 reappears there.
 
 The final invariant is instead a native nftables filter chain at postrouting priority 110, ten after
-srcnat. Healthy `0x2` and owner packets have already been masqueraded and do not match. Any stale
-ESTABLISHED packet still carrying a tailnet (`100.64.0.0/10`) or iOA tunnel
-(`192.168.255.0/24`) source is dropped before a physical interface sees it. The rule covers the same
+srcnat. Healthy `0x2` packets have already been masqueraded and do not match. Any stale
+ESTABLISHED packet still carrying a tailnet (`100.64.0.0/10`) source is dropped before a physical
+interface sees it. The rule covers the same
 wireless and wired name families accepted by `physical_device()`. Forwarded Tailscale traffic is
 normally source-NATed before this guard as well; forwarding a raw tunnel source onto a
 source-guarded LAN is invalid for the same reason as the local leak.
@@ -1147,8 +1036,8 @@ summary is bounded separately: it keeps counts and first/last events, then retai
 events in a 900 KB byte ring (at most 5,000, with each line capped at 512 bytes), so it remains below
 1 MiB without discarding the newest timeline tail. The snapshots include TCP/UDP sockets and
 conntrack state, kernel network counters, interface statistics, packet counters, the `ioa` classifier,
-table `ioa_src`, iOA vendor logs, policy-owner logs, bounded tailscaled goroutines, and this
-route-event timeline. During the capture,
+the `ioa` namespace's addresses, rules and routes, iOA vendor logs, policy-owner logs, bounded
+tailscaled goroutines, and this route-event timeline. During the capture,
 `connectivity-timeline.tsv` probes four paths in parallel and records all three kernel route decisions
 and the current BSSID on every sample, so a physical, Tailscale, iOA, or policy-routing failure can be
 separated without restarting anything. Do not put passwords, tokens, or other secrets in the incident
@@ -1252,19 +1141,17 @@ baseline to diff a future failure against.
 Run the network checks:
 
 ```bash
-bash network/test-ip-override.sh
-bash network/test-smartgate-underlay.sh
 bash network/test-ioa-wrapper.sh
 bash network/test-ioa-user-timeout.sh
 bash network/test-smartgate-argv0.sh
-bash network/test-tun-underlay.sh
 sudo -n bash network/test-nft-direct-routing.sh
 bash network/test-smartdns-no-cache.sh
 bash network/test-resolv-pin.sh
-bash network/test-ioa-fail-closed.sh
 bash network/test-install-ioa-62.sh
 sudo -n bash network/test-ioa-static-lan-overlap.sh
 sudo -n bash network/test-reconfigure.sh
+bash network/test-ioa-netns.sh
+bash network/test-ioa-netns-wiring.sh
 bash network/test-static-policy.sh
 bash network/test-dhcp-refresh.sh
 bash network/test-portal-login.sh
@@ -1277,8 +1164,8 @@ python3 network/test-updateroutes.py
 
 `network/test-reconfigure.sh` runs destructive routing, firewall, roaming, cold-start, and
 mutation checks inside an isolated network namespace. Its mutation checks ensure assertions
-actually fail when reconciliation safeguards are removed. The override and static-policy
-checks use local fixtures and command contracts.
+actually fail when reconciliation safeguards are removed. The static-policy checks use local
+fixtures and command contracts.
 
 Live inspection is read-only:
 
@@ -1287,8 +1174,8 @@ scripts/network-status
 ```
 
 It reports interfaces, connected routes, repository priority bands, optional CN-set and IOA state,
-SmartGateAgent's owner mark, Tailscale table `52`, and exit-node health without repairing or
-mutating them.
+whether the `ioa` namespace exists and `tun0` is up in it, Tailscale table `52`, and exit-node
+health without repairing or mutating them.
 
 ## Deployment
 

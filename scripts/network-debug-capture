@@ -140,9 +140,13 @@ run_snapshot() {
     record_command "$incident" "$phase" route-get-underlay 5 \
         /usr/bin/ip -4 route get 216.239.32.117 mark 0x80000
     record_command "$incident" "$phase" route-get-ioa 5 /usr/bin/ip -4 route get 10.0.0.1
-    for entry in main 52 ioa 20 ioa_src; do
+    for entry in main 52 ioa; do
         record_command "$incident" "$phase" "ip-route-$entry" 5 /usr/bin/ip route show table "$entry"
     done
+    # iOA and tun0 live in the ioa network namespace (network/ioa-netns).
+    record_command "$incident" "$phase" ioa-netns-addr 5 /usr/bin/ip -n ioa addr show
+    record_command "$incident" "$phase" ioa-netns-rule 5 /usr/bin/ip -n ioa rule show
+    record_command "$incident" "$phase" ioa-netns-route 5 /usr/bin/ip -n ioa route show table all
     gateway=$(/usr/bin/ip -4 route show table main default 2>/dev/null |
         /usr/bin/awk '$5 == "wlan0" {print $3; exit}')
     physical_source=$(/usr/bin/ip -4 -o addr show dev wlan0 scope global 2>/dev/null |
@@ -232,7 +236,7 @@ run_snapshot() {
     record_route_events "$incident" "$phase"
     record_command "$incident" "$phase" journal-policy-tags 15 \
         /usr/bin/journalctl -b --since=-15min -n 5000 --no-pager \
-        -t network-reconfigure -t ioa-ip-shim -t network-dhcp-refresh
+        -t network-reconfigure -t network-dhcp-refresh
     record_command "$incident" "$phase" journal-kernel-network 15 \
         /usr/bin/journalctl -b -k --since=-15min -n 5000 --no-pager
     for entry in tailscaled systemd-networkd iwd network-reconfigure network-dhcp-refresh \
