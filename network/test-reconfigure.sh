@@ -22,7 +22,8 @@ set -uo pipefail
 # anything that has to read the repo or write /tmp must happen out here — a
 # build that fails in there fails silently and the test then re-runs whatever
 # copy was left over, reporting a pass for code that was never exercised.
-REPO=/home/amos/git/serverconfig
+# The checkout this file lives in, so a worktree tests its own script and not the main checkout.
+REPO=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 SCRIPT=""   # set once $WORK exists
 # Named, not numbered: `ip rule show` prints the name from rt_tables, so a
 # numeric comparison here would never match what the kernel reports back.
@@ -1930,11 +1931,11 @@ if [ -z "${IN_NETNS:-}" ]; then
     [ -s "$WORK/nr-under-test" ] || { echo "the built copy is empty"; exit 1; }
     # Copied out here, where the repository is still readable, so the namespace exercises the
     # fragment that actually ships instead of a stub written to match the assertions.
-    cp /home/amos/git/serverconfig/network/smartdns/office.conf "$WORK/office.conf" || exit 1
+    cp "$REPO"/network/smartdns/office.conf "$WORK/office.conf" || exit 1
     chmod 644 "$WORK/office.conf"
     # The base config for the same reason: the office overrides are derived from its tunnel-resolver
     # domains, so a stub would only prove the derivation works on whatever the stub happens to list.
-    cp /home/amos/git/serverconfig/network/smartdns/smartdns.conf "$WORK/smartdns-base.conf" || exit 1
+    cp "$REPO"/network/smartdns/smartdns.conf "$WORK/smartdns-base.conf" || exit 1
     chmod 644 "$WORK/smartdns-base.conf"
     exec 9</proc/self/ns/net
     export HOST_NETNS_FD=9
