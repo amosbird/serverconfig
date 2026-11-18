@@ -61,6 +61,10 @@ class BookmarkLauncherTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(self.log.read_text()), [
             f"--user-data-dir={profile}", "--no-default-browser-check",
+            "--silent-debugger-extension-api", "--remote-debugging-port=9222",
+            "--hide-crash-restore-bubble",
+            "--disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation",
+            "--disable-smooth-scrolling",
             f"--app=chrome-extension://{extension_id}/bookmarks.html",
         ])
         self.assertFalse((self.home / ".config/google-chrome-bookmarks").exists())
@@ -116,10 +120,36 @@ class BookmarkLauncherTest(unittest.TestCase):
                 self.assertIn("usage:", result.stderr)
                 self.assertFalse(self.log.exists())
 
+    def test_cold_bookmark_launch_preserves_main_process_flags_without_restoring_windows(self):
+        root = self.base / "serverconfig"
+        scripts = root / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "chrome-profile-running.py").symlink_to(
+            ROOT / "scripts/chrome-profile-running.py")
+        updater = scripts / "update-external-links-profile"
+        updater.write_text("#!/usr/bin/env bash\nexit 0\n")
+        updater.chmod(0o755)
+        proc = self.base / "proc"
+        proc.mkdir()
+        profile = self.home / ".config/google-chrome-main"
+        result = subprocess.run([ROOT / "scripts/chromium", "--current-group"],
+            env={**self.env, "ABUSH_SERVERCONFIG_ROOT": str(root), "ABUSH_PROC_ROOT": str(proc)},
+            capture_output=True, text=True, timeout=3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        main_arguments = json.loads(self.log.read_text())
+        result = self.launch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        bookmark_arguments = json.loads(self.log.read_text())
+        self.assertEqual(bookmark_arguments[:-1], [
+            argument for argument in main_arguments if argument != "--restore-last-session"])
+        self.assertEqual(bookmark_arguments[-1],
+                         f"--app=chrome-extension://{DEV_ID}/bookmarks.html")
+        self.assertEqual(bookmark_arguments[0], f"--user-data-dir={profile}")
+
     def test_chrome_failure_is_not_reported_as_success_or_retried(self):
         result = self.launch(TEST_CHROME_STATUS="9")
         self.assertEqual(result.returncode, 9)
-        self.assertEqual(len(json.loads(self.log.read_text())), 3)
+        self.assertEqual(len(json.loads(self.log.read_text())), 8)
 
 
 @unittest.skipUnless(importlib.util.find_spec("libqtile"), "Qtile is not installed")
@@ -277,6 +307,38 @@ class BookmarkScratchpadTest(unittest.TestCase):
         self.toggle()
         self.assertEqual(self.manager.spawn.call_count, 1)
 
+    def test_warm_singleton_window_does_not_need_the_launcher_pid_or_class(self):
+        self.toggle()
+        window = self.window()
+        window.pid = 9001
+        self.assertNotEqual(window.get_pid(), self.manager.spawn.return_value)
+        self.manager.windows_map[window.wid] = window
+        self.scratchpad.on_client_new(window)
+        self.ns["after_window_created"](window)
+        self.assertEqual(self.state(), (22, "e", True, (), 1))
+        self.assertEqual(window.classes[1], "Google-chrome")
+
+    def test_closing_the_legacy_blocked_popup_allows_one_new_main_profile_launch(self):
+        legacy = self.window("bookmark-manager")
+        self.manager.windows_map[legacy.wid] = legacy
+        self.ns["recover_scratchpad_dropdowns"]()
+        trace = [self.state()]
+        self.toggle()
+        trace.append(self.state())
+        self.ns["window_killed"](legacy)
+        self.manager.windows_map.pop(legacy.wid)
+        trace.append(self.state())
+        self.toggle()
+        trace.append(self.state())
+        self.toggle()
+        trace.append(self.state())
+        self.assertEqual(trace, [
+            (22, "scratchpad", False, (), 0), (22, "e", True, (), 0),
+            (None, None, False, (), 0), (None, None, False, ("bookmarks",), 1),
+            (None, None, False, ("bookmarks",), 1),
+        ])
+        self.manager.spawn.assert_called_once_with("bookmark-manager")
+
     def test_unrelated_windows_do_not_satisfy_the_bookmark_spawn_waiter(self):
         self.toggle()
         for instance in ("google-chrome", f"{DEV_ID}__download.html", "AbushBrowser"):
@@ -291,6 +353,7 @@ class OfflineWindow:
     def __init__(self, manager, events, wid, classes, role):
         self.qtile, self.events, self.wid = manager, events, wid
         self.classes, self.role = classes, role
+        self.pid = 4242
         self.name = "Bookmarks"
         self.group = manager.groups_map["f"]
         self.has_focus = False
@@ -311,7 +374,7 @@ class OfflineWindow:
         return self.role
 
     def get_pid(self):
-        return 4242
+        return self.pid
 
     def togroup(self, group=None):
         group = group or self.qtile.current_group.name

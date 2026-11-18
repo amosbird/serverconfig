@@ -22,4 +22,9 @@ chrome=${ABUSH_CHROME_BIN:-/usr/bin/google-chrome-stable}
 exec "$chrome" \
     --user-data-dir="$profile" \
     --no-default-browser-check \
+    --silent-debugger-extension-api \
+    --remote-debugging-port=9222 \
+    --hide-crash-restore-bubble \
+    --disable-features=OverscrollHistoryNavigation,TouchpadOverscrollHistoryNavigation \
+    --disable-smooth-scrolling \
     --app="$url"
