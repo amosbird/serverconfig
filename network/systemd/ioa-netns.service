@@ -2,7 +2,7 @@
 # See network/ioa-netns.md.
 [Unit]
 Description=Network namespace for iOA
-Before=ngnclient.service ioa-netns-forward.service
+Before=ngnclient.service
 After=network-pre.target
 
 [Service]

@@ -1,212 +1,129 @@
 #!/usr/bin/env bash
-# Prove the iOA-in-netns wiring, in a sandbox that never touches the host:
+# Prove the iOA-in-netns wiring with the real unit files.
 #
 #   - ioa-netns.service creates netns `ioa`; the ngnclient drop-in runs the daemon inside it.
-#   - A fake daemon in ngnclient.service listens on 127.0.0.1:12639 and :56101 inside `ioa`, like
-#     SmartGateAgent and iOA.bin do.
-#   - ioa-netns-forward.service makes those answer on the host's 127.0.0.1, so corkscrew, the PAC
-#     file and the GUI keep working unchanged.
-#   - The fake daemon reaches the uplink through the namespace's default route.
+#   - ioa-port@.socket binds a host loopback port; ioa-port@.service runs systemd-socket-proxyd in
+#     the namespace, so 127.0.0.1:12639 (corkscrew, PAC, browsers) and :56100/:56101 (the GUI)
+#     keep answering although iOA listens only inside `ioa`.
 #
-# systemd itself cannot run in the sandbox, so the units are checked for exactly the settings the
-# wiring depends on, and the behaviour those settings produce is exercised by hand in a sandbox
-# (net, mount and PID namespaces; private /run/netns; hard time limit). When the sandbox exits, the
-# kernel reaps every process in it, so nothing can hang the test.
-#
-# Usage: test-ioa-netns-wiring.sh [forwarder]   (the argument exists for mutation testing)
+# Two layers:
+#   1. The unit files are checked for every setting the wiring depends on.
+#   2. The same templates are instantiated as transient units with `systemd-run`, against a
+#      throwaway namespace and a high port, so the real systemd does the socket binding, the
+#      namespace switch and the activation. Every transient unit has RuntimeMaxSec and is stopped
+#      on exit, and the whole run has a hard time limit.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-FORWARDER=$(realpath "${1:-$ROOT/network/ioa-netns-forward}")
 LIMIT=${TEST_LIMIT:-60}
+NETNS_UNIT=$ROOT/network/systemd/ioa-netns.service
+SOCKET_UNIT=$ROOT/network/systemd/ioa-port@.socket
+PORT_UNIT=$ROOT/network/systemd/ioa-port@.service
+DROPIN=$ROOT/systemd/ngnclient.service.d/netns.conf
 
 fail() { echo "FAIL $*" >&2; exit 1; }
 ok() { echo "OK   $*"; }
 
-if [ "${IOA_WIRING_SANDBOX:-}" != 1 ]; then
-    # ---- static contract of the units, checked outside the sandbox ----------------------------
-    netns_unit=$ROOT/network/systemd/ioa-netns.service
-    fwd_unit=$ROOT/network/systemd/ioa-netns-forward.service
-    dropin=$ROOT/systemd/ngnclient.service.d/netns.conf
-    grep -Fxq 'NetworkNamespacePath=/run/netns/ioa' "$dropin" ||
-        fail 'ngnclient is not placed in netns ioa'
-    grep -Fxq 'BindsTo=ioa-netns.service' "$dropin" ||
-        fail 'ngnclient keeps running in the host namespace if netns ioa goes away'
-    grep -Fxq 'After=ioa-netns.service' "$dropin" || fail 'ngnclient can start before netns ioa exists'
-    grep -Eq '^Before=.*\bngnclient\.service\b' "$netns_unit" || fail 'ioa-netns.service is not ordered first'
-    grep -Fxq 'RemainAfterExit=yes' "$netns_unit" ||
-        fail 'ioa-netns.service would be "dead" after up, and BindsTo would stop ngnclient'
-    grep -Eq '^ExecStop=.* down$' "$netns_unit" || fail 'stopping ioa-netns.service leaves the namespace'
-    for port in 12639 12649 12679 12759 12769 12101 56100 56101; do
-        grep -q "127.0.0.1:$port\b" "$fwd_unit" || fail "host port $port is not forwarded into netns ioa"
-    done
-    grep -Fxq 'Requires=ioa-netns.service' "$fwd_unit" || fail 'the forwarder does not require the namespace'
-    grep -Fxq 'Restart=always' "$fwd_unit" || fail 'a crashed forwarder is not restarted'
-    ok 'units: ngnclient in netns ioa, ordered after it and bound to it; every iOA port forwarded'
+# ---- 1. unit contract --------------------------------------------------------------------------
+grep -Fxq 'NetworkNamespacePath=/run/netns/ioa' "$DROPIN" || fail 'ngnclient is not placed in netns ioa'
+grep -Fxq 'BindsTo=ioa-netns.service' "$DROPIN" ||
+    fail 'ngnclient keeps running in the host namespace if netns ioa goes away'
+grep -Fxq 'After=ioa-netns.service' "$DROPIN" || fail 'ngnclient can start before netns ioa exists'
+grep -Eq '^Before=.*\bngnclient\.service\b' "$NETNS_UNIT" || fail 'ioa-netns.service is not ordered first'
+grep -Fxq 'RemainAfterExit=yes' "$NETNS_UNIT" ||
+    fail 'ioa-netns.service would be inactive after up, and BindsTo would stop ngnclient'
+grep -Eq '^ExecStop=.* down$' "$NETNS_UNIT" || fail 'stopping ioa-netns.service leaves the namespace'
+grep -Fxq 'ListenStream=127.0.0.1:%i' "$SOCKET_UNIT" || fail 'the port socket does not bind host loopback'
+grep -q 'NetworkNamespacePath' "$SOCKET_UNIT" &&
+    fail 'the port socket must bind on the host; NetworkNamespacePath there would bind it in ioa'
+grep -Fxq 'NetworkNamespacePath=/run/netns/ioa' "$PORT_UNIT" || fail 'the port proxy does not run in ioa'
+grep -Fxq 'ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:%i' "$PORT_UNIT" ||
+    fail 'the port proxy does not forward to the same loopback port inside ioa'
+grep -Fxq 'Requires=ioa-netns.service' "$PORT_UNIT" || fail 'the port proxy does not require the namespace'
+for port in 12639 12649 12679 12759 12769 12101 56100 56101; do
+    grep -Eq "ioa-port@\{([0-9]+,)*$port(,[0-9]+)*\}\.socket" "$ROOT/restore.sh" ||
+        fail "restore.sh does not enable the socket for host port $port"
+done
+ok 'units: ngnclient in netns ioa and bound to it; host sockets proxied into ioa for every iOA port'
 
-    sudo -n timeout -k 5 "$LIMIT" \
-        unshare --net --mount --pid --fork --kill-child --mount-proc --propagation private \
-        env IOA_WIRING_SANDBOX=1 bash "$0" "$FORWARDER"
-    [ -z "${1:-}" ] || exit 0
-    mutate() {
-        local work rc=0
-        work=$(mktemp)
-        sed "$2" "$FORWARDER" >"$work"
-        if cmp -s "$FORWARDER" "$work"; then rm -f "$work"; fail "mutant $1 did not change the forwarder"; fi
-        sudo -n timeout -k 5 "$LIMIT" \
-            unshare --net --mount --pid --fork --kill-child --mount-proc --propagation private \
-            env IOA_WIRING_SANDBOX=1 bash "$0" "$work" >/dev/null 2>&1 || rc=$?
-        rm -f "$work"
-        case $rc in
-            0) fail "mutant $1 survived" ;;
-            124 | 137) fail "mutant $1 hit the ${LIMIT}s limit instead of failing an assertion" ;;
-        esac
-    }
-    mutate no-setns 's/os.setns(handle.fileno(), os.CLONE_NEWNET)/pass/'
-    mutate setns-before-bind 's/^    listeners = \[\]$/    os.setns(open(args.netns, "rb").fileno(), os.CLONE_NEWNET); listeners = []/'
-    mutate no-half-close 's/dst.shutdown(socket.SHUT_WR)/pass/'
-    ok "mutation checks: every mutant fails an assertion"
-    exit 0
-fi
+# ---- 2. the templates, run by the real systemd -------------------------------------------------
+TAG=ioatest$$
+PORT=$((47000 + $$ % 1000))
+NS=/run/netns/$TAG
+cleanup() {
+    sudo -n systemctl stop "$TAG-port.socket" "$TAG-port.service" "$TAG-agent.service" \
+        >/dev/null 2>&1 || true
+    sudo -n systemctl reset-failed "$TAG-port.socket" "$TAG-port.service" "$TAG-agent.service" \
+        >/dev/null 2>&1 || true
+    sudo -n ip netns del "$TAG" 2>/dev/null || true
+}
+trap cleanup EXIT
+sudo -n ip netns add "$TAG"
+sudo -n ip -n "$TAG" link set lo up
 
-# ---- inside the sandbox -------------------------------------------------------------------------
-mkdir -p /run/netns
-mount -t tmpfs tmpfs /run/netns
-ip link set lo up
+unit_value() { sed -n "s/^$2=//p" "$1" | sed "s/%i/$PORT/g; s#/run/netns/ioa#$NS#g"; }
 
-# Host uplink to an "internet" namespace answering on 198.51.100.7:7000.
-ip netns add up
-ip link add wl0 type veth peer name up0 netns up
-ip addr add 192.0.2.10/24 dev wl0
-ip link set wl0 up
-ip -n up link set lo up
-ip -n up addr add 192.0.2.1/24 dev up0
-ip -n up addr add 198.51.100.7/32 dev lo
-ip -n up link set up0 up
-ip -n up route add default via 192.0.2.10 dev up0
-ip route add default via 192.0.2.1 dev wl0
-
-IOA_NETNS=ioa bash "$ROOT/network/ioa-netns" up >/dev/null
-
-py_listen() {  # py_listen <netns> <addr> <port> <reply>
-    ip netns exec "$1" python3 -c '
+# The fake iOA listener: replies only after it sees EOF, with the byte count it received.
+sudo -n systemd-run --quiet --unit="$TAG-agent" -p RuntimeMaxSec="$LIMIT" \
+    -p NetworkNamespacePath="$NS" python3 -c '
 import socket, sys
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind((sys.argv[1], int(sys.argv[2]))); s.listen(8)
+s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(64)
 while True:
-    c, a = s.accept()
-    data = b""
-    while not data.endswith(b"\n"):
-        chunk = c.recv(4096)
-        if not chunk: break
-        data += chunk
-    c.sendall(sys.argv[3].encode() + b" " + a[0].encode() + b" " + data)
-    c.shutdown(socket.SHUT_WR)
-    while c.recv(4096): pass
-    c.close()
-' "$2" "$3" "$4" </dev/null >/dev/null 2>&1 &
-}
-wait_listen() {  # wait_listen <netns> <port>
-    for _ in $(seq 50); do
-        ip netns exec "$1" ss -Hltn "sport = :$2" | grep -q . && return 0
-        sleep 0.1
-    done
-    fail "fixture: nothing listens on :$2 in $1"
-}
-# The fake iOA daemon: what SmartGateAgent and iOA.bin do on loopback inside the namespace.
-py_listen ioa 127.0.0.1 12639 agent
-py_listen ioa 127.0.0.1 56101 daemon
-py_listen up 198.51.100.7 7000 internet
-wait_listen ioa 12639
-wait_listen ioa 56101
-wait_listen up 7000
+    c, _ = s.accept(); d = b""
+    while (x := c.recv(65536)): d += x
+    c.sendall(b"agent " + str(len(d)).encode()); c.close()' "$PORT"
+for _ in $(seq 50); do
+    sudo -n ip netns exec "$TAG" ss -Hltn "sport = :$PORT" | grep -q . && break
+    sleep 0.1
+done
+sudo -n ip netns exec "$TAG" ss -Hltn "sport = :$PORT" | grep -q . || fail 'fixture: agent did not listen'
 
-# Before the forwarder, the host's loopback must not reach iOA: that is the problem it solves.
-host_call() {  # host_call <port> <payload>
-    timeout 4 python3 -c '
+probe() { timeout 5 python3 -c '
 import socket, sys
 try:
     s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=2)
-    s.sendall(sys.argv[2].encode() + b"\n")
-    s.shutdown(socket.SHUT_WR)
-    out = b""
-    while True:
-        d = s.recv(4096)
-        if not d: break
-        out += d
-    print(out.decode().strip())
+    s.sendall(b"x" * 23); s.shutdown(socket.SHUT_WR)
+    r = b""
+    while (d := s.recv(4096)): r += d
+    print(r.decode())
 except OSError as e:
-    print("ERR", e.__class__.__name__)
-' "$1" "$2" || echo TIMEOUT
-}
-out=$(host_call 12639 hello)
-case $out in "ERR "*) ;; *) fail "fixture: the host already reaches the namespace's loopback: $out" ;; esac
+    print("ERR", e.__class__.__name__)' "$PORT" || echo TIMEOUT; }
+[ "$(probe)" = "ERR ConnectionRefusedError" ] ||
+    fail 'fixture: the host reaches the namespace loopback without the proxy'
 
-python3 "$FORWARDER" --netns /run/netns/ioa 127.0.0.1:12639 127.0.0.1:56101 </dev/null >/dev/null 2>&1 &
-for _ in $(seq 50); do ss -Hltn 'sport = :12639' | grep -q . && break; sleep 0.1; done
+sudo -n systemd-run --quiet --unit="$TAG-port" -p RuntimeMaxSec="$LIMIT" \
+    --socket-property=ListenStream="$(unit_value "$SOCKET_UNIT" ListenStream)" \
+    -p NetworkNamespacePath="$(unit_value "$PORT_UNIT" NetworkNamespacePath)" \
+    $(unit_value "$PORT_UNIT" ExecStart)
 
-out=$(host_call 12639 proxy-request)
-[ "$out" = "agent 127.0.0.1 proxy-request" ] ||
-    fail "host 127.0.0.1:12639 should reach the agent inside netns ioa, got '$out'"
-ok "host 127.0.0.1:12639 reaches SmartGateAgent's listener inside netns ioa"
-out=$(host_call 56101 gui-hello)
-[ "$out" = "daemon 127.0.0.1 gui-hello" ] ||
-    fail "host 127.0.0.1:56101 should reach the daemon inside netns ioa, got '$out'"
-ok "host 127.0.0.1:56101 reaches the daemon's GUI channel inside netns ioa"
+out=$(probe)
+[ "$out" = "agent 23" ] || fail "host 127.0.0.1:$PORT should reach the listener in the namespace, got '$out'"
+ok 'the host port reaches the listener in the namespace, and a half-close is passed through'
 
-# Many concurrent clients, and large payloads, through the forwarder.
-got=$(timeout 10 python3 - <<'PY'
+pid=$(systemctl show -p MainPID --value "$TAG-port.service")
+# readlink on a /run/netns handle returns nothing (it is a bind mount, not a link); compare inodes.
+[ "$(sudo -n readlink /proc/"$pid"/ns/net)" = "net:[$(sudo -n stat -L -c %i "$NS")]" ] ||
+    fail 'the activated proxy is not running in the namespace'
+ok 'the activated proxy runs in the namespace'
+
+got=$(timeout 20 python3 - "$PORT" <<'PY'
 import socket, sys, threading
-payload = "x" * 300000
-results = []
-def one(i):
-    s = socket.create_connection(("127.0.0.1", 12639), timeout=5)
-    s.sendall((f"{i}-" + payload + "\n").encode()); s.shutdown(socket.SHUT_WR)
-    out = b""
-    while (d := s.recv(65536)): out += d
-    results.append(out.endswith((f"{i}-" + payload + "\n").encode()))
-ts = [threading.Thread(target=one, args=(i,)) for i in range(20)]
+port = int(sys.argv[1]); ok = []
+def one():
+    s = socket.create_connection(("127.0.0.1", port), timeout=10)
+    s.sendall(b"y" * 300000); s.shutdown(socket.SHUT_WR)
+    r = b""
+    while (d := s.recv(65536)): r += d
+    ok.append(r == b"agent 300000")
+ts = [threading.Thread(target=one) for _ in range(20)]
 [t.start() for t in ts]; [t.join() for t in ts]
-print(sum(results))
+print(sum(ok))
 PY
 ) || got=TIMEOUT
-[ "$got" = 20 ] || fail "20 concurrent 300KB round trips through the forwarder: $got succeeded"
-ok "20 concurrent 300KB round trips through the forwarder"
+[ "$got" = 20 ] || fail "20 concurrent 300KB round trips: $got succeeded"
+ok '20 concurrent 300KB round trips through the activated proxy'
 
-# A client that half-closes must still get the whole reply: the forwarder has to pass the EOF on
-# instead of closing both directions. The fake agent here only answers after it sees EOF.
-ip netns exec ioa python3 -c '
-import socket
-s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("127.0.0.1", 12649)); s.listen(8)
-while True:
-    c, _ = s.accept()
-    data = b""
-    while (d := c.recv(4096)): data += d
-    c.sendall(b"after-eof " + data); c.close()
-' </dev/null >/dev/null 2>&1 &
-wait_listen ioa 12649
-pkill -f "$FORWARDER" || true
-python3 "$FORWARDER" --netns /run/netns/ioa 127.0.0.1:12639 127.0.0.1:12649 127.0.0.1:56101 \
-    </dev/null >/dev/null 2>&1 &
-for _ in $(seq 50); do ss -Hltn 'sport = :12649' | grep -q . && break; sleep 0.1; done
-out=$(timeout 4 python3 -c '
-import socket
-s = socket.create_connection(("127.0.0.1", 12649), timeout=2)
-s.sendall(b"request-without-newline"); s.shutdown(socket.SHUT_WR)
-out = b""
-while (d := s.recv(4096)): out += d
-print(out.decode())' || echo TIMEOUT)
-[ "$out" = "after-eof request-without-newline" ] ||
-    fail "a half-closing client must still get the reply, got '$out'"
-ok "a client's half-close is passed through, and the reply still arrives"
-
-# The daemon itself reaches the uplink from inside the namespace.
-out=$(ip netns exec ioa timeout 4 python3 -c '
-import socket
-s = socket.create_connection(("198.51.100.7", 7000), timeout=2)
-s.sendall(b"heartbeat\n"); s.shutdown(socket.SHUT_WR)
-print(s.recv(4096).decode().strip())' || echo TIMEOUT)
-[ "$out" = "internet 192.0.2.10 heartbeat" ] ||
-    fail "the daemon should reach the uplink masqueraded to 192.0.2.10, got '$out'"
-ok "the daemon in netns ioa reaches the uplink, masqueraded"
+sudo -n systemctl stop "$TAG-port.service" 2>/dev/null
+[ "$(probe)" = "agent 23" ] || fail 'a stopped proxy was not re-activated by the next connection'
+ok 'a stopped proxy is re-activated by the next connection'

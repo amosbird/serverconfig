@@ -1,0 +1,12 @@
+# Keep a host loopback port iOA serves on answering now that iOA listens inside netns `ioa`:
+# 127.0.0.1:12639 and its siblings for corkscrew, the PAC file and browsers, 12101, and 56100/56101
+# for the GUI. The socket is bound on the host; the proxy it activates runs in the namespace.
+# See network/ioa-netns.md.
+[Unit]
+Description=Host loopback port %i of the iOA namespace
+
+[Socket]
+ListenStream=127.0.0.1:%i
+
+[Install]
+WantedBy=sockets.target

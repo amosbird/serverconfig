@@ -54,12 +54,14 @@ lookup main`，再加 prohibit 兜底，防止物理路由暂时缺失时泄漏�
 ## GUI 和 daemon
 
 - `iOA.bin`、`SmartGateAgent` 由 `ngnclient.service` 启动，加 `NetworkNamespacePath=/run/netns/ioa`。
-- `iOALinux` 留在宿主机，不进命名空间。它和 daemon 之间只靠 `127.0.0.1:56100/56101`，这两个端口由
-  `ioa-netns-forward` 从宿主机回环转进命名空间，GUI 不需要任何改动，也就不需要 sudo 入口、X11 也不受影响。
-- 同一个转发器还转发 SmartGateAgent 的本地端口（12639/12649/12679/12759/12769/12101），所以 corkscrew、
-  `amos.pac`、qutebrowser 和 GUI 里写死的 `PROXY 127.0.0.1:12639` 都不用改。
-- 转发器先在宿主机绑定这些地址，再把自己切进 `ioa`：监听 socket 留在宿主机，之后建立的上游连接都在 `ioa`
-  里。代价是 SmartGateAgent 看到的发起进程变成转发器（或 `UnknownProcess`），票据照样成功（已核实）。
+- `iOALinux` 留在宿主机，不进命名空间。它和 daemon 之间只靠 `127.0.0.1:56100/56101`，这两个端口从宿主机
+  回环转进命名空间，GUI 不需要任何改动，也就不需要 sudo 入口、X11 也不受影响。
+- SmartGateAgent 的本地端口（12639/12649/12679/12759/12769/12101）同样转发，所以 corkscrew、`amos.pac`、
+  qutebrowser 和 GUI 里写死的 `PROXY 127.0.0.1:12639` 都不用改。
+- 转发用 systemd 自带的组件，不写代码：`ioa-port@.socket` 在宿主机绑定 `127.0.0.1:%i`，被连接时激活
+  `ioa-port@.service`，后者带 `NetworkNamespacePath=/run/netns/ioa` 运行 `systemd-socket-proxyd 127.0.0.1:%i`。
+  每个端口一个实例，互不影响；代理退出后下一个连接会重新激活。代价是 SmartGateAgent 看到的发起进程变成
+  代理（或 `UnknownProcess`），票据照样成功（已核实）。
 
 ## BPF 心跳超时
 
@@ -79,7 +81,7 @@ SmartGateAgent 的隧道和 iOA.bin 的控制连接仍在同一 cgroup，按进�
    物理出网、不进 Tailscale、宿主机漫游后仍通。
 2. **切换 daemon**（一次重新登录）：停 ngnclient → 装 netns 单元和 drop-in → 起 ngnclient。验证 tun0 在命名
    空间里、心跳和票据成功。
-3. **GUI 和本地代理**：`ioa-netns-forward.service` 随 daemon 一起上线；验证 GUI 登录状态、`ioa-health`、
+3. **GUI 和本地代理**：`ioa-port@*.socket` 随 daemon 一起上线；验证 GUI 登录状态、`ioa-health`、
    corkscrew SSH、浏览器 PAC。
 4. **宿主机的 TUN 流量**（DNS fakeip、直接访问 100.12/16 和 10/8）：SmartDNS 的 ioa 组改指向命名空间内的
    `192.168.255.10`，宿主机把这些网段路由到 veth；验证 git/iwiki 直连。
@@ -92,3 +94,25 @@ SmartGateAgent 的隧道和 iOA.bin 的控制连接仍在同一 cgroup，按进�
 2. SmartGateAgent 在命名空间里能否创建 tun0 并正常工作（`/dev/net/tun` 不受 netns 影响，应可以）。
 3. 宿主机漫游时，命名空间内 iOA 是否真的收不到任何地址事件，隧道是否仍需 BPF 才能恢复。
 4. `exec -a firefox` 的来历（命名空间后是否还需要）。
+
+## 风险核实记录（2026-11-18，只读）
+
+### SmartGateAgent 会不会改宿主机的 `/etc/resolv.conf`
+
+**会尝试，被挡住了。** 网络命名空间不隔离文件系统，所以它在命名空间里的行为和现在一样。
+
+- 宿主机的 `/etc/resolv.conf` 带不可变属性（`lsattr` 显示 `i`），内容 `nameserver 127.0.0.1`。
+- 日志里共 109 次 `Setting system DNS servers: [192.168.255.10 114.114.114.114]`，每次都以
+  `rename /etc/resolv.conf /etc/resolv_ngn_backup.conf: operation not permitted` 失败。
+- `/etc/resolv_ngn.conf`（它想写进去的内容）停在 2026-07-27，之后没有成功写过。
+
+结论：只要不可变属性保留，A 不改变这一点。但这个属性是 A 的前提，必须写进部署检查。
+
+### 漫游后 iOA 是否依赖地址事件来恢复
+
+**不依赖。** 当前 iOA 收到 `RTM_NEWADDR` 后只做一次 `http agent inconn`（2s 超时）和 `BuildPacket`，
+不重建心跳连接；心跳仍按自己的 60 秒节奏走，连接由 BPF 超时（`close:…,2,110`）或对端 RST
+（`close:…,2,104`）结束后再重连。最近 30 次地址事件里，下一次心跳成功的时间就是心跳相位决定的
+1–64 秒（个别 200 秒以上的出在连续换 IP 期间），和有没有收到地址事件无关。
+
+结论：命名空间里收不到地址事件，恢复速度不会因此变慢。

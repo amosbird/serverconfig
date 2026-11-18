@@ -1,0 +1,8 @@
+[Unit]
+Description=Forward host loopback port %i into netns ioa
+Requires=ioa-netns.service
+After=ioa-netns.service
+
+[Service]
+NetworkNamespacePath=/run/netns/ioa
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:%i
