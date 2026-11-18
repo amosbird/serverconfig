@@ -8,7 +8,7 @@
 #   iOALinux (the 1.0.3.88 GUI) scans every /proc/<pid>/cmdline and only counts the agent as running
 #     when argv[0] is the full path it launches, /usr/lib/iOA/bin/SmartGateAgent. If argv[0] is the
 #     bare name, it logs `No SmartGateAgent Runing` every 5s. Each time it re-sends the agent3 mode
-#     to the agent, which tears down and rebuilds tables 20/230 and the tun0 default.
+#     to the agent, which tears down and rebuilds its routes and the tun0 default.
 #
 # The test runs the real wrapper with a fake agent ELF, a copy of `sleep`, and reads what /proc shows.
 set -euo pipefail
@@ -25,13 +25,7 @@ fail() { echo "FAIL $*" >&2; exit 1; }
 mkdir -p "$WORK/bin"
 cp "$(readlink -f "$(command -v sleep)")" "$WORK/bin/SmartGateAgent.bin.9.9.9.9"
 ln -s SmartGateAgent.bin.9.9.9.9 "$WORK/bin/SmartGateAgent.bin"
-cat >"$WORK/ip" <<'EOF'
-#!/usr/bin/env bash
-echo 'default via 192.0.2.1 dev wlan0 proto dhcp src 192.0.2.2 metric 600'
-EOF
-chmod +x "$WORK/ip"
-
-SMARTGATE_IP_BIN="$WORK/ip" SMARTGATE_BINDIR="$WORK/bin" \
+SMARTGATE_BINDIR="$WORK/bin" \
     SMARTGATE_AGENT_BIN="$WORK/bin/SmartGateAgent.bin" SMARTGATE_LOCK_FILE="$WORK/lock" \
     SMARTGATE_ARGV0="$WORK/bin/SmartGateAgent" \
     bash "$WRAPPER" 30 &
