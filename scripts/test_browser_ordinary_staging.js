@@ -79,6 +79,8 @@ cases.push(["ordinary creation cannot expand a folded Abush group before isolati
     const personal = [...f.tabs.values()].find(tab => tab.url === payload.url);
     assert.equal(created.args[0].active, false);
     assert.ok(created.args[0].index > 0);
+    assert.ok(f.tabStrip(1).indexOf(personal.id) < f.tabStrip(1).indexOf(work.tab_id),
+        "ordinary page stays before the folded work group even after inherited-group cleanup");
     assert.ok(calls.findIndex(call => call.name === "tabs.ungroup") <
         calls.findIndex(call => call.name === "tabs.update" && call.args[1].active));
     assert.deepEqual(group, before);

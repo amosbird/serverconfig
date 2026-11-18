@@ -469,9 +469,11 @@ if (rofiPath) {
         await f.api.tabs.update(work.tab_id, {active: true});
         const {context, creates} = loadRofi(f, file);
         await vm.runInContext(entrance, context);
-        await Promise.all(creates); await settle();
+        await Promise.all(creates); await settle(); await f.executor.presentationTail;
         assert.equal(creates.length, 1);
         const personal = await creates[0];
+        assert.ok(f.tabStrip(1).indexOf(personal.id) < f.tabStrip(1).indexOf(work.tab_id),
+            "direct Rofi creation stays before the Abush presentation group");
         assert.equal(f.tabs.get(personal.id).groupId, -1);
         assert.equal(f.tabs.get(personal.id).active, true);
         assert.equal(f.executor.ownsTab(personal.id), false);

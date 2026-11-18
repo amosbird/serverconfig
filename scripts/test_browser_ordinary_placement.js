@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-const {assert, clone, deferred, fixture, runCases} =
+const {assert, clone, deferred, fixture, runCases, REMOTE, execute} =
     require("./browser_tab_groups_fixture.js");
+const {bounded} = require("../chromium/external-links/extension/workspace.js");
 const request = id => ({version: 1, operation: "ordinary_open", focus: true,
     request_id: id, url: `https://qq.com/?personal=${id}`, deadline_ms: Date.now() + 5000});
 function seedTab(f, id, groupId = -1, extra = {}) {
@@ -186,6 +187,86 @@ for (const intervention of ["move ABA", "pin ABA", "group ABA", "navigate ABA", 
         assert.equal(f.calls.filter(call => call.name === "tabs.move").length,
             intervention === "move ABA" ? 2 : 0);
         assert.equal(f.executor.personalPlacements.size, 0);
+    }]);
+}
+for (const heldOperation of ["tabs.create", "tabs.ungroup"]) {
+    cases.push([`ordinary placement retains serialization after a late ${heldOperation} callback`, async () => {
+        const f = fixture({globalAutomation: true}); seedTab(f, 3, 80); seedGroup(f, 80); await f.ready();
+        const entered = deferred(); const release = deferred();
+        f.hooks[`${heldOperation}.after`] = async () => { entered.resolve(); await release.promise; };
+        const firstPayload = request(`late-${heldOperation}`);
+        const first = f.executor.ordinaryOpen(firstPayload);
+        await entered.promise;
+        f.executor.cancelOrdinaryOpen({version: 1, operation: "ordinary_open_cancel", request_id: firstPayload.request_id});
+        const second = open(f, `after-${heldOperation}`);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(f.calls.filter(call => call.name === "tabs.create").length, 1);
+        delete f.hooks[`${heldOperation}.after`]; release.resolve();
+        assert.equal(await first, "unknown");
+        const id = await second;
+        assert.ok(f.tabStrip(1).indexOf(id) < f.tabStrip(1).indexOf(3));
+        assert.equal(f.calls.filter(call => call.name === "native.prepare").length, 1);
+    }]);
+}
+cases.push(["ordinary creation cannot overtake an unresolved work-group membership effect", async () => {
+    const f = fixture({globalAutomation: true}); seedTab(f, 3, 80); seedGroup(f, 80); await f.ready();
+    const entered = deferred(); const release = deferred();
+    f.hooks["tabs.group.after"] = async () => { entered.resolve(); await release.promise; };
+    const materializing = f.materialize();
+    await entered.promise;
+    const ordinary = open(f, "during-grouping");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.calls.filter(call => call.name === "tabs.create").length, 1);
+    release.resolve();
+    await materializing; const id = await ordinary;
+    assert.deepEqual(f.tabStrip(1), [1, id, 3, f.executor.recordFor("remote").tab_id]);
+}]);
+cases.push(["human tab movement while a staging read is held prevents late activation or navigation", async () => {
+    const f = fixture({globalAutomation: true}); seedTab(f, 3, 80); seedGroup(f, 80); await f.ready();
+    const entered = deferred(); const release = deferred(); let held = false;
+    f.hooks["tabs.get.after"] = async tab => {
+        if (held || tab.id < 10) return;
+        held = true; entered.resolve(tab.id); await release.promise;
+    };
+    const pending = f.executor.ordinaryOpen(request("human-staging-move"));
+    const id = await entered.promise;
+    await f.api.tabs.move(id, {index: 0}); await f.api.tabs.move(id, {index: -1});
+    release.resolve(); assert.equal(await pending, "unknown");
+    assert.equal(f.calls.some(call => call.name === "native.prepare"), false);
+    assert.equal(f.calls.some(call => call.name === "tabs.update"), false);
+}]);
+for (const heldOperation of ["tabs.move", "tabs.ungroup"]) {
+    cases.push([`personal placement timeout cannot release a raw ${heldOperation} effect or replay it`, async () => {
+        const f = fixture({globalAutomation: true}); seedTab(f, 3, 80); seedGroup(f, 80);
+        await f.ready();
+        if (heldOperation === "tabs.ungroup") {
+            await f.materialize(); await f.api.tabs.update(f.executor.recordFor("remote").tab_id, {active: true});
+        }
+        const originalApi = f.executor.api.bind(f.executor);
+        const timedOut = deferred();
+        f.executor.api = (task, label) => label === "place new personal tab before work groups" ?
+            bounded(task, label, 25).catch(error => { timedOut.resolve(error); throw error; }) : originalApi(task, label);
+        const entered = deferred(); const release = deferred();
+        f.hooks[`${heldOperation}.after`] = async () => { entered.resolve(); await release.promise; };
+        const personal = await f.api.tabs.create({windowId: 1, active: true, url: "https://rofi.test/late"});
+        await entered.promise;
+        assert.match((await timedOut.promise).message, /timed out/);
+        const second = {...REMOTE, remote_key: "second", principal_id: "second-principal", workspace_id: "second-workspace"};
+        await f.emitRemote(second); const record = f.executor.recordFor("second");
+        const groupingReached = deferred();
+        f.hooks["tabs.group"] = async () => { groupingReached.resolve(); };
+        const materializing = f.executor.execute(execute(f, {remote_key: "second", principal_id: second.principal_id,
+            authorization: {browser_boot_id: record.browser_boot_id, enable_id: record.enable_id, revision: record.revision},
+            command: {command: "navigate", page: clone(record.page), url: "https://second.test/"}}));
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(f.calls.filter(call => call.name === "tabs.group").length,
+            heldOperation === "tabs.ungroup" ? 1 : 0, "unresolved raw personal effect holds the presentation queue");
+        delete f.hooks[`${heldOperation}.after`]; release.resolve();
+        await materializing; await groupingReached.promise;
+        assert.equal(f.calls.filter(call => call.name === heldOperation &&
+            (heldOperation === "tabs.move" ? call.args[0] === personal.id : call.args[0].includes(personal.id))).length, 1);
+        await f.executor.reconcileAll();
+        assert.equal(f.executor.ownsTab(personal.id), false);
     }]);
 }
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

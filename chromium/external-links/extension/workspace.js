@@ -1213,6 +1213,9 @@ class WorkspaceExecutor {
         const previous = this.activeTabs.get(info.windowId);
         if (previous?.tab_id === info.tabId) return;
         this.activationGenerations.set(info.windowId, (this.activationGenerations.get(info.windowId) || 0) + 1);
+        for (const [tabId, placement] of this.personalPlacements) {
+            if (placement.window_id === info.windowId && tabId !== info.tabId) placement.retired = true;
+        }
         this.activeTabs.set(info.windowId, {tab_id: info.tabId, previous_tab_id: previous?.tab_id,
             previous_unseeded: !previous && (!this.activeBoot || this.activeBoot !== this.browserBootId)});
         return this.persistInheritance();
@@ -1332,8 +1335,8 @@ class WorkspaceExecutor {
             ...this.workCreations.values()].filter(value => value.group_reused !== true)
             .map(value => value.group_id).filter(id => id >= 0 && id !== null));
     }
-    forgetPersonalCandidate(tabId) {
-        this.personalPlacements.delete(tabId);
+    forgetPersonalCandidate(tabId, preservePlacement = false) {
+        if (!preservePlacement) this.personalPlacements.delete(tabId);
         clearTimeout(this.personalCandidates.get(tabId)?.timer);
         if (this.personalCandidates.delete(tabId)) return this.persistInheritance();
     }
@@ -1360,14 +1363,17 @@ class WorkspaceExecutor {
         this.personalCandidates.set(tab.id, candidate);
         this.schedulePersonalExpiry(candidate);
         this.persistInheritance();
+        const isolation = this.isolateNewPersonalTab(tab.id);
+        const url = tab.pendingUrl || tab.url;
         if (this.restored && this.inheritanceBoot === this.browserBootId && tab.active === true &&
-                tab.groupId === -1 && !tab.pinned &&
-                /^https?:/.test(tab.pendingUrl || tab.url || "")) {
-            this.positionNewPersonalTab(tab).catch(error => this.reportAdvisoryError(error));
+                !tab.pinned && text(url) && !url.startsWith("about:blank#abush-work-") &&
+                !url.startsWith(this.chrome.runtime.getURL("ordinary-staging.html")) &&
+                (tab.groupId === -1 || source?.group_id === tab.groupId)) {
+            this.positionNewPersonalTab(tab, isolation).catch(error => this.reportAdvisoryError(error));
         }
-        return this.isolateNewPersonalTab(tab.id);
+        return isolation;
     }
-    positionNewPersonalTab(created) {
+    positionNewPersonalTab(created, isolation) {
         const placement = {browser_boot_id: this.browserBootId, window_id: created.windowId,
             url: created.pendingUrl || created.url, deadline: Date.now() + API_TIMEOUT_MS,
             moving: false, retired: false};
@@ -1377,6 +1383,11 @@ class WorkspaceExecutor {
             Date.now() < placement.deadline && !this.ownsTab(created.id) &&
             !this.pendingCreations.has(created.id);
         const task = this.presentationTail.catch(() => {}).then(async () => {
+            try {
+                await isolation;
+            } finally {
+                await placement.isolationEffect;
+            }
             if (!current()) return;
             const index = await this.ordinaryInsertionIndex(created.windowId,
                 (task, label) => this.api(task, label), () => {}, created.id);
@@ -1397,7 +1408,7 @@ class WorkspaceExecutor {
     }
     personalTabMoved(tabId) {
         const placement = this.personalPlacements.get(tabId);
-        if (placement && !placement.moving) placement.retired = true;
+        if (placement && !placement.moving && !placement.isolating) placement.retired = true;
     }
     schedulePersonalExpiry(candidate) {
         // The first creation generation allows Chrome's delayed initial group update.
@@ -1467,7 +1478,7 @@ class WorkspaceExecutor {
             if ((candidate.window_id !== tab?.windowId && tab?.windowId !== undefined) ||
                     (change.windowId !== undefined) || change.groupId === -1 ||
                     (candidate.group_id >= 0 && !this.inheritedWorkGroups(candidate).has(candidate.group_id))) {
-                return this.forgetPersonalCandidate(tabId);
+                return this.forgetPersonalCandidate(tabId, change.groupId === -1 && placement?.isolating === true);
             }
             this.persistInheritance();
         }
@@ -1525,12 +1536,20 @@ class WorkspaceExecutor {
             }
         }
         if (this.inheritedWorkGroups(candidate).has(tab.groupId)) {
-            await this.api(() => {
+            const placement = this.personalPlacements.get(tabId);
+            const isolationEffect = Promise.resolve().then(async () => {
                 // Chrome has no conditional ungroup API: event identity fences the last synchronous step.
                 if (!current() || !this.inheritedWorkGroups(candidate).has(tab.groupId)) return;
-                return this.chrome.tabs.ungroup([tabId]);
-            }, "remove new personal tab inheritance");
-            if (this.personalCandidates.get(tabId) === candidate) await this.forgetPersonalCandidate(tabId);
+                if (placement) placement.isolating = true;
+                try {
+                    await this.chrome.tabs.ungroup([tabId]);
+                } finally {
+                    if (placement) placement.isolating = false;
+                }
+            });
+            if (placement) placement.isolationEffect = isolationEffect;
+            await this.api(() => isolationEffect, "remove new personal tab inheritance");
+            if (this.personalCandidates.get(tabId) === candidate) await this.forgetPersonalCandidate(tabId, true);
         } else if (tab.groupId >= 0 || candidate.stage === "expired") {
             await this.forgetPersonalCandidate(tabId);
         }
@@ -1906,6 +1925,7 @@ class WorkspaceExecutor {
         let isolated = false;
         let ungrouped = false;
         let navigating = false;
+        let moving = false;
         let invalid = false;
         const early = [];
         const placeholder = value => !value || value === "about:blank" || value === url;
@@ -1920,6 +1940,8 @@ class WorkspaceExecutor {
                 if (id.windowId === target.windowId && id.tabId !== target.id) invalid = true;
             } else if (kind === "created") {
                 if (id.id === target.id) initialGroup = id.groupId;
+            } else if (id === target.id && kind === "moved") {
+                if (!moving || change.windowId !== target.windowId) invalid = true;
             } else if (id === target.id) {
                 if (kind !== "updated" || tab?.windowId !== target.windowId ||
                         change.groupId !== undefined && change.groupId !== -1 &&
@@ -1929,7 +1951,7 @@ class WorkspaceExecutor {
                 if (kind === "updated" && change.groupId === -1) ungrouped = true;
             }
         };
-        const listeners = ["onCreated", "onUpdated", "onRemoved", "onDetached", "onAttached", "onActivated"]
+        const listeners = ["onCreated", "onUpdated", "onRemoved", "onMoved", "onDetached", "onAttached", "onActivated"]
             .map(event => [this.chrome.tabs[event], (...args) => observe(event.slice(2).toLowerCase(), args)]);
         for (const [event, listener] of listeners) event.addListener(listener);
         return {
@@ -1946,6 +1968,10 @@ class WorkspaceExecutor {
                         tab.groupId !== -1 && tab.groupId !== initialGroup) {
                     throw new Error("Created ordinary tab no longer matches its staging request");
                 }
+            },
+            move: async task => {
+                moving = true;
+                try { return await task(); } finally { moving = false; }
             },
             isolate: () => { isolated = true; },
             navigate: () => { navigating = true; },
@@ -2071,40 +2097,56 @@ class WorkspaceExecutor {
             entry.phase = "dispatched";
             await this.persistWal();
             check();
-            const index = window ? await this.ordinaryInsertionIndex(window.id, api, check) : undefined;
-            check();
-            observation = this.observeOrdinaryTab(url);
-            let tab;
-            if (window) tab = await api(() => {
+            const preparation = this.presentationTail.catch(() => {}).then(async () => {
                 check();
-                op.dispatched = true;
-                return this.chrome.tabs.create({windowId: window.id, url, active: false, index});
-            }, "create ordinary staging tab");
-            else {
-                const created = await api(() => {
-                    check();
+                const index = window ? await this.ordinaryInsertionIndex(window.id, api, check) : undefined;
+                check();
+                observation = this.observeOrdinaryTab(url);
+                let tab;
+                if (window) {
                     op.dispatched = true;
-                    return this.chrome.windows.create({url, type: "normal", focused: true});
-                }, "explicit ordinary cold window");
-                tab = created.tabs?.[0];
+                    tab = await this.chrome.tabs.create({windowId: window.id, url, active: false, index});
+                } else {
+                    op.dispatched = true;
+                    const created = await this.chrome.windows.create({url, type: "normal", focused: true});
+                    tab = created.tabs?.[0];
+                }
+                if (!Number.isSafeInteger(tab?.id) || !Number.isSafeInteger(tab.windowId) ||
+                        window && tab.windowId !== window.id || this.ownsTab(tab.id)) {
+                    throw new Error("No exact ordinary tab");
+                }
+                observation.bind(tab);
+                check();
+                const created = await this.chrome.tabs.get(tab.id);
+                observation.validate(created);
+                check();
+                await observation.move(() => this.chrome.tabs.ungroup([tab.id]));
+                observation.isolate();
+                check();
+                const indexAfterIsolation = await this.ordinaryInsertionIndex(tab.windowId, api, check, tab.id);
+                const isolated = await this.chrome.tabs.get(tab.id);
+                check();
+                if (isolated.id !== tab.id || isolated.windowId !== tab.windowId ||
+                        isolated.groupId !== -1 || this.ownsTab(tab.id)) {
+                    throw new Error("Ordinary tab must be isolated before activation");
+                }
+                if (indexAfterIsolation !== RIGHT_EDGE_TAB_INDEX && isolated.index > indexAfterIsolation) {
+                    await observation.move(() => this.chrome.tabs.move(tab.id, {index: indexAfterIsolation}));
+                    check();
+                }
+                return isolated;
+            });
+            this.presentationTail = preparation;
+            let preparedTab;
+            try {
+                preparedTab = await api(() => preparation, "prepare ordinary staging tab presentation");
+            } catch (error) {
+                op.cancelled = true;
+                throw error;
             }
-            if (!Number.isSafeInteger(tab?.id) || !Number.isSafeInteger(tab.windowId) ||
-                    window && tab.windowId !== window.id || this.ownsTab(tab.id)) {
-                throw new Error("No exact ordinary tab");
-            }
-            observation.bind(tab);
             check();
-            const created = await api(() => this.chrome.tabs.get(tab.id), "verify exact created ordinary tab");
-            observation.validate(created);
-            check();
-            await api(() => this.chrome.tabs.ungroup([tab.id]), "ungroup exact ordinary tab");
-            observation.isolate();
-            const isolated = await api(() => this.chrome.tabs.get(tab.id), "verify ordinary isolation");
-            if (isolated.id !== tab.id || isolated.windowId !== tab.windowId ||
-                    isolated.groupId !== -1 || this.ownsTab(tab.id)) {
-                throw new Error("Ordinary tab must be isolated before activation");
-            }
-            if (!isolated.active) await api(() => this.chrome.tabs.update(tab.id, {active: true}),
+            const tab = preparedTab;
+            if (!tab.active) await api(() => this.chrome.tabs.update(tab.id, {active: true}),
                 "activate exact isolated ordinary staging tab");
             await this.waitOrdinaryStaging(payload, op, tab, url, nonce, api, check);
             const prepared = await native("prepare", {nonce,
