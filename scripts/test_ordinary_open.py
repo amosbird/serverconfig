@@ -225,6 +225,90 @@ class OrdinaryOpenSocketTest(unittest.TestCase):
                     adapter.set_text.assert_not_called()
                     adapter.finish.assert_not_called()
 
+    def test_native_activate_forwards_explicit_caller_deadline(self):
+        binding = mock.Mock()
+        binding.activate_ordinary_window.return_value = {"xid": 42, "nonce": "a" * 32}
+        broker = host.BrowserBroker()
+        broker.x11_binding = mock.Mock(return_value=binding)
+        with mock.patch.object(host.time, "time", return_value=1000.0), \
+                mock.patch.object(host.time, "monotonic", return_value=10.0):
+            result = broker.handle_request({
+                "version": 1, "id": "deadline-native", "service": "ordinary_open",
+                "operation": "activate", "payload": {
+                    "nonce": "a" * 32, "xid": 42, "deadline_ms": 1_000_125},
+            })
+        self.assertEqual(result, {"xid": 42, "nonce": "a" * 32})
+        binding.activate_ordinary_window.assert_called_once_with(
+            {"nonce": "a" * 32, "xid": 42}, deadline=10.125)
+
+    def test_native_activate_shares_budget_through_lookup_identity_doc_and_final_info(self):
+        import test_abush_browser_x11_unit as native_tests
+
+        binding = native_tests.binding
+        compatibility = native_tests.OrdinaryIPCCompatibilityTest()
+        for legacy in (False, True):
+            for phase in ("lookup", "identity", "doc", "info", "complete"):
+                with self.subTest(legacy=legacy, phase=phase):
+                    clock = [10.0]
+                    nonce, adapter = compatibility.fixture()
+                    adapter.active_window = lambda: 22
+
+                    def lookup():
+                        clock[0] = 10.125 if phase == "lookup" else 10.03125
+                        return binding
+
+                    def incarnation(_pid):
+                        if phase == "identity":
+                            clock[0] = 10.125
+                        return ["boot", 4242, "start"]
+
+                    def observe(name, _adapter):
+                        if name == "doc":
+                            clock[0] = 10.125 if phase == "doc" else 10.0625
+                        elif name == "info":
+                            clock[0] = 10.125 if phase == "info" else 10.09375
+
+                    broker = host.BrowserBroker()
+                    broker.x11_binding = mock.Mock(side_effect=lookup)
+                    native = host.NativeBrokerHost(ordinary_open_factory=None, browser={
+                        "pid": 4242, "starttime": "start", "profile": pathlib.Path(),
+                        "browser_boot_id": "test-boot"})
+                    native.broker = broker
+                    request = {
+                        "version": 1, "id": "deadline-native", "service": "ordinary_open",
+                        "operation": "activate", "payload": {
+                            "nonce": nonce, "xid": 22, "deadline_ms": 1_000_125},
+                    }
+                    with mock.patch.object(host.time, "time", return_value=1000.0), \
+                            mock.patch.object(host.time, "monotonic", side_effect=lambda: clock[0]), \
+                            mock.patch.object(binding, "XcffibAdapter", return_value=adapter), \
+                            mock.patch.object(binding, "browser_process", return_value=True), \
+                            mock.patch.object(binding, "browser_incarnation", side_effect=incarnation), \
+                            compatibility.transport(adapter, legacy=legacy, hook=observe) as state:
+                        native._respond(request)
+                    response = native.outbound.get_nowait()
+                    calls, window, root = state
+                    names = [data[1] for data in calls]
+                    expected = {
+                        "lookup": [], "identity": [], "doc": ["doc"],
+                        "info": ["doc", "activate_ordinary_window", "info"],
+                        "complete": ["doc", "activate_ordinary_window", "info"],
+                    }
+                    self.assertEqual(names, expected[phase])
+                    if phase == "complete":
+                        self.assertEqual(response["payload"], {"xid": 22, "nonce": nonce})
+                        self.assertNotIn("error", response)
+                    else:
+                        self.assertIn("deadline expired", response["error"])
+                        self.assertNotIn("payload", response)
+                    if phase in {"info", "complete"}:
+                        window.focus.assert_called_once_with(warp=False)
+                        root.groups_map["f"].toscreen.assert_called_once_with()
+                    else:
+                        window.focus.assert_not_called()
+                        root.groups_map["f"].toscreen.assert_not_called()
+                    self.assertFalse(adapter.finished)
+
     def test_native_ordinary_prepare_requires_current_browser_incarnation(self):
         binding = mock.Mock()
         request = {

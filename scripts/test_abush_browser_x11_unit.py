@@ -58,6 +58,12 @@ class FakeAdapter:
 
 
 class XcffibPropertyAdapterTest(unittest.TestCase):
+    def setUp(self):
+        guard = mock.patch.object(binding.XcffibAdapter, "__init__",
+                                  side_effect=AssertionError("live X11 is forbidden"))
+        guard.start()
+        self.addCleanup(guard.stop)
+
     class Value:
         def __init__(self, raw):
             self.raw = raw
@@ -246,6 +252,10 @@ class XcffibPropertyAdapterTest(unittest.TestCase):
 
 class OrdinaryX11Test(unittest.TestCase):
     def setUp(self):
+        guard = mock.patch.object(binding, "XcffibAdapter",
+                                  side_effect=AssertionError("live X11 is forbidden"))
+        guard.start()
+        self.addCleanup(guard.stop)
         self.process_patch = mock.patch.object(binding, "browser_process", return_value=True)
         self.process_patch.start()
         self.addCleanup(self.process_patch.stop)
@@ -823,6 +833,63 @@ class OrdinaryIPCCompatibilityTest(unittest.TestCase):
                     calls, window, _root = state
                     self.assertEqual(sum(data[1] == command for data in calls), 1)
                     self.assertEqual(window.togroup.call_count + window.focus.call_count, 1)
+
+    def test_final_info_identity_changes_never_report_success_or_repeat_effect(self):
+        for legacy in (False, True):
+            for change in ("nonce", "title", "pid", "incarnation", "class", "process",
+                           *binding.LEGACY_BROWSER_PROPERTIES, "WM_WINDOW_ROLE", "deadline",
+                           "final_identity_deadline"):
+                with self.subTest(legacy=legacy, change=change):
+                    nonce, adapter = self.fixture()
+                    adapter.active_window = lambda: 22
+                    clock = [10.0]
+
+                    def invalidate(name, adapter):
+                        if name != "info":
+                            return
+                        if change == "nonce":
+                            adapter.values[(22, binding.ORDINARY_NONCE_PROPERTY)] = "b" * 32
+                        elif change == "title":
+                            adapter.values[(22, "_NET_WM_NAME")] = "other page"
+                        elif change == "pid":
+                            adapter.pid = lambda _window: 4243
+                            binding.browser_incarnation.side_effect = lambda pid: [
+                                "boot", pid, "start"]
+                        elif change == "incarnation":
+                            binding.browser_incarnation.return_value = ["boot", 4242, "new"]
+                        elif change == "class":
+                            adapter.values[(22, "WM_CLASS")] = "unrelated"
+                        elif change == "process":
+                            binding.browser_process.return_value = False
+                        elif change == "deadline":
+                            clock[0] = 10.25
+                        elif change == "final_identity_deadline":
+                            def late_incarnation(_pid):
+                                clock[0] = 10.25
+                                return ["boot", 4242, "start"]
+
+                            binding.browser_incarnation.side_effect = late_incarnation
+                        else:
+                            adapter.values[(22, change)] = (
+                                "abush-browser" if change == "WM_WINDOW_ROLE" else "legacy")
+
+                    with mock.patch.object(binding, "browser_process", return_value=True), \
+                            mock.patch.object(binding, "browser_incarnation",
+                                              return_value=["boot", 4242, "start"]), \
+                            mock.patch.object(binding.time, "monotonic",
+                                              side_effect=lambda: clock[0]), \
+                            mock.patch.object(binding.time, "sleep"), \
+                            self.transport(adapter, legacy=legacy, hook=invalidate) as state, \
+                            self.assertRaises((binding.X11Unavailable, ValueError)):
+                        binding.activate_ordinary_window(
+                            {"nonce": nonce, "xid": 22}, adapter=adapter, deadline=10.25)
+                    calls, window, root = state
+                    names = [data[1] for data in calls]
+                    self.assertEqual(names[:3], ["doc", "activate_ordinary_window", "info"])
+                    self.assertTrue(all(name == "info" for name in names[3:]))
+                    self.assertEqual(names.count("activate_ordinary_window"), 1)
+                    window.focus.assert_called_once_with(warp=False)
+                    root.groups_map["f"].toscreen.assert_called_once_with()
 
     def test_legacy_native_binding_and_deadline_revalidated_around_effect(self):
         for command in ("prepare_ordinary_window", "activate_ordinary_window"):

@@ -552,4 +552,8 @@ def activate_ordinary_window(payload, adapter=None, run=None, verify=None, deadl
         verified = before_deadline(deadline, verify, window)
     if verified is not True:
         raise X11Unavailable("ordinary activation verification failed")
+    verify_ordinary_chrome(adapter, window, nonce)
+    if before_deadline(deadline, browser_incarnation, adapter.pid(window)) != identity or \
+            adapter.title(window) != title:
+        raise X11Unavailable("ordinary activation changed window identity")
     return {"xid": window, "nonce": nonce}

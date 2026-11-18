@@ -2098,8 +2098,10 @@ class BrowserBroker:
             )
             return {**result, "deadline_ms": deadline_ms}
         if service == "ordinary_open" and operation == "activate":
-            _ordinary_deadline(payload, {"nonce", "xid"})
-            return self.x11_binding().activate_ordinary_window(_without_deadline(payload))
+            deadline_ms = _ordinary_deadline(payload, {"nonce", "xid"})
+            deadline = time.monotonic() + (deadline_ms / 1000 - time.time())
+            return self.x11_binding().activate_ordinary_window(
+                _without_deadline(payload), deadline=deadline)
         if service == "ordinary_open" and operation == "ordinary_open_completion":
             if self.ordinary_open is None:
                 raise ValueError("ordinary-open broker is unavailable")
