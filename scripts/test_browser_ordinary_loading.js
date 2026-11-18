@@ -154,4 +154,25 @@ for (const initial of ["empty", "blank"]) {
         assert.deepEqual(urlUpdates(f), []);
     }]);
 }
+for (const event of ["transport", "boot"]) {
+    cases.push([`a queued ordinary request cannot adopt the next ${event} generation`, async () => {
+        const f = fresh(); await f.ready();
+        const firstPayload = request(`first-${event}`); const queuedPayload = request(`queued-${event}`);
+        const entered = deferred(); const release = deferred();
+        f.hooks["tabs.create.after"] = async () => { entered.resolve(); await release.promise; };
+        const first = f.executor.ordinaryOpen(firstPayload);
+        let queued;
+        try {
+            await entered.promise;
+            queued = f.executor.ordinaryOpen(queuedPayload);
+            if (event === "transport") await f.executor.invalidateRemote();
+            else await f.executor.acceptNativeBootstrap({...require("./browser_tab_groups_fixture.js").BOOT,
+                browser_boot_id: "next-browser-boot"});
+        } finally { release.resolve(); }
+        assert.equal(await first, "unknown");
+        assert.equal(await queued, "not_applied");
+        assert.equal(f.calls.filter(call => call.name === "tabs.create").length, 1);
+        assert.equal(f.calls.some(call => call.name === "tabs.update"), false);
+    }]);
+}
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

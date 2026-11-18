@@ -2098,7 +2098,8 @@ class WorkspaceExecutor {
             if (running) return running.done;
             return this.ordinaryCompletion(payload, old.completion || "unknown");
         }
-        const op = {cancelled: this.ordinaryCancellations[payload.request_id] === true, dispatched: false};
+        const op = {cancelled: this.ordinaryCancellations[payload.request_id] === true, dispatched: false,
+            browser_boot_id: this.browserBootId, transport_generation: this.transportGeneration};
         const entry = {version: 9, payload: clone(payload), phase: "accepted", completion: null};
         this.ordinary[payload.request_id] = entry;
         this.ordinaryOperations.set(payload.request_id, op);
@@ -2133,8 +2134,8 @@ class WorkspaceExecutor {
     }
     async performOrdinary(payload, entry, op) {
         let observation;
-        const boot = this.browserBootId;
-        const transport = this.transportGeneration;
+        const boot = op.browser_boot_id;
+        const transport = op.transport_generation;
         const check = () => {
             observation?.check();
             if (boot !== this.browserBootId || transport !== this.transportGeneration ||
