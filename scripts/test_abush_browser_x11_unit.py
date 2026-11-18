@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+from contextlib import contextmanager
 import json
 import pathlib
 import socket
@@ -9,6 +10,9 @@ import struct
 import unittest
 from types import SimpleNamespace
 from unittest import mock
+
+from libqtile.command.base import CommandObject, expose_command
+from libqtile.command.interface import IPCCommandServer
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 BINDING_PATH = ROOT / "chromium/external-links/x11_binding.py"
@@ -257,6 +261,10 @@ class OrdinaryX11Test(unittest.TestCase):
         commands = []
 
         def run(command, **_kwargs):
+            if "doc" in command:
+                name = command[-1]
+                return mock.Mock(returncode=0, stdout=json.dumps(
+                    f"{name}(manager, xid: int, expected_json: str = '')\n"))
             commands.append(command)
             return mock.Mock(
                 returncode=0, stdout=json.dumps({
@@ -288,6 +296,8 @@ class OrdinaryX11Test(unittest.TestCase):
 
         def ipc(selectors, function, arguments=(), deadline=None):
             self.assertIsNotNone(deadline)
+            if function == "doc":
+                return f"{arguments[0]}(manager, xid: int, expected_json: str = '')\n"
             if function == "info":
                 self.assertEqual(selectors, [("window", 22)])
                 self.assertEqual(arguments, ())
@@ -439,6 +449,9 @@ class OrdinaryX11Test(unittest.TestCase):
         calls = []
 
         def run(command, **options):
+            if "doc" in command:
+                return mock.Mock(returncode=0, stdout=json.dumps(
+                    f"{command[-1]}(manager, xid: int, expected_json: str = '')\n"))
             calls.append((command, options))
             clock[0] = 10.125
             return mock.Mock(returncode=0, stdout=json.dumps({
@@ -586,6 +599,10 @@ class OrdinaryX11Test(unittest.TestCase):
         commands = []
 
         def run(command, **_kwargs):
+            if "doc" in command:
+                name = command[-1]
+                return mock.Mock(returncode=0, stdout=json.dumps(
+                    f"{name}(manager, xid: int, expected_json: str = '')\n"))
             commands.append(command)
             return mock.Mock(
                 returncode=0, stdout=json.dumps({"id": 11, "group": "f"}), stderr="")
@@ -636,6 +653,220 @@ class OrdinaryX11Test(unittest.TestCase):
             "qtile_move_command", "qtile_candidate_lease_command",
         ):
             self.assertFalse(hasattr(binding, name), name)
+
+
+class OrdinaryIPCCompatibilityTest(unittest.TestCase):
+    setUp = OrdinaryX11Test.setUp
+
+    def fixture(self):
+        nonce = "a" * 32
+        adapter = FakeAdapter()
+        adapter.values[(22, "_NET_WM_NAME")] = f"__ABUSH_ORDINARY__:{nonce} - Google Chrome"
+        adapter.values[(22, binding.ORDINARY_NONCE_PROPERTY)] = nonce
+        return nonce, adapter
+
+    @contextmanager
+    def transport(self, adapter, legacy=False, hook=None, doc_result=None, effect_error=False):
+        namespace = qtile.load_browser_config({})
+        window = qtile.FakeWindow(group="f", name=adapter.title(22))
+        window.incarnation = ["boot", 4242, "start"]
+        window.metadata = {name: value for (xid, name), value in adapter.values.items() if xid == 22}
+        calls = []
+
+        class WindowNode(CommandObject):
+            def _items(self, name):
+                return None
+
+            def _select(self, name, sel):
+                return None
+
+            @expose_command()
+            def info(self):
+                return {"id": 22, "group": window.group.name, "name": window.name}
+
+        node = WindowNode()
+
+        class RootNode(CommandObject):
+            locked = False
+
+            def _items(self, name):
+                return (False, [22]) if name == "window" else None
+
+            def _select(self, name, sel):
+                return node if (name, sel) == ("window", 22) else None
+
+        root = RootNode()
+        root.windows_map = {22: window}
+        root.groups_map = {"f": qtile.FakeGroup("f")}
+
+        def dispatch(name, manager, xid, *arguments):
+            result = namespace[name](manager, xid, *arguments)
+            if effect_error:
+                raise TypeError("modeled error after effect")
+            return result
+
+        def prepare_ordinary_window(manager, xid: int):
+            return dispatch("prepare_ordinary_window", manager, xid)
+
+        def activate_ordinary_window(manager, xid: int):
+            return dispatch("activate_ordinary_window", manager, xid)
+
+        def current_prepare(manager, xid: int, expected_json: str = ""):
+            return dispatch("prepare_ordinary_window", manager, xid, expected_json)
+
+        def current_activate(manager, xid: int, expected_json: str = ""):
+            return dispatch("activate_ordinary_window", manager, xid, expected_json)
+
+        root._commands = root._commands.copy()
+        root._commands.update({
+            "prepare_ordinary_window": prepare_ordinary_window if legacy else
+                current_prepare if effect_error else namespace["prepare_ordinary_window"],
+            "activate_ordinary_window": activate_ordinary_window if legacy else
+                current_activate if effect_error else namespace["activate_ordinary_window"],
+        })
+        server = IPCCommandServer(root)
+        path = mock.Mock()
+        path.lstat.return_value = mock.Mock(
+            st_mode=stat.S_IFSOCK | 0o600, st_uid=binding.os.getuid(), st_dev=11, st_ino=22)
+        path.is_symlink.return_value = False
+
+        def client_socket(*_args):
+            client = mock.MagicMock()
+            client.__enter__.return_value = client
+            client.getsockopt.return_value = struct.pack("3i", 999, binding.os.getuid(), 999)
+            response = []
+
+            def send(frame):
+                size = binding.QTILE_IPC_HEADER.unpack(frame[:4])[0]
+                self.assertEqual(len(frame[4:]), size)
+                data = binding.marshal.loads(frame[4:])
+                calls.append(data)
+                selectors, name, args, _kwargs, lifted = data
+                self.assertTrue(lifted)
+                if hook is not None:
+                    hook(name, adapter)
+                window.metadata = {key: value for (xid, key), value in adapter.values.items()
+                                   if xid == 22}
+                result = server.call(data)
+                if name == "doc" and doc_result is not None:
+                    result = (0, doc_result)
+                payload = binding.marshal.dumps(result)
+                response.extend([binding.QTILE_IPC_HEADER.pack(len(payload)) + payload, b""])
+
+            client.sendall.side_effect = send
+            client.recv.side_effect = lambda _size: response.pop(0)
+            return client
+
+        with mock.patch.object(binding, "qtile_socket_path", return_value=path), \
+                mock.patch.object(binding.socket, "socket", side_effect=client_socket), \
+                mock.patch.object(binding.subprocess, "run", side_effect=AssertionError("process")):
+            yield calls, window, root
+
+    def invoke(self, command, nonce, adapter, deadline=None):
+        options = {} if deadline is None else {"deadline": deadline}
+        if command == "prepare_ordinary_window":
+            return binding.prepare_ordinary_window(
+                {"nonce": nonce}, adapter=adapter, attempts=1, **options)
+        return binding.activate_ordinary_window(
+            {"nonce": nonce, "xid": 22}, adapter=adapter, verify=lambda xid: xid == 22,
+            **options)
+
+    def test_real_root_doc_lift_args_and_marshal_frames_negotiate_both_signatures(self):
+        for legacy in (False, True):
+            for command in ("prepare_ordinary_window", "activate_ordinary_window"):
+                with self.subTest(legacy=legacy, command=command):
+                    nonce, adapter = self.fixture()
+                    with self.transport(adapter, legacy=legacy) as (calls, window, root):
+                        self.assertEqual(self.invoke(command, nonce, adapter),
+                                         {"xid": 22, "nonce": nonce})
+                    self.assertEqual(calls[0][:3], ([], "doc", (command,)))
+                    effects = [data for data in calls if data[1] == command]
+                    self.assertEqual(len(effects), 1)
+                    self.assertEqual(effects[0][2][0], "22")
+                    self.assertEqual(len(effects[0][2]), 1 if legacy else 2)
+                    if not legacy:
+                        self.assertEqual(json.loads(effects[0][2][1]), {
+                            "version": 1, "nonce": nonce, "identity": ["boot", 4242, "start"]})
+                    if command.startswith("prepare"):
+                        window.togroup.assert_called_once_with("f", switch_group=False)
+                        window.focus.assert_not_called()
+                        root.groups_map["f"].toscreen.assert_not_called()
+                    else:
+                        window.focus.assert_called_once_with(warp=False)
+                        root.groups_map["f"].toscreen.assert_called_once_with()
+
+    def test_unknown_capability_fails_before_native_write_or_effect(self):
+        for command in ("prepare_ordinary_window", "activate_ordinary_window"):
+            for doc in ({}, "", "other(manager, xid: int)\n", f"{command}(manager, xid)",
+                        f"{command}(manager, xid: int)", f"{command}(manager, xid)\n",
+                        f"{command}(manager, xid: int, *args)\n"):
+                with self.subTest(command=command, doc=doc):
+                    nonce, adapter = self.fixture()
+                    before = adapter.values.copy()
+                    with self.transport(adapter, doc_result=doc) as (calls, window, _root), \
+                            self.assertRaises(binding.X11Unavailable):
+                        self.invoke(command, nonce, adapter)
+                    self.assertEqual([data[1] for data in calls], ["doc"])
+                    self.assertEqual(adapter.values, before)
+                    self.assertFalse(adapter.finished)
+                    window.togroup.assert_not_called()
+                    window.focus.assert_not_called()
+
+    def test_error_after_effect_never_retries_with_either_signature(self):
+        for legacy in (False, True):
+            for command in ("prepare_ordinary_window", "activate_ordinary_window"):
+                with self.subTest(legacy=legacy, command=command):
+                    nonce, adapter = self.fixture()
+                    with self.transport(adapter, legacy=legacy, effect_error=True) as state, \
+                            self.assertRaisesRegex(binding.X11Unavailable, "Qtile command failed"):
+                        self.invoke(command, nonce, adapter)
+                    calls, window, _root = state
+                    self.assertEqual(sum(data[1] == command for data in calls), 1)
+                    self.assertEqual(window.togroup.call_count + window.focus.call_count, 1)
+
+    def test_legacy_native_binding_and_deadline_revalidated_around_effect(self):
+        for command in ("prepare_ordinary_window", "activate_ordinary_window"):
+            for phase in ("doc", command):
+                for change in ("nonce", "title", "pid", "incarnation", "class", "process",
+                               *binding.LEGACY_BROWSER_PROPERTIES, "WM_WINDOW_ROLE", "deadline"):
+                    with self.subTest(command=command, phase=phase, change=change):
+                        nonce, adapter = self.fixture()
+                        clock = [10.0]
+
+                        def invalidate(name, adapter):
+                            if name != phase:
+                                return
+                            if change == "nonce":
+                                adapter.values[(22, binding.ORDINARY_NONCE_PROPERTY)] = "b" * 32
+                            elif change == "title":
+                                adapter.values[(22, "_NET_WM_NAME")] = "other page"
+                            elif change == "pid":
+                                adapter.pid = lambda _window: 4243
+                                binding.browser_incarnation.side_effect = lambda pid: [
+                                    "boot", pid, "start"]
+                            elif change == "incarnation":
+                                binding.browser_incarnation.return_value = ["boot", 4242, "new"]
+                            elif change == "class":
+                                adapter.values[(22, "WM_CLASS")] = "unrelated"
+                            elif change == "process":
+                                binding.browser_process.return_value = False
+                            elif change == "deadline":
+                                clock[0] = 10.25
+                            else:
+                                adapter.values[(22, change)] = (
+                                    "abush-browser" if change == "WM_WINDOW_ROLE" else "legacy")
+
+                        with mock.patch.object(binding, "browser_process", return_value=True), \
+                                mock.patch.object(binding, "browser_incarnation",
+                                                  return_value=["boot", 4242, "start"]), \
+                                mock.patch.object(binding.time, "monotonic",
+                                                  side_effect=lambda: clock[0]), \
+                                self.transport(adapter, legacy=True, hook=invalidate) as state, \
+                                self.assertRaises((binding.X11Unavailable, ValueError)):
+                            self.invoke(command, nonce, adapter, deadline=10.25)
+                        calls, _window, _root = state
+                        self.assertEqual(sum(data[1] == command for data in calls),
+                                         0 if phase == "doc" else 1)
 
 
 if __name__ == "__main__":

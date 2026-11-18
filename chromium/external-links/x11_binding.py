@@ -345,6 +345,28 @@ def run_qtile(command, run=None, deadline=None):
     return result.stdout.strip()
 
 
+def qtile_ordinary_supports_identity(name, run=None, deadline=None):
+    if name not in {"prepare_ordinary_window", "activate_ordinary_window"}:
+        raise X11Unavailable("unknown ordinary Qtile command")
+    output = run_qtile([
+        "qtile", "cmd-obj", "--object", "root", "--function", "doc", "--args", name,
+    ], run, deadline=deadline)
+    try:
+        documentation = json.loads(output)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise X11Unavailable("invalid Qtile ordinary command capability") from error
+    if not isinstance(documentation, str):
+        raise X11Unavailable("invalid Qtile ordinary command capability")
+    signature, separator, _description = documentation.partition("\n")
+    if not separator:
+        raise X11Unavailable("invalid Qtile ordinary command capability")
+    if signature == f"{name}(manager, xid: int)":
+        return False
+    if signature == f"{name}(manager, xid: int, expected_json: str = '')":
+        return True
+    raise X11Unavailable("unsupported Qtile ordinary command signature")
+
+
 def qtile_window_info(window, run=None, deadline=None):
     output = run_qtile([
         "qtile", "cmd-obj", "--object", "window", str(window), "--function", "info",
@@ -358,10 +380,11 @@ def qtile_window_info(window, run=None, deadline=None):
     return info
 
 
-def verify_ordinary_activation(adapter, window, nonce, run=None, attempts=20, interval=0.05):
+def verify_ordinary_activation(adapter, window, nonce, run=None, attempts=20, interval=0.05,
+                               deadline=None):
     for attempt in range(attempts):
         try:
-            info = qtile_window_info(window, run)
+            info = qtile_window_info(window, run, deadline=deadline)
             active = getattr(adapter, "active_window", lambda: None)()
             if active == window and info.get("id") == window and info.get("group") == "f" and \
                     adapter.property(window, ORDINARY_NONCE_PROPERTY) == nonce and \
@@ -371,7 +394,8 @@ def verify_ordinary_activation(adapter, window, nonce, run=None, attempts=20, in
             if attempt + 1 == attempts:
                 raise
         if attempt + 1 < attempts:
-            time.sleep(interval)
+            delay = interval if deadline is None else min(interval, deadline_remaining(deadline))
+            time.sleep(delay)
     return False
 
 
@@ -424,6 +448,13 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
     if identity is None or (expected_identity is not None and identity != expected_identity) or \
             not ordinary_candidate(adapter, window, payload["nonce"]):
         raise X11Unavailable("ordinary browser incarnation is unavailable")
+    previous_nonce = adapter.property(window, ORDINARY_NONCE_PROPERTY)
+    supports_identity = qtile_ordinary_supports_identity(
+        "prepare_ordinary_window", run, deadline=deadline)
+    if before_deadline(deadline, browser_incarnation, adapter.pid(window)) != identity or \
+            adapter.property(window, ORDINARY_NONCE_PROPERTY) != previous_nonce or \
+            not ordinary_candidate(adapter, window, payload["nonce"]):
+        raise X11Unavailable("ordinary browser identity changed during capability lookup")
     adapter.set_text(window, ORDINARY_NONCE_PROPERTY, payload["nonce"])
     adapter.finish()
     if adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
@@ -456,11 +487,12 @@ def prepare_ordinary_window(payload, adapter=None, attempts=100, interval=0.05, 
         raise X11Unavailable("ordinary browser incarnation changed before prepare")
     expected = json.dumps({"version": 1, "nonce": payload["nonce"], "identity": identity})
     deadline_remaining(deadline)
-    qtile_transition(qtile_command("prepare_ordinary_window", window, expected), window, "f", run,
+    arguments = (expected,) if supports_identity else ()
+    qtile_transition(qtile_command("prepare_ordinary_window", window, *arguments), window, "f", run,
                      deadline=deadline)
     if before_deadline(deadline, browser_incarnation, adapter.pid(window)) != identity or \
             adapter.property(window, ORDINARY_NONCE_PROPERTY) != payload["nonce"] or \
-            has_legacy_browser_binding(adapter, window):
+            not ordinary_candidate(adapter, window, payload["nonce"]):
         raise X11Unavailable("ordinary prepare changed window identity")
     return {"xid": window, "nonce": payload["nonce"]}
 
@@ -490,23 +522,34 @@ def verify_prepared_ordinary_window(payload, adapter=None):
     return verify_ordinary_chrome(adapter, window, nonce, require_staging_title=True)
 
 
-def activate_ordinary_window(payload, adapter=None, run=None, verify=None):
+def activate_ordinary_window(payload, adapter=None, run=None, verify=None, deadline=None):
     window, nonce = prepared_ordinary_identity(payload)
-    adapter = adapter or XcffibAdapter()
+    local_deadline = time.monotonic() + 5.0
+    deadline = local_deadline if deadline is None else min(local_deadline, deadline)
+    deadline_remaining(deadline)
+    adapter = DeadlineAdapter(adapter or XcffibAdapter(), deadline)
     verify_ordinary_chrome(adapter, window, nonce)
-    identity = browser_incarnation(adapter.pid(window))
+    identity = before_deadline(deadline, browser_incarnation, adapter.pid(window))
     if identity is None:
         raise X11Unavailable("ordinary browser incarnation is unavailable")
+    title = adapter.title(window)
+    supports_identity = qtile_ordinary_supports_identity(
+        "activate_ordinary_window", run, deadline=deadline)
+    verify_ordinary_chrome(adapter, window, nonce)
+    if before_deadline(deadline, browser_incarnation, adapter.pid(window)) != identity or \
+            adapter.title(window) != title:
+        raise X11Unavailable("ordinary activation changed window identity")
     expected = json.dumps({"version": 1, "nonce": nonce, "identity": identity})
-    qtile_transition(qtile_activate_command(window, expected), window, "f", run)
-    if adapter.property(window, ORDINARY_NONCE_PROPERTY) != nonce or \
-            browser_incarnation(adapter.pid(window)) != identity or \
-            has_legacy_browser_binding(adapter, window):
+    qtile_transition(qtile_activate_command(window, expected if supports_identity else None),
+                     window, "f", run, deadline=deadline)
+    verify_ordinary_chrome(adapter, window, nonce)
+    if before_deadline(deadline, browser_incarnation, adapter.pid(window)) != identity or \
+            adapter.title(window) != title:
         raise X11Unavailable("ordinary activation changed window identity")
     if verify is None:
-        verified = verify_ordinary_activation(adapter, window, nonce, run)
+        verified = verify_ordinary_activation(adapter, window, nonce, run, deadline=deadline)
     else:
-        verified = verify(window)
+        verified = before_deadline(deadline, verify, window)
     if verified is not True:
         raise X11Unavailable("ordinary activation verification failed")
     return {"xid": window, "nonce": nonce}

@@ -2,6 +2,7 @@
 """Offline ordinary-window X11/Qtile endpoint; never connects to a live WM."""
 
 import importlib.util
+import inspect
 import json
 import pathlib
 import sys
@@ -101,6 +102,9 @@ class Model:
             assert function == "info" and len(selectors) == 1
             window = self.windows_map[selectors[0][1]]
             return {"id": window.wid, "group": window.group.name, "name": window.name}
+        if function == "doc":
+            command = self.command_root._commands[arguments[0]]
+            return arguments[0] + str(inspect.signature(command)) + "\n"
         if function not in self.command_root._commands:
             raise ValueError("unsupported ordinary Qtile command: " + function)
         command = self.command_root._commands[function]
