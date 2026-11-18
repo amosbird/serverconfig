@@ -1,0 +1,15 @@
+# Create netns `ioa` before iOA starts, and keep it for as long as the daemon may need it.
+# See network/ioa-netns.md.
+[Unit]
+Description=Network namespace for iOA
+Before=ngnclient.service ioa-netns-forward.service
+After=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/ioa/ioa-netns up
+ExecStop=/usr/local/lib/ioa/ioa-netns down
+
+[Install]
+WantedBy=multi-user.target

@@ -301,6 +301,19 @@ if [[ -n $GUI ]]; then
     sudo systemctl enable ioa-sockops.service
     # restart, not start: a rebuilt object must replace the pinned one.
     sudo systemctl restart ioa-sockops.service
+    # iOA runs in its own network namespace (network/ioa-netns.md). The namespace and the loopback
+    # forwarder are enabled here but never started: moving a running daemon into the namespace
+    # takes an ngnclient restart, which forces a QR re-login, so that is a deliberate cutover.
+    sudo install -Dm755 "$DIR/network/ioa-netns" /usr/local/lib/ioa/ioa-netns
+    sudo install -Dm755 "$DIR/network/ioa-netns-forward" /usr/local/lib/ioa/ioa-netns-forward
+    sudo install -Dm644 "$DIR/network/systemd/ioa-netns.service" \
+        /etc/systemd/system/ioa-netns.service
+    sudo install -Dm644 "$DIR/network/systemd/ioa-netns-forward.service" \
+        /etc/systemd/system/ioa-netns-forward.service
+    sudo install -Dm644 "$DIR/systemd/ngnclient.service.d/netns.conf" \
+        /etc/systemd/system/ngnclient.service.d/netns.conf
+    sudo systemctl daemon-reload
+    sudo systemctl enable ioa-netns.service ioa-netns-forward.service
     install -Dm644 "$DIR/systemd/ioa-health.service" \
         "$HOME/.config/systemd/user/ioa-health.service"
     install -Dm644 "$DIR/systemd/ioa-health.timer" \

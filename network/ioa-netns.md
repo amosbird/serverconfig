@@ -54,12 +54,12 @@ lookup main`，再加 prohibit 兜底，防止物理路由暂时缺失时泄漏�
 ## GUI 和 daemon
 
 - `iOA.bin`、`SmartGateAgent` 由 `ngnclient.service` 启动，加 `NetworkNamespacePath=/run/netns/ioa`。
-- `iOALinux` 必须在同一个命名空间（56100/56101 回环）。`ioagui.service` 是用户 unit，不能直接设置
-  `NetworkNamespacePath`（需要 CAP_SYS_ADMIN）。方案：用户 unit 改为调用一个 root 拥有、只能做这一件事的
-  sudo 白名单入口 `ioa-netns-exec`，它 `setns` 进 `ioa` 后降权回 uid 1000 再 exec iOALinux。
-- X11：命名空间内连抽象 socket 失败、文件 socket 成功（已实测），所以入口设置 `DISPLAY=:0` 时 Xlib 会退回
-  文件 socket；需实测 iOALinux 能显示。
-- 剪贴板、托盘、D-Bus session 不受网络命名空间影响（unix socket 走文件系统）。
+- `iOALinux` 留在宿主机，不进命名空间。它和 daemon 之间只靠 `127.0.0.1:56100/56101`，这两个端口由
+  `ioa-netns-forward` 从宿主机回环转进命名空间，GUI 不需要任何改动，也就不需要 sudo 入口、X11 也不受影响。
+- 同一个转发器还转发 SmartGateAgent 的本地端口（12639/12649/12679/12759/12769/12101），所以 corkscrew、
+  `amos.pac`、qutebrowser 和 GUI 里写死的 `PROXY 127.0.0.1:12639` 都不用改。
+- 转发器先在宿主机绑定这些地址，再把自己切进 `ioa`：监听 socket 留在宿主机，之后建立的上游连接都在 `ioa`
+  里。代价是 SmartGateAgent 看到的发起进程变成转发器（或 `UnknownProcess`），票据照样成功（已核实）。
 
 ## BPF 心跳超时
 
@@ -79,15 +79,16 @@ SmartGateAgent 的隧道和 iOA.bin 的控制连接仍在同一 cgroup，按进�
    物理出网、不进 Tailscale、宿主机漫游后仍通。
 2. **切换 daemon**（一次重新登录）：停 ngnclient → 装 netns 单元和 drop-in → 起 ngnclient。验证 tun0 在命名
    空间里、心跳和票据成功。
-3. **切换 GUI**：ioagui 走 `ioa-netns-exec`；验证 GUI 能显示、登录状态正确、`ioa-health` 正常。
-4. **切换宿主机访问**：tinyproxy 进命名空间，SmartDNS 改指向；验证 git/iwiki、SSH 隧道、浏览器。
+3. **GUI 和本地代理**：`ioa-netns-forward.service` 随 daemon 一起上线；验证 GUI 登录状态、`ioa-health`、
+   corkscrew SSH、浏览器 PAC。
+4. **宿主机的 TUN 流量**（DNS fakeip、直接访问 100.12/16 和 10/8）：SmartDNS 的 ioa 组改指向命名空间内的
+   `192.168.255.10`，宿主机把这些网段路由到 veth；验证 git/iwiki 直连。
 5. **删除 C 类补丁**：逐项删并跑测试；每删一项都在系统上验证一次。
 
 回滚：任一步失败，跑快照里的 `rollback.sh --apply --restart-ioa`。
 
 ## 待实测的问题
 
-1. iOALinux 在命名空间里能否显示（X11 文件 socket）。
 2. SmartGateAgent 在命名空间里能否创建 tun0 并正常工作（`/dev/net/tun` 不受 netns 影响，应可以）。
 3. 宿主机漫游时，命名空间内 iOA 是否真的收不到任何地址事件，隧道是否仍需 BPF 才能恢复。
 4. `exec -a firefox` 的来历（命名空间后是否还需要）。
