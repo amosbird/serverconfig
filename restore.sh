@@ -237,6 +237,9 @@ if [[ -n $GUI ]]; then
     [[ -e /etc/smartdns/dhcp-dns.conf ]] ||
         sudo cp "$DIR"/network/smartdns/dhcp-dns.conf /etc/smartdns/dhcp-dns.conf
     sudo "$DIR"/network/smartdns-deploy.sh "$DIR"/network/smartdns/smartdns.conf
+    # Every host query goes to SmartDNS, and SmartGateAgent tries to replace resolv.conf with its own
+    # tunnel resolver. Pinning the file immutable is what keeps it from succeeding.
+    sudo "$DIR"/network/resolv-pin
 
     sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
     sudo cp "$DIR"/systemd/getty-autologin.conf \

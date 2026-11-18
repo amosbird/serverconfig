@@ -566,6 +566,15 @@ resolver. The learned addresses persist across reboot in
 
 ## SmartDNS IOA classification
 
+`/etc/resolv.conf` is exactly `nameserver 127.0.0.1` and immutable, so every host query goes to
+SmartDNS. SmartGateAgent tries to replace it with its tunnel resolver
+(`Setting system DNS servers: [192.168.255.10 114.114.114.114]`, by renaming the file to
+`/etc/resolv_ngn_backup.conf` first). The flag makes that rename fail with EPERM: 109 attempts by
+2026-11-18, all logged as `operation not permitted`, none succeeded. Its last successful write of
+`/etc/resolv_ngn.conf` dates from 2026-07-27. The flag was set by hand and recorded nowhere; it is now
+owned by `network/resolv-pin`, which `restore.sh` runs after deploying SmartDNS. A symlink is never
+accepted as a pin, because SmartGateAgent can rename the link itself.
+
 The iOA-owned upstream is permanently declared in the base SmartDNS configuration as
 `server 192.168.255.10 -group ioa -exclude-default-group`; learned intranet upstreams supplement it
 as described above. Neither is generated from `tun0` state: link down/up and address-change events do
@@ -1251,6 +1260,7 @@ bash network/test-smartgate-argv0.sh
 bash network/test-tun-underlay.sh
 sudo -n bash network/test-nft-direct-routing.sh
 bash network/test-smartdns-no-cache.sh
+bash network/test-resolv-pin.sh
 bash network/test-ioa-fail-closed.sh
 bash network/test-install-ioa-62.sh
 sudo -n bash network/test-ioa-static-lan-overlap.sh
