@@ -507,7 +507,7 @@ Promise.all([first, second]).then(values => {{
 """
         self.run_node(script)
 
-    def test_ordinary_staging_title_wait_stops_at_request_deadline(self):
+    def test_ordinary_file_staging_title_wait_stops_at_request_deadline(self):
         script = f"""
 const {{assert, fixture}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_groups_fixture.js'))});
 const {{WAL_KEY}} = require({json.dumps(str(CONTENT.with_name('workspace.js')))});
@@ -529,7 +529,7 @@ const {{WAL_KEY}} = require({json.dumps(str(CONTENT.with_name('workspace.js')))}
         return {{...f.tabs.get(id), title: 'Preparing ordinary Chrome window'}};
     }};
     const payload = {{version: 1, operation: 'ordinary_open', focus: true,
-        request_id: 'title-deadline', url: 'https://ordinary.test/destination', deadline_ms: now + 5000}};
+        request_id: 'title-deadline', url: 'file:///home/amos/ordinary-test.html', deadline_ms: now + 5000}};
     try {{
         assert.equal(await f.executor.ordinaryOpen(payload), 'unknown');
         assert.equal(now, payload.deadline_ms);

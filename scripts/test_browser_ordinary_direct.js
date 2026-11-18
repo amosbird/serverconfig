@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const {assert, clone, deferred, fixture, runCases, REMOTE} =
+const {assert, clone, deferred, fixture, runCases, REMOTE, BOOT} =
     require("./browser_tab_groups_fixture.js");
 const {WAL_KEY, AUTOMATION_KEY} = require("../chromium/external-links/extension/workspace.js");
 const request = (id, url = `https://qq.com/?ordinary=${id}#fragment`) => ({version: 1,
@@ -195,4 +195,124 @@ cases.push(["a deadline during isolation prevents late navigation after its call
     assert.equal(f.calls.some(call => call.name === "tabs.update"), false);
     noDesktopHandshake(f);
 }]);
+for (const existingWindow of [true, false]) {
+    cases.push([`cold web launch lease with ${existingWindow ? "an existing" : "no normal"} window navigates once without desktop IPC`, async () => {
+        const f = fresh(); const payload = request(`cold-${existingWindow}`);
+        if (!existingWindow) { f.windows.delete(1); f.tabs.delete(1); }
+        await f.executor.acceptNativeBootstrap({...BOOT, ordinary_launch_leases: [payload]});
+        const entered = deferred(); const release = deferred();
+        f.hooks["tabs.update.after"] = async (_result, _id, update) => {
+            if (update.url) { entered.resolve(); await release.promise; }
+        };
+        const restoring = f.executor.restoreWhenReady();
+        let duplicate;
+        try {
+            await entered.promise;
+            duplicate = f.executor.ordinaryOpen(payload);
+            assert.equal(f.calls.filter(call => call.name === "tabs.update" && call.args[1].url).length, 1);
+        } finally { release.resolve(); }
+        await restoring; assert.equal(await duplicate, "applied");
+        assert.equal(f.local[AUTOMATION_KEY], undefined, "default ON needs no saved opt-in");
+        assert.equal(f.calls.filter(call => call.name === "tabs.update" && call.args[1].url).length, 1);
+        assert.equal(f.executor.records.size, 0);
+        noDesktopHandshake(f); noVisibleStaging(f);
+        const count = effects(f).length;
+        await f.executor.acceptNativeBootstrap({...BOOT, ordinary_launch_leases: [payload]});
+        await f.restart();
+        await f.executor.acceptNativeBootstrap({...BOOT, ordinary_launch_leases: [payload]});
+        assert.equal(effects(f).length, count);
+        assert.equal(f.executor.ordinary[payload.request_id].completion, "applied");
+    }]);
+}
+for (const phase of ["accepted", "dispatched"]) {
+    cases.push([`a restored ${phase} lease reports its durable outcome instead of re-executing a web open`, async () => {
+        const f = fresh(); const payload = request(`restored-${phase}`);
+        f.local[WAL_KEY] = {version: 9, ordinary: {[payload.request_id]: {
+            version: 9, payload, phase, completion: null}}};
+        await f.executor.acceptNativeBootstrap({...BOOT, ordinary_launch_leases: [payload]});
+        await f.executor.restoreWhenReady();
+        const expected = phase === "accepted" ? "not_applied" : "unknown";
+        assert.equal(await f.executor.ordinaryOpen(payload), expected);
+        assert.equal(effects(f).length, 0);
+        noDesktopHandshake(f);
+    }]);
+}
+for (const operation of ["tabs.create", "tabs.get", "tabs.ungroup", "tabs.move"]) {
+    cases.push([`web preparation timer winning against raw ${operation} fences late continuation and serialization`, async () => {
+        const f = fresh(); await f.ready(); await f.materialize();
+        const work = f.executor.recordFor("remote"); await f.api.tabs.update(work.tab_id, {active: true});
+        const start = f.calls.length; const payload = request(`timeout-${operation}`);
+        const entered = deferred(); const release = deferred(); let id;
+        if (operation === "tabs.move") f.hooks["tabs.create"] = async args => { args.index = -1; };
+        f.hooks["tabs.create.after"] = async created => {
+            id = created.id;
+            if (operation === "tabs.create") { entered.resolve(); await release.promise; }
+        };
+        if (operation !== "tabs.create") f.hooks[`${operation}.after`] = async (_result, argument) => {
+            if (operation === "tabs.get" && argument !== id) return;
+            entered.resolve(); await release.promise;
+        };
+        const schedule = globalThis.setTimeout; const cancel = globalThis.clearTimeout;
+        const alarms = new Map();
+        globalThis.setTimeout = (callback, delay, ...args) => {
+            const timer = schedule(callback, delay, ...args); alarms.set(timer, {callback, delay}); return timer;
+        };
+        globalThis.clearTimeout = timer => { alarms.delete(timer); return cancel(timer); };
+        let pending;
+        try {
+            pending = f.executor.ordinaryOpen(payload);
+            await entered.promise;
+            const [timer, alarm] = [...alarms].find(([_timer, alarm]) => alarm.delay <= 2000);
+            cancel(timer); alarm.callback();
+            assert.equal(await pending, "unknown");
+        } finally {
+            globalThis.setTimeout = schedule; globalThis.clearTimeout = cancel;
+            if (!f.executor.ordinary[payload.request_id]?.completion) release.resolve();
+        }
+        try {
+            const second = f.executor.ordinaryOpen(request(`after-timeout-${operation}`));
+            await new Promise(resolve => setImmediate(resolve));
+            assert.equal(f.calls.slice(start).filter(call => call.name === "tabs.create").length, 1);
+            delete f.hooks[`${operation}.after`]; delete f.hooks["tabs.create.after"]; delete f.hooks["tabs.create"];
+            release.resolve();
+            assert.equal(await second, "applied", f.executor.lastError);
+            assert.equal(f.calls.slice(start).filter(call => call.name === "tabs.update" && call.args[1].url).length, 1);
+            assert.notEqual(f.tabs.get(id)?.url, payload.url);
+            const count = effects(f).length;
+            await f.restart(); await f.emitRemote(REMOTE);
+            assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
+            assert.equal(effects(f).length, count);
+            noDesktopHandshake(f);
+        } finally { release.resolve(); await f.executor.presentationTail.catch(() => {}); }
+    }]);
+}
+for (const intervention of ["navigate ABA", "pin ABA", "group ABA", "activate ABA", "detach ABA"]) {
+    cases.push([`${intervention} during the final web tab read prevents destination navigation`, async () => {
+        const f = fresh(); await f.ready();
+        let verifyEntered = false;
+        f.hooks["tabs.get.after"] = async (_result, id) => {
+            if (id < 10 || verifyEntered || !f.calls.some(call => call.name === "tabs.ungroup")) return;
+            verifyEntered = true;
+            const tab = f.tabs.get(id);
+            if (["navigate ABA", "pin ABA", "group ABA"].includes(intervention)) {
+                const key = intervention === "navigate ABA" ? "url" : intervention === "pin ABA" ? "pinned" : "groupId";
+                const initial = tab[key];
+                for (const value of [key === "url" ? "https://human.test/final-boundary" : key === "pinned" ? true : 90, initial]) {
+                    tab[key] = value;
+                    await Promise.all(f.api.tabs.onUpdated.emit(id, {[key]: value}, clone(tab)));
+                }
+            } else if (intervention === "activate ABA") {
+                await f.api.tabs.update(id, {active: true}); await f.api.tabs.update(1, {active: true});
+            } else {
+                await Promise.all(f.api.tabs.onDetached.emit(id, {oldWindowId: 1}));
+                await Promise.all(f.api.tabs.onAttached.emit(id, {newWindowId: 1}));
+            }
+        };
+        const payload = request(`final-read-${intervention}`);
+        assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
+        assert.equal(verifyEntered, true);
+        assert.equal(f.calls.some(call => call.name === "tabs.update" && call.args[1].url), false);
+        noDesktopHandshake(f);
+    }]);
+}
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });
