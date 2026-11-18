@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const {randomUUID} = require("node:crypto");
 const {assert, clone, deferred, fixture, execute, runCases} = require("./browser_tab_groups_fixture.js");
 const rofiPath = process.env.ABUSH_ROFI_EXTENSION_PATH;
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -18,17 +19,35 @@ function dom() {
 }
 function loadRofi(f, file) {
     const noopEvent = {addListener() {}};
-    const creates = [];
+    const creates = [], removed = [];
+    const managerUrl = "chrome-extension://aocepclkpgckjeikiphffdlileoaceec/bookmarks.html";
     const chrome = {...f.api, tabs: {...f.api.tabs, onActivated: noopEvent,
+        getCurrent: async () => ({id: 700, url: managerUrl}),
+        async remove(id) { assert.equal(id, 700); removed.push(id); },
         create(args) { const task = f.api.tabs.create({windowId: 1, active: true, ...args}); creates.push(task); return task; }},
         runtime: {...f.api.runtime, onMessage: noopEvent, sendMessage(message, cb) { cb?.({connected: true}); },
+            getURL: name => managerUrl.replace("bookmarks.html", name),
+            async sendNativeMessage(host, message) {
+                assert.equal(host, "io.github.amosbird.rofi.chrome");
+                assert.equal(message.info, "openInBrowser");
+                const before = new Set(f.tabs.keys());
+                const completion = await f.executor.ordinaryOpen({version: 1,
+                    operation: "ordinary_open", focus: true, request_id: message.request_id,
+                    url: message.param.url, deadline_ms: Date.now() + 5000});
+                const added = [...f.tabs.values()].filter(tab => !before.has(tab.id));
+                assert.equal(added.length, 1);
+                creates.push(Promise.resolve(clone(added[0])));
+                return {version: 1, info: message.info, request_id: message.request_id,
+                    completion: completion === "applied" ? "completed" : "unknown", message: ""};
+            },
             connectNative: () => ({onMessage: noopEvent, onDisconnect: noopEvent, postMessage() {}})},
         commands: {onCommand: noopEvent}, downloads: {onChanged: noopEvent},
         permissions: {contains: async () => false, request: async () => true},
         bookmarks: {onCreated: noopEvent, onChanged: noopEvent, onMoved: noopEvent, onRemoved: noopEvent}};
-    const context = vm.createContext({chrome, document: dom(), window: {close() {}}, console, URL, confirm: () => true});
+    const context = vm.createContext({chrome, document: dom(), window: {close() {}}, console, URL,
+        crypto: {randomUUID}, confirm: () => true});
     vm.runInContext(fs.readFileSync(path.join(rofiPath, file), "utf8"), context, {filename: file});
-    return {context, creates};
+    return {context, creates, removed};
 }
 const cases = [
     ["new plain tabs same URL isolate once and later manual regroup stays human", async () => {
@@ -467,8 +486,9 @@ if (rofiPath) {
         const f = fixture({globalAutomation: true}); await physicalReady(f);
         const work = f.executor.recordFor("remote"); const authority = clone(f.executor.state("remote"));
         await f.api.tabs.update(work.tab_id, {active: true});
-        const {context, creates} = loadRofi(f, file);
+        const {context, creates, removed} = loadRofi(f, file);
         await vm.runInContext(entrance, context);
+        if (file === "bookmarks.js") assert.deepEqual(removed, [700]);
         await Promise.all(creates); await settle(); await f.executor.presentationTail;
         assert.equal(creates.length, 1);
         const personal = await creates[0];
