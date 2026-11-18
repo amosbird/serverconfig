@@ -71,7 +71,10 @@ if [ "${IOA_NETNS_SANDBOX:-}" != 1 ]; then
     mutate no-host-localnet 's/net.ipv4.conf.\$HOST_IF.route_localnet=1/net.ipv4.conf.$HOST_IF.route_localnet=0/'
     mutate no-loopback-masquerade 's/postrouting ip saddr 127.0.0.0\/8 oifname "\$NS_IF" masquerade/postrouting ip saddr 127.0.0.0\/8 oifname "$NS_IF" accept/'
     mutate no-resolver-snat 's/snat ip to ip daddr$/accept/'
-    mutate no-ns-tunnel-rule 's/rule add pref "\$NS_RULE_PREF" iif "\$NS_IF" lookup "\$TUNNEL_TABLE"/rule add pref "$NS_RULE_PREF" iif "$NS_IF" lookup main/'
+    mutate no-local-uplink 's/reconcile_ns_rule "\$NS_LOCAL_PREF" iif lo lookup "\$NS_UPLINK_TABLE"/:/'
+    mutate no-local-specific 's/reconcile_ns_rule "\$((NS_LOCAL_PREF - 1))" iif lo lookup main suppress_prefixlength 0/:/'
+    mutate uplink-metric-0 's/metric "\$NS_UPLINK_METRIC"$//'
+    mutate no-veth-masquerade 's/postrouting oifname "\$HOST_IF" masquerade/postrouting oifname "$HOST_IF" accept/'
     ok "mutation checks: every mutant fails an assertion"
     exit 0
 fi
@@ -158,14 +161,14 @@ netns_script() {
         bash "$SCRIPT" "$@" >/dev/null
 }
 # SmartGateAgent's tunnel, inside the namespace: tun0 is a veth to `corp`, the intranet, which serves
-# 10.20.30.40:7000 and a fakeip 100.12.0.2:7000 and only routes back to the tunnel address. The
-# agent's only route is its default, which scripts/overrides/ip puts in table ioa (400).
+# 10.20.30.40:7000 and a fakeip 100.12.0.2:7000 and only routes back to the tunnel address. Like the
+# real agent with no shim, it puts its tunnel default in main at metric 0.
 add_tunnel() {
     ip netns add corp
     ip link add tun0 netns ioa type veth peer name ct0 netns corp
     ip -n ioa addr add 192.168.255.10/24 dev tun0
     ip -n ioa link set tun0 up
-    ip -n ioa route add default dev tun0 table 400 metric 101
+    ip -n ioa route add default via 192.168.255.1 dev tun0
     ip -n corp link set lo up
     ip -n corp addr add 192.168.255.1/24 dev ct0
     ip -n corp addr add 10.20.30.40/32 dev lo
@@ -190,12 +193,13 @@ while True:
 }
 # A host process reaching the intranet: by mark 0x1 (what SmartDNS-classified names and tinyproxy
 # get) or by a literal 10/8 address (which rule 1150 sends to table ioa unmarked).
-host_to() {  # host_to <addr> [mark]
+host_to() {  # host_to <addr> [mark [source]]
     timeout 4 python3 -c '
 import errno, socket, sys
 try:
     s = socket.socket()
     if len(sys.argv) > 2: s.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, int(sys.argv[2], 0))
+    if len(sys.argv) > 3: s.bind((sys.argv[3], 0))
     s.settimeout(2); s.connect((sys.argv[1], 7000))
     print(s.recv(64).decode().strip())
 except socket.timeout:
@@ -269,6 +273,14 @@ out=$(host_to 100.12.0.2 0x1)
 [ "$out" = "fakeip 192.168.255.10" ] ||
     fail "a marked host connect to a fakeip should cross the tunnel, got '$out'"
 ok "the host reaches a marked fakeip address through the tunnel in the namespace"
+# A marked socket keeps the source its first, unmarked lookup chose: the exit node's or the uplink's
+# address, which the namespace has no route back to except through tun0 itself.
+for src in 100.88.0.1 192.0.2.10; do
+    out=$(host_to 100.12.0.2 0x1 "$src")
+    [ "$out" = "fakeip 192.168.255.10" ] ||
+        fail "a marked host connect sourced from $src should cross the tunnel, got '$out'"
+done
+ok "marked host traffic crosses the tunnel whatever source it was given first"
 listen_on corp 192.168.255.1 resolver
 out=$(host_to 192.168.255.1)
 [ "$out" = "resolver 192.168.255.10" ] ||
@@ -288,7 +300,10 @@ listen_on up 10.20.30.40 uplink
 out=$(ip netns exec ioa bash -c "$(declare -f host_to); host_to 10.20.30.40")
 [ "$out" = "uplink 192.0.2.10" ] ||
     fail "iOA's own traffic should keep the uplink while the tunnel is up, got '$out'"
-ok "iOA's own traffic keeps the uplink while the tunnel is up"
+out=$(ip netns exec ioa bash -c "$(declare -f host_to); host_to 192.168.255.1")
+[ "$out" = "resolver 192.168.255.10" ] ||
+    fail "iOA's own traffic to the tunnel network should use tun0, got '$out'"
+ok "iOA's own traffic keeps the uplink while the tunnel is up, and tun0 for the tunnel network"
 
 # iOA's own lookups go to 127.0.0.1:53, the host's SmartDNS. Nothing listens there in the namespace.
 serve_dns

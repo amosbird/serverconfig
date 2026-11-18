@@ -4,8 +4,8 @@
 # Usage: ioa-netns up | down | status
 #
 # Topology: veth-ioa (host, 169.254.170.1/30) <-> veth-ioa-ns (in netns `ioa`, 169.254.170.2/30).
-# Inside the namespace there is one default route via the host end and nothing else, so iOA sees a
-# single uplink whose address never changes. The host masquerades that traffic onto whatever
+# Inside the namespace there is one uplink default via the host end, so iOA sees a single uplink
+# whose address never changes. The host masquerades that traffic onto whatever
 # physical device carries main's default, and policy routing keeps it off the Tailscale exit node.
 #
 # Everything here is idempotent: `up` converges an existing namespace, `down` tolerates partial state.
@@ -29,8 +29,14 @@ UNDERLAY_TABLE=${IOA_NETNS_UNDERLAY_TABLE:-19}
 NFT_TABLE=${IOA_NETNS_NFT_TABLE:-ioa_netns}
 TUNNEL_TABLE=${IOA_NETNS_TUNNEL_TABLE:-ioa}
 TUN_IF=${IOA_NETNS_TUN_IF:-tun0}
-# Inside the namespace, where nothing else has rules.
-NS_RULE_PREF=${IOA_NETNS_NS_RULE_PREF:-100}
+# Inside the namespace SmartGateAgent routes exactly as its vendor intends, with no shim: it adds
+# `default via 192.168.255.1 dev tun0` (metric 0) to main and escapes it with its own mark (table
+# 20) and source rule (table 230). The uplink default in main therefore has a higher metric, as a
+# DHCP default has on any ordinary machine; at the same metric the agent's route would fail with
+# EEXIST. iOA's own traffic keeps today's path regardless (see NS_LOCAL_PREF).
+NS_UPLINK_METRIC=${IOA_NETNS_NS_UPLINK_METRIC:-600}
+NS_LOCAL_PREF=${IOA_NETNS_NS_LOCAL_PREF:-100}
+NS_UPLINK_TABLE=${IOA_NETNS_NS_UPLINK_TABLE:-170}
 IP=${IP_OVERRIDE:-ip}
 NFT=${NFT_OVERRIDE:-nft}
 SYSCTL=${SYSCTL_OVERRIDE:-sysctl}
@@ -51,13 +57,14 @@ up() {
     "$IP" link set "$HOST_IF" up
     in_ns "$IP" addr replace "$NS_ADDR/$PREFIX" dev "$NS_IF"
     in_ns "$IP" link set "$NS_IF" up
-    in_ns "$IP" route replace default via "$HOST_ADDR" dev "$NS_IF"
-    # SmartGateAgent's tunnel default goes to table ioa in here too (scripts/overrides/ip), so iOA's
-    # own traffic keeps the uplink, exactly as on the host before. Only what the host sends in is
-    # looked up there; with no tunnel the table is empty and that traffic falls through to the
-    # uplink default, where the forward filter below refuses it.
-    in_ns "$IP" -4 rule del pref "$NS_RULE_PREF" 2>/dev/null || true
-    in_ns "$IP" -4 rule add pref "$NS_RULE_PREF" iif "$NS_IF" lookup "$TUNNEL_TABLE"
+    in_ns "$IP" route replace default via "$HOST_ADDR" dev "$NS_IF" metric "$NS_UPLINK_METRIC"
+    # iOA's own traffic (locally generated, `iif lo`) takes the path it has on the host today: every
+    # specific route in main, tun0's network included, and otherwise the uplink, never the tunnel
+    # default. Only what the host forwards in reaches main's tunnel default. SmartGateAgent's own
+    # rules get priorities below these from the kernel, so its escapes still come first.
+    in_ns "$IP" route replace default via "$HOST_ADDR" dev "$NS_IF" table "$NS_UPLINK_TABLE"
+    reconcile_ns_rule "$((NS_LOCAL_PREF - 1))" iif lo lookup main suppress_prefixlength 0
+    reconcile_ns_rule "$NS_LOCAL_PREF" iif lo lookup "$NS_UPLINK_TABLE"
 
     # Forwarding has to be on for the host end and for the uplink, because replies enter on the
     # uplink and are forwarded back to the namespace. Inside, the namespace forwards between the
@@ -93,14 +100,19 @@ destroy table ip $NFT_TABLE
 add table ip $NFT_TABLE
 add chain ip $NFT_TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }
 add rule ip $NFT_TABLE postrouting ip saddr $NET oifname != "$HOST_IF" masquerade
+# Host traffic into the namespace leaves with the veth address. A marked socket keeps the source
+# its first, unmarked lookup chose (the exit node's or the uplink's address), and inside the
+# namespace the only route back to such an address is the tunnel default.
+add rule ip $NFT_TABLE postrouting oifname "$HOST_IF" masquerade
 add chain ip $NFT_TABLE prerouting { type nat hook prerouting priority dstnat; policy accept; }
 add rule ip $NFT_TABLE prerouting iifname "$HOST_IF" ip daddr $HOST_ADDR meta l4proto { tcp, udp } th dport 53 dnat to 127.0.0.1
 EOF
 
     # The host reaches the tunnel through the namespace. Host policy keeps deciding what is iOA
     # traffic (pref 1150/1151 send it to table `ioa`); table `ioa` now hands all of it to the
-    # namespace end of the veth. Inside, it is forwarded into tun0 and masqueraded to the tun0
-    # address, the source SmartGateAgent's tunnel expects, so replies come back the same way.
+    # namespace end of the veth. Inside, SmartGateAgent's tunnel default carries it into tun0, and
+    # it is masqueraded to the tun0 address, the source the tunnel expects, so replies come back the
+    # same way.
     # Host traffic may only leave the namespace through the tunnel. Without tun0 (iOA stopped or
     # logged out) the namespace's default points back at the host, which would carry intranet
     # destinations out of the physical uplink; the forward filter refuses them at once instead.
@@ -144,6 +156,15 @@ reconcile_rule() {
     # it prints `lookup wired_underlay` for a rule added as `lookup 19`.
     # shellcheck disable=SC2086
     err=$("$IP" -4 rule add pref "$pref" $spec 2>&1) || [[ $err == *'File exists'* ]] || {
+        printf '%s\n' "$err" >&2
+        return 1
+    }
+}
+
+reconcile_ns_rule() {
+    local pref=$1 err
+    shift
+    err=$(in_ns "$IP" -4 rule add pref "$pref" "$@" 2>&1) || [[ $err == *'File exists'* ]] || {
         printf '%s\n' "$err" >&2
         return 1
     }
