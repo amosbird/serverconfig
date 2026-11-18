@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import pathlib
 import select
 import signal
@@ -157,6 +158,19 @@ class BookmarkHostBoundaryTest(unittest.TestCase):
         spawn.assert_called_once_with([host.BOOKMARK_BROWSER, "https://example.test/bookmark"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         wait.assert_called_once()
+
+    def test_completed_launcher_does_not_wait_for_inherited_stderr_to_close(self):
+        reader, writer = os.pipe()
+        with os.fdopen(reader, "rb", buffering=0) as diagnostic, \
+                os.fdopen(writer, "wb", buffering=0) as inherited:
+            inherited.write(b"final available diagnostic")
+            process = mock.Mock()
+            process.stderr = diagnostic
+            process.poll.return_value = 0
+            with mock.patch.object(host, "BOOKMARK_OPEN_TIMEOUT", 0.2):
+                self.assertEqual(host.wait_browser_open(process, lambda: False),
+                                 (0, "final available diagnostic"))
+            self.assertFalse(inherited.closed)
 
     def test_timeout_and_ignored_termination_have_bounded_owned_child_cleanup(self):
         process = mock.Mock()
