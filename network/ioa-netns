@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# ioa-netns — create or remove the network namespace iOA runs in.
+#
+# Usage: ioa-netns up | down | status
+#
+# Topology: veth-ioa (host, 169.254.170.1/30) <-> veth-ioa-ns (in netns `ioa`, 169.254.170.2/30).
+# Inside the namespace there is one default route via the host end and nothing else, so iOA sees a
+# single uplink whose address never changes. The host masquerades that traffic onto whatever
+# physical device carries main's default, and policy routing keeps it off the Tailscale exit node.
+#
+# Everything here is idempotent: `up` converges an existing namespace, `down` tolerates partial state.
+set -euo pipefail
+
+NS=${IOA_NETNS:-ioa}
+HOST_IF=${IOA_NETNS_HOST_IF:-veth-ioa}
+NS_IF=${IOA_NETNS_NS_IF:-veth-ioa-ns}
+HOST_ADDR=${IOA_NETNS_HOST_ADDR:-169.254.170.1}
+NS_ADDR=${IOA_NETNS_NS_ADDR:-169.254.170.2}
+PREFIX=${IOA_NETNS_PREFIX:-30}
+NET=${IOA_NETNS_NET:-169.254.170.0/30}
+# Below Tailscale's 5210-5270 and the repository's 1000 band, above nothing that matters.
+RULE_PREF=${IOA_NETNS_RULE_PREF:-900}
+RULE_RETURN_PREF=${IOA_NETNS_RULE_RETURN_PREF:-900}
+RULE_STOP_PREF=${IOA_NETNS_RULE_STOP_PREF:-901}
+NFT_TABLE=${IOA_NETNS_NFT_TABLE:-ioa_netns}
+IP=${IP_OVERRIDE:-ip}
+NFT=${NFT_OVERRIDE:-nft}
+SYSCTL=${SYSCTL_OVERRIDE:-sysctl}
+
+log() { printf 'ioa-netns: %s\n' "$*"; }
+
+in_ns() { "$IP" netns exec "$NS" "$@"; }
+
+ns_exists() { "$IP" netns list | awk '{print $1}' | grep -qx "$NS"; }
+
+up() {
+    ns_exists || "$IP" netns add "$NS"
+    in_ns "$IP" link set lo up
+    if ! "$IP" link show "$HOST_IF" >/dev/null 2>&1; then
+        "$IP" link add "$HOST_IF" type veth peer name "$NS_IF" netns "$NS"
+    fi
+    "$IP" addr replace "$HOST_ADDR/$PREFIX" dev "$HOST_IF"
+    "$IP" link set "$HOST_IF" up
+    in_ns "$IP" addr replace "$NS_ADDR/$PREFIX" dev "$NS_IF"
+    in_ns "$IP" link set "$NS_IF" up
+    in_ns "$IP" route replace default via "$HOST_ADDR" dev "$NS_IF"
+
+    # Forwarding has to be on for the host end and for the uplink, because replies enter on the
+    # uplink and are forwarded back to the namespace. The namespace itself never forwards.
+    "$SYSCTL" -q -w "net.ipv4.conf.$HOST_IF.forwarding=1"
+    "$SYSCTL" -q -w net.ipv4.ip_forward=1
+    # Loose reverse-path check: replies from the uplink come back on a different device than the
+    # namespace's traffic left by, and strict mode would drop them.
+    "$SYSCTL" -q -w "net.ipv4.conf.$HOST_IF.rp_filter=2"
+
+    # Namespace traffic looks up main (the physical default), never the Tailscale exit node table.
+    # The stop rule makes a missing physical route fail closed, immediately and visibly to iOA,
+    # instead of falling through to the exit node at 5270. The `to` rule is for the return path:
+    # replies are de-masqueraded to the namespace address before the routing decision, and without
+    # it the host's catch-all would send them into the exit node instead of back over the veth.
+    reconcile_rule "$RULE_PREF" "from $NET lookup main"
+    reconcile_rule "$RULE_RETURN_PREF" "to $NET lookup main"
+    reconcile_rule "$RULE_STOP_PREF" "from $NET prohibit"
+
+    "$NFT" -f - <<EOF
+destroy table ip $NFT_TABLE
+add table ip $NFT_TABLE
+add chain ip $NFT_TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }
+add rule ip $NFT_TABLE postrouting ip saddr $NET oifname != "$HOST_IF" masquerade
+EOF
+    log "up: $NS ($NS_ADDR) via $HOST_IF ($HOST_ADDR)"
+}
+
+reconcile_rule() {
+    local pref=$1 spec=$2
+    # Converge on the exact rule text, so two rules can share a priority and a re-run adds nothing.
+    # shellcheck disable=SC2086
+    "$IP" -4 rule show pref "$pref" | sed 's/^[0-9]*:[[:space:]]*//' | grep -qxF "$(rule_text $spec)" ||
+        "$IP" -4 rule add pref "$pref" $spec
+}
+
+# How `ip rule show` prints a spec: an action without `from` gets `from all`.
+rule_text() {
+    case $1 in
+        from) echo "$*" ;;
+        *) echo "from all $*" ;;
+    esac
+}
+
+down() {
+    "$NFT" delete table ip "$NFT_TABLE" 2>/dev/null || true
+    local pref
+    for pref in "$RULE_PREF" "$RULE_RETURN_PREF" "$RULE_STOP_PREF"; do
+        while "$IP" -4 rule del pref "$pref" 2>/dev/null; do :; done
+    done
+    "$IP" link del "$HOST_IF" 2>/dev/null || true
+    ! ns_exists || "$IP" netns del "$NS"
+    log "down"
+}
+
+status() {
+    ns_exists && log "namespace $NS present" || { log "namespace $NS absent"; return 1; }
+    "$IP" -br addr show "$HOST_IF" 2>/dev/null || log "host link $HOST_IF missing"
+    in_ns "$IP" -br addr
+    in_ns "$IP" route
+    "$IP" -4 rule show pref "$RULE_PREF"
+    "$IP" -4 rule show pref "$RULE_STOP_PREF"
+}
+
+case ${1:-} in
+    up) up ;;
+    down) down ;;
+    status) status ;;
+    *) echo "usage: $0 up|down|status" >&2; exit 2 ;;
+esac
