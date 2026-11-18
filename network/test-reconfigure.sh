@@ -150,7 +150,6 @@ setup() {
 # outside the namespace: DNS, tailscale, smartdns, the routefile.
 run_script() {
     FORCE="${1:-0}" NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
-        IOA_CGROUP_PATHS_OVERRIDE= \
         WPA_CLI_OVERRIDE="$WORK/wpa_cli" PROBE_OVERRIDE="$WORK/probe" \
         PORTAL_NOTIFY_OVERRIDE="$WORK/portal-notify" PORTAL_NOTIFY_GUI="${PORTAL_NOTIFY_GUI-}" \
         bash "$SCRIPT" wlan0 2>&1 |
@@ -164,7 +163,6 @@ run_script() {
 # from "are the rules right" and needs its own check.
 run_status() {
     FORCE="${1:-0}" NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
-        IOA_CGROUP_PATHS_OVERRIDE= \
         WPA_CLI_OVERRIDE="$WORK/wpa_cli" PROBE_OVERRIDE="$WORK/probe" \
         bash "$SCRIPT" wlan0 >/dev/null 2>&1
     echo $?
@@ -534,7 +532,20 @@ main() {
     head_ "wired underlay advertisement"
     ipset create ioa_intranet hash:net
     ipset add ioa_intranet 9.0.0.0/8
+    # What the retired iOA owner mark left on an upgraded host: its rules, NAT and tailscale0 DROP.
+    ip rule add fwmark 0x1000000 lookup main pref 400
+    ip rule add fwmark 0x1000000 prohibit pref 401
+    iptables -t nat -A POSTROUTING -o wlan0 -m mark --mark 0x1000000 -j MASQUERADE
+    iptables -t nat -A POSTROUTING -o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE
+    iptables -t mangle -A POSTROUTING -m mark --mark 0x1000000 -o tailscale0 -j DROP
     run_script 1 >/dev/null
+    if [ -z "$(band 400)" ] && [ -z "$(band 401)" ] &&
+       ! iptables -t nat -S POSTROUTING | grep -q -- '--mark 0x1000000' &&
+       ! iptables -t mangle -S POSTROUTING | grep -q -- '--mark 0x1000000'; then
+        ok "retired iOA owner rules 400/401, owner NAT and tailscale0 DROP are removed"
+    else
+        bad "retired iOA owner policy survives: 400=$(band 400) 401=$(band 401)"
+    fi
     if ipset list ioa_intranet >/dev/null 2>&1; then
         bad "retired ioa_intranet set survives reconciliation"
     else
@@ -554,12 +565,10 @@ main() {
     else
         bad "office entry disturbed iOA $(ngnclient_disruptions) times"
     fi
-    if [ "$(band 400 | grep -Fxc \
-            'from all fwmark 0x1000000 lookup wired_underlay')" -eq 1 ] &&
-       [ "$(route_table 10.30.1.1)" = ioa ]; then
-        ok "authorized office prefers wired for iOA underlay while business stays tunneled"
+    if [ "$(route_table 10.30.1.1)" = ioa ]; then
+        ok "authorized office keeps business payload tunneled"
     else
-        bad "authorized office mixed underlay and payload policy: owner=$(band 400)"
+        bad "authorized office routed business payload elsewhere: $(route_table 10.30.1.1)"
     fi
     for mapping in \
         'nameserver /smartgate.oa.tencent.com/office' \
@@ -591,10 +600,12 @@ main() {
     # iOA's own resolver NXDOMAINs every name outside its forward policy, so the group needs a real
     # intranet resolver. Learn it here, from the lease, while there is a lease to learn it from — but
     # only the addresses policy routes into the tunnel. This lease also advertises 21.7.x, which lands
-    # on Tailscale off the office LAN and would send intranet DNS out of the exit node.
+    # on Tailscale off the office LAN and would send intranet DNS out of the exit node. No -interface:
+    # tun0 is in the ioa namespace, and binding to it there would fail on the host.
     local learned=1
-    if ! grep -Fqx 'server 10.76.9.15 -group ioa -exclude-default-group -interface tun0' \
-            "$WORK/ioa-resolvers.conf" 2>/dev/null; then
+    if ! grep -Fqx 'server 10.76.9.15 -group ioa -exclude-default-group' \
+            "$WORK/ioa-resolvers.conf" 2>/dev/null ||
+       grep -Fq -- '-interface' "$WORK/ioa-resolvers.conf"; then
         learned=0
     fi
     if grep -Eq '^server 21\.' "$WORK/ioa-resolvers.conf" 2>/dev/null ||
@@ -605,14 +616,6 @@ main() {
         ok "the office lease teaches the IOA group only tunnel-reachable resolvers"
     else
         bad "learned resolvers are wrong: $(cat "$WORK/ioa-resolvers.conf" 2>/dev/null)"
-    fi
-    local initial_nat
-    initial_nat=$(iptables -t nat -S POSTROUTING)
-    if grep -Fq -- '-o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$initial_nat" &&
-       grep -Fq -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$initial_nat"; then
-        ok "office owner uses wired NAT while business payload keeps tunnel NAT"
-    else
-        bad "office NAT does not follow the selected underlay: $initial_nat"
     fi
     # A pin to main is worthless while main has no route to the resolver: this link deliberately
     # contributes no default route, so each resolver needs its own way through the wired gateway.
@@ -664,11 +667,6 @@ main() {
     else
         bad "office exit disturbed iOA $(ngnclient_disruptions) times"
     fi
-    if [ "$(band 400 | grep -Fxc 'from all fwmark 0x1000000 lookup main')" -eq 1 ]; then
-        ok "unauthorized wired falls back to ordinary owner main and tunnel business policy"
-    else
-        bad "unauthorized wired retained office routing: owner=$(band 400) office=$(band 1125)"
-    fi
     for mapping in \
         'nameserver /smartgate.oa.tencent.com/office' \
         'nameserver /sgw.woa.com/office' \
@@ -690,20 +688,12 @@ main() {
     # The learned resolvers are the half that must survive leaving: iOA proxies them through the
     # tunnel, and they are the only upstream that answers names outside iOA's own forward policy.
     local kept=1
-    grep -Fqx 'server 10.76.9.15 -group ioa -exclude-default-group -interface tun0' \
+    grep -Fqx 'server 10.76.9.15 -group ioa -exclude-default-group' \
         "$WORK/ioa-resolvers.conf" 2>/dev/null || kept=0
     if [ "$kept" -eq 1 ]; then
         ok "learned intranet resolvers stay available off the office LAN"
     else
         bad "leaving office discarded the learned intranet resolvers"
-    fi
-    local unauthorized_nat
-    unauthorized_nat=$(iptables -t nat -S POSTROUTING)
-    if grep -Fq -- '-o wlan0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$unauthorized_nat" &&
-       grep -Fq -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$unauthorized_nat"; then
-        ok "unauthorized wired restores the internet owner underlay and keeps tunnel payload"
-    else
-        bad "unauthorized wired retained stale office NAT: $unauthorized_nat"
     fi
     for resolver in $OFFICE_RESOLVERS; do
         if band 1000 | grep -Fq "to $resolver lookup main"; then
@@ -1300,6 +1290,11 @@ main() {
     [ "$(band 1150 | grep -Fxc 'from all to 10.0.0.0/8 fwmark 0 lookup ioa')" -eq 1 ] \
         && ok "IOA has exactly one unmarked 10/8 fallback rule" \
         || bad "IOA 10/8 rule is missing or duplicated"
+    # SmartDNS's permanent `server 192.168.255.10 -group ioa`: with tun0 in the namespace nothing in
+    # main routes it, and without this rule the query would leave through the exit node.
+    [ "$(band 1150 | grep -Fxc 'from all to 192.168.255.0/24 fwmark 0 lookup ioa')" -eq 1 ] \
+        && ok "IOA has exactly one unmarked rule for iOA's tunnel network" \
+        || bad "IOA 192.168.255.0/24 rule is missing or duplicated: $(band 1150)"
     ! band 1150 | grep -q '100.12.0.0/16' \
         && ok "100.12/16 is classified dynamically, not statically" \
         || bad "static 100.12/16 IOA rule still exists"
@@ -1463,7 +1458,6 @@ main() {
     ip route add blackhole 198.51.100.0/24 table 501
     iptables -t nat -A POSTROUTING -m mark --mark 0x1 -o owner0 -j MASQUERADE
     iptables -t nat -A POSTROUTING -m mark --mark 0x1 -o tun0 -j SNAT --to-source 192.0.2.10
-    iptables -t nat -A POSTROUTING -m mark --mark 0x1000000 -o owner0 -j MASQUERADE
     run_script 1 >/dev/null
     [ "$(routes 500)" -eq 1 ] && [ "$(routes 501)" -eq 1 ] \
         && ok "foreign tables 500/501 are untouched" || bad "foreign tables 500/501 were flushed"
@@ -1472,20 +1466,16 @@ main() {
     grep -Fq -- '-o owner0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules" &&
         grep -Fq -- '-o tun0 -m mark --mark 0x1 -j SNAT' <<<"$nat_rules" \
         && ok "similar foreign NAT rules are untouched" || bad "similar foreign NAT rules were removed"
-    [ "$(grep -Fc -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
-        && ok "owned IOA payload NAT rule exists exactly once" \
-        || bad "owned IOA payload NAT rule is missing or duplicated"
-    [ "$(grep -Fc -- '-o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
-        ! grep -Fq -- '-o owner0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules" \
-        && ok "IOA owner NAT follows the authorized office device exactly once" \
-        || bad "IOA owner NAT is stale, missing, or duplicated"
+    ! grep -Fq -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules" \
+        && ok "no IOA payload NAT on the host; the ioa namespace masquerades" \
+        || bad "host still installs IOA payload NAT on tun0"
     [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "CN reroute source NAT follows the physical device exactly once" \
         || bad "CN reroute source NAT is stale, missing, or duplicated"
     local source_guard
     source_guard=$(nft -s list table ip serverconfig_source_guard 2>/dev/null)
     if grep -Fq 'priority srcnat + 10' <<<"$source_guard" &&
-       grep -Fq 'elements = { 100.64.0.0/10, 192.168.255.0/24 }' <<<"$source_guard" &&
+       grep -Fq 'elements = { 100.64.0.0/10 }' <<<"$source_guard" &&
        [ "$(grep -c 'ip saddr @foreign_sources counter drop' <<<"$source_guard")" -eq 6 ]; then
         ok "physical source validity is enforced after source NAT"
     else
@@ -1507,14 +1497,10 @@ main() {
     run_script 0 >/dev/null
     ! iptables -t mangle -S NETMODE_IOA | grep -q -- '-j ACCEPT' \
         && ok "chain content drift triggers reconciliation" || bad "chain drift survived early exit"
-    while iptables -t nat -D POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE 2>/dev/null; do :; done
-    while iptables -t nat -D POSTROUTING -o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE 2>/dev/null; do :; done
     while iptables -t nat -D POSTROUTING -o wlan0 -m mark --mark 0x2 -j MASQUERADE 2>/dev/null; do :; done
     run_script 0 >/dev/null
     nat_rules=$(iptables -t nat -S POSTROUTING)
-    [ "$(grep -Fc -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
-        [ "$(grep -Fc -- '-o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] &&
-        [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
+    [ "$(grep -Fc -- '-o wlan0 -m mark --mark 0x2 -j MASQUERADE' <<<"$nat_rules")" -eq 1 ] \
         && ok "owned NAT drift triggers reconciliation" \
         || bad "owned NAT drift survived early exit"
     nft delete table ip serverconfig_source_guard
@@ -1693,14 +1679,6 @@ main() {
     [ "$zero" -eq 0 ] && ok "1150 never empty ($(wc -l < "$WORK/samples") samples)" \
                       || bad "1150 was empty $zero times"
 
-    head_ "MASQUERADE survives a tun0 address change"
-    ip addr flush dev tun0
-    ip addr add 192.168.255.77/24 dev tun0
-    local nat
-    nat=$(iptables -t nat -S POSTROUTING 2>/dev/null | grep -c 'tun0.*MASQUERADE')
-    [ "$nat" -eq 1 ] && ok "NAT rule needs no refresh (address-independent)" \
-                     || bad "NAT rule count is $nat"
-
     # From here the AP changes, so nothing below may compare against the
     # baseline bands captured above.
     head_ "roam onto an AP with a different subnet, gateway and resolvers"
@@ -1758,81 +1736,38 @@ main() {
         && ok "CN gateway change preserves tunnel-owned state" \
         || bad "CN gateway change modified tunnel-owned state"
 
-    head_ "SmartGate underlay audit (iOA pref 1100/1200, tables 20/230)"
-
-    # The healthy table 230 default matches the shim's choice: the wired
-    # underlay advertisement (table 19) when present, else the main default.
-    expected_default=$(ip -4 route show table 19 default 2>/dev/null)
-    [ -n "$expected_default" ] ||
-        expected_default=$(ip -4 route show table main default | awk '$5 ~ /^wl/')
-    exp_gw=$(awk '{ for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }' \
-        <<<"$expected_default")
-    exp_dev=$(awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }' \
-        <<<"$expected_default")
-    ip route replace default via "$exp_gw" dev "$exp_dev" table 230
-    ip route replace default via "$exp_gw" dev "$exp_dev" table 20
+    head_ "host iOA leftovers are retired only once tun0 has left the host"
+    # Before the cutover iOA still runs on the host: tun0 is here and its rules, tables and the tun0
+    # payload NAT are live. A run in that state must not touch them.
+    ip route replace default dev owner0 table 20
+    ip route replace default dev owner0 table 230
     ip rule add pref 1100 fwmark 0xa38 lookup 20
     ip rule add pref 1200 from 10.36.43.250 lookup 230
+    iptables -t nat -A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE
     rc=$(run_status 0)
-    [ "$rc" -eq 0 ] && ok "SmartGate audit run exits clean" \
-                    || bad "SmartGate audit run exited $rc"
-    [ -n "$(ip -4 rule show pref 1200)" ] &&
-    [ -n "$(ip -4 rule show pref 1100)" ] &&
-    ip route show table 230 | grep -q "via $exp_gw" \
-        && ok "healthy SmartGate policy preserved" \
-        || bad "healthy SmartGate policy torn down"
-
-    # Stale: table 230 points at the pre-roam gateway. Rule 1200 captures all
-    # locally sourced traffic, so this blackholes the machine; the audit must
-    # fail open so iOA redeploys against the settled main table.
-    ip route replace default via 10.36.48.1 dev wlan0 onlink table 230
+    [ "$rc" -eq 0 ] && ok "run with tun0 on the host exits clean" \
+                    || bad "run with tun0 on the host exited $rc"
+    [ -n "$(band 1100)" ] && [ -n "$(band 1200)" ] &&
+    [ "$(routes 20)" -gt 0 ] && [ "$(routes 230)" -gt 0 ] &&
+    iptables -t nat -C POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE 2>/dev/null \
+        && ok "with tun0 on the host, 1100/1200, tables 20/230 and tun0 NAT are untouched" \
+        || bad "with tun0 on the host, live iOA policy was torn down"
+    # After the cutover tun0 is in the ioa namespace and the same objects are residue.
+    ip link del tun0
     rc=$(run_status 0)
-    [ "$rc" -eq 0 ] && ok "stale SmartGate audit run exits clean" \
-                    || bad "stale SmartGate audit run exited $rc"
-    [ -z "$(ip -4 rule show pref 1200)" ] &&
-    [ -z "$(ip -4 rule show pref 1100)" ] &&
-    [ -z "$(ip route show table 230)" ] &&
-    [ -z "$(ip route show table 20)" ] \
-        && ok "stale SmartGate underlay torn down (fail open)" \
-        || bad "stale SmartGate underlay left in place"
-
-    # Service stopped: iOA's own teardown can be killed mid-cleanup; leftover
-    # SmartGate policy is residue and must go.
-    ip route replace default via "$exp_gw" dev "$exp_dev" table 230
-    ip route replace default via "$exp_gw" dev "$exp_dev" table 20
-    ip rule add pref 1100 fwmark 0xa38 lookup 20
-    ip rule add pref 1200 from 10.36.43.250 lookup 230
-    NGNCLIENT_ACTIVE_OVERRIDE=0 FORCE=0 NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
-        IOA_CGROUP_PATHS_OVERRIDE= bash "$SCRIPT" wlan0 >/dev/null 2>&1
-    rc=$?
-    [ "$rc" -eq 0 ] && ok "inactive SmartGate cleanup exits clean" \
-                    || bad "inactive SmartGate cleanup exited $rc"
-    [ -z "$(ip -4 rule show pref 1200)" ] &&
-    [ -z "$(ip -4 rule show pref 1100)" ] &&
-    [ -z "$(ip route show table 230)" ] &&
-    [ -z "$(ip route show table 20)" ] \
-        && ok "inactive SmartGate residue cleaned" \
-        || bad "inactive SmartGate residue left behind"
-
-    # Hard isolation: owner-marked (iOA) packets must never leave via
-    # tailscale0. The rule lives in mangle POSTROUTING (after the reroute
-    # triggered by the NETMODE_IOA marking) and keys off the owner mark, not
-    # the cgroup match, so it installs fine inside the namespace.
-    FORCE=1 NSTEST=1 NETWORK_RECONFIGURE_LOCKED=1 \
-        IOA_CGROUP_PATHS_OVERRIDE= bash "$SCRIPT" wlan0 >/dev/null 2>&1
-    rc=$?
-    [ "$rc" -eq 0 ] && ok "isolation run exits clean" \
-                    || bad "isolation run exited $rc"
-    iptables -t mangle -C POSTROUTING -m mark --mark 0x1000000/0xffffffff \
-        -o tailscale0 -j DROP 2>/dev/null \
-        && ok "owner-mark DROP on tailscale0 installed in mangle POSTROUTING" \
-        || bad "owner-mark DROP on tailscale0 missing from mangle POSTROUTING"
-    ! iptables -t filter -C OUTPUT -m mark --mark 0x1000000/0xffffffff \
-        -o tailscale0 -j REJECT 2>/dev/null \
-        && ok "no pre-reroute filter OUTPUT variant remains" \
-        || bad "pre-reroute filter OUTPUT REJECT variant still present"
-
-    # Restore the owner sentinels the cold-boot block expects to find.
+    [ "$rc" -eq 0 ] && ok "run without tun0 on the host exits clean" \
+                    || bad "run without tun0 on the host exited $rc"
+    [ -z "$(band 1100)" ] && [ -z "$(band 1200)" ] &&
+    [ "$(routes 20)" -eq 0 ] && [ "$(routes 230)" -eq 0 ] &&
+    ! iptables -t nat -S POSTROUTING | grep -Fq -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' \
+        && ok "without tun0 on the host, 1100/1200, tables 20/230 and tun0 NAT are retired" \
+        || bad "without tun0 on the host, iOA residue was left behind"
+    # The remaining blocks model the pre-cutover host again.
+    ip link add tun0 type dummy
+    ip link set tun0 up
+    ip addr add 192.168.255.10/24 dev tun0
+    ip route replace default dev tun0 table 52
+    ip route replace default via 192.168.255.1 dev tun0 table 400
     ip route replace default dev owner0 table 20
     ip route replace default dev owner0 table 230
 

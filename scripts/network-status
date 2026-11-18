@@ -31,15 +31,20 @@ printf '  pref 1501     %s\n' "$([ -n "$(rules 1501)" ] && echo fail-closed || e
 printf '\nIOA business\n'
 printf '  table ioa     %s\n' \
     "$([ "$(routes ioa)" -gt 0 ] && echo populated || echo empty)"
-printf '  tun0          %s\n' \
-    "$([ -n "$(ip -4 -o addr show tun0 2>/dev/null)" ] && echo up || echo down)"
+# iOA runs in its own network namespace (network/ioa-netns); tun0 lives there, not on the host.
+if ip netns list 2>/dev/null | awk '$1 == "ioa" {found=1} END {exit !found}'; then
+    printf '  netns ioa     present\n'
+    if ns_tun0=$(ip -n ioa -4 -o addr show tun0 2>/dev/null); then
+        printf '  tun0 (ioa)    %s\n' "$([ -n "$ns_tun0" ] && echo up || echo down)"
+    else
+        printf '  tun0 (ioa)    down or unreadable (needs root)\n'
+    fi
+else
+    printf '  netns ioa     missing\n'
+fi
 printf '  pref 1150\n'
 ioa_rules=$(rules 1150)
 [ -n "$ioa_rules" ] && printf '%s\n' "$ioa_rules" | sed 's/^/    /' || printf '    missing\n'
-printf '  owner 0xa38   %s\n' \
-    "$(ip -4 rule show 2>/dev/null | awk '
-        /fwmark 0xa38/ {print "pref " $1; found=1}
-        END {if (!found) print "missing"}' | tr -d ':')"
 
 printf '\nTailscale\n'
 printf '  table 52      %s\n' \

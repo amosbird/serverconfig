@@ -78,12 +78,11 @@ main() {
     # onward: the rule was present all along, and `to 10.0.0.0/8 lookup ioa` is simply not how it
     # renders. Keep each substring in step with the rule it names.
     for spec in \
-        '400:fwmark 0x1000000 lookup main' \
-        '401:fwmark 0x1000000 prohibit' \
         '500:fwmark 0x80000/0xff0000 lookup main' \
         '1000:lookup main suppress_prefixlength 0' \
         '1150:fwmark 0x1 lookup ioa' \
         '1150:to 10.0.0.0/8 fwmark 0 lookup ioa' \
+        '1150:to 192.168.255.0/24 fwmark 0 lookup ioa' \
         '3000:to 100.64.0.0/10 lookup 52'
     do
         pref=${spec%%:*}

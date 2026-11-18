@@ -51,20 +51,7 @@ reject 'SmartDNS base config does not include a dynamic IOA fragment' \
 # state — which is why this rejects tunnel-derived IOA DNS specifically, not IOA DNS fragments.
 reject 'production reconciler derives IOA DNS from tunnel state' \
     'ioa-dns\.conf|ip -4 -o addr show tun0' scripts/network-reconfigure
-# iOA installs `from <underlay address> lookup 230` at its own priority, and an unbound socket has
-# already taken that source by the time OUTPUT mangle applies a mark, so the mark-triggered reroute
-# still matches it. Any priority above iOA's therefore makes the IOA band unreachable for the traffic
-# it exists to carry, with no error anywhere: on 2026-09-18 the set marked packets correctly, iOA's
-# rule returned them to wlan0, and tun0 carried zero packets while every internal host timed out.
 p_ioa=$(awk -F= '$1 == "P_IOA" {print $2; exit}' scripts/network-reconfigure)
-p_ioa_smart_src=$(awk -F= '$1 == "P_IOA_SMART_SRC" {print $2; exit}' scripts/network-reconfigure)
-if [ -z "$p_ioa" ] || [ -z "$p_ioa_smart_src" ] || [ "$p_ioa" -ge "$p_ioa_smart_src" ]; then
-    printf 'FAIL IOA band priority %s does not precede iOA source rule %s\n' \
-        "${p_ioa:-none}" "${p_ioa_smart_src:-none}" >&2
-    fail=1
-else
-    echo 'OK   IOA band precedes the iOA source rule'
-fi
 # A source guard belongs nowhere in mangle POSTROUTING. That hook runs at priority -150, before
 # srcnat at 100, so no packet has been through source NAT yet and there is no way to tell one the
 # MASQUERADE is about to fix from one it will never see. Dropping on a foreign source there killed
@@ -116,7 +103,7 @@ fi
 # A stale ESTABLISHED flow may still retain a no-NAT decision across the failed lookup. Its final
 # source is therefore checked after srcnat, where healthy packets have already been masqueraded.
 if grep -Fq 'hook postrouting priority 110' scripts/network-reconfigure &&
-   grep -Fq '100.64.0.0/10, 192.168.255.0/24' scripts/network-reconfigure &&
+   grep -Fq 'elements = { 100.64.0.0/10 }' scripts/network-reconfigure &&
    grep -Fq 'PHYSICAL_IFACE_GLOBS=(wlan wlp enp eth eno ens)' scripts/network-reconfigure &&
    grep -Fq 'install_source_guard' scripts/network-reconfigure; then
     echo 'OK   post-srcnat source validity guard covers physical interfaces'
@@ -142,9 +129,9 @@ for domain in smartgate.oa.tencent.com sgw.woa.com ioa.tencent.com; do
         echo "FAIL base SmartDNS does not map $domain exactly once to china" >&2
         fail=1
     fi
-    # The office override is safe only as one half of the same authorization switch that sends the
-    # owner mark to wired_underlay. Away from the office the fragment disappears and the public base
-    # rule above becomes authoritative again.
+    # The office override is safe only as one half of the same authorization switch that fills
+    # wired_underlay. Away from the office the fragment disappears and the public base rule above
+    # becomes authoritative again.
     if [ "$(grep -Fxc "nameserver /$domain/office" network/smartdns/office.conf)" -ne 1 ]; then
         echo "FAIL office SmartDNS does not select the internal $domain bootstrap endpoint" >&2
         fail=1
@@ -195,7 +182,7 @@ if [ "$(grep -Fxc 'conf-file /etc/smartdns/ioa-resolvers.conf' network/smartdns/
     fail=1
 fi
 if ! grep -Fq 'remember_intranet_resolvers "$wired_dev"' scripts/network-reconfigure ||
-   ! grep -Fq 'server %s -group ioa -exclude-default-group -interface tun0' \
+   ! grep -Fq "printf 'server %s -group ioa -exclude-default-group\\n'" \
         scripts/network-reconfigure; then
     echo 'FAIL network-reconfigure does not learn intranet resolvers into the IOA group' >&2
     fail=1
@@ -224,28 +211,23 @@ if ! grep -Fq 'ioa-resolvers.conf' restore.sh; then
 fi
 if ! awk '
     /\[ "\$ioa_environment" = external \].*\$SMARTDNS_CHANGED/ { external_dns = NR }
-    /reconcile_mark_masquerade "\$IOA_OWNER_MARK" "\$owner_dev" true false/ { stage_nat = NR }
-    /reconcile_desired_band "\$P_IOA_OWNER"$/ { switch_owner = NR }
-    /reconcile_mark_masquerade "\$IOA_OWNER_MARK" "\$owner_dev"$/ { prune_nat = NR }
     /ip route flush table "\$WIRED_UNDERLAY_TABLE"/ { flush_underlay = NR }
     /for band in "\$\{!DESIRED_BANDS\[@\]\}"/ { policy = NR }
     /systemctl restart smartdns/ { final_dns = NR }
-    END {
-        exit !(external_dns < stage_nat &&
-               stage_nat < switch_owner &&
-               switch_owner < prune_nat &&
-               prune_nat < flush_underlay &&
-               policy < final_dns)
-    }
+    END { exit !(external_dns < flush_underlay && policy < final_dns) }
 ' scripts/network-reconfigure; then
-    echo 'FAIL office transition ordering opens a DNS, routing, NAT, or table-19 gap' >&2
+    echo 'FAIL office transition ordering opens a DNS, routing, or table-19 gap' >&2
     fail=1
 fi
-if ! grep -Fq 'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup $WIRED_UNDERLAY_TABLE"' \
+# iOA lives in the ioa namespace (network/ioa-netns). Its host-side owner mark, SmartGate audit and
+# tun0 NAT are gone; pref 400/401 stay on the retirement list so an upgraded host converges.
+reject 'no host-side iOA owner mark, SmartGate audit, or tun0 payload NAT' \
+    'IOA_OWNER|set-xmark 0x1000000|P_IOA_SMART|reconcile_ioa_smartgate|-interface tun0|reconcile_mark_masquerade "\$IOA_MARK"' \
+    scripts/network-reconfigure
+if ! grep -Eq '^for p in 100 400 401 900 [0-9 ]+; do clean_pref "\$p"; done$' \
         scripts/network-reconfigure ||
-   ! grep -Fq 'DESIRED_BANDS[$P_IOA_OWNER]="from all fwmark $IOA_OWNER_MARK lookup main"' \
-        scripts/network-reconfigure; then
-    echo 'FAIL iOA owner routing does not switch atomically between office wired and ordinary main' >&2
+   ! grep -Fq 'IOA_TUNNEL_NETS=("192.168.255.0/24")' scripts/network-reconfigure; then
+    echo 'FAIL pref 400/401 are not retired or iOA tunnel network is not routed into table ioa' >&2
     fail=1
 fi
 if ! grep -Fq 'IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environment}"' \
@@ -967,8 +949,6 @@ case "$command" in
     ip)
         case "$*" in
             '-4 route show table main default') echo 'default via 192.0.2.1 dev wlan0' ;;
-            '-4 rule show pref 400') echo '400: from all fwmark 0x1000000 lookup main' ;;
-            '-4 rule show pref 401') echo '401: from all fwmark 0x1000000 prohibit' ;;
             '-4 rule show pref 500') echo '500: from all fwmark 0x80000/0xff0000 lookup main' ;;
             '-4 rule show pref 1000')
                 echo '1000: from all lookup main suppress_prefixlength 0'
@@ -978,6 +958,7 @@ case "$command" in
             '-4 rule show pref 1150')
                 echo '1150: from all fwmark 0x1 lookup ioa'
                 echo '1150: from all to 10.0.0.0/8 fwmark 0 lookup ioa'
+                echo '1150: from all to 192.168.255.0/24 fwmark 0 lookup ioa'
                 ;;
             '-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
         esac
@@ -1022,8 +1003,6 @@ EOF
                 'reconfigure|FORCE=1|wlan0'| \
                 'ip|-4|route|show|table|main|default'| \
                 'ipset|save|cn_direct'| \
-                'ip|-4|rule|show|pref|400'| \
-                'ip|-4|rule|show|pref|401'| \
                 'ip|-4|rule|show|pref|500'| \
                 'ip|-4|rule|show|pref|1000'| \
                 'ip|-4|rule|show|pref|1500'| \
@@ -1098,9 +1077,9 @@ case "$command|$*" in
     'ip|-4 rule show pref 1500') echo '1500: from all fwmark 0x2 lookup main' ;;
     'ip|-4 rule show pref 1501') echo '1501: from all fwmark 0x2 prohibit' ;;
     'ip|-4 route show table ioa') echo '10.0.0.0/8 dev tun0' ;;
-    'ip|-4 -o addr show tun0') echo '8: tun0 inet 198.51.100.2/24 scope global tun0' ;;
+    'ip|netns list') echo 'ioa (id: 0)' ;;
+    'ip|-n ioa -4 -o addr show tun0') echo '8: tun0 inet 192.168.255.10/24 scope global tun0' ;;
     'ip|-4 rule show pref 1150') echo '1150: from all to 10.0.0.0/8 fwmark 0 lookup ioa' ;;
-    'ip|-4 rule show') echo '490: from all fwmark 0xa38 lookup main' ;;
     'ip|-4 route show table 52') echo 'default dev tailscale0' ;;
     'ip|-4 rule show pref 3000') echo '3000: from all to 100.64.0.0/10 lookup 52' ;;
     'tailscale|status --json')
@@ -1154,9 +1133,9 @@ EOF
                 'ip|-4|rule|show|pref|1500'| \
                 'ip|-4|rule|show|pref|1501'| \
                 'ip|-4|route|show|table|ioa'| \
-                'ip|-4|-o|addr|show|tun0'| \
+                'ip|netns|list'| \
+                'ip|-n|ioa|-4|-o|addr|show|tun0'| \
                 'ip|-4|rule|show|pref|1150'| \
-                'ip|-4|rule|show'| \
                 'ip|-4|route|show|table|52'| \
                 'ip|-4|rule|show|pref|3000'| \
                 'tailscale|status|--json') ;;
@@ -1282,16 +1261,29 @@ reject 'CN promotion does not launch one ip process per route' \
     scripts/network-reconfigure
 reject 'CN reconciliation does not clear its live rule before replacement' \
     'clean_pref "\\$P_CN"' scripts/network-reconfigure
-reject 'table 19 is used only by the iOA owner underlay, never business payload' \
+reject 'table 19 is used only by the ioa namespace underlay, never business payload' \
     'P_OFFICE|fwmark \\$IOA_MARK lookup \\$WIRED_UNDERLAY_TABLE|to \\$cidr.*\\$WIRED_UNDERLAY_TABLE' \
     scripts/network-reconfigure
 reject 'wired advertisement does not mutate tunnel-owned tables' \
-    'ip route (flush|del|replace).*table (20|230|52|ioa)' scripts/network-reconfigure
+    'ip route (flush|del|replace).*table (52|ioa)' scripts/network-reconfigure
+# Tables 20/230 belong to SmartGateAgent while it still runs on the host (tun0 present); only
+# after the cutover are they residue to retire.
+if ! awk '
+    /^retire_host_ioa\(\) \{/ { inside = 1 }
+    inside && /ip link show tun0 >\/dev\/null 2>&1 && return 0/ { guard = NR }
+    inside && /ip route flush table (20|230)/ { if (!first) first = NR }
+    inside && /^\}/ { inside = 0 }
+    END { exit !(guard && first && guard < first) }
+' scripts/network-reconfigure ||
+   [ "$(grep -Ec 'ip route flush table (20|230)( |$)' scripts/network-reconfigure)" -ne 2 ]; then
+    echo 'FAIL tables 20/230 are flushed outside the tun0-absent retirement' >&2
+    fail=1
+fi
 for statement in \
     'IgnoreCarrierLoss=3s' \
     'AddressRandomization=network' \
     'AddressOverride=1e:dc:46:00:66:1b' \
-    'priorities 1100 and 1200' \
+    'network/ioa-netns.md' \
     'table `wired_underlay` has absolute preference' \
     'not on hard-coding `wlan0`' \
     'restore.sh'
