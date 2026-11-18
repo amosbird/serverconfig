@@ -117,7 +117,19 @@ def wait_browser_open(process, cancelled):
                     diagnostic.extend(chunk)
                     del diagnostic[:-BOOKMARK_DIAGNOSTIC_LIMIT]
             returncode = process.poll()
-            if returncode is not None and not pipe_open:
+            if returncode is not None:
+                if pipe_open:
+                    for _ in range(16):
+                        if cancelled():
+                            raise InterruptedError("bookmark opening was cancelled; outcome is unknown")
+                        try:
+                            chunk = os.read(process.stderr.fileno(), 4096)
+                        except BlockingIOError:
+                            break
+                        if not chunk:
+                            break
+                        diagnostic.extend(chunk)
+                        del diagnostic[:-BOOKMARK_DIAGNOSTIC_LIMIT]
                 if cancelled():
                     raise InterruptedError("bookmark opening was cancelled; outcome is unknown")
                 return returncode, diagnostic.decode("utf-8", errors="replace").strip()
