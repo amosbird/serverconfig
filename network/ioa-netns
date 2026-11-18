@@ -3,7 +3,7 @@
 #
 # Usage: ioa-netns up | down | status
 #
-# Topology: veth-ioa (host, 169.254.170.1/30) <-> veth-ioa-ns (in netns `ioa`, 169.254.170.2/30).
+# Topology: veth-ioa (host, 198.18.170.1/30) <-> veth-ioa-ns (in netns `ioa`, 198.18.170.2/30).
 # Inside the namespace there is one uplink default via the host end, so iOA sees a single uplink
 # whose address never changes. The host masquerades that traffic onto whatever
 # physical device carries main's default, and policy routing keeps it off the Tailscale exit node.
@@ -14,10 +14,12 @@ set -euo pipefail
 NS=${IOA_NETNS:-ioa}
 HOST_IF=${IOA_NETNS_HOST_IF:-veth-ioa}
 NS_IF=${IOA_NETNS_NS_IF:-veth-ioa-ns}
-HOST_ADDR=${IOA_NETNS_HOST_ADDR:-169.254.170.1}
-NS_ADDR=${IOA_NETNS_NS_ADDR:-169.254.170.2}
+HOST_ADDR=${IOA_NETNS_HOST_ADDR:-198.18.170.1}
+NS_ADDR=${IOA_NETNS_NS_ADDR:-198.18.170.2}
 PREFIX=${IOA_NETNS_PREFIX:-30}
-NET=${IOA_NETNS_NET:-169.254.170.0/30}
+NET=${IOA_NETNS_NET:-198.18.170.0/30}
+# Not link-local: SmartGateAgent looks for its uplink address and skips 169.254/16 ("no addr for
+# interface"), then crashes deploying routes. 198.18/15 is reserved for benchmarking, never routed.
 # After Tailscale's own transport escape (500) and before everything of the repository's from 1000 on.
 # network-reconfigure retires a list of old priorities on every run (900 is one of them), so these
 # must stay off that list.

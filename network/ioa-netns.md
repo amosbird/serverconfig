@@ -21,15 +21,17 @@ tinyproxy 标记、源地址保护、tun0/underlay 的 MASQUERADE）、SmartDNS 
  宿主机 (init netns)                              命名空间 ioa
  ───────────────────                              ─────────────
  wlan0/eth  ── 物理上行                            lo
- tailscale0 ── 出口节点                            veth-ioa-ns  169.254.170.2/30
- veth-ioa   169.254.170.1/30  ◄──────────────────►   default via 169.254.170.1
+ tailscale0 ── 出口节点                            veth-ioa-ns  198.18.170.2/30
+ veth-ioa   198.18.170.1/30  ◄──────────────────►   default via 198.18.170.1
                                                      tun0 (SmartGateAgent 创建)
                                                      192.168.255.10
 ```
 
-- 地址取 `169.254.170.0/30`：链路本地，不会和任何 DHCP 网段、Tailscale（100.64/10）、iOA（192.168.255/24、
+- 地址取 `198.18.170.0/30`（RFC 2544 基准测试网段，不会被路由）。最初用的是链路本地 `169.254.170.0/30`，
+  但 SmartGateAgent 找上行网卡时跳过链路本地地址（日志 `no addr for interface:veth-ioa-ns`），
+  之后部署路由时空指针崩溃，隧道建不起来。这个网段同样不会和任何 DHCP 网段、Tailscale（100.64/10）、iOA（192.168.255/24、
   100.12/16）、公司内网（10/8）冲突。
-- 命名空间内只有一条 `default via 169.254.170.1`，iOA 自己加的 tun0 路由、table 20/230、规则 1100/1200
+- 命名空间内只有一条 `default via 198.18.170.1`，iOA 自己加的 tun0 路由、table 20/230、规则 1100/1200
   全部留在命名空间里，不需要 ip 拦截脚本去改写。
 - 宿主机对 veth 出来的流量做 MASQUERADE 到当前物理网卡，并强制走物理路径（不进 Tailscale 出口节点）。
   宿主机漫游只改变 MASQUERADE 的出口地址，命名空间内的地址和路由不变，iOA 收不到地址事件。
@@ -39,7 +41,7 @@ tinyproxy 标记、源地址保护、tun0/underlay 的 MASQUERADE）、SmartDNS 
 **iOA 自己的流量**（心跳、票据、到 sgw 网关的 TLS）：命名空间内 → veth → 宿主机 → 物理网卡，宿主机做
 MASQUERADE。宿主机规则（`network/ioa-netns`）：600 `iif veth-ioa lookup 19`（办公室 802.1X 有线授权时
 `network-reconfigure` 往 table 19 放默认路由，否则清空，等于跳过），601 `iif veth-ioa lookup main` 和
-`to 169.254.170.0/30 lookup main`（回程），602 `iif veth-ioa prohibit`（物理路由缺失时立即失败，绝不掉进
+`to 198.18.170.0/30 lookup main`（回程），602 `iif veth-ioa prohibit`（物理路由缺失时立即失败，绝不掉进
 Tailscale）。优先级避开 `network-reconfigure` 每次都清理的退役优先级（其中有 900）。
 
 命名空间里 SmartGateAgent 按厂商原样工作，不再需要 `ip` 拦截脚本：它把 `default via 192.168.255.1 dev
@@ -48,7 +50,7 @@ metric 是 600，所以两者共存。iOA 自己产生的包（`iif lo`）先查
 默认路由的 table 170，因此路径和以前在宿主机上时一样：不会被自己的隧道默认路由吸进 tun0。
 
 **宿主机进程访问内网**：宿主机策略照旧决定什么是 iOA 流量（1150：mark 0x1，以及不带 mark 的 10/8 和
-192.168.255.0/24；1151 prohibit 兜底）。table `ioa` 现在是 `default via 169.254.170.2 dev veth-ioa`，
+192.168.255.0/24；1151 prohibit 兜底）。table `ioa` 现在是 `default via 198.18.170.2 dev veth-ioa`，
 进入命名空间后走 SmartGateAgent 的隧道默认路由进 tun0，再 MASQUERADE 成 tun0 地址。命名空间只允许从
 veth 进来的包从 tun0 出去：没有 tun0 时（iOA 停了或没登录）TCP 立即收到 RST，其他协议收到 ICMP
 admin-prohibited（命名空间内关掉了 ICMP 限速，否则拒绝会被吞成超时），绝不会从物理上行漏出去。

@@ -55,7 +55,7 @@ its cloud traffic does not need the physical path.
 |---:|---|---|---|
 | 500 | `fwmark 0x80000/0xff0000` | `main` | Let Tailscale-owned transport packets reach the physical network. |
 | 600 | `iif veth-ioa` | `wired_underlay` | iOA's own traffic prefers the authorized office wire (`network/ioa-netns`). |
-| 601 | `iif veth-ioa`; `to 169.254.170.0/30` | `main` | Otherwise iOA uses the physical default; return path to the namespace. |
+| 601 | `iif veth-ioa`; `to 198.18.170.0/30` | `main` | Otherwise iOA uses the physical default; return path to the namespace. |
 | 602 | `iif veth-ioa` | `prohibit` | Never let iOA's traffic fall through to Tailscale. |
 | 1000 | `main` with `suppress_prefixlength 0`, plus current `scope link` routes, physical gateway, declared link-local destinations, captive-portal resolvers, and the office resolvers from the wired lease | `main` | Keep the actual LAN and its required infrastructure direct. |
 | 1150 | exact `fwmark 0x1`, then unmarked `10.0.0.0/8` and `192.168.255.0/24` | `ioa` | DNS-classified IOA payload, a literal-address fallback for Tencent destinations, and iOA's own resolver network. |
@@ -64,7 +64,7 @@ its cloud traffic does not need the physical path.
 | 1501 | exact `fwmark 0x2` | `prohibit` | Fail closed if main has no route; never fall through to Tailscale. |
 | 3000 | `100.64.0.0/10` | `52` | Reach tailnet peers through Tailscale. |
 
-Table `ioa` holds a single `default via 169.254.170.2 dev veth-ioa`: whatever 1150 selects enters the
+Table `ioa` holds a single `default via 198.18.170.2 dev veth-ioa`: whatever 1150 selects enters the
 namespace, where SmartGateAgent's own default carries it into `tun0` and the namespace masquerades it
 to the tunnel address. iOA's control traffic never touches the host's policy above 600, so it needs
 no owner mark. While the office wire is 802.1X-authorized, `network-reconfigure` keeps
