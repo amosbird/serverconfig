@@ -37,12 +37,12 @@ Operator tools respect the same boundary. `scripts/network-status` observes repo
 owner state without changing it. `scripts/netfix` may force reconciliation of repository-owned
 objects, but it does not change tunnel preferences or owner-managed tables.
 
-The `/usr/lib/iOA/bin/iOA` entrypoint has two callers with different authority. The root-owned
-`ngnclient.service` starts `iOA.bin` (inside the namespace, via `ngnclient.service.d/netns.conf`).
-`iOALinux` also invokes the same entrypoint as the desktop user when it cannot see the daemon.
-That path only checks whether `ngnclient.service` is active; it never attempts reconciliation or
-starts a second daemon. `ioagui.service` has the same condition, so starting the GUI while the daemon
-is absent is skipped rather than entering its restart loop.
+`/usr/lib/iOA/bin/iOA` and `/usr/lib/iOA/bin/SmartGateAgent` are symlinks to the versioned vendor
+ELFs, installed by `restore.sh`; there are no wrappers. `ngnclient.service` starts `iOA` inside the
+namespace (`ngnclient.service.d/netns.conf`), and `iOA` launches the agent by its full path, so the
+agent's comm is `SmartGateAgent` (what `killall SmartGateAgent` matches) and its argv[0] is the
+launch path (what the GUI scans `/proc/*/cmdline` for). `ioagui.service` starts the GUI only while
+`ngnclient.service` is active, so a GUI without its daemon is skipped rather than looping.
 
 The GUI stays in the host namespace and reaches the daemon on `127.0.0.1:56100/56101` through the
 `ioa-port@` socket proxies. It also opens its own HTTPS connections to the iOA cloud; those are
@@ -1141,9 +1141,8 @@ baseline to diff a future failure against.
 Run the network checks:
 
 ```bash
-bash network/test-ioa-wrapper.sh
+bash network/test-ioa-entrypoints.sh
 bash network/test-ioa-user-timeout.sh
-bash network/test-smartgate-argv0.sh
 sudo -n bash network/test-nft-direct-routing.sh
 bash network/test-smartdns-no-cache.sh
 bash network/test-resolv-pin.sh

@@ -12,7 +12,7 @@ iOA（`iOA.bin`、`SmartGateAgent`、`iOALinux`）运行在命名空间 `ioa` �
 PATH 改写、`network-reconfigure` 里的 iOA 共存规则（400/401/1150/1151、1100/1200 审计、owner mark、
 tinyproxy 标记、源地址保护、tun0/underlay 的 MASQUERADE）、SmartDNS 的 `ipset ioa` 标记。
 
-要保留的东西（V 类）：SmartGateAgent 的 argv[0] 和硬链接、GUI 的 root 入口保护、BPF 心跳超时、
+要保留的东西（V 类）：BPF 心跳超时、
 `ioa-health`、`gui-bounce`。N 类（漫游修复、captive portal、有线 802.1X）与 iOA 无关，不动。
 
 ## 拓扑
@@ -107,7 +107,6 @@ corkscrew SSH；浏览器 PAC；之后再做一次真实漫游。
 
 1. SmartGateAgent 在命名空间里能否创建 tun0 并正常工作（`/dev/net/tun` 不受 netns 影响，应可以）。
 2. 宿主机漫游时，命名空间内 iOA 是否真的收不到任何地址事件，隧道是否仍需 BPF 才能恢复。
-3. `exec -a firefox` 的来历（命名空间后是否还需要）。
 
 ## 风险核实记录（2026-11-18，只读）
 

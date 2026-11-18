@@ -12,10 +12,9 @@ Description=iOA zero-trust client GUI
 [Service]
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=%h/.Xauthority
-# Starting the vendor GUI without the system daemon makes it invoke /usr/lib/iOA/bin/iOA itself.
-# That entrypoint owns root-only network reconciliation and must only run through
-# ngnclient.service. Exit status 1 from ExecCondition skips the GUI without marking this unit failed
-# or entering its Restart=always loop; the daemon starts/restarts the GUI after it is ready.
+# Without the system daemon the GUI has nothing to show and keeps restarting. Exit status 1 from
+# ExecCondition skips the GUI without marking this unit failed or entering its Restart=always loop;
+# the daemon starts/restarts the GUI after it is ready (ngnclient.service.d/gui-bounce.conf).
 ExecCondition=/usr/bin/systemctl is-active --quiet ngnclient.service
 ExecStart=/usr/lib/iOA/bin/iOALinux
 Restart=always

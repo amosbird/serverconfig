@@ -216,11 +216,13 @@ if [[ -n $GUI ]]; then
     sudo systemctl disable --now network-debug-pcap.service 2>/dev/null || true
     sudo rm -f /etc/systemd/system/network-debug-pcap.service
     sudo rm -rf /var/log/network-debug/ring
-    # The two documented serverconfig wrappers over the vendor entry points. The vendor files
-    # themselves are installed by hand from the vendor package, not by this script.
-    sudo cp "$DIR"/network/iOA /usr/lib/iOA/bin/iOA
-    sudo cp "$DIR"/network/SmartGateAgent /usr/lib/iOA/bin/SmartGateAgent
-    sudo chmod 755 /usr/lib/iOA/bin/SmartGateAgent
+    # The vendor entry points are the versioned ELFs themselves, under the names iOA.bin launches
+    # them by. A symlink keeps both lookups of SmartGateAgent working: `killall SmartGateAgent`
+    # matches comm, the basename executed, and the GUI matches argv[0], the full launch path.
+    # The vendor files are installed by hand from the vendor package, not by this script.
+    sudo ln -sfn iOA.bin /usr/lib/iOA/bin/iOA
+    sudo ln -sfn SmartGateAgent.bin /usr/lib/iOA/bin/SmartGateAgent
+    sudo rm -rf /usr/lib/iOA/bin/.real /run/smartgateagent-wrapper.lock
     sudo cp "$DIR"/network/udev/90-wired-8021x.rules /etc/udev/rules.d/
 
     sudo rm -f /var/lib/network-reconfigure/derp-ips \

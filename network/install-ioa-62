@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Converge the live iOA installation on the extracted 1.0.3.62 package.
 #
-# The package is authoritative for every vendor file. serverconfig only replaces the iOA and
-# SmartGateAgent entry points with wrappers; their real ELFs remain byte-identical package copies
-# under versioned names. The Arch GUI adaptation is the user ioagui.service, not a launcher shim.
+# The package is authoritative for every vendor file. Its iOA and SmartGateAgent ELFs are kept as
+# byte-identical copies under versioned names; restore.sh points the vendor names at them. The Arch GUI adaptation is the user ioagui.service, not a launcher shim.
 
 set -euo pipefail
 
