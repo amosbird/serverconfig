@@ -175,4 +175,32 @@ for (const event of ["transport", "boot"]) {
         assert.equal(f.calls.some(call => call.name === "tabs.update"), false);
     }]);
 }
+for (const initial of ["empty", "blank"]) {
+    for (const timing of ["during final read", "cancel and resume ABA"]) {
+        cases.push([`${initial} pending destination lost ${timing} cannot use a stale read to select a placeholder`, async () => {
+            const f = fresh(); await f.ready(); const payload = request(`lost-${initial}-${timing}`); let id;
+            f.hooks["tabs.create.after"] = async created => {
+                id = created.id;
+                Object.assign(created, {url: initial === "empty" ? "" : "about:blank", pendingUrl: payload.url,
+                    status: "loading"});
+                Object.assign(f.tabs.get(id), clone(created));
+            };
+            let stopped = false;
+            f.hooks["tabs.get.after"] = async (_snapshot, tabId) => {
+                if (tabId !== id || stopped || !f.calls.some(call => call.name === "tabs.ungroup")) return;
+                stopped = true;
+                const tab = f.tabs.get(id); delete tab.pendingUrl; tab.status = "complete";
+                await Promise.all(f.api.tabs.onUpdated.emit(id, {status: "complete"}, clone(tab)));
+                if (timing === "cancel and resume ABA") {
+                    tab.pendingUrl = payload.url; tab.status = "loading";
+                    await Promise.all(f.api.tabs.onUpdated.emit(id, {status: "loading"}, clone(tab)));
+                }
+            };
+            assert.equal(await f.executor.ordinaryOpen(payload), "unknown");
+            assert.equal(stopped, true); assert.equal(f.tabs.get(id).active, false);
+            assert.equal(f.tabs.get(1).active, true);
+            assert.equal(f.calls.some(call => call.name === "tabs.update"), false);
+        }]);
+    }
+}
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

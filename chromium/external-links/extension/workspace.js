@@ -1971,6 +1971,7 @@ class WorkspaceExecutor {
         let isolated = false;
         let ungrouped = false;
         let navigating = false;
+        let destinationObserved = false;
         let expectedMove = null;
         let invalid = false;
         const early = [];
@@ -1980,6 +1981,11 @@ class WorkspaceExecutor {
         };
         const placeholder = value => !value || value === "about:blank" || sameUrl(value);
         const matchesDocument = tab => placeholder(tab?.url) && (!tab?.pendingUrl || sameUrl(tab.pendingUrl));
+        const observeDocument = tab => {
+            const destination = sameUrl(tab?.pendingUrl || tab?.url);
+            if (!matchesDocument(tab) || destinationObserved && !destination) invalid = true;
+            destinationObserved ||= destination;
+        };
         const observe = (kind, args) => {
             if (!target) {
                 if (early.length >= 128) invalid = true;
@@ -1992,7 +1998,7 @@ class WorkspaceExecutor {
             } else if (kind === "created") {
                 if (id.id === target.id) {
                     initialGroup = id.groupId;
-                    if (initialNavigation && !matchesDocument(id)) invalid = true;
+                    if (initialNavigation) observeDocument(id);
                 }
             } else if (kind === "replaced") {
                 if (change === target.id) invalid = true;
@@ -2000,12 +2006,12 @@ class WorkspaceExecutor {
                 if (expectedMove && sameRef(expectedMove, change)) expectedMove = null;
                 else invalid = true;
             } else if (id === target.id) {
+                if (kind === "updated" && initialNavigation) observeDocument(tab);
                 if (kind !== "updated" || tab?.windowId !== target.windowId ||
                         change.pinned !== undefined ||
                         change.groupId !== undefined && change.groupId !== -1 &&
                             (isolated || ungrouped || change.groupId !== initialGroup) ||
-                        !navigating && (initialNavigation && !matchesDocument(tab) ||
-                            change.url !== undefined && !placeholder(change.url) ||
+                        !navigating && (change.url !== undefined && !placeholder(change.url) ||
                             change.pendingUrl && !sameUrl(change.pendingUrl))) invalid = true;
                 if (kind === "updated" && change.groupId === -1) ungrouped = true;
             }
@@ -2018,11 +2024,13 @@ class WorkspaceExecutor {
                 target = {id: tab.id, windowId: tab.windowId};
                 initialGroup = tab.groupId;
                 for (const [kind, args] of early) observe(kind, args);
+                if (initialNavigation && sameUrl(tab.pendingUrl || tab.url)) destinationObserved = true;
                 early.length = 0;
             },
             check: () => { if (invalid) throw new Error("Ordinary tab changed during preparation"); },
             validate: tab => {
-                if (tab.id !== target.id || tab.windowId !== target.windowId || tab.pinned ||
+                if (initialNavigation) observeDocument(tab);
+                if (invalid || tab.id !== target.id || tab.windowId !== target.windowId || tab.pinned ||
                         !matchesDocument(tab) || tab.groupId !== -1 && tab.groupId !== initialGroup) {
                     throw new Error("Created ordinary tab no longer matches its staging request");
                 }
