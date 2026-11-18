@@ -24,6 +24,7 @@ RULE_RETURN_PREF=${IOA_NETNS_RULE_RETURN_PREF:-900}
 RULE_STOP_PREF=${IOA_NETNS_RULE_STOP_PREF:-901}
 NFT_TABLE=${IOA_NETNS_NFT_TABLE:-ioa_netns}
 TUNNEL_TABLE=${IOA_NETNS_TUNNEL_TABLE:-ioa}
+TUN_IF=${IOA_NETNS_TUN_IF:-tun0}
 IP=${IP_OVERRIDE:-ip}
 NFT=${NFT_OVERRIDE:-nft}
 SYSCTL=${SYSCTL_OVERRIDE:-sysctl}
@@ -79,16 +80,25 @@ EOF
     # traffic (pref 1150/1151 send it to table `ioa`); table `ioa` now hands all of it to the
     # namespace end of the veth. Inside, it is forwarded into tun0 and masqueraded to the tun0
     # address, the source SmartGateAgent's tunnel expects, so replies come back the same way.
+    # Host traffic may only leave the namespace through the tunnel. Without tun0 (iOA stopped or
+    # logged out) the namespace's default points back at the host, which would carry intranet
+    # destinations out of the physical uplink; the forward filter refuses them at once instead.
     "$IP" route replace default via "$NS_ADDR" dev "$HOST_IF" table "$TUNNEL_TABLE"
     # Whether a new namespace forwards depends on what it inherited; it must forward between the
     # veth and tun0, so say so explicitly.
     in_ns "$SYSCTL" -q -w net.ipv4.ip_forward=1
     in_ns "$SYSCTL" -q -w "net.ipv4.conf.$NS_IF.rp_filter=2"
+    # The refusals below are only immediate if they are sent: ICMP rate limiting otherwise swallows
+    # them and the host's sockets wait out their own timeout. The namespace sends no other ICMP.
+    in_ns "$SYSCTL" -q -w net.ipv4.icmp_ratelimit=0
     in_ns "$NFT" -f - <<EOF
 destroy table ip $NFT_TABLE
 add table ip $NFT_TABLE
 add chain ip $NFT_TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }
 add rule ip $NFT_TABLE postrouting iifname "$NS_IF" oifname != "$NS_IF" masquerade
+add chain ip $NFT_TABLE forward { type filter hook forward priority filter; policy accept; }
+add rule ip $NFT_TABLE forward iifname "$NS_IF" oifname != "$TUN_IF" meta l4proto tcp reject with tcp reset
+add rule ip $NFT_TABLE forward iifname "$NS_IF" oifname != "$TUN_IF" reject with icmp type admin-prohibited
 EOF
     log "up: $NS ($NS_ADDR) via $HOST_IF ($HOST_ADDR)"
 }

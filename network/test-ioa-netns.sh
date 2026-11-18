@@ -4,8 +4,9 @@
 #      the replies back even though the host's catch-all would send them into the exit node;
 #   2. never leaves through the Tailscale exit node, even though the host's catch-all prefers it;
 #   3. fails closed immediately (EHOSTUNREACH, not a timeout) when the physical route is gone;
-#   4. carries the host's own iOA traffic (mark 0x1, literal 10/8) through tun0 inside the namespace,
-#      sourced from the tunnel address, and refuses it rather than leaking it once `down` ran;
+#   4. carries the host's own iOA traffic (mark 0x1, literal 10/8, the tunnel network SmartDNS asks)
+#      through tun0 inside the namespace, sourced from the tunnel address; without tun0 refuses it
+#      instead of sending it out the uplink, and once `down` ran refuses it rather than leaking it;
 #   5. is idempotent (`up` twice) and removed completely by `down`.
 #
 # Every run happens in a sandbox: new network, mount and PID namespaces, with /run/netns on a
@@ -60,6 +61,9 @@ if [ "${IOA_NETNS_SANDBOX:-}" != 1 ]; then
     # `link del` is equivalent. Keeping the namespace itself is the meaningful failure.
     mutate down-keeps-ns 's/! ns_exists || "\$IP" netns del "\$NS"/true/'
     mutate down-keeps-nat 's/"\$NFT" delete table ip "\$NFT_TABLE"/true/'
+    mutate no-tunnel-only 's/ meta l4proto tcp reject with tcp reset$/ accept/'
+    mutate no-tunnel-icmp 's/ reject with icmp type admin-prohibited$/ accept/'
+    mutate icmp-ratelimit 's/net.ipv4.icmp_ratelimit=0/net.ipv4.icmp_ratelimit=1000/'
     ok "mutation checks: every mutant fails an assertion"
     exit 0
 fi
@@ -190,6 +194,7 @@ out=$(from_host)
 echo '400 ioa' >>/etc/iproute2/rt_tables 2>/dev/null || true
 ip rule add pref 1150 fwmark 0x1 lookup 400
 ip rule add pref 1150 to 10.0.0.0/8 fwmark 0 lookup 400
+ip rule add pref 1150 to 192.168.255.0/24 fwmark 0 lookup 400
 ip rule add pref 1151 fwmark 0x1 prohibit
 
 netns_script up
@@ -207,6 +212,11 @@ out=$(host_to 100.12.0.2 0x1)
 [ "$out" = "fakeip 192.168.255.10" ] ||
     fail "a marked host connect to a fakeip should cross the tunnel, got '$out'"
 ok "the host reaches a marked fakeip address through the tunnel in the namespace"
+listen_on corp 192.168.255.1 resolver
+out=$(host_to 192.168.255.1)
+[ "$out" = "resolver 192.168.255.10" ] ||
+    fail "an unmarked host connect to iOA's tunnel network (SmartDNS's upstream) should cross the tunnel, got '$out'"
+ok "the host reaches iOA's tunnel network unmarked, as SmartDNS's ioa upstream does"
 
 netns_script up
 [ "$(ip -4 rule show pref 900 | wc -l)" -eq 2 ] && [ "$(ip -4 rule show pref 901 | wc -l)" -eq 1 ] ||
@@ -222,6 +232,36 @@ ok "with no physical route the namespace fails closed at once"
 ip route add default via 192.0.2.1 dev wl0
 [ "$(from_ioa)" = "up 192.0.2.10" ] || fail "the path did not return with the physical route"
 ok "the path returns with the physical route without re-running up"
+
+# iOA stopped or logged out: tun0 is gone and the namespace's only route leads back to the host. The
+# uplink also answers on the intranet address, so a leak would show up as "leak ...".
+ip -n up addr add 10.20.30.40/32 dev lo
+listen_on up 10.20.30.40 leak
+ip -n ioa link del tun0
+for dst in 10.20.30.40 192.168.255.1; do
+    out=$(host_to "$dst")
+    case $out in
+        ERR*) ;;
+        *) fail "with no tunnel, host traffic to $dst must be refused at once, got '$out'" ;;
+    esac
+done
+# DNS to the tunnel resolver is UDP: the refusal has to arrive as ICMP, not as a timeout.
+out=$(timeout 4 python3 -c '
+import errno, socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(2)
+s.connect(("192.168.255.1", 53))
+try:
+    s.send(b"x"); s.recv(64); print("ANSWER")
+except socket.timeout:
+    print("TIMEOUT")
+except OSError as e:
+    print("ERR", errno.errorcode.get(e.errno, e.errno))
+' || echo TIMEOUT)
+case $out in
+    ERR*) ;;
+    *) fail "with no tunnel, UDP to the tunnel resolver must be refused at once, got '$out'" ;;
+esac
+ok "with no tunnel, intranet traffic is refused, never sent out the physical uplink"
 
 netns_script down
 out=$(host_to 100.12.0.2 0x1)
