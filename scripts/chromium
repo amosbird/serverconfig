@@ -8,8 +8,7 @@ mkdir -p "$(dirname "$host")"
 ln -sf "$root/chromium/external-links/native-host.json" "$host"
 
 focus_main_group() {
-    printf '%s' '[[["group","f"]],"toscreen",[],{},true]' \
-        | nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY" >/dev/null
+    python3 "$root/scripts/ordinary-open-client.py" --focus-desktop
 }
 
 chrome_args=(
@@ -112,7 +111,10 @@ PY
         rm -f "$lease_output"
         start_chrome >/dev/null 2>&1 &
     fi
-    ABUSH_ORDINARY_OPEN_REQUEST_ID="$request_id" \
+    desktop_focus=0
+    if $focus_group; then desktop_focus=1; fi
+    ABUSH_ORDINARY_OPEN_FOCUS_DESKTOP="$desktop_focus" \
+        ABUSH_ORDINARY_OPEN_REQUEST_ID="$request_id" \
         ABUSH_ORDINARY_OPEN_DEADLINE_MS="$deadline_ms" \
         ABUSH_ORDINARY_OPEN_LEASE_PATH="$lease_path" \
         ABUSH_CHROME_PROFILE="$profile" \
@@ -128,6 +130,6 @@ if ! profile_is_running; then
     update_external_links_profile || exit
 fi
 if $focus_group; then
-    focus_main_group
+    focus_main_group || exit
 fi
 launch_chrome

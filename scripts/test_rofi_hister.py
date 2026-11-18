@@ -403,8 +403,10 @@ class RofiHisterTest(unittest.TestCase):
         root = SCRIPT.parent.parent
         launcher = SCRIPT.with_name("chromium").read_text()
         qtile_config = (root / ".config/qtile/config.py").read_text()
-        self.assertIn('[[["group","f"]],"toscreen",[],{},true]', launcher)
-        self.assertIn('nc -U -N "$HOME/.cache/qtile/qtilesocket.$DISPLAY"', launcher)
+        self.assertIn('python3 "$root/scripts/ordinary-open-client.py" --focus-desktop', launcher)
+        client = SCRIPT.with_name("ordinary-open-client.py").read_text()
+        self.assertIn('[[["group", "f"]], "toscreen", [], {}, True]', client)
+        self.assertIn('ABUSH_ORDINARY_OPEN_FOCUS_DESKTOP="$desktop_focus"', launcher)
         self.assertNotIn("qtile cmd-obj", launcher)
         self.assertIn("--restore-last-session", launcher)
         self.assertIn("--hide-crash-restore-bubble", launcher)

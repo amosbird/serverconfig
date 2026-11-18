@@ -16,6 +16,79 @@ MAX_MESSAGE_SIZE = 64 * 1024
 LEASE_VERSION = 1
 LEASE_MAX_SIZE = 64 * 1024
 LEASE_MAX_LIFETIME = 60.0
+DESKTOP_FOCUS_TIMEOUT = 2.0
+QTILE_MAX_REPLY = 64 * 1024
+
+
+def desktop_socket_path():
+    injected = os.environ.get("ABUSH_QTILE_SOCKET")
+    if injected:
+        path = pathlib.Path(injected)
+        if not path.is_absolute():
+            raise RuntimeError("Qtile socket path is not absolute")
+        return path
+    cache = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache")) / "qtile"
+    display = os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")
+    if display:
+        return cache / f"qtilesocket.{display}"
+    for display in ("wayland-0", ":0"):
+        path = cache / f"qtilesocket.{display}"
+        if path.exists():
+            return path
+    raise RuntimeError("Qtile socket is unavailable")
+
+
+def focus_browser_desktop(deadline=None):
+    local_deadline = time.monotonic() + DESKTOP_FOCUS_TIMEOUT
+    deadline = local_deadline if deadline is None else min(local_deadline, deadline)
+
+    def remaining():
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise TimeoutError("Qtile desktop switch deadline expired")
+        return budget
+
+    remaining()
+    path = desktop_socket_path()
+    before = path.lstat()
+    if path.is_symlink() or not stat.S_ISSOCK(before.st_mode) or \
+            before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) != 0o600:
+        raise RuntimeError("Qtile socket is unsafe")
+    request = json.dumps([[["group", "f"]], "toscreen", [], {}, True],
+                         separators=(",", ":")).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(remaining())
+        connection.connect(str(path))
+        remaining()
+        if hasattr(socket, "SO_PEERCRED"):
+            credentials = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                               struct.calcsize("3i"))
+            if struct.unpack("3i", credentials)[1] != os.getuid():
+                raise RuntimeError("Qtile socket peer is not owned by this user")
+        after = path.lstat()
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise RuntimeError("Qtile socket changed during connection")
+        connection.settimeout(remaining())
+        connection.sendall(request)
+        remaining()
+        connection.shutdown(socket.SHUT_WR)
+        response = bytearray()
+        while True:
+            connection.settimeout(remaining())
+            chunk = connection.recv(min(4096, QTILE_MAX_REPLY + 1 - len(response)))
+            remaining()
+            if not chunk:
+                break
+            response.extend(chunk)
+            if len(response) > QTILE_MAX_REPLY:
+                raise RuntimeError("Qtile desktop switch reply is too large")
+    result = json.loads(response)
+    if not isinstance(result, list) or len(result) != 2 or type(result[0]) is not int:
+        raise RuntimeError("invalid Qtile desktop switch reply")
+    if result[0] != 0:
+        raise RuntimeError("Qtile desktop switch command failed")
+    if result[1] is not None:
+        raise RuntimeError("unexpected Qtile desktop switch result")
 
 
 def runtime_root():
@@ -153,8 +226,11 @@ def connect(path, timeout):
 
 
 def main():
+    if sys.argv[1:] == ["--focus-desktop"]:
+        focus_browser_desktop()
+        return
     if len(sys.argv) != 2:
-        raise RuntimeError("usage: ordinary-open-client URL")
+        raise RuntimeError("usage: ordinary-open-client URL | --focus-desktop")
     url = sys.argv[1]
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https", "file"} or \
@@ -217,13 +293,21 @@ def main():
     finally:
         remove_launch_lease(lease)
     expected = {"version", "request_id", "operation", "completion"}
-    if set(completion) != expected or completion.get("version") != 1 or \
+    if set(completion) != expected or type(completion.get("version")) is not int or \
+            completion.get("version") != 1 or \
             completion.get("request_id") != request["request_id"] or \
             completion.get("operation") != "ordinary_open_completed" or \
-            completion.get("completion") not in {"applied", "not_applied", "unknown"}:
+            completion.get("completion") not in ("applied", "not_applied", "unknown"):
         raise RuntimeError("invalid ordinary-open completion")
     if completion["completion"] != "applied":
         raise RuntimeError(f"ordinary-open completed as {completion['completion']}")
+    if os.environ.get("ABUSH_ORDINARY_OPEN_FOCUS_DESKTOP") == "1":
+        try:
+            focus_browser_desktop(time.monotonic() + (deadline_ms / 1000 - time.time()))
+        except (EOFError, OSError, RuntimeError, TimeoutError, ValueError) as error:
+            raise RuntimeError(
+                f"URL opened; desktop switch failed: {error}. Do not retry the URL automatically"
+            ) from error
 
 
 if __name__ == "__main__":

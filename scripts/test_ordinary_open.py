@@ -886,6 +886,9 @@ class LauncherTest(unittest.TestCase):
         self.fake_scanner.chmod(0o755)
         self.fake_client.write_text(
             "import json,os,sys,pathlib\n"
+            "if sys.argv[1:] == ['--focus-desktop']:\n"
+            " pathlib.Path(os.environ['ABUSH_TEST_FOCUS_LOG']).write_text('focused')\n"
+            " raise SystemExit(0)\n"
             "pathlib.Path(os.environ['ABUSH_TEST_CLIENT_LOG']).write_text(sys.argv[1])\n"
             "metadata=os.environ.get('ABUSH_ORDINARY_OPEN_LEASE_METADATA')\n"
             "request_id=os.environ.get('ABUSH_ORDINARY_OPEN_REQUEST_ID','test')\n"
@@ -920,6 +923,7 @@ class LauncherTest(unittest.TestCase):
             "ABUSH_TEST_CHROME_LOG": str(self.log),
             "ABUSH_TEST_CHROME_READY": str(self.chrome_ready),
             "ABUSH_TEST_CLIENT_LOG": str(self.base / "client"),
+            "ABUSH_TEST_FOCUS_LOG": str(self.base / "focus"),
             "ABUSH_TEST_UPDATE_LOG": str(self.update_log),
         }
 
@@ -935,9 +939,6 @@ class LauncherTest(unittest.TestCase):
             "printf '%s' ACK > \"$ABUSH_TEST_REMOTE_LOG\"\n"
         )
         remote.chmod(0o755)
-        nc = self.bin / "nc"
-        nc.write_text("#!/usr/bin/env python3\nimport sys\nsys.stdin.buffer.read()\n")
-        nc.chmod(0o755)
         return environment
 
     def test_windowless_running_profile_with_pending_upgrade_reaches_native_chrome(self):
@@ -974,6 +975,7 @@ class LauncherTest(unittest.TestCase):
         self.assertIn(b"--user-data-dir=" + os.fsencode(profile), arguments)
         self.assertFalse(self.remote_log.exists(), "a singleton ACK is not a visible window")
         self.assertFalse((self.base / "client").exists())
+        self.assertEqual((self.base / "focus").read_text(), "focused")
         self.assertEqual(preferences.read_bytes(), original)
         self.assertEqual(marker.read_bytes(), b"old extension remains installed")
         self.assertFalse((profile / "external-links-backups").exists())
@@ -987,6 +989,7 @@ class LauncherTest(unittest.TestCase):
         self.assertTrue(self.log.is_file())
         self.assertFalse(self.remote_log.exists())
         self.assertFalse((self.base / "client").exists())
+        self.assertEqual((self.base / "focus").read_text(), "focused")
 
     def test_cold_no_argument_update_failure_stays_visible_without_launch(self):
         environment = self.no_argument_environment()
@@ -1064,7 +1067,7 @@ class LauncherTest(unittest.TestCase):
             server.complete(host.ordinary_open_response(lease["request_id"], "applied"))
 
         finish = start_worker(self, delayed_server)
-        result = subprocess.run([ROOT / "scripts/chromium", url], env=environment,
+        result = subprocess.run([ROOT / "scripts/chromium", "--current-group", url], env=environment,
                                 capture_output=True, text=True, timeout=8)
         finish()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -1193,7 +1196,7 @@ class LauncherTest(unittest.TestCase):
 
                 finish = start_worker(self, delayed_server)
                 result = subprocess.run(
-                    [ROOT / "scripts/chromium", url], env=environment,
+                    [ROOT / "scripts/chromium", "--current-group", url], env=environment,
                     capture_output=True, text=True, timeout=3,
                 )
                 finish()
