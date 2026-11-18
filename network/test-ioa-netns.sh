@@ -324,8 +324,8 @@ ip route flush table 19
 ok "the namespace prefers the authorized office wire, and main without it"
 
 netns_script up
-[ "$(ip -4 rule show pref 900 | wc -l)" -eq 2 ] && [ "$(ip -4 rule show pref 901 | wc -l)" -eq 1 ] &&
-    [ "$(ip -4 rule show pref 899 | wc -l)" -eq 1 ] ||
+[ "$(ip -4 rule show pref 601 | wc -l)" -eq 2 ] && [ "$(ip -4 rule show pref 602 | wc -l)" -eq 1 ] &&
+    [ "$(ip -4 rule show pref 600 | wc -l)" -eq 1 ] ||
     fail "up twice left duplicate rules"
 [ "$(from_ioa)" = "up 192.0.2.10" ] || fail "a second up broke the path"
 ok "up is idempotent"
@@ -375,9 +375,9 @@ ok "with the namespace down, marked intranet traffic is refused, never sent to t
 left=$(
     ip netns list | awk '$1 == "ioa"'
     ip -o link show vio 2>/dev/null || true
-    ip -4 rule show pref 899
-    ip -4 rule show pref 900
-    ip -4 rule show pref 901
+    ip -4 rule show pref 600
+    ip -4 rule show pref 601
+    ip -4 rule show pref 602
     ip route show table 400
     nft list tables | grep -w ioa_netns || true
 )

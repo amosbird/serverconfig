@@ -18,13 +18,15 @@ HOST_ADDR=${IOA_NETNS_HOST_ADDR:-169.254.170.1}
 NS_ADDR=${IOA_NETNS_NS_ADDR:-169.254.170.2}
 PREFIX=${IOA_NETNS_PREFIX:-30}
 NET=${IOA_NETNS_NET:-169.254.170.0/30}
-# Below Tailscale's 5210-5270 and the repository's 1000 band, above nothing that matters.
-RULE_PREF=${IOA_NETNS_RULE_PREF:-900}
-RULE_RETURN_PREF=${IOA_NETNS_RULE_RETURN_PREF:-900}
-RULE_STOP_PREF=${IOA_NETNS_RULE_STOP_PREF:-901}
+# After Tailscale's own transport escape (500) and before everything of the repository's from 1000 on.
+# network-reconfigure retires a list of old priorities on every run (900 is one of them), so these
+# must stay off that list.
+RULE_PREF=${IOA_NETNS_RULE_PREF:-601}
+RULE_RETURN_PREF=${IOA_NETNS_RULE_RETURN_PREF:-601}
+RULE_STOP_PREF=${IOA_NETNS_RULE_STOP_PREF:-602}
 # Ahead of RULE_PREF: while the office wire is 802.1X-authorized, network-reconfigure keeps its
 # default in this table (and flushes it otherwise, so the lookup falls through to main).
-RULE_UNDERLAY_PREF=${IOA_NETNS_RULE_UNDERLAY_PREF:-899}
+RULE_UNDERLAY_PREF=${IOA_NETNS_RULE_UNDERLAY_PREF:-600}
 UNDERLAY_TABLE=${IOA_NETNS_UNDERLAY_TABLE:-19}
 NFT_TABLE=${IOA_NETNS_NFT_TABLE:-ioa_netns}
 TUNNEL_TABLE=${IOA_NETNS_TUNNEL_TABLE:-ioa}
