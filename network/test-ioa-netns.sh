@@ -4,7 +4,9 @@
 #      the replies back even though the host's catch-all would send them into the exit node;
 #   2. never leaves through the Tailscale exit node, even though the host's catch-all prefers it;
 #   3. fails closed immediately (EHOSTUNREACH, not a timeout) when the physical route is gone;
-#   4. is idempotent (`up` twice) and removed completely by `down`.
+#   4. carries the host's own iOA traffic (mark 0x1, literal 10/8) through tun0 inside the namespace,
+#      sourced from the tunnel address, and refuses it rather than leaking it once `down` ran;
+#   5. is idempotent (`up` twice) and removed completely by `down`.
 #
 # Every run happens in a sandbox: new network, mount and PID namespaces, with /run/netns on a
 # private tmpfs. The sandbox's own network namespace plays the host, so the real host's rules,
@@ -43,18 +45,27 @@ if [ "${IOA_NETNS_SANDBOX:-}" != 1 ]; then
             124 | 137) fail "mutant $1 hit the ${LIMIT}s limit instead of failing an assertion" ;;
         esac
     }
-    mutate no-main-rule 's/reconcile_rule "\$RULE_PREF" "from \$NET lookup main"/:/'
-    mutate no-stop-rule 's/reconcile_rule "\$RULE_STOP_PREF" "from \$NET prohibit"/:/'
+    mutate no-main-rule 's/reconcile_rule "\$RULE_PREF" "iif \$HOST_IF lookup main"/:/'
+    mutate no-stop-rule 's/reconcile_rule "\$RULE_STOP_PREF" "iif \$HOST_IF prohibit"/:/'
     mutate no-masquerade 's/ masquerade$/ accept/'
     mutate no-forwarding 's/net.ipv4.conf.\$HOST_IF.forwarding=1/net.ipv4.conf.$HOST_IF.forwarding=0/'
     mutate no-return-rule 's/reconcile_rule "\$RULE_RETURN_PREF" "to \$NET lookup main"/:/'
     mutate down-keeps-rules 's/while "\$IP" -4 rule del pref "\$pref"/while false/'
+    mutate no-tunnel-route 's/"\$IP" route replace default via "\$NS_ADDR" dev "\$HOST_IF" table "\$TUNNEL_TABLE"/:/'
+    # No mutant drops the namespace's own ip_forward: on this kernel every new network namespace
+    # starts with forwarding on (net.ipv4.ip_forward=1 even from a namespace that set it to 0), so
+    # that mutant is equivalent here. The setting stays in the script because it is not guaranteed.
+    mutate no-ns-masquerade 's/postrouting iifname "\$NS_IF" oifname != "\$NS_IF" masquerade/postrouting iifname "$NS_IF" oifname != "$NS_IF" accept/'
+    # No down-keeps-link mutant: deleting the namespace destroys the veth pair with it, so skipping
+    # `link del` is equivalent. Keeping the namespace itself is the meaningful failure.
+    mutate down-keeps-ns 's/! ns_exists || "\$IP" netns del "\$NS"/true/'
     mutate down-keeps-nat 's/"\$NFT" delete table ip "\$NFT_TABLE"/true/'
     ok "mutation checks: every mutant fails an assertion"
     exit 0
 fi
 
 # ---- inside the sandbox -------------------------------------------------------------------------
+
 # The real host's /run/netns is a shared mount; without a private tmpfs on top, namespaces created
 # here would appear in the host's `ip netns list`.
 mkdir -p /run/netns
@@ -120,17 +131,82 @@ except OSError as e:
 from_host() { connect_from env; }
 from_ioa() { connect_from ip netns exec ioa; }
 netns_script() {
-    IOA_NETNS=ioa IOA_NETNS_HOST_IF=vio IOA_NETNS_NS_IF=vio-ns bash "$SCRIPT" "$@" >/dev/null
+    IOA_NETNS=ioa IOA_NETNS_HOST_IF=vio IOA_NETNS_NS_IF=vio-ns IOA_NETNS_TUNNEL_TABLE=400 \
+        bash "$SCRIPT" "$@" >/dev/null
+}
+# SmartGateAgent's tunnel, inside the namespace: tun0 is a veth to `corp`, the intranet, which serves
+# 10.20.30.40:7000 and a fakeip 100.12.0.2:7000 and only routes back to the tunnel address.
+add_tunnel() {
+    ip netns add corp
+    ip link add tun0 netns ioa type veth peer name ct0 netns corp
+    ip -n ioa addr add 192.168.255.10/24 dev tun0
+    ip -n ioa link set tun0 up
+    ip -n ioa route add 10.0.0.0/8 dev tun0
+    ip -n ioa route add 100.12.0.0/16 dev tun0
+    ip -n corp link set lo up
+    ip -n corp addr add 192.168.255.1/24 dev ct0
+    ip -n corp addr add 10.20.30.40/32 dev lo
+    ip -n corp addr add 100.12.0.2/32 dev lo
+    ip -n corp link set ct0 up
+    listen_on corp 10.20.30.40 corp
+    listen_on corp 100.12.0.2 fakeip
+}
+listen_on() {  # listen_on <netns> <addr> <name>
+    ip netns exec "$1" python3 -c '
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind((sys.argv[1], 7000)); s.listen(8)
+while True:
+    c, a = s.accept(); c.sendall((sys.argv[2] + " " + a[0] + "\n").encode()); c.close()
+' "$2" "$3" </dev/null >/dev/null 2>&1 &
+    for _ in $(seq 50); do
+        ip netns exec "$1" ss -Hltn "src $2 and sport = :7000" | grep -q . && return 0
+        sleep 0.1
+    done
+    fail "fixture: nothing listens on $2:7000 in $1"
+}
+# A host process reaching the intranet: by mark 0x1 (what SmartDNS-classified names and tinyproxy
+# get) or by a literal 10/8 address (which rule 1150 sends to table ioa unmarked).
+host_to() {  # host_to <addr> [mark]
+    timeout 4 python3 -c '
+import errno, socket, sys
+try:
+    s = socket.socket()
+    if len(sys.argv) > 2: s.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, int(sys.argv[2], 0))
+    s.settimeout(2); s.connect((sys.argv[1], 7000))
+    print(s.recv(64).decode().strip())
+except socket.timeout:
+    print("TIMEOUT")
+except OSError as e:
+    print("ERR", errno.errorcode.get(e.errno, e.errno))
+' "$@" || echo TIMEOUT
 }
 
 out=$(from_host)
 [ "$out" = "ts 100.88.0.1" ] || fail "fixture: the host's own traffic should take the exit node, got '$out'"
+
+# The host's iOA policy as network-reconfigure installs it: mark 0x1 and literal 10/8 use table ioa,
+# and a marked packet with no route in it is refused, never sent to the exit node.
+echo '400 ioa' >>/etc/iproute2/rt_tables 2>/dev/null || true
+ip rule add pref 1150 fwmark 0x1 lookup 400
+ip rule add pref 1150 to 10.0.0.0/8 fwmark 0 lookup 400
+ip rule add pref 1151 fwmark 0x1 prohibit
 
 netns_script up
 out=$(from_ioa)
 [ "$out" = "up 192.0.2.10" ] ||
     fail "namespace traffic should leave through the uplink masqueraded to 192.0.2.10, got '$out'"
 ok "namespace traffic leaves through the uplink, masqueraded, while the host prefers the exit node"
+
+add_tunnel
+out=$(host_to 10.20.30.40)
+[ "$out" = "corp 192.168.255.10" ] ||
+    fail "a host connect to a literal 10/8 address should cross the tunnel from 192.168.255.10, got '$out'"
+ok "the host reaches a literal intranet address through the tunnel in the namespace"
+out=$(host_to 100.12.0.2 0x1)
+[ "$out" = "fakeip 192.168.255.10" ] ||
+    fail "a marked host connect to a fakeip should cross the tunnel, got '$out'"
+ok "the host reaches a marked fakeip address through the tunnel in the namespace"
 
 netns_script up
 [ "$(ip -4 rule show pref 900 | wc -l)" -eq 2 ] && [ "$(ip -4 rule show pref 901 | wc -l)" -eq 1 ] ||
@@ -148,11 +224,16 @@ ip route add default via 192.0.2.1 dev wl0
 ok "the path returns with the physical route without re-running up"
 
 netns_script down
+out=$(host_to 100.12.0.2 0x1)
+[ "$out" = "ERR EACCES" ] ||
+    fail "with the namespace down, marked intranet traffic must be refused (1151), got '$out'"
+ok "with the namespace down, marked intranet traffic is refused, never sent to the exit node"
 left=$(
     ip netns list | awk '$1 == "ioa"'
     ip -o link show vio 2>/dev/null || true
     ip -4 rule show pref 900
     ip -4 rule show pref 901
+    ip route show table 400
     nft list tables | grep -w ioa_netns || true
 )
 [ -z "$left" ] || fail "down left state behind: $left"

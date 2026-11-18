@@ -23,6 +23,7 @@ RULE_PREF=${IOA_NETNS_RULE_PREF:-900}
 RULE_RETURN_PREF=${IOA_NETNS_RULE_RETURN_PREF:-900}
 RULE_STOP_PREF=${IOA_NETNS_RULE_STOP_PREF:-901}
 NFT_TABLE=${IOA_NETNS_NFT_TABLE:-ioa_netns}
+TUNNEL_TABLE=${IOA_NETNS_TUNNEL_TABLE:-ioa}
 IP=${IP_OVERRIDE:-ip}
 NFT=${NFT_OVERRIDE:-nft}
 SYSCTL=${SYSCTL_OVERRIDE:-sysctl}
@@ -46,7 +47,8 @@ up() {
     in_ns "$IP" route replace default via "$HOST_ADDR" dev "$NS_IF"
 
     # Forwarding has to be on for the host end and for the uplink, because replies enter on the
-    # uplink and are forwarded back to the namespace. The namespace itself never forwards.
+    # uplink and are forwarded back to the namespace. Inside, the namespace forwards between the
+    # veth and tun0 for the host's tunnel traffic.
     "$SYSCTL" -q -w "net.ipv4.conf.$HOST_IF.forwarding=1"
     "$SYSCTL" -q -w net.ipv4.ip_forward=1
     # Loose reverse-path check: replies from the uplink come back on a different device than the
@@ -54,19 +56,39 @@ up() {
     "$SYSCTL" -q -w "net.ipv4.conf.$HOST_IF.rp_filter=2"
 
     # Namespace traffic looks up main (the physical default), never the Tailscale exit node table.
-    # The stop rule makes a missing physical route fail closed, immediately and visibly to iOA,
-    # instead of falling through to the exit node at 5270. The `to` rule is for the return path:
-    # replies are de-masqueraded to the namespace address before the routing decision, and without
-    # it the host's catch-all would send them into the exit node instead of back over the veth.
-    reconcile_rule "$RULE_PREF" "from $NET lookup main"
+    # It is matched by the input device, not by source address: the host end of the veth carries a
+    # /30 address too, and a `from` rule would also catch the host's own sockets the moment they
+    # pick that address as the source for a route through the veth, sending them to main instead of
+    # table ioa. The stop rule makes a missing physical route fail closed, immediately and visibly
+    # to iOA, instead of falling through to the exit node at 5270. The `to` rule is for the return
+    # path: replies are de-masqueraded to the namespace address before the routing decision, and
+    # without it the host's catch-all would send them into the exit node instead of back over the
+    # veth.
+    reconcile_rule "$RULE_PREF" "iif $HOST_IF lookup main"
     reconcile_rule "$RULE_RETURN_PREF" "to $NET lookup main"
-    reconcile_rule "$RULE_STOP_PREF" "from $NET prohibit"
+    reconcile_rule "$RULE_STOP_PREF" "iif $HOST_IF prohibit"
 
     "$NFT" -f - <<EOF
 destroy table ip $NFT_TABLE
 add table ip $NFT_TABLE
 add chain ip $NFT_TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }
 add rule ip $NFT_TABLE postrouting ip saddr $NET oifname != "$HOST_IF" masquerade
+EOF
+
+    # The host reaches the tunnel through the namespace. Host policy keeps deciding what is iOA
+    # traffic (pref 1150/1151 send it to table `ioa`); table `ioa` now hands all of it to the
+    # namespace end of the veth. Inside, it is forwarded into tun0 and masqueraded to the tun0
+    # address, the source SmartGateAgent's tunnel expects, so replies come back the same way.
+    "$IP" route replace default via "$NS_ADDR" dev "$HOST_IF" table "$TUNNEL_TABLE"
+    # Whether a new namespace forwards depends on what it inherited; it must forward between the
+    # veth and tun0, so say so explicitly.
+    in_ns "$SYSCTL" -q -w net.ipv4.ip_forward=1
+    in_ns "$SYSCTL" -q -w "net.ipv4.conf.$NS_IF.rp_filter=2"
+    in_ns "$NFT" -f - <<EOF
+destroy table ip $NFT_TABLE
+add table ip $NFT_TABLE
+add chain ip $NFT_TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }
+add rule ip $NFT_TABLE postrouting iifname "$NS_IF" oifname != "$NS_IF" masquerade
 EOF
     log "up: $NS ($NS_ADDR) via $HOST_IF ($HOST_ADDR)"
 }
@@ -79,7 +101,7 @@ reconcile_rule() {
         "$IP" -4 rule add pref "$pref" $spec
 }
 
-# How `ip rule show` prints a spec: an action without `from` gets `from all`.
+# How `ip rule show` prints a spec: a rule without `from` is shown with `from all`.
 rule_text() {
     case $1 in
         from) echo "$*" ;;
@@ -89,6 +111,8 @@ rule_text() {
 
 down() {
     "$NFT" delete table ip "$NFT_TABLE" 2>/dev/null || true
+    # Deleting the veth also drops the table route through it; the route is only left behind if the
+    # link is already gone, so it is not removed separately.
     local pref
     for pref in "$RULE_PREF" "$RULE_RETURN_PREF" "$RULE_STOP_PREF"; do
         while "$IP" -4 rule del pref "$pref" 2>/dev/null; do :; done
