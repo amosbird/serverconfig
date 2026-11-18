@@ -569,7 +569,11 @@ scratchpad_matches = {
     "chatgpt": Match(wm_class="chatgpt"),
     "stardict": Match(title="stardict"),
     "stalonetray": Match(title="stalonetray"),
-    "bookmarks": Match(wm_class="bookmark-manager"),
+    "bookmarks": MatchAny(
+        Match(wm_instance_class="aocepclkpgckjeikiphffdlileoaceec__bookmarks.html"),
+        Match(wm_instance_class="jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html"),
+        Match(wm_class="bookmark-manager"),
+    ),
 }
 
 

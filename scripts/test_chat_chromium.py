@@ -69,12 +69,13 @@ for (const [url, expected] of cases) {{
         for launcher in (CHROMIUM, RUNCHAT, ROOT / "scripts/runai"):
             self.assertIn("--no-default-browser-check", launcher.read_text())
 
-    def test_bookmark_manager_uses_a_dedicated_non_managed_profile(self):
+    def test_bookmark_manager_uses_the_main_profile_through_a_fixed_app_launcher(self):
         launcher = (ROOT / "scripts/bookmark-manager").read_text()
-        self.assertIn('profile=${ABUSH_BOOKMARK_PROFILE:-"$HOME/.config/google-chrome-bookmarks"}',
-                      launcher)
+        self.assertIn('profile=${ABUSH_BOOKMARK_PROFILE:-${ABUSH_CHROME_PROFILE:-', launcher)
+        self.assertIn('$HOME/.config/google-chrome-main', launcher)
+        self.assertNotIn('google-chrome-bookmarks', launcher)
         self.assertIn('exec "$chrome"', launcher)
-        self.assertIn('--class=bookmark-manager', launcher)
+        self.assertNotIn('--class=', launcher)
         self.assertIn('--app="$url"', launcher)
         self.assertNotIn("/home/amos/scripts/chromium", launcher)
 

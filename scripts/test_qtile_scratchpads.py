@@ -57,9 +57,9 @@ class QtileScratchpadTest(unittest.TestCase):
             "chatgpt",
             "stardict",
             "stalonetray",
-            "bookmarks",
         ):
             self.assertIn(f'"{name}": Match(', self.config)
+        self.assertIn('"bookmarks": MatchAny(', self.config)
 
     def test_the_tray_row_stays_centered_however_many_icons_it_holds(self):
         # The row is exactly as wide as the icons docked in it, so no fixed
@@ -99,10 +99,11 @@ class QtileScratchpadTest(unittest.TestCase):
         self.assertIn('--app="$url"', source)
         self.assertIn("rofi-chrome-mode id", source)
         self.assertIn('chrome-extension://$extension_id/bookmarks.html', source)
-        self.assertIn('profile=${ABUSH_BOOKMARK_PROFILE:-"$HOME/.config/google-chrome-bookmarks"}',
-                      source)
+        self.assertIn('profile=${ABUSH_BOOKMARK_PROFILE:-${ABUSH_CHROME_PROFILE:-', source)
+        self.assertIn('$HOME/.config/google-chrome-main', source)
+        self.assertNotIn('google-chrome-bookmarks', source)
         self.assertIn('exec "$chrome"', source)
-        self.assertIn("--class=bookmark-manager", source)
+        self.assertNotIn("--class=", source)
         self.assertNotIn("/home/amos/scripts/chromium", source)
         chromium = (ROOT / "scripts/chromium").read_text()
         self.assertIn('if [[ ${1:-} == --current-group ]]; then', chromium)
@@ -117,7 +118,12 @@ class QtileScratchpadTest(unittest.TestCase):
             'Key([ctrl, alt], "b", toggle_scratchpad("bookmarks"))',
             self.config,
         )
-        self.assertIn('"bookmarks": Match(wm_class="bookmark-manager")', self.config)
+        self.assertIn('"bookmarks": MatchAny(', self.config)
+        self.assertIn('Match(wm_instance_class="aocepclkpgckjeikiphffdlileoaceec__bookmarks.html")',
+                      self.config)
+        self.assertIn('Match(wm_instance_class="jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html")',
+                      self.config)
+        self.assertIn('Match(wm_class="bookmark-manager")', self.config)
         self.assertIn('"bookmark-manager",', self.config)
         self.assertEqual(self.config.count('Key([ctrl, alt], "b",'), 1)
         self.assertNotIn('Key([ctrl, alt], "b", lazy.spawn("scanqrcode"))', self.config)

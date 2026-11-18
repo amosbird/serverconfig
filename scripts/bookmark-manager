@@ -2,13 +2,24 @@
 
 set -euo pipefail
 
+if [[ $# -ne 0 ]]; then
+    printf 'usage: bookmark-manager\n' >&2
+    exit 2
+fi
+
 extension_id=$(rofi-chrome-mode id)
+case "$extension_id" in
+    aocepclkpgckjeikiphffdlileoaceec|jpgfhlaplofoaempbhliigmjbpofeghk) ;;
+    *)
+        printf 'bookmark-manager: unsupported Rofi Chrome extension ID\n' >&2
+        exit 1
+        ;;
+esac
 url="chrome-extension://$extension_id/bookmarks.html"
-profile=${ABUSH_BOOKMARK_PROFILE:-"$HOME/.config/google-chrome-bookmarks"}
+profile=${ABUSH_BOOKMARK_PROFILE:-${ABUSH_CHROME_PROFILE:-"$HOME/.config/google-chrome-main"}}
 chrome=${ABUSH_CHROME_BIN:-/usr/bin/google-chrome-stable}
 
 exec "$chrome" \
     --user-data-dir="$profile" \
     --no-default-browser-check \
-    --class=bookmark-manager \
     --app="$url"
