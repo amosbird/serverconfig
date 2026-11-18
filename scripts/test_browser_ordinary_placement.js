@@ -322,4 +322,29 @@ cases.push(["closing an unrelated tab during boundary reads cannot use an outdat
     await f.executor.presentationTail;
     assert.deepEqual(f.tabStrip(1), [personal.id, 3]);
 }]);
+cases.push(["membership arriving during placement reads preserves its newer pending isolation", async () => {
+    const f = fixture({globalAutomation: true}); await f.ready(); await f.materialize();
+    const work = f.executor.recordFor("remote"); await f.api.tabs.update(work.tab_id, {active: true});
+    const queryEntered = deferred(); const queryRelease = deferred(); let held = false;
+    f.hooks["tabGroups.query.after"] = async () => {
+        if (held) return; held = true; queryEntered.resolve(); await queryRelease.promise;
+    };
+    const emitCreated = f.api.tabs.onCreated.emit;
+    f.api.tabs.onCreated.emit = tab => emitCreated({...tab, groupId: -1});
+    const personal = await f.api.tabs.create({windowId: 1, active: true, url: "https://rofi.test/concurrent-membership"});
+    f.api.tabs.onCreated.emit = emitCreated;
+    await queryEntered.promise;
+    const ungroupEntered = deferred(); const ungroupRelease = deferred();
+    f.hooks["tabs.ungroup"] = async () => { ungroupEntered.resolve(); await ungroupRelease.promise; };
+    const isolation = Promise.all(f.api.tabs.onUpdated.emit(personal.id, {groupId: work.group_id}, clone(f.tabs.get(personal.id))));
+    try {
+        await ungroupEntered.promise;
+        queryRelease.resolve();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(f.executor.personalPlacements.has(personal.id), true);
+    } finally { queryRelease.resolve(); ungroupRelease.resolve(); }
+    await isolation; await f.executor.presentationTail;
+    assert.deepEqual(f.tabStrip(1), [1, personal.id, work.tab_id]);
+    assert.equal(f.tabs.get(personal.id).groupId, -1);
+}]);
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

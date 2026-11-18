@@ -1398,8 +1398,9 @@ class WorkspaceExecutor {
         const task = this.presentationTail.catch(() => {}).then(async () => {
             while (current()) {
                 const changed = new Promise(resolve => { placement.wake = resolve; });
+                const isolation = placement.isolation;
                 try {
-                    await placement.isolation;
+                    await isolation;
                 } finally {
                     await placement.isolationEffect;
                 }
@@ -1407,7 +1408,7 @@ class WorkspaceExecutor {
                 const {index, tab, revision} = await this.ordinaryPlacement(created.windowId,
                     (task, label) => this.api(task, label), () => {}, created.id);
                 if (!current() || index === RIGHT_EDGE_TAB_INDEX) return;
-                if (revision !== this.presentationRevision) continue;
+                if (isolation !== placement.isolation || revision !== this.presentationRevision) continue;
                 if (tab?.groupId >= 0) {
                     const candidate = this.personalCandidates.get(created.id);
                     if (candidate?.initial_group !== -1 || candidate.generation !== 1 ||
