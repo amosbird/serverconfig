@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# Generate a short-lived SFA bootstrap profile and stream it as QRS dynamic QR codes.
+
+set -euo pipefail
+
+DEFAULT_HOSTNAME=${SING_BOX_ANDROID_HOSTNAME:-singbox-android-$(date +%Y%m%d-%H%M%S)-$RANDOM}
+TAILSCALE_KEYS_URL=https://login.tailscale.com/admin/settings/keys
+QIFI_VERSION=0.3.0
+
+usage() {
+    cat <<EOF
+Usage: ${0##*/}
+
+Interactively creates a standalone new-phone sing-box configuration and displays
+it as SFA-compatible QRS dynamic QR codes. No output file or server is created.
+
+Scan with: SFA > add profile > scan QR code
+
+Environment:
+  SING_BOX_ANDROID_HOSTNAME  generated Tailscale hostname override
+  OPEN                       browser opener (default: xdg-open)
+EOF
+}
+
+case ${1:-} in
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    "") ;;
+    *)
+        usage >&2
+        exit 1
+        ;;
+esac
+
+for command in jq python3 node npx; do
+    command -v "$command" >/dev/null || {
+        printf 'missing required command: %s\n' "$command" >&2
+        exit 1
+    }
+done
+
+base=$(mktemp "${TMPDIR:-/tmp}/sing-box-android.XXXXXX")
+key_file=$(mktemp "${TMPDIR:-/tmp}/tailscale-auth-key.XXXXXX")
+config=$(mktemp "${TMPDIR:-/tmp}/sing-box-android-config.XXXXXX")
+profile=$(mktemp "${TMPDIR:-/tmp}/sing-box-android-profile.XXXXXX.bpf")
+trap 'rm -f "$base" "$key_file" "$config" "$profile"' EXIT
+cat >"$base" <<'JSON'
+{
+    "log": { "level": "info", "timestamp": true },
+    "dns": {
+        "servers": [
+            { "type": "local", "tag": "local" },
+            {
+                "type": "https",
+                "tag": "remote",
+                "server": "dns.google",
+                "path": "/dns-query",
+                "domain_resolver": "local",
+                "detour": "tailscale-out"
+            }
+        ],
+        "rules": [
+            {
+                "action": "evaluate",
+                "server": "local",
+                "tag": "local-response",
+                "timeout": "500ms"
+            },
+            {
+                "match_response": "local-response",
+                "rule_set": "geoip-cn",
+                "action": "respond",
+                "race": true
+            },
+            {
+                "action": "route",
+                "server": "remote",
+                "speculative": true
+            }
+        ],
+        "final": "remote",
+        "strategy": "ipv4_only",
+        "optimistic": {
+            "enabled": true,
+            "timeout": "3d"
+        }
+    },
+    "http_clients": [
+        {
+            "tag": "rule-set-direct",
+            "domain_resolver": "local"
+        }
+    ],
+    "endpoints": [
+        {
+            "type": "tailscale",
+            "tag": "tailscale-out",
+            "accept_routes": true,
+            "exit_node": "100.125.242.70",
+            "exit_node_allow_lan_access": true
+        }
+    ],
+    "inbounds": [
+        {
+            "type": "tun",
+            "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+            "mtu": 1400,
+            "auto_route": true,
+            "stack": "gvisor"
+        }
+    ],
+    "outbounds": [
+        { "type": "direct", "tag": "direct", "domain_resolver": "local" }
+    ],
+    "route": {
+        "default_domain_resolver": "local",
+        "rules": [
+            { "action": "sniff" },
+            {
+                "type": "logical",
+                "mode": "or",
+                "rules": [{ "protocol": "dns" }, { "port": 53 }],
+                "action": "hijack-dns"
+            },
+            { "ip_is_private": true, "outbound": "direct" },
+            { "rule_set": "geoip-cn", "outbound": "direct" }
+        ],
+        "rule_set": [
+            {
+                "type": "remote",
+                "tag": "geoip-cn",
+                "format": "binary",
+                "url": "https://github.com/SagerNet/sing-geoip/raw/rule-set/geoip-cn.srs",
+                "http_client": "rule-set-direct"
+            }
+        ],
+        "auto_detect_interface": true,
+        "default_http_client": "rule-set-direct",
+        "final": "tailscale-out"
+    },
+    "experimental": {
+        "cache_file": {
+            "enabled": true,
+            "store_dns": true
+        }
+    }
+}
+JSON
+
+cat <<EOF
+Create a Tailscale auth key with these settings:
+
+  Reusable:     on (allows startup retry)
+  Ephemeral:    off
+  Pre-approved: on
+  Expiration:   1 hour (or the shortest practical value)
+  Tags:         none
+
+Use a newly created key every time this script is run. Revoke the key in the
+Tailscale admin page immediately after SFA is online. Reusable is intentional:
+SFA initialization may be interrupted after consuming a one-use key but before
+persisting its node state, which makes every retry fail with "missing Tailscale
+IPv4 address".
+
+The generated profile contains the short-lived key. SFA persists its node
+identity in state_directory, so the key is not needed after registration. Press
+Ctrl-C after SFA finishes scanning; all temporary files are then removed.
+EOF
+
+open=${OPEN:-xdg-open}
+if command -v "$open" >/dev/null 2>&1; then
+    "$open" "$TAILSCALE_KEYS_URL" >/dev/null 2>&1 &
+    disown || true
+else
+    printf '\nOpen this URL:\n%s\n' "$TAILSCALE_KEYS_URL"
+fi
+
+printf '\nTailscale auth key: '
+IFS= read -rs auth_key
+printf '\n'
+[[ $auth_key == tskey-auth-* ]] || {
+    printf 'invalid Tailscale auth key format\n' >&2
+    exit 1
+}
+
+hostname=$DEFAULT_HOSTNAME
+[[ $hostname =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,62}$ ]] || {
+    printf 'invalid hostname: use letters, digits, and hyphens only\n' >&2
+    exit 1
+}
+
+state_directory="tailscale-${hostname}"
+umask 077
+printf '%s' "$auth_key" >"$key_file"
+unset auth_key
+jq --rawfile auth_key "$key_file" --arg hostname "$hostname" --arg state "$state_directory" '
+    .endpoints |= map(
+        if .type == "tailscale" then
+            .auth_key = $auth_key |
+            .hostname = $hostname |
+            .state_directory = $state
+        else . end
+    )
+' "$base" >"$config"
+: >"$key_file"
+
+jq empty "$config" >/dev/null
+python3 - "$config" "$profile" "$hostname" <<'PY'
+import gzip
+import pathlib
+import struct
+import sys
+
+config_path, profile_path, profile_name = sys.argv[1:]
+config = pathlib.Path(config_path).read_bytes()
+name = profile_name.encode()
+
+
+def uvarint(value):
+    encoded = bytearray()
+    while value >= 0x80:
+        encoded.append((value & 0x7f) | 0x80)
+        value >>= 7
+    encoded.append(value)
+    return bytes(encoded)
+
+
+# libbox ProfileContent: message type 3, version 1, then gzip(name, local type, config).
+payload = uvarint(len(name)) + name + struct.pack(">i", 0) + uvarint(len(config)) + config
+pathlib.Path(profile_path).write_bytes(b"\x03\x01" + gzip.compress(payload))
+PY
+
+printf '\nProfile ready: %s (%s bytes compressed for QRS)\n' "$hostname" "$(stat -c %s "$profile")"
+printf 'On the phone open SFA > add profile > scan QR code. Press Ctrl-C when imported.\n\n'
+npx --yes "qifi@$QIFI_VERSION" \
+    --slice-size 300 \
+    --fps 8 \
+    --compact \
+    --max-degree 8 \
+    --content-type application/octet-stream \
+    "$profile"
