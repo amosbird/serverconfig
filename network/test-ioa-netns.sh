@@ -64,6 +64,13 @@ if [ "${IOA_NETNS_SANDBOX:-}" != 1 ]; then
     mutate no-tunnel-only 's/ meta l4proto tcp reject with tcp reset$/ accept/'
     mutate no-tunnel-icmp 's/ reject with icmp type admin-prohibited$/ accept/'
     mutate icmp-ratelimit 's/net.ipv4.icmp_ratelimit=0/net.ipv4.icmp_ratelimit=1000/'
+    mutate no-underlay-rule 's/reconcile_rule "\$RULE_UNDERLAY_PREF" "iif \$HOST_IF lookup \$UNDERLAY_TABLE"/:/'
+    mutate no-dns-redirect 's/th dport 53 dnat to \$HOST_ADDR$/th dport 53 accept/'
+    mutate no-dns-to-smartdns 's/th dport 53 dnat to 127.0.0.1$/th dport 53 accept/'
+    mutate no-ns-localnet 's/net.ipv4.conf.\$NS_IF.route_localnet=1/net.ipv4.conf.$NS_IF.route_localnet=0/'
+    mutate no-host-localnet 's/net.ipv4.conf.\$HOST_IF.route_localnet=1/net.ipv4.conf.$HOST_IF.route_localnet=0/'
+    mutate no-loopback-masquerade 's/postrouting ip saddr 127.0.0.0\/8 oifname "\$NS_IF" masquerade/postrouting ip saddr 127.0.0.0\/8 oifname "$NS_IF" accept/'
+    mutate no-resolver-snat 's/snat ip to ip daddr$/accept/'
     ok "mutation checks: every mutant fails an assertion"
     exit 0
 fi
@@ -111,7 +118,18 @@ while True:
 }
 listen up
 listen ts
-for ns in up ts; do
+# The office wire: a second uplink, used only while table 19 has a default.
+ip netns add wire
+ip link add en0 type veth peer name wr0 netns wire
+ip addr add 192.0.3.10/24 dev en0
+ip link set en0 up
+ip -n wire link set lo up
+ip -n wire addr add 192.0.3.1/24 dev wr0
+ip -n wire addr add 198.51.100.7/32 dev lo
+ip -n wire link set wr0 up
+ip -n wire route add default via 192.0.3.10 dev wr0
+listen wire
+for ns in up ts wire; do
     for _ in $(seq 50); do
         ip netns exec "$ns" ss -Hltn 'sport = :7000' | grep -q . && break
         sleep 0.1
@@ -185,13 +203,51 @@ except OSError as e:
     print("ERR", errno.errorcode.get(e.errno, e.errno))
 ' "$@" || echo TIMEOUT
 }
+# The host's SmartDNS stand-in on 127.0.0.1:53: answers each UDP datagram and TCP connection with
+# "smartdns <proto>".
+serve_dns() {
+    python3 -c '
+import socket, threading
+u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.bind(("127.0.0.1", 53))
+t = socket.socket(); t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+t.bind(("127.0.0.1", 53)); t.listen(8)
+def udp():
+    while True:
+        _, a = u.recvfrom(512); u.sendto(b"smartdns udp", a)
+threading.Thread(target=udp, daemon=True).start()
+while True:
+    c, _ = t.accept(); c.sendall(b"smartdns tcp"); c.close()
+' </dev/null >/dev/null 2>&1 &
+    for _ in $(seq 50); do
+        ss -Hltn 'src 127.0.0.1 and sport = :53' | grep -q . && return 0
+        sleep 0.1
+    done
+    fail "fixture: the SmartDNS stand-in never listened"
+}
+ns_dns() {  # ns_dns udp|tcp: a query to 127.0.0.1:53 from inside the namespace
+    ip netns exec ioa timeout 4 python3 -c '
+import errno, socket, sys
+try:
+    if sys.argv[1] == "udp":
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(2)
+        s.connect(("127.0.0.1", 53)); s.send(b"q")
+    else:
+        s = socket.create_connection(("127.0.0.1", 53), timeout=2)
+    print(s.recv(64).decode().strip())
+except socket.timeout:
+    print("TIMEOUT")
+except OSError as e:
+    print("ERR", errno.errorcode.get(e.errno, e.errno))
+' "$1" || echo TIMEOUT
+}
 
 out=$(from_host)
 [ "$out" = "ts 100.88.0.1" ] || fail "fixture: the host's own traffic should take the exit node, got '$out'"
 
 # The host's iOA policy as network-reconfigure installs it: mark 0x1 and literal 10/8 use table ioa,
 # and a marked packet with no route in it is refused, never sent to the exit node.
-echo '400 ioa' >>/etc/iproute2/rt_tables 2>/dev/null || true
+# Numbered, never named: the sandbox shares the host's /etc, so naming a table would mean writing to
+# the real rt_tables.
 ip rule add pref 1150 fwmark 0x1 lookup 400
 ip rule add pref 1150 to 10.0.0.0/8 fwmark 0 lookup 400
 ip rule add pref 1150 to 192.168.255.0/24 fwmark 0 lookup 400
@@ -217,9 +273,35 @@ out=$(host_to 192.168.255.1)
 [ "$out" = "resolver 192.168.255.10" ] ||
     fail "an unmarked host connect to iOA's tunnel network (SmartDNS's upstream) should cross the tunnel, got '$out'"
 ok "the host reaches iOA's tunnel network unmarked, as SmartDNS's ioa upstream does"
+# SmartGateAgent's own resolver listens on the tunnel address in the namespace. SmartDNS asks it
+# unmarked and must be seen from that same address, as it was while tun0 lived on the host.
+listen_on ioa 192.168.255.10 agentdns
+out=$(host_to 192.168.255.10)
+[ "$out" = "agentdns 192.168.255.10" ] ||
+    fail "the host should reach iOA's resolver on the tunnel address, seen from it, got '$out'"
+ok "the host reaches iOA's own resolver on the tunnel address"
+
+# iOA's own lookups go to 127.0.0.1:53, the host's SmartDNS. Nothing listens there in the namespace.
+serve_dns
+for proto in udp tcp; do
+    out=$(ns_dns "$proto")
+    [ "$out" = "smartdns $proto" ] ||
+        fail "a $proto query to 127.0.0.1:53 in the namespace should reach the host's SmartDNS, got '$out'"
+done
+ok "lookups to 127.0.0.1:53 in the namespace reach the host's SmartDNS, over UDP and TCP"
+
+# At an office desk the authorized wire carries iOA, ahead of main (network-reconfigure keeps its
+# default in table 19 while 802.1X says authorized, and flushes it otherwise).
+ip route add default via 192.0.3.1 dev en0 table 19
+out=$(from_ioa)
+[ "$out" = "wire 192.0.3.10" ] || fail "with an office underlay, the namespace should use the wire, got '$out'"
+ip route flush table 19
+[ "$(from_ioa)" = "up 192.0.2.10" ] || fail "with no office underlay, the namespace should use main"
+ok "the namespace prefers the authorized office wire, and main without it"
 
 netns_script up
-[ "$(ip -4 rule show pref 900 | wc -l)" -eq 2 ] && [ "$(ip -4 rule show pref 901 | wc -l)" -eq 1 ] ||
+[ "$(ip -4 rule show pref 900 | wc -l)" -eq 2 ] && [ "$(ip -4 rule show pref 901 | wc -l)" -eq 1 ] &&
+    [ "$(ip -4 rule show pref 899 | wc -l)" -eq 1 ] ||
     fail "up twice left duplicate rules"
 [ "$(from_ioa)" = "up 192.0.2.10" ] || fail "a second up broke the path"
 ok "up is idempotent"
@@ -271,6 +353,7 @@ ok "with the namespace down, marked intranet traffic is refused, never sent to t
 left=$(
     ip netns list | awk '$1 == "ioa"'
     ip -o link show vio 2>/dev/null || true
+    ip -4 rule show pref 899
     ip -4 rule show pref 900
     ip -4 rule show pref 901
     ip route show table 400

@@ -22,6 +22,10 @@ NET=${IOA_NETNS_NET:-169.254.170.0/30}
 RULE_PREF=${IOA_NETNS_RULE_PREF:-900}
 RULE_RETURN_PREF=${IOA_NETNS_RULE_RETURN_PREF:-900}
 RULE_STOP_PREF=${IOA_NETNS_RULE_STOP_PREF:-901}
+# Ahead of RULE_PREF: while the office wire is 802.1X-authorized, network-reconfigure keeps its
+# default in this table (and flushes it otherwise, so the lookup falls through to main).
+RULE_UNDERLAY_PREF=${IOA_NETNS_RULE_UNDERLAY_PREF:-899}
+UNDERLAY_TABLE=${IOA_NETNS_UNDERLAY_TABLE:-19}
 NFT_TABLE=${IOA_NETNS_NFT_TABLE:-ioa_netns}
 TUNNEL_TABLE=${IOA_NETNS_TUNNEL_TABLE:-ioa}
 TUN_IF=${IOA_NETNS_TUN_IF:-tun0}
@@ -55,6 +59,9 @@ up() {
     # Loose reverse-path check: replies from the uplink come back on a different device than the
     # namespace's traffic left by, and strict mode would drop them.
     "$SYSCTL" -q -w "net.ipv4.conf.$HOST_IF.rp_filter=2"
+    # The namespace's DNS is the host's SmartDNS on 127.0.0.1:53 (see the DNAT below); delivering a
+    # packet that arrives on the veth to a loopback address needs route_localnet on that device.
+    "$SYSCTL" -q -w "net.ipv4.conf.$HOST_IF.route_localnet=1"
 
     # Namespace traffic looks up main (the physical default), never the Tailscale exit node table.
     # It is matched by the input device, not by source address: the host end of the veth carries a
@@ -65,6 +72,10 @@ up() {
     # path: replies are de-masqueraded to the namespace address before the routing decision, and
     # without it the host's catch-all would send them into the exit node instead of back over the
     # veth.
+    # The office wire comes first, exactly like iOA's control traffic used to (pref 400): at an
+    # office desk the iOA cloud names resolve to intranet addresses only that wire reaches, and iOA
+    # decides it is "outer net" if it is sent out of Wi-Fi.
+    reconcile_rule "$RULE_UNDERLAY_PREF" "iif $HOST_IF lookup $UNDERLAY_TABLE"
     reconcile_rule "$RULE_PREF" "iif $HOST_IF lookup main"
     reconcile_rule "$RULE_RETURN_PREF" "to $NET lookup main"
     reconcile_rule "$RULE_STOP_PREF" "iif $HOST_IF prohibit"
@@ -74,6 +85,8 @@ destroy table ip $NFT_TABLE
 add table ip $NFT_TABLE
 add chain ip $NFT_TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }
 add rule ip $NFT_TABLE postrouting ip saddr $NET oifname != "$HOST_IF" masquerade
+add chain ip $NFT_TABLE prerouting { type nat hook prerouting priority dstnat; policy accept; }
+add rule ip $NFT_TABLE prerouting iifname "$HOST_IF" ip daddr $HOST_ADDR meta l4proto { tcp, udp } th dport 53 dnat to 127.0.0.1
 EOF
 
     # The host reaches the tunnel through the namespace. Host policy keeps deciding what is iOA
@@ -91,11 +104,24 @@ EOF
     # The refusals below are only immediate if they are sent: ICMP rate limiting otherwise swallows
     # them and the host's sockets wait out their own timeout. The namespace sends no other ICMP.
     in_ns "$SYSCTL" -q -w net.ipv4.icmp_ratelimit=0
+    # DNS. iOA.bin and SmartGateAgent ask 127.0.0.1:53, the host's SmartDNS (resolv.conf is pinned
+    # to it and must stay pinned, see network/resolv-pin). In the namespace nothing listens there, so
+    # those queries are sent to the host end of the veth, which hands them to SmartDNS. A loopback
+    # source may not leave on the veth without route_localnet and is masqueraded to NS_ADDR.
+    in_ns "$SYSCTL" -q -w "net.ipv4.conf.$NS_IF.route_localnet=1"
     in_ns "$NFT" -f - <<EOF
 destroy table ip $NFT_TABLE
 add table ip $NFT_TABLE
 add chain ip $NFT_TABLE postrouting { type nat hook postrouting priority srcnat; policy accept; }
 add rule ip $NFT_TABLE postrouting iifname "$NS_IF" oifname != "$NS_IF" masquerade
+add rule ip $NFT_TABLE postrouting ip saddr 127.0.0.0/8 oifname "$NS_IF" masquerade
+add chain ip $NFT_TABLE output { type nat hook output priority dstnat; policy accept; }
+add rule ip $NFT_TABLE output ip daddr 127.0.0.1 meta l4proto { tcp, udp } th dport 53 dnat to $HOST_ADDR
+# The host's queries to iOA's own resolver (on the tunnel address, so local here) arrive from the
+# veth. Rewrite their source to the address they are sent to, the source they had while tun0 was on
+# the host, so the resolver sees the same peer as before and never needs to answer the veth.
+add chain ip $NFT_TABLE input { type nat hook input priority srcnat; policy accept; }
+add rule ip $NFT_TABLE input iifname "$NS_IF" ip daddr != $NS_ADDR snat ip to ip daddr
 add chain ip $NFT_TABLE forward { type filter hook forward priority filter; policy accept; }
 add rule ip $NFT_TABLE forward iifname "$NS_IF" oifname != "$TUN_IF" meta l4proto tcp reject with tcp reset
 add rule ip $NFT_TABLE forward iifname "$NS_IF" oifname != "$TUN_IF" reject with icmp type admin-prohibited
@@ -104,19 +130,15 @@ EOF
 }
 
 reconcile_rule() {
-    local pref=$1 spec=$2
-    # Converge on the exact rule text, so two rules can share a priority and a re-run adds nothing.
+    local pref=$1 spec=$2 err
+    # The kernel refuses an identical rule with EEXIST, so a re-run adds nothing, while two different
+    # rules can still share a priority. Comparing `ip rule show` text instead breaks on table names:
+    # it prints `lookup wired_underlay` for a rule added as `lookup 19`.
     # shellcheck disable=SC2086
-    "$IP" -4 rule show pref "$pref" | sed 's/^[0-9]*:[[:space:]]*//' | grep -qxF "$(rule_text $spec)" ||
-        "$IP" -4 rule add pref "$pref" $spec
-}
-
-# How `ip rule show` prints a spec: a rule without `from` is shown with `from all`.
-rule_text() {
-    case $1 in
-        from) echo "$*" ;;
-        *) echo "from all $*" ;;
-    esac
+    err=$("$IP" -4 rule add pref "$pref" $spec 2>&1) || [[ $err == *'File exists'* ]] || {
+        printf '%s\n' "$err" >&2
+        return 1
+    }
 }
 
 down() {
@@ -124,7 +146,7 @@ down() {
     # Deleting the veth also drops the table route through it; the route is only left behind if the
     # link is already gone, so it is not removed separately.
     local pref
-    for pref in "$RULE_PREF" "$RULE_RETURN_PREF" "$RULE_STOP_PREF"; do
+    for pref in "$RULE_UNDERLAY_PREF" "$RULE_PREF" "$RULE_RETURN_PREF" "$RULE_STOP_PREF"; do
         while "$IP" -4 rule del pref "$pref" 2>/dev/null; do :; done
     done
     "$IP" link del "$HOST_IF" 2>/dev/null || true
@@ -137,6 +159,7 @@ status() {
     "$IP" -br addr show "$HOST_IF" 2>/dev/null || log "host link $HOST_IF missing"
     in_ns "$IP" -br addr
     in_ns "$IP" route
+    "$IP" -4 rule show pref "$RULE_UNDERLAY_PREF"
     "$IP" -4 rule show pref "$RULE_PREF"
     "$IP" -4 rule show pref "$RULE_STOP_PREF"
 }
