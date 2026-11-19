@@ -428,8 +428,16 @@ def restore(scratchpad, state, restart):
         if window_alive(scratchpad.qtile, previous.window):
             attach_existing(scratchpad, name, previous.window, previous)
     for name, match in saved["spawned"].items():
-        if name in scratchpad._dropdownconfig and name not in scratchpad.dropdowns:
-            scratchpad._spawned[name] = match
+        if name not in scratchpad._dropdownconfig or name in scratchpad.dropdowns:
+            continue
+        if runtime.get_state(scratchpad.qtile).get("reload_failure"):
+            arrived = [window for window in scratchpad.qtile.windows_map.values()
+                       if isinstance(window, QtileWindow) and match.compare(window)
+                       and bound_name(scratchpad, window) is None]
+            if len(arrived) == 1:
+                attach_existing(scratchpad, name, arrived[0])
+                continue
+        scratchpad._spawned[name] = match
     scratchpad._to_hide = [name for name in saved["to_hide"] if name in scratchpad._spawned]
     if scratchpad._spawned:
         hook.subscribe.client_new(scratchpad.on_client_new)

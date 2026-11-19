@@ -461,6 +461,21 @@ class ReloadLifecycleTest(unittest.TestCase):
         self.assertIn(restored.on_client_new, callbacks)
         self.assertNotIn(scratchpad.on_client_new, callbacks)
 
+    def test_preexisting_native_signal_callback_refreshes_snapshot_on_every_reload(self):
+        window = FakeWindow(self.manager, group="scratchpad")
+        self.attach(window)
+        NATIVE_RELOAD(self.manager)
+        self.manager._state = None
+        self.manager.groups_map["scratchpad"].dropdown_toggle("webchat")
+        pending = self.manager.groups_map["scratchpad"]._spawned["webchat"]
+        self.manager.trace.clear()
+        NATIVE_RELOAD(self.manager)
+        restored = self.manager.groups_map["scratchpad"]
+        self.assertIs(restored.dropdowns["chatgpt"].window, window)
+        self.assertIs(restored._spawned["webchat"], pending)
+        self.assertEqual(window_effects(self.manager), [])
+        self.assertFalse(any(event[0] == "spawn" for event in self.manager.trace))
+
     def test_native_first_migration_preserves_pending_dropdown_and_shell(self):
         import types
         from libqtile.config import Match
@@ -736,6 +751,37 @@ class ReloadLifecycleTest(unittest.TestCase):
         self.assertIs(restored.dropdowns["chatgpt"].window, client)
         self.assertNotIn("chatgpt", restored._spawned)
         self.assertFalse(any(event[0] == "spawn" for event in self.manager.trace))
+        self.assertEqual(window_effects(self.manager), [])
+
+    def test_arrival_after_failure_before_restore_is_passively_bound_on_retry(self):
+        from libqtile.scratchpad import ScratchPad
+        scratchpad = self.manager.groups_map["scratchpad"]
+        scratchpad.dropdown_toggle("chatgpt")
+        original = self.manager.load_config
+        calls = []
+
+        def fail_before_restore(initial=False):
+            calls.append(1)
+            if len(calls) == 1:
+                self.manager.config.load()
+                self.manager.rebuild()
+                raise RuntimeError("offline before restore")
+            original(initial)
+
+        with mock.patch.object(self.manager, "load_config", fail_before_restore), \
+                mock.patch("libqtile.utils.send_notification"):
+            with self.assertRaisesRegex(RuntimeError, "offline before restore"):
+                self.manager.reload_config()
+            client = FakeWindow(self.manager, wid=882)
+            client.get_wm_class = lambda: ("chatgpt",)
+            client.keep_above = lambda: None
+            hook.fire("client_new", client)
+            hook.fire("client_managed", client)
+            self.manager.trace.clear()
+            self.manager.reload_config()
+        restored = self.manager.groups_map["scratchpad"]
+        self.assertIs(restored.dropdowns["chatgpt"].window, client)
+        self.assertNotIn("chatgpt", restored._spawned)
         self.assertEqual(window_effects(self.manager), [])
 
     def test_preflight_validate_failure_restores_config_identity_without_teardown(self):

@@ -42,6 +42,7 @@ def screen_rect(screen):
 
 def capture_reload(manager):
     state = get_state(manager)
+    state["initializing"] = False
     state["native_snapshot"] = QtileState(manager, restart=False)
     state["reload_snapshot"] = scratchpads.snapshot(manager)
     state["window_snapshot"] = {
@@ -108,8 +109,8 @@ def reconcile_recovery(manager):
             for name in list(saved["spawned"]):
                 if name not in group._spawned and name not in group.dropdowns:
                     saved["spawned"].pop(name)
+            saved["to_hide"] = list(group._to_hide)
         saved["spawned"].update(group._spawned)
-        saved["to_hide"] = list(group._to_hide)
 
 
 def cancel_input(manager):
@@ -179,9 +180,10 @@ def install(manager, snapshot, legacy_shell=None, entry=None):
     patches.check_compatible(manager)
     if not state["installed"] and legacy_shell is not None:
         state["shell"] = legacy_shell
-    if not state["installed"] and (getattr(manager, "no_spawn", False)
-                                   and manager.groups_map.get("scratchpad") is not None):
-        # The first migration may already be inside the old native reload function.
+    if (not state["reload_active"] and not getattr(manager, "_state", None)
+            and getattr(manager, "no_spawn", False)
+            and manager.groups_map.get("scratchpad") is not None):
+        # Existing signal handlers may still hold the old native reload function.
         capture_reload(manager)
         state["migration_snapshot"] = True
     scratchpads.upgrade_shell(manager)

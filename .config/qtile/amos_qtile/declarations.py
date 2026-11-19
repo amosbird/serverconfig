@@ -29,7 +29,8 @@ _REFRESH_FIELDS = {"command", "match"}
 def _text(value, label):
     if (not isinstance(value, str) or not value.strip() or "\0" in value
             or len(value) > _MAX_TEXT):
-        raise ValueError(f"{label} must be a nonempty string, at most {_MAX_TEXT} characters, no NUL")
+        raise ValueError(
+            f"{label} must be a nonempty string, at most {_MAX_TEXT} characters, no NUL")
 
 
 def _validate(data):

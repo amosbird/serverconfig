@@ -212,6 +212,7 @@ def reload_config(self):
     recovery = state.get("reload_failure")
     if recovery is None:
         runtime.capture_reload(self)
+    state["migration_snapshot"] = False
     state["reload_active"] = True
     self._state = None
     runtime.cancel_input(self)
