@@ -166,6 +166,13 @@ if [[ -n $GUI ]]; then
     sudo mkdir -p /etc/pacman.d/hooks
     sudo cp "$DIR"/xkb-restore.hook /etc/pacman.d/hooks/xkb-restore.hook
     sudo cp "$DIR"/dkms-sigint-fix.hook /etc/pacman.d/hooks/dkms-sigint-fix.hook
+    # Keep the journal and the package cache from filling the disk. paccache.timer (pacman-contrib)
+    # runs weekly and keeps the last three versions of each package.
+    sudo install -Dm644 "$DIR"/systemd/journald.conf.d/size.conf \
+        /etc/systemd/journald.conf.d/size.conf
+    sudo systemctl restart systemd-journald
+    paru -S --needed --noconfirm pacman-contrib
+    sudo systemctl enable --now paccache.timer
 
     # Network stack: iwd + systemd-networkd (see network/README.md).
     # Install config now and enable link owners for the next boot without dropping this connection.
