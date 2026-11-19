@@ -12,6 +12,11 @@ from libqtile.config import DropDown, Match, MatchAny
 
 __source_code__ = sys._getframe().f_code
 
+_MAX_SOURCE_BYTES = 64 * 1024
+_MAX_DROPDOWNS = 64
+_MAX_MATCHES = 16
+_MAX_TEXT = 4096
+
 _DEFAULTS = {
     "x": 0.1, "y": 0.0, "width": 0.8, "height": 0.35, "opacity": 0.9,
     "on_focus_lost_hide": True, "warp_pointer": True,
@@ -22,15 +27,17 @@ _REFRESH_FIELDS = {"command", "match"}
 
 
 def _text(value, label):
-    if not isinstance(value, str) or not value.strip() or "\0" in value:
-        raise ValueError(f"{label} must be a nonempty string without NUL")
+    if (not isinstance(value, str) or not value.strip() or "\0" in value
+            or len(value) > _MAX_TEXT):
+        raise ValueError(f"{label} must be a nonempty string, at most {_MAX_TEXT} characters, no NUL")
 
 
 def _validate(data):
     if not isinstance(data, dict) or set(data) != {"dropdowns"}:
         raise ValueError("declarations must contain only 'dropdowns'")
-    if not isinstance(data["dropdowns"], list) or not data["dropdowns"]:
-        raise ValueError("dropdowns must be a nonempty array")
+    if (not isinstance(data["dropdowns"], list)
+            or not 1 <= len(data["dropdowns"]) <= _MAX_DROPDOWNS):
+        raise ValueError(f"dropdowns must contain 1..{_MAX_DROPDOWNS} entries")
     result = []
     names = set()
     for index, raw in enumerate(data["dropdowns"]):
@@ -40,7 +47,8 @@ def _validate(data):
         unknown = set(raw) - _FIELDS
         missing = {"name", "command", "match"} - set(raw)
         if unknown or missing:
-            raise ValueError(f"{label}: unknown fields {sorted(unknown)}, missing {sorted(missing)}")
+            raise ValueError(
+                f"{label}: unknown fields {sorted(unknown)}, missing {sorted(missing)}")
         item = {**_DEFAULTS, **copy.deepcopy(raw)}
         for field in ("name", "command"):
             _text(item[field], f"{label}.{field}")
@@ -49,7 +57,8 @@ def _validate(data):
         names.add(item["name"])
         for field in ("x", "y", "width", "height", "opacity"):
             value = item[field]
-            if type(value) not in (int, float) or (type(value) is float and not math.isfinite(value)):
+            if (type(value) not in (int, float)
+                    or (type(value) is float and not math.isfinite(value))):
                 raise ValueError(f"{label}.{field} must be a finite number")
             if not 0 <= value <= 1 or (field in ("width", "height") and value == 0):
                 raise ValueError(f"{label}.{field} is outside its allowed range")
@@ -57,8 +66,8 @@ def _validate(data):
             if type(item[field]) is not bool:
                 raise ValueError(f"{label}.{field} must be a boolean")
         matches = item["match"]
-        if not isinstance(matches, list) or not matches:
-            raise ValueError(f"{label}.match must be a nonempty array of tables")
+        if not isinstance(matches, list) or not 1 <= len(matches) <= _MAX_MATCHES:
+            raise ValueError(f"{label}.match must contain 1..{_MAX_MATCHES} tables")
         for match in matches:
             if not isinstance(match, dict) or not match or set(match) - _MATCH_FIELDS:
                 raise ValueError(f"{label}.match allows only {sorted(_MATCH_FIELDS)}")
@@ -71,7 +80,10 @@ def _validate(data):
 def load(path=None):
     """Read TOML once; path is for trusted startup/tests, never an IPC argument."""
     path = Path(path) if path is not None else Path(__file__).parent.parent / "scratchpads.toml"
-    source = path.read_bytes()
+    with path.open("rb") as handle:
+        source = handle.read(_MAX_SOURCE_BYTES + 1)
+    if len(source) > _MAX_SOURCE_BYTES:
+        raise ValueError(f"scratchpad declarations exceed {_MAX_SOURCE_BYTES} bytes")
     data = _validate(tomllib.loads(source.decode("utf-8")))
     return {"source_digest": hashlib.sha256(source).hexdigest(), "data": data}
 
@@ -134,6 +146,8 @@ def _prepare(manager):
         "requires_full_reload": False, "deferred_full_reload": [],
     }
     state = manager._amos_runtime
+    if state.get("reload_active") or state.get("reload_failure"):
+        result["errors"].append("Full reload recovery is pending; retry explicit full reload first")
     root = Path(manager.config.file_path).absolute().parent
     sources = capture_sources(root)
     baseline = state["source_digest"]

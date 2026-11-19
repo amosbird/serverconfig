@@ -71,8 +71,9 @@ class QtileConfigTest(unittest.TestCase):
             self.assertEqual([group.name for group in config.groups],
                              ["scratchpad", "h", "2", "c", "w", "e", "d", "f", "v", "n", "i", "o"])
             dropdowns = config.groups[0].dropdowns
-            self.assertEqual([dd.name for dd in dropdowns],
-                             ["ioa", "tdesktop", "webchat", "chatgpt", "bookmarks", "stardict", "stalonetray"])
+            self.assertEqual([dd.name for dd in dropdowns], [
+                "ioa", "tdesktop", "webchat", "chatgpt", "bookmarks", "stardict", "stalonetray",
+            ])
             self.assertEqual([(dd.x, dd.y, dd.width, dd.height, dd.opacity)
                               for dd in dropdowns], [
                 (0.26, 0.224, 0.8, 0.35, 1.0), (0.1, 0.1, 0.8, 0.85, 1.0),

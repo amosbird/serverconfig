@@ -20,6 +20,18 @@ from qtile_test_support import (
 
 
 class NativeFixtureTest(unittest.TestCase):
+    def test_fixture_blocks_live_x11_and_socket_ipc_connections(self):
+        import socket
+        import xcffib
+        with OfflineQtile():
+            with self.assertRaisesRegex(AssertionError, "external effect forbidden"):
+                xcffib.connect()
+            with socket.socket(socket.AF_UNIX) as connection:
+                with self.assertRaisesRegex(AssertionError, "external effect forbidden"):
+                    connection.connect("not-a-live-socket")
+                with self.assertRaisesRegex(AssertionError, "external effect forbidden"):
+                    connection.connect_ex("not-a-live-socket")
+
     def test_native_restore_really_exposes_the_hidden_window_flash(self):
         with OfflineQtile() as fixture:
             fixture.load()
@@ -50,7 +62,8 @@ class NativeFixtureTest(unittest.TestCase):
             self.assertEqual(load.call_count, 2)
             self.assertNotIn(sentinel, hook.subscriptions.get("qtile", {}).get("client_new", []))
             events = [event[0] for event in manager.trace]
-            self.assertLess(events.index("native.finalize"), events.index("native.load_config.adapter"))
+            self.assertLess(events.index("native.finalize"),
+                            events.index("native.load_config.adapter"))
             self.assertLess(events.index("native.load_config.adapter"),
                             events.index("fixture.rebuild_groups_and_screens"))
             self.assertIn("native.screen.set_group", events)
@@ -99,7 +112,9 @@ class X11ReloadLifecycleTest(unittest.TestCase):
             state = fixture.module("runtime").get_state(manager)
             state["window_snapshot"] = {}
             state["group_snapshot"] = {}
-            with mock.patch.object(core.Core, "_amos_on_config_load", return_value="native") as fallback:
+            with mock.patch.object(
+                core.Core, "_amos_on_config_load", return_value="native"
+            ) as fallback:
                 manager._state = object()
                 self.assertEqual(core.Core.on_config_load(fake_core, True), "native")
                 fallback.assert_called_once_with(fake_core, True)
@@ -180,7 +195,8 @@ class X11ReloadLifecycleTest(unittest.TestCase):
                         group = ScratchPad("scratchpad", definition.dropdowns)
                     else:
                         group = _Group(definition.name)
-                    group._configure(manager.config.layouts, manager.config.floating_layout, manager)
+                    group._configure(
+                        manager.config.layouts, manager.config.floating_layout, manager)
                     manager.groups.append(group)
                     manager.groups_map[group.name] = group
                 manager.screens = [FakeScreen(manager, index, manager.groups_map[name])
@@ -645,6 +661,48 @@ class ReloadLifecycleTest(unittest.TestCase):
             "client_killed": [runtime.window_killed],
             "client_focus": [runtime.client_focused],
         })
+
+    def test_rebuild_failure_is_observable_and_next_reload_recovers_original_bindings(self):
+        window = FakeWindow(self.manager, group="scratchpad")
+        self.attach(window)
+        state = self.runtime.get_state(self.manager)
+        pending = self.manager.groups_map["scratchpad"]
+        pending.dropdown_toggle("webchat")
+        waiter = pending._spawned["webchat"]
+        original_load_config = self.manager.load_config
+        calls = []
+
+        def fail_once(initial=False):
+            calls.append("rebuild")
+            original_load_config(initial)
+            if len(calls) == 1:
+                self.manager._state = object()
+                raise RuntimeError("offline backend failed after state creation")
+
+        notifications = []
+
+        def notify(*args, **kwargs):
+            notifications.append(args)
+
+        with mock.patch.object(self.manager, "load_config", fail_once), \
+                mock.patch("libqtile.utils.send_notification", side_effect=notify):
+            with self.assertRaisesRegex(RuntimeError, "offline backend failed"):
+                self.manager.reload_config()
+            self.assertIsNone(self.manager._state)
+            self.assertFalse(state["reload_active"])
+            self.assertIn("offline backend failed", state["reload_failure"])
+            self.assertIsNotNone(state["reload_snapshot"])
+            self.assertFalse(self.fixture.module("declarations").plan(self.manager)["ok"])
+            self.manager.trace.clear()
+            self.manager.reload_config()
+        self.assertEqual(calls, ["rebuild", "rebuild"])
+        self.assertTrue(notifications)
+        self.assertNotIn("reload_failure", state)
+        self.assertIsNone(self.manager._state)
+        restored = self.manager.groups_map["scratchpad"]
+        self.assertIs(restored.dropdowns["chatgpt"].window, window)
+        self.assertIs(restored._spawned["webchat"], waiter)
+        self.assertEqual(window_effects(self.manager), [])
 
     def test_preflight_validate_failure_restores_config_identity_without_teardown(self):
         window = FakeWindow(self.manager, group="h", focused=True)

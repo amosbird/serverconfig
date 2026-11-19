@@ -101,10 +101,12 @@ class QtileScratchpadTest(unittest.TestCase):
             self.assertNotIn(forbidden, source)
         chromium = (ROOT / "scripts/chromium").read_text()
         for expected in ('if [[ ${1:-} == --current-group ]]; then', 'focus_group=false',
-                         'flags and app launches require a dedicated profile', 'if $focus_group; then'):
+                         'flags and app launches require a dedicated profile',
+                         'if $focus_group; then'):
             self.assertIn(expected, chromium)
-        self.assertLess(chromium.index('exec python3 "$root/scripts/ordinary-open-client.py" "$url"'),
-                        chromium.rindex("focus_main_group"))
+        self.assertLess(
+            chromium.index('exec python3 "$root/scripts/ordinary-open-client.py" "$url"'),
+            chromium.rindex("focus_main_group"))
         self.assertEqual(self.manager.groups_map["scratchpad"]._dropdownconfig["bookmarks"].command,
                          "bookmark-manager")
 

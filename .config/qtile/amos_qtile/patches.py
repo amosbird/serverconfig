@@ -1,6 +1,7 @@
 """Small Qtile 0.37/X11 adapters, installed explicitly and never chained."""
 
 from importlib.metadata import version
+import copy
 import sys
 
 import xcffib.xproto
@@ -10,6 +11,7 @@ from libqtile.backend.x11.window import Window, _Window
 from libqtile.group import _Group
 from libqtile.layout.floating import Floating
 from libqtile.core.manager import Qtile
+from libqtile.utils import remove_dbus_rules
 from libqtile.scratchpad import ScratchPad
 
 from . import bindings, runtime, scratchpads
@@ -207,14 +209,18 @@ def reload_config(self):
     state = runtime.get_state(self)
     if state["reload_active"]:
         raise RuntimeError("Qtile config reload already in progress")
-    runtime.capture_reload(self)
+    recovery = state.get("reload_failure")
+    if recovery is None:
+        runtime.capture_reload(self)
     state["reload_active"] = True
+    self._state = None
     runtime.cancel_input(self)
     old_settings = vars(self.config).copy()
     original_load = self.config.load
     had_override = "load" in vars(self.config)
     previous_override = vars(self.config).get("load")
     loaded = False
+    failed = False
 
     def load_once():
         nonlocal loaded
@@ -234,7 +240,34 @@ def reload_config(self):
 
     self.config.load = load_once
     try:
-        Qtile._amos_reload_config(self)
+        if recovery is None:
+            Qtile._amos_reload_config(self)
+        else:
+            # Rebuild fresh configurable objects, retaining the last coherent window snapshot.
+            load_once()
+            self._finalize_configurables()
+            hook.clear()
+            self.ungrab_keys()
+            self.chord_stack.clear()
+            self.core.ungrab_buttons()
+            self._mouse_map.clear()
+            self.groups_map.clear()
+            self.groups.clear()
+            self.screens.clear()
+            remove_dbus_rules()
+            self._state = copy.copy(state["native_snapshot"])
+            self._state.scratchpads = copy.deepcopy(state["native_snapshot"].scratchpads)
+            runtime.install_hooks(self)
+            self.load_config()
+    except Exception as error:
+        failed = True
+        self._state = None
+        state["reload_failure"] = str(error)
+        runtime.install_hooks(self)
+        runtime.logger.exception("Qtile config rebuild failed; retry explicit full reload")
+        runtime.send_notification("Qtile configuration failed",
+                                  str(error) + "; retry explicit full reload")
+        raise
     finally:
         if had_override:
             self.config.load = previous_override
@@ -243,14 +276,17 @@ def reload_config(self):
         if not loaded:
             runtime.install_hooks(self)
         state["reload_active"] = False
-        state.pop("candidate_declarations", None)
-        state.pop("candidate_sources", None)
-        runtime.finish_reload(self)
+        if not failed:
+            state.pop("candidate_declarations", None)
+            state.pop("candidate_sources", None)
+            state.pop("reload_failure", None)
+            runtime.finish_reload(self)
 
 
 def check_compatible(manager):
     if version("qtile").split(".")[:2] != ["0", "37"]:
-        raise RuntimeError("Qtile lifecycle adapter supports 0.37; run offline tests before upgrading")
+        raise RuntimeError(
+            "Qtile lifecycle adapter supports 0.37; run offline tests before upgrading")
     if manager.core.name not in ("x11", "fixture"):
         raise RuntimeError("This configuration's reload preservation supports X11 only")
 

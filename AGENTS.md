@@ -6,8 +6,8 @@ Dotfiles/configuration repository — a deeply customized Linux environment buil
 over 10+ years. Everything is symlinked into `$HOME` via `restore.sh`. Edits
 here are immediately live. This repo is the single source of truth.
 
-**Not a software project** — no build system, no test suite, no CI. The "code"
-is shell scripts, config files, and a small Go tool.
+Dotfiles repository, not a single buildable project. There is no repository-wide CI;
+focused offline regression tests for scripts and configurations live under `scripts/`.
 
 ## Key Commands
 
@@ -18,7 +18,28 @@ is shell scripts, config files, and a small Go tool.
 | Build search indexer | `cd tools/crush-search-index && go build -o ../../scripts/crush-search-index .` |
 | Update system (Arch) | `scripts/update` (paru + VCS package rebuilds) |
 
-There are no test, lint, or CI commands for this repository.
+### Qtile development
+
+- Entry: `.config/qtile/config.py`; import-safe builders and lifecycle helpers:
+  `.config/qtile/amos_qtile/`; scratchpad declarations: `scratchpads.toml`.
+- `Super+0` refreshes supported future scratchpad commands/matchers without rebuilding
+  the desktop. `Super+Shift+0` explicitly requests full reload. Changes outside that
+  refresh scope, and changed dropdowns with pending launches, must be reported rather
+  than silently falling back to full reload.
+- Validate offline, never by contacting/reloading live Qtile or manipulating existing
+  windows. The fixtures block X11 and socket IPC connections. Use an outer deadline:
+
+```bash
+PYTHONPATH=scripts timeout -s TERM -k 5s 45s python3 -B -m unittest \
+  test_qtile_config test_qtile_scratchpads test_qtile_floating_colors test_qtile_volume \
+  test_bookmark_manager test_abush_browser_qtile test_qtile_reload test_qtile_refresh
+```
+
+- The reload compatibility adapter targets Qtile 0.37/X11. Recheck installed native
+  lifecycle code and the intermediate-state tests before upgrading it. Preserve
+  pending launches and exact window identities; recovery must not spawn, kill, show,
+  or hide windows merely to rebuild bindings. Topology changes need explicit
+  visibility/geometry reconciliation, not unconditional restoration of old coordinates.
 
 ## Repository Structure
 
@@ -138,5 +159,5 @@ A consistent Emacs + Vim hybrid runs through the entire setup:
    `scripts/opencode`.
 6. **fcitx5 state**: Input method state is tracked per-pane in tmux via hooks.
    If editing tmux config, preserve the `fcitx5-tmux-hook` integration.
-7. **No tests**: This is a config repo. Validation is manual — test changes by
-   running the affected tool/script directly.
+7. **Offline checks**: Use focused regression tests where provided. Never validate
+   window-manager changes by reloading the live desktop without explicit permission.

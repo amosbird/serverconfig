@@ -8,6 +8,7 @@ from libqtile import hook, qtile
 from libqtile.backend.base import Window as QtileWindow
 from libqtile.command.base import expose_command
 from libqtile.core.manager import Qtile
+from libqtile.core.state import QtileState
 from libqtile.log_utils import logger
 from libqtile.utils import send_notification
 
@@ -41,6 +42,7 @@ def screen_rect(screen):
 
 def capture_reload(manager):
     state = get_state(manager)
+    state["native_snapshot"] = QtileState(manager, restart=False)
     state["reload_snapshot"] = scratchpads.snapshot(manager)
     state["window_snapshot"] = {
         wid: (window, window.group.name if window.group is not None else None)
@@ -206,6 +208,7 @@ def finish_reload(manager):
         state.pop("group_snapshot", None)
         state.pop("window_visibility", None)
         state.pop("preserve_floating", None)
+        state.pop("native_snapshot", None)
     for group in manager.groups:
         for dropdown in getattr(group, "dropdowns", {}).values():
             scratchpads.arm_dropdown(dropdown)
@@ -265,7 +268,8 @@ def window_killed(client):
     manager = client.qtile
     scratchpads.shell_holder(manager).on_client_killed(client)
     state = get_state(manager)
-    state["previous_focused"] = [window for window in state["previous_focused"] if window is not client]
+    state["previous_focused"] = [
+        window for window in state["previous_focused"] if window is not client]
     scratchpad = manager.groups_map.get("scratchpad")
     if scratchpad is not None:
         for name, dropdown in list(scratchpad.dropdowns.items()):

@@ -6,6 +6,7 @@ import contextlib
 import copy
 import importlib
 import pathlib
+import socket
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -69,7 +70,7 @@ class OfflineQtile(contextlib.AbstractContextManager):
         for target in (
             "subprocess.Popen", "subprocess.run", "subprocess.call",
             "subprocess.check_call", "subprocess.check_output", "os.system",
-            "xcffib.connect",
+            "xcffib.connect", "socket.socket.connect", "socket.socket.connect_ex",
             "libqtile.core.manager.remove_dbus_rules",
         ):
             self.stack.enter_context(mock.patch(target, side_effect=AssertionError(

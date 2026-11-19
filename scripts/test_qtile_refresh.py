@@ -173,7 +173,9 @@ class RefreshTests(unittest.TestCase):
                     'command = "runchat"', 'command = "new"'))
                 result = self.assert_rejected_unchanged()
                 self.assertTrue(result["requires_full_reload"])
-                self.assertEqual(result["deferred_full_reload"], [{"name": "ioa", "fields": [field]}])
+                self.assertEqual(result["deferred_full_reload"], [
+                    {"name": "ioa", "fields": [field]},
+                ])
 
     def test_tray_matcher_is_not_a_future_only_change(self):
         self.edit('title = "stalonetray"', 'title = "different-existing-window"')
@@ -232,6 +234,17 @@ class RefreshTests(unittest.TestCase):
         with patch.object(declarations, "build_dropdowns", side_effect=race):
             self.assertIn("during validation", " ".join(
                 self.assert_rejected_unchanged(digest)["errors"]))
+
+    def test_oversized_declarations_are_rejected_before_application(self):
+        variants = [SOURCE + "#" * (64 * 1024),
+                    SOURCE.replace('command = "tray"', 'command = "' + "x" * 4097 + '"'),
+                    SOURCE.replace('match = [{title = "iOA"}]',
+                                   'match = [' + ','.join('{title = "iOA"}' for _ in range(17))
+                                   + ']')]
+        for source in variants:
+            with self.subTest(length=len(source)):
+                self.path.write_text(source)
+                self.assert_rejected_unchanged()
 
     def test_invalid_data_and_syntax_have_no_effects(self):
         variants = [

@@ -156,6 +156,8 @@ class ShellHolder:
 
 def shell_holder(manager):
     state = runtime.get_state(manager)
+    if state.get("reload_failure") and not state["reload_active"]:
+        raise RuntimeError("Scratchpad controls paused until explicit full reload recovery")
     if state["shell"] is None:
         state["shell"] = ShellHolder()
     holder = state["shell"]
@@ -197,8 +199,8 @@ def window_alive(manager, window):
 
 def consume_pending(scratchpad, name):
     removed = scratchpad._spawned.pop(name, None)
-    if (removed is not None and not scratchpad._spawned
-            and scratchpad.on_client_new in hook.subscriptions.get("qtile", {}).get("client_new", [])):
+    callbacks = hook.subscriptions.get("qtile", {}).get("client_new", [])
+    if removed is not None and not scratchpad._spawned and scratchpad.on_client_new in callbacks:
         hook.unsubscribe.client_new(scratchpad.on_client_new)
 
 
@@ -293,7 +295,8 @@ def register_window(manager, window, hide=True):
         old = scratchpad.dropdowns.get(name)
         if old is not None:
             if window_alive(manager, old.window):
-                logger.warning("Scratchpad %s already bound; leaving window %s alone", name, window.wid)
+                logger.warning("Scratchpad %s already bound; leaving window %s alone",
+                               name, window.wid)
                 continue
             drop_dropdown(scratchpad, name)
         consume_pending(scratchpad, name)
@@ -317,7 +320,8 @@ def recover_windows(manager):
         if len(found) == 1:
             attach_existing(scratchpad, name, found[0])
         elif len(found) > 1:
-            logger.warning("Ambiguous scratchpad %s: %d windows; no automatic adoption", name, len(found))
+            logger.warning("Ambiguous scratchpad %s: %d windows; no automatic adoption",
+                           name, len(found))
 
 
 exclusive_scratchpads = ("chatgpt", "webchat", "tdesktop")
@@ -348,6 +352,8 @@ def adopt_window(manager, name):
 def toggle_scratchpad(name):
     @lazy.function
     def toggle(manager):
+        if runtime.get_state(manager).get("reload_failure"):
+            raise RuntimeError("Scratchpad controls paused until explicit full reload recovery")
         scratchpad = manager.groups_map["scratchpad"]
         if name in scratchpad.dropdowns and not window_alive(
                 manager, scratchpad.dropdowns[name].window):

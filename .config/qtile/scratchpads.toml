@@ -1,4 +1,7 @@
-# Declarative scratchpads. Match tables are OR alternatives; fields within a table are ANDed.
+# Launcher/matcher edits support Super+0 refresh; other edits require Super+Shift+0.
+# Existing windows keep their bindings and geometry. Pending changed launches block refresh.
+# The tray matcher also controls placement, so changing it requires full reload.
+# Match tables are OR alternatives; fields within a table are ANDed.
 [[dropdowns]]
 name = "ioa"
 command = "systemctl --user start ioagui.service"
