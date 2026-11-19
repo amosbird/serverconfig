@@ -156,8 +156,6 @@ class ShellHolder:
 
 def shell_holder(manager):
     state = runtime.get_state(manager)
-    if state.get("reload_failure") and not state["reload_active"]:
-        raise RuntimeError("Scratchpad controls paused until explicit full reload recovery")
     if state["shell"] is None:
         state["shell"] = ShellHolder()
     holder = state["shell"]
@@ -178,18 +176,26 @@ def upgrade_shell(manager):
     state["shell"] = holder
 
 
+def require_controls(manager):
+    if runtime.get_state(manager).get("reload_failure"):
+        raise RuntimeError("Scratchpad controls paused until explicit full reload recovery")
+
+
 @lazy.function
 def toggle_shell_left(manager):
+    require_controls(manager)
     shell_holder(manager).toggle_left()
 
 
 @lazy.function
 def toggle_shell_right(manager):
+    require_controls(manager)
     shell_holder(manager).toggle_right()
 
 
 @lazy.function
 def show_shell(manager):
+    require_controls(manager)
     shell_holder(manager).show_shell()
 
 
@@ -352,8 +358,7 @@ def adopt_window(manager, name):
 def toggle_scratchpad(name):
     @lazy.function
     def toggle(manager):
-        if runtime.get_state(manager).get("reload_failure"):
-            raise RuntimeError("Scratchpad controls paused until explicit full reload recovery")
+        require_controls(manager)
         scratchpad = manager.groups_map["scratchpad"]
         if name in scratchpad.dropdowns and not window_alive(
                 manager, scratchpad.dropdowns[name].window):
@@ -379,6 +384,7 @@ def toggle_scratchpad(name):
 
 
 def show_scratchpad(manager, name):
+    require_controls(manager)
     scratchpad = manager.groups_map["scratchpad"]
     if name in scratchpad.dropdowns:
         hide_exclusive(scratchpad, name)
@@ -427,4 +433,5 @@ def restore(scratchpad, state, restart):
     scratchpad._to_hide = [name for name in saved["to_hide"] if name in scratchpad._spawned]
     if scratchpad._spawned:
         hook.subscribe.client_new(scratchpad.on_client_new)
+    scratchpad._amos_restored = True
     return []

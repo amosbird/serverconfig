@@ -244,6 +244,7 @@ def reload_config(self):
             Qtile._amos_reload_config(self)
         else:
             # Rebuild fresh configurable objects, retaining the last coherent window snapshot.
+            runtime.reconcile_recovery(self)
             load_once()
             self._finalize_configurables()
             hook.clear()
@@ -263,6 +264,9 @@ def reload_config(self):
         failed = True
         self._state = None
         state["reload_failure"] = str(error)
+        state["failure_groups"] = list(self.groups)
+        state["failure_restored_groups"] = [group for group in self.groups
+                                             if getattr(group, "_amos_restored", False)]
         runtime.install_hooks(self)
         runtime.logger.exception("Qtile config rebuild failed; retry explicit full reload")
         runtime.send_notification("Qtile configuration failed",

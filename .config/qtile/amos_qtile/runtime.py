@@ -80,6 +80,38 @@ def capture_reload(manager):
     }
 
 
+def reconcile_recovery(manager):
+    """Merge accepted failure-frame arrivals; never replay a consumed launch waiter."""
+    state = get_state(manager)
+    windows = {wid: pair for wid, pair in state["window_snapshot"].items()
+               if manager.windows_map.get(wid) is pair[0]}
+    for wid, window in manager.windows_map.items():
+        if isinstance(window, QtileWindow) and wid not in windows:
+            windows[wid] = (window, window.group.name if window.group is not None else None)
+            state["window_visibility"][wid] = {
+                "screen": screen_rect(window.group.screen) if window.group is not None else None,
+                "hidden": getattr(window, "hidden", True),
+                "geometry": (window.x, window.y, window.width, window.height),
+            }
+    state["window_snapshot"] = windows
+    for group in manager.groups:
+        saved = state["reload_snapshot"].get(group.name)
+        failed_groups = state.get("failure_groups", [])
+        if (saved is None or not hasattr(group, "dropdowns")
+                or not any(group is failed for failed in failed_groups)):
+            continue
+        for name, dropdown in group.dropdowns.items():
+            if scratchpads.window_alive(manager, dropdown.window):
+                saved["dropdowns"][name] = dropdown
+                saved["spawned"].pop(name, None)
+        if any(group is restored for restored in state.get("failure_restored_groups", [])):
+            for name in list(saved["spawned"]):
+                if name not in group._spawned and name not in group.dropdowns:
+                    saved["spawned"].pop(name)
+        saved["spawned"].update(group._spawned)
+        saved["to_hide"] = list(group._to_hide)
+
+
 def cancel_input(manager):
     state = get_state(manager)
     state["input_generation"] += 1
@@ -209,6 +241,8 @@ def finish_reload(manager):
         state.pop("window_visibility", None)
         state.pop("preserve_floating", None)
         state.pop("native_snapshot", None)
+        state.pop("failure_groups", None)
+        state.pop("failure_restored_groups", None)
     for group in manager.groups:
         for dropdown in getattr(group, "dropdowns", {}).values():
             scratchpads.arm_dropdown(dropdown)

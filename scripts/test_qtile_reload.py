@@ -704,6 +704,40 @@ class ReloadLifecycleTest(unittest.TestCase):
         self.assertIs(restored._spawned["webchat"], waiter)
         self.assertEqual(window_effects(self.manager), [])
 
+    def test_pending_client_consumed_in_failure_frame_is_not_resurrected_on_retry(self):
+        scratchpad = self.manager.groups_map["scratchpad"]
+        scratchpad.dropdown_toggle("chatgpt")
+        original = self.manager.load_config
+        calls = []
+
+        def fail_once(initial=False):
+            original(initial)
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("offline failure interval")
+
+        with mock.patch.object(self.manager, "load_config", fail_once), \
+                mock.patch("libqtile.utils.send_notification"):
+            with self.assertRaisesRegex(RuntimeError, "offline failure interval"):
+                self.manager.reload_config()
+            client = FakeWindow(self.manager, wid=881)
+            client.get_wm_class = lambda: ("chatgpt",)
+            client.keep_above = lambda: None
+            with mock.patch.object(hook.logger, "exception",
+                                   side_effect=AssertionError("hook callback failed")):
+                hook.fire("client_new", client)
+                hook.fire("client_managed", client)
+            failed_group = self.manager.groups_map["scratchpad"]
+            self.assertIs(failed_group.dropdowns["chatgpt"].window, client)
+            self.assertNotIn("chatgpt", failed_group._spawned)
+            self.manager.trace.clear()
+            self.manager.reload_config()
+        restored = self.manager.groups_map["scratchpad"]
+        self.assertIs(restored.dropdowns["chatgpt"].window, client)
+        self.assertNotIn("chatgpt", restored._spawned)
+        self.assertFalse(any(event[0] == "spawn" for event in self.manager.trace))
+        self.assertEqual(window_effects(self.manager), [])
+
     def test_preflight_validate_failure_restores_config_identity_without_teardown(self):
         window = FakeWindow(self.manager, group="h", focused=True)
         self.attach(window)
