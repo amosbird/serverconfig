@@ -40,6 +40,12 @@ def screen_rect(screen):
     return (screen.x, screen.y, screen.width, screen.height)
 
 
+def screen_work_area(screen):
+    if screen is None:
+        return None
+    return (screen.dx, screen.dy, screen.dwidth, screen.dheight)
+
+
 def capture_reload(manager):
     state = get_state(manager)
     state["initializing"] = False
@@ -51,6 +57,8 @@ def capture_reload(manager):
     }
     state["window_visibility"] = {
         wid: {"screen": screen_rect(window.group.screen) if window.group is not None else None,
+              "work_area": (screen_work_area(window.group.screen)
+                            if window.group is not None else None),
               "hidden": getattr(window, "hidden", window.group is None
                                 or window.group.screen is None),
               "geometry": (window.x, window.y, window.width, window.height)}
@@ -96,6 +104,8 @@ def reconcile_recovery(manager):
             windows[wid] = (window, window.group.name if window.group is not None else None)
             state["window_visibility"][wid] = {
                 "screen": screen_rect(window.group.screen) if window.group is not None else None,
+                "work_area": (screen_work_area(window.group.screen)
+                              if window.group is not None else None),
                 "hidden": getattr(window, "hidden", True),
                 "geometry": (window.x, window.y, window.width, window.height),
             }

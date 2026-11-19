@@ -87,6 +87,44 @@ def process_screens(self, reloading=False):
     return self._process_screens_unpatched(reloading)
 
 
+def reconcile_floating(window, group, state):
+    saved = state["window_visibility"][window.wid]
+    screen = group.screen
+    hidden = getattr(window, "hidden", saved["hidden"])
+    if screen is None:
+        if not hidden:
+            window.hide()
+        state["preserve_floating"].add(window.wid)
+        return
+    if window.fullscreen or window.maximized:
+        if window.fullscreen:
+            rectangle, previous = runtime.screen_rect(screen), saved["screen"]
+            border = group.floating_layout.fullscreen_border_width
+        else:
+            rectangle, previous = runtime.screen_work_area(screen), saved["work_area"]
+            border = group.floating_layout.max_border_width
+        if rectangle == previous and not hidden:
+            state["preserve_floating"].add(window.wid)
+            return
+        x, y, width, height = rectangle
+        # Keep the float mode, saved base geometry and stacking unchanged.
+        window.x, window.y = x, y
+        window.width, window.height = max(1, width - 2 * border), max(1, height - 2 * border)
+    elif runtime.screen_rect(screen) == saved["screen"] and not hidden:
+        state["preserve_floating"].add(window.wid)
+        return
+    else:
+        x, y, width, height = saved["geometry"]
+        previous = saved["screen"]
+        if previous is not None:
+            x += screen.x - previous[0]
+            y += screen.y - previous[1]
+        window.x = max(screen.dx, min(x, screen.dx + screen.dwidth - width))
+        window.y = max(screen.dy, min(y, screen.dy + screen.dheight - height))
+    window.float_x = window.x - screen.x
+    window.float_y = window.y - screen.y
+
+
 def on_config_load(self, initial):
     manager = self.qtile
     state = runtime.get_state(manager)
@@ -109,31 +147,12 @@ def on_config_load(self, initial):
         if window.floating and not window.fullscreen:
             if window not in group.floating_layout.clients:
                 group.floating_layout.add_client(window)
-            saved_visibility = state["window_visibility"][wid]
-            new_screen = runtime.screen_rect(group.screen)
-            hidden = getattr(window, "hidden", saved_visibility["hidden"])
-            if new_screen is None:
-                if not hidden:
-                    window.hide()
-                state["preserve_floating"].add(wid)
-            elif (new_screen == saved_visibility["screen"] and not hidden):
-                state["preserve_floating"].add(wid)
-            else:
-                x, y, width, height = saved_visibility["geometry"]
-                old_screen = saved_visibility["screen"]
-                if old_screen is not None:
-                    x += new_screen[0] - old_screen[0]
-                    y += new_screen[1] - old_screen[1]
-                window.x = max(group.screen.dx, min(x, group.screen.dx
-                                                   + group.screen.dwidth - width))
-                window.y = max(group.screen.dy, min(y, group.screen.dy
-                                                   + group.screen.dheight - height))
-                window.float_x = window.x - group.screen.x
-                window.float_y = window.y - group.screen.y
         else:
             group.tiled_windows.add(window)
-            if group.screen is None and not getattr(window, "hidden", False):
-                window.hide()
+        if window.floating:
+            reconcile_floating(window, group, state)
+        elif group.screen is None and not getattr(window, "hidden", False):
+            window.hide()
     for group in manager.groups:
         saved = state["group_snapshot"].get(group.name, {"focus_history": [], "clients": {},
                                                         "layout": None, "monadtall": {}})

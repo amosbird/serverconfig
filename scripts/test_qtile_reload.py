@@ -382,6 +382,113 @@ class X11TopologyTest(unittest.TestCase):
                                      for event in manager.trace))
 
 
+class X11ExpandedTopologyTest(unittest.TestCase):
+    def test_expanded_geometry_tracks_screen_context_without_changing_restore_state(self):
+        import contextlib
+        from libqtile import layout
+        from libqtile.backend.base import FloatStates
+        from libqtile.config import ScreenRect
+        from libqtile.group import _Group
+
+        def screen(group, geometry, top):
+            x, y, width, height = geometry
+            result = SimpleNamespace(group=group, index=0, x=x, y=y, width=width,
+                height=height, dx=x, dy=y + top, dwidth=width, dheight=height - top)
+            result.get_rect = lambda: ScreenRect(
+                result.dx, result.dy, result.dwidth, result.dheight)
+            group.screen = result
+            return result
+
+        cases = (
+            ("unchanged", (1920, 0, 1920, 1080), 44, (1920, 0, 1920, 1080), 44),
+            ("resized", (0, 0, 1920, 1080), 44, (0, 0, 1280, 720), 44),
+            ("repositioned", (1920, 0, 1920, 1080), 44, (0, 0, 1920, 1080), 44),
+            ("work_area", (0, 0, 1920, 1080), 44, (0, 0, 1920, 1080), 88),
+            ("revealed", None, 44, (0, 0, 1280, 720), 44),
+            ("removed", (1920, 0, 1920, 1080), 44, None, 44),
+        )
+        for mode in (FloatStates.FULLSCREEN, FloatStates.MAXIMIZED):
+            for label, old_rect, old_top, new_rect, new_top in cases:
+                with self.subTest(mode=mode, case=label), OfflineQtile() as fixture:
+                    fixture.load()
+                    manager = fixture.manager
+                    manager._drag = None
+                    manager.core.name = "x11"
+                    manager.core.masked = contextlib.nullcontext
+                    manager.core.clear_focus = lambda: None
+                    patches = fixture.module("patches")
+                    patches.install(manager)
+
+                    def groups():
+                        floating = layout.Floating(float_rules=[], max_border_width=3,
+                                                   fullscreen_border_width=2)
+                        result = [_Group("h"), _Group("f")]
+                        for group in result:
+                            group._configure([layout.Max()], floating, manager)
+                        manager.groups = result
+                        manager.groups_map = {group.name: group for group in result}
+                        return result
+
+                    old, other = groups()
+                    visible = old if old_rect is not None else other
+                    manager.screens = [screen(visible, old_rect or (0, 0, 1920, 1080), old_top)]
+                    manager.current_screen = manager.screens[0]
+                    window = FakeWindow(manager, group="h")
+                    original_rect = old_rect or (1920, 0, 1920, 1080)
+                    x, y, width, height = original_rect
+                    border = 2 if mode == FloatStates.FULLSCREEN else 3
+                    if mode == FloatStates.MAXIMIZED:
+                        y += old_top
+                        height -= old_top
+                    window.x, window.y = x, y
+                    window.width, window.height = width - 2 * border, height - 2 * border
+                    window._float_state = mode
+                    window.saved_float_state = FloatStates.FLOATING
+                    restore = (37, 59, 640, 480)
+                    window.base_x, window.base_y, window.base_width, window.base_height = restore
+                    window._float_width, window._float_height = 640, 480
+                    fixture.module("runtime").capture_reload(manager)
+                    new, other = groups()
+                    visible = new if new_rect is not None else other
+                    manager.screens = [screen(visible, new_rect or (0, 0, 1920, 1080), new_top)]
+                    manager.current_screen = manager.screens[0]
+                    manager._state = object()
+                    core = SimpleNamespace(qtile=manager, update_client_lists=mock.Mock(),
+                        fire_screen_change=mock.Mock(),
+                        conn=SimpleNamespace(enable_screen_change_notifications=mock.Mock()))
+                    before = window.snapshot()
+                    manager.trace.clear()
+                    with mock.patch.object(patches, "Window", FakeWindow):
+                        patches.on_config_load(core, False)
+                    # Production final draw: layout.show then group.layout_all.
+                    for output in manager.screens:
+                        output.group.layout.show(output.get_rect())
+                        output.group.layout_all()
+                    self.assertIs(window._float_state, mode)
+                    self.assertIs(window.saved_float_state, FloatStates.FLOATING)
+                    self.assertEqual((window.base_x, window.base_y, window.base_width,
+                                      window.base_height), restore)
+                    self.assertEqual((window._float_width, window._float_height), (640, 480))
+                    if new_rect is None:
+                        self.assertTrue(window.hidden)
+                    else:
+                        x, y, width, height = new_rect
+                        if mode == FloatStates.MAXIMIZED:
+                            y += new_top
+                            height -= new_top
+                        self.assertEqual((window.x, window.y, window.width, window.height),
+                                         (x, y, width - 2 * border, height - 2 * border))
+                        self.assertFalse(window.hidden)
+                    unchanged = label == "unchanged" or (
+                        label == "work_area" and mode == FloatStates.FULLSCREEN)
+                    if unchanged:
+                        self.assertEqual(window.snapshot(), before)
+                        self.assertEqual(window_effects(manager), [])
+                    self.assertFalse(any(event[0] in {
+                        "window.focus", "window.bring_to_front", "window.kill", "spawn"
+                    } for event in manager.trace))
+
+
 class ReloadLifecycleTest(unittest.TestCase):
     def setUp(self):
         self.fixture = self.enterContext(OfflineQtile())
