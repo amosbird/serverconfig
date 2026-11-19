@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import subprocess
+import sys
 
 from libqtile import hook, qtile
 from libqtile.backend.base import Window as QtileWindow
@@ -13,6 +14,7 @@ from libqtile.utils import send_notification
 from . import bindings, browser, declarations, desktop, patches, scratchpads
 
 
+__source_code__ = sys._getframe().f_code
 SCHEMA = 1
 
 
@@ -31,6 +33,12 @@ def get_state(manager):
     return state
 
 
+def screen_rect(screen):
+    if screen is None:
+        return None
+    return (screen.x, screen.y, screen.width, screen.height)
+
+
 def capture_reload(manager):
     state = get_state(manager)
     state["reload_snapshot"] = scratchpads.snapshot(manager)
@@ -38,14 +46,33 @@ def capture_reload(manager):
         wid: (window, window.group.name if window.group is not None else None)
         for wid, window in manager.windows_map.items() if isinstance(window, QtileWindow)
     }
+    state["window_visibility"] = {
+        wid: {"screen": screen_rect(window.group.screen) if window.group is not None else None,
+              "hidden": getattr(window, "hidden", window.group is None
+                                or window.group.screen is None),
+              "geometry": (window.x, window.y, window.width, window.height)}
+        for wid, (window, _group) in state["window_snapshot"].items()
+    }
+    state["preserve_floating"] = set()
     state["group_snapshot"] = {
         group.name: {
             "focus_history": list(getattr(group, "focus_history", [])),
+            "floating_focus": getattr(getattr(group, "floating_layout", None), "focused", None),
             "layout": group.layout.name if getattr(group, "layouts", None) else None,
             "clients": {
                 layout.name: list(layout.clients.clients)
                 for layout in getattr(group, "layouts", [])
                 if hasattr(getattr(layout, "clients", None), "clients")
+            },
+            "monadtall": {
+                layout.name: {
+                    "ratio": layout.ratio, "align": layout.align,
+                    "relative_sizes": list(layout.relative_sizes),
+                    "do_normalize": getattr(layout, "do_normalize", True),
+                    "auto_maximize": layout.auto_maximize,
+                } for layout in getattr(group, "layouts", [])
+                if type(layout).__module__ == "libqtile.layout.xmonad"
+                and type(layout).__name__ == "MonadTall"
             },
         } for group in manager.groups
     }
@@ -108,10 +135,11 @@ def _install_commands():
     browser.install_browser_commands()
 
 
-def install(manager, snapshot, legacy_shell=None):
+def install(manager, snapshot, legacy_shell=None, entry=None):
     if not hasattr(manager, "config"):
         return
     state = get_state(manager)
+    sources = declarations.capture_running_sources(Path(manager.config.file_path).parent, entry)
     if state.get("reload_active") and getattr(manager, "_state", None):
         raise RuntimeError("Refusing config evaluation during an active rebuild")
     patches.check_compatible(manager)
@@ -123,7 +151,6 @@ def install(manager, snapshot, legacy_shell=None):
         capture_reload(manager)
         state["migration_snapshot"] = True
     scratchpads.upgrade_shell(manager)
-    sources = declarations.capture_sources(Path(manager.config.file_path).parent)
     patches.install(manager)
     _install_commands()
     # Preflight evaluation must not commit new defaults over the running config.
@@ -177,6 +204,8 @@ def finish_reload(manager):
     if not migrating:
         state.pop("window_snapshot", None)
         state.pop("group_snapshot", None)
+        state.pop("window_visibility", None)
+        state.pop("preserve_floating", None)
     for group in manager.groups:
         for dropdown in getattr(group, "dropdowns", {}).values():
             scratchpads.arm_dropdown(dropdown)

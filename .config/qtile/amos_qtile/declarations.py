@@ -4,10 +4,13 @@ import copy
 import hashlib
 import math
 from pathlib import Path
+import sys
 import tomllib
 
 from libqtile.config import DropDown, Match, MatchAny
 
+
+__source_code__ = sys._getframe().f_code
 
 _DEFAULTS = {
     "x": 0.1, "y": 0.0, "width": 0.8, "height": 0.35, "opacity": 0.9,
@@ -102,6 +105,28 @@ def capture_sources(config_dir):
             for path in sorted(paths)}
 
 
+def capture_running_sources(config_dir, entry):
+    """Reject stale bytecode or edits between module execution and installation."""
+    root = Path(config_dir).absolute()
+    executed = {str(Path(entry["__file__"]).absolute()): entry["__source_code__"]}
+    for module in list(sys.modules.values()):
+        path = getattr(module, "__file__", None)
+        if path is not None and root / "amos_qtile" in Path(path).absolute().parents:
+            executed[str(Path(path).absolute())] = getattr(module, "__source_code__", None)
+    sources = capture_sources(root)
+    for path, code in executed.items():
+        if code is None or path not in sources:
+            raise ValueError(f"Missing executed source identity: {path}")
+        source = Path(path).read_bytes()
+        if (hashlib.sha256(source).hexdigest() != sources[path]
+                or compile(source, code.co_filename, "exec", dont_inherit=True,
+                           optimize=sys.flags.optimize) != code):
+            raise ValueError(f"Python source differs from executed code: {path}")
+    if capture_sources(root) != sources:
+        raise ValueError("Python sources changed during installation")
+    return sources
+
+
 def _prepare(manager):
     result = {
         "ok": False, "source_digest": None, "scope": "future_unbound_launches",
@@ -151,7 +176,8 @@ def _prepare(manager):
         result["requires_full_reload"] = True
         result["errors"].append("Non-command/matcher changes deferred to full reload")
     if result["pending"]:
-        result["errors"].append("Changed dropdowns have pending launches; retry after completion")
+        result["errors"].append("Pending launches: " + ", ".join(result["pending"])
+                                + "; retry after completion")
     result["ok"] = not result["errors"]
     return result, snapshot, sources
 

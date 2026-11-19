@@ -3,11 +3,14 @@
 import json
 import pathlib
 import re
+import sys
 
 from libqtile.backend.base import Window as QtileWindow
 from libqtile.command.base import expose_command
 from libqtile.core.manager import Qtile
 
+
+__source_code__ = sys._getframe().f_code
 
 ORDINARY_NONCE = re.compile(r"[0-9a-f]{32}\Z")
 LEGACY_BROWSER_PROPERTIES = (

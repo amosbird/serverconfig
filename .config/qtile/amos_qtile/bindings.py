@@ -1,5 +1,6 @@
 """Key and mouse builders, with lifecycle-owned deferred input."""
 
+import sys
 import xcffib.xproto
 from libqtile import qtile
 from libqtile.backend.x11 import xcbq
@@ -8,6 +9,8 @@ from libqtile.lazy import lazy
 
 from . import runtime, scratchpads
 
+
+__source_code__ = sys._getframe().f_code
 
 super_r = "mod3"
 super_l = "mod4"

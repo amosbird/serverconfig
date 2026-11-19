@@ -270,6 +270,10 @@ class FakeWindow(Window):
         self._focused = focused
         self.floating = True
         self._float_state = None
+        self.fullscreen = False
+        self.maximized = False
+        self.minimized = False
+        self.hidden = self._group.screen is None
         self.x, self.y, self.width, self.height = 111, 73, 777, 555
         self.float_x, self.float_y = self.x, self.y
         self.borderwidth = 8
@@ -282,6 +286,8 @@ class FakeWindow(Window):
             self._group.current_window = self
         manager.windows_map[wid] = self
         self._record = True
+
+    minimized = False
 
     @property
     def floating(self):
@@ -335,9 +341,11 @@ class FakeWindow(Window):
 
     def hide(self):
         self.effect("hide")
+        self.hidden = True
 
     def unhide(self):
         self.effect("unhide")
+        self.hidden = False
 
     def kill(self):
         self.effect("kill")

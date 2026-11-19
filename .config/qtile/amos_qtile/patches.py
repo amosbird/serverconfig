@@ -1,8 +1,10 @@
 """Small Qtile 0.37/X11 adapters, installed explicitly and never chained."""
 
 from importlib.metadata import version
+import sys
 
 import xcffib.xproto
+from libqtile import hook
 from libqtile.backend.x11 import core as x11_core
 from libqtile.backend.x11.window import Window, _Window
 from libqtile.group import _Group
@@ -11,6 +13,9 @@ from libqtile.core.manager import Qtile
 from libqtile.scratchpad import ScratchPad
 
 from . import bindings, runtime, scratchpads
+
+
+__source_code__ = sys._getframe().f_code
 
 
 class ConditionalBorderColor(str):
@@ -102,14 +107,39 @@ def on_config_load(self, initial):
         if window.floating and not window.fullscreen:
             if window not in group.floating_layout.clients:
                 group.floating_layout.add_client(window)
+            saved_visibility = state["window_visibility"][wid]
+            new_screen = runtime.screen_rect(group.screen)
+            hidden = getattr(window, "hidden", saved_visibility["hidden"])
+            if new_screen is None:
+                if not hidden:
+                    window.hide()
+                state["preserve_floating"].add(wid)
+            elif (new_screen == saved_visibility["screen"] and not hidden):
+                state["preserve_floating"].add(wid)
+            else:
+                x, y, width, height = saved_visibility["geometry"]
+                old_screen = saved_visibility["screen"]
+                if old_screen is not None:
+                    x += new_screen[0] - old_screen[0]
+                    y += new_screen[1] - old_screen[1]
+                window.x = max(group.screen.dx, min(x, group.screen.dx
+                                                   + group.screen.dwidth - width))
+                window.y = max(group.screen.dy, min(y, group.screen.dy
+                                                   + group.screen.dheight - height))
+                window.float_x = window.x - group.screen.x
+                window.float_y = window.y - group.screen.y
         else:
             group.tiled_windows.add(window)
+            if group.screen is None and not getattr(window, "hidden", False):
+                window.hide()
     for group in manager.groups:
         saved = state["group_snapshot"].get(group.name, {"focus_history": [], "clients": {},
-                                                        "layout": None})
+                                                        "layout": None, "monadtall": {}})
         group.focus_history = [window for window in saved["focus_history"]
                                if window in group.windows
                                and manager.windows_map.get(window.wid) is window]
+        if saved.get("floating_focus") in group.floating_layout.clients:
+            group.floating_layout.focused = saved["floating_focus"]
         for layout in group.layouts:
             ordered = [window for window in saved["clients"].get(layout.name, [])
                        if window in group.tiled_windows]
@@ -119,6 +149,13 @@ def on_config_load(self, initial):
                 layout.clients.clients = ordered
                 if group.current_window in ordered:
                     layout.clients.current_client = group.current_window
+                monad = saved.get("monadtall", {}).get(layout.name)
+                if monad is not None and type(layout).__name__ == "MonadTall":
+                    layout.ratio, layout.align = monad["ratio"], monad["align"]
+                    layout.auto_maximize = monad["auto_maximize"]
+                    layout.relative_sizes = list(monad["relative_sizes"])
+                    layout.do_normalize = monad["do_normalize"] or len(
+                        layout.relative_sizes) != max(0, len(ordered) - 1)
             else:
                 for window in ordered:
                     layout.add_client(window)
@@ -127,6 +164,19 @@ def on_config_load(self, initial):
                 if layout.name == saved["layout"]:
                     group.current_layout = index
                     break
+
+
+def focus_screen(self, index, warp=True):
+    state = runtime.get_state(self)
+    if "window_snapshot" in state and getattr(self, "_state", None):
+        if index < len(self.screens):
+            previous = self.current_screen
+            self.current_screen = self.screens[index]
+            if previous is not self.current_screen:
+                hook.fire("current_screen_change")
+                hook.fire("setgroup")
+        return
+    return Qtile._amos_focus_screen(self, index, warp)
 
 
 def group_focus(self, *args, **kwargs):
@@ -140,7 +190,9 @@ def floating_configure(self, window, screen_rect):
     manager = window.qtile
     state = runtime.get_state(manager)
     saved = state.get("window_snapshot", {}).get(window.wid)
-    if saved is not None and saved[0] is window and getattr(manager, "_state", None):
+    if (saved is not None and saved[0] is window
+            and window.wid in state.get("preserve_floating", ())
+            and getattr(manager, "_state", None)):
         # Membership was reattached without unmapping; native final layout may observe it.
         return
     return Floating._amos_configure(self, window, screen_rect)
@@ -227,6 +279,9 @@ def install(manager):
         if not hasattr(x11_core.Core, "_amos_on_config_load"):
             x11_core.Core._amos_on_config_load = x11_core.Core.on_config_load
             x11_core.Core.on_config_load = on_config_load
+        if not hasattr(Qtile, "_amos_focus_screen"):
+            Qtile._amos_focus_screen = Qtile.focus_screen
+            Qtile.focus_screen = focus_screen
         if not hasattr(_Group, "_amos_focus"):
             _Group._amos_focus = _Group.focus
             _Group.focus = group_focus

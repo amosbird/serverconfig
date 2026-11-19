@@ -1,5 +1,7 @@
 """Scratchpad actions and passive same-process restoration."""
 
+import sys
+
 from threading import Lock
 
 from libqtile import hook, qtile
@@ -10,6 +12,9 @@ from libqtile.log_utils import logger
 from libqtile.scratchpad import DropDownToggler
 
 from . import runtime
+
+
+__source_code__ = sys._getframe().f_code
 
 
 class Shell:
@@ -192,7 +197,8 @@ def window_alive(manager, window):
 
 def consume_pending(scratchpad, name):
     removed = scratchpad._spawned.pop(name, None)
-    if removed is not None and not scratchpad._spawned:
+    if (removed is not None and not scratchpad._spawned
+            and scratchpad.on_client_new in hook.subscriptions.get("qtile", {}).get("client_new", [])):
         hook.unsubscribe.client_new(scratchpad.on_client_new)
 
 
@@ -201,12 +207,6 @@ def drop_dropdown(scratchpad, name):
     if dropdown is not None:
         dropdown.unsubscribe()
     consume_pending(scratchpad, name)
-    if not scratchpad.dropdowns:
-        callbacks = hook.subscriptions.get("qtile", {})
-        for event, callback in (("client_killed", scratchpad.on_client_killed),
-                                ("float_change", scratchpad.on_float_change)):
-            if callback in callbacks.get(event, []):
-                getattr(hook.unsubscribe, event)(callback)
 
 
 def _cleanup_hooks(scratchpad):

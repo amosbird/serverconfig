@@ -1,10 +1,14 @@
 """Pure desktop declarations and explicitly subscribed taskbar callbacks."""
 
+import sys
+
 from libqtile import bar, layout, qtile, widget
 from libqtile.config import Group, Match, MatchAny, Rule, ScratchPad, Screen
 
 from . import declarations, patches
 
+
+__source_code__ = sys._getframe().f_code
 
 follow_mouse_focus = False
 bring_front_click = "floating_only"

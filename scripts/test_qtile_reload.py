@@ -2,6 +2,7 @@
 """Offline regression coverage against the installed Qtile lifecycle."""
 
 import importlib
+import json
 import sys
 import unittest
 from types import SimpleNamespace
@@ -76,6 +77,45 @@ class NativeFixtureTest(unittest.TestCase):
 
 
 class X11ReloadLifecycleTest(unittest.TestCase):
+    def test_x11_initial_and_unsnapshotted_load_delegate_but_reload_uses_adapter(self):
+        from libqtile.backend.x11 import core
+        native = core.Core.on_config_load
+        with OfflineQtile() as fixture:
+            fixture.load()
+            manager = fixture.manager
+            manager.core.name = "x11"
+            patches = fixture.module("patches")
+            patches.install(manager)
+            self.assertIs(core.Core._amos_on_config_load, native)
+            manager.groups = []
+            manager.config.wmname = "offline-wm"
+            calls = []
+            fake_core = SimpleNamespace(
+                qtile=manager,
+                update_client_lists=lambda: calls.append("clients"),
+                conn=SimpleNamespace(
+                    enable_screen_change_notifications=lambda: calls.append("notifications")),
+                fire_screen_change=lambda event: calls.append(("screen", event)))
+            state = fixture.module("runtime").get_state(manager)
+            state["window_snapshot"] = {}
+            state["group_snapshot"] = {}
+            with mock.patch.object(core.Core, "_amos_on_config_load", return_value="native") as fallback:
+                manager._state = object()
+                self.assertEqual(core.Core.on_config_load(fake_core, True), "native")
+                fallback.assert_called_once_with(fake_core, True)
+                self.assertEqual(calls, [])
+                fallback.reset_mock()
+                manager._state = None
+                self.assertEqual(core.Core.on_config_load(fake_core, False), "native")
+                fallback.assert_called_once_with(fake_core, False)
+                self.assertEqual(calls, [])
+                fallback.reset_mock()
+                manager._state = object()
+                core.Core.on_config_load(fake_core, False)
+                fallback.assert_not_called()
+            self.assertEqual(fake_core.wmname, "offline-wm")
+            self.assertEqual(calls, ["clients", "notifications", ("screen", None)])
+
     def test_native_x11_rebuild_preserves_all_existing_window_membership_and_frames(self):
         import contextlib
         from libqtile.backend.x11 import core, window as xwindow
@@ -174,6 +214,119 @@ class X11ReloadLifecycleTest(unittest.TestCase):
             self.assertIn(tiled, manager.groups_map["c"].layout.clients.clients)
             self.assertEqual(manager.groups_map["scratchpad"].dropdowns["stardict"].window,
                              windows[0])
+
+
+class X11TopologyTest(unittest.TestCase):
+    def test_monadtall_runtime_partition_survives_reattachment(self):
+        from libqtile.config import ScreenRect
+        from libqtile.group import _Group
+        from libqtile import layout
+        from qtile_test_support import FakeScreen
+        with OfflineQtile() as fixture:
+            fixture.load()
+            manager = fixture.manager
+            manager._drag = None
+            manager.core.name = "x11"
+            patches = fixture.module("patches")
+            patches.install(manager)
+            group = _Group("h")
+            group._configure([layout.MonadTall(border_width=0)], manager.config.floating_layout,
+                             manager)
+            manager.groups = [group]
+            manager.groups_map = {"h": group}
+            manager.screens = [FakeScreen(manager, 0, group)]
+            manager.current_screen = manager.screens[0]
+            windows = [FakeWindow(manager, index + 900, name="tiled", focused=index == 1)
+                       for index in range(3)]
+            for window in windows:
+                window.floating = False
+                group.tiled_windows.add(window)
+            group.layout.clients.clients = windows[:]
+            group.layout.clients.current_client = windows[1]
+            group.layout.ratio, group.layout.align = .63, 1
+            group.layout.relative_sizes, group.layout.do_normalize = [.3, .7], False
+            rect = ScreenRect(0, 0, 1920, 1080)
+            group.layout.layout(windows, rect)
+            expected = [(window.x, window.y, window.width, window.height) for window in windows]
+            fixture.module("runtime").capture_reload(manager)
+            new = _Group("h")
+            new._configure([layout.MonadTall(border_width=0)], manager.config.floating_layout,
+                           manager)
+            manager.groups, manager.groups_map = [new], {"h": new}
+            manager.screens[0].group = new
+            new.screen = manager.screens[0]
+            manager._state = object()
+            core = SimpleNamespace(qtile=manager, update_client_lists=mock.Mock(),
+                fire_screen_change=mock.Mock(),
+                conn=SimpleNamespace(enable_screen_change_notifications=mock.Mock()))
+            with mock.patch.object(patches, "Window", FakeWindow):
+                patches.on_config_load(core, False)
+            new.layout.layout(windows, rect)
+            self.assertEqual((new.layout.ratio, new.layout.align), (.63, 1))
+            self.assertEqual(new.layout.relative_sizes, [.3, .7])
+            self.assertEqual([(window.x, window.y, window.width, window.height)
+                              for window in windows], expected)
+            self.assertEqual(new.layout.clients.clients, windows)
+
+    def test_visibility_and_geometry_reconcile_only_when_screen_context_changes(self):
+        from libqtile.config import ScreenRect
+        from libqtile.layout.floating import Floating
+
+        cases = (("removed", "2", False, None), ("revealed", "other", True, (0, 0)),
+                 ("reordered", "2", False, (0, 0)), ("unchanged", "2", False, (1920, 0)))
+        for label, old_group, hidden, position in cases:
+            with self.subTest(case=label), OfflineQtile() as fixture:
+                fixture.load()
+                manager = fixture.manager
+                manager.rebuild()
+                manager._drag = None
+                manager.core.name = "x11"
+                module = fixture.module("patches")
+                module.install(manager)
+                window = FakeWindow(manager, group=old_group)
+                window.hidden = hidden
+                window.x = 2050
+                window.y = 90
+                fixture.module("runtime").capture_reload(manager)
+                state = fixture.module("runtime").get_state(manager)
+                manager._state = object()
+                group = window.group
+                group.tiled_windows = set()
+                group.layouts = []
+                group.floating_layout = Floating(float_rules=[])
+                group.windows = []
+                if position is None:
+                    group.screen = None
+                else:
+                    group.screen = SimpleNamespace(x=position[0], y=position[1],
+                        dx=position[0], dy=position[1], width=1920, height=1080,
+                        dwidth=1920, dheight=1080)
+                # Other fixture groups need only empty bookkeeping in this adapter test.
+                manager.groups = [group]
+                core = SimpleNamespace(qtile=manager, update_client_lists=mock.Mock(),
+                    fire_screen_change=mock.Mock(),
+                    conn=SimpleNamespace(enable_screen_change_notifications=mock.Mock()))
+                manager.trace.clear()
+                with mock.patch.object(module, "Window", FakeWindow):
+                    module.on_config_load(core, False)
+                if group.screen is not None:
+                    Floating.configure(group.floating_layout, window, ScreenRect(
+                        group.screen.x, group.screen.y, 1920, 1080))
+                effects = window_effects(manager)
+                if label == "removed":
+                    self.assertTrue(window.hidden)
+                    self.assertEqual([event[0] for event in effects], ["window.hide"])
+                elif label == "unchanged":
+                    self.assertEqual(effects, [])
+                    self.assertEqual((window.x, window.y), (2050, 90))
+                else:
+                    self.assertFalse(window.hidden)
+                    self.assertGreaterEqual(window.x, group.screen.x)
+                    self.assertLessEqual(window.x + window.width, group.screen.x + 1920)
+                    self.assertIn("window.place", [event[0] for event in effects])
+                    self.assertIn("window.unhide", [event[0] for event in effects])
+                self.assertFalse(any(event[0] in {"window.focus", "window.kill", "spawn"}
+                                     for event in manager.trace))
 
 
 class ReloadLifecycleTest(unittest.TestCase):
@@ -420,6 +573,201 @@ class ReloadLifecycleTest(unittest.TestCase):
             timer.fire_even_if_cancelled()
         self.assertFalse(any(event[0] == "spawn" for event in self.manager.trace))
         self.assertEqual(window_effects(self.manager), [])
+
+    def test_registered_plan_apply_commands_survive_reload_with_native_argument_lifting(self):
+        from libqtile.command.interface import IPCCommandServer, SUCCESS
+        # FakeManager's subclass command cache predates runtime installation; the
+        # production object is Qtile itself, whose command table is updated here.
+        self.manager._commands = Qtile._commands
+        server = IPCCommandServer(self.manager)
+        self.manager.locked = False
+        previous = None
+        for generation in range(3):
+            if generation:
+                self.manager.reload_config()
+            runtime = self.fixture.module("runtime")
+            self.manager._commands = Qtile._commands
+            for name in ("config_plan", "config_apply"):
+                self.assertIn(name, self.manager.commands())
+                self.assertIs(self.manager.command(name), getattr(runtime, name))
+            self.assertIs(runtime.config_apply.__annotations__["expected_digest"], str)
+            if previous is not None:
+                self.assertIsNot(self.manager.command("config_apply"), previous)
+            previous = self.manager.command("config_apply")
+            status, plan = server.call(([], "config_plan", (), {}, True))
+            self.assertEqual(status, SUCCESS, plan)
+            self.assertTrue(plan["ok"], plan)
+            status, result = server.call(([], "config_apply", (plan["source_digest"],), {}, True))
+            self.assertEqual(status, SUCCESS, result)
+            self.assertTrue(result["ok"], result)
+            self.assertFalse(result["changed"])
+            json.dumps(result)
+
+    def test_full_reload_loads_once_and_reinstalls_exact_hooks_after_native_clear(self):
+        from libqtile.confreader import Config
+        original_load = Config.load
+        original_clear = hook.clear
+        events = []
+
+        def load(config):
+            events.append("load")
+            result = original_load(config)
+            # Config.load reloads the module, replacing any earlier spy.
+            runtime = self.fixture.module("runtime")
+            install = runtime.install_hooks
+
+            def reinstall(manager):
+                events.append("install")
+                self.assertIn("clear", events)
+                return install(manager)
+
+            self.enterContext(mock.patch.object(runtime, "install_hooks", reinstall))
+            return result
+
+        def clear():
+            events.append("clear")
+            original_clear()
+            self.assertEqual(hook_counts(), {})
+
+        with mock.patch.object(Config, "load", load), \
+                mock.patch.object(hook, "clear", clear):
+            self.manager.reload_config()
+        self.assertEqual(events, ["load", "clear", "install"])
+        runtime = self.fixture.module("runtime")
+        desktop = self.fixture.module("desktop")
+        self.assertEqual(hook.subscriptions.get("qtile", {}), {
+            "startup": [runtime.on_startup],
+            "startup_complete": [runtime.on_startup_complete],
+            "startup_once": [runtime.startup_once],
+            "setgroup": [desktop.show_browser_tabs],
+            "client_new": [runtime.before_window_created],
+            "client_managed": [runtime.after_window_created],
+            "client_killed": [runtime.window_killed],
+            "client_focus": [runtime.client_focused],
+        })
+
+    def test_preflight_validate_failure_restores_config_identity_without_teardown(self):
+        window = FakeWindow(self.manager, group="h", focused=True)
+        self.attach(window)
+        config = self.manager.config
+        before = vars(config).copy()
+        before_window = window.snapshot()
+        sentinel = object()
+        original_load = config.load
+
+        def candidate_load():
+            original_load()
+            config.wmname = sentinel
+            config.offline_candidate_only = sentinel
+
+        with mock.patch.object(config, "load", candidate_load), \
+                mock.patch.object(config, "validate", side_effect=ValueError("offline invalid")):
+            expected = vars(config).copy()
+            self.manager.reload_config()
+            self.assertEqual(set(vars(config)), set(expected))
+            for name, value in expected.items():
+                self.assertIs(vars(config)[name], value, name)
+        self.assertIs(self.manager.config, config)
+        self.assertEqual(set(vars(config)), set(before))
+        for name, value in before.items():
+            self.assertIs(vars(config)[name], value, name)
+        self.assertEqual(window.snapshot(), before_window)
+        self.assertEqual(window_effects(self.manager), [])
+        self.assertFalse(any(event[0] in {
+            "native.finalize", "native.ungrab_keys", "native.load_config.adapter"
+        } for event in self.manager.trace), self.manager.trace)
+        self.assertFalse(self.runtime.get_state(self.manager)["reload_active"])
+
+    def test_shell_instances_rebind_to_new_classes_preserving_window_and_pending(self):
+        from libqtile.config import Match
+        window = FakeWindow(self.manager, name="urxvt_scratchpad", group="scratchpad")
+        holder = self.scratchpads.shell_holder(self.manager)
+        holder.recover([window])
+        pending = (Match(net_wm_pid=999), 2)
+        holder._spawned = pending
+        old_shell, old_class, old_holder_class = holder.shell, type(holder.shell), type(holder)
+        before = window.snapshot()
+        self.manager.reload_config()
+        current = self.fixture.module("scratchpads")
+        rebound = current.shell_holder(self.manager)
+        self.assertIs(type(rebound), current.ShellHolder)
+        self.assertIs(type(rebound.shell), current.Shell)
+        self.assertIsNot(type(rebound), old_holder_class)
+        self.assertIsNot(type(rebound.shell), old_class)
+        self.assertIsNot(rebound.shell, old_shell)
+        self.assertIs(rebound.shell.window, window)
+        self.assertIs(rebound._spawned, pending)
+        self.assertEqual(window.snapshot(), before)
+        self.assertEqual(window_effects(self.manager), [])
+        self.assertFalse(any(event[0] == "spawn" for event in self.manager.trace))
+
+    def test_pending_client_arrives_after_reload_consumed_once_then_close_and_reopen(self):
+        for late_class in (False, True):
+            with self.subTest(late_class=late_class):
+                fixture = self.fixture
+                manager = self.manager
+                scratchpad = manager.groups_map["scratchpad"]
+                scratchpad.dropdown_toggle("chatgpt")
+                pending = scratchpad._spawned["chatgpt"]
+                manager.trace.clear()
+                manager.reload_config()
+                restored = manager.groups_map["scratchpad"]
+                self.assertIs(restored._spawned["chatgpt"], pending)
+                runtime = fixture.module("runtime")
+                self.assertEqual(hook.subscriptions["qtile"]["client_new"],
+                                 [runtime.before_window_created, restored.on_client_new])
+                client = FakeWindow(manager, wid=801)
+                classes = [] if late_class else ["chatgpt"]
+                client.get_wm_class = lambda: tuple(classes)
+                client.keep_above = lambda: client.effect("keep_above")
+                # hook.fire logs callback exceptions; make them fail the test as well.
+                with mock.patch.object(hook.logger, "exception",
+                                       side_effect=AssertionError("hook callback failed")):
+                    hook.fire("client_new", client)
+                    if late_class:
+                        self.assertIs(restored._spawned["chatgpt"], pending)
+                        self.assertNotIn("chatgpt", restored.dropdowns)
+                        classes.append("chatgpt")
+                    hook.fire("client_managed", client)
+                    self.assertNotIn("chatgpt", restored._spawned)
+                    self.assertEqual(hook.subscriptions["qtile"]["client_new"],
+                                     [runtime.before_window_created])
+                    dropdown = restored.dropdowns["chatgpt"]
+                    self.assertIs(dropdown.window, client)
+                    effects = window_effects(manager)[:]
+                    hook.fire("client_new", client)
+                    hook.fire("client_managed", client)
+                    self.assertIs(restored.dropdowns["chatgpt"], dropdown)
+                    self.assertEqual([event for event in window_effects(manager)[len(effects):]
+                                      if event[0] != "window.keep_above"], [])
+                    hook.fire("client_killed", client)
+                self.assertNotIn("chatgpt", restored.dropdowns)
+                self.assertNotIn(restored.on_client_killed,
+                                 hook.subscriptions["qtile"].get("client_killed", []))
+                manager.windows_map.pop(client.wid)
+                client.group.windows.remove(client)
+                manager.trace.clear()
+                restored.dropdown_toggle("chatgpt")
+                restored.dropdown_toggle("chatgpt")
+                self.assertEqual([event for event in manager.trace if event[0] == "spawn"],
+                                 [("spawn", restored._dropdownconfig["chatgpt"].command)])
+                self.assertEqual(hook.subscriptions["qtile"]["client_new"],
+                                 [runtime.before_window_created, restored.on_client_new])
+                replacement = FakeWindow(manager, wid=802)
+                replacement.get_wm_class = lambda: ("chatgpt",)
+                replacement.keep_above = lambda: replacement.effect("keep_above")
+                with mock.patch.object(hook.logger, "exception",
+                                       side_effect=AssertionError("hook callback failed")):
+                    hook.fire("client_new", replacement)
+                    hook.fire("client_managed", replacement)
+                    self.assertIs(restored.dropdowns["chatgpt"].window, replacement)
+                    self.assertIsNot(restored.dropdowns["chatgpt"], dropdown)
+                    self.assertNotIn("chatgpt", restored._spawned)
+                    hook.fire("client_killed", replacement)
+                manager.windows_map.pop(replacement.wid)
+                replacement.group.windows.remove(replacement)
+                self.assertEqual(hook.subscriptions["qtile"]["client_new"],
+                                 [runtime.before_window_created])
 
     def test_preflight_import_failure_has_no_window_or_native_rebuild_effects(self):
         window = FakeWindow(self.manager, group="h", focused=True)

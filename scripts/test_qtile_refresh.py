@@ -12,9 +12,12 @@ from unittest.mock import patch
 
 from libqtile.config import DropDown, Match, MatchAny
 
+from qtile_test_support import FakeWindow, OfflineQtile, window_effects
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / ".config/qtile"
+TEMP_ROOT = ROOT / ".worktrees/.tmp" if (ROOT / ".git").is_dir() else ROOT.parent / ".tmp"
 SPEC = importlib.util.spec_from_file_location(
     "qtile_declarations_under_test", CONFIG / "amos_qtile/declarations.py"
 )
@@ -30,9 +33,9 @@ class NoEffects:
 
 class RefreshTests(unittest.TestCase):
     def setUp(self):
-        (ROOT.parent / ".tmp").mkdir(parents=True, exist_ok=True)
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(prefix="qtile-refresh-test-",
-                                                dir=ROOT.parent / ".tmp")
+                                                dir=TEMP_ROOT)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         (self.root / "config.py").write_text("# offline configuration\n")
@@ -251,6 +254,158 @@ class RefreshTests(unittest.TestCase):
                 self.path.write_text(source)
                 self.assertFalse(declarations.plan(self.manager)["ok"])
                 self.assert_rejected_unchanged()
+
+
+class SourceIdentityTests(unittest.TestCase):
+    def test_running_source_identity_tracks_config_symlink_paths(self):
+        import sys
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(
+            prefix="qtile-source-link-", dir=TEMP_ROOT)))
+        target = root / "target"
+        target.mkdir()
+        link = root / "linked"
+        link.symlink_to(target, target_is_directory=True)
+        path = link / "config.py"
+        source = 'import sys\n__source_code__ = sys._getframe().f_code\nvalue = 1\n'
+        path.write_text(source)
+        namespace = {"__file__": str(path)}
+        exec(compile(source, str(path), "exec"), namespace)
+        self.assertEqual(declarations.capture_running_sources(link, namespace),
+                         declarations.capture_sources(link))
+
+    def test_running_source_identity_rejects_timestamp_stale_bytecode(self):
+        import os
+        import py_compile
+        import sys
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(
+            prefix="qtile-source-identity-", dir=TEMP_ROOT)))
+        path = root / "config.py"
+        old = 'import sys\n__source_code__ = sys._getframe().f_code\nvalue = True \n'
+        new = old.replace("True ", "False")
+        path.write_text(old)
+        timestamp = path.stat().st_mtime_ns
+        py_compile.compile(str(path), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+        path.write_text(new)
+        os.utime(path, ns=(timestamp, timestamp))
+        spec = importlib.util.spec_from_file_location("offline_stale_config", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertTrue(module.value, "fixture must execute stale timestamp bytecode")
+        with self.assertRaisesRegex(ValueError, "differs from executed"):
+            declarations.capture_running_sources(root, vars(module))
+
+    def test_source_edit_after_evaluation_cannot_become_a_loaded_baseline(self):
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(
+            prefix="qtile-source-race-", dir=TEMP_ROOT)))
+        path = root / "config.py"
+        source = 'import sys\n__source_code__ = sys._getframe().f_code\nvalue = 1\n'
+        path.write_text(source)
+        namespace = {"__file__": str(path)}
+        exec(compile(source, str(path), "exec"), namespace)
+        self.assertEqual(declarations.capture_running_sources(root, namespace),
+                         declarations.capture_sources(root))
+        path.write_text(source.replace("value = 1", "value = 2"))
+        with self.assertRaisesRegex(ValueError, "differs from executed"):
+            declarations.capture_running_sources(root, namespace)
+
+
+class RuntimeRefreshTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = self.enterContext(OfflineQtile())
+        self.fixture.load()
+        self.manager = self.fixture.manager
+        self.manager.rebuild()
+        self.runtime = self.fixture.module("runtime")
+        TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory(
+            prefix="qtile-runtime-refresh-", dir=TEMP_ROOT)))
+        (self.root / "config.py").write_text("# offline configuration\n")
+        (self.root / "scratchpads.toml").write_text(SOURCE)
+        self.manager.config.file_path = str(self.root / "config.py")
+        self.runtime.get_state(self.manager)["source_digest"] = declarations.capture_sources(
+            self.root)
+        self.notifications = []
+        self.enterContext(patch.object(self.runtime, "send_notification",
+                                      side_effect=lambda *args: self.notifications.append(args)))
+        self.manager.trace.clear()
+
+    def shortcut(self, modifiers):
+        keys = [key for key in self.manager.config.keys
+                if key.key == "0" and set(key.modifiers) == set(modifiers)]
+        self.assertEqual(len(keys), 1)
+        self.assertEqual(len(keys[0].commands), 1)
+        return keys[0].commands[0]
+
+    def test_shortcuts_separate_refresh_from_explicit_full_reload(self):
+        refresh = self.shortcut(["mod4"])
+        full = self.shortcut(["mod4", "shift"])
+        self.assertEqual(refresh.name, "function")
+        self.assertIs(refresh.args[0], self.runtime.refresh_config)
+        self.assertEqual(full.name, "reload_config")
+        self.assertEqual(full.selectors, [])
+        self.assertEqual(full.args, ())
+        result = refresh.args[0](self.manager)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(self.notifications, [
+            ("Qtile configuration", "No supported declaration changes")])
+        self.assertEqual(window_effects(self.manager), [])
+        self.assertFalse(any(event[0].startswith("native.") for event in self.manager.trace))
+
+    def test_shortcut_rejections_explain_structural_and_pending_failures(self):
+        path = self.root / "scratchpads.toml"
+        scratchpad = self.manager.groups_map["scratchpad"]
+        original = scratchpad._dropdownconfig
+        for reason in ("structural", "pending"):
+            with self.subTest(reason=reason):
+                scratchpad._spawned.clear()
+                if reason == "structural":
+                    path.write_text(SOURCE.replace("x = 0.26", "x = 0.25", 1))
+                else:
+                    scratchpad._spawned["ioa"] = Match(title="pending")
+                    path.write_text(SOURCE.replace(
+                        'command = "systemctl --user start ioagui.service"',
+                        'command = "offline-new"'))
+                self.notifications.clear()
+                result = self.shortcut(["mod4"]).args[0](self.manager)
+                self.assertFalse(result["ok"], result)
+                self.assertNotEqual(result.get("applied"), True)
+                self.assertIs(scratchpad._dropdownconfig, original)
+                self.assertEqual(len(self.notifications), 1)
+                title, message = self.notifications[0]
+                self.assertEqual(title, "Qtile configuration")
+                for error in result["errors"]:
+                    self.assertIn(error, message)
+                if reason == "structural":
+                    self.assertIn("Super+Shift+0", message)
+                else:
+                    self.assertEqual(result["pending"], ["ioa"])
+                    self.assertIn("ioa", message)
+                self.assertEqual(window_effects(self.manager), [])
+                self.assertFalse(any(event[0].startswith("native.")
+                                     for event in self.manager.trace))
+
+    def test_actual_refresh_discovery_uses_current_dropdown_not_module_defaults(self):
+        path = self.root / "scratchpads.toml"
+        path.write_text(SOURCE.replace('title = "iOA"', 'title = "iOA.refreshed"'))
+        old = FakeWindow(self.manager, wid=701, name="iOA")
+        new = FakeWindow(self.manager, wid=702, name="iOA.refreshed")
+        before = (old.snapshot(), new.snapshot())
+        result = self.runtime.refresh_config(self.manager)
+        self.assertTrue(result["applied"], result)
+        self.assertEqual(result["changes"], [{"name": "ioa", "fields": ["match"]}])
+        self.runtime.get_state(self.manager)["initializing"] = True
+        from libqtile import hook
+        hook.fire("client_managed", old)
+        self.assertNotIn("ioa", self.manager.groups_map["scratchpad"].dropdowns)
+        hook.fire("client_managed", new)
+        dropdown = self.manager.groups_map["scratchpad"].dropdowns["ioa"]
+        self.assertIs(dropdown.window, new)
+        self.assertEqual((old.snapshot(), new.snapshot()), before)
+        self.assertEqual(window_effects(self.manager), [])
 
 
 if __name__ == "__main__":
