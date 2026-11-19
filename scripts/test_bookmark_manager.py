@@ -283,6 +283,32 @@ class BookmarkScratchpadTest(unittest.TestCase):
         self.toggle()
         self.assertEqual(self.state(), (None, None, False, ("bookmarks",), 1))
 
+    def test_reload_discards_unmatched_legacy_spawn_and_loads_native_app_matching(self):
+        from libqtile import config, scratchpad
+
+        legacy = scratchpad.ScratchPad("scratchpad", [config.DropDown(
+            "bookmarks", "bookmark-manager", match=config.Match(wm_class="bookmark-manager"))])
+        legacy.qtile = self.manager
+        legacy.dropdown_toggle("bookmarks")
+        legacy.dropdown_toggle("bookmarks")
+        self.manager.spawn.assert_called_once_with("bookmark-manager")
+        self.assertIn("bookmarks", legacy._spawned)
+        self.assertFalse(legacy._spawned["bookmarks"].compare(self.window()))
+        saved = legacy.get_state()
+        self.assertEqual(saved, [], "an unmatched launch waiter is not a restorable window")
+
+        self.manager.spawn.reset_mock()
+        self.scratchpad.restore_state(saved, restart=False)
+        self.assertEqual(self.state(), (None, None, False, (), 0))
+        self.toggle()
+        window = self.window()
+        self.assertTrue(self.scratchpad._spawned["bookmarks"].compare(window))
+        self.manager.windows_map[window.wid] = window
+        self.scratchpad.on_client_new(window)
+        self.ns["after_window_created"](window)
+        self.assertEqual(self.state(), (22, "e", True, (), 1))
+        self.manager.spawn.assert_called_once_with("bookmark-manager")
+
     def test_existing_untracked_manager_is_adopted_before_spawning(self):
         window = self.window()
         self.manager.windows_map[window.wid] = window
