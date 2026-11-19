@@ -532,20 +532,7 @@ main() {
     head_ "wired underlay advertisement"
     ipset create ioa_intranet hash:net
     ipset add ioa_intranet 9.0.0.0/8
-    # What the retired iOA owner mark left on an upgraded host: its rules, NAT and tailscale0 DROP.
-    ip rule add fwmark 0x1000000 lookup main pref 400
-    ip rule add fwmark 0x1000000 prohibit pref 401
-    iptables -t nat -A POSTROUTING -o wlan0 -m mark --mark 0x1000000 -j MASQUERADE
-    iptables -t nat -A POSTROUTING -o enp1s0 -m mark --mark 0x1000000 -j MASQUERADE
-    iptables -t mangle -A POSTROUTING -m mark --mark 0x1000000 -o tailscale0 -j DROP
     run_script 1 >/dev/null
-    if [ -z "$(band 400)" ] && [ -z "$(band 401)" ] &&
-       ! iptables -t nat -S POSTROUTING | grep -q -- '--mark 0x1000000' &&
-       ! iptables -t mangle -S POSTROUTING | grep -q -- '--mark 0x1000000'; then
-        ok "retired iOA owner rules 400/401, owner NAT and tailscale0 DROP are removed"
-    else
-        bad "retired iOA owner policy survives: 400=$(band 400) 401=$(band 401)"
-    fi
     if ipset list ioa_intranet >/dev/null 2>&1; then
         bad "retired ioa_intranet set survives reconciliation"
     else
@@ -1735,41 +1722,6 @@ main() {
     [ "$(snapshot_owner_state)" = "$owner_before" ] \
         && ok "CN gateway change preserves tunnel-owned state" \
         || bad "CN gateway change modified tunnel-owned state"
-
-    head_ "host iOA leftovers are retired only once tun0 has left the host"
-    # Before the cutover iOA still runs on the host: tun0 is here and its rules, tables and the tun0
-    # payload NAT are live. A run in that state must not touch them.
-    ip route replace default dev owner0 table 20
-    ip route replace default dev owner0 table 230
-    ip rule add pref 1100 fwmark 0xa38 lookup 20
-    ip rule add pref 1200 from 10.36.43.250 lookup 230
-    iptables -t nat -A POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE
-    rc=$(run_status 0)
-    [ "$rc" -eq 0 ] && ok "run with tun0 on the host exits clean" \
-                    || bad "run with tun0 on the host exited $rc"
-    [ -n "$(band 1100)" ] && [ -n "$(band 1200)" ] &&
-    [ "$(routes 20)" -gt 0 ] && [ "$(routes 230)" -gt 0 ] &&
-    iptables -t nat -C POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE 2>/dev/null \
-        && ok "with tun0 on the host, 1100/1200, tables 20/230 and tun0 NAT are untouched" \
-        || bad "with tun0 on the host, live iOA policy was torn down"
-    # After the cutover tun0 is in the ioa namespace and the same objects are residue.
-    ip link del tun0
-    rc=$(run_status 0)
-    [ "$rc" -eq 0 ] && ok "run without tun0 on the host exits clean" \
-                    || bad "run without tun0 on the host exited $rc"
-    [ -z "$(band 1100)" ] && [ -z "$(band 1200)" ] &&
-    [ "$(routes 20)" -eq 0 ] && [ "$(routes 230)" -eq 0 ] &&
-    ! iptables -t nat -S POSTROUTING | grep -Fq -- '-o tun0 -m mark --mark 0x1 -j MASQUERADE' \
-        && ok "without tun0 on the host, 1100/1200, tables 20/230 and tun0 NAT are retired" \
-        || bad "without tun0 on the host, iOA residue was left behind"
-    # The remaining blocks model the pre-cutover host again.
-    ip link add tun0 type dummy
-    ip link set tun0 up
-    ip addr add 192.168.255.10/24 dev tun0
-    ip route replace default dev tun0 table 52
-    ip route replace default via 192.168.255.1 dev tun0 table 400
-    ip route replace default dev owner0 table 20
-    ip route replace default dev owner0 table 230
 
     head_ "cold boot: no owned rules, no cn table, no state"
     # Restore owner sentinels independently before the cold-boot run.

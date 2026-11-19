@@ -97,7 +97,7 @@ SmartGateAgent 的隧道和 iOA.bin 的控制连接仍在同一 cgroup，按进�
 切换只有一次，需要扫码一次：`.tmp/cutover-ioa-netns.sh`（默认只打印，`--apply` 执行）。顺序是固定的：
 正在运行的 SmartGateAgent 调用 `scripts/overrides/ip`，正在运行的策略依赖 400/401，而合入后这两样都不在
 了，所以先停 ngnclient，再合入 master，再安装单元，起命名空间和端口，跑一次 `network-reconfigure`
-（tun0 已不在宿主机，它顺带清掉 1100/1200、table 20/230 和 tun0 的 MASQUERADE），最后起 ngnclient。
+（当时它还带一段一次性清理，删掉宿主机上 iOA 留下的 400/401、1100/1200、table 20/230 和相关 NAT；清理完成后已删除），最后起 ngnclient。
 
 验证：命名空间里有 tun0、宿主机没有；心跳和票据成功；GUI 登录状态和 `ioa-health`；git/iwiki；
 corkscrew SSH；浏览器 PAC；之后再做一次真实漫游。

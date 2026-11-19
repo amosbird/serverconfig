@@ -79,8 +79,7 @@ toward `100.64.0.0/10` are left unmarked so 1150 cannot pull the client return p
 
 Earlier versions ran iOA in the host namespace and needed an `ip` shim (fixing SmartGateAgent's
 rules at 1100/1200), an owner mark `0x1000000` at 400/401 with its own MASQUERADE, and a `tun0`
-MASQUERADE. `network-reconfigure` retires pref 400/401 and the owner NAT on every run, and retires
-1100/1200, tables 20/230 and the `tun0` NAT once `tun0` is no longer on the host.
+MASQUERADE. All of it is gone; the cutover removed what it had left on this host.
 
 ### Routefile is optional acceleration
 

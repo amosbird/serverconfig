@@ -1518,19 +1518,6 @@ record_ioa_environment() {
     printf '%s\n' "$ioa_environment" > "$IOA_ENV_STATE"
 }
 
-# One-time retirement of what iOA left on the host before it moved into the ioa namespace: its
-# rules 1100/1200, tables 20/230 and the tun0 payload NAT. Before the early exit, because nothing
-# else would notice them. While tun0 is still on the host, iOA runs there and they are live.
-retire_host_ioa() {
-    ip link show tun0 >/dev/null 2>&1 && return 0
-    clean_pref 1100
-    clean_pref 1200
-    ip route flush table 20 2>/dev/null || true
-    ip route flush table 230 2>/dev/null || true
-    while iptables -t nat -D POSTROUTING -o tun0 -m mark --mark 0x1 -j MASQUERADE 2>/dev/null; do :; done
-}
-retire_host_ioa
-
 if [ "${FORCE:-0}" != 1 ] &&
    [ "$SMARTDNS_CHANGED" -eq 0 ] &&
    [ "$(cat "$IOA_ENV_STATE" 2>/dev/null || true)" = "$ioa_environment" ] &&
@@ -1557,7 +1544,7 @@ finish_state() {
 trap 'finish_state $?' EXIT
 
 # Retire only obsolete repository-owned policy from earlier versions.
-for p in 100 400 401 900 1401 2000 2501 3500 4000 4500; do clean_pref "$p"; done
+for p in 100 900 1401 2000 2501 3500 4000 4500; do clean_pref "$p"; done
 rm -f "$CACHE_DIR/derp-ips" "$CACHE_DIR/ioa-endpoints"
 
 valid_ipv4() {
@@ -1730,17 +1717,6 @@ mark_transaction+=$'\n'"-F $NEXT_CHAIN"
 mark_transaction+=$'\n'"-X $NEXT_CHAIN"
 mark_transaction+=$'\nCOMMIT'
 iptables-restore --noflush <<<"$mark_transaction"
-
-# Retire the iOA owner mark 0x1000000 (pref 400/401 above): iOA's own traffic now leaves from the
-# ioa namespace (network/ioa-netns).
-while iptables -t mangle -D POSTROUTING -m mark --mark 0x1000000 -o tailscale0 -j DROP \
-    2>/dev/null; do :; done
-while read -r rule; do
-    # shellcheck disable=SC2086 # iptables -S output is intentional argument input
-    iptables -t nat ${rule/-A /-D } 2>/dev/null || true
-done < <(iptables -t nat -S POSTROUTING 2>/dev/null |
-    grep -E -- '^-A POSTROUTING -o [^ ]+ -m mark --mark 0x1000000(/0xffffffff)? -j MASQUERADE$' ||
-    true)
 
 # Final source validity is checked after srcnat, not in mangle POSTROUTING. At this priority every
 # healthy CN packet has already been rewritten to the physical address, while an ESTABLISHED

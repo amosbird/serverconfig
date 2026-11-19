@@ -220,14 +220,12 @@ if ! awk '
     fail=1
 fi
 # iOA lives in the ioa namespace (network/ioa-netns). Its host-side owner mark, SmartGate audit and
-# tun0 NAT are gone; pref 400/401 stay on the retirement list so an upgraded host converges.
+# tun0 NAT are gone.
 reject 'no host-side iOA owner mark, SmartGate audit, or tun0 payload NAT' \
     'IOA_OWNER|set-xmark 0x1000000|P_IOA_SMART|reconcile_ioa_smartgate|-interface tun0|reconcile_mark_masquerade "\$IOA_MARK"' \
     scripts/network-reconfigure
-if ! grep -Eq '^for p in 100 400 401 900 [0-9 ]+; do clean_pref "\$p"; done$' \
-        scripts/network-reconfigure ||
-   ! grep -Fq 'IOA_TUNNEL_NETS=("192.168.255.0/24")' scripts/network-reconfigure; then
-    echo 'FAIL pref 400/401 are not retired or iOA tunnel network is not routed into table ioa' >&2
+if ! grep -Fq 'IOA_TUNNEL_NETS=("192.168.255.0/24")' scripts/network-reconfigure; then
+    echo 'FAIL iOA tunnel network is not routed into table ioa' >&2
     fail=1
 fi
 if ! grep -Fq 'IOA_ENV_STATE="${IOA_ENV_STATE_OVERRIDE:-/run/network-reconfigure/ioa-environment}"' \
@@ -1266,19 +1264,8 @@ reject 'table 19 is used only by the ioa namespace underlay, never business payl
     scripts/network-reconfigure
 reject 'wired advertisement does not mutate tunnel-owned tables' \
     'ip route (flush|del|replace).*table (52|ioa)' scripts/network-reconfigure
-# Tables 20/230 belong to SmartGateAgent while it still runs on the host (tun0 present); only
-# after the cutover are they residue to retire.
-if ! awk '
-    /^retire_host_ioa\(\) \{/ { inside = 1 }
-    inside && /ip link show tun0 >\/dev\/null 2>&1 && return 0/ { guard = NR }
-    inside && /ip route flush table (20|230)/ { if (!first) first = NR }
-    inside && /^\}/ { inside = 0 }
-    END { exit !(guard && first && guard < first) }
-' scripts/network-reconfigure ||
-   [ "$(grep -Ec 'ip route flush table (20|230)( |$)' scripts/network-reconfigure)" -ne 2 ]; then
-    echo 'FAIL tables 20/230 are flushed outside the tun0-absent retirement' >&2
-    fail=1
-fi
+reject 'the host never touches SmartGateAgent tables 20/230; they live in the ioa namespace' \
+    'table (20|230)\b' scripts/network-reconfigure
 for statement in \
     'IgnoreCarrierLoss=3s' \
     'AddressRandomization=network' \
