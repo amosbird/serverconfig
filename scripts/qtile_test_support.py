@@ -19,6 +19,8 @@ from libqtile.backend.x11 import core as x11_core
 from libqtile.backend.x11 import window as x11_window
 from libqtile.confreader import Config
 from libqtile.core.manager import Qtile
+from libqtile.group import _Group
+from libqtile.layout.floating import Floating
 from libqtile.scratchpad import DropDownToggler, ScratchPad, WindowVisibilityToggler
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -60,7 +62,7 @@ class OfflineQtile(contextlib.AbstractContextManager):
             cls: {name: copy.copy(value) if isinstance(value, (dict, set, list)) else value
                   for name, value in vars(cls).items()} for cls in (
                 Qtile, ScratchPad, DropDownToggler, WindowVisibilityToggler,
-                x11_window._Window, x11_window.Window, x11_core.Core,
+                x11_window._Window, x11_window.Window, x11_core.Core, _Group, Floating,
             )
         }
         hook.clear()

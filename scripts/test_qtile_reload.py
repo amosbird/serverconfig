@@ -75,6 +75,107 @@ class NativeFixtureTest(unittest.TestCase):
         self.assertIs(sys.modules.get("config"), original_config)
 
 
+class X11ReloadLifecycleTest(unittest.TestCase):
+    def test_native_x11_rebuild_preserves_all_existing_window_membership_and_frames(self):
+        import contextlib
+        from libqtile.backend.x11 import core, window as xwindow
+        from libqtile.config import ScreenRect
+        from libqtile.group import _Group
+
+        with OfflineQtile() as fixture:
+            fixture.load()
+            manager = fixture.manager
+            manager.rebuild()
+            manager._drag = None
+            manager.core.name = "x11"
+            manager.core.masked = contextlib.nullcontext
+            manager.core.clear_focus = lambda: manager.trace.append(("native.clear_focus",))
+            fixture.module("patches").install(manager)
+            manager.groups = []
+            manager.groups_map = {}
+            for definition in manager.config.groups:
+                if definition.name == "scratchpad":
+                    from libqtile.scratchpad import ScratchPad
+                    group = ScratchPad("scratchpad", definition.dropdowns)
+                else:
+                    group = _Group(definition.name)
+                group._configure(manager.config.layouts, manager.config.floating_layout, manager)
+                manager.groups.append(group)
+                manager.groups_map[group.name] = group
+            from qtile_test_support import FakeScreen
+            manager.screens = [FakeScreen(manager, index, manager.groups_map[name])
+                               for index, name in enumerate(("h", "f"))]
+            for screen in manager.screens:
+                screen.get_rect = lambda screen=screen: ScreenRect(
+                    screen.x, screen.y, screen.width, screen.height)
+            manager.current_screen = manager.screens[1]
+            windows = [FakeWindow(manager, index + 501, group=name, focused=focused)
+                       for index, (name, focused) in enumerate((
+                           ("scratchpad", False), ("h", False), ("f", True), ("c", False)))]
+            for window in windows:
+                window.fullscreen = False
+                window.can_steal_focus = True
+            tiled = FakeWindow(manager, 505, group="c", focused=False)
+            tiled.floating = False
+            tiled.fullscreen = False
+            tiled.can_steal_focus = True
+            group_c = manager.groups_map["c"]
+            group_c.tiled_windows.add(tiled)
+            for layout in group_c.layouts:
+                layout.add_client(tiled)
+            windows.append(tiled)
+            module = fixture.module("scratchpads")
+            module.attach_existing(manager.groups_map["scratchpad"], "stardict", windows[0])
+            module.attach_existing(manager.groups_map["scratchpad"], "ioa", windows[1])
+            before = [window.snapshot() for window in windows]
+            fake_core = SimpleNamespace(
+                qtile=manager, update_client_lists=mock.Mock(), fire_screen_change=mock.Mock(),
+                conn=SimpleNamespace(enable_screen_change_notifications=mock.Mock()))
+            def rebuild(initial=False):
+                manager.config.load()
+                manager.groups, manager.groups_map = [], {}
+                for definition in manager.config.groups:
+                    if definition.name == "scratchpad":
+                        from libqtile.scratchpad import ScratchPad
+                        group = ScratchPad("scratchpad", definition.dropdowns)
+                    else:
+                        group = _Group(definition.name)
+                    group._configure(manager.config.layouts, manager.config.floating_layout, manager)
+                    manager.groups.append(group)
+                    manager.groups_map[group.name] = group
+                manager.screens = [FakeScreen(manager, index, manager.groups_map[name])
+                                   for index, name in enumerate(("h", "f"))]
+                for screen in manager.screens:
+                    screen.get_rect = lambda screen=screen: ScreenRect(
+                        screen.x, screen.y, screen.width, screen.height)
+                manager.current_screen = manager.screens[0]
+                manager._state.apply(manager)
+                # Module reload replaces imported classes, so patch only at dispatch.
+                with mock.patch.object(fixture.module("patches"), "Window", FakeWindow):
+                    core.Core.on_config_load(fake_core, False)
+                hook.fire("startup")
+                for screen in manager.screens:
+                    screen.group.layout_all()
+                manager._state = None
+            manager.load_config = rebuild
+            manager.trace.clear()
+            with mock.patch.object(fixture.module("patches"), "Window", FakeWindow):
+                manager.reload_config()
+            self.assertEqual(fake_core.update_client_lists.call_count, 1)
+            self.assertEqual([window.snapshot() for window in windows], before)
+            effects = window_effects(manager)
+            self.assertTrue(all(event[0] == "window.focus" and event[1] == windows[2].wid
+                                for event in effects), manager.trace)
+            for window in windows:
+                self.assertIs(window.group, manager.groups_map[window.group.name])
+                self.assertIn(window, window.group.windows)
+            self.assertEqual(manager.current_group.name, "f")
+            self.assertIs(manager.current_window, windows[2])
+            self.assertIn(tiled, manager.groups_map["c"].layout.clients.clients)
+            self.assertEqual(manager.groups_map["scratchpad"].dropdowns["stardict"].window,
+                             windows[0])
+
+
 class ReloadLifecycleTest(unittest.TestCase):
     def setUp(self):
         self.fixture = self.enterContext(OfflineQtile())
@@ -149,6 +250,31 @@ class ReloadLifecycleTest(unittest.TestCase):
         self.assertEqual(scratchpad.dropdowns, {})
         self.assertEqual(window_effects(self.manager), [])
 
+    def test_overlapping_matchers_cannot_give_one_window_two_owners(self):
+        from libqtile.config import Match
+        window = FakeWindow(self.manager, name="shared")
+        scratchpad = self.manager.groups_map["scratchpad"]
+        for name in ("ioa", "stardict"):
+            scratchpad._dropdownconfig[name].match = Match(title="shared")
+        self.scratchpads.recover_windows(self.manager)
+        self.scratchpads.recover_windows(self.manager)
+        owners = [name for name, dropdown in scratchpad.dropdowns.items()
+                  if dropdown.window is window]
+        self.assertEqual(len(owners), 1)
+        other = "stardict" if owners[0] == "ioa" else "ioa"
+        with self.assertRaisesRegex(ValueError, "belongs|bound"):
+            self.scratchpads.adopt_window(self.manager, other)
+        self.assertEqual(window_effects(self.manager), [])
+
+    def test_cold_managed_discovery_is_passive_before_startup(self):
+        self.runtime.get_state(self.manager)["initializing"] = True
+        window = FakeWindow(self.manager, name="iOA", group="2")
+        before = window.snapshot()
+        hook.fire("client_managed", window)
+        self.assertIs(self.manager.groups_map["scratchpad"].dropdowns["ioa"].window, window)
+        self.assertEqual(window.snapshot(), before)
+        self.assertEqual(window_effects(self.manager), [])
+
     def test_pending_launch_survives_reload_without_respawn(self):
         scratchpad = self.manager.groups_map["scratchpad"]
         scratchpad.dropdown_toggle("chatgpt")
@@ -165,6 +291,43 @@ class ReloadLifecycleTest(unittest.TestCase):
         callbacks = hook.subscriptions.get("qtile", {}).get("client_new", [])
         self.assertIn(restored.on_client_new, callbacks)
         self.assertNotIn(scratchpad.on_client_new, callbacks)
+
+    def test_native_first_migration_preserves_pending_dropdown_and_shell(self):
+        import types
+        from libqtile.config import Match
+        from libqtile.scratchpad import ScratchPad
+        from qtile_test_support import FakeManager
+
+        with OfflineQtile() as fixture:
+            manager = fixture.manager
+            sys.path.insert(0, str(manager.config.file_path.rsplit("/", 1)[0]))
+            declarations = fixture.module("declarations")
+            legacy = ScratchPad("scratchpad", declarations.build_dropdowns(declarations.load()))
+            legacy.qtile = manager
+            manager.groups = [group for group in manager.groups if group.name != "scratchpad"]
+            manager.groups.append(legacy)
+            manager.groups_map["scratchpad"] = legacy
+            legacy.dropdown_toggle("chatgpt")
+            pending = legacy._spawned["chatgpt"]
+            shell_pending = (Match(net_wm_pid=999), 2)
+            legacy_module = types.ModuleType("config")
+            legacy_module.__file__ = manager.config.file_path
+            legacy_module.__spec__ = importlib.util.spec_from_file_location(
+                "config", manager.config.file_path)
+            legacy_module.shell = SimpleNamespace(shell=None, _spawned=shell_pending)
+            sys.modules["config"] = legacy_module
+            # Enter the native function already resolved by the previous config.
+            manager.trace.clear()
+            NATIVE_RELOAD(manager)
+            restored = manager.groups_map["scratchpad"]
+            self.assertIs(restored._spawned["chatgpt"], pending)
+            holder = fixture.module("scratchpads").shell_holder(manager)
+            self.assertIs(holder._spawned, shell_pending)
+            restored.dropdown_toggle("chatgpt")
+            holder.toggle_left()
+            self.assertFalse(any(event[0] == "spawn" for event in manager.trace))
+            self.assertIn(restored.on_client_new,
+                          hook.subscriptions.get("qtile", {}).get("client_new", []))
 
     def test_recycled_window_id_cannot_restore_an_old_object(self):
         old = FakeWindow(self.manager, group="scratchpad")
@@ -220,6 +383,18 @@ class ReloadLifecycleTest(unittest.TestCase):
             self.manager.trace.clear()
             self.manager.reload_config()
             self.assertIs(Qtile.reload_config, wrapper)
+            self.assertTrue(hook_counts())
+            callbacks = hook.subscriptions.get("qtile", {})
+            installed_runtime = self.fixture.module("runtime")
+            installed_desktop = self.fixture.module("desktop")
+            for event, callback in (
+                ("startup", installed_runtime.on_startup),
+                ("client_managed", installed_runtime.after_window_created),
+                ("client_killed", installed_runtime.window_killed),
+                ("setgroup", installed_desktop.show_browser_tabs),
+                ("client_focus", installed_runtime.client_focused),
+            ):
+                self.assertIn(callback, callbacks.get(event, []), event)
             self.assertEqual(hook_counts(), expected)
             self.assertIs(self.fixture.module("runtime").get_state(self.manager), state)
             self.assertIs(state["offline_fixture_marker"], marker)

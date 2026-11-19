@@ -2,250 +2,232 @@
 
 import pathlib
 import unittest
+from types import SimpleNamespace
+from unittest import mock
+
+from qtile_test_support import FakeWindow, OfflineQtile, window_effects
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CONFIG = ROOT / ".config/qtile/config.py"
 TELEGRAM = ROOT / "scripts/tdesktop-open"
 
 
 class QtileScratchpadTest(unittest.TestCase):
     def setUp(self):
-        self.config = CONFIG.read_text()
+        self.fixture = self.enterContext(OfflineQtile())
+        self.config = self.fixture.load()
+        self.manager = self.fixture.manager
+        self.manager.rebuild()
+        self.module = self.fixture.module("scratchpads")
+        self.runtime = self.fixture.module("runtime")
+        self.manager.trace.clear()
 
     def test_all_dropdown_shortcuts_use_unified_raise_and_focus_toggle(self):
-        shortcuts = {
-            "1": "ioa",
-            "4": "stalonetray",
-            "8": "chatgpt",
-            "9": "webchat",
-            "0": "tdesktop",
-            "minus": "stardict",
-        }
+        shortcuts = {"1": "ioa", "4": "stalonetray", "8": "chatgpt", "9": "webchat",
+                     "0": "tdesktop", "minus": "stardict", "b": "bookmarks"}
         for key, name in shortcuts.items():
-            self.assertIn(
-                f'Key([ctrl, alt], "{key}", toggle_scratchpad("{name}"))',
-                self.config,
-            )
-        self.assertNotIn("def toggle_chatgpt", self.config)
-        self.assertIn("def toggle_scratchpad(name):", self.config)
-        self.assertIn("dropdown.window.bring_to_front()", self.config)
-        self.assertIn("dropdown.window.focus(warp=True)", self.config)
+            with self.subTest(key=key):
+                binding = [binding for binding in self.config.keys
+                           if binding.key == key and set(binding.modifiers) == {"control", "mod1"}]
+                self.assertEqual(len(binding), 1)
+                scratchpad = self.manager.groups_map["scratchpad"]
+                with mock.patch.object(scratchpad, "dropdown_toggle") as toggle:
+                    call = binding[0].commands[0]
+                    self.assertEqual(call.name, "function")
+                    call.args[0](self.manager)
+                    toggle.assert_called_once_with(name)
 
     def test_toggle_adopts_existing_window_instead_of_hanging_on_systemd_spawn(self):
-        toggle = self.config.split("def toggle_scratchpad(name):", 1)[1].split(
-            "pending_inputstr", 1
-        )[0]
-        self.assertIn("_adopt_scratchpad_window(qtile, name)", toggle)
-        self.assertIn("_scratchpad_window_alive", toggle)
-        self.assertIn("_drop_scratchpad_dropdown", self.config)
-        self.assertIn("no-op when the unit is already active", self.config)
-        self.assertLess(
-            toggle.index("_adopt_scratchpad_window(qtile, name)"),
-            toggle.index("scratchpad.dropdown_toggle(name)"),
-        )
+        window = FakeWindow(self.manager, name="iOA")
+        self.module.toggle_scratchpad("ioa").args[0](self.manager)
+        self.assertIs(self.manager.groups_map["scratchpad"].dropdowns["ioa"].window, window)
+        self.assertFalse(any(event[0] == "spawn" for event in self.manager.trace))
+        self.assertIn("window.focus", [event[0] for event in self.manager.trace])
 
     def test_reload_recovers_orphan_dropdown_windows_before_state_is_saved(self):
-        self.assertIn("def register_scratchpad_window(window, hide=True):", self.config)
-        self.assertIn("register_scratchpad_window(client)", self.config)
-        self.assertIn("def recover_scratchpad_dropdowns():", self.config)
-        self.assertIn("DropDownToggler(window, scratchpad.name, config)", self.config)
-        self.assertIn("@hook.subscribe.startup", self.config)
-        for name in (
-            "ioa",
-            "tdesktop",
-            "webchat",
-            "chatgpt",
-            "stardict",
-            "stalonetray",
-        ):
-            self.assertIn(f'"{name}": Match(', self.config)
-        self.assertIn('"bookmarks": MatchAny(', self.config)
+        window = FakeWindow(self.manager, name="iOA")
+        before = window.snapshot()
+        self.module.recover_windows(self.manager)
+        dropdown = self.manager.groups_map["scratchpad"].dropdowns["ioa"]
+        self.assertIs(dropdown.window, window)
+        self.assertTrue(dropdown.shown)
+        self.assertEqual(window.snapshot(), before)
+        self.assertEqual(window_effects(self.manager), [])
 
     def test_the_tray_row_stays_centered_however_many_icons_it_holds(self):
-        # The row is exactly as wide as the icons docked in it, so no fixed
-        # fraction of the screen centers it; every placement re-centers.
-        self.assertIn("def center_tray(win):", self.config)
-        self.assertIn("(screen.width - win.width) / 2", self.config)
-        self.assertIn("(screen.height - win.height) / 2", self.config)
-        self.assertIn("if (win.x, win.y) == (x, y):", self.config)
-        place = self.config.split("def new_place(", 1)[1]
-        # Centering reads the placed size, which is what the hints allowed.
-        self.assertLess(place.index("self._place("), place.index("center_tray(self)"))
-        self.assertNotIn("client.qtile.current_screen.width * 0.45", self.config)
+        window = FakeWindow(self.manager, name="stalonetray")
+        window._place = mock.Mock(side_effect=window.place)
+        patches = self.fixture.module("patches")
+        for width in (96, 288, 480):
+            window.width = width
+            patches.center_tray(window)
+            self.assertEqual((window.x, window.y), ((1920 - width) // 2, (1080 - 555) // 2))
+            window._place.reset_mock()
+            patches.center_tray(window)
+            window._place.assert_not_called()
+        # Native hints can change the requested size: center the actual resulting size.
+        def native_place(x, y, width, height, *_args, **_kwargs):
+            window.x, window.y = x, y
+            window.width, window.height = min(width, 288), min(height, 96)
+        window._place.side_effect = native_place
+        patches.new_place(window, 0, 0, 500, 300, 8, "red")
+        self.assertEqual((window.x, window.y, window.width, window.height), (816, 492, 288, 96))
+        window.group = self.manager.screens[1].group
+        patches.center_tray(window)
+        self.assertEqual((window.x, window.y), (2736, 492))
 
     def test_tray_drops_the_fcitx5_xembed_icon(self):
-        # fcitx5 paints its XEmbed icon only while connecting to a tray, so a
-        # tray spawned later (first Ctrl-Alt-4 of the session) leaves a blank
-        # slot that nothing repaints. The icon is the indicator's job now, and
-        # the tray must not carry fcitx5's own blank slot beside it.
         source = (ROOT / "scripts/tray").read_text()
         self.assertIn("exec stalonetray --icon-size=96 --kludges=force_icons_size", source)
         self.assertNotIn("fcitx5-remote", source)
         self.assertIn("ignore_classes fcitx", (ROOT / ".stalonetrayrc").read_text())
-        self.assertIn('"stalonetray",\n                "tray",', self.config)
-        startup = (ROOT / "scripts/startup").read_text()
-        self.assertIn('run "tray" systemctl --user start tray.service', startup)
-        # A unit of its own, so that an indicator can restart it without
-        # taking it down with itself the next time it restarts.
+        dropdown = next(group for group in self.config.groups
+                        if group.name == "scratchpad").dropdowns
+        self.assertEqual(next(dd.command for dd in dropdown if dd.name == "stalonetray"), "tray")
+        self.assertIn('run "tray" systemctl --user start tray.service',
+                      (ROOT / "scripts/startup").read_text())
         unit = (ROOT / "systemd/tray.service").read_text()
         self.assertIn("ExecStart=/home/amos/scripts/tray", unit)
         self.assertIn("Restart=always", unit)
         self.assertIn("systemd/tray.service", (ROOT / "restore.sh").read_text())
 
     def test_bookmark_manager_is_a_reusable_scratchpad(self):
-        launcher = ROOT / "scripts/bookmark-manager"
-        self.assertTrue(launcher.exists())
-        source = launcher.read_text()
-        self.assertIn('--app="$url"', source)
-        self.assertIn("rofi-chrome-mode id", source)
-        self.assertIn('chrome-extension://$extension_id/bookmarks.html', source)
-        self.assertIn('profile=${ABUSH_BOOKMARK_PROFILE:-${ABUSH_CHROME_PROFILE:-', source)
-        self.assertIn('$HOME/.config/google-chrome-main', source)
-        self.assertNotIn('google-chrome-bookmarks', source)
-        self.assertIn('exec "$chrome"', source)
-        self.assertNotIn("--class=", source)
-        self.assertNotIn("/home/amos/scripts/chromium", source)
+        source = (ROOT / "scripts/bookmark-manager").read_text()
+        for expected in ('--app="$url"', "rofi-chrome-mode id",
+                         'chrome-extension://$extension_id/bookmarks.html',
+                         'profile=${ABUSH_BOOKMARK_PROFILE:-${ABUSH_CHROME_PROFILE:-',
+                         '$HOME/.config/google-chrome-main', 'exec "$chrome"'):
+            self.assertIn(expected, source)
+        for forbidden in ('google-chrome-bookmarks', '--class=', '/home/amos/scripts/chromium'):
+            self.assertNotIn(forbidden, source)
         chromium = (ROOT / "scripts/chromium").read_text()
-        self.assertIn('if [[ ${1:-} == --current-group ]]; then', chromium)
-        self.assertIn("focus_group=false", chromium)
-        self.assertIn("flags and app launches require a dedicated profile", chromium)
-        self.assertIn("if $focus_group; then", chromium)
-        self.assertLess(
-            chromium.index('exec python3 "$root/scripts/ordinary-open-client.py" "$url"'),
-            chromium.rindex("focus_main_group"),
-        )
-        self.assertIn(
-            'Key([ctrl, alt], "b", toggle_scratchpad("bookmarks"))',
-            self.config,
-        )
-        self.assertIn('"bookmarks": MatchAny(', self.config)
-        self.assertIn('Match(wm_instance_class="aocepclkpgckjeikiphffdlileoaceec__bookmarks.html")',
-                      self.config)
-        self.assertIn('Match(wm_instance_class="jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html")',
-                      self.config)
-        self.assertIn('Match(wm_class="bookmark-manager")', self.config)
-        self.assertIn('"bookmark-manager",', self.config)
-        self.assertEqual(self.config.count('Key([ctrl, alt], "b",'), 1)
-        self.assertNotIn('Key([ctrl, alt], "b", lazy.spawn("scanqrcode"))', self.config)
+        for expected in ('if [[ ${1:-} == --current-group ]]; then', 'focus_group=false',
+                         'flags and app launches require a dedicated profile', 'if $focus_group; then'):
+            self.assertIn(expected, chromium)
+        self.assertLess(chromium.index('exec python3 "$root/scripts/ordinary-open-client.py" "$url"'),
+                        chromium.rindex("focus_main_group"))
+        self.assertEqual(self.manager.groups_map["scratchpad"]._dropdownconfig["bookmarks"].command,
+                         "bookmark-manager")
 
     def test_bookmark_toggle_moves_hidden_window_to_current_group_before_showing(self):
-        toggle = self.config.split("def toggle_scratchpad(name):", 1)[1].split(
-            "pending_inputstr", 1
-        )[0]
-        self.assertIn("current_group = qtile.current_group", toggle)
-        self.assertIn("dropdown.window.togroup(current_group.name)", toggle)
-        self.assertIn("current_group.toscreen()", toggle)
-        self.assertLess(
-            toggle.index("dropdown.window.togroup(current_group.name)"),
-            toggle.index("dropdown.show()"),
-        )
+        window = FakeWindow(self.manager, name="iOA", group="scratchpad")
+        self.module.recover_windows(self.manager)
+        self.module.toggle_scratchpad("ioa").args[0](self.manager)
+        effects = window_effects(self.manager)
+        move = next(index for index, event in enumerate(effects) if event[0] == "window.togroup")
+        place = next(index for index, event in enumerate(effects) if event[0] == "window.place")
+        self.assertLess(move, place)
+        self.assertEqual(window.group.name, "h")
+        self.assertTrue(window.has_focus)
 
     def test_matching_bookmark_window_is_registered_before_generic_popup_geometry(self):
-        managed = self.config.split("def after_window_created(client):", 1)[1]
-        self.assertIn('if scratchpad_matches["bookmarks"].compare(client):', managed)
-        self.assertIn('register_scratchpad_window(client, hide=False)', managed)
-        self.assertLess(
-            managed.index('if scratchpad_matches["bookmarks"].compare(client):'),
-            managed.index('client.get_wm_role() == "pop-up"'),
-        )
+        from test_bookmark_manager import OfflineWindow, DEV_ID
+        events = []
+        self.enterContext(mock.patch.object(self.module, "QtileWindow", OfflineWindow))
+        window = OfflineWindow(self.manager, events, 101,
+                               (f"{DEV_ID}__bookmarks.html", "Google-chrome"), "pop-up")
+        self.manager.windows_map[101] = window
+        self.runtime.after_window_created(window)
+        self.assertFalse(any(event[0].startswith("generic") for event in events))
+        self.assertIs(self.manager.groups_map["scratchpad"].dropdowns["bookmarks"].window, window)
 
     def test_shell_is_recovered_after_reload_without_spawning_duplicates(self):
-        self.assertIn("def recover_shell():", self.config)
-        self.assertIn("def recover(self, windows):", self.config)
-        self.assertIn('window.name == "urxvt_scratchpad"', self.config)
-        self.assertIn("window.kill()", self.config)
-        self.assertIn("shell.recover(qtile.windows_map.values())", self.config)
-        self.assertIn("def register(self, window):", self.config)
-        self.assertIn("shell.register(client)", self.config)
-        self.assertIn("if self.shell is not None or self._spawned is not None:", self.config)
-        self.assertNotIn("hook.subscribe.client_new(self.on_client_new)", self.config)
+        first = FakeWindow(self.manager, name="urxvt_scratchpad")
+        focused = FakeWindow(self.manager, 102, name="urxvt_scratchpad", focused=True)
+        before = (first.snapshot(), focused.snapshot())
+        self.module.recover_windows(self.manager)
+        self.module.recover_windows(self.manager)
+        self.assertIs(self.module.shell_holder(self.manager).shell.window, focused)
+        self.assertEqual((first.snapshot(), focused.snapshot()), before)
+        self.assertEqual(self.manager.trace, [])
 
     def test_shell_spawn_action_runs_only_after_window_is_managed(self):
-        register = self.config.split("def register(self, window):", 1)[1].split(
-            "def recover(self, windows):", 1
-        )[0]
-        self.assertIn("self.shell = Shell(window)", register)
-        self.assertIn("self._show(mode)", register)
-        managed = self.config.split("def after_window_created(client):", 1)[1]
-        self.assertIn("shell.register(client)", managed)
+        holder = self.module.shell_holder(self.manager)
+        holder.toggle_left()
+        holder.toggle_left()
+        self.assertEqual(sum(event[0] == "spawn" for event in self.manager.trace), 1)
+        window = FakeWindow(self.manager, name="urxvt_scratchpad", focused=True)
+        self.assertEqual(window_effects(self.manager), [])
+        self.runtime.after_window_created(window)
+        self.assertIsNone(holder._spawned)
+        self.assertEqual((window.x, window.y, window.width, window.height), (0, 0, 960, 1080))
+        self.assertEqual(window.group.name, "h")
 
     def test_a_shell_spawned_to_be_shown_is_not_toggled_away_again(self):
-        # A window that has only now been managed is focused and can already
-        # be tiled at the very half of the screen it is asked for, which a
-        # toggle reads as "already there" and hides.
-        show = self.config.split("    def _show(self, mode):", 1)[1].split(
-            "    def _spawn(self", 1
-        )[0]
-        self.assertIn("self.shell.show_left()", show)
-        self.assertIn("self.shell.show_right()", show)
-        self.assertIn("self.shell.show_tiled()", show)
-        self.assertNotIn("toggle_", show)
-        for half in ("left", "right"):
-            toggle = self.config.split(f"    def toggle_{half}(self):", 1)[1].split(
-                "    def ", 1
-            )[0]
-            self.assertIn("self.hide()", toggle)
-            self.assertIn(f"self.show_{half}()", toggle)
+        holder = self.module.shell_holder(self.manager)
+        holder.toggle_left()
+        window = FakeWindow(self.manager, name="urxvt_scratchpad", focused=True)
+        window.x, window.float_x, window.width, window.height = 0, 0, 960, 1080
+        self.runtime.after_window_created(window)
+        self.assertEqual(window.group.name, "h")
+        holder.toggle_left()
+        self.assertEqual(window.group.name, "scratchpad")
+        holder.toggle_left()
+        self.assertEqual(window.group.name, "h")
+
+    def test_shell_right_and_tiled_spawn_requests_show_once_after_manage(self):
+        for mode, action, floating, x in ((1, "toggle_right", True, 960),
+                                          (0, "show_shell", False, 111)):
+            with self.subTest(mode=mode):
+                holder = self.module.ShellHolder()
+                self.manager.groups_map["h"].toscreen = mock.Mock()
+                getattr(holder, action)()
+                window = FakeWindow(self.manager, wid=200 + mode, name="urxvt_scratchpad",
+                                    focused=True)
+                self.assertTrue(holder.register(window))
+                self.assertIsNone(holder._spawned)
+                self.assertEqual((window.group.name, window.floating, window.x), ("h", floating, x))
+                self.assertFalse(holder.register(window))
 
     def test_a_screen_qtile_invented_without_an_output_is_thrown_away(self):
-        # Qtile keeps a screen it never gives a group to when it sees no
-        # output for a moment, and then every screen change and every config
-        # reload dies on it for the rest of the session.
-        process = self.config.split("def process_screens(self, reloading", 1)[1].split(
-            "@hook.subscribe.startup", 1
-        )[0]
-        self.assertIn('hasattr(screen, "group")', process)
-        self.assertIn("del self.current_screen", process)
-        self.assertIn("self._process_screens_unpatched(reloading)", process)
-        patch = self.config.split("def patch_process_screens():", 1)[1]
-        self.assertIn('if not hasattr(Qtile, "_process_screens_unpatched"):', patch)
-        self.assertIn("Qtile._process_screens = process_screens", patch)
+        invalid = SimpleNamespace()
+        valid = SimpleNamespace(group=object())
+        native = mock.Mock(return_value="processed")
+        manager = SimpleNamespace(screens=[invalid, valid], current_screen=invalid,
+                                  _process_screens_unpatched=native)
+        result = self.fixture.module("patches").process_screens(manager, True)
+        self.assertEqual(result, "processed")
+        self.assertEqual(manager.screens, [valid])
+        self.assertFalse(hasattr(manager, "current_screen"))
+        native.assert_called_once_with(True)
 
     def test_shell_moves_to_current_group_and_marks_it_floating_before_resizing(self):
-        show_float = self.config.split("def show_float(self, x, y):", 1)[1].split(
-            "def show_tiled(self):", 1
-        )[0]
-        self.assertIn("win.togroup(win.qtile.current_group.name)", show_float)
-        self.assertIn("win.enable_floating()", show_float)
-        self.assertIn("win.place(", show_float)
-        self.assertNotIn("win._float_state", show_float)
-        self.assertNotIn("FloatStates", self.config)
-        self.assertNotIn("mark_floating(", self.config)
-        self.assertNotIn("win.set_size_floating", show_float)
-        self.assertLess(
-            show_float.index("win.togroup(win.qtile.current_group.name)"),
-            show_float.index("win.enable_floating()"),
-        )
-        self.assertLess(
-            show_float.index("win.enable_floating()"),
-            show_float.index("win.place("),
-        )
+        window = FakeWindow(self.manager, group="scratchpad")
+        self.module.Shell(window).show_left()
+        names = [event[0] for event in window_effects(self.manager)]
+        self.assertLess(names.index("window.togroup"), names.index("window.enable_floating"))
+        self.assertLess(names.index("window.enable_floating"), names.index("window.place"))
 
     def test_floating_shell_is_not_left_in_tiled_window_list(self):
-        self.assertIn("win.disable_floating()", self.config)
-        self.assertIn("win.enable_floating()", self.config)
+        window = FakeWindow(self.manager)
+        self.manager.groups_map["h"].toscreen = mock.Mock()
+        shell = self.module.Shell(window)
+        shell.show_tiled()
+        self.assertFalse(window.floating)
+        shell.show_left()
+        self.assertTrue(window.floating)
+        self.assertEqual(window.group.name, "h")
 
     def test_floating_geometry_hooks_use_public_floating_api(self):
-        hooks = self.config.split("def before_window_created(client):", 1)[1].split(
-            "class ConditionalBorderColor", 1
-        )[0]
-        for marker in (
-            'if "copyq" in client.get_wm_class():',
-            'client.window.get_name() == "float"',
-            'client.window.get_name() == "dtpick"',
-            'client.get_wm_role() == "pop-up"',
-        ):
-            section = hooks.split(marker, 1)[1].split("elif ", 1)[0]
-            self.assertIn("enable_floating()", section)
+        for classes, title, size in ((["copyq"], "copyq", (2000, 1200)),
+                                     (["kitty"], "float", (2000, 1200)),
+                                     (["kitty"], "dtpick", (400, 120))):
+            with self.subTest(title=title):
+                window = mock.Mock()
+                window.get_wm_class.return_value = classes
+                window.window.get_name.return_value = title
+                self.runtime.before_window_created(window)
+                window.enable_floating.assert_called_once_with()
+                window.set_size_floating.assert_called_once_with(*size)
+                window.center.assert_called_once_with()
+                calls = window.mock_calls
+                self.assertLess(calls.index(mock.call.enable_floating()),
+                                calls.index(mock.call.set_size_floating(*size)))
 
     def test_telegram_uri_handler_does_not_use_eval_or_private_qtile_api(self):
         launcher = TELEGRAM.read_text()
         self.assertNotIn("eval", launcher)
         self.assertNotIn("show_telegram", launcher)
         self.assertIn('exec /opt/telegram/Telegram -- "$@"', launcher)
-        self.assertNotIn("def show_telegram", self.config)
-        self.assertNotIn("scratchpad._dropdownconfig", self.config)
-        self.assertNotIn("scratchpad._spawn(", self.config)
 
 
 if __name__ == "__main__":

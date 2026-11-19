@@ -30,7 +30,9 @@ class NoEffects:
 
 class RefreshTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix=".qtile-refresh-test-", dir=ROOT)
+        (ROOT.parent / ".tmp").mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(prefix="qtile-refresh-test-",
+                                                dir=ROOT.parent / ".tmp")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         (self.root / "config.py").write_text("# offline configuration\n")
@@ -169,6 +171,14 @@ class RefreshTests(unittest.TestCase):
                 result = self.assert_rejected_unchanged()
                 self.assertTrue(result["requires_full_reload"])
                 self.assertEqual(result["deferred_full_reload"], [{"name": "ioa", "fields": [field]}])
+
+    def test_tray_matcher_is_not_a_future_only_change(self):
+        self.edit('title = "stalonetray"', 'title = "different-existing-window"')
+        result = self.assert_rejected_unchanged()
+        self.assertTrue(result["requires_full_reload"])
+        self.assertEqual(result["deferred_full_reload"], [
+            {"name": "stalonetray", "fields": ["match"]},
+        ])
 
     def test_name_and_order_require_full_reload(self):
         self.edit('name = "ioa"', 'name = "renamed"')

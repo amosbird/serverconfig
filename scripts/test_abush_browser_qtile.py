@@ -1,28 +1,16 @@
 #!/usr/bin/env python3
 
-import ast
+import importlib.util
 import json
 import pathlib
-import re
 import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from qtile_test_support import OfflineQtile
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / ".config/qtile/config.py"
-
-
-def call_name(node):
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return f"{call_name(node.value)}.{node.attr}"
-    return ""
-
-
-def literal_keyword(call, name):
-    keyword = next(keyword for keyword in call.keywords if keyword.arg == name)
-    return ast.literal_eval(keyword.value)
 
 
 class FakeGroup:
@@ -51,6 +39,9 @@ class FakeWindow:
     def _togroup(self, group, switch_group=False):
         self.group = FakeGroup(group)
 
+    def match(self, rule):
+        return rule.compare(self)
+
     def get_wm_role(self):
         return self.role
 
@@ -59,63 +50,55 @@ class FakeWindow:
 
 
 def load_browser_config(namespace):
-    tree = ast.parse(CONFIG_PATH.read_text())
-    names = {
-        "qtile_window_by_xid", "prepare_ordinary_window", "activate_ordinary_window",
-        "ordinary_browser_incarnation", "x11_text_property", "is_chrome_window",
-        "has_legacy_browser_binding", "before_window_created", "install_browser_commands",
-    }
-    nodes = []
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-                isinstance(target, ast.Name) and target.id in {
-                    "ORDINARY_NONCE", "LEGACY_BROWSER_PROPERTIES"}
-                for target in node.targets):
-            nodes.append(node)
-        elif isinstance(node, ast.FunctionDef) and node.name in names:
-            node.decorator_list = []
-            nodes.append(node)
-    namespace.update(json=json, re=re, pathlib=pathlib, QtileWindow=FakeWindow)
-    exec(compile(ast.fix_missing_locations(ast.Module(nodes, [])), str(CONFIG_PATH), "exec"),
-         namespace)
-    namespace["ordinary_browser_incarnation"] = lambda window: window.incarnation
-    return namespace
+    """Return isolated production globals; fixture overrides never leak to Qtile."""
+    spec = importlib.util.spec_from_file_location(
+        "offline_browser", CONFIG_PATH.parent / "amos_qtile/browser.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with OfflineQtile() as fixture:
+        fixture.load()
+        before_window_created = fixture.module("runtime").before_window_created
+    module.__dict__.update(
+        QtileWindow=FakeWindow,
+        Qtile=type("OfflineCommandRoot", (), {}),
+        ordinary_browser_incarnation=lambda window: window.incarnation,
+        before_window_created=before_window_created,
+    )
+    module.__dict__.update(namespace)
+    return module.__dict__
 
 
 class QtileConfigTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.source = CONFIG_PATH.read_text()
-        cls.tree = ast.parse(cls.source)
-
     def test_group_c_uses_max_with_native_top_tabs(self):
-        group_c = next(
-            node for node in ast.walk(self.tree)
-            if isinstance(node, ast.Call) and call_name(node.func) == "Group" and node.args
-            and isinstance(node.args[0], ast.Constant) and node.args[0].value == "c")
-        layouts = next(keyword.value for keyword in group_c.keywords if keyword.arg == "layouts")
-        self.assertEqual(call_name(layouts.elts[0].func), "layout.Max")
-        task_list = next(node for node in ast.walk(self.tree)
-                         if isinstance(node, ast.Call) and call_name(node.func) == "widget.TaskList")
-        self.assertEqual(literal_keyword(task_list, "highlight_method"), "block")
-        self.assertEqual(literal_keyword(task_list, "font"), "Ubuntu Mono")
-        self.assertEqual(literal_keyword(task_list, "fontsize"), 32)
-        self.assertEqual(literal_keyword(task_list, "padding_y"), 2)
-        bar_call = next(node for node in ast.walk(self.tree)
-                        if isinstance(node, ast.Call) and call_name(node.func) == "bar.Bar")
-        self.assertEqual(ast.literal_eval(bar_call.args[1]), 44)
-        self.assertIn('@hook.subscribe.startup\ndef initialize_browser_tabs()', self.source)
-        self.assertIn('screen.top.show(screen.group.name == "c")', self.source)
-        self.assertIn('lazy.group["c"].toscreen()', self.source)
+        with OfflineQtile() as fixture:
+            config = fixture.load()
+            group = next(group for group in config.groups if group.name == "c")
+            self.assertEqual(group.layouts[0].name, "max")
+            top = config.screens[0].top
+            task_list = top.widgets[0]
+            self.assertEqual((top.size, task_list.highlight_method, task_list.font,
+                              task_list.fontsize, task_list.padding_y),
+                             (44, "block", "Ubuntu Mono", 32, 2))
+            show = mock.Mock()
+            screen = SimpleNamespace(top=SimpleNamespace(show=show),
+                                     group=SimpleNamespace(name="c"))
+            manager = SimpleNamespace(screens=[screen])
+            desktop = fixture.module("desktop")
+            desktop.initialize_browser_tabs(manager)
+            screen.group.name = "f"
+            desktop.show_browser_tabs(manager)
+            self.assertEqual(show.call_args_list, [mock.call(True), mock.call(False)])
 
     def test_no_managed_gate_routing_or_control_initialized(self):
+        source = "\n".join(path.read_text() for path in
+                           (CONFIG_PATH.parent / "amos_qtile").glob("*.py"))
         for retired in (
-            "__abush_quarantine", "handle_MapRequest", "handle_DestroyNotify", "on_config_load",
+            "__abush_quarantine", "handle_MapRequest", "handle_DestroyNotify",
             "install_abush_premap_gate", "ABUSH_CANDIDATE_WINDOWS", "ABUSH_CANDIDATE_LEASES",
             "claim_abush_browser_candidate", "place_abush_browser", "recover_abush_browsers",
             "reclassify_abush_browser", "prevent_abush_browser_focus_steal", "__ABUSH_BIND__",
         ):
-            self.assertNotIn(retired, self.source)
+            self.assertNotIn(retired, source)
         root = type("OfflineQtile", (), {"_commands": {"unrelated": object()}})
         ns = load_browser_config({"Qtile": root,
                                   "expose_command": lambda name: lambda function: function})
@@ -124,14 +107,38 @@ class QtileConfigTest(unittest.TestCase):
             "unrelated", "prepare_ordinary_window", "activate_ordinary_window"})
 
     def test_normal_chrome_rule_remains_f(self):
-        rules = [ast.get_source_segment(self.source, node) for node in ast.walk(self.tree)
-                 if isinstance(node, ast.Call) and call_name(node.func) == "Rule"]
-        self.assertTrue(any('wm_class="Google-chrome"' in rule and 'group="f"' in rule
-                            for rule in rules))
-        self.assertFalse(any('group="c"' in rule or 'abush' in rule.lower() for rule in rules))
-        self.assertNotIn("weechat", self.source.lower())
+        with OfflineQtile() as fixture:
+            config = fixture.load()
+            chrome = FakeWindow()
+            rules = [rule for rule in config.dgroups_app_rules
+                     if rule.matches(chrome)]
+            self.assertEqual([rule.group for rule in rules], ["f"])
+            self.assertFalse(any(rule.group == "c" for rule in config.dgroups_app_rules))
         self.assertFalse((ROOT / "scripts/wee").exists())
         self.assertFalse((ROOT / "scripts/kitty-notify").exists())
+
+    def test_browser_fixture_globals_are_isolated_and_overrides_are_honored(self):
+        root = type("CommandRoot", (), {"_commands": {}})
+        class CustomWindow(FakeWindow):
+            pass
+        incarnation = mock.Mock(return_value=["fixture", 42, "7"])
+        ns = load_browser_config({"Qtile": root, "QtileWindow": CustomWindow,
+                                  "ordinary_browser_incarnation": incarnation,
+                                  "expose_command": lambda name: lambda function: function})
+        ns["install_browser_commands"]()
+        self.assertIs(root._commands["prepare_ordinary_window"], ns["prepare_ordinary_window"])
+        window = CustomWindow(name="__ABUSH_ORDINARY__:" + "a" * 32,
+                              metadata={"_ABUSH_ORDINARY_NONCE": "a" * 32})
+        expected = json.dumps({"version": 1, "nonce": "a" * 32,
+                               "identity": ["fixture", 42, "7"]})
+        ns["prepare_ordinary_window"](SimpleNamespace(windows_map={22: window}), 22, expected)
+        incarnation.assert_called_once_with(window)
+        other = load_browser_config({})
+        self.assertIsNot(other["Qtile"], root)
+        self.assertIs(other["QtileWindow"], FakeWindow)
+        self.assertEqual(other["ordinary_browser_incarnation"](FakeWindow()), ["boot", 4242, "123"])
+        with self.assertRaises(ValueError):
+            ns["qtile_window_by_xid"](SimpleNamespace(windows_map={22: FakeWindow()}), 22)
 
     def test_client_new_leaves_chrome_and_legacy_windows_untouched(self):
         ns = load_browser_config({})

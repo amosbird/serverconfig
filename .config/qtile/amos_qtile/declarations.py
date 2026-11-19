@@ -131,6 +131,9 @@ def _prepare(manager):
         result["requires_full_reload"] = True
         result["errors"].append("Dropdown names/order changed; full reload required")
     previous = {item["name"]: item for item in old}
+    removed = sorted(set(previous) - set(new_names))
+    if removed:
+        result["changes"].extend({"name": name, "fields": ["removed"]} for name in removed)
     for item in new:
         name = item["name"]
         fields = sorted(field for field in item if previous.get(name, {}).get(field) != item[field])
@@ -138,8 +141,10 @@ def _prepare(manager):
             continue
         result["changes"].append({"name": name, "fields": fields})
         deferred = sorted(set(fields) - _REFRESH_FIELDS)
+        if (name == "stalonetray" and "match" in fields):
+            deferred.append("match")
         if deferred:
-            result["deferred_full_reload"].append({"name": name, "fields": deferred})
+            result["deferred_full_reload"].append({"name": name, "fields": sorted(deferred)})
         if name in scratchpad._spawned:
             result["pending"].append(name)
     if result["deferred_full_reload"]:

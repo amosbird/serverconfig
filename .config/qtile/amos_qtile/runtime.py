@@ -31,6 +31,26 @@ def get_state(manager):
     return state
 
 
+def capture_reload(manager):
+    state = get_state(manager)
+    state["reload_snapshot"] = scratchpads.snapshot(manager)
+    state["window_snapshot"] = {
+        wid: (window, window.group.name if window.group is not None else None)
+        for wid, window in manager.windows_map.items() if isinstance(window, QtileWindow)
+    }
+    state["group_snapshot"] = {
+        group.name: {
+            "focus_history": list(getattr(group, "focus_history", [])),
+            "layout": group.layout.name if getattr(group, "layouts", None) else None,
+            "clients": {
+                layout.name: list(layout.clients.clients)
+                for layout in getattr(group, "layouts", [])
+                if hasattr(getattr(layout, "clients", None), "clients")
+            },
+        } for group in manager.groups
+    }
+
+
 def cancel_input(manager):
     state = get_state(manager)
     state["input_generation"] += 1
@@ -88,21 +108,39 @@ def _install_commands():
     browser.install_browser_commands()
 
 
-def install(manager, snapshot):
+def install(manager, snapshot, legacy_shell=None):
     if not hasattr(manager, "config"):
         return
     state = get_state(manager)
+    if state.get("reload_active") and getattr(manager, "_state", None):
+        raise RuntimeError("Refusing config evaluation during an active rebuild")
+    patches.check_compatible(manager)
+    if not state["installed"] and legacy_shell is not None:
+        state["shell"] = legacy_shell
+    if not state["installed"] and (getattr(manager, "no_spawn", False)
+                                   and manager.groups_map.get("scratchpad") is not None):
+        # The first migration may already be inside the old native reload function.
+        capture_reload(manager)
+        state["migration_snapshot"] = True
+    scratchpads.upgrade_shell(manager)
     sources = declarations.capture_sources(Path(manager.config.file_path).parent)
     patches.install(manager)
     _install_commands()
-    _unsubscribe_owned(manager)
-    # The first preflight evaluation must not commit new defaults over the running config.
+    # Preflight evaluation must not commit new defaults over the running config.
     if state["installed"]:
         state["candidate_declarations"] = snapshot
         state["candidate_sources"] = sources
     else:
         state["declarations"], state["source_digest"] = snapshot, sources
     state["installed"] = True
+    if not getattr(manager, "no_spawn", True) or getattr(manager, "_state", None):
+        state["initializing"] = True
+    install_hooks(manager)
+    manager.show_scratchpad = lambda name: scratchpads.show_scratchpad(manager, name)
+
+
+def install_hooks(manager):
+    _unsubscribe_owned(manager)
     for event, callback in (
         ("startup", on_startup), ("startup_complete", on_startup_complete),
         ("startup_once", startup_once), ("setgroup", desktop.show_browser_tabs),
@@ -110,7 +148,6 @@ def install(manager, snapshot):
         ("client_killed", window_killed), ("client_focus", client_focused),
     ):
         _subscribe(manager, event, callback)
-    manager.show_scratchpad = lambda name: scratchpads.show_scratchpad(manager, name)
 
 
 def on_startup():
@@ -121,6 +158,7 @@ def on_startup():
         state["source_digest"] = state.pop("candidate_sources")
     bindings.enable_key_release_events(manager)
     desktop.initialize_browser_tabs(manager)
+    state["initializing"] = False
     if state["reload_snapshot"] is None:
         scratchpads.recover_windows(manager)
     # Delay focus-lost subscriptions until native state/core reconstruction has finished.
@@ -135,6 +173,10 @@ def on_startup_complete():
 def finish_reload(manager):
     state = get_state(manager)
     state["reload_snapshot"] = None
+    migrating = state.pop("migration_snapshot", False)
+    if not migrating:
+        state.pop("window_snapshot", None)
+        state.pop("group_snapshot", None)
     for group in manager.groups:
         for dropdown in getattr(group, "dropdowns", {}).values():
             scratchpads.arm_dropdown(dropdown)
@@ -170,6 +212,12 @@ def after_window_created(client):
     if scratchpads.shell_holder(manager).register(client):
         return
     bookmarks = scratchpads.matches(manager, "bookmarks", client)
+    if get_state(manager).get("initializing"):
+        scratchpad = manager.groups_map["scratchpad"]
+        for name in scratchpad._dropdownconfig:
+            if scratchpads.matches(manager, name, client):
+                scratchpads.attach_existing(scratchpad, name, client)
+                return
     scratchpads.register_window(manager, client, hide=not bookmarks)
     if bookmarks:
         return

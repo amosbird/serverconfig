@@ -96,6 +96,9 @@ class ShellHolder:
                 "unix:/tmp/kitty-mux-socket",
             ], shell=True)
             self._spawned = (Match(net_wm_pid=pid), mode)
+            if pid <= 0:
+                self._spawned = None
+                raise RuntimeError("Scratchpad shell launcher failed")
 
     def register(self, window):
         if self.shell is not None or window.name != "urxvt_scratchpad":
@@ -150,7 +153,22 @@ def shell_holder(manager):
     state = runtime.get_state(manager)
     if state["shell"] is None:
         state["shell"] = ShellHolder()
-    return state["shell"]
+    holder = state["shell"]
+    if holder.shell is not None and not window_alive(manager, holder.shell.window):
+        holder.shell = None
+    return holder
+
+
+def upgrade_shell(manager):
+    state = runtime.get_state(manager)
+    old = state["shell"]
+    if old is None:
+        return
+    holder = ShellHolder()
+    holder._spawned = old._spawned
+    if old.shell is not None and window_alive(manager, old.shell.window):
+        holder.shell = Shell(old.shell.window)
+    state["shell"] = holder
 
 
 @lazy.function
@@ -196,14 +214,36 @@ def _cleanup_hooks(scratchpad):
     hook.subscribe.float_change(scratchpad.on_float_change)
 
 
+def bound_name(scratchpad, window):
+    return next((name for name, dropdown in scratchpad.dropdowns.items()
+                 if dropdown.window is window), None)
+
+
+class RestoredDropDownToggler(DropDownToggler):
+    def on_focus_change(self, *args, **kwargs):
+        manager = self.window.qtile
+        if runtime.get_state(manager)["reload_active"] or getattr(manager, "_state", None):
+            return
+        return super().on_focus_change(*args, **kwargs)
+
+
 def attach_existing(scratchpad, name, window, previous=None):
     """Bind without window effects; the constructor is only for newly launched clients."""
     if not window_alive(scratchpad.qtile, window):
         raise ValueError("scratchpad window identity changed")
     if previous is not None and previous.window is not window:
         raise ValueError("scratchpad toggler belongs to another window object")
+    owner = bound_name(scratchpad, window)
+    if owner is not None:
+        if owner != name:
+            raise ValueError(f"Window {window.wid} is already bound to scratchpad {owner}")
+        consume_pending(scratchpad, name)
+        return scratchpad.dropdowns[name]
+    current = scratchpad.dropdowns.get(name)
+    if current is not None and window_alive(scratchpad.qtile, current.window):
+        raise ValueError(f"Scratchpad {name} is already bound to another window")
     config = scratchpad._dropdownconfig[name]
-    dropdown = object.__new__(DropDownToggler)
+    dropdown = object.__new__(RestoredDropDownToggler)
     dropdown.name = name
     dropdown.x, dropdown.y = config.x, config.y
     dropdown.width, dropdown.height = config.width, config.height
@@ -272,7 +312,8 @@ def recover_windows(manager):
         if name in scratchpad.dropdowns or name in scratchpad._spawned or config.match is None:
             continue
         found = [window for window in manager.windows_map.values()
-                 if isinstance(window, QtileWindow) and config.match.compare(window)]
+                 if isinstance(window, QtileWindow) and config.match.compare(window)
+                 and bound_name(scratchpad, window) is None]
         if len(found) == 1:
             attach_existing(scratchpad, name, found[0])
         elif len(found) > 1:
@@ -291,8 +332,11 @@ def hide_exclusive(scratchpad, name):
 
 def adopt_window(manager, name):
     scratchpad = manager.groups_map["scratchpad"]
-    found = [window for window in manager.windows_map.values()
-             if isinstance(window, QtileWindow) and matches(manager, name, window)]
+    candidates = [window for window in manager.windows_map.values()
+                  if isinstance(window, QtileWindow) and matches(manager, name, window)]
+    found = [window for window in candidates if bound_name(scratchpad, window) in (None, name)]
+    if candidates and not found:
+        raise ValueError(f"Matching window for {name} already belongs to another scratchpad")
     if len(found) > 1:
         raise ValueError(f"Ambiguous scratchpad {name}: select or close a duplicate explicitly")
     if not found:

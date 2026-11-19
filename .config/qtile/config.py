@@ -8,4 +8,7 @@ globals().update(desktop.build_desktop(snapshot))
 keys = bindings.build_keys()
 mouse = bindings.build_mouse()
 
-runtime.install(qtile, snapshot)
+runtime.install(qtile, snapshot, legacy_shell=globals().get("shell"))
+# A callback queued by the previous monolithic config still resolves these globals.
+pending_inputstr = None
+shell = None

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import ast
 import importlib.util
 import json
 import os
@@ -10,6 +9,8 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
+
+from qtile_test_support import OfflineQtile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "scripts/bookmark-manager"
@@ -155,38 +156,23 @@ class BookmarkLauncherTest(unittest.TestCase):
 @unittest.skipUnless(importlib.util.find_spec("libqtile"), "Qtile is not installed")
 class BookmarkScratchpadTest(unittest.TestCase):
     def setUp(self):
-        import libqtile.backend.base  # Initialize Qtile's circular window/scratchpad imports.
-        from libqtile import config, lazy, scratchpad
+        fixture = self.enterContext(OfflineQtile())
+        loaded = fixture.load()
+        from libqtile import scratchpad
 
         self.events = []
-        self.hooks = mock.Mock()
-        patch = mock.patch.object(scratchpad, "hook", self.hooks)
-        patch.start()
-        self.addCleanup(patch.stop)
-        self.ns = dict(Match=config.Match, MatchAny=config.MatchAny, ScratchPad=config.ScratchPad,
-                       DropDown=config.DropDown, Qtile=object, QtileWindow=OfflineWindow,
-                       DropDownToggler=scratchpad.DropDownToggler, hook=self.hooks, lazy=lazy.lazy)
-        tree = ast.parse(CONFIG.read_text())
-        names = {"_scratchpad_window_alive", "_drop_scratchpad_dropdown",
-                 "_adopt_scratchpad_window", "_hide_exclusive_scratchpads", "toggle_scratchpad",
-                 "register_scratchpad_window", "recover_scratchpad_dropdowns",
-                 "before_window_created", "after_window_created", "window_killed"}
-        nodes = []
-        for node in tree.body:
-            if isinstance(node, ast.Assign) and any(
-                    isinstance(target, ast.Name) and target.id in {
-                        "scratchpad_matches", "exclusive_scratchpads"} for target in node.targets):
-                nodes.append(node)
-            elif isinstance(node, ast.FunctionDef) and node.name in names:
-                node.decorator_list = []
-                nodes.append(node)
-        exec(compile(ast.fix_missing_locations(ast.Module(nodes, [])), str(CONFIG), "exec"),
-             self.ns)
-        groups = next(node.value for node in tree.body if isinstance(node, ast.Assign)
-                      and any(isinstance(target, ast.Name) and target.id == "groups"
-                              for target in node.targets))
-        configured = eval(compile(ast.Expression(groups.elts[0]), str(CONFIG), "eval"), self.ns)
-        self.ns["groups"] = [configured]
+        self.hooks = scratchpad.hook
+        module = fixture.module("scratchpads")
+        runtime = fixture.module("runtime")
+        self.enterContext(mock.patch.object(module, "QtileWindow", OfflineWindow))
+        configured = next(group for group in loaded.groups if group.name == "scratchpad")
+        self.ns = dict(
+            scratchpad_matches=fixture.module("declarations").build_matches(loaded.snapshot),
+            toggle_scratchpad=module.toggle_scratchpad,
+            before_window_created=runtime.before_window_created,
+            after_window_created=runtime.after_window_created,
+            window_killed=runtime.window_killed,
+        )
         self.scratchpad = scratchpad.ScratchPad("scratchpad", configured.dropdowns)
         self.manager = SimpleNamespace(
             windows_map={}, groups_map={"scratchpad": self.scratchpad},
@@ -201,8 +187,8 @@ class BookmarkScratchpadTest(unittest.TestCase):
             self.manager.groups_map[name] = SimpleNamespace(name=name,
                 screen=self.manager.current_screen)
         self.manager.current_group = self.manager.groups_map["e"]
-        self.ns.update(qtile=self.manager, shell=SimpleNamespace(
-            register=mock.Mock(return_value=False), on_client_killed=mock.Mock()))
+        self.ns["recover_scratchpad_dropdowns"] = lambda: module.recover_windows(self.manager)
+        self.enterContext(mock.patch.object(module, "qtile", self.manager))
 
     def window(self, instance=None, wid=22, role="pop-up"):
         return OfflineWindow(self.manager, self.events, wid,
@@ -271,9 +257,11 @@ class BookmarkScratchpadTest(unittest.TestCase):
         window = self.window(f"{STORE_ID}__bookmarks.html")
         self.manager.windows_map[window.wid] = window
         self.ns["recover_scratchpad_dropdowns"]()
-        self.assertEqual(self.state(), (22, "scratchpad", False, (), 0))
+        self.assertEqual(self.state(), (22, "f", True, (), 0))
+        self.assertEqual((window.x, window.y, window.width, window.height), (0, 0, 800, 600))
+        self.assertEqual(self.events, [])
         self.ns["recover_scratchpad_dropdowns"]()
-        self.assertEqual(window.window.set_property.call_count, 1)
+        window.window.set_property.assert_not_called()
         self.toggle()
         self.assertEqual(self.state(), (22, "e", True, (), 0))
         self.manager.spawn.assert_not_called()
@@ -323,6 +311,36 @@ class BookmarkScratchpadTest(unittest.TestCase):
         self.assertEqual(self.state(), (22, "e", True, (), 0))
         self.assertFalse(any(event[0].startswith("generic") for event in self.events))
 
+    def test_managed_fallback_consumes_pending_launch_before_close_in_either_hook_order(self):
+        for native_first in (True, False):
+            with self.subTest(native_first=native_first):
+                self.manager.spawn.reset_mock()
+                self.toggle()
+                self.assertEqual(self.state(), (None, None, False, ("bookmarks",), 1))
+                window = self.window()
+                self.manager.windows_map[window.wid] = window
+                # The native client_new hook can be missed; client_managed must consume it.
+                self.ns["after_window_created"](window)
+                self.assertEqual(self.state(), (22, "e", True, (), 1))
+                self.assertNotIn(self.scratchpad.on_client_new,
+                                 self.hooks.subscriptions.get("qtile", {}).get("client_new", []))
+                callbacks = [self.scratchpad.on_client_killed, self.ns["window_killed"]]
+                if not native_first:
+                    callbacks.reverse()
+                for callback in callbacks:
+                    callback(window)
+                self.manager.windows_map.pop(window.wid)
+                self.assertEqual(self.state(), (None, None, False, (), 1))
+                self.toggle()
+                self.toggle()
+                self.assertEqual(self.state(), (None, None, False, ("bookmarks",), 2))
+                # Complete the second request before the next ordering permutation.
+                replacement = self.window(wid=23)
+                self.manager.windows_map[23] = replacement
+                self.ns["after_window_created"](replacement)
+                self.ns["window_killed"](replacement)
+                self.manager.windows_map.pop(23)
+
     def test_stale_manager_binding_is_dropped_before_one_new_spawn(self):
         window = self.window()
         self.manager.windows_map[window.wid] = window
@@ -359,7 +377,7 @@ class BookmarkScratchpadTest(unittest.TestCase):
         self.toggle()
         trace.append(self.state())
         self.assertEqual(trace, [
-            (22, "scratchpad", False, (), 0), (22, "e", True, (), 0),
+            (22, "f", True, (), 0), (22, "e", True, (), 0),
             (None, None, False, (), 0), (None, None, False, ("bookmarks",), 1),
             (None, None, False, ("bookmarks",), 1),
         ])
