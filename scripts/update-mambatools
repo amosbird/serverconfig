@@ -47,3 +47,10 @@ else
     "$MAMBA_BIN" create -y -p "$MAMBA_PREFIX" \
         "${extra_args[@]}" "${channels[@]}" "${packages[@]}"
 fi
+
+# Every update unpacks the new versions into the package cache and never drops the old ones; it had
+# grown to 39G, of which only the 4.7G hardlinked into the environment was in use. The environment
+# keeps its own hardlinks, so cleaning the cache costs only a re-download on the next change.
+if [[ ${extra_args[*]-} != *--dry-run* ]]; then
+    "$MAMBA_BIN" clean -a -y
+fi
