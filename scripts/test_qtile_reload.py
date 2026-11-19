@@ -284,6 +284,43 @@ class X11TopologyTest(unittest.TestCase):
                               for window in windows], expected)
             self.assertEqual(new.layout.clients.clients, windows)
 
+    def test_tiled_client_selection_survives_a_focused_floating_overlay(self):
+        from libqtile.group import _Group
+        from libqtile import layout
+        from qtile_test_support import FakeScreen
+        with OfflineQtile() as fixture:
+            fixture.load()
+            manager = fixture.manager
+            manager.core.name = "x11"
+            patches = fixture.module("patches")
+            patches.install(manager)
+            group = _Group("h")
+            group._configure([layout.Max()], manager.config.floating_layout, manager)
+            manager.groups, manager.groups_map = [group], {"h": group}
+            manager.screens = [FakeScreen(manager, 0, group)]
+            manager.current_screen = manager.screens[0]
+            tiled = [FakeWindow(manager, index + 950) for index in range(2)]
+            for window in tiled:
+                window.floating = False
+                group.tiled_windows.add(window)
+            group.layout.clients.clients = tiled[:]
+            group.layout.clients.current_client = tiled[1]
+            overlay = FakeWindow(manager, 952, focused=True)
+            fixture.module("runtime").capture_reload(manager)
+            new = _Group("h")
+            new._configure([layout.Max()], manager.config.floating_layout, manager)
+            manager.groups, manager.groups_map = [new], {"h": new}
+            manager.screens[0].group = new
+            new.screen = manager.screens[0]
+            manager._state = object()
+            core = SimpleNamespace(qtile=manager, update_client_lists=mock.Mock(),
+                fire_screen_change=mock.Mock(),
+                conn=SimpleNamespace(enable_screen_change_notifications=mock.Mock()))
+            with mock.patch.object(patches, "Window", FakeWindow):
+                patches.on_config_load(core, False)
+            self.assertIs(new.current_window, overlay)
+            self.assertIs(new.layout.clients.current_client, tiled[1])
+
     def test_visibility_and_geometry_reconcile_only_when_screen_context_changes(self):
         from libqtile.config import ScreenRect
         from libqtile.layout.floating import Floating

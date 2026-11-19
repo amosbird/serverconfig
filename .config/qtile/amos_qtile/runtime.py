@@ -67,6 +67,11 @@ def capture_reload(manager):
                 for layout in getattr(group, "layouts", [])
                 if hasattr(getattr(layout, "clients", None), "clients")
             },
+            "layout_focus": {
+                layout.name: layout.clients.current_client
+                for layout in getattr(group, "layouts", [])
+                if hasattr(getattr(layout, "clients", None), "current_client")
+            },
             "monadtall": {
                 layout.name: {
                     "ratio": layout.ratio, "align": layout.align,

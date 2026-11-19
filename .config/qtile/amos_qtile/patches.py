@@ -149,7 +149,10 @@ def on_config_load(self, initial):
                            if window in group.tiled_windows and window not in ordered)
             if hasattr(getattr(layout, "clients", None), "clients"):
                 layout.clients.clients = ordered
-                if group.current_window in ordered:
+                focused = saved.get("layout_focus", {}).get(layout.name)
+                if focused in ordered:
+                    layout.clients.current_client = focused
+                elif group.current_window in ordered:
                     layout.clients.current_client = group.current_window
                 monad = saved.get("monadtall", {}).get(layout.name)
                 if monad is not None and type(layout).__name__ == "MonadTall":
