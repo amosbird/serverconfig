@@ -1,0 +1,88 @@
+# Declarative scratchpads. Match tables are OR alternatives; fields within a table are ANDed.
+[[dropdowns]]
+name = "ioa"
+command = "systemctl --user start ioagui.service"
+match = [{title = "iOA"}]
+x = 0.26
+y = 0.224
+width = 0.8
+height = 0.35
+opacity = 1.0
+on_focus_lost_hide = true
+warp_pointer = true
+
+[[dropdowns]]
+name = "tdesktop"
+command = "/opt/telegram/Telegram"
+match = [{wm_class = "TelegramDesktop"}]
+x = 0.1
+y = 0.1
+width = 0.8
+height = 0.85
+opacity = 1.0
+on_focus_lost_hide = false
+warp_pointer = true
+
+[[dropdowns]]
+name = "webchat"
+command = "runchat"
+match = [{wm_class = "webchat"}]
+x = 0.1
+y = 0.1
+width = 0.8
+height = 0.85
+opacity = 1.0
+on_focus_lost_hide = false
+warp_pointer = true
+
+[[dropdowns]]
+name = "chatgpt"
+command = "runai"
+match = [{wm_class = "chatgpt"}]
+x = 0.1
+y = 0.1
+width = 0.8
+height = 0.85
+opacity = 1.0
+on_focus_lost_hide = false
+warp_pointer = true
+
+[[dropdowns]]
+name = "bookmarks"
+command = "bookmark-manager"
+match = [
+    {wm_instance_class = "aocepclkpgckjeikiphffdlileoaceec__bookmarks.html"},
+    {wm_instance_class = "jpgfhlaplofoaempbhliigmjbpofeghk__bookmarks.html"},
+    {wm_class = "bookmark-manager"},
+]
+x = 0.1
+y = 0.05
+width = 0.8
+height = 0.9
+opacity = 1.0
+on_focus_lost_hide = false
+warp_pointer = true
+
+[[dropdowns]]
+name = "stardict"
+command = "kitty -T stardict -e dict.sh"
+match = [{title = "stardict"}]
+x = 0.25
+y = 0.1
+width = 0.5
+height = 0.8
+opacity = 0.75
+on_focus_lost_hide = true
+warp_pointer = true
+
+[[dropdowns]]
+name = "stalonetray"
+command = "tray"
+match = [{title = "stalonetray"}]
+x = 0.1
+y = 0.0
+width = 0.8
+height = 0.35
+opacity = 0.9
+on_focus_lost_hide = true
+warp_pointer = true
