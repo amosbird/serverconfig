@@ -124,6 +124,90 @@ const cases = [
         await f.executor.execute(payload);
         assert.equal(f.calls.filter(call => call.name === "native.engine_execute").length, count);
     }],
+    ["persistent CDP response crosses A completion and B rebind without lease loss", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        const first = action(f, {type: "text"}); await f.executor.execute(first);
+        const session = [...f.executor.engineSessions.values()][0];
+        const sessionId = session.bridge.rootSessionId;
+        const entered = deferred(), release = deferred(), replied = deferred();
+        const originalCommand = f.hooks["debugger.sendCommand"];
+        f.hooks["debugger.sendCommand"] = async (source, method, params) => {
+            if (method === "Runtime.getProperties") {
+                entered.resolve(); await release.promise; return {result: []};
+            }
+            return originalCommand(source, method, params);
+        };
+        const originalSend = f.hooks["native.engine_cdp"];
+        f.hooks["native.engine_cdp"] = async wire => {
+            if (wire.message.id === 81) replied.resolve(clone(wire));
+            return originalSend(wire);
+        };
+        assert.equal(f.executor.engineCdp({...first, lease_id: "lease", message: {
+            id: 81, sessionId, method: "Runtime.getProperties", params: {objectId: "old-object"}}}), true);
+        await entered.promise;
+        const second = action(f, {type: "console"});
+        const executing = deferred(), finish = deferred();
+        f.hooks["native.engine_execute"] = async () => {
+            executing.resolve(); await finish.promise; return {ok: true, result, error: null};
+        };
+        const running = f.executor.execute(second);
+        try {
+            await executing.promise;
+            assert.equal(f.executor.engineSessions.get(f.executor.recordFor("remote")), session);
+            release.resolve();
+            const response = await replied.promise;
+            assert.equal(response.request_id, second.request_id);
+            assert.equal(response.lease_id, "lease");
+            assert.deepEqual(response.message, {id: 81, sessionId, result: {result: []}});
+            const received = deferred();
+            f.hooks["native.engine_cdp"] = async wire => {
+                if (wire.message.id === 82) received.resolve(clone(wire));
+            };
+            // Host-origin A context remains valid after B is current.
+            assert.equal(f.executor.engineCdp({...first, lease_id: "lease", message: {
+                id: 82, sessionId, method: "Network.enable"}}), true);
+            assert.deepEqual((await received.promise).message.result, {});
+            for (const change of [{lease_id: "old-lease"}, {remote_key: "foreign"},
+                {principal_id: "foreign"}, {connection_id: "old"},
+                {executor_fence: {...first.executor_fence, epoch: 99}},
+                {authorization: {...first.authorization, revision: 99}},
+                {command: {...first.command, page: {...first.command.page, generation: 99}}},
+                {command: {...first.command, page: {...first.command.page, page_id: "foreign"}}}]) {
+                assert.equal(f.executor.engineCdp({...first, lease_id: "lease", ...change,
+                    message: {id: 83, sessionId, method: "Runtime.getProperties"}}), false);
+            }
+            assert.equal(f.calls.filter(call => call.name === "native.engine_open").length, 1);
+            assert.equal(f.calls.some(call => call.name === "native.engine_close"), false);
+        } finally { release.resolve(); finish.resolve(); }
+        await running;
+        await f.executor.setAutomation(false);
+    }],
+    ["idle lease forwards observations but never executes Runtime or input mutations", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        const first = action(f, {type: "text"}); await f.executor.execute(first);
+        const session = [...f.executor.engineSessions.values()][0];
+        const received = deferred();
+        f.hooks["native.engine_cdp"] = async wire => {
+            if (wire.message.method === "Runtime.consoleAPICalled") received.resolve(wire);
+        };
+        f.api.debugger.onEvent.emit({tabId: f.executor.recordFor("remote").tab_id},
+            "Runtime.consoleAPICalled", {type: "log", args: []});
+        assert.equal((await received.promise).lease_id, "lease");
+        const count = f.calls.filter(call => call.name === "debugger.sendCommand").length;
+        for (const [id, method] of [[91, "Runtime.evaluate"], [92, "Runtime.callFunctionOn"],
+            [93, "Input.dispatchMouseEvent"], [94, "Page.navigate"]]) {
+            const response = deferred();
+            f.hooks["native.engine_cdp"] = async wire => {
+                if (wire.message.id === id) response.resolve(wire.message);
+            };
+            assert.equal(f.executor.engineCdp({...first, lease_id: "lease", message: {
+                id, method, sessionId: session.bridge.rootSessionId, params: {}}}), true);
+            assert.match((await response.promise).error.message, /current accepted operation/);
+        }
+        assert.equal(f.calls.filter(call => call.name === "debugger.sendCommand").length, count);
+        assert.equal(f.executor.effects[f.executor.effectKey(first)].completion, "applied");
+        await f.executor.setAutomation(false);
+    }],
     ["frozen v9 history and global OFF survive v10 restore", async () => {
         const f = fixture({globalAutomation: true, officialEngine: true});
         const old = {version: 9, effects: {old: {phase: "dispatched"}}};

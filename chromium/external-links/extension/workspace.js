@@ -77,6 +77,17 @@ function validEngineAction(action) {
         return typeof value === "string" && (key === "value" || value.length > 0);
     });
 }
+function engineBinding(payload) {
+    return {remote_key: payload.remote_key, connection_id: payload.connection_id,
+        principal_id: payload.principal_id, executor_fence: payload.executor_fence,
+        authorization: payload.authorization, page: payload.command?.page};
+}
+const IDLE_ENGINE_COMMANDS = new Set([
+    "Browser.getVersion", "Target.getTargetInfo", "Page.getFrameTree", "Page.getLayoutMetrics",
+    "Page.getNavigationHistory", "Runtime.getProperties", "Runtime.releaseObject",
+    "Runtime.releaseObjectGroup", "DOM.getDocument", "DOM.describeNode", "DOM.resolveNode",
+    "Network.getResponseBody", "Network.getRequestPostData", "Log.enable", "Log.disable",
+]);
 function validEngineResult(result) {
     return exactFields(result, ["text", "data", "images"]) && typeof result.text === "string" &&
         Array.isArray(result.images) && result.images.every(image =>
@@ -1817,7 +1828,7 @@ class WorkspaceExecutor {
         const origin = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "lease_id"));
         const record = this.recordFor(payload.remote_key);
         const session = this.engineSessions.get(record);
-        if (!session || session.closed || !sameRef(session.op.payload, origin)) {
+        if (!session || session.closed || !sameRef(session.binding, engineBinding(origin))) {
             if (text(payload.lease_id)) this.nativeRequest("abush_browser", "engine_close", clone(payload))
                 .catch(error => this.reportAdvisoryError(error));
             return false;
@@ -1831,8 +1842,7 @@ class WorkspaceExecutor {
     }
     engineCdp(payload) {
         const session = [...this.engineSessions.values()].find(candidate =>
-            sameRef(candidate.op.payload, Object.fromEntries(Object.entries(payload)
-                .filter(([key]) => !["lease_id", "message"].includes(key)))));
+            sameRef(candidate.binding, engineBinding(payload)));
         if (!session || session.closed || !text(payload.lease_id) ||
                 session.lease_id && session.lease_id !== payload.lease_id) return false;
         this.authorization(session.op.payload, session.op);
@@ -1845,17 +1855,17 @@ class WorkspaceExecutor {
     }
     async executeEngine(record, op) {
         let session = this.engineSessions.get(record);
-        if (session && (!sameRef(session.op.payload.authorization, op.payload.authorization) ||
-                session.op.payload.connection_id !== op.payload.connection_id ||
-                session.op.payload.remote_key !== op.payload.remote_key)) {
+        if (session && !sameRef(session.binding, engineBinding(op.payload))) {
             this.closeEngine(record);
             session = null;
         }
+        op.engineActive = true;
         if (!session) {
             let reject;
             const stopped = new Promise((_, rejectPromise) => { reject = rejectPromise; });
             stopped.catch(() => {});
-            session = {op, closed: false, lease_id: null, stopped, reject};
+            session = {op, binding: clone(engineBinding(op.payload)),
+                closed: false, lease_id: null, stopped, reject};
             const check = () => {
                 if (session.closed || this.engineSessions.get(record) !== session) throw new Error("Stale engine lease");
                 this.authorization(session.op.payload, session.op);
@@ -1865,8 +1875,14 @@ class WorkspaceExecutor {
             chromeApi.debugger.sendCommand = (source, method, params) => {
                 check();
                 if (source.tabId !== record.tab_id) throw new Error("Foreign CDP tab");
+                const current = session.op;
+                if (!IDLE_ENGINE_COMMANDS.has(method) && (!current.engineActive ||
+                        this.operations.get(this.effectKey(current.payload)) !== current ||
+                        this.effects[this.effectKey(current.payload)]?.phase !== "dispatched")) {
+                    throw new Error("CDP page command requires a current accepted operation");
+                }
                 if (/^(Page\.(navigate|reload|navigateToHistoryEntry|handleJavaScriptDialog)|Input\.|DOM\.(focus|scrollIntoViewIfNeeded)|Runtime\.(evaluate|callFunctionOn))/.test(method)) {
-                    session.op.dispatched = true;
+                    current.dispatched = true;
                 }
                 return this.chrome.debugger.sendCommand(source, method, params);
             };
@@ -1897,9 +1913,13 @@ class WorkspaceExecutor {
         }
         session.op = op;
         this.authorization(op.payload, op);
-        return bounded(() => Promise.race([session.stopped,
-            this.nativeRequest("abush_browser", "engine_execute", {...clone(op.payload), lease_id: session.lease_id})]),
-        "execute official engine", 35000);
+        try {
+            return await bounded(() => Promise.race([session.stopped,
+                this.nativeRequest("abush_browser", "engine_execute", {...clone(op.payload), lease_id: session.lease_id})]),
+            "execute official engine", 35000);
+        } finally {
+            op.engineActive = false;
+        }
     }
     async performExecute(key, op, entry) {
         let error;

@@ -106,6 +106,66 @@ class EngineBrokerTest(BrowserPeerBrokerTest):
             self.assertFalse(worker.is_alive())
             self.assertIsInstance(results[0], ValueError)
 
+    def test_persistent_cdp_uses_lease_not_current_execution_context(self):
+        broker, peer, server = self.connected()
+        first = self.context(peer)
+        callbacks = []
+        engine = mock.Mock()
+        engine.request.return_value = {"ok": True, "result": {
+            "text": "original", "data": None, "images": []}}
+        def spawn(callback):
+            callbacks.append(callback)
+            return engine
+        with mock.patch.object(host, "BrowserEngine", side_effect=spawn):
+            lease = broker.engine_request("engine_open", first)["lease_id"]
+            self.event(broker, "abush_browser.engine_lease")
+            broker.engine_request("engine_execute", {**first, "lease_id": lease})
+            held = {**first, "lease_id": lease, "message": {"id": 81, "result": {}}}
+            # Completion removes A's admission before B is even delivered.
+            with peer.transport_lock:
+                peer.pending.pop(first["effect_id"])
+            second = self.context(peer, request_id="request-B", effect_id="effect-B",
+                                  command={**first["command"], "url": "https://example.org/B"})
+            # An event response can carry B's label before engine_execute(B).
+            broker.engine_request("engine_cdp", {**second, "lease_id": lease,
+                                                "message": {"id": 82, "result": {}}})
+            entered, release = threading.Event(), threading.Event()
+            def delayed_native_event():
+                entered.set()
+                if not release.wait(2):
+                    return
+                callbacks[0]({"type": "cdp", "lease_id": lease,
+                              "message": {"id": 83, "method": "Network.getResponseBody"}})
+            worker = threading.Thread(target=delayed_native_event, daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                broker.engine_request("engine_execute", {**second, "lease_id": lease})
+                broker.engine_request("engine_cdp", held)
+                self.assertEqual(engine.send.call_count, 2)
+            finally:
+                release.set()
+                worker.join(timeout=2)
+            self.assertFalse(worker.is_alive())
+            event = self.event(broker, "abush_browser.engine_cdp")
+            self.assertEqual(host.BrowserBroker.engine_binding(event),
+                             host.BrowserBroker.engine_binding(first))
+            self.assertEqual(event["request_id"], first["request_id"])
+            for change in ({"lease_id": "retired"}, {"remote_key": "r_foreign000"},
+                           {"principal_id": "foreign"},
+                           {"executor_fence": {**first["executor_fence"], "epoch": 99}},
+                           {"authorization": {**first["authorization"], "revision": 99}},
+                           {"command": {**first["command"], "page": {
+                               **first["command"]["page"], "generation": 99}}},
+                           {"command": {**first["command"], "page": {
+                               **first["command"]["page"], "page_id": "foreign"}}}):
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    broker.engine_request("engine_cdp", {**held, **change})
+            with self.assertRaisesRegex(ValueError, "admission"):
+                broker.engine_request("engine_execute", {**first, "lease_id": lease})
+            broker.engine_request("engine_close", {**first, "lease_id": lease})
+            engine.close.assert_called_once()
+
     def test_v9_rejected(self):
         server = self.server()
         broker = self.broker()
@@ -307,6 +367,8 @@ class TransportBoundsTest(unittest.TestCase):
 
     def test_shared_shutdown_deadline_not_per_worker(self):
         native = self.native()
+        # This test exhausts the entire budget in worker joins, not native output.
+        native.writer = mock.Mock(is_alive=lambda: False)
         joins = []
         def join(timeout):
             joins.append(timeout)

@@ -2000,6 +2000,14 @@ class BrowserBroker:
                 else:
                     state["engine"].close(deadline=deadline)
 
+    @staticmethod
+    def engine_binding(context):
+        return json.loads(json.dumps({
+            **{key: context[key] for key in
+               ("remote_key", "connection_id", "principal_id", "executor_fence", "authorization")},
+            "page": context["command"]["page"],
+        }))
+
     def engine_request(self, operation, payload):
         context_fields = {"remote_key", "connection_id", "principal_id", "request_id",
                           "effect_id", "executor_fence", "authorization", "command"}
@@ -2018,7 +2026,8 @@ class BrowserBroker:
             raise ValueError("engine operation has no current daemon admission")
         if operation == "engine_open":
             lease_id = uuid.uuid4().hex
-            state = {"peer": peer, "context": context, "engine": None, "executions": set()}
+            state = {"peer": peer, "context": context, "binding": self.engine_binding(context),
+                     "engine": None, "executions": set()}
             with self.engine_lock:
                 if any(value["peer"] is peer and value["context"]["effect_id"] == payload["effect_id"]
                        for value in self.engine_leases.values()):
@@ -2033,6 +2042,7 @@ class BrowserBroker:
                     current = self.engine_leases.get(lease_id)
                     if current is not state or not peer.connected:
                         return
+                    # Legacy native fields retain the opening context; only binding is authority.
                     origin = json.loads(json.dumps(state["context"]))
                 self.outbound.put(event("abush_browser.engine_cdp", "abush_browser", {
                     **origin, "lease_id": lease_id, "message": message["message"]}))
@@ -2067,16 +2077,10 @@ class BrowserBroker:
             state = self.engine_leases.get(lease_id)
             if state is None or state["peer"] is not peer:
                 raise ValueError("unknown engine lease")
-            # Rebinding requires a newly admitted operation on the identical page authority.
-            previous = state["context"]
-            if operation in {"engine_execute", "engine_cdp"} and previous != context and admitted:
-                if any(previous[key] != context[key] for key in
-                       ("remote_key", "connection_id", "principal_id", "executor_fence", "authorization")) or \
-                        previous["command"]["page"] != context["command"]["page"]:
-                    raise ValueError("engine lease authority mismatch")
-                state["context"] = context
-            elif previous != context:
-                raise ValueError("engine lease context mismatch")
+            if state["binding"] != self.engine_binding(context) or \
+                    payload["executor_fence"] != peer.executor_fence or \
+                    payload["authorization"]["browser_boot_id"] != self.browser["browser_boot_id"]:
+                raise ValueError("engine lease authority mismatch")
             engine = state["engine"]
             if operation == "engine_execute":
                 identity = (payload["request_id"], payload["effect_id"])
@@ -2104,8 +2108,8 @@ class BrowserBroker:
             self.close_engine_lease(lease_id)
             raise
         with self.engine_lock:
-            if self.engine_leases.get(lease_id) is not state or state["context"] != context or \
-                    not peer.connected:
+            if self.engine_leases.get(lease_id) is not state or \
+                    state["binding"] != self.engine_binding(context) or not peer.connected:
                 raise ValueError("engine output authority revoked")
         if reply.get("ok") is True and valid_result(reply.get("result")):
             return {"ok": True, "result": reply["result"], "error": None}
