@@ -221,11 +221,32 @@ const cases = [
         assert.equal(g.bridge.closed, true); assert.equal(g.errors[0].message, "send failed");
         f.bridge.close();
     }],
+    ["decoded chunked and compressed sizes gate body dispatch before allocation", async () => {
+        const f = fixture(); const session = await f.boot();
+        const limit = 256 * 1024;
+        for (const [id, lengths] of [["chunked", [limit, 1]], ["compressed", [limit + 1]],
+            ["unknown", []], ["small", [2, 3]], ["zero", [0]]]) {
+            f.event("Network.requestWillBeSent", {requestId: id, request: {} });
+            f.event("Network.responseReceived", {requestId: id,
+                response: {headers: {"Content-Length": "1", "Content-Encoding": "gzip"}}});
+            for (const dataLength of lengths) f.event("Network.dataReceived", {requestId: id, dataLength});
+            const before = f.calls.length;
+            assert.ok((await f.request("Network.getResponseBody", {requestId: id}, session)).error);
+            assert.equal(f.calls.length, before);
+            f.event("Network.loadingFinished", {requestId: id, encodedDataLength: 1});
+            const reply = await f.request("Network.getResponseBody", {requestId: id}, session);
+            assert.equal(Boolean(reply.result), id === "small" || id === "zero");
+            assert.equal(f.calls.length - before, id === "small" || id === "zero" ? 1 : 0);
+        }
+        f.attach("child");
+        assert.ok((await f.request("Network.getResponseBody", {requestId: "small"}, "child")).error);
+        f.bridge.close();
+    }],
     ["allowlist forwards page primitives, denies global and profile effects", async () => {
         const f = fixture(); const session = await f.boot();
         for (const method of ["Page.getFrameTree", "Page.getLayoutMetrics", "Runtime.callFunctionOn",
             "DOM.getContentQuads", "Accessibility.getFullAXTree", "Input.dispatchMouseEvent",
-            "Input.insertText", "Page.captureScreenshot", "Network.getResponseBody"]) {
+            "Input.insertText", "Page.captureScreenshot"]) {
             assert.ok((await f.request(method, {}, session)).result);
             assert.equal(f.calls.at(-1).method, method);
         }

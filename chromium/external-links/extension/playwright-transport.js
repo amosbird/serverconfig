@@ -4,6 +4,8 @@
 
     // Reviewed against pinned Playwright 1.65.1 coreBundle noDefaults initialization.
     // No viewport/window emulation: screenshots requiring a metrics override remain denied.
+    const MAX_BODY = 256 * 1024;
+    const MAX_CAPTURE = 128;
     const PAGE_COMMANDS = new Set([
         "Page.enable", "Page.disable", "Page.getFrameTree", "Page.getLayoutMetrics",
         "Page.setLifecycleEventsEnabled", "Page.createIsolatedWorld",
@@ -54,6 +56,7 @@
             this.closed = false;
             this.rootSessionId = (root.crypto || require("node:crypto").webcrypto).randomUUID();
             this.sessions = new Map();
+            this.bodies = new Map();
             this.retiredSessions = new Set();
             this.targetInfo = null;
             this.bootstrap = null;
@@ -224,6 +227,13 @@
                         {...params, filter: copy(FRAME_FILTER)}, generation);
                 } else {
                     if (!PAGE_COMMANDS.has(method)) throw new Error(`Page CDP command denied: ${method}`);
+                    if (method === "Network.getResponseBody") {
+                        const size = this.bodies.get(`${session.id}:${params.requestId}`);
+                        if (!size?.finished || !size.observed || size.bytes > MAX_BODY) {
+                            throw new Error(size?.bytes > MAX_BODY ? "Body oversized" :
+                                "Body size unavailable or unfinished");
+                        }
+                    }
                     result = await this.command(session, method, params, generation);
                 }
                 if (!this.authorized(generation)) return;
@@ -276,6 +286,20 @@
             } else if (!EVENT_DOMAINS.has(method.split(".")[0]) || method === "Page.windowOpen") {
                 return;
             }
+            const key = `${parentId}:${params.requestId}`;
+            if (method === "Network.requestWillBeSent") {
+                this.bodies.set(key, {bytes: 0, observed: false, finished: false});
+                if (this.bodies.size > MAX_CAPTURE) this.bodies.delete(this.bodies.keys().next().value);
+            }
+            const size = this.bodies.get(key);
+            if (size && method === "Network.dataReceived") {
+                const bytes = params.dataLength;
+                size.observed = true;
+                size.bytes = Number.isSafeInteger(bytes) && bytes >= 0 ?
+                    Math.min(MAX_BODY + 1, size.bytes + bytes) : MAX_BODY + 1;
+            }
+            if (size && method === "Network.loadingFinished") size.finished = true;
+            if (size && method === "Network.loadingFailed") this.bodies.delete(key);
             this.emit({sessionId: parentId, method, params});
         }
 
@@ -284,6 +308,9 @@
                 if (child.parent === id) this.removeSession(child.id);
             }
             this.sessions.delete(id);
+            for (const key of this.bodies.keys()) {
+                if (key.startsWith(`${id}:`)) this.bodies.delete(key);
+            }
             this.retiredSessions.add(id);
         }
 
@@ -292,6 +319,7 @@
             this.closed = true;
             this.generation++;
             this.sessions.clear();
+            this.bodies.clear();
             this.retiredSessions.clear();
             this.targetInfo = null;
             this.buffer = [];
