@@ -30,7 +30,7 @@ const REMOTE = {remote_key: "remote", connection_id: "connection", principal_id:
     workspace_id: "workspace", connected: true, executor_fence: {executor_id: "executor", epoch: 1},
     owner_display: {daemon_instance_id: "instance", daemon_boot_id: "daemon-boot",
         workbench_name: "Workbench"}, connection_display_name: "local"};
-function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
+function fixture({globalAutomation = false, inheritActiveGroup = true, officialEngine = false} = {}) {
     const calls = [];
     const local = {abushOwnedMarkers: {legacy: true}};
     if (!globalAutomation) local.abushBrowserAutomationV9 = false;
@@ -240,7 +240,7 @@ function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
                 api.tabGroups.onUpdated.emit(clone(updated));
                 return clone(updated);
             })},
-        debugger: {attach: (target, version) => invoke("debugger.attach", [target, version], () => {
+        debugger: {onEvent: event(), onDetach: event(), attach: (target, version) => invoke("debugger.attach", [target, version], () => {
             if (attachedTabs.has(target.tabId)) throw new Error("Already attached");
             attachedTabs.add(target.tabId);
         }), detach: target => invoke("debugger.detach", [target], () => {
@@ -288,6 +288,9 @@ function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
         return tabSnapshot(current);
     }
     const native = (service, operation, payload) => invoke(`native.${operation}`, [payload], () => {
+        if (operation === "engine_open") return {lease_id: "fixture-lease"};
+        if (operation === "engine_execute") return {ok: true,
+            result: {text: "fixture result", data: null, images: []}, error: null};
         if (operation === "refresh_remotes") return {remotes: [clone(REMOTE)]};
         if (operation === "workspace_state") {
             assert.deepEqual(Object.keys(payload).sort(), ["remote_key", "connection_id", "principal_id",
@@ -313,7 +316,8 @@ function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
             return {type: operation === "executor_completion" ? "completion_accepted" :
                 "cancellation_completion_accepted", request_id: payload.request_id,
             effect_id: payload.effect_id, executor_fence: payload.executor_fence,
-            completion: payload.completion};
+            completion: payload.completion, ...(operation === "executor_completion" ?
+                {result: payload.result, error: payload.error} : {})};
         }
         if (["prepare", "activate"].includes(operation)) return {nonce: payload.nonce, xid: 42};
         if (operation === "ordinary_file_navigate") {
@@ -323,7 +327,23 @@ function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
         }
         return {};
     });
-    let executor = new WorkspaceExecutor(api, native);
+    function legacyEngine(executor) {
+        if (officialEngine) return executor;
+        executor.executeEngine = async (record, op) => {
+            executor.authorization(op.payload, op);
+            op.dispatched = true;
+            const result = await executor.api(() => api.debugger.sendCommand({tabId: record.tab_id},
+                "Page.navigate", {url: op.payload.command.url}), "navigate exact work tab");
+            if (!result || !result.frameId || result.errorText ||
+                    result.loaderId !== undefined && !result.loaderId ||
+                    result.isDownload !== undefined && typeof result.isDownload !== "boolean") {
+                throw new Error("Page.navigate response is not confirmed");
+            }
+            return {ok: true, result: {text: "fixture result", data: null, images: []}, error: null};
+        };
+        return executor;
+    }
+    let executor = legacyEngine(new WorkspaceExecutor(api, native));
     executor.manualControls = !globalAutomation;
     const trusted = {id: api.runtime.id, url: api.runtime.getURL("popup.html")};
     const nativeEvents = event();
@@ -377,7 +397,7 @@ function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
             assert.equal(response.ok, true, response.error);
             return executor.records.get("remote");
         }, resetWorker() {
-            executor = new WorkspaceExecutor(api, native);
+            executor = legacyEngine(new WorkspaceExecutor(api, native));
             executor.manualControls = !globalAutomation;
             route();
             return executor;
@@ -405,7 +425,7 @@ function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
             nextTab = Math.max(nextTab, ...tabs.keys()) + 1;
             nextGroup = Math.max(nextGroup, ...groups.keys()) + 1;
             for (const key of Object.keys(session)) delete session[key];
-            executor = new WorkspaceExecutor(api, native);
+            executor = legacyEngine(new WorkspaceExecutor(api, native));
             executor.manualControls = !globalAutomation;
             route();
             const boot = {...BOOT, browser_boot_id: `restored-boot-${browserRestart}`,
@@ -416,7 +436,7 @@ function fixture({globalAutomation = false, inheritActiveGroup = true} = {}) {
             await executor.restoreWhenReady();
             return restored;
         }, async restart(boot = BOOT) {
-            executor = new WorkspaceExecutor(api, native);
+            executor = legacyEngine(new WorkspaceExecutor(api, native));
             executor.manualControls = !globalAutomation;
             route();
             await executor.acceptNativeBootstrap(boot);

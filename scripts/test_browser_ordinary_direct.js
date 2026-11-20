@@ -231,7 +231,7 @@ for (const existingWindow of [true, false]) {
 for (const phase of ["accepted", "dispatched"]) {
     cases.push([`a restored ${phase} lease reports its durable outcome instead of re-executing a web open`, async () => {
         const f = fresh(); const payload = request(`restored-${phase}`);
-        f.local[WAL_KEY] = {version: 9, ordinary: {[payload.request_id]: {
+        f.local[WAL_KEY] = {version: 10, ordinary: {[payload.request_id]: {
             version: 9, payload, phase, completion: null}}};
         await f.executor.acceptNativeBootstrap({...BOOT, ordinary_launch_leases: [payload]});
         await f.executor.restoreWhenReady();

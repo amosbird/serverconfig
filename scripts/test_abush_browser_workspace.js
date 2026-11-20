@@ -246,13 +246,13 @@ const cases = [
         assert.equal(f.attachedTabs.size, 0);
         assert.equal(f.executor.attachments.size, 0);
     }],
-    ["pause after confirmed dispatch remains applied", async () => {
+    ["pause after dispatch fences output and records unknown", async () => {
         const f = fixture(); await f.ready(); await f.enable(); const payload = execute(f);
         const entered = deferred(); const gate = deferred();
         f.hooks["debugger.sendCommand"] = async () => { entered.resolve(); await gate.promise; };
         const pending = f.executor.execute(payload); pending.catch(() => {}); await entered.promise;
-        await f.executor.control("pause", "remote"); gate.resolve(); assert.equal(await pending, "applied");
-        assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, "applied");
+        await f.executor.control("pause", "remote"); gate.resolve(); await assert.rejects(pending, /disabled|paused/);
+        assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, "unknown");
     }],
     ["ACK loss resends terminal only", async () => {
         const f = fixture(); await f.ready(); await f.enable(); const payload = execute(f);

@@ -12,6 +12,10 @@ const NATIVE_TIMEOUTS_MS = Object.freeze({
     workspace_state: 8000,
     executor_completion: 8000,
     cancellation_completion: 8000,
+    engine_open: 35000,
+    engine_execute: 35000,
+    engine_close: 5000,
+    engine_cdp: 5000,
     refresh_remotes: 8000,
 });
 const SERIAL_NATIVE_OPERATIONS = new Set();
@@ -583,11 +587,21 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
             return;
         }
         if (message.service !== "abush_browser") return;
+        if (message.event === "abush_browser.engine_lease") {
+            try { workspaces.engineLease(message.payload); }
+            catch (error) { onFailure(error.message); }
+            return;
+        }
+        if (message.event === "abush_browser.engine_cdp") {
+            try { workspaces.engineCdp(message.payload); }
+            catch (error) { onFailure(error.message); }
+            return;
+        }
         const methods = {"abush_browser.remote_state": "remoteState",
             "abush_browser.execute": "execute", "abush_browser.cancel": "cancel"};
         const method = methods[message.event];
         if (!method) {
-            onFailure("Unsupported browser event; protocol v9 is required");
+            onFailure("Unsupported browser event; protocol v10 is required");
             return;
         }
         if (method === "cancel" || method === "remoteState") {

@@ -432,7 +432,7 @@ const {{assert, fixture}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_
         self.assertIn("runtime.onMessage.addListener", background)
         self.assertIn("chrome.notifications.create", background)
 
-    def test_background_routes_v9_execution_and_rejects_managed_window_events(self):
+    def test_background_routes_v10_execution_and_rejects_managed_window_events(self):
         script = f"""
 const {{assert, fixture, execute}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_groups_fixture.js'))});
 const {{registerNativeEventRouter}} = require({json.dumps(str(CONTENT.with_name('background.js')))});
@@ -448,7 +448,7 @@ const {{registerNativeEventRouter}} = require({json.dumps(str(CONTENT.with_name(
         listener({{service: 'abush_browser', event: `abush_browser.${{event}}`, payload: {{}}}});
     }}
     assert.equal(errors.length, 2);
-    assert(errors.every(message => /protocol v9/.test(message)));
+    assert(errors.every(message => /protocol v10/.test(message)));
     assert.deepEqual(f.calls, before, 'retired events must not mutate browser or consent');
     const record = await f.enable();
     const payload = execute(f);

@@ -1,8 +1,9 @@
+if (typeof importScripts === "function") importScripts("playwright-transport.js");
 const ORDINARY_PREFIX = "__ABUSH_ORDINARY__:";
 const AUTOMATION_KEY = "abushBrowserAutomationV9";
 const CONSENT_KEY = "abushBrowserConsentV9";
-const WAL_KEY = "abushBrowserEffectsV9";
-const RECEIPTS_KEY = "abushBrowserReceiptsV9";
+const WAL_KEY = "abushBrowserEffectsV10";
+const RECEIPTS_KEY = "abushBrowserReceiptsV10";
 const INHERITANCE_KEY = "abushBrowserInheritanceV9";
 const API_TIMEOUT_MS = 2000;
 // tabs.create clamps this signed API index to the current end, even after concurrent inserts.
@@ -58,10 +59,36 @@ async function bounded(task, label, timeoutMs = API_TIMEOUT_MS) {
     }
 }
 
+function validEngineAction(action) {
+    const fields = {snapshot: [], text: [], click: ["snapshot_id", "ref"],
+        fill: ["snapshot_id", "ref", "value"], press: ["snapshot_id", "ref", "key"],
+        select: ["snapshot_id", "ref", "values"], check: ["snapshot_id", "ref", "checked"],
+        hover: ["snapshot_id", "ref"], scroll: ["x", "y"], evaluate: ["expression"],
+        wait: ["text", "timeout_ms"], network_list: [], network_body: ["request_id"],
+        console: [], screenshot: ["full_page"]};
+    const keys = fields[action?.type];
+    if (!keys || !exactFields(action, ["type", ...keys])) return false;
+    return keys.every(key => {
+        const value = action[key];
+        if (["checked", "full_page"].includes(key)) return typeof value === "boolean";
+        if (["x", "y", "timeout_ms"].includes(key)) return Number.isSafeInteger(value) &&
+            (key !== "timeout_ms" || value >= 1 && value <= 30000);
+        if (key === "values") return Array.isArray(value) && value.every(v => typeof v === "string");
+        return typeof value === "string" && (key === "value" || value.length > 0);
+    });
+}
+function validEngineResult(result) {
+    return exactFields(result, ["text", "data", "images"]) && typeof result.text === "string" &&
+        Array.isArray(result.images) && result.images.every(image =>
+            exactFields(image, ["mime_type", "data_base64"]) &&
+            ["image/png", "image/jpeg"].includes(image.mime_type) && typeof image.data_base64 === "string");
+}
+
 class WorkspaceExecutor {
     constructor(chromeApi, nativeRequest) {
         this.chrome = chromeApi;
         this.nativeRequest = nativeRequest;
+        this.engineSessions = new Map();
         this.cancellations = {};
         this.controlTokens = new Map();
         this.restoreGeneration = 0;
@@ -201,7 +228,7 @@ class WorkspaceExecutor {
             this.preferenceReady = true;
         }
         const wal = local[WAL_KEY];
-        if (wal?.version === 9) {
+        if (wal?.version === 10) {
             this.cancellations = {...(wal.cancellations || {}), ...this.cancellations};
             this.effects = wal.effects || {};
             this.creations = wal.creations || {};
@@ -214,6 +241,12 @@ class WorkspaceExecutor {
                 if (!entry.completion) entry.completion =
                     entry.phase === "accepted" ? "not_applied" : "unknown";
             }
+            for (const entry of Object.values(this.effects)) {
+                if (entry.completion !== "applied" && !text(entry.error)) {
+                    entry.result = null;
+                    entry.error = "Engine interrupted before durable output";
+                }
+            }
             for (const entry of Object.values(this.cancellations)) {
                 if (!entry.completion) {
                     const effect = this.effects[this.effectKey(entry.payload)];
@@ -221,7 +254,7 @@ class WorkspaceExecutor {
                 }
             }
         }
-        this.receipts = local[RECEIPTS_KEY]?.version === 9 ? local[RECEIPTS_KEY].receipts : {};
+        this.receipts = local[RECEIPTS_KEY]?.version === 10 ? local[RECEIPTS_KEY].receipts : {};
         const session = await this.api(() => this.chrome.storage.session.get(CONSENT_KEY),
             "read browser consent");
         if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
@@ -307,7 +340,7 @@ class WorkspaceExecutor {
     }
     persistWal() {
         const write = this.localTail.catch(() => {}).then(() =>
-            this.chrome.storage.local.set({[WAL_KEY]: clone({version: 9,
+            this.chrome.storage.local.set({[WAL_KEY]: clone({version: 10,
                 effects: this.effects, creations: this.creations, ordinary: this.ordinary,
                 cancellations: this.cancellations, ordinary_cancellations: this.ordinaryCancellations})}));
         this.localTail = write;
@@ -392,6 +425,7 @@ class WorkspaceExecutor {
             Number.isSafeInteger(record.tab_id) && record.phase !== "disabled" && record.tab_id === tabId);
     }
     closeAuthorization(record, phase) {
+        this.closeEngine(record);
         this.bumpControl(record.remote_key);
         const token = this.attachments.get(record.tab_id);
         if (token) token.cleanup = true;
@@ -413,6 +447,7 @@ class WorkspaceExecutor {
         token.record.pendingDetach = null;
     }
     async detach(record, attachment = record?.pendingDetach || record?.attachment) {
+        this.closeEngine(record);
         const token = record && this.attachments.get(record.tab_id);
         if (!token || token.record !== record || attachment && attachment !== token) return;
         token.cleanup = true;
@@ -1682,6 +1717,7 @@ class WorkspaceExecutor {
             if (!token.detaching) this.releaseAttachment(token);
         }
         const record = [...this.records.values()].find(record => record.tab_id === tabId);
+        this.closeEngine(record);
         if (record) record.attached = false;
         for (const op of this.operations.values()) if (op.tab_id === tabId) op.cancelled = true;
     }
@@ -1694,9 +1730,16 @@ class WorkspaceExecutor {
                 !exactFields(payload.authorization, ["browser_boot_id", "enable_id", "revision"]) ||
                 !text(payload.authorization.browser_boot_id) || !text(payload.authorization.enable_id) ||
                 !Number.isSafeInteger(payload.authorization.revision) || payload.authorization.revision <= 0 ||
-                !exactFields(payload.command, ["command", "page", "url"]) ||
-                payload.command.command !== "navigate" || !validPageRef(payload.command.page) ||
-                !text(payload.command.url)) fail("invalid_command", "Invalid v9 navigate event");
+                !validPageRef(payload.command?.page)) fail("invalid_command", "Invalid v10 execute event");
+        if (payload.command.command === "action") {
+            if (!exactFields(payload.command, ["command", "page", "action"]) ||
+                    !validEngineAction(payload.command.action)) fail("invalid_command", "Invalid engine action");
+            return;
+        }
+        if (!exactFields(payload.command, ["command", "page", "url"]) ||
+                payload.command.command !== "navigate" || !text(payload.command.url)) {
+            fail("invalid_command", "Invalid navigation command");
+        }
         let url;
         try { url = new URL(payload.command.url); }
         catch (_) { fail("invalid_command", "Invalid navigation URL"); }
@@ -1740,7 +1783,8 @@ class WorkspaceExecutor {
         }
         const op = {payload: clone(payload), cancelled: false, dispatched: false, tab_id: null};
         this.operations.set(key, op);
-        const entry = {version: 9, payload: clone(payload), phase: "accepted", completion: null};
+        const entry = {version: 10, payload: clone(payload), phase: "accepted", completion: null,
+            result: null, error: null};
         this.effects[key] = entry;
         const reservationKey = JSON.stringify([payload.authorization.browser_boot_id,
             payload.authorization.enable_id]);
@@ -1749,6 +1793,105 @@ class WorkspaceExecutor {
         this.executionTails.set(reservationKey, op.done);
         op.done.catch(() => {});
         return op.done;
+    }
+    closeEngine(record) {
+        const session = this.engineSessions.get(record);
+        if (!session) return;
+        this.engineSessions.delete(record);
+        session.closed = true;
+        session.bridge.close();
+        session.reject(new Error("Engine lease revoked"));
+        if (session.lease_id) this.nativeRequest("abush_browser", "engine_close",
+            {...clone(session.op.payload), lease_id: session.lease_id})
+            .catch(error => this.reportAdvisoryError(error));
+    }
+    engineLease(payload) {
+        const origin = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "lease_id"));
+        const record = this.recordFor(payload.remote_key);
+        const session = this.engineSessions.get(record);
+        if (!session || session.closed || !sameRef(session.op.payload, origin)) {
+            if (text(payload.lease_id)) this.nativeRequest("abush_browser", "engine_close", clone(payload))
+                .catch(error => this.reportAdvisoryError(error));
+            return false;
+        }
+        this.authorization(session.op.payload, session.op);
+        if (!text(payload.lease_id) || session.lease_id && session.lease_id !== payload.lease_id) {
+            throw new Error("Conflicting engine lease reservation");
+        }
+        session.lease_id = payload.lease_id;
+        return true;
+    }
+    engineCdp(payload) {
+        const session = [...this.engineSessions.values()].find(candidate =>
+            sameRef(candidate.op.payload, Object.fromEntries(Object.entries(payload)
+                .filter(([key]) => !["lease_id", "message"].includes(key)))));
+        if (!session || session.closed || !text(payload.lease_id) ||
+                session.lease_id && session.lease_id !== payload.lease_id) return false;
+        this.authorization(session.op.payload, session.op);
+        session.lease_id = payload.lease_id;
+        session.bridge.handle(payload.message).catch(error => {
+            this.reportAdvisoryError(error);
+            this.closeEngine(this.recordFor(session.op.payload.remote_key));
+        });
+        return true;
+    }
+    async executeEngine(record, op) {
+        let session = this.engineSessions.get(record);
+        if (session && (!sameRef(session.op.payload.authorization, op.payload.authorization) ||
+                session.op.payload.connection_id !== op.payload.connection_id ||
+                session.op.payload.remote_key !== op.payload.remote_key)) {
+            this.closeEngine(record);
+            session = null;
+        }
+        if (!session) {
+            let reject;
+            const stopped = new Promise((_, rejectPromise) => { reject = rejectPromise; });
+            stopped.catch(() => {});
+            session = {op, closed: false, lease_id: null, stopped, reject};
+            const check = () => {
+                if (session.closed || this.engineSessions.get(record) !== session) throw new Error("Stale engine lease");
+                this.authorization(session.op.payload, session.op);
+            };
+            const chromeApi = Object.create(this.chrome);
+            chromeApi.debugger = Object.create(this.chrome.debugger);
+            chromeApi.debugger.sendCommand = (source, method, params) => {
+                check();
+                if (source.tabId !== record.tab_id) throw new Error("Foreign CDP tab");
+                if (/^(Page\.(navigate|reload|navigateToHistoryEntry|handleJavaScriptDialog)|Input\.|DOM\.(focus|scrollIntoViewIfNeeded)|Runtime\.(evaluate|callFunctionOn))/.test(method)) {
+                    session.op.dispatched = true;
+                }
+                return this.chrome.debugger.sendCommand(source, method, params);
+            };
+            const Bridge = globalThis.AuthorizedCdpBridge ||
+                (typeof require === "function" && require("./playwright-transport.js").AuthorizedCdpBridge);
+            session.bridge = new Bridge({chrome: chromeApi, tabId: record.tab_id,
+                checkAuthorization: check,
+                send: message => {
+                    check();
+                    if (!session.lease_id) throw new Error("Engine CDP has no lease");
+                    return this.nativeRequest("abush_browser", "engine_cdp",
+                        {...clone(session.op.payload), lease_id: session.lease_id, message});
+                }, onError: error => { this.reportAdvisoryError(error); this.closeEngine(record); }});
+            this.engineSessions.set(record, session);
+            const opening = this.nativeRequest("abush_browser", "engine_open", clone(op.payload))
+                .then(reply => {
+                    if (!text(reply?.lease_id)) throw new Error("Invalid engine lease");
+                    if (session.closed) {
+                        this.nativeRequest("abush_browser", "engine_close",
+                            {...clone(op.payload), lease_id: reply.lease_id}).catch(error => this.reportAdvisoryError(error));
+                        throw new Error("Engine opening revoked");
+                    }
+                    if (session.lease_id && session.lease_id !== reply.lease_id) throw new Error("Conflicting engine lease");
+                    session.lease_id = reply.lease_id;
+                    check();
+                });
+            await bounded(() => Promise.race([opening, session.stopped]), "initialize official engine", 35000);
+        }
+        session.op = op;
+        this.authorization(op.payload, op);
+        return bounded(() => Promise.race([session.stopped,
+            this.nativeRequest("abush_browser", "engine_execute", {...clone(op.payload), lease_id: session.lease_id})]),
+        "execute official engine", 35000);
     }
     async performExecute(key, op, entry) {
         let error;
@@ -1801,23 +1944,21 @@ class WorkspaceExecutor {
             entry.phase = "dispatched";
             await this.persistWal();
             this.authorization(op.payload, op);
-            const result = await this.api(() => {
-                this.authorization(op.payload, op);
-                op.dispatched = true;
-                return this.chrome.debugger.sendCommand({tabId: record.tab_id},
-                    "Page.navigate", {url: op.payload.command.url});
-            }, "navigate exact work tab");
-            if (!result || typeof result !== "object" || !text(result.frameId) ||
-                    result.errorText !== undefined && result.errorText !== "" ||
-                    result.loaderId !== undefined && !text(result.loaderId) ||
-                    result.isDownload !== undefined && typeof result.isDownload !== "boolean") {
-                throw new Error(`Page.navigate response is not confirmed: ${result?.errorText || "invalid response"}`);
+            const result = await this.executeEngine(record, op);
+            this.authorization(op.payload, op);
+            if (result?.ok !== true || !validEngineResult(result.result) || result.error !== null) {
+                throw new Error(result?.error || "Invalid engine output");
             }
+            entry.result = clone(result.result);
+            entry.error = null;
             entry.completion = "applied";
         } catch (failure) {
             error = failure;
             op.cancelled = true;
             entry.completion = op.dispatched ? "unknown" : "not_applied";
+            entry.result = null;
+            entry.error = failure.message || "Engine operation failed";
+            this.closeEngine(this.recordFor(op.payload.remote_key));
             this.reportAdvisoryError(failure);
         }
         entry.phase = "terminal";
@@ -1844,17 +1985,17 @@ class WorkspaceExecutor {
                 remote.connection_id : origin.connection_id,
             principal_id: origin.principal_id, request_id: origin.request_id,
             effect_id: origin.effect_id, executor_fence: origin.executor_fence,
-            completion: entry.completion};
+            completion: entry.completion, result: entry.result, error: entry.error};
         if (this.receipts[key]) return entry.completion;
         const receipt = await this.native("abush_browser", "executor_completion", payload);
         const expected = {type: "completion_accepted", request_id: payload.request_id,
             effect_id: payload.effect_id, executor_fence: payload.executor_fence,
-            completion: payload.completion};
+            completion: payload.completion, result: payload.result, error: payload.error};
         if (!sameRef(receipt, expected)) fail("stale_authority", "Invalid completion receipt; result remains pending");
         this.receipts[key] = receipt;
         try {
             await this.api(() => this.chrome.storage.local.set({[RECEIPTS_KEY]: {
-                version: 9, receipts: clone(this.receipts),
+                version: 10, receipts: clone(this.receipts),
             }}), "persist completion receipt");
         } catch (error) { delete this.receipts[key]; throw error; }
         return entry.completion;
@@ -1924,7 +2065,7 @@ class WorkspaceExecutor {
         const op = this.operations.get(key);
         const cancellation = {payload: clone(payload), completion: null};
         this.cancellations[cancellationKey] = cancellation;
-        if (op) op.cancelled = true;
+        if (op) { op.cancelled = true; this.closeEngine(this.recordFor(payload.remote_key)); }
         await this.persistWal();
         if (op) {
             const record = this.recordFor(payload.remote_key);

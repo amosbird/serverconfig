@@ -204,7 +204,7 @@ const cases = [
         registerNativeEventRouter({onEvent: fn => { listener = fn; }}, f.executor,
             async () => {}, message => errors.push(message));
         listener({service: "abush_browser", event: "abush_browser.ensure_managed_page", payload: {}});
-        assert.match(errors[0], /protocol v9/); assert.equal(f.tabs.size, 2);
+        assert.match(errors[0], /protocol v10/); assert.equal(f.tabs.size, 2);
     }],
     ["disconnect followed by peer refresh stays disabled", async () => {
         const f = fixture(); await f.ready(); await f.enable();

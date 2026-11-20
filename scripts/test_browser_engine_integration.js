@@ -1,0 +1,135 @@
+#!/usr/bin/env node
+const {assert, clone, deferred, fixture, execute, runCases, REMOTE} = require("./browser_tab_groups_fixture.js");
+const {WAL_KEY, AUTOMATION_KEY} = require("../chromium/external-links/extension/workspace.js");
+const result = {text: "button [ref=e1]", data: {snapshot_id: "snapshot-1", refs: ["e1"]}, images: []};
+function setup(f) {
+    f.hooks["debugger.sendCommand"] = async (source, method) => {
+        if (method === "Target.getTargetInfo") return {targetInfo: {targetId: "exact", type: "page", url: "about:blank"}};
+        return {};
+    };
+    let sessionId;
+    f.hooks["native.engine_open"] = async payload => {
+        const received = deferred();
+        f.hooks["native.engine_cdp"] = async wire => {
+            if (wire.message.method === "Target.attachedToTarget") sessionId = wire.message.params.sessionId;
+            if (wire.message.id === 1) received.resolve();
+        };
+        assert.equal(f.executor.effects[f.executor.effectKey(payload)].phase, "dispatched");
+        assert.equal(f.executor.engineCdp({...payload, lease_id: "lease", message: {id: 1,
+            method: "Target.setAutoAttach", params: {autoAttach: true, flatten: true, waitForDebuggerOnStart: false}}}), true);
+        await received.promise;
+        return {lease_id: "lease"};
+    };
+    f.hooks["native.engine_execute"] = async payload => {
+        if (payload.command.action?.type === "click" || payload.command.command === "navigate") {
+            const received = deferred();
+            f.hooks["native.engine_cdp"] = async wire => { if (wire.message.id === 2) received.resolve(); };
+            f.executor.engineCdp({...payload, message: {id: 2, sessionId,
+                method: payload.command.command === "navigate" ? "Page.navigate" : "Input.dispatchMouseEvent",
+                params: payload.command.command === "navigate" ? {url: payload.command.url} : {type: "mousePressed", x: 1, y: 1}}});
+            await received.promise;
+        }
+        return {ok: true, result: clone(result), error: null};
+    };
+}
+const action = (f, value) => execute(f, {command: {command: "action", page: clone(f.executor.recordFor("remote").page), action: value}});
+const cases = [
+    ["open on exact attached blank precedes navigate and data reaches durable completion", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        const payload = execute(f); await f.executor.execute(payload);
+        const names = f.calls.map(call => call.name);
+        assert.ok(names.indexOf("debugger.attach") < names.indexOf("native.engine_open"));
+        assert.ok(names.indexOf("native.engine_open") < names.indexOf("native.engine_execute"));
+        const completion = f.calls.find(call => call.name === "native.executor_completion").args[0];
+        assert.deepEqual(completion.result, result); assert.equal(completion.error, null);
+        assert.equal(completion.completion, "applied");
+        assert.equal(f.api.debugger.onEvent.listeners.length, 1);
+        assert.equal(f.calls.filter(call => call.name === "debugger.sendCommand").every(call =>
+            call.args[0].tabId === f.executor.recordFor("remote").tab_id), true);
+        await f.executor.setAutomation(false);
+        assert.equal(f.api.debugger.onEvent.listeners.length, 0);
+    }],
+    ["snapshot and click return original output through one journal; worker replay never executes", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        const read = action(f, {type: "snapshot"}); await f.executor.execute(read);
+        const click = action(f, {type: "click", snapshot_id: "snapshot-1", ref: "e1"});
+        f.hooks["native.executor_completion"] = async () => { throw new Error("lost receipt"); };
+        await assert.rejects(f.executor.execute(click), /lost receipt/);
+        const saved = JSON.stringify(f.local[WAL_KEY].effects[f.executor.effectKey(click)]);
+        assert.equal(f.calls.filter(call => call.name === "native.engine_open").length, 1);
+        assert.deepEqual(f.executor.effects[f.executor.effectKey(read)].result, result);
+        delete f.hooks["native.executor_completion"];
+        const count = f.calls.filter(call => call.name === "native.engine_execute").length;
+        await f.executor.setAutomation(false); await f.restart(); await f.emitRemote(REMOTE);
+        await f.executor.execute(click);
+        assert.equal(f.calls.filter(call => call.name === "native.engine_execute").length, count);
+        assert.equal(JSON.stringify(f.local[WAL_KEY].effects[f.executor.effectKey(click)]), saved);
+    }],
+    ["Stop racing blocked engine execute closes only lease and rejects stale or personal CDP", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        const payload = action(f, {type: "text"}); const entered = deferred(); const gate = deferred();
+        f.hooks["native.engine_execute"] = async () => { entered.resolve(); await gate.promise; return {ok: true, result, error: null}; };
+        const running = f.executor.execute(payload); running.catch(() => {}); await entered.promise;
+        const session = [...f.executor.engineSessions.values()][0];
+        const before = f.calls.filter(call => call.name === "native.engine_cdp").length;
+        f.api.debugger.onEvent.emit({tabId: 1}, "Network.requestWillBeSent", {secret: "personal"});
+        assert.equal(f.calls.filter(call => call.name === "native.engine_cdp").length, before);
+        await f.executor.setAutomation(false); await assert.rejects(running, /revoked/);
+        assert.equal(f.executor.engineCdp({...payload, lease_id: "lease", message: {id: 3, method: "Runtime.evaluate"}}), false);
+        assert.equal(session.bridge.closed, true); assert.equal(f.local[AUTOMATION_KEY], false);
+        assert.equal(f.executor.effects[f.executor.effectKey(payload)].completion, "not_applied");
+        assert.equal(f.calls.some(call => /^(windows\.(remove|update|create)|tabs\.remove)$/.test(call.name)), false);
+        gate.resolve();
+    }],
+    ["cancellation while engine waits exits without false applied or result", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        const payload = action(f, {type: "wait", text: "later", timeout_ms: 30000});
+        const entered = deferred(); const gate = deferred();
+        f.hooks["native.engine_execute"] = async () => { entered.resolve(); await gate.promise; return {ok: true, result, error: null}; };
+        const running = f.executor.execute(payload); running.catch(() => {}); await entered.promise;
+        const cancellation = f.executor.cancel({remote_key: payload.remote_key, connection_id: payload.connection_id,
+            principal_id: payload.principal_id, executor_fence: payload.executor_fence,
+            effect_id: payload.effect_id, execution_request_id: payload.request_id, request_id: "cancel"});
+        await assert.rejects(running, /revoked/); assert.equal(await cancellation, "not_applied");
+        const wire = f.calls.find(call => call.name === "native.cancellation_completion").args[0];
+        assert.equal("result" in wire, false); assert.equal("error" in wire, false); gate.resolve();
+    }],
+    ["Stop during engine initialization fences late reservation before any CDP", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); await f.ready();
+        const entered = deferred(); const gate = deferred();
+        const payload = execute(f);
+        f.hooks["native.engine_open"] = async () => { entered.resolve(); await gate.promise; return {lease_id: "late"}; };
+        const running = f.executor.execute(payload); running.catch(() => {}); await entered.promise;
+        await f.executor.setAutomation(false); await assert.rejects(running, /revoked/);
+        assert.equal(f.executor.engineLease({...payload, lease_id: "late"}), false);
+        gate.resolve(); await Promise.resolve(); await Promise.resolve();
+        assert.ok(f.calls.some(call => call.name === "native.engine_close" && call.args[0].lease_id === "late"));
+        assert.equal(f.calls.some(call => call.name === "native.engine_execute"), false);
+        assert.equal(f.api.debugger.onEvent.listeners.length, 0);
+    }],
+    ["engine error after CDP input is unknown, persisted, and never retried", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        await f.executor.execute(action(f, {type: "snapshot"}));
+        const original = f.hooks["native.engine_execute"];
+        f.hooks["native.engine_execute"] = async payload => {
+            await original(payload);
+            return {ok: false, result: null, error: "Input outcome unconfirmed"};
+        };
+        const payload = action(f, {type: "click", snapshot_id: "snapshot-1", ref: "e1"});
+        await assert.rejects(f.executor.execute(payload), /Input outcome/);
+        const entry = f.local[WAL_KEY].effects[f.executor.effectKey(payload)];
+        assert.equal(entry.completion, "unknown"); assert.equal(entry.result, null);
+        assert.equal(entry.error, "Input outcome unconfirmed");
+        const count = f.calls.filter(call => call.name === "native.engine_execute").length;
+        await f.executor.execute(payload);
+        assert.equal(f.calls.filter(call => call.name === "native.engine_execute").length, count);
+    }],
+    ["frozen v9 history and global OFF survive v10 restore", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true});
+        const old = {version: 9, effects: {old: {phase: "dispatched"}}};
+        f.local.abushBrowserEffectsV9 = clone(old); f.local[AUTOMATION_KEY] = false;
+        await f.ready(); assert.deepEqual(f.local.abushBrowserEffectsV9, old);
+        assert.deepEqual(f.executor.effects, {}); assert.equal(f.tabs.size, 2);
+    }],
+];
+runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });
