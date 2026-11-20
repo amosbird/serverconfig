@@ -28,6 +28,11 @@ _engine_spec.loader.exec_module(_browser_engine)
 BrowserEngine = _browser_engine.BrowserEngine
 valid_action = _browser_engine.valid_action
 valid_result = _browser_engine.valid_result
+BoundedQueue = _browser_engine.BoundedQueue
+SHUTDOWN_TIMEOUT = 2.0
+NATIVE_IO_TIMEOUT = 2.0
+MAX_REQUEST_WORKERS = 32
+RESERVED_REQUEST_WORKERS = 8
 
 try:
     from websockets.exceptions import WebSocketException
@@ -563,13 +568,15 @@ def scroll_page(direction, url=None):
         return False
 
 
-def read_message(stream=None):
+def read_message(stream=None, on_frame=None):
     stream = stream or sys.stdin.buffer
     header = stream.read(4)
     if not header:
         return None
     if len(header) != 4:
         raise EOFError
+    if on_frame is not None:
+        on_frame()
     size = struct.unpack("<I", header)[0]
     if size > MAX_MESSAGE_SIZE:
         raise ValueError("native message is too large")
@@ -1048,6 +1055,10 @@ class OrdinaryOpenServer:
                 return
             worker = threading.Thread(target=self._handle, args=(client,), daemon=True)
             with self.lock:
+                if len(self.workers) >= 32:
+                    client.close()
+                    logging.warning("ordinary-open worker admission exhausted")
+                    continue
                 self.workers.add(worker)
             worker.start()
 
@@ -1100,6 +1111,12 @@ class OrdinaryOpenServer:
         with self.lock:
             state = self.requests.get(request["request_id"])
             if state is None:
+                if len(self.requests) >= 256:
+                    evict = next((key for key, value in self.requests.items()
+                                  if value["done"].is_set()), None)
+                    if evict is None:
+                        raise ValueError("ordinary-open request admission exhausted")
+                    self.requests.pop(evict)
                 state = {"request": request, "done": threading.Event(), "response": None,
                          "cancelled": False, "source": source, "active_waiters": set(),
                          "bootstrap_owner": source == "bootstrap"}
@@ -1188,19 +1205,20 @@ class OrdinaryOpenServer:
         except FileNotFoundError:
             pass
 
-    def close(self):
+    def close(self, deadline=None):
+        deadline = deadline or time.monotonic() + SHUTDOWN_TIMEOUT
         self.stopping.set()
         if self.server is not None:
             self.server.close()
         if self.thread is not None:
-            self.thread.join(timeout=1)
+            self.thread.join(timeout=max(0, deadline - time.monotonic()))
         with self.lock:
             states = list(self.requests.values())
             workers = list(self.workers)
         for state in states:
             state["done"].set()
         for worker in workers:
-            worker.join(timeout=1)
+            worker.join(timeout=max(0, deadline - time.monotonic()))
         try:
             info = self.path.lstat()
             identity = (info.st_dev, info.st_ino)
@@ -1682,7 +1700,7 @@ class RemotePeer:
                     self.handle(message)
                 except ValueError as error:
                     logging.warning("browser peer message rejected: %s", error)
-        except (OSError, EOFError, ValueError, json.JSONDecodeError) as error:
+        except (OSError, EOFError, ValueError, json.JSONDecodeError, queue.Full) as error:
             if not self.stop_event.is_set():
                 logging.info("browser peer closed remote=%s connection=%s error=%s",
                              self.metadata["remote_key"], self.metadata["connection_id"], error)
@@ -1840,6 +1858,11 @@ class RemotePeer:
                 if known != correlation:
                     raise ValueError("conflicting duplicate execute effect")
                 return
+            pending_bytes = sum(len(json.dumps(value, separators=(",", ":")).encode())
+                                for value in self.pending.values())
+            incoming_bytes = len(json.dumps(correlation, separators=(",", ":")).encode())
+            if len(self.pending) >= 32 or pending_bytes + incoming_bytes > 4 * MAX_MESSAGE_SIZE:
+                raise OSError("browser execution admission exhausted (32 / 4 MiB per remote)")
             self.pending[effect_id] = correlation
         self.broker.outbound.put(event("abush_browser.execute", "abush_browser", {
             "remote_key": self.metadata["remote_key"],
@@ -1883,7 +1906,8 @@ class RemotePeer:
             "executor_fence": fence,
         }))
 
-    def close(self, emit=False, from_reader=False):
+    def close(self, emit=False, from_reader=False, deadline=None):
+        deadline = deadline or time.monotonic() + SHUTDOWN_TIMEOUT
         was_connected = self.connected
         self.connected = False
         self.broker.close_engine_peer(self)
@@ -1903,7 +1927,7 @@ class RemotePeer:
         for state in transport_states:
             state["done"].set()
         if self.reader and not from_reader and self.reader is not threading.current_thread():
-            self.reader.join(timeout=1)
+            self.reader.join(timeout=max(0, deadline - time.monotonic()))
         if emit and was_connected:
             self.broker.remote_disconnected(self)
 
@@ -1913,7 +1937,7 @@ class BrowserBroker:
                  write_barrier=None, browser=None):
         self.browser = browser
         self.remote_root = pathlib.Path(remote_root) if remote_root else None
-        self.outbound = outbound or queue.Queue()
+        self.outbound = outbound if outbound is not None else BoundedQueue()
         self.ordinary_open = ordinary_open
         self.write_barrier = write_barrier
         self.peers = {}
@@ -1923,6 +1947,8 @@ class BrowserBroker:
         self.lock = threading.RLock()
         self.engine_lock = threading.RLock()
         self.engine_leases = {}
+        self.engine_retirements = set()
+        self.engine_shutdown_errors = []
         install = f"{pathlib.Path(__file__).resolve()}:{os.getuid()}".encode()
         self.install_id = hashlib.sha256(install).hexdigest()[:24]
 
@@ -1936,24 +1962,43 @@ class BrowserBroker:
         # but never wait for an owned child while holding that selection lock.
         if leases:
             def stop_retired():
-                for key, state in leases:
-                    self._stop_engine(key, state)
-            threading.Thread(target=stop_retired, daemon=True).start()
+                deadline = time.monotonic() + SHUTDOWN_TIMEOUT
+                try:
+                    for key, state in leases:
+                        try:
+                            self._stop_engine(key, state, deadline)
+                        except OSError as error:
+                            logging.error("retired engine shutdown failed: %s", error)
+                            with self.engine_lock:
+                                self.engine_shutdown_errors.append(str(error))
+                                del self.engine_shutdown_errors[:-16]
+                finally:
+                    with self.engine_lock:
+                        self.engine_retirements.discard(threading.current_thread())
+            worker = threading.Thread(target=stop_retired, daemon=True)
+            with self.engine_lock:
+                self.engine_retirements.add(worker)
+            worker.start()
 
-    def close_engine_lease(self, lease_id):
+    def close_engine_lease(self, lease_id, deadline=None):
         with self.engine_lock:
             state = self.engine_leases.pop(lease_id, None)
-        self._stop_engine(lease_id, state)
+        self._stop_engine(lease_id, state, deadline)
 
     @staticmethod
-    def _stop_engine(lease_id, state):
+    def _stop_engine(lease_id, state, deadline=None):
         if state and state.get("engine"):
             try:
-                state["engine"].close_lease(lease_id)
+                if deadline is None:
+                    state["engine"].close_lease(lease_id)
             except OSError as error:
-                logging.info("engine lease already closed: %s", error)
+                logging.warning("engine lease close failed: %s", error)
+                raise
             finally:
-                state["engine"].close()
+                if deadline is None or not isinstance(state["engine"], _browser_engine.BrowserEngine):
+                    state["engine"].close()
+                else:
+                    state["engine"].close(deadline=deadline)
 
     def engine_request(self, operation, payload):
         context_fields = {"remote_key", "connection_id", "principal_id", "request_id",
@@ -1978,7 +2023,7 @@ class BrowserBroker:
                 if any(value["peer"] is peer and value["context"]["effect_id"] == payload["effect_id"]
                        for value in self.engine_leases.values()):
                     raise ValueError("engine opening is never replayed")
-                if len(self.engine_leases) >= 16:
+                if len(self.engine_leases) + len(self.engine_retirements) >= 16:
                     raise ValueError("engine lease limit reached")
                 self.engine_leases[lease_id] = state
             self.outbound.put(event("abush_browser.engine_lease", "abush_browser", {
@@ -1992,7 +2037,14 @@ class BrowserBroker:
                 self.outbound.put(event("abush_browser.engine_cdp", "abush_browser", {
                     **origin, "lease_id": lease_id, "message": message["message"]}))
             try:
+                def revoked():
+                    with self.engine_lock:
+                        if self.engine_leases.get(lease_id) is state:
+                            self.engine_leases.pop(lease_id)
                 engine = BrowserEngine(emit)
+                engine.on_close = revoked
+                if isinstance(engine, _browser_engine.BrowserEngine) and engine.closed:
+                    revoked()
                 with self.engine_lock:
                     current = self.engine_leases.get(lease_id)
                     if current is state:
@@ -2046,7 +2098,11 @@ class BrowserBroker:
         command = payload["command"]
         action = ({"type": "navigate", "url": command["url"]}
                   if command["command"] == "navigate" else command["action"])
-        reply = engine.request("execute", lease_id, action=action)
+        try:
+            reply = engine.request("execute", lease_id, action=action)
+        except (OSError, TimeoutError):
+            self.close_engine_lease(lease_id)
+            raise
         with self.engine_lock:
             if self.engine_leases.get(lease_id) is not state or state["context"] != context or \
                     not peer.connected:
@@ -2181,17 +2237,30 @@ class BrowserBroker:
                     })
             return states
 
-    def close(self):
+    def close(self, deadline=None):
+        deadline = deadline or time.monotonic() + SHUTDOWN_TIMEOUT
         with self.engine_lock:
             leases = list(self.engine_leases)
+        failures = []
         for lease_id in leases:
-            self.close_engine_lease(lease_id)
+            try:
+                self.close_engine_lease(lease_id, deadline)
+            except OSError as error:
+                failures.append(error)
         with self.lock:
             peers = list(self.peers.values())
             self.peers.clear()
             self.candidates.clear()
         for peer in peers:
-            peer.close()
+            peer.close(deadline=deadline)
+        with self.engine_lock:
+            retirements = list(self.engine_retirements)
+        for worker in retirements:
+            worker.join(timeout=max(0, deadline - time.monotonic()))
+        with self.engine_lock:
+            failures.extend(self.engine_shutdown_errors)
+        if failures:
+            raise OSError("engine shutdown failed: " + "; ".join(map(str, failures)))
 
     def peer(self, payload, completion_type=None):
         remote_key = payload.get("remote_key")
@@ -2321,7 +2390,7 @@ class NativeBrokerHost:
                  ordinary_open_factory=OrdinaryOpenServer, browser=None):
         self.input = input_stream or sys.stdin.buffer
         self.output = output_stream or sys.stdout.buffer
-        self.outbound = queue.Queue()
+        self.outbound = BoundedQueue(on_full=self._fatal)
         self.browser = browser or native_host_browser()
         if self.browser is None:
             if ordinary_open_factory is not None:
@@ -2361,6 +2430,98 @@ class NativeBrokerHost:
         self.request_workers = set()
         self.request_workers_lock = threading.Lock()
         self.fatal_error = None
+        self.input_queue = queue.Queue(maxsize=1)
+        self.input_stop = threading.Event()
+        self.input_thread = threading.Thread(target=self._read_loop, daemon=True)
+        self.write_started = None
+        self.read_started = None
+        self.worker_classes = {}
+        self.normal_workers = 0
+        self.worker_bytes = 0
+        self.normal_worker_bytes = 0
+
+    def _fatal(self, error):
+        self.fatal_error = error
+        logging.error("native transport failed closed: %s", error)
+        self.refresh_stop.set()
+        self.refresh_wakeup.set()
+
+    def _read_loop(self):
+        try:
+            while not self.input_stop.is_set():
+                message = self._receive()
+                self.read_started = None
+                while not self.input_stop.is_set():
+                    try:
+                        self.input_queue.put(message, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+                if message is None:
+                    return
+        except (OSError, EOFError, ValueError) as error:
+            self._fatal(error)
+
+    def _receive(self):
+        try:
+            fd = self.input.fileno()
+        except (AttributeError, OSError, ValueError):
+            fd = None
+        if type(fd) is not int:
+            return read_message(self.input, on_frame=lambda: setattr(
+                self, "read_started", time.monotonic()))
+        os.set_blocking(fd, False)
+        data = bytearray()
+        size = 4
+        deadline = None
+        while len(data) < size:
+            if self.input_stop.is_set():
+                return None
+            remaining = 0.05 if deadline is None else min(0.05, deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError("native frame assembly deadline exceeded")
+            if not select.select([fd], [], [], remaining)[0]:
+                continue
+            try:
+                part = os.read(fd, size - len(data))
+            except BlockingIOError:
+                continue
+            if not part:
+                if not data:
+                    return None
+                raise EOFError("native frame truncated")
+            if deadline is None:
+                deadline = time.monotonic() + NATIVE_IO_TIMEOUT
+            data.extend(part)
+            if len(data) == 4 and size == 4:
+                length = struct.unpack("<I", data)[0]
+                if not 0 < length <= MAX_MESSAGE_SIZE:
+                    raise ValueError("invalid native frame size")
+                size += length
+        return json.loads(bytes(data[4:]).decode("utf-8"))
+
+    def _send(self, message):
+        try:
+            fd = self.output.fileno()
+        except (AttributeError, OSError, ValueError):
+            fd = None
+        if type(fd) is not int:
+            send_message(message, self.output)
+            return
+        payload = json.dumps(message, separators=(",", ":")).encode()
+        if len(payload) > MAX_MESSAGE_SIZE:
+            raise ValueError("native message is too large")
+        frame = memoryview(struct.pack("<I", len(payload)) + payload)
+        deadline = time.monotonic() + NATIVE_IO_TIMEOUT
+        os.set_blocking(fd, False)
+        while frame:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([], [fd], [], remaining)[1]:
+                raise TimeoutError("native stdout write deadline exceeded")
+            try:
+                frame = frame[os.write(fd, frame):]
+            except BlockingIOError:
+                continue
 
     def bootstrap_event(self):
         return event("bootstrap", "native_host", {
@@ -2375,7 +2536,7 @@ class NativeBrokerHost:
         while not self.refresh_stop.is_set():
             try:
                 self.broker.refresh()
-            except (OSError, ValueError) as error:
+            except (OSError, ValueError, queue.Full) as error:
                 logging.info("browser remote refresh failed error=%s", error)
             self.refresh_wakeup.wait(self.refresh_interval)
             self.refresh_wakeup.clear()
@@ -2388,11 +2549,14 @@ class NativeBrokerHost:
                     return
                 message, barrier = queued if isinstance(queued, tuple) else (queued, None)
                 if message is not None:
-                    send_message(message, self.output)
+                    self.write_started = time.monotonic()
+                    self._send(message)
+                    self.write_started = None
                 if barrier is not None:
                     barrier.set()
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, TypeError, queue.Full) as error:
             self.writer_error = error
+            self._fatal(error)
 
     def _respond(self, message):
         request_id = message.get("id") if isinstance(message, dict) else "invalid"
@@ -2408,11 +2572,23 @@ class NativeBrokerHost:
         except MemoryError as error:
             self.fatal_error = error
             raise
+        except queue.Full as error:
+            self._fatal(error)
         except Exception as error:
-            self.outbound.put(response(request_id, error=error))
+            try:
+                self.outbound.put(response(request_id, error=error), control=True)
+            except queue.Full as full:
+                self._fatal(full)
         finally:
             with self.request_workers_lock:
-                self.request_workers.discard(threading.current_thread())
+                current = threading.current_thread()
+                self.request_workers.discard(current)
+                admission = self.worker_classes.pop(current, None)
+                if admission is not None:
+                    normal, size = admission
+                    self.normal_workers -= int(normal)
+                    self.worker_bytes -= size
+                    self.normal_worker_bytes -= size if normal else 0
 
     def _is_blocking_request(self, message):
         if not isinstance(message, dict):
@@ -2430,36 +2606,81 @@ class NativeBrokerHost:
             self._respond(message)
             return
         worker = threading.Thread(target=self._respond, args=(message,), daemon=True)
+        control = message.get("operation") in {
+            "engine_close", "cancellation_completion", "executor_completion"}
+        size = len(json.dumps(message, separators=(",", ":")).encode())
         with self.request_workers_lock:
-            self.request_workers.add(worker)
+            full = len(self.request_workers) >= MAX_REQUEST_WORKERS + RESERVED_REQUEST_WORKERS or \
+                self.worker_bytes + size > 5 * MAX_MESSAGE_SIZE or \
+                (not control and (self.normal_workers >= MAX_REQUEST_WORKERS or
+                                  self.normal_worker_bytes + size > 4 * MAX_MESSAGE_SIZE))
+            if not full:
+                self.request_workers.add(worker)
+                self.worker_classes[worker] = (not control, size)
+                self.normal_workers += int(not control)
+                self.worker_bytes += size
+                self.normal_worker_bytes += size if not control else 0
+        if full:
+            self.outbound.put(response(message.get("id"), error=ValueError(
+                "native request admission exhausted")), control=True)
+            return
         worker.start()
 
     def run(self):
         self.writer.start()
-        if self.ordinary_open is not None:
-            self.ordinary_open.start()
-        self.outbound.put(self.bootstrap_event())
-        self.broker.refresh()
-        self.refresh_thread.start()
         try:
+            if self.ordinary_open is not None:
+                self.ordinary_open.start()
+            self.outbound.put(self.bootstrap_event())
+            self.broker.refresh()
+            self.refresh_thread.start()
+            self.input_thread.start()
             while self.writer_error is None and self.fatal_error is None:
-                message = read_message(self.input)
+                if self.read_started is not None and \
+                        time.monotonic() - self.read_started >= NATIVE_IO_TIMEOUT:
+                    self._fatal(TimeoutError("native frame assembly deadline exceeded"))
+                    break
+                if self.write_started is not None and \
+                        time.monotonic() - self.write_started >= NATIVE_IO_TIMEOUT:
+                    self._fatal(TimeoutError("native stdout write deadline exceeded"))
+                    break
+                try:
+                    message = self.input_queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
                 if message is None:
-                    return
+                    break
                 self._dispatch(message)
         finally:
+            deadline = time.monotonic() + SHUTDOWN_TIMEOUT
+            self.input_stop.set()
             self.refresh_stop.set()
             self.refresh_wakeup.set()
-            self.refresh_thread.join(timeout=2)
             if self.ordinary_open is not None:
-                self.ordinary_open.close()
-            self.broker.close()
+                try:
+                    self.ordinary_open.close(deadline=deadline)
+                except (OSError, ValueError) as error:
+                    self._fatal(error)
+            try:
+                self.broker.close(deadline=deadline)
+            except (OSError, ValueError) as error:
+                self._fatal(error)
+            if self.refresh_thread.ident is not None:
+                self.refresh_thread.join(timeout=max(0, deadline - time.monotonic()))
             with self.request_workers_lock:
                 workers = list(self.request_workers)
             for worker in workers:
-                worker.join(timeout=1)
-            self.outbound.put(None)
-            self.writer.join(timeout=2)
+                worker.join(timeout=max(0, deadline - time.monotonic()))
+            if self.fatal_error is None:
+                self.outbound.put(None)
+            else:
+                self.outbound.close()
+            self.writer.join(timeout=max(0, deadline - time.monotonic()))
+            if self.writer.is_alive():
+                self._fatal(TimeoutError("native writer did not exit before shutdown deadline"))
+                self.outbound.close()
+            if self.input_thread.ident is not None:
+                self.input_thread.join(timeout=max(0, deadline - time.monotonic()))
         if self.fatal_error is not None:
             raise self.fatal_error
 

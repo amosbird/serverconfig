@@ -1781,6 +1781,14 @@ class WorkspaceExecutor {
             if (running) return running.done;
             return this.deliverEffect(key);
         }
+        const queued = [...this.operations.values()].filter(operation =>
+            operation.payload.remote_key === payload.remote_key);
+        const bytes = value => new TextEncoder().encode(JSON.stringify(value)).length;
+        if (queued.length >= 32 || bytes(payload) > 1024 * 1024 ||
+                queued.reduce((total, operation) => total + bytes(operation.payload), 0) +
+                    bytes(payload) > 4 * 1024 * 1024) {
+            fail("backpressure", "Execution admission exhausted (32 / 4 MiB per remote)");
+        }
         const op = {payload: clone(payload), cancelled: false, dispatched: false, tab_id: null};
         this.operations.set(key, op);
         const entry = {version: 10, payload: clone(payload), phase: "accepted", completion: null,
@@ -2246,6 +2254,9 @@ class WorkspaceExecutor {
             const running = this.ordinaryOperations.get(payload.request_id);
             if (running) return running.done;
             return this.ordinaryCompletion(payload, old.completion || "unknown");
+        }
+        if (this.ordinaryOperations.size >= 32) {
+            fail("backpressure", "Ordinary execution admission exhausted (32)");
         }
         const op = {cancelled: this.ordinaryCancellations[payload.request_id] === true, dispatched: false,
             browser_boot_id: this.browserBootId, transport_generation: this.transportGeneration};
