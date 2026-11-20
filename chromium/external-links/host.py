@@ -19,6 +19,16 @@ import urllib.request
 import uuid
 from urllib.parse import urlsplit
 
+# host.py is also loaded by path by the daemon's offline fixtures.
+import importlib.util
+_engine_spec = importlib.util.spec_from_file_location(
+    "external_links_browser_engine", pathlib.Path(__file__).with_name("browser_engine.py"))
+_browser_engine = importlib.util.module_from_spec(_engine_spec)
+_engine_spec.loader.exec_module(_browser_engine)
+BrowserEngine = _browser_engine.BrowserEngine
+valid_action = _browser_engine.valid_action
+valid_result = _browser_engine.valid_result
+
 try:
     from websockets.exceptions import WebSocketException
     from websockets.sync.client import connect
@@ -39,7 +49,7 @@ ORDINARY_LAUNCH_LEASE_MAX_SIZE = 64 * 1024
 ORDINARY_LAUNCH_LEASE_MAX_LIFETIME_MS = 60_000
 ORDINARY_LAUNCH_LEASE_DIR = "ordinary-launch"
 NATIVE_ENVELOPE_VERSION = 1
-PEER_PROTOCOL_VERSION = 9
+PEER_PROTOCOL_VERSION = 10
 COMPLETION_RECEIPTS = {
     "completion": "completion_accepted",
     "cancellation_completed": "cancellation_completion_accepted",
@@ -1534,9 +1544,9 @@ class RemotePeer:
             self.pending.pop(effect_id, None)
         return receipt
 
-    def complete(self, request_id, effect_id, fence, completion):
-        if not isinstance(completion, str) or completion not in {"applied", "not_applied", "unknown"}:
-            raise ValueError("invalid executor completion")
+    def complete(self, request_id, effect_id, fence, completion, result=None, error=None):
+        if not self._valid_output(completion, result, error):
+            raise ValueError("invalid executor completion output")
         return self._complete_request(self.pending, effect_id, {
             "request_id": request_id, "fence": fence,
         }, {
@@ -1544,8 +1554,15 @@ class RemotePeer:
             "request_id": request_id,
             "effect_id": effect_id,
             "executor_fence": fence,
-            "completion": completion,
+            "completion": completion, "result": result, "error": error,
         })
+
+    @staticmethod
+    def _valid_output(completion, result, error):
+        if completion == "applied":
+            return valid_result(result) and error is None
+        return completion in {"not_applied", "unknown"} and result is None and \
+            isinstance(error, str) and bool(error)
 
     @staticmethod
     def _retain_bounded(history, key, value):
@@ -1562,6 +1579,11 @@ class RemotePeer:
 
     def _handle_completion_accepted(self, message):
         fields = {"type", "request_id", "executor_fence", "effect_id", "completion"}
+        if message.get("type") == "completion_accepted":
+            fields |= {"result", "error"}
+            if not self._valid_output(message.get("completion"), message.get("result"),
+                                      message.get("error")):
+                raise ValueError("invalid completion receipt output")
         if not self._exact_fields(message, fields) or not all(
                 isinstance(message.get(field), str) and message[field]
                 for field in ("request_id", "effect_id")) or \
@@ -1755,6 +1777,9 @@ class RemotePeer:
 
     @classmethod
     def _valid_command(cls, command):
+        if cls._exact_fields(command, {"command", "page", "action"}) and \
+                command["command"] == "action" and cls._valid_page_ref(command["page"]):
+            return valid_action(command["action"])
         if not cls._exact_fields(command, {"command", "page", "url"}) or \
                 command["command"] != "navigate" or not cls._valid_page_ref(command["page"]):
             return False
@@ -1861,6 +1886,7 @@ class RemotePeer:
     def close(self, emit=False, from_reader=False):
         was_connected = self.connected
         self.connected = False
+        self.broker.close_engine_peer(self)
         self.stop_event.set()
         sock, self.socket = self.socket, None
         if sock is not None:
@@ -1895,8 +1921,139 @@ class BrowserBroker:
         self.completion_history = {}
         self.candidates = {}
         self.lock = threading.RLock()
+        self.engine_lock = threading.RLock()
+        self.engine_leases = {}
         install = f"{pathlib.Path(__file__).resolve()}:{os.getuid()}".encode()
         self.install_id = hashlib.sha256(install).hexdigest()[:24]
+
+    def close_engine_peer(self, peer):
+        with self.engine_lock:
+            leases = [(key, value) for key, value in self.engine_leases.items()
+                      if value["peer"] is peer]
+            for key, _state in leases:
+                self.engine_leases.pop(key, None)
+        # Peer retirement can be called inside broker selection's lock. Fence now,
+        # but never wait for an owned child while holding that selection lock.
+        if leases:
+            def stop_retired():
+                for key, state in leases:
+                    self._stop_engine(key, state)
+            threading.Thread(target=stop_retired, daemon=True).start()
+
+    def close_engine_lease(self, lease_id):
+        with self.engine_lock:
+            state = self.engine_leases.pop(lease_id, None)
+        self._stop_engine(lease_id, state)
+
+    @staticmethod
+    def _stop_engine(lease_id, state):
+        if state and state.get("engine"):
+            try:
+                state["engine"].close_lease(lease_id)
+            except OSError as error:
+                logging.info("engine lease already closed: %s", error)
+            finally:
+                state["engine"].close()
+
+    def engine_request(self, operation, payload):
+        context_fields = {"remote_key", "connection_id", "principal_id", "request_id",
+                          "effect_id", "executor_fence", "authorization", "command"}
+        extras = {"engine_open": set(), "engine_execute": {"lease_id"},
+                  "engine_cdp": {"lease_id", "message"}, "engine_close": {"lease_id"}}
+        if operation not in extras or not isinstance(payload, dict) or \
+                set(payload) != context_fields | extras[operation]:
+            raise ValueError("invalid engine operation")
+        peer = self.peer(payload)
+        context = {key: payload[key] for key in context_fields}
+        expected = {"request_id": payload["request_id"], "fence": payload["executor_fence"],
+                    "authorization": payload["authorization"], "command": payload["command"]}
+        with peer.transport_lock:
+            admitted = peer.pending.get(payload["effect_id"]) == expected
+        if not admitted and operation not in {"engine_close", "engine_cdp"}:
+            raise ValueError("engine operation has no current daemon admission")
+        if operation == "engine_open":
+            lease_id = uuid.uuid4().hex
+            state = {"peer": peer, "context": context, "engine": None, "executions": set()}
+            with self.engine_lock:
+                if any(value["peer"] is peer and value["context"]["effect_id"] == payload["effect_id"]
+                       for value in self.engine_leases.values()):
+                    raise ValueError("engine opening is never replayed")
+                if len(self.engine_leases) >= 16:
+                    raise ValueError("engine lease limit reached")
+                self.engine_leases[lease_id] = state
+            self.outbound.put(event("abush_browser.engine_lease", "abush_browser", {
+                **json.loads(json.dumps(context)), "lease_id": lease_id}))
+            def emit(message):
+                with self.engine_lock:
+                    current = self.engine_leases.get(lease_id)
+                    if current is not state or not peer.connected:
+                        return
+                    origin = json.loads(json.dumps(state["context"]))
+                self.outbound.put(event("abush_browser.engine_cdp", "abush_browser", {
+                    **origin, "lease_id": lease_id, "message": message["message"]}))
+            try:
+                engine = BrowserEngine(emit)
+                with self.engine_lock:
+                    current = self.engine_leases.get(lease_id)
+                    if current is state:
+                        state["engine"] = engine
+                if current is not state:
+                    engine.close()
+                    raise ValueError("engine lease revoked during spawn")
+                reply = engine.request("open", lease_id)
+                with self.engine_lock:
+                    if self.engine_leases.get(lease_id) is not state or not peer.connected:
+                        raise ValueError("engine opening authority revoked")
+                if reply.get("ok") is not True:
+                    raise ValueError(reply.get("error", "engine initialization failed"))
+                return {"lease_id": lease_id}
+            except BaseException:
+                self.close_engine_lease(lease_id)
+                raise
+        lease_id = payload["lease_id"]
+        with self.engine_lock:
+            state = self.engine_leases.get(lease_id)
+            if state is None or state["peer"] is not peer:
+                raise ValueError("unknown engine lease")
+            # Rebinding requires a newly admitted operation on the identical page authority.
+            previous = state["context"]
+            if operation in {"engine_execute", "engine_cdp"} and previous != context and admitted:
+                if any(previous[key] != context[key] for key in
+                       ("remote_key", "connection_id", "principal_id", "executor_fence", "authorization")) or \
+                        previous["command"]["page"] != context["command"]["page"]:
+                    raise ValueError("engine lease authority mismatch")
+                state["context"] = context
+            elif previous != context:
+                raise ValueError("engine lease context mismatch")
+            engine = state["engine"]
+            if operation == "engine_execute":
+                identity = (payload["request_id"], payload["effect_id"])
+                if identity in state["executions"]:
+                    raise ValueError("engine execution is never replayed")
+                if len(state["executions"]) >= 4096:
+                    raise ValueError("engine execution limit reached; renew authorization")
+                state["executions"].add(identity)
+        if operation == "engine_close":
+            self.close_engine_lease(lease_id)
+            return {}
+        if engine is None:
+            raise ValueError("engine lease not ready")
+        if operation == "engine_cdp":
+            if not isinstance(payload["message"], dict):
+                raise ValueError("invalid CDP message")
+            engine.send({"type": "cdp", "lease_id": lease_id, "message": payload["message"]})
+            return {}
+        command = payload["command"]
+        action = ({"type": "navigate", "url": command["url"]}
+                  if command["command"] == "navigate" else command["action"])
+        reply = engine.request("execute", lease_id, action=action)
+        with self.engine_lock:
+            if self.engine_leases.get(lease_id) is not state or state["context"] != context or \
+                    not peer.connected:
+                raise ValueError("engine output authority revoked")
+        if reply.get("ok") is True and valid_result(reply.get("result")):
+            return {"ok": True, "result": reply["result"], "error": None}
+        return {"ok": False, "result": None, "error": str(reply.get("error") or "invalid engine result")}
 
     def executor_id(self, metadata):
         return f"browser-router-{self.install_id}-{metadata['remote_key']}"
@@ -2025,6 +2182,10 @@ class BrowserBroker:
             return states
 
     def close(self):
+        with self.engine_lock:
+            leases = list(self.engine_leases)
+        for lease_id in leases:
+            self.close_engine_lease(lease_id)
         with self.lock:
             peers = list(self.peers.values())
             self.peers.clear()
@@ -2133,12 +2294,13 @@ class BrowserBroker:
         if service == "abush_browser" and operation == "executor_completion":
             if set(payload) != {
                 "remote_key", "connection_id", "principal_id", "request_id", "effect_id",
-                "executor_fence", "completion",
+                "executor_fence", "completion", "result", "error",
             }:
                 raise ValueError("invalid executor completion payload")
             return self.peer(payload, "completion").complete(
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"),
+                payload.get("result"), payload.get("error"),
             )
         if service == "abush_browser" and operation == "cancellation_completion":
             if set(payload) != {
@@ -2149,6 +2311,8 @@ class BrowserBroker:
             return self.peer(payload, "cancellation_completed").complete_cancellation(
                 payload.get("request_id"), payload.get("effect_id"),
                 payload.get("executor_fence"), payload.get("completion"))
+        if service == "abush_browser" and operation.startswith("engine_"):
+            return self.engine_request(operation, payload)
         raise ValueError("unsupported native operation")
 
 
@@ -2258,6 +2422,7 @@ class NativeBrokerHost:
         return (service == "external_links" and operation == "open") or \
             (service == "abush_browser" and operation in {
                 "workspace_state", "executor_completion", "cancellation_completion",
+                "engine_open", "engine_execute", "engine_close",
             })
 
     def _dispatch(self, message):

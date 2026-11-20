@@ -65,7 +65,7 @@ class FakePeer:
             self.client.settimeout(2)
             hello = host.read_peer_message(self.client)
             self.record(hello)
-            if hello["version"] != 9 or hello["capabilities"] != {
+            if hello["version"] != 10 or hello["capabilities"] != {
                     "cancellation": True, "owned_tab_group": True}:
                 self.send({"type": "hello_rejected", "request_id": "hello",
                            "reason": "unsupported_version"})
@@ -188,8 +188,10 @@ class BrowserPeerBrokerTest(unittest.TestCase):
                 **changes}
 
     def terminal(self, peer, **changes):
+        completion = changes.get("completion", "applied")
+        output = {"result": {"text": "original result", "data": {"value": 1}, "images": []}, "error": None} if completion == "applied" else {"result": None, "error": "original error"}
         return {**self.identity(peer), "request_id": "execute", "effect_id": "effect",
-                "executor_fence": peer.executor_fence, "completion": "applied", **changes}
+                "executor_fence": peer.executor_fence, "completion": "applied", **output, **changes}
 
     def event(self, broker, name):
         deadline = time.monotonic() + 2
@@ -211,11 +213,11 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         self.brokers.append(native.broker)
         return native
 
-    def test_v9_exact_handshake_and_capabilities(self):
+    def test_v10_exact_handshake_and_capabilities(self):
         broker, peer, server = self.connected()
         hello = server.wait_for("hello")
         self.assertEqual(set(hello), {"type", "version", "executor_id", "nonce", "capabilities"})
-        self.assertEqual(hello["version"], 9)
+        self.assertEqual(hello["version"], 10)
         self.assertEqual(hello["capabilities"], {"cancellation": True, "owned_tab_group": True})
         self.assertEqual(server.wait_for("hello_ready"), {"type": "hello_ready", "request_id": "hello",
                                                         "executor_fence": peer.executor_fence})
@@ -512,7 +514,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         broker, peer, server = self.connected()
         peer.handle(self.execute(peer))
         self.event(broker, "abush_browser.execute")
-        receipt = peer.complete("execute", "effect", peer.executor_fence, "applied")
+        receipt = peer.complete("execute", "effect", peer.executor_fence, "applied", self.terminal(peer)["result"], None)
         self.assertEqual(receipt["completion"], "applied")
         self.assertNotIn("effect", peer.pending)
         cancel = {"type": "cancel", "request_id": "cancel", "effect_id": "effect",
@@ -525,7 +527,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         self.assertTrue(broker.outbound.empty())
         self.assertEqual(peer.complete_cancellation("cancel", "effect", peer.executor_fence,
                                                   "unknown")["completion"], "unknown")
-        self.assertEqual(peer.complete("execute", "effect", peer.executor_fence, "applied"),
+        self.assertEqual(peer.complete("execute", "effect", peer.executor_fence, "applied", self.terminal(peer)["result"], None),
                          receipt)
 
     def test_paused_state_requires_exact_binding(self):
@@ -650,19 +652,20 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         with mock.patch.object(peer, "send"):
             for index in range(256):
                 with self.assertRaises(TimeoutError):
-                    peer.complete(str(index), str(index), peer.executor_fence, "unknown")
+                    peer.complete(str(index), str(index), peer.executor_fence, "unknown", None, "original error")
             with self.assertRaisesRegex(ValueError, "backlog"):
-                peer.complete("overflow", "overflow", peer.executor_fence, "unknown")
+                peer.complete("overflow", "overflow", peer.executor_fence, "unknown", None, "original error")
         self.assertIn(("completion", "0"), peer.completions)
 
     def test_terminal_receipt_before_waiter_is_exact(self):
         broker, peer, server = self.connected()
         receipt = {"type": "completion_accepted", "request_id": "execute", "effect_id": "effect",
-                   "executor_fence": {"executor_id": "old", "epoch": 1}, "completion": "applied"}
+                   "executor_fence": {"executor_id": "old", "epoch": 1}, "completion": "applied",
+                   "result": self.terminal(peer)["result"], "error": None}
         server.send(receipt)
         self.barrier(server)
         with mock.patch.object(peer, "send") as send:
-            self.assertEqual(peer.complete("execute", "effect", receipt["executor_fence"], "applied"), receipt)
+            self.assertEqual(peer.complete("execute", "effect", receipt["executor_fence"], "applied", receipt["result"], None), receipt)
             send.assert_not_called()
 
     def test_reconnect_replays_origin_terminal_not_execute(self):
@@ -670,7 +673,7 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         first.accept = False
         peer.completion_timeout = 0
         with self.assertRaises(TimeoutError):
-            peer.complete("execute", "effect", peer.executor_fence, "applied")
+            peer.complete("execute", "effect", peer.executor_fence, "applied", self.terminal(peer)["result"], None)
         first.wait_for("completion")
         origin = peer.executor_fence
         second = self.server(connection="c_22222222", epoch=2)
