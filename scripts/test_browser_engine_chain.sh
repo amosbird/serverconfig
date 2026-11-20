@@ -10,4 +10,7 @@ abush=$(cd -- "$ABUSH_BROWSER_ENGINE_ROOT/.." && pwd -P)
 export ABUSH_BROWSER_HOST_PATH="$serverconfig/chromium/external-links/host.py"
 export ABUSH_BROWSER_EXTENSION_PATH="$serverconfig/chromium/external-links/extension"
 cd -- "$abush"
-exec scripts/test-bounded.sh -p abush-daemon --test browser_engine_chain -- --nocapture
+export TMPDIR="$abush/.worktrees/.tmp"
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-16}"
+exec timeout --signal=TERM --kill-after=5s 180s \
+    cargo test --release -p abush-daemon --test browser_engine_chain -- --nocapture
