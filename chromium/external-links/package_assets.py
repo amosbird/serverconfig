@@ -30,21 +30,35 @@ def stage_assets(source, destination, version):
     match = re.search(r'importScripts\("([^"]+)"\)', background)
     if not match or match.group(1) != "workspace.js":
         raise ValueError("External Links background must import the canonical workspace.js source")
-    workspace = (source / "workspace.js").read_bytes()
+    workspace = (source / "workspace.js").read_text()
+    transport = (source / "playwright-transport.js").read_bytes()
+    for text, dependency in ((background, "workspace.js"),
+                             (workspace, "playwright-transport.js")):
+        if text.count(f'importScripts("{dependency}")') != 1 or \
+                text.count(f'require("./{dependency}")') != 1:
+            raise ValueError(f"External Links must use exact canonical imports for {dependency}")
     suffix = version.replace(".", "-")
     versioned_workspace = f"workspace-{suffix}.js"
     versioned_worker = f"background-{suffix}.js"
-    if any((source / name).exists() for name in (versioned_workspace, versioned_worker)):
+    versioned_transport = f"playwright-transport-{suffix}.js"
+    if any((source / name).exists() for name in
+           (versioned_workspace, versioned_worker, versioned_transport)):
         raise FileExistsError("Versioned assets already exist in the source")
     versioned_background = background.replace(
         'importScripts("workspace.js")', f'importScripts("{versioned_workspace}")', 1).replace(
         'require("./workspace.js")', f'require("./{versioned_workspace}")')
 
+    versioned_workspace_source = workspace.replace(
+        'importScripts("playwright-transport.js")',
+        f'importScripts("{versioned_transport}")', 1).replace(
+        'require("./playwright-transport.js")', f'require("./{versioned_transport}")', 1)
     shutil.copytree(source, destination)
-    (destination / versioned_workspace).write_bytes(workspace)
+    (destination / versioned_workspace).write_text(versioned_workspace_source)
+    (destination / versioned_transport).write_bytes(transport)
     (destination / versioned_worker).write_text(versioned_background)
     (destination / "background.js").unlink()
     (destination / "workspace.js").unlink()
+    (destination / "playwright-transport.js").unlink()
     manifest["version"] = version
     manifest["background"]["service_worker"] = versioned_worker
     (destination / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")))

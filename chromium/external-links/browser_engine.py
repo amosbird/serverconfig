@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Private, inherited socket transport for the official browser engine."""
 import collections
+import hashlib
 import json
 import logging
 import os
 import pathlib
 import queue
+import re
 import select
 import shutil
 import socket
@@ -168,12 +170,182 @@ def artifacts_directory():
     return directory
 
 
+PLAYWRIGHT_VERSION = "1.65.1"
+PLAYWRIGHT_INTEGRITY = (
+    "sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==")
+NODE_PATH = "/usr/local/bin:/usr/bin:/bin"
+NODE_CHECK_TIMEOUT = 3.0
+NODE_CHECK_LOCK = threading.Lock()
+NODE_CHECKED = set()
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def trusted_path(path):
+    require(path.is_absolute() and ".." not in path.parts, "trusted path must be absolute")
+    for directory in reversed(path.parents):
+        info = directory.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid in {0, os.getuid()} and
+                not info.st_mode & 0o022, "unsafe trusted path parent")
+    info = path.lstat()
+    require(not path.is_symlink() and info.st_uid in {0, os.getuid()} and
+            not info.st_mode & 0o022, "unsafe trusted path owner or permissions")
+    return info
+
+
+def engine_environment():
+    return {key: value for key, value in os.environ.items()
+            if key not in {"NODE_OPTIONS", "NODE_PATH"} and
+            not key.lower().startswith("npm_config_")}
+
+
+def node_version(node, environment):
+    with subprocess.Popen([str(node), "--version"], env=environment,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+        output = bytearray()
+        deadline = time.monotonic() + NODE_CHECK_TIMEOUT
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                    raise ValueError("Node version check timed out")
+                chunk = os.read(process.stdout.fileno(), 4096 - len(output))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                require(len(output) < 4096, "Node version check output exceeds limit")
+            process.wait(timeout=max(0.001, deadline - time.monotonic()))
+            return process.returncode, bytes(output)
+        except BaseException:
+            process.kill()
+            process.wait(timeout=SHUTDOWN_TIMEOUT)
+            raise
+
+
+def trusted_node(environment):
+    candidate = os.environ.get("ABUSH_BROWSER_ENGINE_NODE")
+    if candidate is None:
+        candidate = shutil.which("node", path=NODE_PATH)
+    require(bool(candidate), "Node >=20 is required; trusted Node executable not found")
+    node = pathlib.Path(candidate)
+    require(node.is_absolute(), "ABUSH_BROWSER_ENGINE_NODE must be absolute")
+    try:
+        # A local executable alias may resolve only within its trusted directory.
+        if node.is_symlink():
+            trusted_path(node.parent)
+            require(node.lstat().st_uid in {0, os.getuid()} and
+                    node.resolve(strict=True).parent == node.parent.resolve(),
+                    "unsafe Node symlink escape")
+            node = node.resolve(strict=True)
+        info = trusted_path(node)
+        require(stat.S_ISREG(info.st_mode) and os.access(node, os.X_OK),
+                "Node executable must be a trusted executable file")
+        identity = (str(node), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+                    info.st_ctime_ns)
+        with NODE_CHECK_LOCK:
+            if identity not in NODE_CHECKED:
+                try:
+                    returncode, output = node_version(node, environment)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    raise ValueError("Node version check failed or timed out") from error
+                match = re.fullmatch(rb"v(\d+)\.\d+\.\d+\s*", output)
+                require(returncode == 0 and match and int(match[1]) >= 20,
+                        "Node >=20 is required; Node version check failed")
+                NODE_CHECKED.add(identity)
+        return str(node)
+    except OSError as error:
+        raise ValueError("trusted Node executable is missing or invalid") from error
+
+
+def trusted_engine_root():
+    explicit = os.environ.get("ABUSH_BROWSER_ENGINE_ROOT")
+    data = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local/share"))
+    root = pathlib.Path(explicit) if explicit is not None else data / "abush/browser-engine"
+    try:
+        if explicit is None:
+            trusted_path(root.parent)
+            info = root.lstat()
+            require(stat.S_ISLNK(info.st_mode) and info.st_uid == os.getuid(),
+                    "official browser engine requires a managed installation symlink")
+            target = pathlib.Path(os.readlink(root))
+            require(not target.is_absolute() and len(target.parts) == 2 and
+                    target.parts[0] == "browser-engine-versions" and
+                    target.parts[1] not in {".", ".."}, "unsafe managed engine symlink target")
+            root = root.parent / target
+        require(stat.S_ISDIR(trusted_path(root).st_mode), "engine root must be a directory")
+        assets = {}
+        files = {}
+        def scan_error(error):
+            raise error
+        for directory, directories, names in os.walk(root, followlinks=False, onerror=scan_error):
+            for name in directories + names:
+                path = pathlib.Path(directory) / name
+                relative = path.relative_to(root).as_posix()
+                info = path.lstat()
+                require(info.st_uid in {0, os.getuid()}, "untrusted engine entry owner")
+                if stat.S_ISLNK(info.st_mode):
+                    require(path.resolve(strict=True).is_relative_to(root) and
+                            path.resolve().is_file(), "engine dependency symlink escape")
+                    files[relative] = {"symlink": os.readlink(path)}
+                else:
+                    require(not info.st_mode & 0o022, "unsafe writable engine entry")
+                    if stat.S_ISREG(info.st_mode):
+                        require(explicit is not None or not info.st_mode & 0o222,
+                                "managed engine files must be read-only")
+                        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                        if relative != "abush-engine-manifest.json":
+                            files[relative] = {"sha256": digest}
+                        if path.parent == root and (name.endswith(".cjs") or
+                                name in {"package.json", "package-lock.json"}):
+                            assets[name] = digest
+                    else:
+                        require(stat.S_ISDIR(info.st_mode), "unsupported engine entry")
+        require({"main.cjs", "engine.cjs", "protocol.cjs", "package.json",
+                 "package-lock.json"}.issubset(assets), "incomplete official browser engine")
+        package = json.loads((root / "package.json").read_bytes())
+        lock = json.loads((root / "package-lock.json").read_bytes())
+        require(package.get("name") == "abush-browser-engine" and
+                package.get("dependencies") == {"playwright-core": PLAYWRIGHT_VERSION} and
+                package.get("engines") == {"node": ">=20"}, "engine package dependency mismatch")
+        packages = lock.get("packages", {})
+        require(lock.get("lockfileVersion") == 3 and
+                set(packages) == {"", "node_modules/playwright-core"}, "engine lock mismatch")
+        require(packages[""].get("name") == package["name"] and
+                packages[""].get("version") == package.get("version") and
+                packages[""].get("dependencies") == package["dependencies"],
+                "engine package and lock disagree")
+        dependency = packages["node_modules/playwright-core"]
+        require(dependency.get("version") == PLAYWRIGHT_VERSION and
+                dependency.get("integrity") == PLAYWRIGHT_INTEGRITY and
+                dependency.get("resolved") ==
+                f"https://registry.npmjs.org/playwright-core/-/playwright-core-{PLAYWRIGHT_VERSION}.tgz",
+                "engine requires official pinned playwright-core 1.65.1")
+        require(json.loads((root / "node_modules/playwright-core/package.json").read_bytes())
+                .get("version") == PLAYWRIGHT_VERSION, "installed playwright-core version mismatch")
+        if explicit is None:
+            manifest = json.loads((root / "abush-engine-manifest.json").read_bytes())
+            fingerprint = hashlib.sha256(json.dumps(assets, sort_keys=True,
+                separators=(",", ":")).encode()).hexdigest()
+            require(manifest.get("schema_version") == 1 and
+                    manifest.get("playwright_core") == PLAYWRIGHT_VERSION and
+                    manifest.get("assets") == assets and manifest.get("files") == files and
+                    manifest.get("fingerprint") == fingerprint and
+                    manifest.get("engine_version") == package.get("version") and
+                    root.name == f"{package.get('version')}-{fingerprint}",
+                    "managed engine manifest mismatch")
+        return root
+    except (OSError, KeyError, TypeError, AttributeError, json.JSONDecodeError) as error:
+        raise ValueError("official browser engine root is missing or invalid") from error
+
+
 class BrowserEngine:
     def __init__(self, on_cdp, on_close=None, timeout=35, process_factory=subprocess.Popen):
-        data = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local/share"))
-        root = pathlib.Path(os.environ.get("ABUSH_BROWSER_ENGINE_ROOT", data / "abush/browser-engine"))
-        if not root.is_absolute() or not (root / "main.cjs").is_file():
-            raise ValueError("official browser engine is not installed")
+        root = trusted_engine_root()
+        environment = engine_environment()
+        node = trusted_node(environment)
         self.on_cdp = on_cdp
         self.on_close = on_close or (lambda: None)
         self.timeout = timeout
@@ -191,10 +363,10 @@ class BrowserEngine:
         self.socket, child = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         self.socket.settimeout(2)
         try:
-            self.process = process_factory(["node", str(root / "main.cjs"), "--fd",
+            self.process = process_factory([node, str(root / "main.cjs"), "--fd",
                 str(child.fileno()), "--artifacts-dir", str(self.artifacts)],
                 pass_fds=(child.fileno(),), stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=environment)
         except BaseException:
             self.socket.close()
             shutil.rmtree(self.artifacts)

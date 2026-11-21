@@ -215,13 +215,18 @@ const {{assert, fixture}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_
         suffix = version.replace(".", "-")
         worker = f"background-{suffix}.js"
         workspace = f"workspace-{suffix}.js"
+        transport = f"playwright-transport-{suffix}.js"
         package_assets.stage_assets(source, staged, version)
         expected = dict(original)
         manifest = json.loads(expected["manifest.json"])
         manifest["version"] = version
         manifest["background"]["service_worker"] = worker
         expected["manifest.json"] = json.dumps(manifest, separators=(",", ":")).encode()
-        expected[workspace] = expected.pop("workspace.js")
+        expected[transport] = expected.pop("playwright-transport.js")
+        expected[workspace] = expected.pop("workspace.js").replace(
+            b'importScripts("playwright-transport.js")',
+            f'importScripts("{transport}")'.encode(), 1).replace(
+            b'require("./playwright-transport.js")', f'require("./{transport}")'.encode(), 1)
         expected[worker] = expected.pop("background.js").replace(
             b'importScripts("workspace.js")', f'importScripts("{workspace}")'.encode(), 1).replace(
             b'require("./workspace.js")', f'require("./{workspace}")'.encode())
@@ -238,6 +243,10 @@ const {{assert, fixture}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_
                 self.assertEqual(archive.read(name), content)
         self.assertNotIn("background.js", expected)
         self.assertNotIn("workspace.js", expected)
+        self.assertNotIn("playwright-transport.js", expected)
+        self.assertIn(f'importScripts("{transport}")'.encode(), expected[workspace])
+        self.assertIn(f'require("./{transport}")'.encode(), expected[workspace])
+        self.assertIn(b'abushBrowserAutomationV9', expected[workspace])
         self.assertIn(b'requestBootstrap(port)', expected[worker])
         self.assertNotIn(b'"workspace.js"', expected[worker])
         self.assertNotIn(b'"./workspace.js"', expected[worker])
@@ -326,6 +335,8 @@ const {{assert, fixture}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_
         for name, content in (
                 ("manifest.json", json.dumps({"background": {"service_worker": "../escape"}})),
                 ("background.js", 'importScripts("../escape")'),
+                ("workspace.js", 'importScripts("../escape")'),
+                ("playwright-transport-1-2-3-4.js", "unexpected transport"),
                 ("workspace-1-2-3-4.js", "unexpected workspace"),
                 ("background-1-2-3-4.js", "unexpected worker")):
             path = source / name
@@ -340,6 +351,15 @@ const {{assert, fixture}} = require({json.dumps(str(ROOT / 'scripts/browser_tab_
                 path.unlink()
             else:
                 path.write_bytes(previous)
+
+    def test_asset_staging_missing_transport_fails_before_writes(self):
+        source, staged = self.asset_fixture()
+        (source / "playwright-transport.js").unlink()
+        original = self.asset_snapshot(source)
+        with self.assertRaises(FileNotFoundError):
+            package_assets.stage_assets(source, staged, "1.2.3.4")
+        self.assertFalse(staged.exists())
+        self.assertEqual(self.asset_snapshot(source), original)
 
     def test_runai_uses_installed_extension_and_registers_native_host(self):
         launcher = RUNAI.read_text()

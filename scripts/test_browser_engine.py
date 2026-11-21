@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import io
 import json
 import os
@@ -15,7 +16,193 @@ from unittest import mock
 from test_browser_peer_broker import BrowserPeerBrokerTest, host, clone
 
 ENGINE_ROOT = pathlib.Path(os.environ.get("ABUSH_BROWSER_ENGINE_ROOT",
-    "/home/amos/git/abush/.worktrees/browser-engine/browser-engine"))
+    pathlib.Path.home() / ".local/share/abush/browser-engine")).resolve()
+
+
+def engine_fixture(root):
+    module = host._browser_engine
+    package = {"name": "abush-browser-engine", "version": "0.1.0",
+               "engines": {"node": ">=20"},
+               "dependencies": {"playwright-core": module.PLAYWRIGHT_VERSION}}
+    lock = {"lockfileVersion": 3, "packages": {"": package,
+        "node_modules/playwright-core": {"version": module.PLAYWRIGHT_VERSION,
+            "integrity": module.PLAYWRIGHT_INTEGRITY,
+            "resolved": "https://registry.npmjs.org/playwright-core/-/playwright-core-1.65.1.tgz"}}}
+    for name, value in (("package.json", package), ("package-lock.json", lock)):
+        (root / name).write_text(json.dumps(value))
+    for name in ("main.cjs", "engine.cjs", "protocol.cjs"):
+        (root / name).write_text("fixture")
+    dependency = root / "node_modules/playwright-core"
+    dependency.mkdir(parents=True)
+    (dependency / "package.json").write_text(json.dumps({"version": "1.65.1"}))
+
+
+class EngineTrustTest(unittest.TestCase):
+    def setUp(self):
+        self.module = host._browser_engine
+        temporary_root = pathlib.Path(__file__).resolve().parents[1] / ".tmp"
+        temporary_root.mkdir(exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=temporary_root)
+        self.addCleanup(temporary.cleanup)
+        self.root = pathlib.Path(temporary.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        engine_fixture(self.source)
+        environment = mock.patch.dict(os.environ, {"ABUSH_BROWSER_ENGINE_ROOT": str(self.source),
+            "ABUSH_BROWSER_ENGINE_NODE": str(self.root / "node"),
+            "XDG_DATA_HOME": str(self.root), "XDG_CACHE_HOME": str(self.root)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.node = self.root / "node"
+        self.node.write_text("fixture executable")
+        self.node.chmod(0o700)
+
+    def test_node_version_is_checked_once_with_sanitized_environment(self):
+        with mock.patch.dict(os.environ, {"NODE_OPTIONS": "--require /bad/code.js",
+                "NODE_PATH": "/bad/modules", "npm_config_userconfig": "/bad/npmrc",
+                "NPM_CONFIG_CACHE": "/bad/cache"}), mock.patch.object(
+                self.module, "node_version", return_value=(0, b"v20.1.0\n")) as run:
+            env = self.module.engine_environment()
+            self.assertFalse({"NODE_OPTIONS", "NODE_PATH", "npm_config_userconfig",
+                              "NPM_CONFIG_CACHE"} & env.keys())
+            self.assertEqual(self.module.trusted_node(env), str(self.node))
+            self.module.trusted_node(env)
+            run.assert_called_once_with(self.node, env)
+
+    def test_invalid_or_old_node_fails_before_artifacts_and_spawn(self):
+        factory = mock.Mock()
+        with mock.patch.object(self.module, "artifacts_directory") as artifacts:
+            for path in ("node", str(self.root / "missing"), str(self.source)):
+                with self.subTest(path=path), mock.patch.dict(os.environ,
+                        {"ABUSH_BROWSER_ENGINE_NODE": path}), self.assertRaises(ValueError):
+                    host.BrowserEngine(lambda _: None, process_factory=factory)
+            self.node.chmod(0o722)
+            with self.assertRaisesRegex(ValueError, "unsafe"):
+                host.BrowserEngine(lambda _: None, process_factory=factory)
+            self.node.chmod(0o700)
+            for output in (b"v18.20.0\n", b"invalid"):
+                with mock.patch.object(self.module, "node_version", return_value=(0, output)), \
+                        self.assertRaisesRegex(ValueError, "Node >=20"):
+                    host.BrowserEngine(lambda _: None, process_factory=factory)
+            with mock.patch.object(self.module, "node_version",
+                    side_effect=subprocess.TimeoutExpired("node", 3)), \
+                    self.assertRaisesRegex(ValueError, "timed out"):
+                host.BrowserEngine(lambda _: None, process_factory=factory)
+            artifacts.assert_not_called()
+        factory.assert_not_called()
+
+    def test_node_version_output_and_time_are_bounded_without_echoing_secrets(self):
+        for script, expected in (("printf '%5000s' secret", "output exceeds limit"),
+                                 ("exec sleep 10", "timed out")):
+            self.node.write_text("#!/bin/sh\n" + script + "\n")
+            self.node.chmod(0o700)
+            with mock.patch.object(self.module, "NODE_CHECK_TIMEOUT", 0.05), \
+                    self.assertRaisesRegex(ValueError, expected) as raised:
+                self.module.trusted_node(self.module.engine_environment())
+            self.assertNotIn("secret", str(raised.exception))
+
+    def test_node_symlink_escape_and_missing_default_rejected(self):
+        self.node.unlink()
+        self.node.symlink_to(self.source / "main.cjs")
+        with self.assertRaisesRegex(ValueError, "symlink escape"):
+            self.module.trusted_node({})
+        os.environ.pop("ABUSH_BROWSER_ENGINE_NODE")
+        with mock.patch.object(self.module.shutil, "which", return_value=None) as which, \
+                self.assertRaisesRegex(ValueError, "not found"):
+            self.module.trusted_node({})
+        which.assert_called_once_with("node", path=self.module.NODE_PATH)
+
+    def test_explicit_root_is_trusted_override_without_manifest(self):
+        self.assertEqual(self.module.trusted_engine_root(), self.source)
+        for root in ("relative", str(self.root / "missing")):
+            with mock.patch.dict(os.environ, {"ABUSH_BROWSER_ENGINE_ROOT": root}), \
+                    self.assertRaises(ValueError):
+                host.BrowserEngine(lambda _: None, process_factory=mock.Mock())
+        self.source.chmod(0o777)
+        with self.assertRaisesRegex(ValueError, "unsafe"):
+            self.module.trusted_engine_root()
+        self.source.chmod(0o700)
+        (self.source / "node_modules/playwright-core/escape").symlink_to(self.node)
+        with self.assertRaisesRegex(ValueError, "symlink escape"):
+            self.module.trusted_engine_root()
+        (self.source / "node_modules/playwright-core/escape").unlink()
+        (self.source / "package-lock.json").write_text('{}')
+        with self.assertRaisesRegex(ValueError, "lock mismatch"):
+            self.module.trusted_engine_root()
+
+    def managed(self):
+        prefix = self.root / "abush"
+        versions = prefix / "browser-engine-versions"
+        versions.mkdir(parents=True)
+        assets = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                  for p in self.source.iterdir() if p.is_file()}
+        fingerprint = hashlib.sha256(json.dumps(assets, sort_keys=True,
+            separators=(",", ":")).encode()).hexdigest()
+        generation = versions / f"0.1.0-{fingerprint}"
+        self.source.rename(generation)
+        files = {p.relative_to(generation).as_posix():
+                 {"sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+                 for p in generation.rglob("*") if p.is_file()}
+        manifest = {"schema_version": 1, "playwright_core": "1.65.1",
+                    "engine_version": "0.1.0", "assets": assets,
+                    "fingerprint": fingerprint, "files": files}
+        (generation / "abush-engine-manifest.json").write_text(json.dumps(manifest))
+        for path in generation.rglob("*"):
+            if path.is_file():
+                path.chmod(0o400)
+        (prefix / "browser-engine").symlink_to(
+            pathlib.Path("browser-engine-versions") / generation.name)
+        os.environ.pop("ABUSH_BROWSER_ENGINE_ROOT")
+        return generation, prefix / "browser-engine", manifest
+
+    def test_default_managed_root_requires_exact_manifest_and_read_only_files(self):
+        generation, link, manifest = self.managed()
+        self.assertEqual(self.module.trusted_engine_root(), generation)
+        entry = generation / "main.cjs"
+        entry.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "read-only"):
+            self.module.trusted_engine_root()
+        entry.write_text("tampered")
+        entry.chmod(0o400)
+        with self.assertRaisesRegex(ValueError, "manifest mismatch"):
+            self.module.trusted_engine_root()
+        link.unlink()
+        link.symlink_to(generation)
+        with self.assertRaisesRegex(ValueError, "symlink target"):
+            self.module.trusted_engine_root()
+
+    def test_root_failures_do_not_create_artifacts_or_spawn(self):
+        with mock.patch.object(self.module, "artifacts_directory") as artifacts, \
+                mock.patch.object(self.module, "trusted_node") as node:
+            factory = mock.Mock()
+            (self.source / "main.cjs").chmod(0o666)
+            with self.assertRaisesRegex(ValueError, "unsafe writable"):
+                host.BrowserEngine(lambda _: None, process_factory=factory)
+            artifacts.assert_not_called()
+            factory.assert_not_called()
+            node.assert_not_called()
+
+    def test_managed_missing_manifest_and_unlisted_file_rejected(self):
+        generation, _, _ = self.managed()
+        extra = generation / "unlisted.cjs"
+        extra.write_text("unlisted")
+        extra.chmod(0o400)
+        with self.assertRaisesRegex(ValueError, "manifest mismatch"):
+            self.module.trusted_engine_root()
+        extra.unlink()
+        (generation / "abush-engine-manifest.json").unlink()
+        with self.assertRaisesRegex(ValueError, "missing or invalid"):
+            self.module.trusted_engine_root()
+
+    def test_managed_manifest_dependency_mismatch_rejected(self):
+        generation, _, manifest = self.managed()
+        manifest["playwright_core"] = "1.64.0"
+        path = generation / "abush-engine-manifest.json"
+        path.chmod(0o600)
+        path.write_text(json.dumps(manifest))
+        path.chmod(0o400)
+        with self.assertRaisesRegex(ValueError, "manifest mismatch"):
+            self.module.trusted_engine_root()
 
 
 class EngineBrokerTest(BrowserPeerBrokerTest):
@@ -197,7 +384,10 @@ class EngineSocketTest(unittest.TestCase):
             messages.append(message)
             cdp.set()
         with mock.patch.dict(os.environ, {"ABUSH_BROWSER_ENGINE_ROOT": str(ENGINE_ROOT),
-                                         "XDG_CACHE_HOME": str(cache)}):
+                                         "XDG_CACHE_HOME": str(cache),
+                                         "NODE_OPTIONS": "--require /bad/bootstrap.js",
+                                         "NODE_PATH": "/bad/modules",
+                                         "npm_config_userconfig": "/bad/npmrc"}):
             engine = host.BrowserEngine(receive, timeout=3)
             errors = []
             def opening():
@@ -387,12 +577,15 @@ class TransportBoundsTest(unittest.TestCase):
         directory = tempfile.TemporaryDirectory(dir=root)
         self.addCleanup(directory.cleanup)
         cache = pathlib.Path(directory.name)
-        (cache / "main.cjs").write_text("fixture")
+        engine_fixture(cache)
         def process(arguments, **kwargs):
+            self.assertTrue(pathlib.Path(arguments[0]).is_absolute())
+            self.assertNotIn("NODE_OPTIONS", kwargs["env"])
             fd = kwargs["pass_fds"][0]
             return subprocess.Popen([sys.executable, "-c", script, str(fd)], **kwargs)
         environment = {"ABUSH_BROWSER_ENGINE_ROOT": str(cache), "XDG_CACHE_HOME": str(cache)}
-        with mock.patch.dict(os.environ, environment):
+        with mock.patch.dict(os.environ, environment), mock.patch.object(
+                host._browser_engine, "trusted_node", return_value="/usr/bin/node"):
             engine = host.BrowserEngine(lambda _: None, timeout=timeout, process_factory=process)
         self.addCleanup(engine.close)
         return engine
