@@ -7,6 +7,10 @@
     const MAX_BODY = 256 * 1024;
     const MAX_CAPTURE = 128;
     const FOCUS_TIMEOUT_MS = 2000;
+    const RENDER_TIMEOUT_MS = 2000;
+    const CAPTURE_TIMEOUT_MS = 6500;
+    const MAX_SCREENSHOT_PIXELS = 32 * 1024 * 1024;
+    const MAX_SCREENSHOT_BASE64 = 4 * Math.ceil(500000 / 3);
     const PAGE_COMMANDS = new Set([
         "Page.enable", "Page.disable", "Page.getFrameTree", "Page.getLayoutMetrics",
         "Page.setLifecycleEventsEnabled", "Page.createIsolatedWorld",
@@ -62,6 +66,8 @@
             this.targetInfo = null;
             this.bootstrap = null;
             this.rootAttachment = null;
+            this.capture = null;
+            this.lastCaptureFrameId = 0;
             this.buffer = [];
             this.eventListener = (source, method, params) => {
                 try { this.event(source, method, copy(params || {})); }
@@ -205,6 +211,93 @@
             }
         }
 
+        async captureScreenshot(session, params, generation) {
+            if (session.id !== this.rootSessionId) throw new Error("Screenshots require the exact root page");
+            if (this.capture) throw new Error("Screenshot capture already in progress");
+            const clip = params.clip;
+            if (params.format !== "png" || Object.keys(params).some(key =>
+                    !["format", "clip", "captureBeyondViewport"].includes(key)) ||
+                    typeof params.captureBeyondViewport !== "boolean" || !clip ||
+                    Object.keys(clip).sort().join(",") !== "height,scale,width,x,y" ||
+                    ![clip.x, clip.y, clip.width, clip.height, clip.scale].every(Number.isFinite) ||
+                    clip.x < 0 || clip.y < 0 || clip.width <= 0 || clip.height <= 0 || clip.scale <= 0 ||
+                    clip.width > 32768 || clip.height > 32768 || clip.scale > 4 ||
+                    clip.width * clip.height * clip.scale * clip.scale > MAX_SCREENSHOT_PIXELS) {
+                throw new Error("Unsupported or oversized screenshot geometry");
+            }
+            let resolve, reject, rejectFrame, rejectFailure;
+            const frame = new Promise((yes, no) => { resolve = yes; rejectFrame = no; });
+            const failure = new Promise((_, no) => { rejectFailure = no; });
+            frame.catch(() => {}); failure.catch(() => {});
+            reject = error => { rejectFrame(error); rejectFailure(error); };
+            const capture = {session, generation, resolve, reject, frame, failure, ackPending: false,
+                ack: Promise.resolve(), frameId: null, started: performance.now()};
+            this.capture = capture;
+            const bounded = async (label, milliseconds, task) => {
+                let timer;
+                try {
+                    const remaining = Math.min(milliseconds, 9000 - (performance.now() - capture.started));
+                    if (remaining <= 0) throw new Error(`${label} timed out`);
+                    return await Promise.race([Promise.resolve().then(task), failure, new Promise((_, no) => {
+                        timer = setTimeout(() => no(new Error(`${label} timed out`)), remaining);
+                    })]);
+                } finally { clearTimeout(timer); }
+            };
+            try {
+                // A tiny private frame producer keeps the inactive view's compositor surface alive.
+                // Its JPEG frames are discarded; only Playwright's original PNG command is returned.
+                await bounded("Screenshot render preparation", RENDER_TIMEOUT_MS, async () => {
+                    await this.command(session, "Page.startScreencast", {
+                        format: "jpeg", quality: 10, maxWidth: 16, maxHeight: 16, everyNthFrame: 1,
+                    }, generation);
+                    await frame;
+                });
+                if (!this.authorized(generation)) throw new Error("CDP authorization revoked");
+                const output = await bounded("Native screenshot capture", CAPTURE_TIMEOUT_MS,
+                    () => this.command(session, "Page.captureScreenshot", params, generation));
+                if (typeof output.data !== "string" || output.data.length > MAX_SCREENSHOT_BASE64) {
+                    throw new Error("Oversized or invalid screenshot output; maximum 500000 decoded bytes");
+                }
+                await bounded("Screenshot render cleanup", RENDER_TIMEOUT_MS, async () => {
+                    await this.command(session, "Page.stopScreencast", {}, generation);
+                    await capture.ack;
+                });
+                return output;
+            } catch (error) {
+                error.retireBridge = true;
+                throw error;
+            } finally { if (this.capture === capture) this.capture = null; }
+        }
+
+        captureEvent(source, method, params) {
+            if (source.sessionId || !["Page.screencastFrame", "Page.screencastVisibilityChanged"].includes(method)) return false;
+            const capture = this.capture;
+            if (method !== "Page.screencastFrame" || !capture || !this.authorized(capture.generation)) return true;
+            if (!Number.isSafeInteger(params.sessionId) || params.sessionId <= 0) {
+                capture.reject(new Error("Invalid private screenshot frame identity"));
+                return true;
+            }
+            if (capture.frameId === null) {
+                if (params.sessionId <= this.lastCaptureFrameId) return true;
+                capture.frameId = params.sessionId;
+                this.lastCaptureFrameId = params.sessionId;
+            } else if (params.sessionId !== capture.frameId) {
+                if (params.sessionId > capture.frameId) capture.reject(new Error("Conflicting screenshot frame identity"));
+                return true;
+            }
+            if (capture.ackPending) {
+                capture.reject(new Error("Screenshot frame acknowledgement already pending"));
+                return true;
+            }
+            capture.ackPending = true;
+            capture.ack = this.command(capture.session, "Page.screencastFrameAck", {sessionId: params.sessionId}, capture.generation)
+                .then(() => {
+                    if (this.capture === capture && this.authorized(capture.generation)) capture.resolve();
+                }, error => { capture.reject(error); })
+                .finally(() => { capture.ackPending = false; });
+            return true;
+        }
+
         async handle(message) {
             const generation = this.generation;
             if (!this.authorized(generation)) return;
@@ -257,7 +350,9 @@
                                 "Body size unavailable or unfinished");
                         }
                     }
-                    result = await this.command(session, method, params, generation);
+                    if (method === "Page.captureScreenshot") {
+                        result = await this.captureScreenshot(session, params, generation);
+                    } else result = await this.command(session, method, params, generation);
                 }
                 if (!this.authorized(generation)) return;
                 if (session && this.sessions.get(session.id) !== session) {
@@ -274,6 +369,7 @@
 
         event(source, method, params) {
             if (source.tabId !== this.tabId || !this.authorized()) return;
+            if (this.captureEvent(source, method, params)) return;
             const parentId = source.sessionId || this.rootSessionId;
             const parent = this.sessions.get(parentId);
             if (!parent) {
@@ -342,6 +438,8 @@
             if (this.closed) return;
             this.closed = true;
             this.generation++;
+            this.capture?.reject(new Error("Screenshot authorization retired"));
+            this.capture = null;
             this.sessions.clear();
             this.bodies.clear();
             this.retiredSessions.clear();

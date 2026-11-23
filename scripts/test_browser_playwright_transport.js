@@ -7,6 +7,7 @@ const vm = require("node:vm");
 const {AuthorizedCdpBridge} =
     require("../chromium/external-links/extension/playwright-transport.js");
 const AUTO = {autoAttach: true, waitForDebuggerOnStart: true, flatten: true};
+const CAPTURE = {format: "png", clip: {x: 0, y: 0, width: 800, height: 1600, scale: 1}, captureBeyondViewport: true};
 const FILTER = [{type: "iframe", exclude: false}, {exclude: true}];
 const clone = value => JSON.parse(JSON.stringify(value));
 const deferred = () => {
@@ -21,7 +22,7 @@ function eventBus() {
         emit: (...args) => { for (const fn of [...listeners]) fn(...args); }};
 }
 function fixture(send) {
-    const f = {calls: [], sent: [], errors: [], on: true, hooks: {}, nextId: 0};
+    const f = {calls: [], sent: [], errors: [], on: true, hooks: {}, nextId: 0, frameId: 0};
     f.chrome = {debugger: {onEvent: eventBus(), onDetach: eventBus(),
         sendCommand: async (source, method, params) => {
             f.calls.push(clone({source, method, params}));
@@ -31,6 +32,9 @@ function fixture(send) {
             if (method === "Target.getTargetInfo") return {targetInfo: {targetId: "page-exact",
                 type: "page", title: "fixture", url: "https://fixture.test/", attached: true,
                 browserContextId: "context-exact"}};
+            if (method === "Page.startScreencast") queueMicrotask(() =>
+                f.chrome.debugger.onEvent.emit(source, "Page.screencastFrame", {sessionId: ++f.frameId, data: "internal-frame"}));
+            if (method === "Page.captureScreenshot") return {data: "actual-official-png"};
             return {};
         }}};
     f.bridge = new AuthorizedCdpBridge({chrome: f.chrome, tabId: 17,
@@ -362,11 +366,135 @@ const cases = [
         assert.ok((await f.request("Network.getResponseBody", {requestId: "small"}, "child")).error);
         f.bridge.close();
     }],
+    ["screenshot keeps an exact-page frame producer until official PNG and cleanup finish", async () => {
+        const f = fixture(); const session = await f.boot(); const entered = deferred(); const release = deferred();
+        f.hooks["Page.captureScreenshot"] = async (source, params) => {
+            assert.deepEqual(source, {tabId: 17}); assert.deepEqual(params, CAPTURE);
+            assert.ok(f.calls.some(call => call.method === "Page.screencastFrameAck"));
+            assert.equal(f.calls.some(call => call.method === "Page.stopScreencast"), false);
+            entered.resolve(); await release.promise; return {data: "actual-official-png"};
+        };
+        const pending = f.request("Page.captureScreenshot", CAPTURE, session);
+        await entered.promise;
+        assert.equal(f.sent.some(message => message.method === "Page.screencastFrame"), false);
+        release.resolve();
+        assert.deepEqual((await pending).result, {data: "actual-official-png"});
+        assert.deepEqual(f.calls.filter(call => call.method.startsWith("Page.")).map(call => call.method),
+            ["Page.startScreencast", "Page.screencastFrameAck", "Page.captureScreenshot", "Page.stopScreencast"]);
+        assert.deepEqual(f.calls.find(call => call.method === "Page.startScreencast").params,
+            {format: "jpeg", quality: 10, maxWidth: 16, maxHeight: 16, everyNthFrame: 1});
+        f.bridge.close();
+    }],
+    ["native screenshot is not dispatched before an exact-root frame is acknowledged", async () => {
+        const f = fixture(); const session = await f.boot(); const entered = deferred();
+        f.hooks["Page.startScreencast"] = async () => { entered.resolve(); return {}; };
+        const pending = f.request("Page.captureScreenshot", CAPTURE, session);
+        await entered.promise;
+        f.event("Page.screencastFrame", {sessionId: 1, data: "foreign"}, undefined, 99);
+        f.event("Page.screencastFrame", {sessionId: 2, data: "child"}, "unknown");
+        assert.equal(f.calls.some(call => call.method === "Page.captureScreenshot"), false);
+        assert.equal(f.calls.some(call => call.method === "Page.screencastFrameAck"), false);
+        f.event("Page.screencastFrame", {sessionId: 3, data: "discarded"});
+        assert.ok((await pending).result);
+        assert.deepEqual(f.calls.find(call => call.method === "Page.screencastFrameAck").params, {sessionId: 3});
+        assert.equal(JSON.stringify(f.sent).includes("discarded"), false);
+        f.bridge.close();
+    }],
+    ["capture cleanup is a completion boundary and overlapping capture is rejected", async () => {
+        const f = fixture(); const session = await f.boot(); const entered = deferred(); const release = deferred();
+        f.hooks["Page.stopScreencast"] = async () => { entered.resolve(); await release.promise; return {}; };
+        const pending = f.request("Page.captureScreenshot", CAPTURE, session);
+        const id = f.nextId; await entered.promise;
+        assert.equal(f.sent.some(message => message.id === id), false);
+        assert.match((await f.request("Page.captureScreenshot", CAPTURE, session)).error.message, /in progress/);
+        release.resolve(); assert.ok((await pending).result);
+        assert.equal(f.calls.filter(call => call.method === "Page.startScreencast").length, 1);
+        f.bridge.close();
+    }],
+    ["missing render frame times out visibly before native capture and retires the bridge", async () => {
+        const f = fixture(); const session = await f.boot();
+        f.hooks["Page.startScreencast"] = async () => ({});
+        const reply = await f.request("Page.captureScreenshot", CAPTURE, session);
+        assert.match(reply.error.message, /render preparation timed out/);
+        assert.equal(f.calls.some(call => call.method === "Page.captureScreenshot"), false);
+        assert.equal(f.bridge.closed, true);
+        f.event("Page.screencastFrame", {sessionId: 4, data: "late"});
+        assert.equal(f.calls.some(call => call.method === "Page.screencastFrameAck"), false);
+    }],
+    ...["Page.startScreencast", "Page.screencastFrameAck", "Page.captureScreenshot", "Page.stopScreencast"].map(method =>
+        [`screenshot ${method} failure is surfaced, retires ownership, and never returns pump pixels`, async () => {
+            const f = fixture(); const session = await f.boot();
+            f.hooks[method] = async () => { throw new Error(`failed ${method}`); };
+            const reply = await f.request("Page.captureScreenshot", CAPTURE, session);
+            assert.match(reply.error.message, /failed Page\./);
+            assert.equal(reply.result, undefined);
+            assert.equal(f.bridge.closed, true);
+            assert.equal(f.chrome.debugger.onEvent.listeners.size, 0);
+        }]),
+    ...["preparation", "capture"].map(phase => [`Stop during screenshot ${phase} fences late frames and cleanup`, async () => {
+        const f = fixture(); const session = await f.boot(); const entered = deferred(); const release = deferred();
+        const method = phase === "preparation" ? "Page.startScreencast" : "Page.captureScreenshot";
+        f.hooks[method] = async () => { entered.resolve(); await release.promise; return {data: "late-secret"}; };
+        const pending = f.request("Page.captureScreenshot", CAPTURE, session);
+        await entered.promise;
+        const count = f.sent.length;
+        f.on = false;
+        f.event("Page.screencastFrame", {sessionId: 7, data: "late-frame"});
+        release.resolve(); await pending;
+        assert.equal(f.sent.length, count);
+        assert.equal(f.calls.some(call => call.method === "Page.stopScreencast"), false);
+        assert.equal(f.bridge.closed, true);
+        assert.equal(JSON.stringify(f.sent).includes("late-secret"), false);
+    }]),
+    ["repeated capture rejects delayed frames from the previous render episode", async () => {
+        const f = fixture(); const session = await f.boot();
+        assert.ok((await f.request("Page.captureScreenshot", CAPTURE, session)).result);
+        const entered = deferred();
+        f.hooks["Page.startScreencast"] = async () => { entered.resolve(); return {}; };
+        const pending = f.request("Page.captureScreenshot", CAPTURE, session);
+        await entered.promise;
+        const before = f.calls.length;
+        f.event("Page.screencastFrame", {sessionId: 1, data: "old-frame"});
+        assert.equal(f.calls.length, before);
+        f.event("Page.screencastFrame", {sessionId: 2, data: "new-frame"});
+        assert.ok((await pending).result);
+        assert.equal(f.calls.filter(call => call.method === "Page.captureScreenshot").length, 2);
+        f.bridge.close();
+    }],
+    ["invalid or oversized capture geometry is rejected before any frame producer starts", async () => {
+        const f = fixture(); const session = await f.boot(); const before = f.calls.length;
+        for (const clip of [{...CAPTURE.clip, width: 0}, {...CAPTURE.clip, width: 40000},
+            {...CAPTURE.clip, width: 20000, height: 20000}, {...CAPTURE.clip, scale: Infinity},
+            {...CAPTURE.clip, x: -1}]) {
+            assert.match((await f.request("Page.captureScreenshot", {...CAPTURE, clip}, session)).error.message, /geometry/);
+        }
+        assert.equal(f.calls.length, before);
+        f.bridge.close();
+    }],
+    ["native screenshot output limit is enforced before image bytes enter the transport", async () => {
+        const f = fixture(); const session = await f.boot();
+        f.hooks["Page.captureScreenshot"] = async () => ({data: "x".repeat(700000)});
+        const reply = await f.request("Page.captureScreenshot", CAPTURE, session);
+        assert.match(reply.error.message, /Oversized/);
+        assert.equal(reply.result, undefined);
+        assert.equal(JSON.stringify(f.sent).includes("x".repeat(100)), false);
+        assert.equal(f.bridge.closed, true);
+    }],
+    ["screencast and child screenshots remain inaccessible through the page CDP allowlist", async () => {
+        const f = fixture(); const session = await f.boot(); f.attach("child");
+        const before = f.calls.length;
+        for (const method of ["Page.startScreencast", "Page.stopScreencast", "Page.screencastFrameAck"]) {
+            assert.ok((await f.request(method, {}, session)).error);
+        }
+        assert.ok((await f.request("Page.captureScreenshot", CAPTURE, "child")).error);
+        assert.equal(f.calls.length, before);
+        f.bridge.close();
+    }],
     ["allowlist forwards page primitives, denies global and profile effects", async () => {
         const f = fixture(); const session = await f.boot();
         for (const method of ["Page.getFrameTree", "Page.getLayoutMetrics", "Runtime.callFunctionOn",
             "DOM.getContentQuads", "Accessibility.getFullAXTree", "Input.dispatchMouseEvent",
-            "Input.insertText", "Page.captureScreenshot"]) {
+            "Input.insertText"]) {
             assert.ok((await f.request(method, {}, session)).result);
             assert.equal(f.calls.at(-1).method, method);
         }
@@ -394,7 +522,7 @@ const cases = [
         f.hooks["Page.captureScreenshot"] = async () => {
             entered.resolve(); await release.promise; return {data: "private"};
         };
-        const running = f.request("Page.captureScreenshot", {}, session); await entered.promise;
+        const running = f.request("Page.captureScreenshot", CAPTURE, session); await entered.promise;
         const count = f.sent.length; f.bridge.close(); f.bridge.close(); release.resolve(); await running;
         f.event("Runtime.consoleAPICalled", {secret: 1});
         assert.equal(f.sent.length, count);
