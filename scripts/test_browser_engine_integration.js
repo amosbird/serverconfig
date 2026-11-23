@@ -134,6 +134,12 @@ const cases = [
             const receiptEntered = deferred(), receiptRelease = deferred(), lateFinished = deferred();
             const originalCommand = f.hooks["debugger.sendCommand"];
             f.hooks["debugger.sendCommand"] = async (source, method, params) => {
+                if (method === "Page.getLayoutMetrics") return {contentSize: {width: 800, height: 1600},
+                    cssContentSize: {width: 800, height: 1600}};
+                if (method === "Page.startScreencast") {
+                    queueMicrotask(() => f.api.debugger.onEvent.emit(source, "Page.screencastFrame",
+                        {sessionId: 1, data: "private-frame"}));
+                }
                 if (method === "Page.captureScreenshot") {
                     captureEntered.resolve();
                     await captureRelease.promise;
@@ -160,7 +166,8 @@ const cases = [
                     await session.bridge.handle({id: 71, sessionId,
                         method: "Runtime.callFunctionOn", params: {functionDeclaration: "() => true"}});
                     session.bridge.handle({id: 72, sessionId,
-                        method: "Page.captureScreenshot", params: {format: "png"}})
+                        method: "Page.captureScreenshot", params: {format: "png", captureBeyondViewport: false,
+                            clip: {x: 0, y: 0, width: 800, height: 600, scale: 1}}})
                         .then(() => lateFinished.resolve(), error => lateFinished.reject(error));
                     await captureEntered.promise;
                 }
