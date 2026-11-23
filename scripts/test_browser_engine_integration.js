@@ -124,6 +124,125 @@ const cases = [
         await f.executor.execute(payload);
         assert.equal(f.calls.filter(call => call.name === "native.engine_execute").length, count);
     }],
+    ...[false, true].map(dispatched => [
+        `engine failure ${dispatched ? "after" : "before"} capture dispatch retires attachment before receipt`,
+        async () => {
+            const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+            const payload = action(f, {type: "screenshot", full_page: false});
+            const captureEntered = deferred(), captureRelease = deferred();
+            const detachEntered = deferred(), detachRelease = deferred(), detached = deferred();
+            const receiptEntered = deferred(), receiptRelease = deferred(), lateFinished = deferred();
+            const originalCommand = f.hooks["debugger.sendCommand"];
+            f.hooks["debugger.sendCommand"] = async (source, method, params) => {
+                if (method === "Page.captureScreenshot") {
+                    captureEntered.resolve();
+                    await captureRelease.promise;
+                    return {data: "late-image-must-not-be-delivered"};
+                }
+                return originalCommand(source, method, params);
+            };
+            f.hooks["debugger.detach"] = async () => {
+                detachEntered.resolve(); await detachRelease.promise; detached.resolve();
+            };
+            f.hooks["native.executor_completion"] = async wire => {
+                if (wire.effect_id === payload.effect_id) {
+                    receiptEntered.resolve(clone(wire)); await receiptRelease.promise;
+                }
+                return {type: "completion_accepted", request_id: wire.request_id,
+                    effect_id: wire.effect_id, executor_fence: wire.executor_fence,
+                    completion: wire.completion, result: wire.result, error: wire.error};
+            };
+            let session;
+            f.hooks["native.engine_execute"] = async wire => {
+                session = f.executor.engineSessions.get(f.executor.recordFor("remote"));
+                if (dispatched) {
+                    const sessionId = session.bridge.rootSessionId;
+                    await session.bridge.handle({id: 71, sessionId,
+                        method: "Runtime.callFunctionOn", params: {functionDeclaration: "() => true"}});
+                    session.bridge.handle({id: 72, sessionId,
+                        method: "Page.captureScreenshot", params: {format: "png"}})
+                        .then(() => lateFinished.resolve(), error => lateFinished.reject(error));
+                    await captureEntered.promise;
+                }
+                throw new Error("Official screenshot failed");
+            };
+            const running = f.executor.execute(payload); running.catch(() => {});
+            let replacement;
+            try {
+                await detachEntered.promise;
+                const record = f.executor.recordFor("remote");
+                const token = f.executor.attachments.get(record.tab_id);
+                assert.equal(token.cleanup, true); assert.equal(record.attached, false);
+                assert.equal(session.bridge.closed, true);
+                assert.equal(f.calls.some(call => call.name === "native.executor_completion"), false);
+                replacement = f.executor.execute(action(f, {type: "text"})); replacement.catch(() => {});
+                await Promise.resolve();
+                assert.equal(f.calls.filter(call => call.name === "debugger.attach").length, 1);
+                assert.equal(f.calls.filter(call => call.name === "native.engine_execute").length, 1);
+                assert.equal(f.executor.engineCdp({...payload, lease_id: "lease", message: {
+                    id: 73, sessionId: session.bridge.rootSessionId, method: "Page.captureScreenshot",
+                    params: {format: "png"}}}), false);
+                detachRelease.resolve(); await detached.promise;
+                const wire = await receiptEntered.promise;
+                assert.equal(f.executor.attachments.has(record.tab_id), false);
+                assert.equal(wire.completion, dispatched ? "unknown" : "not_applied");
+                assert.equal(wire.result, null); assert.equal(wire.error, "Official screenshot failed");
+                const saved = clone(f.local[WAL_KEY].effects[f.executor.effectKey(payload)]);
+                assert.equal(saved.phase, "terminal"); assert.equal(saved.completion, wire.completion);
+                assert.deepEqual(f.local[WAL_KEY].effects[f.executor.effectKey(payload)], saved);
+                assert.equal(f.calls.filter(call => call.name === "native.executor_completion").length, 1);
+                // The exact receipt is retried, never the failed screenshot or its late image.
+                receiptRelease.reject(new Error("lost receipt"));
+                f.hooks["native.engine_execute"] = async () => ({ok: true, result, error: null});
+                await assert.rejects(running, /lost receipt/);
+                await replacement;
+                const nextToken = f.executor.attachments.get(record.tab_id);
+                assert.ok(nextToken); assert.notEqual(nextToken, token);
+                captureRelease.resolve();
+                if (dispatched) await lateFinished.promise;
+                else lateFinished.resolve();
+                assert.equal(f.executor.attachments.get(record.tab_id), nextToken);
+                assert.equal(record.attached, true);
+                assert.equal(f.calls.filter(call => call.name === "debugger.detach").length, 1);
+                assert.equal(f.calls.some(call => call.name === "native.engine_cdp" &&
+                    call.args[0].message.id === 72), false);
+                delete f.hooks["native.executor_completion"];
+                const executions = f.calls.filter(call => call.name === "native.engine_execute").length;
+                await f.executor.execute(payload); await f.executor.execute(payload);
+                assert.equal(f.calls.filter(call => call.name === "native.engine_execute").length, executions);
+                const receipts = f.calls.filter(call => call.name === "native.executor_completion" &&
+                    call.args[0].effect_id === payload.effect_id);
+                assert.equal(receipts.length, 2);
+                assert.deepEqual(receipts[0].args[0], receipts[1].args[0]);
+                assert.deepEqual(f.local[WAL_KEY].effects[f.executor.effectKey(payload)], saved);
+            } finally {
+                captureRelease.resolve(); detachRelease.resolve(); receiptRelease.resolve();
+                await Promise.allSettled([running, replacement].filter(Boolean));
+                await f.executor.setAutomation(false);
+            }
+        },
+    ]),
+    ["detach failure remains visible without replacing the durable engine outcome", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        const payload = action(f, {type: "screenshot", full_page: false});
+        f.hooks["native.engine_execute"] = async () => { throw new Error("Capture not dispatched"); };
+        f.hooks["debugger.detach"] = async () => { throw new Error("Detach failed"); };
+        await assert.rejects(f.executor.execute(payload), /Detach failed/);
+        assert.match(f.executor.popupState().error, /Detach failed/);
+        assert.equal(f.executor.popupState().cleanup_pending, true);
+        const saved = clone(f.local[WAL_KEY].effects[f.executor.effectKey(payload)]);
+        assert.equal(saved.phase, "terminal"); assert.equal(saved.completion, "not_applied");
+        assert.equal(saved.error, "Capture not dispatched"); assert.equal(saved.result, null);
+        const calls = f.calls.map(call => call.name);
+        assert.ok(calls.indexOf("debugger.detach") < calls.indexOf("native.executor_completion"));
+        const executions = calls.filter(name => name === "native.engine_execute").length;
+        await assert.rejects(f.executor.execute(action(f, {type: "text"})), /cleanup is still pending/);
+        assert.equal(f.calls.filter(call => call.name === "native.engine_execute").length, executions);
+        await f.executor.execute(payload);
+        assert.deepEqual(f.local[WAL_KEY].effects[f.executor.effectKey(payload)], saved);
+        delete f.hooks["debugger.detach"];
+        await f.executor.setAutomation(false);
+    }],
     ["persistent CDP response crosses A completion and B rebind without lease loss", async () => {
         const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
         const first = action(f, {type: "text"}); await f.executor.execute(first);

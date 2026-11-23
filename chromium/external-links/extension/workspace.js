@@ -1996,15 +1996,21 @@ class WorkspaceExecutor {
             this.reportAdvisoryError(failure);
         }
         entry.phase = "terminal";
+        let cleanupError;
         try {
+            if (op.cancelled && op.attachment) {
+                try {
+                    await this.detach(op.attachment.record, op.attachment);
+                } catch (failure) {
+                    cleanupError = failure;
+                }
+            }
             await this.persistWal();
             await this.deliverEffect(key);
         } finally {
             this.operations.delete(key);
-            if (op.cancelled && op.attachment) {
-                await this.detach(op.attachment.record, op.attachment);
-            }
         }
+        if (cleanupError) throw cleanupError;
         if (error) throw error;
         return entry.completion;
     }
