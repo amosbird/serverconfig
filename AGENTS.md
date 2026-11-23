@@ -179,7 +179,16 @@ A consistent Emacs + Vim hybrid runs through the entire setup:
    Fixture observers must also use `noDefaults` and must not attach work-page targets.
    `test_browser_extension_engine.js` asserts trusted Enter events, exactly-once form
    submission, and unchanged active/personal tabs in an unmanaged pipe-only Chrome.
-   Background compositor capture is not proven reliable on Chrome 158: viewport capture
-   passes the fast fixture but can time out in the durable chain; full-page capture
-   is a separate opt-in diagnostic (`ABUSH_ENGINE_FULL_PAGE=1`). Surface capture errors,
-   never substitute viewport bytes for a requested full-page image or activate a tab.
+   Screenshots retain official Playwright PNG capture while the bridge temporarily runs a
+   private 16x16 JPEG frame producer on the exact authorized root page; its frames never
+   enter the Engine transport or result. Start, native capture, ACK drain, and stop are
+   bounded and generation-fenced. Do not expose screencast commands in the page allowlist,
+   activate a tab, resize a window, or replace full-page output with viewport bytes.
+   `test_browser_extension_engine.js` always checks repeated full-page/viewport decoded
+   pixels, fluid-layout restoration, and unchanged personal/window presentation. The
+   private fixture also supports `ABUSH_ENGINE_TEST_DPR=1.25` or `2`. The durable Rust chain
+   checks native PNG bytes, full-page bottom markers, exact replay, reconnect, worker restart,
+   and Stop. Screenshot failures retire their exact attachment before receipt delivery.
+   Chrome 158's automatic scrollbar layout needs the Engine's official screenshot-style
+   preservation; full-page requests that would apply it across child frames fail explicitly
+   rather than reflowing embedded content. Viewport capture remains available.

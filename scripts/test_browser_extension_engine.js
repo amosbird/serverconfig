@@ -217,6 +217,38 @@ function barrier() {
         ownedChrome.assertObserverDefaults();
         await run({type: "click", snapshot_id: snapshot.data.snapshot_id, ref: ref("Apply")});
         assert.match((await run({type: "text"})).text, /Hello Ada/);
+        if (process.env.ABUSH_ENGINE_TEST_CHILD_GUTTER) {
+            const gutter = process.env.ABUSH_ENGINE_TEST_CHILD_GUTTER;
+            assert.ok(["auto", "stable both-edges"].includes(gutter));
+            await run({type: "evaluate", expression: `new Promise(resolve => {
+                const frame=document.createElement('iframe'); frame.id='capture-child';
+                frame.style.cssText='width:400px;height:200px;border:0';
+                frame.src='/child'; frame.onload=()=>resolve(true); document.body.appendChild(frame);
+            })`});
+            await run({type: "evaluate", expression: `(() => {
+                const root=document.querySelector('#capture-child').contentDocument.documentElement;
+                root.style.cssText='scrollbar-gutter:${gutter};overflow-y:auto';
+                root.querySelector('body').style.cssText='margin:0;height:100px';
+                root.querySelectorAll('#top,#bottom').forEach(element=>element.remove());
+            })()`});
+            const child = async () => (await run({type: "evaluate", expression: `(() => {
+                const root=document.querySelector('#capture-child').contentDocument.documentElement;
+                return {width:root.clientWidth,gutter:getComputedStyle(root).scrollbarGutter};
+            })()`})).data.value;
+            const beforeChild = await child();
+            await run({type: "screenshot", full_page: false});
+            assert.deepEqual(await child(), beforeChild);
+            const beforeNative = (await evaluate(() => fixture.captureState())).outputs.length;
+            const rejected = await receive("execute", {type: "screenshot", full_page: true});
+            assert.equal(rejected.ok, false);
+            assert.match(rejected.error, /cannot preserve automatic scrollbar layout with child frames/);
+            assert.equal((await evaluate(() => fixture.captureState())).outputs.length, beforeNative);
+            assert.equal(engine.leases.get("extension").closed, true);
+            assert.equal((await evaluate(() => fixture.tabs()))[0].active, false);
+            assert.deepEqual(await evaluate(() => fixture.personal()), personalBefore);
+            console.log(`PASS viewport preserves child ${gutter}; unsafe full-page style rejected before native capture`);
+            return;
+        }
         const geometry = async () => (await run({type: "evaluate", expression: `({
             width:innerWidth,height:innerHeight,dpr:devicePixelRatio,x:scrollX,y:scrollY,
             scrollWidth:document.documentElement.scrollWidth,
