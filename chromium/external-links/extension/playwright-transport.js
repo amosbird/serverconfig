@@ -190,7 +190,9 @@
                 if (!session) {
                     if (method === "Browser.getVersion") {
                         if (Object.keys(params).length) throw new Error("Unexpected version parameters");
-                        result = await this.command(null, method, {}, generation);
+                        // chrome.debugger has no Browser domain; Playwright's extension relay answers locally.
+                        result = {protocolVersion: "1.3", product: "Chrome/Extension-Bridge",
+                            userAgent: root.navigator?.userAgent || "CDP-Bridge-Server/1.0.0"};
                     } else if (method === "Target.setAutoAttach") {
                         this.validateAutoAttach(params);
                         if (!this.sessions.has(this.rootSessionId)) {

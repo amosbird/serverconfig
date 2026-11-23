@@ -27,8 +27,7 @@ function fixture(send) {
             f.calls.push(clone({source, method, params}));
             assert.equal(source.tabId, 17);
             if (f.hooks[method]) return f.hooks[method](source, params);
-            if (method === "Browser.getVersion") return {product: "Chrome/145.0.0.0",
-                userAgent: "Chrome/145.0.0.0", protocolVersion: "1.3", revision: "fake", jsVersion: "fake"};
+            if (method.startsWith("Browser.")) throw new Error(`'${method}' wasn't found`);
             if (method === "Target.getTargetInfo") return {targetInfo: {targetId: "page-exact",
                 type: "page", title: "fixture", url: "https://fixture.test/", attached: true,
                 browserContextId: "context-exact"}};
@@ -59,6 +58,25 @@ const cases = [
         vm.runInNewContext(fs.readFileSync(path.join(__dirname,
             "../chromium/external-links/extension/playwright-transport.js"), "utf8"), context);
         assert.equal(typeof context.AuthorizedCdpBridge, "function");
+    }],
+    ["version metadata is local and never enters the unsupported debugger Browser domain", async () => {
+        const f = fixture();
+        const reply = await f.request("Browser.getVersion");
+        assert.equal(reply.error, undefined);
+        assert.equal(reply.result.protocolVersion, "1.3");
+        assert.equal(reply.result.product, "Chrome/Extension-Bridge");
+        assert.equal(typeof reply.result.userAgent, "string");
+        assert.deepEqual(f.calls, []);
+        assert.ok((await f.request("Browser.getVersion", {targetId: "foreign"})).error);
+        const session = await f.boot();
+        const before = f.calls.length;
+        assert.ok((await f.request("Browser.getVersion", {}, session)).error);
+        assert.equal(f.calls.length, before);
+        f.on = false;
+        const sent = f.sent.length;
+        await f.request("Browser.getVersion");
+        assert.equal(f.sent.length, sent);
+        assert.equal(f.bridge.closed, true);
     }],
     ["official root bootstrap maps opaque page session onto exact debugger tab", async () => {
         const f = fixture();
