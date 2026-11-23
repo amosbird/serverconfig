@@ -81,6 +81,9 @@ for (const [areaName, names] of Object.entries({
             if (name === "sendCommand" && args[1] === "Runtime.callFunctionOn" &&
                     JSON.stringify(args[2]).includes("Never appears")) publish({kind: "wait_entered"});
             try {
+                if (name === "sendCommand" && args[1] === "Page.captureScreenshot") {
+                    publish({kind: "diagnostic", phase: "capture_enter", source: args[0], params: args[2]});
+                }
                 const result = await actual(...args);
                 if (areaName === "tabs" && name === "create" &&
                         args[0].url?.startsWith("about:blank#abush-work-")) {

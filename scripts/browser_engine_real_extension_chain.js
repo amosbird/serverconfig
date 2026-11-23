@@ -151,7 +151,7 @@ async function setup() {
                 }
                 if (item.kind === "diagnostic") {
                     lastDiagnostic = item;
-                    if (item.phase === "api_error" || item.phase === "error") {
+                    if (item.phase === "api_error" || item.phase === "error" || item.phase === "capture_enter") {
                         process.stderr.write(`CHAIN ${JSON.stringify(item)}\n`);
                     }
                     continue;

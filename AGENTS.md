@@ -174,3 +174,12 @@ A consistent Emacs + Vim hybrid runs through the entire setup:
    `test_browser_popup_readiness.js`, and the broker Python tests. Set
    `ABUSH_ENGINE_REAL_EXTENSION=1` and `ABUSH_ENGINE_EXTENSION_CHROME` to an
    extension-capable executable when running the isolated full engine chain.
+   The exact authorized work tab requires page-level focus emulation before Engine
+   attachment is published; `noDefaults` deliberately does not prepare personal pages.
+   Fixture observers must also use `noDefaults` and must not attach work-page targets.
+   `test_browser_extension_engine.js` asserts trusted Enter events, exactly-once form
+   submission, and unchanged active/personal tabs in an unmanaged pipe-only Chrome.
+   Background compositor capture is not proven reliable on Chrome 158: viewport capture
+   passes the fast fixture but can time out in the durable chain; full-page capture
+   is a separate opt-in diagnostic (`ABUSH_ENGINE_FULL_PAGE=1`). Surface capture errors,
+   never substitute viewport bytes for a requested full-page image or activate a tab.
