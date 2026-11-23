@@ -110,6 +110,7 @@ class WorkspaceExecutor {
         this.attachments = new Map();
         this.ordinaryTail = Promise.resolve();
         this.browserBootId = null;
+        this.browserExecutorStatus = {phase: "unavailable", error: null};
         this.remotes = new Map();
         this.records = new Map();
         this.revisions = new Map();
@@ -695,9 +696,14 @@ class WorkspaceExecutor {
         for (const remote of remotes) await this.remoteState(remote);
         return this.popupState();
     }
+    setBrowserExecutorStatus(status) {
+        this.browserExecutorStatus = clone(status);
+    }
     popupState() {
         return {ok: true, automation_on: this.automationOn, preference_pending: this.preferencePending,
-            stop_pending: this.automationInhibited && this.preferencePending, error: this.lastError,
+            browser_executor: clone(this.browserExecutorStatus),
+            stop_pending: this.automationInhibited && this.preferencePending,
+            error: this.lastError || this.browserExecutorStatus.error,
             cleanup_pending: [...this.attachments.values()].some(token => token.cleanup),
             remotes: [...this.remotes.values()].map(remote => ({
             remote_key: remote.remote_key, principal_id: remote.principal_id,

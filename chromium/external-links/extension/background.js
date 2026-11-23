@@ -5,6 +5,8 @@ const ENVELOPE_VERSION = 1;
 
 const NATIVE_TIMEOUTS_MS = Object.freeze({
     native_bootstrap: 15000,
+    browser_executor_prepare: 8000,
+    browser_executor_ready: 8000,
     external_links_open: 30000,
     ordinary_open_prepare: 8000,
     ordinary_open_activate: 8000,
@@ -37,6 +39,8 @@ class NativeDispatcher {
         this.reconnectTimer = null;
         this.stopped = false;
         this.bootstrapEnabled = false;
+        this.browserReadyEnabled = false;
+        this.browserExecutorStatus = {phase: "unavailable", error: null};
         this.bootstrapGeneration = 0;
         this.bootstrapAttempt = null;
         this.bootstrapWaiters = [];
@@ -74,6 +78,7 @@ class NativeDispatcher {
             outcome: null,
         };
         this.bootstrapAttempt = attempt;
+        if (this.browserReadyEnabled && port !== null) this.startBrowserReady(attempt);
         for (const waiter of this.bootstrapWaiters.splice(0)) {
             attempt.promise.then(waiter.resolve, waiter.reject);
         }
@@ -125,9 +130,11 @@ class NativeDispatcher {
         this.bootstrapEnabled = true;
         let attempt = this.bootstrapAttempt;
         if (!attempt || attempt.port !== port ||
-                (attempt.settled && attempt.outcome !== "ready")) {
+                (attempt.settled && (attempt.outcome !== "ready" ||
+                    attempt.bootstrapPayload?.browser_boot_id !== payload?.browser_boot_id))) {
             attempt = this.createBootstrapAttempt(port);
         }
+        if (!attempt.settled) attempt.bootstrapPayload = payload;
         this.finishBootstrapAttempt(attempt, true, payload);
     }
 
@@ -158,9 +165,82 @@ class NativeDispatcher {
         return this.bootstrapAttempt.promise;
     }
 
+    browserReady() {
+        this.browserReadyEnabled = true;
+        const bootstrap = this.bootstrap();
+        bootstrap.catch(() => {});
+        const attempt = this.bootstrapAttempt;
+        if (!attempt || attempt.port === null) {
+            return bootstrap.then(() => this.browserReady());
+        }
+        return this.startBrowserReady(attempt);
+    }
+
+    assertBrowserReadyAttempt(attempt) {
+        if (this.bootstrapAttempt !== attempt || this.port !== attempt.port || this.stopped) {
+            throw this.bootstrapFailure("native browser readiness attempt was superseded");
+        }
+    }
+
+    startBrowserReady(attempt) {
+        if (attempt.browserReadyPromise) return attempt.browserReadyPromise;
+        const status = (phase, error = null) => {
+            if (this.bootstrapAttempt === attempt && this.port === attempt.port) {
+                this.emitLifecycle("browser_executor_status", {phase, error});
+            }
+        };
+        const exact = (value, fields) => value && typeof value === "object" &&
+            !Array.isArray(value) && Object.keys(value).length === fields.length &&
+            fields.every(key => Object.hasOwn(value, key));
+        attempt.browserReadyPromise = Promise.resolve().then(async () => {
+            status("pending");
+            const bootstrap = await attempt.promise;
+            this.assertBrowserReadyAttempt(attempt);
+            const boot = bootstrap?.browser_boot_id;
+            if (typeof boot !== "string" || !boot.length) {
+                throw new Error("Native browser boot is unavailable for executor readiness");
+            }
+            const prepared = await this.dispatchRequest("native_host", "browser_executor_prepare",
+                {browser_boot_id: boot, protocol_version: 10}, attempt.port);
+            this.assertBrowserReadyAttempt(attempt);
+            if (!exact(prepared, ["browser_boot_id", "native_connection_id", "protocol_version",
+                "primary_profile"]) || prepared.browser_boot_id !== boot ||
+                    prepared.protocol_version !== 10 ||
+                    typeof prepared.native_connection_id !== "string" ||
+                    !prepared.native_connection_id.length ||
+                    typeof prepared.primary_profile !== "boolean") {
+                throw new Error("Invalid native browser executor prepare receipt");
+            }
+            if (!prepared.primary_profile) {
+                const error = "Browser automation belongs to the configured primary browser profile";
+                status("secondary", error);
+                return {ready: false, primary_profile: false};
+            }
+            const receipt = await this.dispatchRequest("native_host", "browser_executor_ready", {
+                browser_boot_id: boot, native_connection_id: prepared.native_connection_id,
+                protocol_version: 10, capabilities: {cancellation: true, owned_tab_group: true,
+                    official_engine: true, typed_output: true},
+            }, attempt.port);
+            this.assertBrowserReadyAttempt(attempt);
+            if (!exact(receipt, ["browser_boot_id", "native_connection_id", "protocol_version",
+                "ready"]) || receipt.browser_boot_id !== boot || receipt.protocol_version !== 10 ||
+                    receipt.native_connection_id !== prepared.native_connection_id ||
+                    receipt.ready !== true) {
+                throw new Error("Invalid native browser executor ready receipt");
+            }
+            status("ready");
+            return receipt;
+        }).catch(error => {
+            status("unavailable", error.message || String(error));
+            throw error;
+        });
+        attempt.browserReadyPromise.catch(() => {});
+        return attempt.browserReadyPromise;
+    }
+
     requestBootstrap(port) {
         const attempt = this.bootstrapAttempt;
-        this.dispatchRequest("native_host", "bootstrap", {}).then(payload => {
+        this.dispatchRequest("native_host", "bootstrap", {}, port).then(payload => {
             if (this.bootstrapAttempt !== attempt || attempt.settled || this.port !== port) return;
             this.resolveBootstrapAttempt(payload, port);
         }).catch(error => {
@@ -226,7 +306,7 @@ class NativeDispatcher {
         return request;
     }
 
-    dispatchRequest(service, operation, payload = {}) {
+    dispatchRequest(service, operation, payload = {}, expectedPort = null) {
         const id = crypto.randomUUID();
         let timeoutMs = Math.max(this.timeoutMs, NATIVE_TIMEOUTS_MS[operation] || 0);
         if (service === "external_links" && operation === "open") {
@@ -251,7 +331,10 @@ class NativeDispatcher {
             this.pending.set(id, {resolve, reject, timer});
             let dispatchStarted = false;
             try {
-                const port = this.ensurePort();
+                const port = expectedPort || this.ensurePort();
+                if (expectedPort && this.port !== expectedPort) {
+                    throw this.bootstrapFailure("native request port was superseded");
+                }
                 dispatchStarted = true;
                 port.postMessage({
                     version: ENVELOPE_VERSION,
@@ -366,6 +449,11 @@ class NativeDispatcher {
     }
 
     emitLifecycle(event, payload = {}) {
+        if (event === "browser_executor_status") this.browserExecutorStatus = {...payload};
+        else if (["disconnect", "bootstrap_timeout", "reconnect_exhausted"].includes(event)) {
+            this.browserExecutorStatus = {phase: "unavailable",
+                error: "Native browser executor is disconnected"};
+        }
         this.eventListeners.forEach(listener => listener({
             version: ENVELOPE_VERSION,
             service: "native_host",
@@ -465,13 +553,25 @@ function connectWorkspaceAfterRestore(workspaces, connect, bootstrap = null) {
 
 function createWorkspaceInitializer(workspaces, native, onFailure = notifyFailure) {
     let initialization = null;
+    workspaces.setBrowserExecutorStatus(native.browserExecutorStatus);
+    native.onEvent(message => {
+        if (message.service !== "native_host") return;
+        if (message.event === "browser_executor_status") {
+            workspaces.setBrowserExecutorStatus(message.payload);
+            if (message.payload.error) onFailure(message.payload.error);
+        } else if (["disconnect", "bootstrap_timeout", "reconnect_exhausted"].includes(message.event)) {
+            workspaces.setBrowserExecutorStatus({phase: "unavailable",
+                error: "Native browser executor is disconnected"});
+        }
+    });
     return function initialize() {
         if (initialization) return initialization;
+        const readiness = native.browserReady().catch(() => {});
         const attempt = connectWorkspaceAfterRestore(
             workspaces,
             () => native.ensurePort(),
             native.bootstrap(),
-        ).then(() => workspaces);
+        ).then(() => readiness).then(() => workspaces);
         const current = attempt.catch(error => {
             onFailure(error.message || "Unable to restore Abush browser workspaces");
             if (initialization === current) initialization = null;
@@ -562,6 +662,7 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
     }).catch(error => onFailure(error.message || fallback));
     return native.onEvent(message => {
         if (message.service === "native_host") {
+            if (message.event === "browser_executor_status") return;
             if (message.event === "bootstrap") {
                 workspaces.acceptNativeBootstrap(message.payload)
                     .then(() => workspaces.restoreWhenReady())
