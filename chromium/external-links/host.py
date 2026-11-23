@@ -1399,6 +1399,11 @@ class RemotePeer:
         return state
 
     def connect(self, timeout=1.0):
+        with self.broker.lock:
+            self.broker.require_executor_ready()
+            return self._connect(timeout)
+
+    def _connect(self, timeout):
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         try:
@@ -1932,10 +1937,29 @@ class RemotePeer:
             self.broker.remote_disconnected(self)
 
 
+def selected_primary_profile(profile=None):
+    value = profile if profile is not None else os.environ.get(
+        "ABUSH_CHROME_PROFILE", pathlib.Path.home() / ".config/google-chrome-main")
+    path = pathlib.Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError("primary Chrome profile must be an absolute path")
+    return path.resolve()
+
+
 class BrowserBroker:
     def __init__(self, remote_root=None, outbound=None, ordinary_open=None,
-                 write_barrier=None, browser=None):
+                 write_barrier=None, browser=None, primary_profile=None):
         self.browser = browser
+        self.primary_profile = selected_primary_profile(primary_profile)
+        self.is_primary_profile = bool(browser and type(browser.get("pid")) is int and
+            browser["pid"] > 0 and isinstance(browser.get("browser_boot_id"), str) and
+            browser["browser_boot_id"] and browser.get("profile") and
+            pathlib.Path(browser["profile"]).is_absolute() and
+            pathlib.Path(browser["profile"]).resolve() == self.primary_profile)
+        self.native_connection_id = str(uuid.uuid4())
+        self.executor_prepared = False
+        self.executor_ready = False
+        self.closed = False
         self.remote_root = pathlib.Path(remote_root) if remote_root else None
         self.outbound = outbound if outbound is not None else BoundedQueue()
         self.ordinary_open = ordinary_open
@@ -1951,6 +1975,65 @@ class BrowserBroker:
         self.engine_shutdown_errors = []
         install = f"{pathlib.Path(__file__).resolve()}:{os.getuid()}".encode()
         self.install_id = hashlib.sha256(install).hexdigest()[:24]
+        logging.info("browser executor selected boot=%s native=%s primary=%s admitted=false",
+                     str(browser.get("browser_boot_id") if browser else None)[:128],
+                     self.native_connection_id, self.is_primary_profile)
+
+    def require_executor_ready(self):
+        with self.lock:
+            if self.closed:
+                raise ValueError("browser executor broker is closed")
+            if not self.is_primary_profile:
+                raise ValueError("browser executor requires the selected primary Chrome profile")
+            if not self.executor_ready:
+                raise ValueError("browser executor v10 readiness has not been confirmed")
+
+    def _executor_identity(self):
+        return {"browser_boot_id": self.browser["browser_boot_id"] if self.browser else None,
+                "native_connection_id": self.native_connection_id, "protocol_version": 10}
+
+    def prepare_executor(self, payload):
+        with self.lock:
+            if self.closed:
+                raise ValueError("browser executor broker is closed")
+            identity = self._executor_identity()
+            if not isinstance(payload, dict) or set(payload) != {
+                    "browser_boot_id", "protocol_version"} or \
+                    not isinstance(payload.get("browser_boot_id"), str) or \
+                    not payload["browser_boot_id"] or \
+                    payload["browser_boot_id"] != identity["browser_boot_id"] or \
+                    type(payload.get("protocol_version")) is not int or \
+                    payload["protocol_version"] != 10:
+                raise ValueError("invalid browser executor prepare identity or protocol")
+            self.executor_prepared = True
+            logging.info("browser executor prepared boot=%s native=%s primary=%s",
+                         str(identity["browser_boot_id"])[:128], self.native_connection_id,
+                         self.is_primary_profile)
+            return {**identity, "primary_profile": self.is_primary_profile}
+
+    def confirm_executor_ready(self, payload, publish):
+        with self.lock:
+            identity = self._executor_identity()
+            capabilities = {"cancellation": True, "owned_tab_group": True,
+                            "official_engine": True, "typed_output": True}
+            if self.closed or not self.executor_prepared:
+                raise ValueError("browser executor has no current prepared native connection")
+            if not isinstance(payload, dict) or set(payload) != set(identity) | {"capabilities"} or \
+                    any(type(payload.get(key)) is not type(value) or payload[key] != value
+                        for key, value in identity.items()) or \
+                    not isinstance(payload.get("capabilities"), dict) or \
+                    set(payload["capabilities"]) != set(capabilities) or \
+                    any(payload["capabilities"][key] is not True for key in capabilities):
+                raise ValueError("invalid browser executor ready identity, protocol or capabilities")
+            if not self.is_primary_profile:
+                raise ValueError("browser executor requires the selected primary Chrome profile")
+            result = {**identity, "ready": True}
+            # Publication is the admission boundary: a failed queue cannot open it.
+            publish(result)
+            self.executor_ready = True
+            logging.info("browser executor admitted boot=%s native=%s primary=true",
+                         str(identity["browser_boot_id"])[:128], self.native_connection_id)
+            return result
 
     def close_engine_peer(self, peer):
         with self.engine_lock:
@@ -2125,6 +2208,8 @@ class BrowserBroker:
 
     def remote_disconnected(self, peer):
         with self.lock:
+            if self.closed or not self.executor_ready or not self.is_primary_profile:
+                return
             if self.peers.get(peer.metadata["remote_key"]) is not peer:
                 return
             remote_key = peer.metadata["remote_key"]
@@ -2141,13 +2226,16 @@ class BrowserBroker:
             pinned_owner["daemon_instance_id"] == candidate_owner["daemon_instance_id"]
 
     def _select_candidate(self, remote_key, exclude=frozenset()):
+        self.require_executor_ready()
         for metadata in self.candidates.get(remote_key, []):
             key = (remote_key, metadata["connection_id"])
             if key in exclude:
                 continue
             peer = RemotePeer(self, metadata)
-            logging.info("browser peer candidate selected remote=%s connection=%s",
-                         remote_key, metadata["connection_id"])
+            logging.info("browser peer candidate selected remote=%s connection=%s "
+                         "boot=%s native=%s primary=true admitted=true",
+                         remote_key, metadata["connection_id"],
+                         str(self.browser["browser_boot_id"])[:128], self.native_connection_id)
             if peer.connect():
                 identity = (peer.principal_id, peer.owner_display)
                 pinned = self.principals.get(remote_key)
@@ -2187,6 +2275,7 @@ class BrowserBroker:
         peer.activate()
 
     def _select(self, remote_key, exclude=frozenset()):
+        self.require_executor_ready()
         current = self.peers.get(remote_key)
         if current and current.connected:
             return current
@@ -2197,6 +2286,12 @@ class BrowserBroker:
         return peer
 
     def refresh(self):
+        with self.lock:
+            if self.closed or not self.executor_ready or not self.is_primary_profile:
+                return []
+            return self._refresh_ready()
+
+    def _refresh_ready(self):
         grouped = {}
         for item in discover_remotes(self.remote_root):
             grouped.setdefault(item["remote_key"], []).append(item)
@@ -2243,6 +2338,10 @@ class BrowserBroker:
 
     def close(self, deadline=None):
         deadline = deadline or time.monotonic() + SHUTDOWN_TIMEOUT
+        with self.lock:
+            self.closed = True
+            self.executor_ready = False
+            self.executor_prepared = False
         with self.engine_lock:
             leases = list(self.engine_leases)
         failures = []
@@ -2267,6 +2366,7 @@ class BrowserBroker:
             raise OSError("engine shutdown failed: " + "; ".join(map(str, failures)))
 
     def peer(self, payload, completion_type=None):
+        self.require_executor_ready()
         remote_key = payload.get("remote_key")
         connection_id = payload.get("connection_id")
         principal_id = payload.get("principal_id")
@@ -2307,6 +2407,8 @@ class BrowserBroker:
         service = request["service"]
         operation = request["operation"]
         payload = request["payload"]
+        if service == "abush_browser":
+            self.require_executor_ready()
         if service == "ordinary_open" and operation == "prepare":
             deadline_ms = _ordinary_deadline(payload, {"nonce"})
             deadline = time.monotonic() + (deadline_ms / 1000 - time.time())
@@ -2391,26 +2493,25 @@ class BrowserBroker:
 
 class NativeBrokerHost:
     def __init__(self, input_stream=None, output_stream=None, remote_root=None,
-                 ordinary_open_factory=OrdinaryOpenServer, browser=None):
+                 ordinary_open_factory=OrdinaryOpenServer, browser=None, primary_profile=None):
         self.input = input_stream or sys.stdin.buffer
         self.output = output_stream or sys.stdout.buffer
         self.outbound = BoundedQueue(on_full=self._fatal)
-        self.browser = browser or native_host_browser()
+        self.browser = browser if browser is not None else native_host_browser()
         if self.browser is None:
-            if ordinary_open_factory is not None:
-                raise ValueError("native host has no Chrome browser identity")
             self.browser = {
                 "pid": 0,
                 "starttime": "0",
                 "profile": pathlib.Path(),
                 "browser_boot_id": "test-no-browser",
             }
+        self.broker = BrowserBroker(remote_root=remote_root, outbound=self.outbound,
+                                    write_barrier=threading.Event, browser=self.browser,
+                                    primary_profile=primary_profile)
+        self.primary_profile = self.broker.primary_profile
         self.bootstrap_requests = []
         self.ordinary_open = None
-        expected_profile = pathlib.Path(os.environ.get(
-            "ABUSH_CHROME_PROFILE", pathlib.Path.home() / ".config/google-chrome-main"
-        )).expanduser().resolve()
-        if ordinary_open_factory is not None and self.browser["profile"] == expected_profile:
+        if ordinary_open_factory is not None and self.broker.is_primary_profile:
             claimed = claim_ordinary_launch_leases(self.browser["profile"])
             leases = [entry["lease"] for entry in claimed]
             self.bootstrap_requests = [ordinary_open_request(
@@ -2421,9 +2522,7 @@ class NativeBrokerHost:
             self.ordinary_open = ordinary_open_factory(
                 self.outbound, bootstrap_requests=self.bootstrap_requests,
                 bootstrap_claims=claims)
-        self.broker = BrowserBroker(remote_root=remote_root, outbound=self.outbound,
-                                    ordinary_open=self.ordinary_open,
-                                    write_barrier=threading.Event, browser=self.browser)
+        self.broker.ordinary_open = self.ordinary_open
         self.refresh_stop = threading.Event()
         self.refresh_wakeup = threading.Event()
         self.refresh_interval = 1.0
@@ -2449,6 +2548,11 @@ class NativeBrokerHost:
         logging.error("native transport failed closed: %s", error)
         self.refresh_stop.set()
         self.refresh_wakeup.set()
+        if hasattr(self, "broker"):
+            with self.broker.lock:
+                self.broker.closed = True
+                self.broker.executor_ready = False
+                self.broker.executor_prepared = False
 
     def _read_loop(self):
         try:
@@ -2570,6 +2674,15 @@ class NativeBrokerHost:
                 if request["payload"]:
                     raise ValueError("native bootstrap request payload must be empty")
                 payload = self.bootstrap_event()["payload"]
+            elif request["service"] == "native_host" and \
+                    request["operation"] == "browser_executor_prepare":
+                payload = self.broker.prepare_executor(request["payload"])
+            elif request["service"] == "native_host" and \
+                    request["operation"] == "browser_executor_ready":
+                self.broker.confirm_executor_ready(request["payload"], lambda result:
+                    self.outbound.put(response(request_id, payload=result)))
+                self.refresh_wakeup.set()
+                return
             else:
                 payload = self.broker.handle_request(request)
             self.outbound.put(response(request_id, payload=payload))

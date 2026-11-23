@@ -27,6 +27,20 @@ def clone(value):
     return json.loads(json.dumps(value))
 
 
+CAPABILITIES = {"cancellation": True, "owned_tab_group": True,
+                "official_engine": True, "typed_output": True}
+
+
+def prepare_ready(broker):
+    prepared = broker.prepare_executor({"browser_boot_id": broker.browser["browser_boot_id"],
+                                       "protocol_version": 10})
+    payload = {key: value for key, value in prepared.items() if key != "primary_profile"}
+    payload["capabilities"] = clone(CAPABILITIES)
+    broker.confirm_executor_ready(payload, lambda result: broker.outbound.put(result))
+    broker.outbound.get(timeout=1)
+    return payload
+
+
 class FakePeer:
     def __init__(self, path, principal="principal", epoch=1, owner=None, handshake=None):
         self.principal = principal
@@ -155,7 +169,8 @@ class BrowserPeerBrokerTest(unittest.TestCase):
         return server
 
     def broker(self):
-        broker = host.BrowserBroker(self.root, browser=BOOT)
+        broker = host.BrowserBroker(self.root, browser=BOOT, primary_profile=BOOT["profile"])
+        prepare_ready(broker)
         self.brokers.append(broker)
         return broker
 
@@ -208,10 +223,285 @@ class BrowserPeerBrokerTest(unittest.TestCase):
 
     def native(self):
         native = host.NativeBrokerHost(input_stream=mock.Mock(), output_stream=mock.Mock(),
-            remote_root=self.root, ordinary_open_factory=None, browser=BOOT)
+            remote_root=self.root, ordinary_open_factory=None, browser=BOOT,
+            primary_profile=BOOT["profile"])
+        prepare_ready(native.broker)
         native.broker.write_barrier = None
         self.brokers.append(native.broker)
         return native
+
+    def raw_native(self, browser=BOOT, primary_profile=None):
+        native = host.NativeBrokerHost(input_stream=mock.Mock(), output_stream=mock.Mock(),
+            remote_root=self.root, ordinary_open_factory=None, browser=browser,
+            primary_profile=primary_profile if primary_profile is not None else BOOT["profile"])
+        native.broker.write_barrier = None
+        self.brokers.append(native.broker)
+        return native
+
+    def native_request(self, native, operation, payload):
+        native._respond({"version": 1, "id": operation, "service": "native_host",
+                         "operation": operation, "payload": payload})
+        return native.outbound.get(timeout=1)
+
+    def prepared_payload(self, native):
+        result = self.native_request(native, "browser_executor_prepare", {
+            "browser_boot_id": BOOT["browser_boot_id"], "protocol_version": 10})
+        self.assertTrue(result["ok"], result)
+        prepared = result["payload"]
+        self.assertEqual(set(prepared), {"browser_boot_id", "native_connection_id",
+                                        "protocol_version", "primary_profile"})
+        return {key: value for key, value in prepared.items() if key != "primary_profile"} | {
+            "capabilities": clone(CAPABILITIES)}
+
+    def test_prepare_alone_and_bootstrap_never_authorize(self):
+        native = self.raw_native()
+        with mock.patch.object(host, "discover_remotes") as discovery:
+            bootstrap = self.native_request(native, "bootstrap", {})
+            self.assertEqual(set(bootstrap["payload"]), {"browser_boot_id", "browser_pid",
+                             "browser_starttime", "ordinary_launch_leases"})
+            self.prepared_payload(native)
+            self.assertEqual(native.broker.refresh(), [])
+            self.assertFalse(native.refresh_wakeup.is_set())
+            discovery.assert_not_called()
+        with mock.patch.object(host.socket, "socket") as socket_factory:
+            with self.assertRaisesRegex(ValueError, "readiness"):
+                host.RemotePeer(native.broker, {}).connect()
+            socket_factory.assert_not_called()
+
+    def test_malformed_prepare_and_ready_never_admit(self):
+        native = self.raw_native()
+        with mock.patch.object(host, "discover_remotes") as discovery:
+            for payload in ({}, {"browser_boot_id": BOOT["browser_boot_id"]},
+                    {"browser_boot_id": "old", "protocol_version": 10},
+                    {"browser_boot_id": BOOT["browser_boot_id"], "protocol_version": 9},
+                    {"browser_boot_id": BOOT["browser_boot_id"], "protocol_version": True},
+                    {"browser_boot_id": BOOT["browser_boot_id"], "protocol_version": 10, "extra": 1}):
+                self.assertFalse(self.native_request(native, "browser_executor_prepare", payload)["ok"])
+            self.assertFalse(native.broker.executor_prepared)
+            payload = self.prepared_payload(native)
+            invalid = [{}, {key: value for key, value in payload.items() if key != "capabilities"},
+                {**payload, "protocol_version": 9}, {**payload, "protocol_version": True},
+                {**payload, "browser_boot_id": "old"}, {**payload, "native_connection_id": "old"},
+                {**payload, "extra": True}, {**payload, "capabilities": {}},
+                {**payload, "capabilities": {**CAPABILITIES, "extra": True}}]
+            for key in CAPABILITIES:
+                invalid.extend([{**payload, "capabilities": {
+                                    field: value for field, value in CAPABILITIES.items()
+                                    if field != key}},
+                                {**payload, "capabilities": {**CAPABILITIES, key: False}},
+                                {**payload, "capabilities": {**CAPABILITIES, key: 1}}])
+            for value in invalid:
+                with self.subTest(value=value):
+                    self.assertFalse(self.native_request(native, "browser_executor_ready", value)["ok"])
+                    self.assertEqual(native.broker.refresh(), [])
+                    self.assertFalse(native.broker.executor_ready)
+            discovery.assert_not_called()
+
+    def test_exact_ready_response_precedes_hello_and_activation(self):
+        native = self.raw_native()
+        server = self.server()
+        payload = self.prepared_payload(native)
+        original_put = native.outbound.put
+        queued = threading.Event()
+        release = threading.Event()
+        trace = []
+        failures = []
+        def publish(message, **kwargs):
+            original_put(message, **kwargs)
+            if message.get("reply_to") == "browser_executor_ready":
+                trace.append("ready_queued")
+                queued.set()
+                if not release.wait(2):
+                    raise AssertionError("ready publication release deadline")
+        def refresh():
+            if not queued.wait(2):
+                failures.append("ready queue deadline")
+                return
+            native.broker.refresh()
+            trace.append("refresh_completed")
+        worker = threading.Thread(target=refresh, daemon=True)
+        ready_worker = threading.Thread(target=native._respond, args=({"version": 1,
+            "id": "browser_executor_ready", "service": "native_host",
+            "operation": "browser_executor_ready", "payload": payload},), daemon=True)
+        with mock.patch.object(native.outbound, "put", side_effect=publish):
+            worker.start()
+            ready_worker.start()
+            try:
+                self.assertTrue(queued.wait(2))
+                self.assertEqual(server.received, [])
+                self.assertFalse(native.broker.executor_ready)
+                result = native.outbound.get(timeout=1)
+                self.assertEqual(result["payload"], {key: value for key, value in payload.items()
+                                 if key != "capabilities"} | {"ready": True})
+            finally:
+                release.set()
+                ready_worker.join(timeout=3)
+                worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(ready_worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(trace, ["ready_queued", "refresh_completed"])
+        self.assertEqual(server.wait_for("hello")["version"], 10)
+        self.assertTrue(native.refresh_wakeup.is_set())
+
+    def test_ready_queue_failure_does_not_admit(self):
+        native = self.raw_native()
+        payload = self.prepared_payload(native)
+        with mock.patch.object(native.outbound, "put", side_effect=queue.Full), \
+                mock.patch.object(host, "discover_remotes") as discovery:
+            native._respond({"version": 1, "id": "ready", "service": "native_host",
+                             "operation": "browser_executor_ready", "payload": payload})
+            self.assertFalse(native.broker.executor_ready)
+            self.assertEqual(native.broker.refresh(), [])
+            discovery.assert_not_called()
+        self.assertIsInstance(native.fatal_error, queue.Full)
+
+    def test_secondary_same_principal_both_orders_never_replaces_primary(self):
+        for secondary_first in (True, False):
+            with self.subTest(secondary_first=secondary_first):
+                remote_key = "r_12345678" if secondary_first else "r_87654321"
+                server = self.server(remote=remote_key)
+                primary = self.raw_native()
+                secondary = self.raw_native({**BOOT, "profile": pathlib.Path("/profiles/other")})
+                secondary_payload = self.prepared_payload(secondary)
+                primary_payload = self.prepared_payload(primary)
+                order = [(secondary, secondary_payload), (primary, primary_payload)]
+                if not secondary_first:
+                    order.reverse()
+                for native, payload in order:
+                    result = self.native_request(native, "browser_executor_ready", payload)
+                    self.assertEqual(result["ok"], native is primary)
+                    native.broker.refresh()
+                remote = server.wait_for("hello")
+                peer = primary.broker.peers[remote_key]
+                peer.handle(self.execute(peer))
+                pending = clone(peer.pending)
+                fence = clone(peer.executor_fence)
+                for _ in range(2):
+                    self.assertEqual(secondary.broker.refresh(), [])
+                    secondary.broker.remote_disconnected(peer)
+                    self.assertFalse(self.native_request(secondary, "browser_executor_ready",
+                                                       secondary_payload)["ok"])
+                reconstructed = self.raw_native({**BOOT,
+                    "profile": pathlib.Path("/profiles/other")})
+                reconstructed_payload = self.prepared_payload(reconstructed)
+                self.assertFalse(self.native_request(reconstructed, "browser_executor_ready",
+                                                     reconstructed_payload)["ok"])
+                self.assertEqual(reconstructed.broker.refresh(), [])
+                with mock.patch.object(host.socket, "socket") as socket_factory:
+                    with self.assertRaisesRegex(ValueError, "primary"):
+                        host.RemotePeer(reconstructed.broker, {}).connect()
+                    socket_factory.assert_not_called()
+                self.assertEqual(peer.pending, pending)
+                self.assertEqual(peer.executor_fence, fence)
+                self.assertEqual(len([m for m in server.received if m["type"] == "hello"]), 1)
+                self.assertEqual(remote["version"], 10)
+                primary.broker.close()
+                server.close()
+                self.servers.remove(server)
+                (self.root / remote_key / "c_12345678" / "connection.json").unlink()
+
+    def test_secondary_only_retains_external_routing_and_explicit_errors(self):
+        native = self.raw_native({**BOOT, "profile": pathlib.Path("/profiles/other")})
+        with mock.patch.object(host, "discover_remotes") as discovery, \
+                mock.patch.object(host, "handle_message", return_value={"ok": True}) as ordinary:
+            self.assertEqual(native.broker.refresh(), [])
+            for operation in ("refresh_remotes", "list_remotes", "engine_open", "workspace_state"):
+                with self.assertRaisesRegex(ValueError, "primary"):
+                    native.broker.handle_request(self.request(operation, {}))
+            for operation, payload in (("open", {"url": "https://example.test/"}),
+                                       ("scroll", {"direction": "down"})):
+                native.broker.handle_request({"version": 1, "id": operation,
+                    "service": "external_links", "operation": operation, "payload": payload})
+            self.assertEqual(ordinary.call_count, 2)
+            discovery.assert_not_called()
+
+    def test_unknown_browser_preserves_bootstrap_and_periodic_refresh_is_blocked(self):
+        ordinary_factory = mock.Mock()
+        with mock.patch.object(host, "native_host_browser", return_value=None):
+            native = host.NativeBrokerHost(input_stream=mock.Mock(), output_stream=mock.Mock(),
+                ordinary_open_factory=ordinary_factory, primary_profile=BOOT["profile"])
+        self.brokers.append(native.broker)
+        ordinary_factory.assert_not_called()
+        bootstrap = self.native_request(native, "bootstrap", {})
+        self.assertTrue(bootstrap["ok"])
+        self.assertEqual(bootstrap["payload"]["browser_pid"], 0)
+        with mock.patch.object(host, "discover_remotes") as discovery, \
+                mock.patch.object(native.refresh_wakeup, "wait",
+                                  side_effect=lambda interval: native.refresh_stop.set()):
+            native._refresh_loop()
+            discovery.assert_not_called()
+        self.assertFalse(native.broker.executor_ready)
+
+    def test_ready_without_prepare_never_authorizes(self):
+        native = self.raw_native()
+        payload = {"browser_boot_id": BOOT["browser_boot_id"], "protocol_version": 10,
+                   "native_connection_id": native.broker.native_connection_id,
+                   "capabilities": clone(CAPABILITIES)}
+        self.assertFalse(self.native_request(native, "browser_executor_ready", payload)["ok"])
+        self.assertFalse(native.broker.executor_ready)
+        self.assertEqual(native.broker.refresh(), [])
+
+    def test_ready_duplicate_and_reconstruction_tokens_and_closed_broker(self):
+        native = self.raw_native()
+        payload = self.prepared_payload(native)
+        first = self.native_request(native, "browser_executor_ready", payload)
+        self.assertEqual(self.native_request(native, "browser_executor_ready", payload), first)
+        newer = self.raw_native()
+        newer_payload = self.prepared_payload(newer)
+        self.assertNotEqual(payload["native_connection_id"], newer_payload["native_connection_id"])
+        self.assertFalse(self.native_request(newer, "browser_executor_ready", payload)["ok"])
+        native.broker.close()
+        self.assertFalse(self.native_request(native, "browser_executor_ready", payload)["ok"])
+        self.assertFalse(self.native_request(native, "browser_executor_prepare", {
+            "browser_boot_id": BOOT["browser_boot_id"], "protocol_version": 10})["ok"])
+        with mock.patch.object(host, "discover_remotes") as discovery:
+            self.assertEqual(native.broker.refresh(), [])
+            with self.assertRaisesRegex(ValueError, "closed"):
+                native.broker.peer({})
+            discovery.assert_not_called()
+
+    def test_primary_profile_environment_canonical_path_and_resolved_once(self):
+        profile = pathlib.Path(self.temporary.name) / "primary"
+        profile.mkdir()
+        link = profile.parent / "alias"
+        link.symlink_to(profile, target_is_directory=True)
+        with mock.patch.dict(host.os.environ, {"ABUSH_CHROME_PROFILE": str(link)}):
+            native = host.NativeBrokerHost(input_stream=mock.Mock(), output_stream=mock.Mock(),
+                ordinary_open_factory=None, browser={**BOOT, "profile": profile})
+            self.brokers.append(native.broker)
+            self.assertTrue(native.broker.is_primary_profile)
+            host.os.environ["ABUSH_CHROME_PROFILE"] = "/profiles/changed"
+            self.assertEqual(native.broker.primary_profile, profile)
+            self.assertEqual(native.primary_profile, profile)
+        override = self.raw_native({**BOOT, "profile": link}, primary_profile=profile)
+        self.assertTrue(override.broker.is_primary_profile)
+        with self.assertRaisesRegex(ValueError, "absolute"):
+            host.BrowserBroker(browser=BOOT, primary_profile="relative")
+        unknown = host.BrowserBroker(primary_profile=profile)
+        self.brokers.append(unknown)
+        self.assertEqual(unknown.refresh(), [])
+        with self.assertRaisesRegex(ValueError, "primary"):
+            unknown.peer({})
+
+    def test_unprepared_primary_refresh_never_discovers_or_connects(self):
+        server = self.server()
+        broker = host.BrowserBroker(self.root, browser=BOOT, primary_profile=BOOT["profile"])
+        self.brokers.append(broker)
+        with mock.patch.object(host, "discover_remotes", wraps=host.discover_remotes) as discover:
+            self.assertEqual(broker.refresh(), [])
+            discover.assert_not_called()
+        self.assertEqual(server.received, [])
+
+    def test_unprepared_secondary_refresh_never_discovers_or_connects(self):
+        server = self.server()
+        broker = host.BrowserBroker(self.root, browser={**BOOT,
+            "profile": pathlib.Path("/profiles/secondary")}, primary_profile=BOOT["profile"])
+        self.brokers.append(broker)
+        with mock.patch.object(host, "discover_remotes", wraps=host.discover_remotes) as discover:
+            self.assertEqual(broker.refresh(), [])
+            discover.assert_not_called()
+        self.assertEqual(server.received, [])
 
     def test_v10_exact_handshake_and_capabilities(self):
         broker, peer, server = self.connected()

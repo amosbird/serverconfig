@@ -30,6 +30,7 @@ host.RemotePeer._handle_completion_accepted = drop_one_receipt
 endpoint = host.NativeBrokerHost(
     input_stream=sys.stdin.buffer, output_stream=sys.stdout.buffer,
     remote_root=pathlib.Path(sys.argv[2]), ordinary_open_factory=None,
+    primary_profile=pathlib.Path(os.environ["HOME"]) / "fake-profile",
     browser={"pid": os.getpid(), "starttime": "1", "browser_boot_id": "chain-boot",
              "profile": pathlib.Path(os.environ["HOME"]) / "fake-profile"},
 )

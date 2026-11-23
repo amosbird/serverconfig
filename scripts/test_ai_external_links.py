@@ -779,7 +779,15 @@ class NativeHostTest(unittest.TestCase):
             self.host.validate_request({**request, "extra": True})
 
     def test_native_broker_rejects_removed_window_and_candidate_operations(self):
-        broker = self.host.BrowserBroker(browser={"pid": 4242, "starttime": "123"})
+        profile = pathlib.Path("/profiles/main")
+        broker = self.host.BrowserBroker(browser={"pid": 4242, "starttime": "123",
+            "profile": profile, "browser_boot_id": "test-boot"}, primary_profile=profile)
+        prepared = broker.prepare_executor({"browser_boot_id": "test-boot", "protocol_version": 10})
+        ready = {key: value for key, value in prepared.items() if key != "primary_profile"}
+        ready["capabilities"] = {"cancellation": True, "owned_tab_group": True,
+                                 "official_engine": True, "typed_output": True}
+        broker.confirm_executor_ready(ready, lambda result: broker.outbound.put(result))
+        self.addCleanup(broker.close)
         with mock.patch.object(broker, "x11_binding") as binding:
             for operation in ("bind_x11_window", "verify_x11_window", "clear_x11_window",
                               "register_candidate_lease", "release_candidate_lease",
