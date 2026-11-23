@@ -11,8 +11,11 @@ const engineRoot = process.env.ABUSH_BROWSER_ENGINE_ROOT;
 assert.equal(process.env.ABUSH_ENGINE_FIXTURE, "1");
 assert.ok(engineRoot && process.env.ABUSH_ENGINE_EXTENSION_CHROME);
 const {Engine, loadOfficialPlaywright} = require(path.join(engineRoot, "engine.cjs"));
-const tmp = "/home/amos/git/serverconfig/.worktrees/.tmp";
-const rows = ["official_full", "raw_viewport_no_clip", "raw_viewport_clip", "raw_beyond_clip",
+const {execFileSync} = require("node:child_process");
+const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    {cwd: path.join(__dirname, ".."), encoding: "utf8", timeout: 5000}).trim();
+const tmp = path.join(path.dirname(common), ".worktrees/.tmp");
+const rows = process.env.ABUSH_CAPTURE_ROWS?.split(",") || ["official_full", "raw_viewport_no_clip", "raw_viewport_clip", "raw_beyond_clip",
     "official_metrics_dontSetVisibleSize_true", "official_metrics_dontSetVisibleSize_false"];
 async function bounded(label, task, ms = 3000) {
     let timer;
@@ -148,22 +151,34 @@ async function runRow(row, origin, artifacts, playwright) {
         record.before = await bounded("DOM metrics", () => lease.page.evaluate(dom));
         const raw = (method, params) => evaluate(({method, params}) => fixture.raw(method, params), {method, params});
         if (row.includes("metrics")) {
-            record.override = {width: record.before.width, height: record.before.height,
+            record.override = {width: row.includes("_content") ? record.before.scrollWidth : record.before.width,
+                height: row.includes("_document") ? record.before.scrollHeight : record.before.height,
                 deviceScaleFactor: 0, mobile: false, dontSetVisibleSize: row.endsWith("_true")};
+            if (row.includes("_viewport")) record.override.viewport = {x: 0, y: 0,
+                width: record.before.width, height: record.before.scrollHeight, scale: 1};
             await raw("Emulation.setDeviceMetricsOverride", record.override);
             // Response-ordered test barrier, not a second capture or window-resize path.
             record.afterOverride = await bounded("override DOM barrier", () => lease.page.evaluate(dom));
+        }
+        if (row.includes("_paint_barrier")) {
+            await bounded("two committed animation frames", () => lease.page.evaluate(() =>
+                new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))));
         }
         record.captureDispatchMs = performance.now();
         try {
             let png;
             if (row.startsWith("official")) {
-                record.request = {api: "Page.screenshot", fullPage: true, timeout: 2800};
-                png = await bounded("official capture", () => lease.page.screenshot({fullPage: true, timeout: 2800}));
+                record.request = {api: "Page.screenshot", fullPage: true, timeout: 2800,
+                    ...(row === "official_caret_initial" ? {caret: "initial"} : {}),
+                    ...(row.startsWith("official_style_scrollbar") ? {style: ':root { scrollbar-width: none !important; }'} : {})};
+                const {api, ...options} = record.request;
+                png = await bounded("official capture", () => lease.page.screenshot(options));
             } else {
-                const params = {format: "png", fromSurface: true, captureBeyondViewport: row === "raw_beyond_clip"};
+                const beyond = row.startsWith("raw_beyond");
+                const params = {format: "png", ...(row.endsWith("_implicit_surface") ? {} : {fromSurface: true}), captureBeyondViewport: beyond};
                 if (row !== "raw_viewport_no_clip") params.clip = {x: 0, y: 0,
-                    width: record.before.width, height: row === "raw_beyond_clip" ? 1600 : record.before.height, scale: 1};
+                    width: row.includes("_content") ? record.before.scrollWidth : row.includes("_wide") ? record.before.width + 20 : record.before.width,
+                    height: beyond ? 1600 : record.before.height, scale: 1};
                 record.request = {method: "Page.captureScreenshot", params};
                 const result = await raw("Page.captureScreenshot", params);
                 png = Buffer.from(result.data, "base64");
@@ -171,7 +186,7 @@ async function runRow(row, origin, artifacts, playwright) {
             record.captureCompletionMs = performance.now();
             record.image = decode(png);
             await fs.writeFile(path.join(artifacts, "capture.png"), png);
-            const expectFull = row.startsWith("official") || row === "raw_beyond_clip";
+            const expectFull = row.startsWith("official") || row.startsWith("raw_beyond");
             record.captureValid = record.image.topPixels > 50 && (expectFull ?
                 record.image.height >= 1600 && record.image.bottomPresent :
                 record.image.height === record.before.height && !record.image.bottomPresent);
@@ -240,8 +255,11 @@ async function runRow(row, origin, artifacts, playwright) {
             results.push(result);
             await fs.writeFile(path.join(suite, "matrix.json"), JSON.stringify({engineRoot,
                 immutableEngine: await fs.realpath(engineRoot), chrome: process.env.ABUSH_ENGINE_EXTENSION_CHROME,
-                results}));
-            console.log(JSON.stringify(result));
+                results}, null, 2));
+            console.log(JSON.stringify({row:result.row, valid:result.captureValid, image:result.image,
+                durationMs:result.captureCompletionMs-result.captureDispatchMs, error:result.error,
+                before:result.before, after:result.after, personalUnchanged:result.personalUnchanged,
+                cleanupErrors:result.cleanupErrors, infrastructureError:result.infrastructureError}));
         }
         console.log(JSON.stringify({report: path.join(suite, "matrix.json"),
             valid: results.filter(r => r.captureValid).length, total: results.length,
