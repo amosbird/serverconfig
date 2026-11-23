@@ -1,7 +1,24 @@
 #!/usr/bin/env bash
+# Lay out displays before the window manager. Kernel connector status is the
+# source of truth: ConnectedMonitor makes an empty NVIDIA port look connected
+# in RandR, which is what lets reverse PRIME reach the laptop panel.
 
-if xrandr -q | rg -q 'DP-1-2 connected'; then
-    moveend
-else
-    movehome
+nvidia_live=0
+for card in /sys/class/drm/card[0-9]; do
+    [ -f "$card/device/vendor" ] || continue
+    [ "$(cat "$card/device/vendor")" = "0x10de" ] || continue
+    name=$(basename "$card")
+    for status in /sys/class/drm/"$name"-{DP,HDMI,VGA,eDP}-*/status; do
+        [ -f "$status" ] || continue
+        if grep -qx connected "$status"; then
+            nvidia_live=1
+            break 2
+        fi
+    done
+done
+
+if [ "$nvidia_live" = 1 ]; then
+    exit 0
 fi
+
+movehome
