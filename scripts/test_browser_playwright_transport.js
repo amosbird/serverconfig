@@ -157,8 +157,12 @@ const cases = [
         await entered.promise;
         const reply = await preparing;
         assert.match(reply.error.message, /focus preparation timed out/);
+        assert.equal(f.bridge.closed, true);
         assert.equal(f.bridge.sessions.size, 0);
         const count = f.sent.length;
+        const calls = f.calls.length;
+        await f.request("Target.setAutoAttach", AUTO);
+        assert.equal(f.calls.length, calls, "uncertain preparation cannot retry within the same bridge");
         f.bridge.close(); release.resolve();
         await Promise.resolve();
         assert.equal(f.sent.length, count);

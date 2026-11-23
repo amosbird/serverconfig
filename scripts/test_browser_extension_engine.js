@@ -87,7 +87,7 @@ function barrier() {
         await bounded("page-only HTTP fixture listen", () => listening);
         const origin = `http://127.0.0.1:${website.address().port}`;
         const playwright = await loadOfficialPlaywright(artifacts);
-        ownedChrome = await launchUnmanagedPipeFixture({playwright, executablePath, artifacts});
+        ownedChrome = await launchUnmanagedPipeFixture({playwright, executablePath, artifacts, observePages: false});
         ({context, browser} = ownedChrome);
         const root = await browser.newBrowserCDPSession();
         const workerReady = context.waitForEvent("serviceworker", {
@@ -259,7 +259,7 @@ function barrier() {
         assert.deepEqual(await evaluate(() => fixture.personal()), personalBefore);
         ownedChrome.assertObserverDefaults();
         assert.equal(browser.isConnected(), true);
-        assert.equal(context.pages().some(p => p.url() === `${origin}/owned`), true);
+        assert.equal(context.pages().length, 0, "fixture observer must not attach Engine's page");
         assert.deepEqual(failures, []);
         console.log("PASS foreign target/session and Browser.close denied; revoked late response suppressed; release preserves both tabs/browser");
         console.log("PASS inactive work-tab trusted ordered Enter events and exactly-once submit");
@@ -295,7 +295,7 @@ function barrier() {
             await attempt("HTTP fixture close", () => new Promise(resolve => website.close(resolve)));
         }
         if (oldTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = oldTmp;
-        await fs.rm(artifacts, {recursive: true, force: true});
+        await attempt("fixture artifacts removal", () => fs.rm(artifacts, {recursive: true, force: true}));
         if (teardownErrors.length) throw new AggregateError(
             [...(primaryError ? [primaryError] : []), ...teardownErrors], "Extension fixture teardown");
     }

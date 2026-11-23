@@ -173,7 +173,8 @@
                         await Promise.race([
                             this.command(null, "Emulation.setFocusEmulationEnabled", {enabled: true}, generation),
                             new Promise((_, reject) => { timer = setTimeout(() =>
-                                reject(new Error("Exact-tab focus preparation timed out")), FOCUS_TIMEOUT_MS); }),
+                                reject(Object.assign(new Error("Exact-tab focus preparation timed out"),
+                                    {retireBridge: true})), FOCUS_TIMEOUT_MS); }),
                         ]);
                     } finally { clearTimeout(timer); }
                     if (!this.authorized(generation)) throw new Error("CDP authorization revoked");
@@ -267,6 +268,7 @@
                 if (!this.authorized(generation)) return;
                 this.emit({...response, error: {code: -32000, message: String(error.message || error)}},
                     generation);
+                if (error.retireBridge) { this.close(); this.report(error); }
             }
         }
 

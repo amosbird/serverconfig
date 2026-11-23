@@ -13,7 +13,7 @@ async function bounded(label, task, ms = 10000) {
     } finally { clearTimeout(timer); }
 }
 
-async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts}) {
+async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts, observePages = true}) {
     assert.equal(process.env.ABUSH_ENGINE_FIXTURE, "1", "private fixture launch only");
     assert.ok(path.isAbsolute(executablePath) && path.isAbsolute(artifacts));
     const profile = path.join(artifacts, "profile");
@@ -39,6 +39,11 @@ async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts
             if (closed) throw new Error("Owned Chrome pipe closed");
             if (message.method) commands.push(message.method);
             assert.ok(commands.length <= 100000, "observer command trace bounded");
+            // Service-worker-only observation avoids a second debugger client on Engine's exact page.
+            if (!observePages && message.method === "Target.setAutoAttach" && !message.sessionId) {
+                message = {...message, params: {...message.params,
+                    filter: [{type: "service_worker", exclude: false}, {exclude: true}]}};
+            }
             const frame = Buffer.from(JSON.stringify(message) + "\0");
             if (frame.length > maxBytes || pendingBytes + frame.length > maxBytes ||
                     pendingWrites >= 1024) throw new Error("Owned Chrome pipe backpressure");
@@ -99,6 +104,11 @@ async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts
         stopping = true;
         const errors = [...failures];
         if (browser?.isConnected()) {
+            try {
+                const root = await bounded("owned shutdown browser session", () => browser.newBrowserCDPSession(), 3000);
+                await bounded("owned browser graceful close", () => root.send("Browser.close"), 5000);
+                await bounded(`owned Chrome ${pid} graceful join`, () => exited, 5000);
+            } catch (error) { errors.push(error); }
             try { await bounded("observer disconnect", () => browser.close(), 5000); }
             catch (error) { errors.push(error); }
         }
