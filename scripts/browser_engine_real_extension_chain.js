@@ -6,6 +6,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const {spawn} = require("node:child_process");
 const {once} = require("node:events");
+const {launchUnmanagedPipeFixture, waitForWorkerFixture} = require("./browser_unmanaged_pipe_fixture.js");
 const extension = process.argv[2], host = process.argv[3], remoteRoot = process.argv[4];
 const artifacts = process.argv[5];
 const engineRoot = process.env.ABUSH_BROWSER_ENGINE_ROOT;
@@ -19,7 +20,7 @@ function barrier() {
     const promise = new Promise(yes => { resolve = yes; });
     return {promise, resolve};
 }
-let context, browser, worker, python, fixturePid, pump;
+let context, browser, worker, python, ownedChrome, pump, primaryError, fixtureReady = false;
 let wake = barrier(), blocked = barrier(), posts = 0, finished = 0, stopping = false;
 let lastDiagnostic = null;
 const failures = [], native = [], tasks = new Set();
@@ -64,16 +65,9 @@ async function setup() {
             run_at: "document_start"}],
     }));
     const playwright = await loadOfficialPlaywright(artifacts);
-    context = await bounded(() => playwright.chromium.launchPersistentContext(
-        path.join(artifacts, "profile"), {
-            executablePath, headless: true, timeout: 10000, viewport: null,
-            ignoreDefaultArgs: ["--disable-extensions"],
-            args: ["--enable-unsafe-extension-debugging", "--window-size=800,687"],
-        }), "owned extension-capable Chrome pipe launch", 15000);
-    browser = context.browser();
+    ownedChrome = await launchUnmanagedPipeFixture({playwright, executablePath, artifacts});
+    ({context, browser} = ownedChrome);
     const root = await browser.newBrowserCDPSession();
-    const processes = await root.send("SystemInfo.getProcessInfo");
-    fixturePid = processes.processInfo.find(info => info.type === "browser").id;
     await context.route("**/*", async route => {
         const request = route.request(), url = new URL(request.url());
         assert.equal(url.origin, "http://fixture.test", "no external website requests");
@@ -95,10 +89,14 @@ async function setup() {
     context.on("requestfinished", request => {
         if (request.url().endsWith("/api")) { finished++; signal(); }
     });
-    const workerReady = context.waitForEvent("serviceworker", {timeout: 10000});
+    const workerReady = context.waitForEvent("serviceworker", {
+        predicate: candidate => candidate.url().endsWith("/worker.js"), timeout: 10000,
+    });
     workerReady.catch(() => {});
     await root.send("Extensions.loadUnpacked", {path: unpacked});
     worker = await workerReady;
+    await waitForWorkerFixture(worker);
+    fixtureReady = true;
     await root.detach();
     worker.on("console", message => {
         if (message.type() === "error") process.stderr.write(`WORKER ${message.text()}\n`);
@@ -159,6 +157,7 @@ function dispatchDisconnect() {
 async function snapshot(op = "snapshot") {
     const result = await evaluate(op => fixture.control(op), op);
     if (failures.length) throw new AggregateError(failures, "native chain transport");
+    ownedChrome.assertObserverDefaults();
     return {...result, posts, finished, lastDiagnostic};
 }
 function page() {
@@ -174,6 +173,7 @@ async function run(command) {
         return {...await evaluate(() => fixture.bootstrap()), posts, finished, lastDiagnostic};
     case "ready": {
         const result = await evaluate(() => fixture.ready());
+        ownedChrome.assertObserverDefaults();
         return {...result, posts, finished, lastDiagnostic};
     }
     case "lose_receipt":
@@ -202,7 +202,7 @@ async function teardown() {
     const attempt = async (label, task, ms = 5000) => {
         try { await bounded(task, label, ms); } catch (error) { teardownErrors.push(error); }
     };
-    if (worker) await attempt("worker stop", () => evaluate(() => fixture.stop()));
+    if (worker && fixtureReady) await attempt("worker stop", () => evaluate(() => fixture.stop()));
     if (pump) await attempt("native pump join", () => pump);
     stopping = true;
     await attempt("native delivery joins", () => Promise.allSettled([...tasks]));
@@ -217,18 +217,9 @@ async function teardown() {
         }
         if (python.exitCode !== 0) teardownErrors.push(new Error(`Python exited ${python.exitCode}`));
     }
-    if (context) {
-        const disconnected = browser.isConnected() ? once(browser, "disconnected") : Promise.resolve();
-        try { await bounded(() => context.close(), "owned Chrome teardown", 5000); }
-        catch (error) {
-            teardownErrors.push(error);
-            if (fixturePid) {
-                try { process.kill(fixturePid, "SIGKILL"); } catch (killError) { teardownErrors.push(killError); }
-                await attempt("owned Chrome killed join", () => disconnected);
-            }
-        }
-    }
-    if (teardownErrors.length) throw new AggregateError(teardownErrors, "real extension chain teardown");
+    if (ownedChrome) await attempt("owned Chrome shutdown", () => ownedChrome.shutdown(), 15000);
+    if (teardownErrors.length) throw new AggregateError(
+        [...(primaryError ? [primaryError] : []), ...teardownErrors], "real extension chain teardown");
 }
 (async () => {
     const controls = readline.createInterface({input: process.stdin});
@@ -250,6 +241,7 @@ async function teardown() {
             if (command.op === "quit") break;
         }
     } catch (error) {
+        primaryError = error;
         console.error("CHAIN PRIMARY FAILURE", error);
         throw error;
     } finally { controls.close(); await teardown(); }

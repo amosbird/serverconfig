@@ -6,6 +6,7 @@ const path = require("node:path");
 const http = require("node:http");
 const {once} = require("node:events");
 const {execFileSync} = require("node:child_process");
+const {launchUnmanagedPipeFixture, waitForWorkerFixture} = require("./browser_unmanaged_pipe_fixture.js");
 const engineRoot = process.env.ABUSH_BROWSER_ENGINE_ROOT;
 const executablePath = process.env.ABUSH_ENGINE_EXTENSION_CHROME;
 if (process.env.ABUSH_ENGINE_FIXTURE !== "1" || !engineRoot || !executablePath) {
@@ -35,8 +36,8 @@ function barrier() {
     const artifacts = await fs.mkdtemp(path.join(tmp, "e-"));
     const oldTmp = process.env.TMPDIR;
     process.env.TMPDIR = artifacts;
-    let context, browser, worker, engine, website, fixturePid, pump;
-    let stopping = false, engineReceiving = false, sequence = 0;
+    let context, browser, worker, engine, website, ownedChrome, pump;
+    let stopping = false, engineReceiving = false, sequence = 0, fixtureReady = false, primaryError;
     const replies = new Map(), cdpReplies = new Map(), protocolErrors = [], failures = [];
     const emitted = [];
     const entered = barrier(), completed = barrier();
@@ -62,34 +63,47 @@ function barrier() {
         }));
         website = http.createServer((request, response) => {
             response.writeHead(200, {"content-type": "text/html"});
-            response.end(request.url === "/other" ? "<!doctype html><title>Other fixture</title>Untouched" :
-                `<!doctype html><title>Extension fixture</title><input aria-label="Name">
-                <button onclick="document.querySelector('output').textContent='Hello '+document.querySelector('input').value">Apply</button><output></output><div style="height:1300px">Tall fixture content</div>`);
+            response.end(`<!doctype html><title>Extension fixture</title>
+                <form><input aria-label="Name"></form>
+                <button onclick="document.querySelector('output').textContent='Hello '+document.querySelector('input').value">Apply</button>
+                <output></output><p id="submitted"></p><div style="height:1300px">Tall fixture content</div>
+                <script>
+                window.keyEvents = []; window.submits = [];
+                for (const type of ['keydown', 'keypress', 'keyup']) {
+                    document.querySelector('input').addEventListener(type, event => {
+                        window.keyEvents.push({type:event.type, key:event.key, trusted:event.isTrusted});
+                    });
+                }
+                document.querySelector('form').addEventListener('submit', event => {
+                    event.preventDefault();
+                    const value = document.querySelector('input').value;
+                    window.submits.push({value, trusted:event.isTrusted});
+                    document.querySelector('#submitted').textContent='Submitted '+value;
+                });
+                </script>`);
         });
         const listening = once(website, "listening");
         website.listen(0, "127.0.0.1");
         await bounded("page-only HTTP fixture listen", () => listening);
         const origin = `http://127.0.0.1:${website.address().port}`;
         const playwright = await loadOfficialPlaywright(artifacts);
-        context = await bounded("owned persistent headless Chrome pipe launch", () =>
-            playwright.chromium.launchPersistentContext(path.join(artifacts, "profile"), {
-                executablePath, headless: true, timeout: 10000,
-                ignoreDefaultArgs: ["--disable-extensions"],
-                args: ["--enable-unsafe-extension-debugging"],
-            }));
-        browser = context.browser();
+        ownedChrome = await launchUnmanagedPipeFixture({playwright, executablePath, artifacts});
+        ({context, browser} = ownedChrome);
         const root = await browser.newBrowserCDPSession();
-        const processes = await bounded("owned process identity", () => root.send("SystemInfo.getProcessInfo"));
-        fixturePid = processes.processInfo.find(info => info.type === "browser").id;
-        const workerReady = context.waitForEvent("serviceworker", {timeout: 10000});
+        const workerReady = context.waitForEvent("serviceworker", {
+            predicate: candidate => candidate.url().endsWith("/worker.js"), timeout: 10000,
+        });
         workerReady.catch(() => {});
         const loaded = await bounded("load actual unpacked MV3 extension", () =>
             root.send("Extensions.loadUnpacked", {path: extension}));
         worker = context.serviceWorkers().find(w => w.url().startsWith(`chrome-extension://${loaded.id}/`)) ||
             await bounded("actual MV3 service worker", () => workerReady);
+
+        await waitForWorkerFixture(worker);
+        fixtureReady = true;
         await bounded("setup root CDP detach", () => root.detach());
         const setup = await bounded("actual chrome.debugger attach and domain probe", () =>
-            evaluate(origin => fixture.setup(origin), origin));
+            evaluate(() => fixture.setup()));
         assert.match(setup.rawVersionError, /Browser.getVersion.*wasn't found/);
         assert.equal(setup.target.targetInfo.type, "page");
         assert.equal(typeof setup.target.targetInfo.browserContextId, "string");
@@ -98,6 +112,9 @@ function barrier() {
         console.log(`PASS actual chrome.debugger Browser domain restriction; Target.getTargetInfo: ${JSON.stringify(setup.target)}`);
         const before = await evaluate(() => fixture.tabs());
         const otherBefore = before[1];
+        const personalBefore = await evaluate(() => fixture.personal());
+        assert.equal(before[0].active, false);
+        assert.equal(personalBefore.filter(tab => tab.active).length, 1);
         engine = new Engine({playwright, artifactsDir: artifacts, onFatal: error => failures.push(error),
             send: message => {
                 if (message.type === "cdp") dispatch(message.message);
@@ -159,11 +176,31 @@ function barrier() {
         const lease = engine.leases.get("extension");
         assert.equal(lease.browser.contexts().flatMap(c => c.pages()).length, 1);
         await run({type: "navigate", url: `${origin}/owned`});
+        const initialVisibility = (await run({type: "evaluate", expression:
+            "({visibility:document.visibilityState,focused:document.hasFocus()})"})).data.value;
+        assert.equal(initialVisibility.visibility, "hidden", "fixture must not mask the inactive tab");
+        console.log(`INITIAL WORK TAB ${JSON.stringify(initialVisibility)}`);
         const snapshot = await run({type: "snapshot"});
         const ref = name => snapshot.text.split("\n").find(line => line.includes(`"${name}"`))
             .match(/\[ref=([^\]]+)\]/)[1];
         assert.ok(snapshot.data.refs.includes(ref("Name")));
         await run({type: "fill", snapshot_id: snapshot.data.snapshot_id, ref: ref("Name"), value: "Ada"});
+        await run({type: "press", snapshot_id: snapshot.data.snapshot_id, ref: ref("Name"), key: "Enter"});
+        const keyboard = (await run({type: "evaluate", expression:
+            "({events:window.keyEvents,submits:window.submits,text:document.querySelector('#submitted').textContent})"})).data.value;
+        // Keep collecting the other regression coverage even when the old bridge drops keyboard events.
+        const keyboardErrors = [];
+        try {
+            assert.deepEqual(keyboard.events, ["keydown", "keypress", "keyup"].map(type =>
+                ({type, key: "Enter", trusted: true})), `Trusted ordered Enter events: ${JSON.stringify(keyboard)}`);
+            assert.deepEqual(keyboard.submits, [{value: "Ada", trusted: true}], "Exactly one trusted form submit");
+            assert.equal(keyboard.text, "Submitted Ada", "Enter must commit the form consequence");
+        } catch (error) { keyboardErrors.push(error); }
+        console.log(`KEYBOARD TRACE ${JSON.stringify({keyboard, focusCalls:
+            (await evaluate(() => fixture.state())).calls.filter(call => /Focus|dispatchKey/.test(call.method))})}`);
+        assert.equal((await evaluate(() => fixture.tabs()))[0].active, false);
+        assert.deepEqual(await evaluate(() => fixture.personal()), personalBefore);
+        ownedChrome.assertObserverDefaults();
         await run({type: "click", snapshot_id: snapshot.data.snapshot_id, ref: ref("Apply")});
         assert.match((await run({type: "text"})).text, /Hello Ada/);
         const viewport = await run({type: "evaluate", expression:
@@ -216,41 +253,39 @@ function barrier() {
         assert.equal(after[0].id, setup.tabId);
         assert.equal(after[0].url, `${origin}/owned`);
         assert.deepEqual(after[1], otherBefore);
+        assert.equal(after[0].active, false);
+        assert.deepEqual(await evaluate(() => fixture.personal()), personalBefore);
+        ownedChrome.assertObserverDefaults();
         assert.equal(browser.isConnected(), true);
         assert.equal(context.pages().some(p => p.url() === `${origin}/owned`), true);
         assert.deepEqual(failures, []);
         console.log("PASS foreign target/session and Browser.close denied; revoked late response suppressed; release preserves both tabs/browser");
+        if (keyboardErrors.length) throw new AggregateError(keyboardErrors, "Hidden work-tab Enter regression");
+        console.log("PASS inactive work-tab trusted ordered Enter events and exactly-once submit");
+    } catch (error) {
+        primaryError = error;
+        throw error;
     } finally {
         const teardownErrors = [];
-        const attempt = async (label, run) => {
-            try { await bounded(label, run, 5000); } catch (error) { teardownErrors.push(error); }
+        const attempt = async (label, run, ms = 5000) => {
+            try { await bounded(label, run, ms); } catch (error) { teardownErrors.push(error); }
         };
         engine?.dispose();
-        if (worker) {
+        if (worker && fixtureReady) {
             await attempt("worker release", () => evaluate(() => fixture.release()));
             await attempt("worker pump stop", () => evaluate(() => fixture.stop()));
         }
         if (pump) await attempt("pump join", () => pump);
         stopping = true;
         await attempt("transport tasks join", () => Promise.allSettled([...transportTasks]));
-        if (context) {
-            const disconnected = browser.isConnected() ? once(browser, "disconnected") : Promise.resolve();
-            try { await bounded("owned Chrome close", () => context.close(), 5000); }
-            catch (error) {
-                teardownErrors.push(error);
-                if (fixturePid) {
-                    try { process.kill(fixturePid, "SIGKILL"); }
-                    catch (killError) { teardownErrors.push(killError); }
-                    await attempt("owned Chrome killed join", () => disconnected);
-                }
-            }
-        }
+        if (ownedChrome) await attempt("owned Chrome shutdown", () => ownedChrome.shutdown(), 15000);
         if (website) {
             website.closeAllConnections();
             await attempt("HTTP fixture close", () => new Promise(resolve => website.close(resolve)));
         }
         if (oldTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = oldTmp;
         await fs.rm(artifacts, {recursive: true, force: true});
-        if (teardownErrors.length) throw new AggregateError(teardownErrors, "Extension fixture teardown");
+        if (teardownErrors.length) throw new AggregateError(
+            [...(primaryError ? [primaryError] : []), ...teardownErrors], "Extension fixture teardown");
     }
 })().catch(error => { console.error(error); process.exitCode = 1; });

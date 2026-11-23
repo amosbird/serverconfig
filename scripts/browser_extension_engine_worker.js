@@ -24,29 +24,12 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     }
 });
 globalThis.fixture = {
-    async setup(origin) {
-        tabId = (await chrome.tabs.create({url: `${origin}/owned`, active: false})).id;
-        otherId = (await chrome.tabs.create({url: `${origin}/other`, active: false})).id;
+    async setup() {
+        tabId = (await chrome.tabs.create({url: "about:blank#work", active: false})).id;
+        otherId = (await chrome.tabs.create({url: "about:blank#other", active: false})).id;
         await chrome.debugger.attach({tabId}, "1.3");
         attached = true;
-        await Promise.all([tabId, otherId].map(id => new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
-                chrome.tabs.onUpdated.removeListener(updated);
-                reject(new Error("Fixture tab load deadline"));
-            }, 10000);
-            function updated(updatedId, change) {
-                if (updatedId === id && change.status === "complete") {
-                    clearTimeout(timer); chrome.tabs.onUpdated.removeListener(updated); resolve();
-                }
-            }
-            chrome.tabs.onUpdated.addListener(updated);
-            function fail(error) {
-                clearTimeout(timer); chrome.tabs.onUpdated.removeListener(updated); reject(error);
-            }
-            chrome.tabs.get(id).then(tab => {
-                if (tab.status === "complete") updated(id, {status: "complete"});
-            }, fail);
-        })));
+
         let rawVersionError;
         try { await actualSendCommand({tabId}, "Browser.getVersion", {}); }
         catch (error) { rawVersionError = error.message; }
@@ -69,6 +52,12 @@ globalThis.fixture = {
             rootSessionId: bridge.rootSessionId};
     },
     async tabs() { return Promise.all([chrome.tabs.get(tabId), chrome.tabs.get(otherId)]); },
+    async personal() {
+        return (await chrome.tabs.query({})).filter(tab => tab.id !== tabId).map(tab => ({
+            id: tab.id, windowId: tab.windowId, index: tab.index, active: tab.active,
+            pinned: tab.pinned, groupId: tab.groupId, url: tab.url,
+        }));
+    },
     async release() {
         bridge?.close();
         if (attached) { await chrome.debugger.detach({tabId}); attached = false; }
@@ -81,3 +70,4 @@ globalThis.fixture = {
     },
     stop() { publish({type: "stop"}); },
 };
+console.log("fixture-worker-ready");

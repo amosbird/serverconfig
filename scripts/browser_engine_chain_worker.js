@@ -8,6 +8,15 @@ const stagingAdvisories = [];
 let wake, executor, chainDispatcher, ready, workTab = null, personal = [], frameTail = Promise.resolve();
 let sequence = 0;
 const registrations = [];
+const localStateChanges = event();
+function enabledReady() {
+    return Boolean(executor.remotes.get(remoteKey)?.connected &&
+        executor.records.get(remoteKey)?.agreed && executor.state(remoteKey).phase === "enabled");
+}
+function localCommit(phase) {
+    frame(phase);
+    localStateChanges.emit();
+}
 const addRuntimeListener = chrome.runtime.onMessage.addListener.bind(chrome.runtime.onMessage);
 chrome.runtime.onMessage.addListener = listener => {
     registrations.push([chrome.runtime.onMessage, listener]);
@@ -104,10 +113,13 @@ function routeWorker() {
     for (const [source, listener] of registrations.splice(0)) source.removeListener(listener);
     executor = new WorkspaceExecutor(chrome, (...args) => chainDispatcher.request(...args));
     executor.onAdvisoryError = failure;
-    const remoteState = executor.remoteState.bind(executor);
-    executor.remoteState = async payload => {
-        try { return await remoteState(payload); } finally { frame("remote_state"); }
-    };
+    for (const name of ["remoteState", "publish", "reconcile"]) {
+        const actual = executor[name].bind(executor);
+        executor[name] = async (...args) => {
+            try { return await actual(...args); }
+            finally { localCommit(`local_commit:${name}`); }
+        };
+    }
     ready = createWorkspaceInitializer(executor, chainDispatcher, failure);
     registerWorkspaceWindowListeners(chrome, executor, ready, failure);
     registerRuntimeMessageRouter(chrome, executor, ready);
@@ -168,16 +180,27 @@ globalThis.fixture = {
     },
     async ready() {
         await ready();
-        await bounded(async () => {
-            while (!(executor.remotes.get(remoteKey)?.connected &&
-                    executor.records.get(remoteKey)?.agreed && executor.state(remoteKey).phase === "enabled")) {
-                // A registered native event barrier; no effect dispatch in this wait.
-                await new Promise(resolve => {
-                    const remove = chainDispatcher.onEvent(() => { remove(); resolve(); });
-                    if (executor.records.get(remoteKey)?.agreed) { remove(); resolve(); }
-                });
-            }
-        }, "real remote hello and enabled reservation", 15000);
+        try {
+            await bounded(async () => {
+                while (!enabledReady()) {
+                    let listener;
+                    try {
+                        const changed = new Promise(resolve => {
+                            listener = resolve;
+                            localStateChanges.addListener(listener);
+                            if (enabledReady()) resolve();
+                        });
+                        await bounded(() => changed, "next post-local-commit state signal", 14000);
+                    } finally { localStateChanges.removeListener(listener); }
+                }
+            }, "post-local-commit connected/agreed/enabled reservation", 15000);
+        } catch (error) {
+            throw new Error(`${error.message}: ${JSON.stringify({
+                connected: executor.remotes.get(remoteKey)?.connected,
+                agreed: executor.records.get(remoteKey)?.agreed,
+                state: executor.state(remoteKey), frames: frames.slice(-8), native: native.slice(-8),
+            })}`, {cause: error});
+        }
         frame("ready");
         return snapshot();
     },
@@ -211,3 +234,4 @@ globalThis.fixture = {
         publish({kind: "stop"});
     },
 };
+console.log("fixture-worker-ready");
