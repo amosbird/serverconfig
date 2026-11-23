@@ -417,8 +417,25 @@ class EngineSocketTest(unittest.TestCase):
 
 class TransportBoundsTest(unittest.TestCase):
     def native(self, **kwargs):
+        temporary_root = pathlib.Path(__file__).resolve().parents[1] / ".tmp"
+        temporary_root.mkdir(exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=temporary_root)
+        self.addCleanup(temporary.cleanup)
+        remote_root = pathlib.Path(temporary.name)
+        kwargs.setdefault("remote_root", remote_root)
+        kwargs.setdefault("browser", {"pid": 42, "starttime": "123",
+            "profile": remote_root / "profile", "browser_boot_id": "transport-fixture"})
         return host.NativeBrokerHost(input_stream=io.BytesIO(), output_stream=io.BytesIO(),
                                      ordinary_open_factory=None, **kwargs)
+
+    def test_native_fixture_uses_empty_owned_remotes_without_browser_probe(self):
+        with mock.patch.object(host, "native_host_browser", side_effect=AssertionError(
+                "transport fixture must not inspect the live browser")):
+            native = self.native()
+        self.assertTrue(native.broker.remote_root.is_dir())
+        self.assertEqual(list(native.broker.remote_root.iterdir()), [])
+        self.assertEqual(native.broker.refresh(), [])
+        self.assertEqual(native.browser["browser_boot_id"], "transport-fixture")
 
     def test_byte_count_reserve_and_close_wakes_consumer(self):
         outbound = host.BoundedQueue(maxsize=2, max_bytes=8,
