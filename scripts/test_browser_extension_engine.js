@@ -63,12 +63,11 @@ function barrier() {
             permissions: ["debugger", "tabs", "tabGroups", "scripting"], host_permissions: ["http://127.0.0.1/*"],
             background: {service_worker: "worker.js"},
         }));
-        // Stable gutter isolates capture restoration from Chrome's native auto-scrollbar relayout.
         website = http.createServer((request, response) => {
             response.writeHead(200, {"content-type": "text/html", "cache-control": "no-store"});
             response.end(`<!doctype html><title>Extension fixture ${request.url}</title>
                 <style>html,body{margin:0;padding:0;background:#ddd}
-                html{scrollbar-gutter:stable}body{height:3200px}
+                body{height:3200px}
                 #top,#bottom{position:absolute;left:0;width:100%;height:100px}
                 #top{top:0;background:rgb(20,40,220)}
                 #bottom{top:3100px;background:rgb(20,200,40)}
