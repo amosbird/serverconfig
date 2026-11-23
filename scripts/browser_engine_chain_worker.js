@@ -181,25 +181,66 @@ async function snapshot() {
         engineExecuteCount: native.filter(item => item.operation === "engine_execute").length};
 }
 globalThis.fixture = {
-    async pageDiagnostics() {
-        if (workTab === null || !attachedTabs.has(workTab)) {
-            throw new Error("Diagnostics require the already attached exact owned work tab");
+    async pageDiagnostics(tabId = workTab) {
+        if (workTab === null || tabId !== workTab) {
+            throw new Error("Diagnostics require the creation-time exact owned work tab");
         }
-        const tab = await chrome.tabs.get(workTab);
+        const tab = await chrome.tabs.get(tabId);
         if (tab.active !== false || tab.url !== "http://fixture.test/") {
             throw new Error("Diagnostics require the inactive fixture document");
         }
-        // Read through the existing extension attachment, never another page debugger client.
-        const result = await bounded(() => chrome.debugger.sendCommand({tabId: workTab},
-            "Runtime.evaluate", {expression: `({inputValue: document.querySelector('input')?.value,
-                receiptClicks: window.receiptClicks || 0, url: location.href,
-                viewport: {width: innerWidth, height: innerHeight}})`, returnByValue: true}),
-        "exact owned page diagnostics", 5000);
-        if (result.exceptionDetails || !result.result?.value) throw new Error("Page diagnostics failed");
-        return result.result.value;
+        // Test-only isolated DOM observation survives production authority revocation;
+        // it neither attaches a debugger nor acquires an Engine lease.
+        const call = {name: "scripting.executeScript", method: null, source: {tabId}, phase: "entered",
+            debuggerAttached: attachedTabs.has(tabId)};
+        calls.push(call);
+        const results = await bounded(() => chrome.scripting.executeScript({
+            target: {tabId, frameIds: [0]}, world: "ISOLATED", func: () => ({
+                inputValue: document.querySelector('input')?.value,
+                receiptClicks: Number(document.querySelector('#receipt')?.dataset.clicks || 0),
+                url: location.href, viewport: {width: innerWidth, height: innerHeight},
+            }),
+        }), "exact owned page diagnostics", 5000);
+        if (results.length !== 1 || results[0].frameId !== 0 ||
+                results[0].result?.url !== "http://fixture.test/") {
+            throw new Error("Page diagnostics failed");
+        }
+        const current = await chrome.tabs.get(tabId);
+        if (current.active !== false || current.url !== tab.url) {
+            throw new Error("Diagnostic fixture document changed");
+        }
+        Object.assign(call, {phase: "completed", documentId: results[0].documentId});
+        frame("page_diagnostics");
+        return results[0].result;
+    },
+    async diagnosticsRejections() {
+        const before = calls.length;
+        const rejected = [];
+        for (const tabId of [null, personal[0].id]) {
+            try { await this.pageDiagnostics(tabId); }
+            catch (error) {
+                if (error.message !== "Diagnostics require the creation-time exact owned work tab") throw error;
+                rejected.push(tabId);
+            }
+        }
+        if (rejected.length !== 2 || calls.length !== before) {
+            throw new Error("Unowned diagnostics reached Chrome scripting");
+        }
+        return {rejected, scriptingCalls: 0};
     },
     async setup() {
-        await chrome.tabs.create({url: "about:blank#personal", active: false});
+        const created = await chrome.tabs.create({url: "about:blank#personal", active: false});
+        let updated;
+        try {
+            await bounded(() => new Promise((resolve, reject) => {
+                updated = (id, change, tab) => {
+                    if (id === created.id && tab.status === "complete" &&
+                            tab.url === "about:blank#personal") resolve();
+                };
+                chrome.tabs.onUpdated.addListener(updated);
+                chrome.tabs.get(created.id).then(tab => updated(tab.id, {}, tab), reject);
+            }), "personal fixture document commit", 5000);
+        } finally { chrome.tabs.onUpdated.removeListener(updated); }
         personal = (await chrome.tabs.query({})).map(tabView);
         if (personal.length !== 2) throw new Error(`Expected two isolated personal tabs, got ${personal.length}`);
         chainDispatcher = new NativeDispatcher(() => port);

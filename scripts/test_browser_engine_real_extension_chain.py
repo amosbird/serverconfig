@@ -22,6 +22,10 @@ temporary.mkdir(parents=True, exist_ok=True)
 
 
 class DiagnosticPeer(FakePeer):
+    def run(self):
+        while not self.stopping.is_set():
+            super().run()
+
     def wait_for(self, kind, request_id=None):
         deadline = time.monotonic() + 20
         with self.condition:
@@ -111,6 +115,9 @@ with tempfile.TemporaryDirectory(prefix="e-", dir=temporary) as name:
         enabled = control("ready")
         assert enabled["engineOpenCount"] == 0
         assert len(enabled["tabs"]) == 2
+        rejected = control("diagnostics_rejections")
+        assert rejected["rejected"] == [None, enabled["tabs"][0]["id"]]
+        assert rejected["scriptingCalls"] == 0
         page = enabled["state"]["binding"]["page"]
         authorization = {"browser_boot_id": enabled["state"]["browser_boot_id"],
             "enable_id": enabled["state"]["binding"]["enable_id"],
@@ -119,6 +126,7 @@ with tempfile.TemporaryDirectory(prefix="e-", dir=temporary) as name:
         materialized = control("snapshot")
         assert materialized["engineOpenCount"] == 1, materialized
         assert len(materialized["tabs"]) == 3
+        assert control("diagnostics_rejections") == rejected
         assert materialized["errors"] == [], (materialized["errors"], "".join(diagnostics))
         print("PASS real extension -> WorkspaceExecutor -> native Python -> inherited AF_UNIX Node -> chrome.debugger navigation")
         snapshot = action("snapshot")
@@ -139,7 +147,17 @@ with tempfile.TemporaryDirectory(prefix="e-", dir=temporary) as name:
         assert int.from_bytes(png[16:20], "big") == 800
         assert int.from_bytes(png[20:24], "big") == 600
         print(f"PASS refs/fill/click/wait/network/body/PNG {int.from_bytes(png[16:20], 'big')}x{int.from_bytes(png[20:24], 'big')}")
+        control("lose_receipt")
         action("click", snapshot_id=snapshot["data"]["snapshot_id"], ref=refs["Receipt"])
+        reconnected = control("receipt_reconnected")
+        assert reconnected["state"]["phase"] == "enabled"
+        assert reconnected["state"]["binding"]["page"] == page
+        authorization["revision"] = reconnected["state"]["revision"]
+        reads = [call for call in reconnected["calls"] if call["name"] == "scripting.executeScript"]
+        assert reads[-1]["debuggerAttached"] is False, reads
+        assert reads[-1]["phase"] == "completed" and reads[-1]["documentId"], reads
+        assert reconnected["engineOpenCount"] == 1, reconnected
+        print("PASS receipt-loss reconnect: exact inactive DOM read without debugger reattachment")
         control("snapshot")
         restarted = control("restart_worker")
         authorization["revision"] = restarted["state"]["revision"]
@@ -159,6 +177,18 @@ with tempfile.TemporaryDirectory(prefix="e-", dir=temporary) as name:
         assert final["engineExecuteCount"] == 11, final
         assert final["errors"] == ["Engine lease revoked", "Engine lease revoked"], final["errors"]
         assert final["engineOpenCount"] == 2
+        before_read = len(final["calls"])
+        detached = control("page_diagnostics")
+        assert detached["inputValue"] == "Ada" and detached["receiptClicks"] == 1, detached
+        observed = control("snapshot")
+        assert observed["calls"][before_read:] == [{
+            "name": "scripting.executeScript", "method": None,
+            "source": {"tabId": final["consent"]["records"][0]["tab_id"]},
+            "phase": "completed", "debuggerAttached": False,
+            "documentId": reads[-1]["documentId"],
+        }], observed["calls"][before_read:]
+        assert observed["engineOpenCount"] == final["engineOpenCount"]
+        assert observed["engineExecuteCount"] == final["engineExecuteCount"]
         assert final["wal"]["effects"][f"r_12345678\0principal\0{waiting}"]["completion"] == "unknown"
         print("Observed modeled-ingress Stop: unknown mutation + two surfaced Engine lease revoked advisories (no daemon cancel)")
         assert all(not call["name"].startswith("windows.") for call in final["calls"])

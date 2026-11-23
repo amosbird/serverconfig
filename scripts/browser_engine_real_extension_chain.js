@@ -71,7 +71,8 @@ async function startWebsite() {
                     <label>Name<input aria-label="Name"></label>
                     <button onclick="fetch('/api',{method:'POST',body:document.querySelector('input').value})
                     .then(r=>r.json()).then(v=>{document.querySelector('output').textContent='Ready '+v.answer})">Load</button>
-                    <button onclick="this.textContent='Receipt once'; window.receiptClicks=(window.receiptClicks||0)+1">Receipt</button>
+                    <button id="receipt" data-clicks="0" onclick="this.textContent='Receipt once';
+                    this.dataset.clicks=Number(this.dataset.clicks)+1">Receipt</button>
                     <output></output>`);
             } else {
                 assert.equal(request.url, "/favicon.ico", "known website paths only");
@@ -112,7 +113,8 @@ async function setup() {
     await fs.copyFile(path.join(__dirname, "browser_engine_chain_worker.js"), path.join(unpacked, "worker.js"));
     await fs.writeFile(path.join(unpacked, "manifest.json"), JSON.stringify({
         manifest_version: 3, name: "Owned full native chain regression", version: "1.0",
-        permissions: ["debugger", "tabs", "tabGroups", "storage"],
+        permissions: ["debugger", "tabs", "tabGroups", "storage", "scripting"],
+        host_permissions: ["http://fixture.test/*"],
         background: {service_worker: "worker.js"},
         content_scripts: [{matches: ["http://fixture.test/*"], js: ["routes.js", "content.js"],
             run_at: "document_start"}],
@@ -218,6 +220,10 @@ async function run(command) {
         ownedChrome.assertObserverDefaults();
         return {...result, posts, finished, lastDiagnostic};
     }
+    case "diagnostics_rejections":
+        return evaluate(() => fixture.diagnosticsRejections());
+    case "page_diagnostics":
+        return pageDiagnostics();
     case "lose_receipt":
         await fs.writeFile(path.join(process.env.HOME, "drop-receipt"), "armed");
         return snapshot();
@@ -226,6 +232,11 @@ async function run(command) {
             message.payload.connected).length >= 2 && native.filter(message =>
             message.operation === "executor_completion").length >= 10, "real receipt retry reconnect");
         assert.ok(await fs.readFile(path.join(process.env.HOME, "receipt-lost"), "utf8"));
+        // Native connected is published before the local authority/record commit.
+        // Use the fixture's production-reducer barrier, not a delay or a wire-only signal.
+        const rebound = await evaluate(() => fixture.ready());
+        assert.equal(rebound.state.phase, "enabled");
+        assert.ok(rebound.state.binding?.page);
         assert.equal((await pageDiagnostics()).receiptClicks, 1);
         return snapshot();
     case "api_finished":
