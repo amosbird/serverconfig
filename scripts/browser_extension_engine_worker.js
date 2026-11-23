@@ -3,8 +3,13 @@ importScripts("playwright-transport.js");
 
 // Only transport plumbing and telemetry live here; every debugger call uses Chrome's real API.
 const output = [], calls = [], errors = [];
+const captureTrace = [], captureOutputs = [], privateFrames = [];
+const captureMethod = method => /^(Page\.(startScreencast|stopScreencast|screencastFrameAck|captureScreenshot))$/.test(method);
 let wake, bridge, lateRawResult, authorized = true, attached = false, tabId, otherId;
 function publish(message) {
+    if (message.type === "cdp" && message.message.result?.data) {
+        captureTrace.push({phase: "published", method: "Page.captureScreenshot"});
+    }
     output.push(message);
     if (wake) { const resolve = wake; wake = null; resolve(); }
 }
@@ -12,10 +17,13 @@ const actualSendCommand = chrome.debugger.sendCommand.bind(chrome.debugger);
 chrome.debugger.sendCommand = async (source, method, params) => {
     const call = {source, method, params, phase: "dispatched"};
     calls.push(call);
+    if (captureMethod(method)) captureTrace.push({method, phase: "dispatched"});
     let result;
     try {
         result = await actualSendCommand(source, method, params);
         call.phase = "completed";
+        if (captureMethod(method)) captureTrace.push({method, phase: "completed"});
+        if (method === "Page.captureScreenshot") captureOutputs.push(result.data);
     } catch (error) {
         call.phase = "failed";
         call.error = error.message;
@@ -27,6 +35,9 @@ chrome.debugger.sendCommand = async (source, method, params) => {
     return result;
 };
 chrome.debugger.onEvent.addListener((source, method, params) => {
+    if (source.tabId === tabId && method === "Page.screencastFrame") {
+        privateFrames.push(params.data);
+    }
     if (source.tabId === tabId && method === "Runtime.consoleAPICalled" &&
         params.args?.some(arg => arg.value === "fixture-late-entered")) {
         publish({type: "late_entered"});
@@ -90,6 +101,16 @@ globalThis.fixture = {
             rootSessionId: bridge.rootSessionId};
     },
     async tabs() { return Promise.all([chrome.tabs.get(tabId), chrome.tabs.get(otherId)]); },
+    captureState() { return {trace: captureTrace, outputs: captureOutputs, privateFrames}; },
+    async presentation() {
+        return {
+            groups: await chrome.tabGroups.query({}),
+            windows: (await chrome.windows.getAll()).map(window => ({
+                id: window.id, focused: window.focused, state: window.state,
+                left: window.left, top: window.top, width: window.width, height: window.height,
+            })),
+        };
+    },
     async personal() {
         return (await chrome.tabs.query({})).filter(tab => tab.id !== tabId).map(tab => ({
             id: tab.id, windowId: tab.windowId, index: tab.index, active: tab.active,

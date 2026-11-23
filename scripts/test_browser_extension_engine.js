@@ -6,6 +6,7 @@ const path = require("node:path");
 const http = require("node:http");
 const {once} = require("node:events");
 const {execFileSync} = require("node:child_process");
+const {decodePng} = require("./browser_capture_png_fixture.js");
 const {launchUnmanagedPipeFixture, waitForWorkerFixture} = require("./browser_unmanaged_pipe_fixture.js");
 const engineRoot = process.env.ABUSH_BROWSER_ENGINE_ROOT;
 const executablePath = process.env.ABUSH_ENGINE_EXTENSION_CHROME;
@@ -59,15 +60,23 @@ function barrier() {
             path.join(extension, "worker.js"));
         await fs.writeFile(path.join(extension, "manifest.json"), JSON.stringify({
             manifest_version: 3, name: "Owned Abush bridge regression", version: "1.0",
-            permissions: ["debugger", "tabs", "scripting"], host_permissions: ["http://127.0.0.1/*"],
+            permissions: ["debugger", "tabs", "tabGroups", "scripting"], host_permissions: ["http://127.0.0.1/*"],
             background: {service_worker: "worker.js"},
         }));
+        // Stable gutter isolates capture restoration from Chrome's native auto-scrollbar relayout.
         website = http.createServer((request, response) => {
-            response.writeHead(200, {"content-type": "text/html"});
-            response.end(`<!doctype html><title>Extension fixture</title>
+            response.writeHead(200, {"content-type": "text/html", "cache-control": "no-store"});
+            response.end(`<!doctype html><title>Extension fixture ${request.url}</title>
+                <style>html,body{margin:0;padding:0;background:#ddd}
+                html{scrollbar-gutter:stable}body{height:3200px}
+                #top,#bottom{position:absolute;left:0;width:100%;height:100px}
+                #top{top:0;background:rgb(20,40,220)}
+                #bottom{top:3100px;background:rgb(20,200,40)}
+                form{padding-top:120px}</style>
+                <div id="top"></div><div id="bottom">Initial bottom</div>
                 <form><input aria-label="Name"></form>
                 <button onclick="document.querySelector('output').textContent='Hello '+document.querySelector('input').value">Apply</button>
-                <output></output><p id="submitted"></p><div style="height:1300px">Tall fixture content</div>
+                <output></output><p id="submitted"></p>
                 <script>
                 window.keyEvents = []; window.submits = [];
                 for (const type of ['keydown', 'keypress', 'keyup']) {
@@ -114,6 +123,7 @@ function barrier() {
         const before = await evaluate(() => fixture.tabs());
         const otherBefore = before[1];
         const personalBefore = await evaluate(() => fixture.personal());
+        const presentationBefore = await evaluate(() => fixture.presentation());
         assert.equal(before[0].active, false);
         assert.equal(personalBefore.filter(tab => tab.active).length, 1);
         assert.deepEqual(await evaluate(() => fixture.pageState()), {visibility: "hidden", focused: false},
@@ -206,26 +216,91 @@ function barrier() {
         ownedChrome.assertObserverDefaults();
         await run({type: "click", snapshot_id: snapshot.data.snapshot_id, ref: ref("Apply")});
         assert.match((await run({type: "text"})).text, /Hello Ada/);
-        const viewport = await run({type: "evaluate", expression:
-            "({width:innerWidth,height:innerHeight,scrollHeight:document.documentElement.scrollHeight})"});
-        const dimensions = [];
-        const captureModes = process.env.ABUSH_ENGINE_FULL_PAGE === "1" ? [false, true] : [false];
-        for (const full_page of captureModes) {
+        const geometry = async () => (await run({type: "evaluate", expression: `({
+            width:innerWidth,height:innerHeight,dpr:devicePixelRatio,x:scrollX,y:scrollY,
+            scrollWidth:document.documentElement.scrollWidth,
+            scrollHeight:document.documentElement.scrollHeight,
+            htmlStyle:document.documentElement.getAttribute('style'),
+            bodyStyle:document.body.getAttribute('style'),
+            top:document.querySelector('#top').getBoundingClientRect().toJSON(),
+            bottom:document.querySelector('#bottom').getBoundingClientRect().toJSON(),
+            styles:[document.documentElement,document.body].map(element => {
+                const style=getComputedStyle(element);
+                return [style.width,style.height,style.overflow,style.position,style.scrollbarWidth];
+            })})`})).data.value;
+        const dimensions = [], imageOutputs = [];
+        let captures = 0;
+        async function capture(full_page, topColor, bottomColor) {
+            const before = await geometry();
+            assert.ok(before.scrollHeight > before.height * 2, "fixture must exceed two viewports");
+            const prior = await evaluate(() => fixture.captureState());
             const shot = await run({type: "screenshot", full_page});
+            assert.equal(shot.images.length, 1);
             assert.equal(shot.images[0].mime_type, "image/png");
-            const png = Buffer.from(shot.images[0].data_base64, "base64");
-            assert.ok(png.length <= 500000);
-            assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-            dimensions.push({width: png.readUInt32BE(16), height: png.readUInt32BE(20)});
+            const base64 = shot.images[0].data_base64;
+            const image = decodePng(Buffer.from(base64, "base64"));
+            const scale = before.dpr;
+            assert.equal(image.width, Math.round((full_page ? before.scrollWidth : before.width) * scale));
+            assert.equal(image.height, Math.round((full_page ? before.scrollHeight : before.height) * scale));
+            assert.deepEqual(image.pixel(Math.floor(40 * scale), Math.floor(40 * scale)), topColor);
+            if (full_page) assert.deepEqual(image.pixel(Math.floor(40 * scale),
+                Math.floor((before.bottom.y + 40) * scale)), bottomColor);
+            const after = await evaluate(() => fixture.captureState());
+            assert.equal(after.outputs.length, ++captures);
+            assert.equal(base64, after.outputs.at(-1), "Engine must return original native PNG bytes");
+            imageOutputs.push(shot);
+            dimensions.push({full_page, width: image.width, height: image.height, dpr: scale});
+            const trace = after.trace.slice(prior.trace.length);
+            const dispatched = trace.filter(event => event.phase === "dispatched");
+            for (const method of ["Page.startScreencast", "Page.captureScreenshot", "Page.stopScreencast"]) {
+                assert.equal(dispatched.filter(event => event.method === method).length, 1, method);
+                assert.equal(trace.filter(event => event.method === method &&
+                    event.phase === "completed").length, 1, `${method} completion`);
+            }
+            const index = (method, phase) => trace.findIndex(event =>
+                event.method === method && event.phase === phase);
+            assert.ok(index("Page.screencastFrameAck", "completed") >= 0);
+            assert.ok(index("Page.screencastFrameAck", "completed") <
+                index("Page.captureScreenshot", "dispatched"));
+            assert.ok(index("Page.startScreencast", "completed") <
+                index("Page.captureScreenshot", "dispatched"));
+            assert.ok(index("Page.captureScreenshot", "completed") <
+                index("Page.stopScreencast", "dispatched"));
+            assert.ok(index("Page.stopScreencast", "completed") <
+                index("Page.captureScreenshot", "published"), "cleanup must precede output publication");
+            assert.ok(after.privateFrames.length > prior.privateFrames.length);
+            assert.equal(emitted.some(message => /screencast/i.test(message.method || "")), false);
+            for (const frame of after.privateFrames) {
+                assert.equal(JSON.stringify(emitted).includes(frame), false, "private JPEG leaked to CDP");
+                assert.equal(JSON.stringify(imageOutputs).includes(frame), false, "private JPEG leaked to Engine output");
+            }
+            assert.deepEqual(await geometry(), before, "capture changed viewport, scroll, styles or geometry");
+            assert.equal(engine.leases.get("extension"), lease, "capture must preserve the live lease");
+            assert.equal((await evaluate(() => fixture.tabs()))[0].active, false);
+            assert.deepEqual(await evaluate(() => fixture.personal()), personalBefore);
+            assert.deepEqual(await evaluate(() => fixture.presentation()), presentationBefore);
         }
-        assert.equal(dimensions[0].width, viewport.data.value.width);
-        assert.equal(dimensions[0].height, viewport.data.value.height);
-        if (dimensions.length === 2) {
-            assert.ok(dimensions[1].height > dimensions[0].height);
-            assert.ok(dimensions[1].height >= viewport.data.value.scrollHeight);
-        } else console.log("SKIP background full-page capture (opt in with ABUSH_ENGINE_FULL_PAGE=1)");
+        for (const [round, colors] of [
+            [[20, 40, 220], [20, 200, 40]],
+            [[220, 40, 20], [180, 20, 200]],
+        ].entries()) {
+            await run({type: "evaluate", expression: `(() => {
+                document.querySelector('#top').style.background='rgb(${colors[0]})';
+                document.querySelector('#bottom').style.background='rgb(${colors[1]})';
+                document.querySelector('#bottom').textContent='Fresh bottom ${round}';
+            })()`});
+            assert.match((await run({type: "text"})).text, new RegExp(`Fresh bottom ${round}`));
+            await capture(false, ...colors);
+            await capture(true, ...colors);
+        }
+        await run({type: "navigate", url: `${origin}/second`});
+        const secondSnapshot = await run({type: "snapshot"});
+        assert.notEqual(secondSnapshot.data.snapshot_id, snapshot.data.snapshot_id);
+        assert.match((await run({type: "text"})).text, /Initial bottom/);
+        await capture(false, [20, 40, 220], [20, 200, 40]);
+        await capture(true, [20, 40, 220], [20, 200, 40]);
         assert.deepEqual(protocolErrors, []);
-        console.log("PASS pinned official Engine exact page, navigation, refs, fill/press/click, changed text and viewport PNG");
+        console.log(`PASS repeated fresh viewport/full-page decoded PNGs across two documents on one lease ${JSON.stringify(dimensions)}`);
         const state = await evaluate(() => fixture.state());
         assert.equal(state.calls.every(c => c.source.tabId === setup.tabId), true);
         assert.equal(state.calls.some(c => /bringToFront|activateTarget|closeTarget|setDeviceMetrics|setWindow/.test(c.method)), false);
@@ -234,6 +309,9 @@ function barrier() {
             {id: 100001, method: "Target.getTargetInfo", params: {targetId: setup.otherTargetId}},
             {id: 100002, method: "Runtime.evaluate", sessionId: "foreign", params: {expression: "1"}},
             {id: 100003, method: "Browser.close"},
+            {id: 100006, sessionId: state.rootSessionId, method: "Page.startScreencast"},
+            {id: 100007, sessionId: state.rootSessionId, method: "Page.stopScreencast"},
+            {id: 100008, sessionId: state.rootSessionId, method: "Page.screencastFrameAck", params: {sessionId: 1}},
         ]) assert.ok((await cdp(message)).error);
         assert.equal((await evaluate(() => fixture.state())).calls.length, state.calls.length);
         engineReceiving = false;
@@ -260,10 +338,11 @@ function barrier() {
             "detaching the owned debugger must remove visibility emulation without activating the tab");
         const after = await evaluate(() => fixture.tabs());
         assert.equal(after[0].id, setup.tabId);
-        assert.equal(after[0].url, `${origin}/owned`);
+        assert.equal(after[0].url, `${origin}/second`);
         assert.deepEqual(after[1], otherBefore);
         assert.equal(after[0].active, false);
         assert.deepEqual(await evaluate(() => fixture.personal()), personalBefore);
+        assert.deepEqual(await evaluate(() => fixture.presentation()), presentationBefore);
         ownedChrome.assertObserverDefaults();
         assert.equal(browser.isConnected(), true);
         assert.equal(context.pages().length, 0, "fixture observer must not attach Engine's page");
