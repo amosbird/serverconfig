@@ -6,6 +6,9 @@ const path = require("node:path");
 const readline = require("node:readline");
 const {spawn} = require("node:child_process");
 const {once} = require("node:events");
+if (process.env.ABUSH_ENGINE_REAL_EXTENSION === "1") {
+    require("./browser_engine_real_extension_chain.js");
+} else {
 const {fixture} = require("./browser_tab_groups_fixture.js");
 const extension = process.argv[2], host = process.argv[3], remoteRoot = process.argv[4];
 const artifacts = process.argv[5];
@@ -296,3 +299,4 @@ async function teardown() {
         }
     } finally { controls.close(); await teardown(); }
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
+}
