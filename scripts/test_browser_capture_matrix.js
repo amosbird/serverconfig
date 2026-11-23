@@ -85,11 +85,11 @@ async function runRow(row, origin, artifacts, playwright) {
             executablePath: process.env.ABUSH_ENGINE_EXTENSION_CHROME});
         record.pid = owned.pid;
         const root = await owned.browser.newBrowserCDPSession();
-        const ready = owned.context.waitForEvent("serviceworker", {timeout: 3000});
+        const ready = owned.context.waitForEvent("serviceworker", {predicate: worker => worker.url().endsWith("/worker.js"), timeout: 5000});
         ready.catch(() => {});
         const loaded = await bounded("extension load", () => root.send("Extensions.loadUnpacked", {path: extension}));
         worker = owned.context.serviceWorkers().find(w => w.url().startsWith(`chrome-extension://${loaded.id}/`)) || await ready;
-        await bounded("worker committed", () => waitForWorkerFixture(worker));
+        await bounded("worker committed", () => waitForWorkerFixture(worker), 11000);
         await root.detach();
         const setup = await evaluate(() => fixture.setup());
         record.tabId = setup.tabId;
@@ -150,7 +150,7 @@ async function runRow(row, origin, artifacts, playwright) {
             bottom: document.querySelector("#bottom").getBoundingClientRect().toJSON()});
         record.before = await bounded("DOM metrics", () => lease.page.evaluate(dom));
         const raw = (method, params) => evaluate(({method, params}) => fixture.raw(method, params), {method, params});
-        if (row.includes("metrics")) {
+        if (row.includes("metrics") && !row.includes("bridge")) {
             record.override = {width: row.includes("_content") ? record.before.scrollWidth : record.before.width,
                 height: row.includes("_document") ? record.before.scrollHeight : record.before.height,
                 deviceScaleFactor: 0, mobile: false, dontSetVisibleSize: row.endsWith("_true")};
@@ -160,6 +160,7 @@ async function runRow(row, origin, artifacts, playwright) {
             // Response-ordered test barrier, not a second capture or window-resize path.
             record.afterOverride = await bounded("override DOM barrier", () => lease.page.evaluate(dom));
         }
+        if (row.includes("bridge")) await evaluate(mode => fixture.prepareCapture(mode), row);
         if (row.includes("_paint_barrier")) {
             await bounded("two committed animation frames", () => lease.page.evaluate(() =>
                 new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))));
