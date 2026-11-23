@@ -161,3 +161,16 @@ A consistent Emacs + Vim hybrid runs through the entire setup:
    If editing tmux config, preserve the `fcitx5-tmux-hook` integration.
 7. **Offline checks**: Use focused regression tests where provided. Never validate
    window-manager changes by reloading the live desktop without explicit permission.
+8. **Browser executor admission**: Only the canonical primary profile selected by
+   `ABUSH_CHROME_PROFILE` (default `~/.config/google-chrome-main`) may connect Abush
+   browser peers. Secondary profiles keep ordinary link and scroll routing but
+   cannot replace that executor. Before any peer hello, the current native port
+   must complete the automatic v10 `browser_executor_prepare` / `browser_executor_ready`
+   handshake with exact browser boot, native connection, protocol, and capabilities.
+   Legacy identity-only bootstrap does not grant admission. Reconnect requires a
+   fresh native connection; readiness never changes the saved Start/Stop preference.
+   Keep the shared native messaging and forwarded Unix socket paths; do not bypass
+   admission in fixtures. Regression checks include `test_browser_native_ready.js`,
+   `test_browser_popup_readiness.js`, and the broker Python tests. Set
+   `ABUSH_ENGINE_REAL_EXTENSION=1` and `ABUSH_ENGINE_EXTENSION_CHROME` to an
+   extension-capable executable when running the isolated full engine chain.
