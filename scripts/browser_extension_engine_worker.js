@@ -36,6 +36,21 @@ globalThis.fixture = {
     async setup() {
         tabId = (await chrome.tabs.create({url: "about:blank#work", active: false})).id;
         otherId = (await chrome.tabs.create({url: "about:blank#other", active: false})).id;
+        await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                chrome.tabs.onUpdated.removeListener(updated);
+                reject(new Error("Blank control document did not commit"));
+            }, 2000);
+            function updated(id, change) {
+                if (id === otherId && change.status === "complete") {
+                    clearTimeout(timer); chrome.tabs.onUpdated.removeListener(updated); resolve();
+                }
+            }
+            chrome.tabs.onUpdated.addListener(updated);
+            chrome.tabs.get(otherId).then(tab => {
+                if (tab.status === "complete") updated(otherId, {status: "complete"});
+            }, error => { clearTimeout(timer); chrome.tabs.onUpdated.removeListener(updated); reject(error); });
+        });
         await chrome.debugger.attach({tabId}, "1.3");
         attached = true;
 
@@ -63,6 +78,12 @@ globalThis.fixture = {
         });
         if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.text);
         return reply.result.value;
+    },
+    async releasedPageState() {
+        const results = await chrome.scripting.executeScript({target: {tabId}, func: () => ({
+            visibility: document.visibilityState, focused: document.hasFocus(),
+        })});
+        return results[0].result;
     },
     state() {
         return {calls, errors, lateRawResult, closed: bridge.closed,

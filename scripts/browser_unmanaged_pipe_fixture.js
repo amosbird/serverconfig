@@ -22,7 +22,7 @@ async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts
         // Installed component extensions are not part of this private fixture.
         "--disable-component-extensions-with-background-pages",
         "--enable-unsafe-extension-debugging", "--no-first-run", "--no-default-browser-check",
-        "--no-sandbox", "--window-size=800,687", `--user-data-dir=${profile}`, "about:blank"];
+        "--no-sandbox", "--window-size=800,743", `--user-data-dir=${profile}`, "about:blank"];
     const child = spawn(executablePath, args, {
         stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
         env: {...process.env, TMPDIR: artifacts},
@@ -173,7 +173,8 @@ if (require.main === module) {
             const info = await root.send("SystemInfo.getProcessInfo");
             assert.equal(info.processInfo.find(process => process.type === "browser").id, fixture.pid);
             assert.equal(fixture.context.pages().length, 1);
-            assert.equal(await fixture.context.pages()[0].evaluate(() => document.visibilityState), "visible");
+            assert.equal(await bounded("owned visible page observation", () =>
+                fixture.context.pages()[0].evaluate(() => document.visibilityState)), "visible");
             await root.detach();
             fixture.assertObserverDefaults();
             console.log("PASS unmanaged owned Chrome PIPE identity and official noDefaults observer");
