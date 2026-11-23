@@ -16,10 +16,14 @@ async function control(action, details = {}) {
         automationOn = response.automation_on;
         stopPending = response.stop_pending === true;
         toggle.textContent = stopPending ? "Retry Stop" : automationOn ? "Stop automation" : "Start automation";
+        const executorPhase = response.browser_executor?.phase;
         state.textContent = stopPending ? "Automation off locally · Stop not saved · retry before restarting" :
             response.preference_pending ? "Automation preference pending · browser work blocked" :
-            automationOn ? "Automation on · work tabs open on first navigation" :
-            "Automation off · pages remain open";
+            !automationOn ? "Automation off · pages remain open" :
+            executorPhase === "ready" ? "Automation on · work tabs open on first navigation" :
+            executorPhase === "pending" ? "Automation preference on · browser executor preparing" :
+            executorPhase === "secondary" ? "Automation preference on · use the configured primary browser" :
+            "Automation preference on · browser executor unavailable";
         list.replaceChildren(...response.remotes.map(remote => {
             const item = document.createElement("li");
             const status = remote.creation_unknown ?
@@ -40,7 +44,7 @@ async function control(action, details = {}) {
             }
             return item;
         }));
-        error.textContent = response.error || "";
+        error.textContent = response.error || response.browser_executor?.error || "";
     } catch (failure) {
         if (current === generation) error.textContent = failure.message;
     } finally {
