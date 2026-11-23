@@ -7,7 +7,7 @@ const remoteKey = "r_12345678";
 const stagingAdvisories = [];
 let wake, executor, chainDispatcher, ready, workTab = null, personal = [], frameTail = Promise.resolve();
 let sequence = 0;
-const registrations = [];
+const registrations = [], attachedTabs = new Set(), apiRequests = new Map();
 const localStateChanges = event();
 function enabledReady() {
     return Boolean(executor.remotes.get(remoteKey)?.connected &&
@@ -88,6 +88,8 @@ for (const [areaName, names] of Object.entries({
                     if (args[0].active !== false) throw new Error("Work tab must be inactive");
                     workTab = result.id;
                 }
+                if (areaName === "debugger" && name === "attach") attachedTabs.add(args[0].tabId);
+                if (areaName === "debugger" && name === "detach") attachedTabs.delete(args[0].tabId);
                 frame(`api_result:${areaName}.${name}:${call.method || ""}`);
                 return result;
             } catch (error) {
@@ -124,7 +126,28 @@ function routeWorker() {
     registerWorkspaceWindowListeners(chrome, executor, ready, failure);
     registerRuntimeMessageRouter(chrome, executor, ready);
     chrome.debugger.onDetach.addListener(source => {
-        if (source.tabId) executor.debuggerDetached(source.tabId);
+        if (source.tabId && !source.sessionId) {
+            attachedTabs.delete(source.tabId);
+            executor.debuggerDetached(source.tabId);
+        }
+    });
+    chrome.debugger.onEvent.addListener((source, method, params) => {
+        if (source.tabId !== workTab || source.sessionId) return;
+        try {
+            if (method === "Network.requestWillBeSent" &&
+                    params.request.url === "http://fixture.test/api") {
+                if (params.request.method !== "POST" || params.request.postData !== "Ada" ||
+                        apiRequests.has(params.requestId)) throw new Error("Unexpected API request");
+                apiRequests.set(params.requestId, {tabId: source.tabId, finished: false});
+            } else if (method === "Network.loadingFinished" && apiRequests.has(params.requestId)) {
+                const request = apiRequests.get(params.requestId);
+                if (request.finished) throw new Error("Duplicate API loadingFinished");
+                request.finished = true;
+                publish({kind: "api_finished", tabId: request.tabId, requestId: params.requestId});
+            } else if (method === "Network.loadingFailed" && apiRequests.has(params.requestId)) {
+                throw new Error(`API loadingFailed: ${params.errorText}`);
+            }
+        } catch (error) { failure(error); }
     });
 }
 async function snapshot() {
@@ -155,6 +178,23 @@ async function snapshot() {
         engineExecuteCount: native.filter(item => item.operation === "engine_execute").length};
 }
 globalThis.fixture = {
+    async pageDiagnostics() {
+        if (workTab === null || !attachedTabs.has(workTab)) {
+            throw new Error("Diagnostics require the already attached exact owned work tab");
+        }
+        const tab = await chrome.tabs.get(workTab);
+        if (tab.active !== false || tab.url !== "http://fixture.test/") {
+            throw new Error("Diagnostics require the inactive fixture document");
+        }
+        // Read through the existing extension attachment, never another page debugger client.
+        const result = await bounded(() => chrome.debugger.sendCommand({tabId: workTab},
+            "Runtime.evaluate", {expression: `({inputValue: document.querySelector('input')?.value,
+                receiptClicks: window.receiptClicks || 0, url: location.href,
+                viewport: {width: innerWidth, height: innerHeight}})`, returnByValue: true}),
+        "exact owned page diagnostics", 5000);
+        if (result.exceptionDetails || !result.result?.value) throw new Error("Page diagnostics failed");
+        return result.result.value;
+    },
     async setup() {
         await chrome.tabs.create({url: "about:blank#personal", active: false});
         personal = (await chrome.tabs.query({})).map(tabView);

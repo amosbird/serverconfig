@@ -13,12 +13,19 @@ async function bounded(label, task, ms = 10000) {
     } finally { clearTimeout(timer); }
 }
 
-async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts, observePages = true}) {
+async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts, observePages = true,
+    fixtureHostPort = null}) {
     assert.equal(process.env.ABUSH_ENGINE_FIXTURE, "1", "private fixture launch only");
     assert.ok(path.isAbsolute(executablePath) && path.isAbsolute(artifacts));
     const profile = path.join(artifacts, "profile");
     await fs.mkdir(profile, {recursive: false, mode: 0o700});
-    const args = ["--headless=new", "--remote-debugging-pipe",
+    assert.ok(fixtureHostPort === null || (Number.isInteger(fixtureHostPort) &&
+        fixtureHostPort > 0 && fixtureHostPort <= 65535), "valid private website port");
+    const websiteArgs = fixtureHostPort === null ? [] : [
+        `--host-resolver-rules=MAP fixture.test 127.0.0.1:${fixtureHostPort}, MAP * ~NOTFOUND`,
+        "--no-proxy-server",
+    ];
+    const args = ["--headless=new", "--remote-debugging-pipe", ...websiteArgs,
         // Installed component extensions are not part of this private fixture.
         "--disable-component-extensions-with-background-pages",
         "--enable-unsafe-extension-debugging", "--no-first-run", "--no-default-browser-check",
@@ -28,7 +35,7 @@ async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts
         env: {...process.env, TMPDIR: artifacts},
     });
     const pid = child.pid;
-    const failures = [], commands = [];
+    const failures = [], commands = [], observedTargets = [];
     let stderr = "", buffer = Buffer.alloc(0), closed = false, stopping = false;
     let pendingBytes = 0, pendingWrites = 0, frameTimer;
     const input = child.stdio[3], output = child.stdio[4];
@@ -81,6 +88,9 @@ async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts
                 if (end > maxBytes) throw new Error("Owned Chrome CDP frame oversized");
                 const message = JSON.parse(buffer.subarray(0, end).toString("utf8"));
                 buffer = buffer.subarray(end + 1);
+                if (message.method === "Target.attachedToTarget") {
+                    observedTargets.push(message.params.targetInfo.type);
+                }
                 if (!transport.onmessage) throw new Error("Owned Chrome observer not registered");
                 transport.onmessage(message);
             }
@@ -98,6 +108,9 @@ async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts
         assert.deepEqual(commands.filter(method =>
             /setFocusEmulationEnabled|setWebLifecycleState|setDeviceMetricsOverride/.test(method)), [],
         "noDefaults observer must not prepare focus, background lifecycle or viewport");
+        if (!observePages) assert.deepEqual(observedTargets.filter(type =>
+            type !== "service_worker" && type !== "browser"), [],
+        "service-worker observer must never attach to page targets");
         if (failures.length) throw new AggregateError(failures, `Owned Chrome pipe ${pid}`);
     }
     async function shutdown() {

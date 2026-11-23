@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const readline = require("node:readline");
+const http = require("node:http");
 const {spawn} = require("node:child_process");
 const {once} = require("node:events");
 const {launchUnmanagedPipeFixture, waitForWorkerFixture} = require("./browser_unmanaged_pipe_fixture.js");
@@ -20,10 +21,10 @@ function barrier() {
     const promise = new Promise(yes => { resolve = yes; });
     return {promise, resolve};
 }
-let context, browser, worker, python, ownedChrome, pump, primaryError, fixtureReady = false;
+let context, browser, worker, python, ownedChrome, website, pump, primaryError, fixtureReady = false;
 let wake = barrier(), blocked = barrier(), posts = 0, finished = 0, stopping = false;
 let lastDiagnostic = null;
-const failures = [], native = [], tasks = new Set();
+const failures = [], native = [], tasks = new Set(), finishedRequests = new Set();
 function signal() { const previous = wake; wake = barrier(); previous.resolve(); }
 function evaluate(fn, argument) {
     return bounded(() => worker.evaluate(fn, argument), "extension worker evaluation", 20000);
@@ -42,6 +43,58 @@ async function until(predicate, label) {
             await changed;
         }
     }, label, 15000);
+}
+async function startWebsite() {
+    website = http.createServer((request, response) => {
+        const task = (async () => {
+            assert.equal(request.headers.host, "fixture.test", "only the fixture hostname");
+            if (request.url === "/api") {
+                assert.equal(request.method, "POST");
+                const body = await bounded(async () => {
+                    const chunks = [];
+                    let size = 0;
+                    for await (const chunk of request) {
+                        size += chunk.length;
+                        assert.ok(size <= 3, "bounded Ada request body");
+                        chunks.push(chunk);
+                    }
+                    return Buffer.concat(chunks).toString("utf8");
+                }, "website API body", 5000);
+                assert.equal(body, "Ada");
+                assert.equal(++posts, 1, "API POST exactly once");
+                response.writeHead(200, {"Content-Type": "application/json"});
+                response.end(JSON.stringify({answer: 42}));
+            } else if (request.url === "/" && request.method === "GET") {
+                response.writeHead(200, {"Content-Type": "text/html",
+                    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'"});
+                response.end(`<!doctype html><title>Chain fixture</title>
+                    <label>Name<input aria-label="Name"></label>
+                    <button onclick="fetch('/api',{method:'POST',body:document.querySelector('input').value})
+                    .then(r=>r.json()).then(v=>{document.querySelector('output').textContent='Ready '+v.answer})">Load</button>
+                    <button onclick="this.textContent='Receipt once'; window.receiptClicks=(window.receiptClicks||0)+1">Receipt</button>
+                    <output></output>`);
+            } else {
+                assert.equal(request.url, "/favicon.ico", "known website paths only");
+                assert.equal(request.method, "GET");
+                response.writeHead(204);
+                response.end();
+            }
+            signal();
+        })();
+        tasks.add(task);
+        task.catch(error => {
+            failures.push(error); signal(); request.destroy(); response.destroy();
+        }).finally(() => tasks.delete(task));
+    });
+    website.headersTimeout = 5000;
+    website.requestTimeout = 5000;
+    website.setTimeout(5000, socket => socket.destroy());
+    website.on("error", error => { failures.push(error); signal(); });
+    const listening = once(website, "listening");
+    listening.catch(() => {});
+    website.listen(0, "127.0.0.1");
+    await bounded(() => listening, "website startup", 5000);
+    return website.address().port;
 }
 async function setup() {
     await fs.mkdir(artifacts, {recursive: true});
@@ -65,30 +118,11 @@ async function setup() {
             run_at: "document_start"}],
     }));
     const playwright = await loadOfficialPlaywright(artifacts);
-    ownedChrome = await launchUnmanagedPipeFixture({playwright, executablePath, artifacts});
+    const fixtureHostPort = await startWebsite();
+    ownedChrome = await launchUnmanagedPipeFixture({playwright, executablePath, artifacts,
+        observePages: false, fixtureHostPort});
     ({context, browser} = ownedChrome);
     const root = await browser.newBrowserCDPSession();
-    await context.route("**/*", async route => {
-        const request = route.request(), url = new URL(request.url());
-        assert.equal(url.origin, "http://fixture.test", "no external website requests");
-        if (url.pathname === "/api") {
-            assert.equal(request.method(), "POST");
-            assert.equal(request.postData(), "Ada");
-            posts++;
-            await route.fulfill({contentType: "application/json", body: JSON.stringify({answer: 42})});
-        } else {
-            await route.fulfill({contentType: "text/html", body: `<!doctype html><title>Chain fixture</title>
-                <label>Name<input aria-label="Name"></label>
-                <button onclick="fetch('/api',{method:'POST',body:document.querySelector('input').value})
-                .then(r=>r.json()).then(v=>{document.querySelector('output').textContent='Ready '+v.answer})">Load</button>
-                <button onclick="this.textContent='Receipt once'; window.receiptClicks=(window.receiptClicks||0)+1">Receipt</button>
-                <output></output>`});
-        }
-        signal();
-    });
-    context.on("requestfinished", request => {
-        if (request.url().endsWith("/api")) { finished++; signal(); }
-    });
     const workerReady = context.waitForEvent("serviceworker", {
         predicate: candidate => candidate.url().endsWith("/worker.js"), timeout: 10000,
     });
@@ -108,6 +142,13 @@ async function setup() {
             for (const item of messages) {
                 if (item.kind === "stop") return;
                 if (item.kind === "wait_entered") { blocked.resolve(); continue; }
+                if (item.kind === "api_finished") {
+                    assert.ok(Number.isInteger(item.tabId) && typeof item.requestId === "string");
+                    const identity = JSON.stringify([item.tabId, item.requestId]);
+                    assert.ok(!finishedRequests.has(identity), "client finish exactly once");
+                    finishedRequests.add(identity);
+                    finished++; signal(); continue;
+                }
                 if (item.kind === "diagnostic") {
                     lastDiagnostic = item;
                     if (item.phase === "api_error" || item.phase === "error") {
@@ -160,10 +201,11 @@ async function snapshot(op = "snapshot") {
     ownedChrome.assertObserverDefaults();
     return {...result, posts, finished, lastDiagnostic};
 }
-function page() {
-    const match = context.pages().find(page => page.url().startsWith("http://fixture.test"));
-    assert.ok(match, "production navigation must materialize an exact fixture page");
-    return match;
+async function pageDiagnostics() {
+    const result = await evaluate(() => fixture.pageDiagnostics());
+    assert.equal(result.url, "http://fixture.test/");
+    ownedChrome.assertObserverDefaults();
+    return result;
 }
 async function run(command) {
     switch (command.op) {
@@ -184,11 +226,12 @@ async function run(command) {
             message.payload.connected).length >= 2 && native.filter(message =>
             message.operation === "executor_completion").length >= 10, "real receipt retry reconnect");
         assert.ok(await fs.readFile(path.join(process.env.HOME, "receipt-lost"), "utf8"));
-        assert.equal(await page().evaluate(() => window.receiptClicks), 1);
+        assert.equal((await pageDiagnostics()).receiptClicks, 1);
         return snapshot();
     case "api_finished":
         await until(() => finished === 1, "API finished event");
-        assert.equal(await page().getByRole("textbox").inputValue(), "Ada");
+        assert.equal(posts, 1);
+        assert.equal((await pageDiagnostics()).inputValue, "Ada");
         return snapshot();
     case "arm_wait": blocked = barrier(); return snapshot();
     case "wait_entered":
@@ -218,6 +261,12 @@ async function teardown() {
         if (python.exitCode !== 0) teardownErrors.push(new Error(`Python exited ${python.exitCode}`));
     }
     if (ownedChrome) await attempt("owned Chrome shutdown", () => ownedChrome.shutdown(), 15000);
+    if (website) {
+        await attempt("website shutdown", () => new Promise((resolve, reject) => {
+            website.close(error => error ? reject(error) : resolve());
+            website.closeAllConnections();
+        }));
+    }
     if (teardownErrors.length) throw new AggregateError(
         [...(primaryError ? [primaryError] : []), ...teardownErrors], "real extension chain teardown");
 }
