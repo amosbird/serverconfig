@@ -5,6 +5,7 @@ importScripts("background.js");
 const output = [], calls = [], errors = [], frames = [], native = [], expectedStagingErrors = [];
 const remoteKey = "r_12345678";
 const stagingAdvisories = [];
+let lastCapture = null;
 let wake, executor, chainDispatcher, ready, workTab = null, personal = [], frameTail = Promise.resolve();
 let sequence = 0;
 const registrations = [], attachedTabs = new Set(), apiRequests = new Map();
@@ -85,6 +86,9 @@ for (const [areaName, names] of Object.entries({
                     publish({kind: "diagnostic", phase: "capture_enter", source: args[0], params: args[2]});
                 }
                 const result = await actual(...args);
+                if (name === "sendCommand" && args[1] === "Page.captureScreenshot") {
+                    lastCapture = {data: result.data, width: args[2].clip.width, height: args[2].clip.height};
+                }
                 if (areaName === "tabs" && name === "create" &&
                         args[0].url?.startsWith("about:blank#abush-work-")) {
                     if (workTab !== null) throw new Error("More than one creation-time work tab");
@@ -181,6 +185,10 @@ async function snapshot() {
         engineExecuteCount: native.filter(item => item.operation === "engine_execute").length};
 }
 globalThis.fixture = {
+    captureEvidence() {
+        if (!lastCapture || typeof lastCapture.data !== "string") throw new Error("Native PNG evidence missing");
+        return lastCapture;
+    },
     async pageDiagnostics(tabId = workTab) {
         if (workTab === null || tabId !== workTab) {
             throw new Error("Diagnostics require the creation-time exact owned work tab");

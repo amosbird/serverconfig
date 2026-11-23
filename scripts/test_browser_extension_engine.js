@@ -97,7 +97,9 @@ function barrier() {
         await bounded("page-only HTTP fixture listen", () => listening);
         const origin = `http://127.0.0.1:${website.address().port}`;
         const playwright = await loadOfficialPlaywright(artifacts);
-        ownedChrome = await launchUnmanagedPipeFixture({playwright, executablePath, artifacts, observePages: false});
+        const deviceScaleFactor = process.env.ABUSH_ENGINE_TEST_DPR === undefined ? null : Number(process.env.ABUSH_ENGINE_TEST_DPR);
+        ownedChrome = await launchUnmanagedPipeFixture({playwright, executablePath, artifacts,
+            observePages: false, deviceScaleFactor});
         ({context, browser} = ownedChrome);
         const root = await browser.newBrowserCDPSession();
         const workerReady = context.waitForEvent("serviceworker", {

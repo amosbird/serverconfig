@@ -14,7 +14,7 @@ async function bounded(label, task, ms = 10000) {
 }
 
 async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts, observePages = true,
-    fixtureHostPort = null}) {
+    fixtureHostPort = null, deviceScaleFactor = null}) {
     assert.equal(process.env.ABUSH_ENGINE_FIXTURE, "1", "private fixture launch only");
     assert.ok(path.isAbsolute(executablePath) && path.isAbsolute(artifacts));
     const profile = path.join(artifacts, "profile");
@@ -25,7 +25,9 @@ async function launchUnmanagedPipeFixture({playwright, executablePath, artifacts
         `--host-resolver-rules=MAP fixture.test 127.0.0.1:${fixtureHostPort}, MAP * ~NOTFOUND`,
         "--no-proxy-server",
     ];
-    const args = ["--headless=new", "--remote-debugging-pipe", ...websiteArgs,
+    assert.ok(deviceScaleFactor === null || [1, 1.25, 2].includes(deviceScaleFactor), "supported fixture device scale");
+    const scaleArgs = deviceScaleFactor === null ? [] : [`--force-device-scale-factor=${deviceScaleFactor}`];
+    const args = ["--headless=new", "--remote-debugging-pipe", ...websiteArgs, ...scaleArgs,
         // Installed component extensions are not part of this private fixture.
         "--disable-component-extensions-with-background-pages",
         "--enable-unsafe-extension-debugging", "--no-first-run", "--no-default-browser-check",

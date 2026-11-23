@@ -220,6 +220,16 @@ async function run(command) {
         ownedChrome.assertObserverDefaults();
         return {...result, posts, finished, lastDiagnostic};
     }
+    case "verify_full_capture": {
+        const evidence = await evaluate(() => fixture.captureEvidence());
+        const {decodePng} = require("./browser_capture_png_fixture.js");
+        const image = decodePng(Buffer.from(evidence.data, "base64"));
+        assert.equal(image.width, evidence.width);
+        assert.equal(image.height, evidence.height);
+        assert.deepEqual(image.pixel(40, 40), [20, 40, 220]);
+        assert.deepEqual(image.pixel(40, 1540), [20, 200, 40]);
+        return {width: image.width, height: image.height, top: true, bottom: true};
+    }
     case "diagnostics_rejections":
         return evaluate(() => fixture.diagnosticsRejections());
     case "page_diagnostics":
