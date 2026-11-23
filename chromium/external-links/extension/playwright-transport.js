@@ -6,6 +6,7 @@
     // No viewport/window emulation: screenshots requiring a metrics override remain denied.
     const MAX_BODY = 256 * 1024;
     const MAX_CAPTURE = 128;
+    const FOCUS_TIMEOUT_MS = 2000;
     const PAGE_COMMANDS = new Set([
         "Page.enable", "Page.disable", "Page.getFrameTree", "Page.getLayoutMetrics",
         "Page.setLifecycleEventsEnabled", "Page.createIsolatedWorld",
@@ -60,6 +61,7 @@
             this.retiredSessions = new Set();
             this.targetInfo = null;
             this.bootstrap = null;
+            this.rootAttachment = null;
             this.buffer = [];
             this.eventListener = (source, method, params) => {
                 try { this.event(source, method, copy(params || {})); }
@@ -159,6 +161,38 @@
             }
         }
 
+        async attachRoot(generation) {
+            if (this.sessions.has(this.rootSessionId)) return;
+            if (!this.rootAttachment) {
+                this.rootAttachment = (async () => {
+                    const info = await this.exactTarget(generation);
+                    if (!this.authorized(generation)) throw new Error("CDP authorization revoked");
+                    let timer;
+                    try {
+                        // noDefaults skips Playwright's focus emulation; hidden tabs can drop trusted input.
+                        await Promise.race([
+                            this.command(null, "Emulation.setFocusEmulationEnabled", {enabled: true}, generation),
+                            new Promise((_, reject) => { timer = setTimeout(() =>
+                                reject(new Error("Exact-tab focus preparation timed out")), FOCUS_TIMEOUT_MS); }),
+                        ]);
+                    } finally { clearTimeout(timer); }
+                    if (!this.authorized(generation)) throw new Error("CDP authorization revoked");
+                    this.sessions.set(this.rootSessionId, {id: this.rootSessionId,
+                        parent: null, targetId: info.targetId});
+                    this.emit({method: "Target.attachedToTarget", params: {
+                        sessionId: this.rootSessionId, targetInfo: copy(info), waitingForDebugger: false,
+                    }}, generation);
+                    const buffered = this.buffer;
+                    this.buffer = [];
+                    for (const event of buffered) this.event(...event);
+                })();
+            }
+            const pending = this.rootAttachment;
+            try { await pending; }
+            catch (error) { this.buffer = []; throw error; }
+            finally { if (this.rootAttachment === pending) this.rootAttachment = null; }
+        }
+
         validateAutoAttach(params) {
             if (params.autoAttach !== true || params.flatten !== true ||
                 typeof params.waitForDebuggerOnStart !== "boolean" ||
@@ -195,21 +229,7 @@
                             userAgent: root.navigator?.userAgent || "CDP-Bridge-Server/1.0.0"};
                     } else if (method === "Target.setAutoAttach") {
                         this.validateAutoAttach(params);
-                        if (!this.sessions.has(this.rootSessionId)) {
-                            const info = await this.exactTarget(generation);
-                            if (!this.authorized(generation)) return;
-                            if (!this.sessions.has(this.rootSessionId)) {
-                                this.sessions.set(this.rootSessionId, {id: this.rootSessionId,
-                                    parent: null, targetId: info.targetId});
-                                this.emit({method: "Target.attachedToTarget", params: {
-                                    sessionId: this.rootSessionId, targetInfo: copy(info),
-                                    waitingForDebugger: false,
-                                }}, generation);
-                                const buffered = this.buffer;
-                                this.buffer = [];
-                                for (const event of buffered) this.event(...event);
-                            }
-                        }
+                        await this.attachRoot(generation);
                         result = {};
                     } else if (method === "Target.getTargetInfo" || method === "Target.getTargets") {
                         if (Object.keys(params).some(key => key !== "targetId") ||
@@ -255,8 +275,8 @@
             const parentId = source.sessionId || this.rootSessionId;
             const parent = this.sessions.get(parentId);
             if (!parent) {
-                // Only exact root-source events during our own target-info roundtrip are buffered.
-                if (!source.sessionId && this.bootstrap &&
+                // Exact root events during our lookup and focus preparation cannot precede attachment.
+                if (!source.sessionId && (this.bootstrap || this.rootAttachment) &&
                     ((method === "Target.attachedToTarget" && params.targetInfo?.type === "iframe") ||
                     (method === "Target.detachedFromTarget" && this.buffer.some(event =>
                         event[1] === "Target.attachedToTarget" &&
@@ -324,6 +344,8 @@
             this.bodies.clear();
             this.retiredSessions.clear();
             this.targetInfo = null;
+            this.bootstrap = null;
+            this.rootAttachment = null;
             this.buffer = [];
             this.chrome.debugger.onEvent.removeListener(this.eventListener);
             this.chrome.debugger.onDetach.removeListener(this.detachListener);

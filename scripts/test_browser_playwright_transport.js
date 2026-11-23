@@ -99,6 +99,104 @@ const cases = [
         assert.equal(f.calls.some(call => call.method === "Target.getTargets"), false);
         f.bridge.close();
     }],
+    ["root attachment prepares only the exact tab before publishing page readiness", async () => {
+        const f = fixture();
+        let prepared = false;
+        f.hooks["Emulation.setFocusEmulationEnabled"] = async (source, params) => {
+            assert.deepEqual(source, {tabId: 17});
+            assert.deepEqual(params, {enabled: true});
+            prepared = true;
+            return {};
+        };
+        const session = await f.boot();
+        assert.equal(prepared, true, "noDefaults requires exact-tab focus preparation");
+        assert.deepEqual(f.calls.map(call => call.method),
+            ["Target.getTargetInfo", "Emulation.setFocusEmulationEnabled"]);
+        assert.equal(f.sent.filter(message => message.method === "Target.attachedToTarget").length, 1);
+        await f.request("Target.setAutoAttach", AUTO);
+        assert.equal(f.calls.length, 2, "duplicate bootstrap must not reprepare or adopt another tab");
+        await f.request("Input.dispatchKeyEvent", {type: "keyDown", key: "Enter"}, session);
+        assert.equal(f.calls.at(-1).source.tabId, 17);
+        f.bridge.close();
+    }],
+    ["blocked focus preparation shares initialization and exposes no usable page", async () => {
+        const f = fixture(); const entered = deferred(); const release = deferred();
+        f.hooks["Emulation.setFocusEmulationEnabled"] = async () => {
+            entered.resolve(); await release.promise; return {};
+        };
+        const first = f.request("Target.setAutoAttach", AUTO);
+        await entered.promise;
+        const second = f.request("Target.setAutoAttach", AUTO);
+        assert.equal(f.bridge.sessions.size, 0);
+        assert.equal(f.sent.some(message => message.method === "Target.attachedToTarget"), false);
+        assert.ok((await f.request("Input.dispatchKeyEvent", {}, f.bridge.rootSessionId)).error);
+        assert.equal(f.calls.some(call => call.method === "Input.dispatchKeyEvent"), false);
+        release.resolve(); await Promise.all([first, second]);
+        assert.equal(f.calls.filter(call => call.method === "Emulation.setFocusEmulationEnabled").length, 1);
+        assert.equal(f.sent.filter(message => message.method === "Target.attachedToTarget").length, 1);
+        f.bridge.close();
+    }],
+    ["failed focus preparation reports initialization failure without a page", async () => {
+        const f = fixture();
+        f.hooks["Emulation.setFocusEmulationEnabled"] = async () => { throw new Error("focus unavailable"); };
+        const reply = await f.request("Target.setAutoAttach", AUTO);
+        assert.match(reply.error.message, /focus unavailable/);
+        assert.equal(f.bridge.sessions.size, 0);
+        assert.equal(f.sent.some(message => message.method === "Target.attachedToTarget"), false);
+        delete f.hooks["Emulation.setFocusEmulationEnabled"];
+        await f.boot();
+        assert.equal(f.calls.filter(call => call.method === "Emulation.setFocusEmulationEnabled").length, 2);
+        f.bridge.close();
+    }],
+    ["focus preparation deadline rejects initialization and ignores the late completion", async () => {
+        const f = fixture(); const entered = deferred(); const release = deferred();
+        f.hooks["Emulation.setFocusEmulationEnabled"] = async () => {
+            entered.resolve(); await release.promise; return {};
+        };
+        const preparing = f.request("Target.setAutoAttach", AUTO);
+        await entered.promise;
+        const reply = await preparing;
+        assert.match(reply.error.message, /focus preparation timed out/);
+        assert.equal(f.bridge.sessions.size, 0);
+        const count = f.sent.length;
+        f.bridge.close(); release.resolve();
+        await Promise.resolve();
+        assert.equal(f.sent.length, count);
+        assert.equal(f.bridge.sessions.size, 0);
+    }],
+    ...["resolve", "reject"].map(outcome => [`Stop during focus preparation ${outcome} never publishes a page`, async () => {
+        const f = fixture(); const entered = deferred(); const release = deferred();
+        f.hooks["Emulation.setFocusEmulationEnabled"] = async () => {
+            entered.resolve(); await release.promise;
+            if (outcome === "reject") throw new Error("late focus failure");
+            return {};
+        };
+        const preparing = f.request("Target.setAutoAttach", AUTO);
+        await entered.promise; f.attach("early"); f.on = false;
+        release.resolve(); await preparing;
+        assert.equal(f.bridge.closed, true);
+        assert.equal(f.bridge.sessions.size, 0);
+        assert.equal(f.sent.some(message => message.method === "Target.attachedToTarget"), false);
+        const before = f.calls.length;
+        f.on = true;
+        await f.request("Target.setAutoAttach", AUTO);
+        await f.request("Input.dispatchKeyEvent", {}, f.bridge.rootSessionId);
+        assert.equal(f.calls.length, before);
+    }]),
+    ["old focus completion cannot publish into a replacement bridge", async () => {
+        const old = fixture(); const entered = deferred(); const release = deferred();
+        old.hooks["Emulation.setFocusEmulationEnabled"] = async () => {
+            entered.resolve(); await release.promise; return {};
+        };
+        const preparing = old.request("Target.setAutoAttach", AUTO);
+        await entered.promise; old.bridge.close();
+        const current = fixture(); await current.boot();
+        release.resolve(); await preparing;
+        assert.deepEqual(old.sent, []);
+        assert.equal(old.bridge.sessions.size, 0);
+        assert.equal(current.sent.filter(message => message.method === "Target.attachedToTarget").length, 1);
+        current.bridge.close();
+    }],
     ["concurrent duplicate root bootstrap emits one attachment and shares roundtrip", async () => {
         const f = fixture(); const entered = deferred(); const release = deferred();
         f.hooks["Target.getTargetInfo"] = async () => {
@@ -110,7 +208,7 @@ const cases = [
         release.resolve(); await Promise.all([a, b]);
         await f.request("Target.setAutoAttach", AUTO);
         assert.equal(f.sent.filter(message => message.method === "Target.attachedToTarget").length, 1);
-        assert.equal(f.calls.length, 1);
+        assert.equal(f.calls.length, 2);
         assert.equal(f.chrome.debugger.onEvent.listeners.size, 1);
         f.bridge.close();
     }],
@@ -185,7 +283,7 @@ const cases = [
         release.resolve(); await running;
         assert.deepEqual(f.sent.filter(message => message.method === "Target.attachedToTarget")
             .map(message => message.params.targetInfo.type), ["page", "iframe"]);
-        assert.equal(f.calls.length, 1);
+        assert.equal(f.calls.length, 2);
         f.bridge.close();
     }],
     ...["resolve", "reject"].map(outcome => [`Stop during command ${outcome} publishes no data or error`, async () => {

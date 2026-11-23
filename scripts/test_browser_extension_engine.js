@@ -115,6 +115,10 @@ function barrier() {
         const personalBefore = await evaluate(() => fixture.personal());
         assert.equal(before[0].active, false);
         assert.equal(personalBefore.filter(tab => tab.active).length, 1);
+        assert.deepEqual(await evaluate(() => fixture.pageState()), {visibility: "hidden", focused: false},
+            "unmanaged observer must not emulate owned-page focus");
+        console.log("PASS unmanaged work document initially hidden and unfocused");
+        ownedChrome.assertObserverDefaults();
         engine = new Engine({playwright, artifactsDir: artifacts, onFatal: error => failures.push(error),
             send: message => {
                 if (message.type === "cdp") dispatch(message.message);
@@ -176,10 +180,12 @@ function barrier() {
         const lease = engine.leases.get("extension");
         assert.equal(lease.browser.contexts().flatMap(c => c.pages()).length, 1);
         await run({type: "navigate", url: `${origin}/owned`});
-        const initialVisibility = (await run({type: "evaluate", expression:
+        const preparedVisibility = (await run({type: "evaluate", expression:
             "({visibility:document.visibilityState,focused:document.hasFocus()})"})).data.value;
-        assert.equal(initialVisibility.visibility, "hidden", "fixture must not mask the inactive tab");
-        console.log(`INITIAL WORK TAB ${JSON.stringify(initialVisibility)}`);
+        assert.deepEqual(preparedVisibility, {visibility: "visible", focused: true},
+            "only production bridge focus preparation may make the owned document ready for input");
+        assert.equal((await evaluate(() => fixture.tabs()))[0].active, false);
+        console.log(`PREPARED WORK DOCUMENT ${JSON.stringify(preparedVisibility)}`);
         const snapshot = await run({type: "snapshot"});
         const ref = name => snapshot.text.split("\n").find(line => line.includes(`"${name}"`))
             .match(/\[ref=([^\]]+)\]/)[1];
@@ -188,14 +194,10 @@ function barrier() {
         await run({type: "press", snapshot_id: snapshot.data.snapshot_id, ref: ref("Name"), key: "Enter"});
         const keyboard = (await run({type: "evaluate", expression:
             "({events:window.keyEvents,submits:window.submits,text:document.querySelector('#submitted').textContent})"})).data.value;
-        // Keep collecting the other regression coverage even when the old bridge drops keyboard events.
-        const keyboardErrors = [];
-        try {
-            assert.deepEqual(keyboard.events, ["keydown", "keypress", "keyup"].map(type =>
-                ({type, key: "Enter", trusted: true})), `Trusted ordered Enter events: ${JSON.stringify(keyboard)}`);
-            assert.deepEqual(keyboard.submits, [{value: "Ada", trusted: true}], "Exactly one trusted form submit");
-            assert.equal(keyboard.text, "Submitted Ada", "Enter must commit the form consequence");
-        } catch (error) { keyboardErrors.push(error); }
+        assert.deepEqual(keyboard.events, ["keydown", "keypress", "keyup"].map(type =>
+            ({type, key: "Enter", trusted: true})), `Trusted ordered Enter events: ${JSON.stringify(keyboard)}`);
+        assert.deepEqual(keyboard.submits, [{value: "Ada", trusted: true}], "Exactly one trusted form submit");
+        assert.equal(keyboard.text, "Submitted Ada", "Enter must commit the form consequence");
         console.log(`KEYBOARD TRACE ${JSON.stringify({keyboard, focusCalls:
             (await evaluate(() => fixture.state())).calls.filter(call => /Focus|dispatchKey/.test(call.method))})}`);
         assert.equal((await evaluate(() => fixture.tabs()))[0].active, false);
@@ -260,10 +262,19 @@ function barrier() {
         assert.equal(context.pages().some(p => p.url() === `${origin}/owned`), true);
         assert.deepEqual(failures, []);
         console.log("PASS foreign target/session and Browser.close denied; revoked late response suppressed; release preserves both tabs/browser");
-        if (keyboardErrors.length) throw new AggregateError(keyboardErrors, "Hidden work-tab Enter regression");
         console.log("PASS inactive work-tab trusted ordered Enter events and exactly-once submit");
     } catch (error) {
         primaryError = error;
+        if (worker && fixtureReady) {
+            try {
+                const state = await evaluate(() => fixture.state());
+                console.error("REAL EXTENSION FAILURE TRACE", JSON.stringify({error: error.message,
+                    calls: state.calls.slice(-12).map(call => ({...call,
+                        params: call.method === "Runtime.callFunctionOn" ? {function: call.params.functionDeclaration?.slice(0, 80)} :
+                            call.method === "Runtime.evaluate" ? {expression: call.params.expression?.slice(0, 80)} : call.params})),
+                    protocolErrors: protocolErrors.slice(-4), failures: failures.map(failure => failure.message)}));
+            } catch (diagnosticError) { console.error("TRACE FAILED", diagnosticError); }
+        }
         throw error;
     } finally {
         const teardownErrors = [];

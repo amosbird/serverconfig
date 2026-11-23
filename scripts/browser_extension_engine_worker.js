@@ -10,8 +10,17 @@ function publish(message) {
 }
 const actualSendCommand = chrome.debugger.sendCommand.bind(chrome.debugger);
 chrome.debugger.sendCommand = async (source, method, params) => {
-    calls.push({source, method, params});
-    const result = await actualSendCommand(source, method, params);
+    const call = {source, method, params, phase: "dispatched"};
+    calls.push(call);
+    let result;
+    try {
+        result = await actualSendCommand(source, method, params);
+        call.phase = "completed";
+    } catch (error) {
+        call.phase = "failed";
+        call.error = error.message;
+        throw error;
+    }
     if (method === "Runtime.evaluate" && params.expression?.includes("fixture-late-entered")) {
         lateRawResult = result;
     }
@@ -47,6 +56,14 @@ globalThis.fixture = {
         return output.splice(0);
     },
     handle(message) { return bridge.handle(message); },
+    async pageState() {
+        const reply = await actualSendCommand({tabId}, "Runtime.evaluate", {
+            expression: "({visibility:document.visibilityState,focused:document.hasFocus()})",
+            returnByValue: true,
+        });
+        if (reply.exceptionDetails) throw new Error(reply.exceptionDetails.text);
+        return reply.result.value;
+    },
     state() {
         return {calls, errors, lateRawResult, closed: bridge.closed,
             rootSessionId: bridge.rootSessionId};
