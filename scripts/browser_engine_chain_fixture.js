@@ -148,6 +148,8 @@ async function setup() {
     f.hooks["debugger.sendCommand"] = async (source, method, params) => {
         assert.equal(source.tabId, workTab, "no personal/restored tab adoption");
         assert.equal(source.sessionId, undefined, "root-page fixture; OOPIF not claimed");
+        assert.equal(method.startsWith("Browser."), false,
+            "chrome.debugger does not expose the Browser domain");
         assert.ok(!/bringToFront|activateTarget|closeTarget|setDeviceMetrics|setWindow/.test(method),
             "automation must not mutate window presentation");
         const result = await session.send(method, params);

@@ -1,0 +1,256 @@
+#!/usr/bin/env node
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const path = require("node:path");
+const http = require("node:http");
+const {once} = require("node:events");
+const {execFileSync} = require("node:child_process");
+const engineRoot = process.env.ABUSH_BROWSER_ENGINE_ROOT;
+const executablePath = process.env.ABUSH_ENGINE_EXTENSION_CHROME;
+if (process.env.ABUSH_ENGINE_FIXTURE !== "1" || !engineRoot || !executablePath) {
+    throw new Error("Requires ABUSH_ENGINE_FIXTURE=1, ABUSH_BROWSER_ENGINE_ROOT and " +
+        "ABUSH_ENGINE_EXTENSION_CHROME (extension-capable Chrome; isolated pipe fixture only)");
+}
+const {Engine, loadOfficialPlaywright} = require(path.join(engineRoot, "engine.cjs"));
+async function bounded(label, run, ms = 15000) {
+    let timer;
+    try {
+        return await Promise.race([Promise.resolve().then(run), new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Deadline: ${label}`)), ms);
+        })]);
+    } finally { clearTimeout(timer); }
+}
+function barrier() {
+    let resolve;
+    const promise = new Promise(yes => { resolve = yes; });
+    return {promise, resolve};
+}
+(async () => {
+    const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        {cwd: path.join(__dirname, ".."), encoding: "utf8", timeout: 5000}).trim();
+    const tmp = path.join(path.dirname(common), ".worktrees/.tmp");
+    await fs.mkdir(tmp, {recursive: true});
+    // Short prefix keeps Chrome's SingletonSocket pathname below the Unix socket limit.
+    const artifacts = await fs.mkdtemp(path.join(tmp, "e-"));
+    const oldTmp = process.env.TMPDIR;
+    process.env.TMPDIR = artifacts;
+    let context, browser, worker, engine, website, fixturePid, pump;
+    let stopping = false, engineReceiving = false, sequence = 0;
+    const replies = new Map(), cdpReplies = new Map(), protocolErrors = [], failures = [];
+    const emitted = [];
+    const entered = barrier(), completed = barrier();
+    const transportTasks = new Set();
+    function evaluate(fn, argument) {
+        return bounded("extension worker evaluation", () => worker.evaluate(fn, argument));
+    }
+    function dispatch(message) {
+        const task = evaluate(message => fixture.handle(message), message);
+        transportTasks.add(task);
+        task.catch(error => failures.push(error)).finally(() => transportTasks.delete(task));
+    }
+    try {
+        const extension = path.join(artifacts, "extension");
+        await fs.mkdir(extension);
+        await fs.copyFile(path.join(__dirname, "../chromium/external-links/extension/playwright-transport.js"),
+            path.join(extension, "playwright-transport.js"));
+        await fs.copyFile(path.join(__dirname, "browser_extension_engine_worker.js"),
+            path.join(extension, "worker.js"));
+        await fs.writeFile(path.join(extension, "manifest.json"), JSON.stringify({
+            manifest_version: 3, name: "Owned Abush bridge regression", version: "1.0",
+            permissions: ["debugger", "tabs"], background: {service_worker: "worker.js"},
+        }));
+        website = http.createServer((request, response) => {
+            response.writeHead(200, {"content-type": "text/html"});
+            response.end(request.url === "/other" ? "<!doctype html><title>Other fixture</title>Untouched" :
+                `<!doctype html><title>Extension fixture</title><input aria-label="Name">
+                <button onclick="document.querySelector('output').textContent='Hello '+document.querySelector('input').value">Apply</button><output></output><div style="height:1300px">Tall fixture content</div>`);
+        });
+        const listening = once(website, "listening");
+        website.listen(0, "127.0.0.1");
+        await bounded("page-only HTTP fixture listen", () => listening);
+        const origin = `http://127.0.0.1:${website.address().port}`;
+        const playwright = await loadOfficialPlaywright(artifacts);
+        context = await bounded("owned persistent headless Chrome pipe launch", () =>
+            playwright.chromium.launchPersistentContext(path.join(artifacts, "profile"), {
+                executablePath, headless: true, timeout: 10000,
+                ignoreDefaultArgs: ["--disable-extensions"],
+                args: ["--enable-unsafe-extension-debugging"],
+            }));
+        browser = context.browser();
+        const root = await browser.newBrowserCDPSession();
+        const processes = await bounded("owned process identity", () => root.send("SystemInfo.getProcessInfo"));
+        fixturePid = processes.processInfo.find(info => info.type === "browser").id;
+        const workerReady = context.waitForEvent("serviceworker", {timeout: 10000});
+        workerReady.catch(() => {});
+        const loaded = await bounded("load actual unpacked MV3 extension", () =>
+            root.send("Extensions.loadUnpacked", {path: extension}));
+        worker = context.serviceWorkers().find(w => w.url().startsWith(`chrome-extension://${loaded.id}/`)) ||
+            await bounded("actual MV3 service worker", () => workerReady);
+        await bounded("setup root CDP detach", () => root.detach());
+        const setup = await bounded("actual chrome.debugger attach and domain probe", () =>
+            evaluate(origin => fixture.setup(origin), origin));
+        assert.match(setup.rawVersionError, /Browser.getVersion.*wasn't found/);
+        assert.equal(setup.target.targetInfo.type, "page");
+        assert.equal(typeof setup.target.targetInfo.browserContextId, "string");
+        assert.ok(setup.target.targetInfo.browserContextId.length > 0);
+        assert.ok(worker.url().startsWith(`chrome-extension://${loaded.id}/`));
+        console.log(`PASS actual chrome.debugger Browser domain restriction; Target.getTargetInfo: ${JSON.stringify(setup.target)}`);
+        const before = await evaluate(() => fixture.tabs());
+        const otherBefore = before[1];
+        engine = new Engine({playwright, artifactsDir: artifacts, onFatal: error => failures.push(error),
+            send: message => {
+                if (message.type === "cdp") dispatch(message.message);
+                else replies.get(message.request_id)?.resolve(message);
+            }});
+        pump = (async () => {
+            while (!stopping) {
+                const messages = await worker.evaluate(() => fixture.next());
+                for (const item of messages) {
+                    if (item.type === "stop") return;
+                    if (item.type === "late_entered") { entered.resolve(); continue; }
+                    if (item.type === "late_completed") { completed.resolve(); continue; }
+                    emitted.push(item.message);
+                    if (item.message.error) protocolErrors.push(item.message);
+                    if (cdpReplies.has(item.message.id)) cdpReplies.get(item.message.id).resolve(item.message);
+                    else if (engineReceiving) await engine.receive({type: "cdp", lease_id: "extension", message: item.message});
+                }
+            }
+        })();
+        pump.catch(error => failures.push(error));
+        async function cdp(message) {
+            const waiting = barrier();
+            cdpReplies.set(message.id, waiting);
+            try { dispatch(message); return await bounded(message.method, () => waiting.promise); }
+            finally { cdpReplies.delete(message.id); }
+        }
+        const version = await cdp({id: 100000, method: "Browser.getVersion"});
+        assert.deepEqual(version.result, {protocolVersion: "1.3", product: "Chrome/Extension-Bridge",
+            userAgent: setup.userAgent});
+        assert.equal((await evaluate(() => fixture.state())).calls.some(c =>
+            c.method.startsWith("Browser.")), false);
+        console.log("PASS production bridge local root version; no Browser.* dispatched");
+        async function receive(type, action) {
+            const request_id = `extension-${++sequence}`, waiting = barrier();
+            replies.set(request_id, waiting);
+            try {
+                return await bounded(`${type} ${action?.type || ""}`, async () => {
+                    await engine.receive({type, lease_id: "extension", request_id, ...(action ? {action} : {})});
+                    return waiting.promise;
+                });
+            } finally { replies.delete(request_id); }
+        }
+        async function run(action) {
+            const reply = await receive("execute", action);
+            assert.equal(reply.ok, true, reply.error);
+            assert.ok(Buffer.byteLength(JSON.stringify(reply.result)) <= 700000);
+            return reply.result;
+        }
+        const exactTargets = await cdp({id: 100005, method: "Target.getTargets"});
+        assert.deepEqual(exactTargets.result.targetInfos.map(info => info.targetId),
+            [setup.target.targetInfo.targetId]);
+        assert.equal(exactTargets.result.targetInfos[0].browserContextId,
+            setup.target.targetInfo.browserContextId);
+        engineReceiving = true;
+        const open = await receive("open");
+        if (!open.ok) console.error("REAL EXTENSION INITIALIZATION FAILURE", JSON.stringify({open,
+            protocolErrors, state: await evaluate(() => fixture.state())}));
+        assert.equal(open.ok, true, open.error);
+        const lease = engine.leases.get("extension");
+        assert.equal(lease.browser.contexts().flatMap(c => c.pages()).length, 1);
+        await run({type: "navigate", url: `${origin}/owned`});
+        const snapshot = await run({type: "snapshot"});
+        const ref = name => snapshot.text.split("\n").find(line => line.includes(`"${name}"`))
+            .match(/\[ref=([^\]]+)\]/)[1];
+        assert.ok(snapshot.data.refs.includes(ref("Name")));
+        await run({type: "fill", snapshot_id: snapshot.data.snapshot_id, ref: ref("Name"), value: "Ada"});
+        await run({type: "click", snapshot_id: snapshot.data.snapshot_id, ref: ref("Apply")});
+        assert.match((await run({type: "text"})).text, /Hello Ada/);
+        const viewport = await run({type: "evaluate", expression:
+            "({width:innerWidth,height:innerHeight,scrollHeight:document.documentElement.scrollHeight})"});
+        const dimensions = [];
+        for (const full_page of [false, true]) {
+            const shot = await run({type: "screenshot", full_page});
+            assert.equal(shot.images[0].mime_type, "image/png");
+            const png = Buffer.from(shot.images[0].data_base64, "base64");
+            assert.ok(png.length <= 500000);
+            assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+            dimensions.push({width: png.readUInt32BE(16), height: png.readUInt32BE(20)});
+        }
+        assert.equal(dimensions[0].width, viewport.data.value.width);
+        assert.equal(dimensions[0].height, viewport.data.value.height);
+        assert.ok(dimensions[1].height > dimensions[0].height);
+        assert.ok(dimensions[1].height >= viewport.data.value.scrollHeight);
+        assert.deepEqual(protocolErrors, []);
+        console.log("PASS pinned official Engine exact page, navigation, official refs, fill/click, changed text, viewport/full-page PNG");
+        const state = await evaluate(() => fixture.state());
+        assert.equal(state.calls.every(c => c.source.tabId === setup.tabId), true);
+        assert.equal(state.calls.some(c => /bringToFront|activateTarget|closeTarget|setDeviceMetrics|setWindow/.test(c.method)), false);
+        assert.deepEqual(state.errors, []);
+        for (const message of [
+            {id: 100001, method: "Target.getTargetInfo", params: {targetId: setup.otherTargetId}},
+            {id: 100002, method: "Runtime.evaluate", sessionId: "foreign", params: {expression: "1"}},
+            {id: 100003, method: "Browser.close"},
+        ]) assert.ok((await cdp(message)).error);
+        assert.equal((await evaluate(() => fixture.state())).calls.length, state.calls.length);
+        engineReceiving = false;
+        await receive("close");
+        assert.equal(browser.isConnected(), true);
+        const lateId = 100004;
+        const late = evaluate(message => fixture.late(message), {id: lateId,
+            sessionId: state.rootSessionId, method: "Runtime.evaluate", params: {
+                expression: "new Promise(resolve => { globalThis.fixtureLateResolve = resolve; console.log('fixture-late-entered'); })",
+                awaitPromise: true, returnByValue: true,
+            }});
+        late.catch(error => failures.push(error));
+        await bounded("registered real Runtime entered barrier", () => entered.promise);
+        await evaluate(() => fixture.revokeAndResolve());
+        await bounded("late actual debugger completion", () => completed.promise);
+        await bounded("late worker return", () => late);
+        assert.equal((await evaluate(() => fixture.state())).lateRawResult.result.value, "fixture-secret");
+        assert.equal(emitted.some(message => message.id === lateId), false);
+        assert.equal(JSON.stringify(emitted).includes("fixture-secret"), false);
+        await evaluate(() => fixture.release());
+        assert.equal((await evaluate(() => fixture.state())).closed, true);
+        const after = await evaluate(() => fixture.tabs());
+        assert.equal(after[0].id, setup.tabId);
+        assert.equal(after[0].url, `${origin}/owned`);
+        assert.deepEqual(after[1], otherBefore);
+        assert.equal(browser.isConnected(), true);
+        assert.equal(context.pages().some(p => p.url() === `${origin}/owned`), true);
+        assert.deepEqual(failures, []);
+        console.log("PASS foreign target/session and Browser.close denied; revoked late response suppressed; release preserves both tabs/browser");
+    } finally {
+        const teardownErrors = [];
+        const attempt = async (label, run) => {
+            try { await bounded(label, run, 5000); } catch (error) { teardownErrors.push(error); }
+        };
+        engine?.dispose();
+        if (worker) {
+            await attempt("worker release", () => evaluate(() => fixture.release()));
+            await attempt("worker pump stop", () => evaluate(() => fixture.stop()));
+        }
+        if (pump) await attempt("pump join", () => pump);
+        stopping = true;
+        await attempt("transport tasks join", () => Promise.allSettled([...transportTasks]));
+        if (context) {
+            const disconnected = browser.isConnected() ? once(browser, "disconnected") : Promise.resolve();
+            try { await bounded("owned Chrome close", () => context.close(), 5000); }
+            catch (error) {
+                teardownErrors.push(error);
+                if (fixturePid) {
+                    try { process.kill(fixturePid, "SIGKILL"); }
+                    catch (killError) { teardownErrors.push(killError); }
+                    await attempt("owned Chrome killed join", () => disconnected);
+                }
+            }
+        }
+        if (website) {
+            website.closeAllConnections();
+            await attempt("HTTP fixture close", () => new Promise(resolve => website.close(resolve)));
+        }
+        if (oldTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = oldTmp;
+        await fs.rm(artifacts, {recursive: true, force: true});
+        if (teardownErrors.length) throw new AggregateError(teardownErrors, "Extension fixture teardown");
+    }
+})().catch(error => { console.error(error); process.exitCode = 1; });

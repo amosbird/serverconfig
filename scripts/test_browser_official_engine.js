@@ -89,6 +89,8 @@ async function bounded(name, run, ms = 15000) {
             assert.equal(source.tabId, 17);
             assert.equal(source.sessionId, undefined, "This fixture exercises the exact root page");
             calls.push({method, params});
+            assert.equal(method.startsWith("Browser."), false,
+                "chrome.debugger does not expose the Browser domain");
             return session.send(method, params);
         }}};
         bridge = new AuthorizedCdpBridge({chrome, tabId: 17, checkAuthorization: () => true,
