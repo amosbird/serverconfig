@@ -32,6 +32,8 @@ function fixture(send) {
             if (method === "Target.getTargetInfo") return {targetInfo: {targetId: "page-exact",
                 type: "page", title: "fixture", url: "https://fixture.test/", attached: true,
                 browserContextId: "context-exact"}};
+            if (method === "Page.getLayoutMetrics") return {contentSize: {width: 800, height: 1600},
+                cssContentSize: {width: 800, height: 1600}};
             if (method === "Page.startScreencast") queueMicrotask(() =>
                 f.chrome.debugger.onEvent.emit(source, "Page.screencastFrame", {sessionId: ++f.frameId, data: "internal-frame"}));
             if (method === "Page.captureScreenshot") return {data: "actual-official-png"};
@@ -379,7 +381,7 @@ const cases = [
         assert.equal(f.sent.some(message => message.method === "Page.screencastFrame"), false);
         release.resolve();
         assert.deepEqual((await pending).result, {data: "actual-official-png"});
-        assert.deepEqual(f.calls.filter(call => call.method.startsWith("Page.")).map(call => call.method),
+        assert.deepEqual(f.calls.filter(call => ["Page.startScreencast", "Page.screencastFrameAck", "Page.captureScreenshot", "Page.stopScreencast"].includes(call.method)).map(call => call.method),
             ["Page.startScreencast", "Page.screencastFrameAck", "Page.captureScreenshot", "Page.stopScreencast"]);
         assert.deepEqual(f.calls.find(call => call.method === "Page.startScreencast").params,
             {format: "jpeg", quality: 10, maxWidth: 16, maxHeight: 16, everyNthFrame: 1});
@@ -446,6 +448,31 @@ const cases = [
         assert.equal(f.bridge.closed, true);
         assert.equal(JSON.stringify(f.sent).includes("late-secret"), false);
     }]),
+    ...["preparation", "capture", "stop"].map(phase => [`next compositor frame may arrive before the previous ACK callback during ${phase}`, async () => {
+        const f = fixture(); const session = await f.boot(); const entered = deferred(); const release = deferred();
+        let count = 0;
+        f.hooks["Page.screencastFrameAck"] = async () => {
+            if (++count === 1 && phase === "preparation") {
+                f.event("Page.screencastFrame", {sessionId: 1, data: "next-frame"});
+                entered.resolve(); await release.promise;
+            }
+            return {};
+        };
+        if (phase !== "preparation") {
+            const method = phase === "capture" ? "Page.captureScreenshot" : "Page.stopScreencast";
+            f.hooks[method] = async () => {
+                f.event("Page.screencastFrame", {sessionId: 1, data: "next-frame"});
+                entered.resolve(); await release.promise; return {data: "actual-official-png"};
+            };
+        }
+        const pending = f.request("Page.captureScreenshot", CAPTURE, session);
+        await entered.promise; release.resolve();
+        const reply = await pending;
+        assert.ok(reply.result, JSON.stringify(reply));
+        assert.equal(f.bridge.closed, false);
+        assert.equal(f.calls.filter(call => call.method === "Page.screencastFrameAck").length, 2);
+        f.bridge.close();
+    }]),
     ["repeated capture rejects delayed frames from the previous render episode", async () => {
         const f = fixture(); const session = await f.boot();
         assert.ok((await f.request("Page.captureScreenshot", CAPTURE, session)).result);
@@ -471,6 +498,22 @@ const cases = [
         assert.equal(f.calls.length, before);
         f.bridge.close();
     }],
+    ...[1, 1.25, 2].map(dpr => [`device-pixel admission rounds fractional screenshot extents at DPR ${dpr}`, async () => {
+        const limit = 32 * 1024 * 1024;
+        const clipWidth = 4096 / dpr;
+        const admittedHeight = 8192 / dpr;
+        for (const [extra, expected] of [[0, true], [0.01, false]]) {
+            const f = fixture(); const session = await f.boot();
+            f.hooks["Page.getLayoutMetrics"] = async () => ({contentSize: {width: 800 * dpr}, cssContentSize: {width: 800}});
+            const params = {...CAPTURE, clip: {...CAPTURE.clip, width: clipWidth, height: admittedHeight + extra}};
+            const reply = await f.request("Page.captureScreenshot", params, session);
+            const started = f.calls.some(call => call.method === "Page.startScreencast");
+            assert.equal(started, expected, JSON.stringify({dpr, params, reply, limit}));
+            assert.equal(Boolean(reply.result), expected);
+            if (!expected) assert.match(reply.error.message, /geometry|device-pixel/);
+            f.bridge.close();
+        }
+    }]),
     ["native screenshot output limit is enforced before image bytes enter the transport", async () => {
         const f = fixture(); const session = await f.boot();
         f.hooks["Page.captureScreenshot"] = async () => ({data: "x".repeat(700000)});

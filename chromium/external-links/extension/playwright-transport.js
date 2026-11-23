@@ -230,8 +230,8 @@
             const failure = new Promise((_, no) => { rejectFailure = no; });
             frame.catch(() => {}); failure.catch(() => {});
             reject = error => { rejectFrame(error); rejectFailure(error); };
-            const capture = {session, generation, resolve, reject, frame, failure, ackPending: false,
-                ack: Promise.resolve(), frameId: null, started: performance.now()};
+            const capture = {session, generation, resolve, reject, frame, failure, pendingFrames: [],
+                ackDraining: false, ack: Promise.resolve(), frameId: null, started: performance.now()};
             this.capture = capture;
             const bounded = async (label, milliseconds, task) => {
                 let timer;
@@ -244,6 +244,19 @@
                 } finally { clearTimeout(timer); }
             };
             try {
+                await bounded("Screenshot layout admission", RENDER_TIMEOUT_MS, async () => {
+                    const metrics = await this.command(session, "Page.getLayoutMetrics", {}, generation);
+                    const deviceWidth = metrics.contentSize?.width;
+                    const cssWidth = metrics.cssContentSize?.width;
+                    const factor = deviceWidth / cssWidth;
+                    const width = Math.ceil(clip.width * clip.scale * factor);
+                    const height = Math.ceil(clip.height * clip.scale * factor);
+                    if (!Number.isFinite(factor) || factor <= 0 || !Number.isSafeInteger(width) ||
+                            !Number.isSafeInteger(height) || width <= 0 || height <= 0 ||
+                            width > 32768 || height > 32768 || width * height > MAX_SCREENSHOT_PIXELS) {
+                        throw new Error("Screenshot exceeds the device-pixel geometry limit");
+                    }
+                });
                 // A tiny private frame producer keeps the inactive view's compositor surface alive.
                 // Its JPEG frames are discarded; only Playwright's original PNG command is returned.
                 await bounded("Screenshot render preparation", RENDER_TIMEOUT_MS, async () => {
@@ -285,16 +298,23 @@
                 if (params.sessionId > capture.frameId) capture.reject(new Error("Conflicting screenshot frame identity"));
                 return true;
             }
-            if (capture.ackPending) {
-                capture.reject(new Error("Screenshot frame acknowledgement already pending"));
+            if (capture.pendingFrames.length >= 2) {
+                capture.reject(new Error("Screenshot frame acknowledgement backpressure"));
                 return true;
             }
-            capture.ackPending = true;
-            capture.ack = this.command(capture.session, "Page.screencastFrameAck", {sessionId: params.sessionId}, capture.generation)
-                .then(() => {
-                    if (this.capture === capture && this.authorized(capture.generation)) capture.resolve();
-                }, error => { capture.reject(error); })
-                .finally(() => { capture.ackPending = false; });
+            capture.pendingFrames.push(params.sessionId);
+            if (capture.ackDraining) return true;
+            capture.ackDraining = true;
+            capture.ack = (async () => {
+                try {
+                    while (capture.pendingFrames.length && this.capture === capture && this.authorized(capture.generation)) {
+                        const sessionId = capture.pendingFrames.shift();
+                        await this.command(capture.session, "Page.screencastFrameAck", {sessionId}, capture.generation);
+                        if (this.capture === capture && this.authorized(capture.generation)) capture.resolve();
+                    }
+                } catch (error) { capture.reject(error); }
+                finally { capture.ackDraining = false; }
+            })();
             return true;
         }
 
