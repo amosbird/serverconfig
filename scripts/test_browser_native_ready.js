@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const {assert, clone, deferred, fixture, BOOT, runCases} =
+const {assert, clone, deferred, fixture, BOOT, REMOTE, execute, runCases} =
     require("./browser_tab_groups_fixture.js");
 const {NativeDispatcher, createWorkspaceInitializer, registerNativeEventRouter} =
     require("../chromium/external-links/extension/background.js");
@@ -234,6 +234,45 @@ const cases = [
         await assert.rejects(f.native.browserReady(), /timed out/);
         assert.deepEqual(f.ports[0].sent.map(m => m.operation), ["bootstrap", "browser_executor_prepare"]);
         f.native.stop();
+    }],
+    ["single native request timeout does not invalidate connected remotes or pause enabled workspace", async () => {
+        const f = nativeFixture(); const workspace = fixture({globalAutomation: true});
+        const errors = [];
+        const ready = createWorkspaceInitializer(workspace.executor, f.native, e => errors.push(e));
+        registerNativeEventRouter(f.native, workspace.executor, ready, e => errors.push(e));
+        const initializing = ready(); await f.admit(f.ports[0]); await initializing;
+        await workspace.executor.remoteState(REMOTE);
+        const before = workspace.executor.state(REMOTE.remote_key);
+        assert.equal(before.phase, "enabled");
+        assert.equal(workspace.executor.remotes.get(REMOTE.remote_key).connected, true);
+        const pending = f.native.request("abush_browser", "executor_completion", {request_id: "slow"});
+        const timer = [...f.timers.values()].find(t => t.delay === 8000); assert.ok(timer); timer.fn();
+        await assert.rejects(pending, /native request timed out/);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(workspace.executor.remotes.get(REMOTE.remote_key).connected, true);
+        assert.deepEqual(workspace.executor.state(REMOTE.remote_key), before);
+        assert.equal(workspace.executor.popupState().browser_executor.phase, "ready");
+        // Transport disconnect still invalidates connected remotes and pauses local state.
+        f.ports[0].disconnect();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(workspace.executor.remotes.get(REMOTE.remote_key).connected, false);
+        assert.equal(workspace.executor.state(REMOTE.remote_key).phase, "paused");
+        f.native.stop();
+    }],
+    ["authorization error distinguishes cancelled operation from global pause", async () => {
+        const workspace = fixture({globalAutomation: true});
+        await workspace.ready();
+        await workspace.executor.remoteState(REMOTE);
+        const payload = execute(workspace);
+        assert.throws(
+            () => workspace.executor.authorization(payload, {cancelled: true}),
+            /Browser operation was cancelled/,
+        );
+        await workspace.executor.setAutomation(false);
+        assert.throws(
+            () => workspace.executor.authorization(payload, {cancelled: false}),
+            /Browser automation is paused; use the Chrome popup to Start/,
+        );
     }],
 ];
 for (const stage of ["prepare", "ready"]) {

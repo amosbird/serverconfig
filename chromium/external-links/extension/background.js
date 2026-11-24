@@ -671,6 +671,12 @@ function registerNativeEventRouter(native, workspaces, ready, onFailure = notify
                         "Unable to accept native browser bootstrap"));
                 return;
             }
+            // Only transport-loss lifecycle events invalidate remote connections.
+            // A single request timeout rejects its own caller and must not wedge connected remotes.
+            if (!["disconnect", "bootstrap_timeout", "bootstrap_request_failed",
+                "reconnect_exhausted"].includes(message.event)) {
+                return;
+            }
             workspaces.invalidateRemote().catch(error => onFailure(error.message));
             if (message.event === "reconnect_exhausted") {
                 onFailure("Native browser integration could not reconnect");

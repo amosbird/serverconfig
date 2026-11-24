@@ -1773,8 +1773,19 @@ class WorkspaceExecutor {
         // Exact Execute is daemon acceptance proof after persisted consent starts publication.
         const published = record?.publication && record.publication.remote === remote &&
             sameRef(record.publication.state, this.state(payload.remote_key));
-        if ((!this.manualControls && (!this.automationOn || !this.preferenceReady)) || op.cancelled || !record || record.phase !== "enabled" || (!record.agreed && !published)) {
-            fail("browser_disabled", "Browser is disabled or paused; use the Chrome popup");
+        if (!this.manualControls && (!this.automationOn || !this.preferenceReady)) {
+            fail("browser_disabled", "Browser automation is paused; use the Chrome popup to Start");
+        }
+        if (!record || record.phase !== "enabled") {
+            fail("browser_disabled", record?.phase === "paused" ?
+                "Browser workspace is paused; reconnect or re-enable in Chrome" :
+                "Browser workspace is disabled");
+        }
+        if (op.cancelled) {
+            fail("browser_disabled", "Browser operation was cancelled");
+        }
+        if (!record.agreed && !published) {
+            fail("browser_disabled", "Browser workspace authorization is not yet published");
         }
         if (!remote?.connected || remote.connection_id !== payload.connection_id ||
                 !this.currentExecutor(remote) ||
