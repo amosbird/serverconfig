@@ -253,6 +253,9 @@ function barrier() {
             width:innerWidth,height:innerHeight,dpr:devicePixelRatio,x:scrollX,y:scrollY,
             scrollWidth:document.documentElement.scrollWidth,
             scrollHeight:document.documentElement.scrollHeight,
+            fullWidth:Math.max(document.body.scrollWidth,document.documentElement.scrollWidth,
+                document.body.offsetWidth,document.documentElement.offsetWidth,
+                document.body.clientWidth,document.documentElement.clientWidth),
             htmlStyle:document.documentElement.getAttribute('style'),
             bodyStyle:document.body.getAttribute('style'),
             top:document.querySelector('#top').getBoundingClientRect().toJSON(),
@@ -334,6 +337,53 @@ function barrier() {
         await capture(true, [20, 40, 220], [20, 200, 40]);
         assert.deepEqual(protocolErrors, []);
         console.log(`PASS repeated fresh viewport/full-page decoded PNGs across two documents on one lease ${JSON.stringify(dimensions)}`);
+        for (const zoom of process.env.ABUSH_ENGINE_TEST_ZOOM ? [Number(process.env.ABUSH_ENGINE_TEST_ZOOM)] : [0.9, 1.1, 1.25, 1.5]) {
+            await run({type: "evaluate", expression: "document.querySelector('#zoom-middle')?.remove(); scrollTo(0,0)"});
+            assert.ok([0.9, 1.1, 1.25, 1.5].includes(zoom));
+            assert.equal(await evaluate(zoom => fixture.setZoom(zoom), zoom), zoom);
+            const zoomGeometry = await geometry();
+            const shot = await run({type: "screenshot", full_page: true});
+            const image = decodePng(Buffer.from(shot.images[0].data_base64, "base64"));
+            assert.equal(image.width, Math.round(zoomGeometry.fullWidth * zoomGeometry.dpr));
+            assert.equal(image.height, Math.round(zoomGeometry.scrollHeight * zoomGeometry.dpr));
+            assert.deepEqual(image.pixel(Math.floor(40 * zoomGeometry.dpr), Math.floor(40 * zoomGeometry.dpr)), [20,40,220]);
+            assert.deepEqual(image.pixel(Math.floor(40 * zoomGeometry.dpr),
+                Math.floor((zoomGeometry.bottom.y + 40) * zoomGeometry.dpr)), [20, 200, 40]);
+            assert.deepEqual(await geometry(), zoomGeometry);
+            assert.equal(shot.images[0].data_base64, (await evaluate(() => fixture.captureState())).outputs.at(-1));
+            assert.equal(await evaluate(() => fixture.zoom()), zoom, "capture must preserve user page zoom");
+            await run({type: "evaluate", expression: `(() => {
+                const middle=document.createElement('div'); middle.id='zoom-middle';
+                middle.style.cssText='position:absolute;left:0;top:1200px;width:100%;height:100px;background:rgb(200,80,20)';
+                document.body.appendChild(middle); scrollTo(0,1200); return scrollY;
+            })()`});
+            const scrolledGeometry = await geometry();
+            const viewportShot = await run({type: "screenshot", full_page: false});
+            const viewportImage = decodePng(Buffer.from(viewportShot.images[0].data_base64, "base64"));
+            const nativeClip = (await evaluate(() => fixture.state())).calls
+                .filter(call => call.method === "Page.captureScreenshot").at(-1).params.clip;
+            const screenDpr = dimensions[0].dpr;
+            // Chromium rounds the float zoom times the clip in DIPs, not the reported DOM DPR.
+            assert.equal(viewportImage.width, Math.round(nativeClip.width * nativeClip.scale * screenDpr));
+            assert.equal(viewportImage.height, Math.round(nativeClip.height * nativeClip.scale * screenDpr));
+            assert.deepEqual(viewportImage.pixel(40,40), [200,80,20]);
+            assert.deepEqual(await geometry(), scrolledGeometry);
+            assert.equal(viewportShot.images[0].data_base64, (await evaluate(() => fixture.captureState())).outputs.at(-1));
+            assert.equal(await evaluate(() => fixture.zoom()), zoom);
+            const scrolledFullShot = await run({type: "screenshot", full_page: true});
+            const scrolledFullImage = decodePng(Buffer.from(scrolledFullShot.images[0].data_base64, "base64"));
+            assert.equal(scrolledFullImage.height, image.height);
+            assert.deepEqual(scrolledFullImage.pixel(Math.floor(40 * scrolledGeometry.dpr),
+                Math.floor(40 * scrolledGeometry.dpr)), [20,40,220]);
+            assert.deepEqual(scrolledFullImage.pixel(Math.floor((scrolledGeometry.bottom.width - 40) * scrolledGeometry.dpr),
+                Math.floor((scrolledGeometry.bottom.y + scrolledGeometry.y + 40) * scrolledGeometry.dpr)), [20,200,40]);
+            assert.deepEqual(await geometry(), scrolledGeometry);
+            assert.equal(scrolledFullShot.images[0].data_base64, (await evaluate(() => fixture.captureState())).outputs.at(-1));
+            assert.equal((await evaluate(() => fixture.tabs()))[0].active, false);
+            assert.deepEqual(await evaluate(() => fixture.personal()), personalBefore);
+            assert.deepEqual(await evaluate(() => fixture.presentation()), presentationBefore);
+            console.log(`PASS page zoom ${zoom}: full-page PNG ${image.width}x${image.height} includes bottom; scrolled viewport ${viewportImage.width}x${viewportImage.height}; native bytes and layout preserved`);
+        }
         const state = await evaluate(() => fixture.state());
         assert.equal(state.calls.every(c => c.source.tabId === setup.tabId), true);
         assert.equal(state.calls.some(c => /bringToFront|activateTarget|closeTarget|setDeviceMetrics|setWindow/.test(c.method)), false);

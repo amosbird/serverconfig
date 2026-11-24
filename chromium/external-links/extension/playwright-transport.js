@@ -244,14 +244,23 @@
                 } finally { clearTimeout(timer); }
             };
             try {
+                let captureParams = params;
+                let pageZoom;
                 await bounded("Screenshot layout admission", RENDER_TIMEOUT_MS, async () => {
                     const metrics = await this.command(session, "Page.getLayoutMetrics", {}, generation);
+                    pageZoom = metrics.cssVisualViewport?.zoom ?? 1;
+                    if (!Number.isFinite(pageZoom) || pageZoom <= 0) throw new Error("Invalid screenshot page zoom");
+                    // Playwright supplies CSS coordinates; Chromium's non-emulated screenshot clip uses DIPs.
+                    captureParams = {...params, clip: {...clip,
+                        x: clip.x * pageZoom, y: clip.y * pageZoom,
+                        width: clip.width * pageZoom, height: clip.height * pageZoom}};
                     const deviceWidth = metrics.contentSize?.width;
                     const cssWidth = metrics.cssContentSize?.width;
                     const factor = deviceWidth / cssWidth;
                     const width = Math.ceil(clip.width * clip.scale * factor);
                     const height = Math.ceil(clip.height * clip.scale * factor);
-                    if (!Number.isFinite(factor) || factor <= 0 || !Number.isSafeInteger(width) ||
+                    if (captureParams.clip.width > 32768 || captureParams.clip.height > 32768 ||
+                            !Number.isFinite(factor) || factor <= 0 || !Number.isSafeInteger(width) ||
                             !Number.isSafeInteger(height) || width <= 0 || height <= 0 ||
                             width > 32768 || height > 32768 || width * height > MAX_SCREENSHOT_PIXELS) {
                         throw new Error("Screenshot exceeds the device-pixel geometry limit");
@@ -267,13 +276,17 @@
                 });
                 if (!this.authorized(generation)) throw new Error("CDP authorization revoked");
                 const output = await bounded("Native screenshot capture", CAPTURE_TIMEOUT_MS,
-                    () => this.command(session, "Page.captureScreenshot", params, generation));
+                    () => this.command(session, "Page.captureScreenshot", captureParams, generation));
                 if (typeof output.data !== "string" || output.data.length > MAX_SCREENSHOT_BASE64) {
                     throw new Error("Oversized or invalid screenshot output; maximum 500000 decoded bytes");
                 }
                 await bounded("Screenshot render cleanup", RENDER_TIMEOUT_MS, async () => {
                     await this.command(session, "Page.stopScreencast", {}, generation);
                     await capture.ack;
+                    const metrics = await this.command(session, "Page.getLayoutMetrics", {}, generation);
+                    if ((metrics.cssVisualViewport?.zoom ?? 1) !== pageZoom) {
+                        throw new Error("Page zoom changed during screenshot capture; output not returned");
+                    }
                 });
                 return output;
             } catch (error) {

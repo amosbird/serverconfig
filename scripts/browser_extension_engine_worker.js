@@ -101,6 +101,15 @@ globalThis.fixture = {
             rootSessionId: bridge.rootSessionId};
     },
     async tabs() { return Promise.all([chrome.tabs.get(tabId), chrome.tabs.get(otherId)]); },
+    async setZoom(zoom) {
+        if (!attached || !authorized || (await chrome.tabs.get(tabId)).active) {
+            throw new Error("Fixture zoom requires its attached inactive work tab");
+        }
+        await chrome.tabs.setZoomSettings(tabId, {mode: "automatic", scope: "per-tab"});
+        await chrome.tabs.setZoom(tabId, zoom);
+        return chrome.tabs.getZoom(tabId);
+    },
+    async zoom() { return chrome.tabs.getZoom(tabId); },
     captureState() { return {trace: captureTrace, outputs: captureOutputs, privateFrames}; },
     async presentation() {
         return {

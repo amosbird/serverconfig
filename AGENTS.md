@@ -186,7 +186,11 @@ A consistent Emacs + Vim hybrid runs through the entire setup:
    activate a tab, resize a window, or replace full-page output with viewport bytes.
    `test_browser_extension_engine.js` always checks repeated full-page/viewport decoded
    pixels, fluid-layout restoration, and unchanged personal/window presentation. The
-   private fixture also supports `ABUSH_ENGINE_TEST_DPR=1.25` or `2`. The durable Rust chain
+   private fixture also supports `ABUSH_ENGINE_TEST_DPR=1.25` or `2`. It covers per-tab
+   page zoom 90%, 110%, 125%, and 150%, including scrolled captures and bottom/right pixels.
+   The bridge converts Playwright CSS clip coordinates to Chromium DIPs using the exact
+   page's `cssVisualViewport.zoom`, never changing page zoom or rewriting PNG bytes.
+   Zoom changes during capture reject output after compositor cleanup. The durable Rust chain
    checks native PNG bytes, full-page bottom markers, exact replay, reconnect, worker restart,
    and Stop. Screenshot failures retire their exact attachment before receipt delivery.
    Chrome 158's automatic scrollbar layout needs the Engine's official screenshot-style

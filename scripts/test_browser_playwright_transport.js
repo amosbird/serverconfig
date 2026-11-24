@@ -514,6 +514,43 @@ const cases = [
             f.bridge.close();
         }
     }]),
+    ...[0.9, 1, 1.1, 1.25, 1.5].map(zoom => [`CSS screenshot coordinates convert to exact-tab DIPs at page zoom ${zoom}`, async () => {
+        const f = fixture(); const session = await f.boot();
+        f.hooks["Page.getLayoutMetrics"] = async () => ({
+            contentSize: {width: 800 * 2 * zoom}, cssContentSize: {width: 800},
+            cssVisualViewport: {zoom, scale: 1}});
+        const params = {...CAPTURE, clip: {...CAPTURE.clip, x: 10.5, y: 1200.25}};
+        const before = clone(params);
+        const reply = await f.request("Page.captureScreenshot", params, session);
+        assert.deepEqual(reply.result, {data: "actual-official-png"});
+        assert.deepEqual(f.calls.find(call => call.method === "Page.captureScreenshot").params,
+            {...params, clip: {...params.clip, x: 10.5 * zoom, y: 1200.25 * zoom,
+                width: 800 * zoom, height: 1600 * zoom}});
+        assert.deepEqual(params, before, "conversion must not mutate the logical Playwright request");
+        assert.equal(f.calls.some(call => /setZoom|setDeviceMetrics|setWindow|bringToFront/.test(call.method)), false);
+        f.bridge.close();
+    }]),
+    ["zoom changed during capture rejects native output after compositor cleanup", async () => {
+        const f = fixture(); const session = await f.boot(); let zoom = 1.1;
+        f.hooks["Page.getLayoutMetrics"] = async () => ({
+            contentSize: {width: 800 * 2 * zoom}, cssContentSize: {width: 800}, cssVisualViewport: {zoom}});
+        f.hooks["Page.captureScreenshot"] = async () => { zoom = 1.25; return {data: "uncertain-zoom-image"}; };
+        const reply = await f.request("Page.captureScreenshot", CAPTURE, session);
+        assert.match(reply.error.message, /zoom changed/);
+        assert.equal(reply.result, undefined);
+        assert.ok(f.calls.some(call => call.method === "Page.stopScreencast"));
+        assert.equal(f.bridge.closed, true);
+        assert.equal(JSON.stringify(f.sent).includes("uncertain-zoom-image"), false);
+    }],
+    ...[0, -1, "1.1", Infinity].map(zoom => [`invalid page zoom ${zoom} is rejected before frame preparation`, async () => {
+        const f = fixture(); const session = await f.boot();
+        f.hooks["Page.getLayoutMetrics"] = async () => ({
+            contentSize: {width: 800}, cssContentSize: {width: 800}, cssVisualViewport: {zoom}});
+        const reply = await f.request("Page.captureScreenshot", CAPTURE, session);
+        assert.match(reply.error.message, /Invalid screenshot page zoom/);
+        assert.equal(f.calls.some(call => call.method === "Page.startScreencast"), false);
+        assert.equal(f.bridge.closed, true);
+    }]),
     ["native screenshot output limit is enforced before image bytes enter the transport", async () => {
         const f = fixture(); const session = await f.boot();
         f.hooks["Page.captureScreenshot"] = async () => ({data: "x".repeat(700000)});
