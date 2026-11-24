@@ -6,6 +6,8 @@
     // No viewport/window emulation: screenshots requiring a metrics override remain denied.
     const MAX_BODY = 256 * 1024;
     const MAX_CAPTURE = 128;
+    const MAX_CDP_MESSAGE_BYTES = 900 * 1024;
+    const MAX_CDP_STRING_BYTES = 64 * 1024;
     const FOCUS_TIMEOUT_MS = 2000;
     const RENDER_TIMEOUT_MS = 2000;
     const CAPTURE_TIMEOUT_MS = 6500;
@@ -44,6 +46,75 @@
     ]);
     const FRAME_FILTER = [{type: "iframe", exclude: false}, {exclude: true}];
     const copy = value => JSON.parse(JSON.stringify(value));
+    const utf8Bytes = text => new TextEncoder().encode(text).length;
+    const truncateString = (value, maxBytes = MAX_CDP_STRING_BYTES) => {
+        if (typeof value !== "string" || value.length * 3 <= maxBytes && utf8Bytes(value) <= maxBytes) {
+            return value;
+        }
+        const suffix = "...[truncated]";
+        let low = 0;
+        let high = value.length;
+        const limit = Math.max(0, maxBytes - suffix.length);
+        while (low < high) {
+            const mid = (low + high + 1) >> 1;
+            if (utf8Bytes(value.slice(0, mid)) <= limit) low = mid;
+            else high = mid - 1;
+        }
+        return `${value.slice(0, low)}${suffix}`;
+    };
+    const compactEventParams = (method, params) => {
+        if (!params || typeof params !== "object") return params;
+        const next = copy(params);
+        if (method === "Network.requestWillBeSent" && next.request && typeof next.request === "object") {
+            if (typeof next.request.url === "string") next.request.url = truncateString(next.request.url, 8192);
+            if (typeof next.request.postData === "string") {
+                next.request.postData = truncateString(next.request.postData, 8192);
+            }
+            if (Array.isArray(next.request.postDataEntries)) {
+                next.request.postDataEntries = next.request.postDataEntries.slice(0, 4).map(entry =>
+                    entry && typeof entry.bytes === "string"
+                        ? {...entry, bytes: truncateString(entry.bytes, 4096)} : entry);
+            }
+            if (next.initiator?.stack?.callFrames) {
+                next.initiator.stack.callFrames = next.initiator.stack.callFrames.slice(0, 8);
+            }
+        } else if (method === "Network.responseReceived" && next.response && typeof next.response === "object") {
+            if (typeof next.response.url === "string") next.response.url = truncateString(next.response.url, 8192);
+            delete next.response.headersText;
+            delete next.response.requestHeadersText;
+        } else if (method === "Runtime.consoleAPICalled") {
+            if (Array.isArray(next.args)) {
+                next.args = next.args.slice(0, 16).map(arg => {
+                    if (!arg || typeof arg !== "object") return arg;
+                    const compact = {...arg};
+                    if (typeof compact.value === "string") compact.value = truncateString(compact.value, 4096);
+                    if (typeof compact.description === "string") {
+                        compact.description = truncateString(compact.description, 4096);
+                    }
+                    delete compact.preview;
+                    return compact;
+                });
+            }
+            if (next.stackTrace?.callFrames) next.stackTrace.callFrames = next.stackTrace.callFrames.slice(0, 8);
+        } else if (method === "Runtime.exceptionThrown" && next.exceptionDetails) {
+            if (typeof next.exceptionDetails.text === "string") {
+                next.exceptionDetails.text = truncateString(next.exceptionDetails.text, 4096);
+            }
+            if (typeof next.exceptionDetails.exception?.description === "string") {
+                next.exceptionDetails.exception.description = truncateString(
+                    next.exceptionDetails.exception.description, 4096);
+            }
+            if (next.exceptionDetails.stackTrace?.callFrames) {
+                next.exceptionDetails.stackTrace.callFrames = next.exceptionDetails.stackTrace.callFrames.slice(0, 8);
+            }
+        } else if (method === "Log.entryAdded" && next.entry && typeof next.entry === "object") {
+            if (typeof next.entry.text === "string") next.entry.text = truncateString(next.entry.text, 4096);
+            if (next.entry.stackTrace?.callFrames) {
+                next.entry.stackTrace.callFrames = next.entry.stackTrace.callFrames.slice(0, 8);
+            }
+        }
+        return next;
+    };
 
     class AuthorizedCdpBridge {
         constructor({chrome, tabId, checkAuthorization, send, onError}) {
@@ -215,8 +286,13 @@
             if (session.id !== this.rootSessionId) throw new Error("Screenshots require the exact root page");
             if (this.capture) throw new Error("Screenshot capture already in progress");
             const clip = params.clip;
-            if (params.format !== "png" || Object.keys(params).some(key =>
-                    !["format", "clip", "captureBeyondViewport"].includes(key)) ||
+            const validFormat = params.format === "png" || params.format === "jpeg";
+            const allowedKeys = params.format === "jpeg"
+                ? ["format", "quality", "clip", "captureBeyondViewport"]
+                : ["format", "clip", "captureBeyondViewport"];
+            const validQuality = params.format !== "jpeg" || params.quality === undefined ||
+                (Number.isInteger(params.quality) && params.quality >= 1 && params.quality <= 100);
+            if (!validFormat || !validQuality || Object.keys(params).some(key => !allowedKeys.includes(key)) ||
                     typeof params.captureBeyondViewport !== "boolean" || !clip ||
                     Object.keys(clip).sort().join(",") !== "height,scale,width,x,y" ||
                     ![clip.x, clip.y, clip.width, clip.height, clip.scale].every(Number.isFinite) ||
@@ -267,7 +343,7 @@
                     }
                 });
                 // A tiny private frame producer keeps the inactive view's compositor surface alive.
-                // Its JPEG frames are discarded; only Playwright's original PNG command is returned.
+                // Its JPEG frames are discarded; only Playwright's original capture command is returned.
                 await bounded("Screenshot render preparation", RENDER_TIMEOUT_MS, async () => {
                     await this.command(session, "Page.startScreencast", {
                         format: "jpeg", quality: 10, maxWidth: 16, maxHeight: 16, everyNthFrame: 1,
@@ -277,8 +353,8 @@
                 if (!this.authorized(generation)) throw new Error("CDP authorization revoked");
                 const output = await bounded("Native screenshot capture", CAPTURE_TIMEOUT_MS,
                     () => this.command(session, "Page.captureScreenshot", captureParams, generation));
-                if (typeof output.data !== "string" || output.data.length > MAX_SCREENSHOT_BASE64) {
-                    throw new Error("Oversized or invalid screenshot output; maximum 500000 decoded bytes");
+                if (typeof output.data !== "string") {
+                    throw new Error("Invalid screenshot output");
                 }
                 await bounded("Screenshot render cleanup", RENDER_TIMEOUT_MS, async () => {
                     await this.command(session, "Page.stopScreencast", {}, generation);
@@ -288,9 +364,14 @@
                         throw new Error("Page zoom changed during screenshot capture; output not returned");
                     }
                 });
+                if (output.data.length > MAX_SCREENSHOT_BASE64) {
+                    // Compositor cleanup already completed cleanly; let the Engine retry with JPEG without retiring.
+                    throw Object.assign(new Error("Oversized screenshot output; maximum 500000 decoded bytes"),
+                        {retireBridge: false});
+                }
                 return output;
             } catch (error) {
-                error.retireBridge = true;
+                if (error.retireBridge !== false) error.retireBridge = true;
                 throw error;
             } finally { if (this.capture === capture) this.capture = null; }
         }
@@ -391,7 +472,11 @@
                 if (session && this.sessions.get(session.id) !== session) {
                     throw new Error("CDP session detached before response");
                 }
-                this.emit({...response, result}, generation);
+                const reply = {...response, result};
+                if (utf8Bytes(JSON.stringify(reply)) > MAX_CDP_MESSAGE_BYTES) {
+                    throw new Error(`CDP response exceeds 1 MiB native transport limit (${method})`);
+                }
+                this.emit(reply, generation);
             } catch (error) {
                 if (!this.authorized(generation)) return;
                 this.emit({...response, error: {code: -32000, message: String(error.message || error)}},
@@ -453,7 +538,15 @@
             }
             if (size && method === "Network.loadingFinished") size.finished = true;
             if (size && method === "Network.loadingFailed") this.bodies.delete(key);
-            this.emit({sessionId: parentId, method, params});
+            let outgoing = {sessionId: parentId, method, params};
+            if (utf8Bytes(JSON.stringify(outgoing)) > MAX_CDP_MESSAGE_BYTES) {
+                outgoing = {sessionId: parentId, method, params: compactEventParams(method, params)};
+                if (utf8Bytes(JSON.stringify(outgoing)) > MAX_CDP_MESSAGE_BYTES) {
+                    // Never send a >1 MiB CDP event that would crash the shared native messaging port.
+                    return;
+                }
+            }
+            this.emit(outgoing);
         }
 
         removeSession(id) {

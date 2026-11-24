@@ -2,6 +2,8 @@ if (typeof importScripts === "function") importScripts("workspace.js");
 
 const NATIVE_HOST = "io.github.amosbird.browser_router";
 const ENVELOPE_VERSION = 1;
+const MAX_NATIVE_MESSAGE_BYTES = 1024 * 1024;
+const NATIVE_TEXT_ENCODER = new TextEncoder();
 
 const NATIVE_TIMEOUTS_MS = Object.freeze({
     native_bootstrap: 15000,
@@ -335,14 +337,19 @@ class NativeDispatcher {
                 if (expectedPort && this.port !== expectedPort) {
                     throw this.bootstrapFailure("native request port was superseded");
                 }
-                dispatchStarted = true;
-                port.postMessage({
+                const envelope = {
                     version: ENVELOPE_VERSION,
                     id,
                     service,
                     operation,
                     payload,
-                });
+                };
+                const encodedBytes = NATIVE_TEXT_ENCODER.encode(JSON.stringify(envelope)).length;
+                if (encodedBytes > MAX_NATIVE_MESSAGE_BYTES) {
+                    throw new Error(`native request exceeds 1 MiB limit (${operation}: ${encodedBytes} bytes)`);
+                }
+                dispatchStarted = true;
+                port.postMessage(envelope);
             } catch (error) {
                 const failure = new Error(error?.message || String(error));
                 failure.nativeDispatch = dispatchStarted ? "unknown" : "not_sent";

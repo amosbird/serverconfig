@@ -274,6 +274,24 @@ const cases = [
             /Browser automation is paused; use the Chrome popup to Start/,
         );
     }],
+    ["oversized native request fails locally before postMessage so the shared native port stays connected", async () => {
+        const f = nativeFixture();
+        const ready = f.native.browserReady();
+        await f.admit(f.ports[0]);
+        await ready;
+        const sentBefore = f.ports[0].sent.length;
+        await assert.rejects(
+            f.native.request("abush_browser", "engine_cdp", {blob: "x".repeat(1024 * 1024 + 16)}),
+            error => {
+                assert.match(error.message, /exceeds 1 MiB limit/);
+                assert.equal(error.nativeDispatch, "not_sent");
+                return true;
+            },
+        );
+        assert.equal(f.ports[0].sent.length, sentBefore);
+        assert.equal(f.native.port, f.ports[0]);
+        f.native.stop();
+    }],
 ];
 for (const stage of ["prepare", "ready"]) {
     const valid = stage === "prepare" ? {browser_boot_id: BOOT.browser_boot_id,

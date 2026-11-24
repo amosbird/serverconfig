@@ -551,14 +551,61 @@ const cases = [
         assert.equal(f.calls.some(call => call.method === "Page.startScreencast"), false);
         assert.equal(f.bridge.closed, true);
     }]),
-    ["native screenshot output limit is enforced before image bytes enter the transport", async () => {
+    ["native screenshot output limit is enforced after compositor cleanup without retiring bridge, and jpeg fallback succeeds", async () => {
         const f = fixture(); const session = await f.boot();
-        f.hooks["Page.captureScreenshot"] = async () => ({data: "x".repeat(700000)});
+        f.hooks["Page.captureScreenshot"] = async (_source, params) => {
+            if (params.format === "png") return {data: "x".repeat(700000)};
+            assert.equal(params.format, "jpeg");
+            assert.equal(params.quality, 80);
+            return {data: "bounded-jpeg-data"};
+        };
         const reply = await f.request("Page.captureScreenshot", CAPTURE, session);
         assert.match(reply.error.message, /Oversized/);
         assert.equal(reply.result, undefined);
         assert.equal(JSON.stringify(f.sent).includes("x".repeat(100)), false);
-        assert.equal(f.bridge.closed, true);
+        assert.ok(f.calls.some(call => call.method === "Page.stopScreencast"));
+        assert.equal(f.bridge.closed, false);
+        const jpegReply = await f.request("Page.captureScreenshot",
+            {...CAPTURE, format: "jpeg", quality: 80}, session);
+        assert.deepEqual(jpegReply.result, {data: "bounded-jpeg-data"});
+        assert.equal(f.bridge.closed, false);
+        f.bridge.close();
+    }],
+    ["unsupported screenshot format or invalid jpeg quality is rejected before frame preparation", async () => {
+        const f = fixture(); const session = await f.boot(); const before = f.calls.length;
+        for (const bad of [
+            {...CAPTURE, format: "webp"},
+            {...CAPTURE, format: "png", quality: 80},
+            {...CAPTURE, format: "jpeg", quality: 0},
+            {...CAPTURE, format: "jpeg", quality: 101},
+            {...CAPTURE, format: "jpeg", quality: 80.5},
+        ]) {
+            assert.match((await f.request("Page.captureScreenshot", bad, session)).error.message, /geometry/);
+        }
+        assert.equal(f.calls.length, before);
+        f.bridge.close();
+    }],
+    ["oversized CDP events are compacted or dropped instead of exceeding the 1 MiB native transport limit", async () => {
+        const f = fixture(); const session = await f.boot();
+        const huge = "A".repeat(1100000);
+        f.event("Network.requestWillBeSent", {
+            requestId: "r-big",
+            request: {url: "https://example.test/api", postData: huge, headers: {}},
+        });
+        const compacted = f.sent.find(m => m.method === "Network.requestWillBeSent");
+        assert.ok(compacted, "compacted Network.requestWillBeSent should still be delivered");
+        assert.ok(Buffer.byteLength(JSON.stringify(compacted)) < 900 * 1024);
+        assert.match(compacted.params.request.postData, /\.\.\.\[truncated\]$/);
+        const before = f.sent.length;
+        f.event("Page.lifecycleEvent", {frameId: "f1", name: "load", payload: huge});
+        assert.equal(f.sent.length, before, "uncompactable >900 KiB CDP event must be dropped safely");
+        assert.equal(f.bridge.closed, false);
+        // Oversized CDP command responses return a correlated error rather than crashing native messaging.
+        f.hooks["Runtime.evaluate"] = async () => ({result: {type: "string", value: huge}});
+        const reply = await f.request("Runtime.evaluate", {expression: "big()"}, session);
+        assert.match(reply.error.message, /exceeds 1 MiB native transport limit/);
+        assert.equal(f.bridge.closed, false);
+        f.bridge.close();
     }],
     ["screencast and child screenshots remain inaccessible through the page CDP allowlist", async () => {
         const f = fixture(); const session = await f.boot(); f.attach("child");
