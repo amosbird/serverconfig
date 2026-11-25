@@ -924,11 +924,22 @@ reappears there.
 
 The final invariant is instead a native nftables filter chain at postrouting priority 110, ten after
 srcnat. Healthy `0x2` packets have already been masqueraded and do not match. Any stale
-ESTABLISHED packet still carrying a tailnet (`100.64.0.0/10`) source is dropped before a physical
-interface sees it. The rule covers the same
+ESTABLISHED packet still carrying a tailnet (`100.64.0.0/10`) source or a leaked `ioa` veth
+(`198.18.170.0/30`) source is dropped before a physical interface sees it. The rule covers the same
 wireless and wired name families accepted by `physical_device()`. Forwarded Tailscale traffic is
 normally source-NATed before this guard as well; forwarding a raw tunnel source onto a
 source-guarded LAN is invalid for the same reason as the local leak.
+
+`tinyproxy` (uid 186) hits the same class of leak on socket close: it connects by IP on behalf of
+tailnet clients so `-m owner --uid-owner` is the only rule marking those packets `0x1` into
+`veth-ioa` (SNATed to `198.18.170.1`). Once `tinyproxy` closes a socket before the peer's FIN
+arrives, kernel-emitted FIN/ACK/RST packets from the orphan socket carry no owning uid, miss
+`-m owner`, fall through to `cn_direct` (`0x2`) or `main`, and leave on `wlan0` with the saved
+`198.18.170.1` SNAT source — triggering a 180s WLC/FortiGate blackhole on `XLSMART Public`
+(observed 2026-11-25 at 10:05:06, 10:08:15, and 10:27:41). `NETMODE_IOA` now persists the IOA mark
+on conntrack bit `0x1/0x1` (disjoint from Tailscale's `0xff0000` mask) so orphan teardown stays on
+`veth-ioa`, and `serverconfig_source_guard` also includes `198.18.170.0/30` as the post-srcnat
+backstop. `network/test-tinyproxy-connmark.sh` reproduces the leak and verifies both layers.
 
 `network/test-cn-fail-closed.sh` contains a required negative control, removes the physical address
 and route, and proves all three layers: without 1501 a tailnet FIN enters table 52; with it table 52
@@ -1148,6 +1159,7 @@ bash network/test-resolv-pin.sh
 bash network/test-install-ioa-62.sh
 sudo -n bash network/test-ioa-static-lan-overlap.sh
 sudo -n bash network/test-reconfigure.sh
+bash network/test-tinyproxy-connmark.sh
 bash network/test-ioa-netns.sh
 bash network/test-ioa-netns-wiring.sh
 bash network/test-static-policy.sh

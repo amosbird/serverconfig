@@ -20,6 +20,7 @@ if [ -z "${NETWORK_RECONFIGURE_LOCKED:-}" ]; then
 fi
 
 IOA_MARK="0x1/0xffffffff"
+IOA_CONNMARK="0x1/0x1"
 CN_MARK="0x2/0xffffffff"
 TS_MARK="0x80000/0xff0000"
 CHAIN="NETMODE_IOA"
@@ -29,6 +30,8 @@ IOA_STATIC_CIDRS=("10.0.0.0/8")
 # (network/ioa-netns), so nothing on the host routes it unless pref 1150 does. Not a source of
 # tunnel-reachable intranet resolvers, hence not part of IOA_STATIC_CIDRS.
 IOA_TUNNEL_NETS=("192.168.255.0/24")
+# Host end of the veth into the `ioa` namespace (network/ioa-netns). Never valid on a physical NIC.
+IOA_VETH_NET="198.18.170.0/30"
 TAILNET_NETS=("100.64.0.0/10")
 CN_SET="cn_direct"
 CN_NEXT_SET="cn_direct_next"
@@ -211,13 +214,13 @@ PHYSICAL_IFACE_GLOBS=(wlan wlp enp eth eno ens)
 install_source_guard() {
     local glob
     {
-        cat <<'NFT'
+        cat <<NFT
 destroy table ip serverconfig_source_guard
 add table ip serverconfig_source_guard
 add set ip serverconfig_source_guard foreign_sources {
     type ipv4_addr
     flags interval
-    elements = { 100.64.0.0/10 }
+    elements = { 100.64.0.0/10, $IOA_VETH_NET }
 }
 add chain ip serverconfig_source_guard postrouting {
     type filter hook postrouting priority 110
@@ -1466,16 +1469,19 @@ fi
 
 firewall_fingerprint_ok() {
     local expected actual
-    expected="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
+    expected="-A $CHAIN -m mark ! --mark 0x0 -j RETURN"$'\n'
     if [ -n "$tinyproxy_uid" ]; then
         local net
+        expected+="-A $CHAIN -m connmark --mark $IOA_CONNMARK -j MARK --set-xmark 0x1/0xffffffff"$'\n'
+        expected+="-A $CHAIN -m mark ! --mark 0x0 -j RETURN"$'\n'
         for net in "${TAILNET_NETS[@]}"; do
             expected+="-A $CHAIN -d $net -m owner --uid-owner $tinyproxy_uid -j RETURN"$'\n'
         done
         expected+="-A $CHAIN -m owner --uid-owner $tinyproxy_uid -j MARK --set-xmark 0x1/0xffffffff"$'\n'
+        expected+="-A $CHAIN -m owner --uid-owner $tinyproxy_uid -j CONNMARK --set-xmark $IOA_CONNMARK"$'\n'
     fi
     expected+="-A $CHAIN -m set --match-set ioa dst -j MARK --set-xmark 0x1/0xffffffff"$'\n'
-    expected+="-A $CHAIN -m mark ! --mark 0x0/0xffffffff -j RETURN"$'\n'
+    expected+="-A $CHAIN -m mark ! --mark 0x0 -j RETURN"$'\n'
     expected+="-A $CHAIN -m set --match-set $CN_SET dst -j MARK --set-xmark 0x2/0xffffffff"
     actual=$(iptables -t mangle -S "$CHAIN" 2>/dev/null | grep "^-A $CHAIN " || true)
     [ "$actual" = "$expected" ] || return 1
@@ -1486,10 +1492,21 @@ firewall_fingerprint_ok() {
         grep -E -c -- "-A POSTROUTING -o $physical_dev -m mark --mark 0x2(/0xffffffff)? -j MASQUERADE")" -eq 1 ]
 }
 
+legacy_cn_tables_absent() {
+    local legacy_stage_id
+    [ -z "$(ip route show table cn 2>/dev/null || true)" ] || return 1
+    [ -z "$(ip route show table 101 2>/dev/null || true)" ] || return 1
+    [ -z "$(ip route show table cn_stage 2>/dev/null || true)" ] || return 1
+    while read -r legacy_stage_id; do
+        [[ "$legacy_stage_id" =~ ^10[0-9]{3}$ ]] || continue
+        [ -z "$(ip route show table "$legacy_stage_id" 2>/dev/null || true)" ] || return 1
+    done < <(awk '$2 == "cn_stage" {print $1}' "$RT_TABLES")
+}
+
 source_guard_fingerprint_ok() {
     local rules glob
     rules=$(nft -s list table ip serverconfig_source_guard 2>/dev/null) || return 1
-    grep -Fq 'elements = { 100.64.0.0/10 }' <<<"$rules" || return 1
+    grep -Fq "elements = { 100.64.0.0/10, $IOA_VETH_NET }" <<<"$rules" || return 1
     grep -Fq 'type filter hook postrouting priority srcnat + 10; policy accept;' \
         <<<"$rules" || return 1
     for glob in "${PHYSICAL_IFACE_GLOBS[@]}"; do
@@ -1526,6 +1543,7 @@ if [ "${FORCE:-0}" != 1 ] &&
    iptables -t mangle -C OUTPUT -j "$CHAIN" 2>/dev/null &&
    firewall_fingerprint_ok &&
    source_guard_fingerprint_ok &&
+   legacy_cn_tables_absent &&
    [ "$(desired_fingerprint)" = "$(actual_fingerprint)" ]; then
     logger -t network-reconfigure -p daemon.info "no change ($current_state); nothing to do"
     exit 0
@@ -1685,6 +1703,15 @@ iptables -t mangle -X "$NEXT_CHAIN" 2>/dev/null || true
 iptables -t mangle -N "$NEXT_CHAIN"
 iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
 if [ -n "$tinyproxy_uid" ]; then
+    # Remember tinyproxy's IOA decision on the conntrack entry (low bit, outside Tailscale's
+    # 0xff0000 mask). Once tinyproxy closes a socket, kernel-emitted FIN/ACK/RST packets from the
+    # orphan/TIME_WAIT state have no owning uid and miss `-m owner`; without connmark they fall
+    # through to cn_direct (mark 0x2) or main and leave on wlan0 carrying the already-recorded
+    # veth-ioa SNAT address (198.18.170.1), which triggers a 180s WLC/FortiGate source-spoof
+    # blackhole on XLSMART Public (observed 2026-11-25 at 10:05:06, 10:08:15, 10:27:41).
+    iptables -t mangle -A "$NEXT_CHAIN" \
+        -m connmark --mark "$IOA_CONNMARK" -j MARK --set-xmark 0x1/0xffffffff
+    iptables -t mangle -A "$NEXT_CHAIN" -m mark ! --mark 0x0/0xffffffff -j RETURN
     for net in "${TAILNET_NETS[@]}"; do
         iptables -t mangle -A "$NEXT_CHAIN" \
             -d "$net" -m owner --uid-owner "$tinyproxy_uid" -j RETURN
@@ -1692,6 +1719,9 @@ if [ -n "$tinyproxy_uid" ]; then
     iptables -t mangle -A "$NEXT_CHAIN" \
         -m owner --uid-owner "$tinyproxy_uid" \
         -j MARK --set-xmark 0x1/0xffffffff
+    iptables -t mangle -A "$NEXT_CHAIN" \
+        -m owner --uid-owner "$tinyproxy_uid" \
+        -j CONNMARK --set-xmark "$IOA_CONNMARK"
 fi
 ensure_ipset ioa
 iptables -t mangle -A "$NEXT_CHAIN" \
@@ -1719,12 +1749,13 @@ mark_transaction+=$'\nCOMMIT'
 iptables-restore --noflush <<<"$mark_transaction"
 
 # Final source validity is checked after srcnat, not in mangle POSTROUTING. At this priority every
-# healthy CN packet has already been rewritten to the physical address, while an ESTABLISHED
-# flow whose old no-NAT conntrack state survived a DHCP transition still carries tailscale0's
-# source and is dropped before the device sees it. Forwarded Tailscale traffic is normally rewritten
-# by Tailscale's own srcnat before this hook too; forwarding a raw tailnet source onto a source-guarded
-# physical network is invalid for the same reason as the local leak. Wildcard physical names make
-# the invariant continuous across Wi-Fi/wired switches. The native nft table is replaced atomically.
+# healthy CN packet has already been rewritten to the physical address, while an ESTABLISHED flow
+# whose old no-NAT conntrack state survived a DHCP transition still carries tailscale0's source, and
+# any misrouted packet from the ioa veth still carries 198.18.170.0/30; either is dropped before the
+# physical device sees it. Forwarded Tailscale traffic is normally rewritten by Tailscale's own
+# srcnat before this hook too; forwarding a raw tailnet source onto a source-guarded physical network
+# is invalid for the same reason as the local leak. Wildcard physical names make the invariant
+# continuous across Wi-Fi/wired switches. The native nft table is replaced atomically.
 install_source_guard
 
 # Remove the repository-owned set retired by the authoritative SmartDNS model.

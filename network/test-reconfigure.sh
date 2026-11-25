@@ -1462,7 +1462,7 @@ main() {
     local source_guard
     source_guard=$(nft -s list table ip serverconfig_source_guard 2>/dev/null)
     if grep -Fq 'priority srcnat + 10' <<<"$source_guard" &&
-       grep -Fq 'elements = { 100.64.0.0/10 }' <<<"$source_guard" &&
+       grep -Fq 'elements = { 100.64.0.0/10, 198.18.170.0/30 }' <<<"$source_guard" &&
        [ "$(grep -c 'ip saddr @foreign_sources counter drop' <<<"$source_guard")" -eq 6 ]; then
         ok "physical source validity is enforced after source NAT"
     else

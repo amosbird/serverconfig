@@ -77,33 +77,44 @@ else
 fi
 # tinyproxy opens connections on behalf of a tailnet client that has already resolved the
 # destination, so domain classification never sees them. Its stable uid owner mark has to
-# exclude tailnet replies and precede the routefile mark; a cgroup path would go stale across a
-# systemd stop/start. Marked traffic must also stop if table ioa has no route.
+# exclude tailnet replies, persist on the conntrack entry (so orphan FIN/ACK/RST packets after
+# close() never miss `-m owner` and leak onto wlan0 with veth-ioa's 198.18.170.1 SNAT source),
+# and precede the routefile mark; a cgroup path would go stale across a systemd stop/start.
+# Marked traffic must also stop if table ioa has no route.
 p_ioa_stop=$(awk -F= '$1 == "P_IOA_STOP" {print $2; exit}' scripts/network-reconfigure)
 if [ -z "$p_ioa_stop" ] || [ "$p_ioa_stop" -ne "$((p_ioa + 1))" ] ||
    ! grep -Fq 'DESIRED_BANDS[$P_IOA_STOP]="from all fwmark $IOA_MARK prohibit"' \
         scripts/network-reconfigure ||
    grep -Fq 'TINYPROXY_CGROUP=' scripts/network-reconfigure ||
+   ! grep -Fq 'expected+="-A $CHAIN -m connmark --mark $IOA_CONNMARK -j MARK --set-xmark 0x1/0xffffffff"' \
+        scripts/network-reconfigure ||
    ! grep -Fq 'expected+="-A $CHAIN -m owner --uid-owner $tinyproxy_uid -j MARK --set-xmark 0x1/0xffffffff"' \
         scripts/network-reconfigure ||
+   ! grep -Fq 'expected+="-A $CHAIN -m owner --uid-owner $tinyproxy_uid -j CONNMARK --set-xmark $IOA_CONNMARK"' \
+        scripts/network-reconfigure ||
    ! awk '
-        $0 ~ /-d "\$net" -m owner --uid-owner "\$tinyproxy_uid" -j RETURN/ { tailnet = NR }
+        $0 ~ /-m connmark --mark "\$IOA_CONNMARK" -j MARK --set-xmark 0x1\/0xffffffff/ { restore = NR }
+        restore && NR > restore && !tailnet &&
+            $0 ~ /-d "\$net" -m owner --uid-owner "\$tinyproxy_uid" -j RETURN/ { tailnet = NR }
         tailnet && NR > tailnet && !owner &&
             $0 ~ /-m owner --uid-owner "\$tinyproxy_uid"/ { owner = NR }
         owner && !mark && $0 ~ /set-xmark 0x1\/0xffffffff/ { mark = NR }
-        mark && $0 ~ /match-set "\$CN_SET" dst/ { cn = NR }
-        END { exit !(tailnet && owner && mark && cn &&
-                     tailnet < owner && owner < mark && mark < cn) }
+        mark && !save && $0 ~ /-j CONNMARK --set-xmark "\$IOA_CONNMARK"/ { save = NR }
+        save && $0 ~ /match-set "\$CN_SET" dst/ { cn = NR }
+        END { exit !(restore && tailnet && owner && mark && save && cn &&
+                     restore < tailnet && tailnet < owner && owner < mark && mark < save && save < cn) }
     ' scripts/network-reconfigure; then
     echo 'FAIL tinyproxy egress is not stably and fail-closed marked into IOA' >&2
     fail=1
 else
     echo 'OK   tinyproxy egress is stably and fail-closed marked into IOA'
 fi
-# A stale ESTABLISHED flow may still retain a no-NAT decision across the failed lookup. Its final
-# source is therefore checked after srcnat, where healthy packets have already been masqueraded.
+# A stale ESTABLISHED flow may still retain a no-NAT decision across the failed lookup, and any
+# misrouted packet from the ioa veth carries 198.18.170.0/30. Final source validity is therefore
+# checked after srcnat, where healthy packets have already been masqueraded.
 if grep -Fq 'hook postrouting priority 110' scripts/network-reconfigure &&
-   grep -Fq 'elements = { 100.64.0.0/10 }' scripts/network-reconfigure &&
+   grep -Fq 'IOA_VETH_NET="198.18.170.0/30"' scripts/network-reconfigure &&
+   grep -Fq 'elements = { 100.64.0.0/10, $IOA_VETH_NET }' scripts/network-reconfigure &&
    grep -Fq 'PHYSICAL_IFACE_GLOBS=(wlan wlp enp eth eno ens)' scripts/network-reconfigure &&
    grep -Fq 'install_source_guard' scripts/network-reconfigure; then
     echo 'OK   post-srcnat source validity guard covers physical interfaces'
