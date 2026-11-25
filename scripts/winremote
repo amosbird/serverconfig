@@ -1,73 +1,389 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
+"""Launch FreeRDP to the Windows workstation via the fastest healthy route."""
 
-DPI_PARAMS="/w:3840 /h:2160 /scale-desktop:200 /scale:180"
+import argparse
+from collections.abc import Iterable, Sequence
+import concurrent.futures
+import dataclasses
+import os
+import signal
+import socket
+import statistics
+import subprocess
+import sys
+import time
 
-# export NVD_BACKEND=direct
-# export LIBVA_DRIVER_NAME=nvidia
-export NO_PROXY=1
-# USB_PARAMS="/dvc:urbdrc,id,dev:18d1:d00d"
-# USB_PARAMS="/usb:auto"
-# VAAPI="/vaapi-connection-type:x11"
 
-rdp_hosts=(
-    100.89.130.111
-    100.125.242.70
-    100.66.107.106
+@dataclasses.dataclass(frozen=True)
+class Route:
+    name: str
+    host: str
+    port: int = 3389
+    note: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
+class ProbeResult:
+    route: Route
+    median_ms: float
+    jitter_ms: float
+    ok: int
+    total: int
+    score: float
+
+
+ROUTES: tuple[Route, ...] = (
+    Route("amos-sg", "100.125.242.70", note="Split-TCP relay"),
+    Route("amoshk", "100.104.31.7", note="Split-TCP relay"),
+    Route("abp1gen6", "100.89.130.111", note="direct"),
+    Route("clickstock", "100.66.107.106", note="fallback relay"),
 )
 
-pick_rdp_ip() {
-    local tmp ip ms best_ip="" best_ms=999999999
-    tmp=$(mktemp -d) || return 1
-    for ip in "$@"; do
-        (
-            start=$(date +%s%N)
-            if timeout 1.5 bash -c "exec 3>/dev/tcp/${ip}/3389" 2>/dev/null; then
-                now=$(date +%s%N)
-                echo $(((now - start) / 1000000)) >"$tmp/$ip"
-            fi
-        ) &
-    done
-    wait
-    for ip in "$@"; do
-        [[ -s $tmp/$ip ]] || continue
-        ms=$(<"$tmp/$ip")
-        echo "rdp probe $ip ${ms}ms" >&2
-        if (( ms < best_ms )); then
-            best_ms=$ms
-            best_ip=$ip
-        fi
-    done
-    rm -rf "$tmp"
-    [[ -n $best_ip ]] || return 1
-    echo "rdp using $best_ip (${best_ms}ms)" >&2
-    printf '%s\n' "$best_ip"
-}
+DEFAULT_USER = "Tencent_Go"
+PASSWORD_PASS_KEY = "gpg"
+FALLBACK_HOST_PASS_KEY = "windows_qtw"
+DEFAULT_PROGRAM = "xfreerdp"
+DEFAULT_GFX = "avc444"
+DEFAULT_LOG_PATH = "/tmp/freerdp.log"
+RDP2TCP_BIN = "/home/amos/git/rdp2tcp/client/rdp2tcp"
+DRIVE_SPEC = "amos,/home/amos"
+DPI_ARGS: tuple[str, ...] = (
+    "/w:3840",
+    "/h:2160",
+    "/scale-desktop:200",
+    "/scale:180",
+)
 
-ip=$(pick_rdp_ip "${rdp_hosts[@]}")
-[[ -n $ip ]] || ip=$(pass show windows_qtw)
-user=Tencent_Go
-password=$(pass show gpg)
+# Minimal X.224 Connection Request (TPKT + COTP CR + RDP_NEG_REQ).
+# Total time for TCP connect + X.224 CR/CC equals 2 * end-to-end RTT for both
+# direct/DNAT links and Split-TCP relays, while also verifying the Windows RDP
+# backend is reachable behind a relay.
+X224_CR = bytes.fromhex("030000130ee000000000000100080003000000")
+DEFAULT_PROBES = 3
+DEFAULT_PROBE_TIMEOUT = 1.5
+LOSS_PENALTY_MS = 300.0
+JITTER_WEIGHT = 0.25
 
-# log="/log-filters:com.freerdp.client.x11.cliprdr:trace"
-# size="/size:1920x1080 /smart-sizing:$(xrandr | head -n1 | cut -d, -f2 | cut -d" " -f3-5 | sed 's/ //g')"
-# debug=/log-level:trace
-# clipboard=/clipboard:use-selection:PRIMARY
-# log=/log-level:trace
-# log=/log-filters:com.freerdp.channels.cliprdr.client:trace
-# log=/log-filters:com.freerdp.channels.audin.client:trace
-rdp2tcp=/rdp2tcp:/home/amos/git/rdp2tcp/client/rdp2tcp
-# compression="-glyph-cache /network:modem /compression /bpp:8 -themes -wallpaper"
-# compression="/compression /network:lan"
 
-# effect="+aero +menu-anims +window-drag +fonts /bpp:32"
-# program=~/git/FreeRDP/release/client/X11/xfreerdp
-# sound="/sound:sys:pulse /microphone:sys:pulse /audio-mode:0"
-# audio=/audio-mode:1
-program=xfreerdp
+def is_x224_cc(resp: bytes) -> bool:
+    return len(resp) >= 11 and resp[0] == 0x03 and resp[5] == 0xD0
 
-$program $log $rdp2tcp $compression $debug $VAAPI $USB_PARAMS $DPI_PARAMS /cert:ignore $effect /gfx:rfx $audio $sound $size +auto-reconnect /drive:amos,/home/amos -toggle-fullscreen -grab-keyboard $clipboard /u:$user /p:"$password" /v:$ip $rdp2tcp &> /tmp/freerdp.log &
-rdp_pid=$!
 
-win-sync-theme &
+def probe_once(host: str, port: int, timeout: float) -> float | None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        t0 = time.monotonic()
+        sock.connect((host, port))
+        sock.sendall(X224_CR)
+        resp = sock.recv(64)
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        if is_x224_cc(resp):
+            return elapsed_ms / 2.0
+    except OSError:
+        return None
+    finally:
+        sock.close()
+    return None
 
-wait $rdp_pid
+
+def score_samples(samples: Sequence[float], total: int) -> tuple[float, float, float]:
+    median_ms = statistics.median(samples)
+    losses = total - len(samples)
+    jitter_ms = max(samples) - min(samples) if len(samples) > 1 else 0.0
+    score = median_ms + losses * LOSS_PENALTY_MS + jitter_ms * JITTER_WEIGHT
+    return median_ms, jitter_ms, score
+
+
+def probe_route(
+    route: Route,
+    probes: int = DEFAULT_PROBES,
+    timeout: float = DEFAULT_PROBE_TIMEOUT,
+    probe_fn=probe_once,
+) -> ProbeResult | None:
+    samples: list[float] = []
+    for _ in range(probes):
+        rtt = probe_fn(route.host, route.port, timeout)
+        if rtt is not None:
+            samples.append(rtt)
+    if not samples:
+        return None
+    median_ms, jitter_ms, score = score_samples(samples, probes)
+    return ProbeResult(
+        route=route,
+        median_ms=median_ms,
+        jitter_ms=jitter_ms,
+        ok=len(samples),
+        total=probes,
+        score=score,
+    )
+
+
+def probe_routes(
+    routes: Sequence[Route],
+    probes: int = DEFAULT_PROBES,
+    timeout: float = DEFAULT_PROBE_TIMEOUT,
+    probe_fn=probe_once,
+) -> list[ProbeResult]:
+    if not routes:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(routes)) as pool:
+        results = list(
+            pool.map(lambda r: probe_route(r, probes, timeout, probe_fn), routes)
+        )
+    return [res for res in results if res is not None]
+
+
+def choose_best_route(results: Iterable[ProbeResult]) -> ProbeResult | None:
+    best: ProbeResult | None = None
+    for res in results:
+        if best is None or res.score < best.score:
+            best = res
+    return best
+
+
+def resolve_named_route(spec: str, routes: Sequence[Route] = ROUTES) -> Route:
+    for route in routes:
+        if spec in (route.name, route.host):
+            return route
+    if ":" in spec and spec.count(":") == 1:
+        host, port_text = spec.split(":", 1)
+        return Route(host, host, int(port_text), note="manual")
+    return Route(spec, spec, 3389, note="manual")
+
+
+def pass_show(key: str) -> str:
+    out = subprocess.check_output(["pass", "show", key], text=True)
+    return out.splitlines()[0]
+
+
+def build_rdp_command(
+    *,
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    gfx: str,
+    program: str = DEFAULT_PROGRAM,
+    audio: bool = False,
+    sound: bool = False,
+    rdp2tcp: bool = True,
+    extra_args: Sequence[str] = (),
+) -> list[str]:
+    target = f"{host}:{port}" if port != 3389 else host
+    cmd: list[str] = [program]
+    if rdp2tcp:
+        cmd.append(f"/rdp2tcp:{RDP2TCP_BIN}")
+    cmd.extend(DPI_ARGS)
+    cmd.extend(
+        [
+            "/cert:ignore",
+            f"/gfx:{gfx}",
+            "+auto-reconnect",
+            f"/drive:{DRIVE_SPEC}",
+            "-toggle-fullscreen",
+            "-grab-keyboard",
+        ]
+    )
+    if sound:
+        cmd.extend(["/sound:sys:pulse", "/microphone:sys:pulse", "/audio-mode:0"])
+    elif audio:
+        cmd.append("/audio-mode:1")
+    cmd.extend(extra_args)
+    cmd.extend([f"/u:{user}", f"/p:{password}", f"/v:{target}"])
+    return cmd
+
+
+def redact_command(cmd: Sequence[str]) -> list[str]:
+    return ["/p:***" if arg.startswith("/p:") else arg for arg in cmd]
+
+
+def format_probe_line(res: ProbeResult, selected: bool = False) -> str:
+    marker = "*" if selected else " "
+    note = f" ({res.route.note})" if res.route.note else ""
+    return (
+        f"{marker} {res.route.name:<11s} {res.route.host:<15s} "
+        f"rtt={res.median_ms:>4.0f}ms jitter={res.jitter_ms:>4.0f}ms "
+        f"ok={res.ok}/{res.total} score={res.score:>4.0f}{note}"
+    )
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="winremote",
+        description="Connect to Windows via FreeRDP using the best available route.",
+    )
+    parser.add_argument(
+        "--host",
+        help="Force a specific route name (e.g. amos-sg, amoshk) or host[:port].",
+    )
+    parser.add_argument(
+        "--gfx",
+        default=DEFAULT_GFX,
+        help=f"FreeRDP /gfx mode (default: {DEFAULT_GFX}; e.g. avc444, rfx, avc420).",
+    )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="Probe all candidate routes, print results, and exit.",
+    )
+    parser.add_argument(
+        "--probes",
+        type=int,
+        default=DEFAULT_PROBES,
+        help=f"Number of X.224 probes per route (default: {DEFAULT_PROBES}).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_PROBE_TIMEOUT,
+        help=f"Per-probe timeout in seconds (default: {DEFAULT_PROBE_TIMEOUT}).",
+    )
+    parser.add_argument(
+        "--audio",
+        action="store_true",
+        help="Leave audio on remote (/audio-mode:1).",
+    )
+    parser.add_argument(
+        "--sound",
+        action="store_true",
+        help="Redirect PulseAudio sound and microphone.",
+    )
+    parser.add_argument(
+        "--no-rdp2tcp",
+        action="store_true",
+        help="Disable rdp2tcp channel.",
+    )
+    parser.add_argument(
+        "--no-sync-theme",
+        action="store_true",
+        help="Do not invoke win-sync-theme after launch.",
+    )
+    parser.add_argument(
+        "--user",
+        default=DEFAULT_USER,
+        help=f"RDP username (default: {DEFAULT_USER}).",
+    )
+    parser.add_argument(
+        "--program",
+        default=DEFAULT_PROGRAM,
+        help=f"FreeRDP executable (default: {DEFAULT_PROGRAM}).",
+    )
+    parser.add_argument(
+        "--log",
+        default=DEFAULT_LOG_PATH,
+        help=f"FreeRDP log file path (default: {DEFAULT_LOG_PATH}).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Select route and print the redacted FreeRDP command without launching.",
+    )
+    parser.add_argument(
+        "extra",
+        nargs=argparse.REMAINDER,
+        help="Extra arguments passed through to FreeRDP (prefix with --).",
+    )
+    return parser.parse_args(argv)
+
+
+def select_route(args: argparse.Namespace) -> Route:
+    if args.host:
+        return resolve_named_route(args.host)
+
+    results = probe_routes(ROUTES, probes=args.probes, timeout=args.timeout)
+    best = choose_best_route(results)
+    for res in sorted(results, key=lambda r: r.score):
+        print(
+            format_probe_line(res, selected=(best is not None and res == best)),
+            file=sys.stderr,
+        )
+    if best is not None:
+        return best.route
+
+    fallback_host = pass_show(FALLBACK_HOST_PASS_KEY)
+    print(f"rdp probe failed for all routes; falling back to {fallback_host}", file=sys.stderr)
+    return resolve_named_route(fallback_host)
+
+
+def launch_rdp(
+    cmd: Sequence[str],
+    log_path: str,
+    sync_theme: bool,
+) -> int:
+    env = os.environ.copy()
+    env["NO_PROXY"] = "1"
+
+    with open(log_path, "wb") as log_file:
+        rdp_proc = subprocess.Popen(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+
+    theme_proc: subprocess.Popen[bytes] | None = None
+    if sync_theme:
+        try:
+            theme_proc = subprocess.Popen(["win-sync-theme"], env=env)
+        except OSError as exc:
+            print(f"warning: failed to start win-sync-theme: {exc}", file=sys.stderr)
+
+    def forward_signal(signum: int, _frame) -> None:
+        if rdp_proc.poll() is None:
+            rdp_proc.send_signal(signum)
+
+    prev_int = signal.signal(signal.SIGINT, forward_signal)
+    prev_term = signal.signal(signal.SIGTERM, forward_signal)
+    try:
+        return rdp_proc.wait()
+    finally:
+        signal.signal(signal.SIGINT, prev_int)
+        signal.signal(signal.SIGTERM, prev_term)
+        if theme_proc is not None and theme_proc.poll() is None:
+            theme_proc.terminate()
+            try:
+                theme_proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                theme_proc.kill()
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    extra = list(args.extra)
+    if extra and extra[0] == "--":
+        extra = extra[1:]
+
+    if args.probe:
+        results = probe_routes(ROUTES, probes=args.probes, timeout=args.timeout)
+        best = choose_best_route(results)
+        for res in sorted(results, key=lambda r: r.score):
+            print(format_probe_line(res, selected=(best is not None and res == best)))
+        return 0 if best is not None else 1
+
+    route = select_route(args)
+    print(f"rdp using {route.name} ({route.host}:{route.port})", file=sys.stderr)
+
+    password = "***" if args.dry_run else pass_show(PASSWORD_PASS_KEY)
+    cmd = build_rdp_command(
+        host=route.host,
+        port=route.port,
+        user=args.user,
+        password=password,
+        gfx=args.gfx,
+        program=args.program,
+        audio=args.audio,
+        sound=args.sound,
+        rdp2tcp=not args.no_rdp2tcp,
+        extra_args=extra,
+    )
+
+    if args.dry_run:
+        print(" ".join(redact_command(cmd)))
+        return 0
+
+    return launch_rdp(cmd, log_path=args.log, sync_theme=not args.no_sync_theme)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
