@@ -21,6 +21,7 @@ gopass = "latest"
 uv = "latest"
 gh = "latest"
 "github:git-lfs/git-lfs" = { version = "latest", filter_bins = "git-lfs" }
+"github:kunobi-ninja/kache" = { version = "latest", filter_bins = "kache,kache-engine" }
 
 [settings]
 experimental = true

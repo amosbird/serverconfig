@@ -1,0 +1,11 @@
+[cache]
+local_max_size = "60GiB"
+seed_new_targets = true
+seed_incremental = true
+adaptive_incremental = true
+cache_executables = true
+build_script_hermetic = true
+auto_clean_orphaned_targets = true
+auto_clean_idle_targets_days = 7
+auto_recover_min_free_bytes = "10GiB"
+daemon_idle_timeout_secs = 600
