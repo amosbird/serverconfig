@@ -275,6 +275,8 @@ if [[ -n $GUI ]]; then
         "$HOME/.config/systemd/user/audio-mute-led.service"
     install -Dm644 "$DIR/systemd/bluetooth-indicator.service" \
         "$HOME/.config/systemd/user/bluetooth-indicator.service"
+    install -Dm644 "$DIR/systemd/network-indicator.service" \
+        "$HOME/.config/systemd/user/network-indicator.service"
     install -Dm644 "$DIR/systemd/battery-indicator.service" \
         "$HOME/.config/systemd/user/battery-indicator.service"
     install -Dm644 "$DIR/systemd/fcitx5-indicator.service" \

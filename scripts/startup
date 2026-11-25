@@ -33,6 +33,7 @@ run_fish_bg() {
 
 run_bg "caps-indicator" caps-indicator
 run "bluetooth-indicator" systemctl --user start bluetooth-indicator.service
+run "network-indicator" systemctl --user start network-indicator.service
 run "battery-indicator" systemctl --user start battery-indicator.service
 run "fcitx5-indicator" systemctl --user start fcitx5-indicator.service
 run "tray" systemctl --user start tray.service

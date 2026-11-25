@@ -1,0 +1,959 @@
+#!/usr/bin/env python3
+
+"""Network connection tray indicator.
+
+Shows the active uplink (wired or Wi-Fi, with SSID and signal strength or link
+speed, plus captive-portal state) at the right end of stalonetray alongside the
+other indicators. State is event-driven through systemd-networkd and iwd D-Bus
+signals, with a slow fallback tick for RSSI drift and daemon restarts.
+"""
+
+import faulthandler
+import json
+import math
+import os
+import subprocess
+import time
+
+faulthandler.enable()
+
+import cairo
+import gi
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo
+
+import trayorder
+import traytooltip
+
+ICON_SIZE = 96
+DESIGN_SIZE = 96
+
+# WM_CLASS instance of our own tray icon, which is the script name.
+INSTANCE = "network-indicator"
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+PORTAL_LOGIN = os.path.join(HERE, "portal-login")
+PORTAL_URL_STATE = "/run/network-reconfigure/captive-portal-url"
+
+IWD = "net.connman.iwd"
+NETWORKD = "org.freedesktop.network1"
+LOGIND = "org.freedesktop.login1"
+
+# D-Bus property changes arrive in bursts during roam/DHCP; coalesce them and
+# poll gently in the background for RSSI and portal-state file changes.
+REFRESH_DELAY_MS = 200
+POLL_SECONDS = 15
+
+# Hysteresis prevents signal bars from oscillating at threshold boundaries,
+# and short grace periods preserve the last known state across daemon restarts.
+RSSI_HYSTERESIS_DB = 3
+IWD_GRACE_SECONDS = 10.0
+OFFLINE_GRACE_SECONDS = 3.0
+
+# Virtual or tunnel interfaces that never represent the physical uplink.
+VIRTUAL_TYPES = {"loopback", "bridge", "tun", "tap", "veth", "wireguard", "none"}
+VIRTUAL_PREFIXES = ("lo", "docker", "br-", "veth", "tailscale", "tun", "tap", "wg")
+
+# RSSI cutoffs in dBm from highest (4 bars) to lowest (1 bar); below the last
+# cutoff is 0 bars.
+SIGNAL_THRESHOLDS = (
+    (4, -55),
+    (3, -67),
+    (2, -75),
+    (1, -85),
+)
+
+# Palette matching the other indicators in the row.
+WIRED_COLOR = (0.12, 0.62, 0.48)
+WIFI_GOOD_COLOR = (0.10, 0.47, 0.95)
+WIFI_FAIR_COLOR = (0.18, 0.56, 0.78)
+WIFI_WEAK_COLOR = (0.85, 0.62, 0.10)
+CONNECTING_COLOR = (0.18, 0.56, 0.78)
+PORTAL_COLOR = (0.90, 0.45, 0.10)
+OFFLINE_COLOR = (0.30, 0.32, 0.36)
+
+FONT = "Noto Sans CJK SC"
+LABEL_MAX_PX = 20
+LABEL_MIN_PX = 13
+LABEL_PAD = 5
+LABEL_LINE_SPACING = -3
+
+
+class State:
+    """Snapshot of the active physical network connection."""
+
+    def __init__(
+        self,
+        kind="offline",
+        interface="",
+        ssid="",
+        ip="",
+        gateway="",
+        rssi=None,
+        frequency=0,
+        security="",
+        speed_mbps=None,
+        tailscale_ip="",
+        portal_url="",
+        station_state="",
+        bars=None,
+    ):
+        self.kind = kind  # wired | wifi | connecting | offline
+        self.interface = interface
+        self.ssid = ssid
+        self.ip = ip
+        self.gateway = gateway
+        self.rssi = rssi
+        self.frequency = frequency
+        self.security = security
+        self.speed_mbps = speed_mbps
+        self.tailscale_ip = tailscale_ip
+        self.portal_url = portal_url
+        self.station_state = station_state
+        self.bars = signal_bars(rssi) if bars is None else bars
+
+    def key(self):
+        return (
+            self.kind,
+            self.interface,
+            self.ssid,
+            self.ip,
+            self.gateway,
+            self.bars,
+            self.frequency,
+            self.security,
+            self.speed_mbps,
+            self.tailscale_ip,
+            self.portal_url,
+            self.station_state,
+        )
+
+
+def is_physical_interface(name, link_type=""):
+    """Whether a link is a candidate physical uplink (wired or wireless)."""
+    if not name or name.startswith(VIRTUAL_PREFIXES):
+        return False
+    if link_type in VIRTUAL_TYPES:
+        return False
+    return True
+
+
+def signal_bars(rssi, previous=None, hysteresis=RSSI_HYSTERESIS_DB):
+    """Map RSSI in dBm to 0..4 signal arcs, with optional hysteresis around boundaries."""
+    if rssi is None:
+        return None
+    raw = 0
+    for bars, cutoff in SIGNAL_THRESHOLDS:
+        if rssi >= cutoff:
+            raw = bars
+            break
+    if previous is None or raw == previous or hysteresis <= 0:
+        return raw
+    # Require crossing the threshold by at least `hysteresis` dB before stepping
+    # down or up by a single bar so a border signal does not flicker the icon.
+    if raw < previous:
+        # Lowest threshold that still qualifies for `previous` bars.
+        cutoff = dict(SIGNAL_THRESHOLDS).get(previous)
+        if cutoff is not None and rssi >= cutoff - hysteresis:
+            return previous
+    else:
+        # Threshold required to enter `raw` bars.
+        cutoff = dict(SIGNAL_THRESHOLDS).get(raw)
+        if cutoff is not None and rssi < cutoff + hysteresis:
+            return previous
+    return raw
+
+
+def format_frequency(mhz):
+    if not mhz:
+        return ""
+    if mhz >= 5900:
+        return f"6 GHz ({mhz} MHz)"
+    if mhz >= 4900:
+        return f"5 GHz ({mhz} MHz)"
+    return f"2.4 GHz ({mhz} MHz)"
+
+
+def format_speed(mbps):
+    if not mbps or mbps <= 0:
+        return ""
+    if mbps >= 1000:
+        gbps = mbps / 1000
+        return f"{int(gbps)}G" if gbps.is_integer() else f"{gbps:.1f}G"
+    return f"{mbps}M"
+
+
+def short_label(state):
+    """Compact label rendered under the icon glyph."""
+    if state.portal_url:
+        return "LOGIN"
+    if state.kind == "wired":
+        return format_speed(state.speed_mbps) or "LAN"
+    if state.kind == "wifi":
+        return state.ssid or "Wi-Fi"
+    if state.kind == "connecting":
+        return "···"
+    return "OFF"
+
+
+def appearance_color(state):
+    if state.portal_url:
+        return PORTAL_COLOR
+    if state.kind == "wired":
+        return WIRED_COLOR
+    if state.kind == "connecting":
+        return CONNECTING_COLOR
+    if state.kind == "wifi":
+        bars = state.bars
+        if bars is None or bars >= 3:
+            return WIFI_GOOD_COLOR
+        if bars == 2:
+            return WIFI_FAIR_COLOR
+        return WIFI_WEAK_COLOR
+    return OFFLINE_COLOR
+
+
+def tooltip_lines(state):
+    if state.kind == "wired":
+        speed = format_speed(state.speed_mbps)
+        head = f"Wired  {state.interface}" + (f"  ·  {speed}" if speed else "")
+        lines = [head]
+    elif state.kind == "wifi":
+        lines = [f"Wi-Fi  {state.ssid or state.interface}"]
+    elif state.kind == "connecting":
+        target = f"  {state.ssid}" if state.ssid else ""
+        lines = [f"Wi-Fi{target}", "Connecting…"]
+    else:
+        lines = ["Network  Disconnected"]
+
+    if state.portal_url:
+        lines.append("Captive portal — click to open login")
+    if state.kind == "wifi":
+        details = []
+        if state.rssi is not None:
+            details.append(f"{state.rssi} dBm")
+        band = format_frequency(state.frequency)
+        if band:
+            details.append(band)
+        if state.security:
+            details.append(state.security)
+        if details:
+            lines.append("  ·  ".join(details))
+        if state.interface:
+            lines.append(f"Interface  {state.interface}")
+    if state.ip:
+        lines.append(f"IP  {state.ip}")
+    if state.gateway:
+        lines.append(f"Gateway  {state.gateway}")
+    if state.tailscale_ip:
+        lines.append(f"Tailscale  {state.tailscale_ip}")
+    return lines
+
+
+def read_portal_url(path=PORTAL_URL_STATE):
+    try:
+        with open(path) as handle:
+            return handle.readline().strip()
+    except OSError:
+        return ""
+
+
+def read_link_speed(interface):
+    if not interface:
+        return None
+    try:
+        with open(f"/sys/class/net/{interface}/speed") as handle:
+            value = int(handle.read().strip())
+            return value if value > 0 else None
+    except (OSError, ValueError):
+        return None
+
+
+def parse_networkd_describe(payload):
+    """Extract per-interface state and lowest-metric IPv4 default route."""
+    interfaces = {}
+    default_routes = []
+    for entry in payload.get("Interfaces", []):
+        name = entry.get("Name", "")
+        if not name:
+            continue
+        link_type = entry.get("Type", "")
+        ipv4 = ""
+        for addr in entry.get("Addresses", []):
+            if addr.get("Family") == 2 and addr.get("ScopeString") == "global":
+                address = addr.get("AddressString", "")
+                prefix = addr.get("PrefixLength")
+                if address:
+                    ipv4 = f"{address}/{prefix}" if prefix is not None else address
+                    break
+        interfaces[name] = {
+            "name": name,
+            "type": link_type,
+            "operational": entry.get("OperationalState", ""),
+            "carrier": entry.get("CarrierState", ""),
+            "ip": ipv4,
+        }
+        for route in entry.get("Routes", []):
+            if (
+                route.get("Family") == 2
+                and route.get("DestinationPrefixLength") == 0
+                and route.get("TableString", "main") == "main"
+            ):
+                default_routes.append(
+                    (
+                        route.get("Priority", 0),
+                        name,
+                        route.get("GatewayString", ""),
+                        route.get("PreferredSourceString", ""),
+                    )
+                )
+    default_routes.sort(key=lambda item: item[0])
+    return interfaces, default_routes
+
+
+def parse_iwd_objects(objects):
+    """Extract Wi-Fi stations keyed by interface name from iwd ObjectManager."""
+    networks = {}
+    for path, ifaces in objects.items():
+        net = ifaces.get("net.connman.iwd.Network")
+        if net:
+            networks[path] = net.get("Name", "")
+
+    stations = {}
+    for path, ifaces in objects.items():
+        device = ifaces.get("net.connman.iwd.Device")
+        station = ifaces.get("net.connman.iwd.Station")
+        if not device or not station:
+            continue
+        name = device.get("Name", "")
+        if not name:
+            continue
+        connected_path = station.get("ConnectedNetwork", "")
+        stations[name] = {
+            "path": path,
+            "powered": bool(device.get("Powered", False)),
+            "state": station.get("State", ""),
+            "ssid": networks.get(connected_path, ""),
+            "has_diagnostic": "net.connman.iwd.StationDiagnostic" in ifaces,
+        }
+    return stations
+
+
+def parse_ip_fallback_output(addr_json, route_json, is_wireless_fn=None):
+    """Parse `ip -j -4 addr` and `ip -j -4 route` JSON into networkd-shaped state."""
+    interfaces = {}
+    default_routes = []
+    if is_wireless_fn is None:
+        is_wireless_fn = lambda name: os.path.isdir(f"/sys/class/net/{name}/wireless")
+
+    for item in json.loads(addr_json):
+        name = item.get("ifname", "")
+        if not name:
+            continue
+        addr_info = item.get("addr_info", [])
+        ipv4 = ""
+        if addr_info:
+            ipv4 = f"{addr_info[0]['local']}/{addr_info[0]['prefixlen']}"
+        flags = set(item.get("flags", []))
+        operstate = item.get("operstate", "")
+        carrier = "LOWER_UP" in flags and operstate != "DOWN"
+        interfaces[name] = {
+            "name": name,
+            "type": "wlan" if is_wireless_fn(name) else "ether",
+            "operational": "routable" if (ipv4 and carrier) else "no-carrier",
+            "carrier": "carrier" if carrier else "no-carrier",
+            "ip": ipv4,
+        }
+
+    for route in json.loads(route_json):
+        default_routes.append(
+            (
+                route.get("metric", 0),
+                route.get("dev", ""),
+                route.get("gateway", ""),
+                route.get("prefsrc", ""),
+            )
+        )
+    default_routes.sort(key=lambda item: item[0])
+    return interfaces, default_routes
+
+
+def build_state(
+    interfaces,
+    default_routes,
+    stations,
+    diagnostics,
+    portal_url="",
+    link_speed_fn=None,
+    previous=None,
+):
+    """Combine networkd, iwd, and portal state into one display State."""
+    tailscale = interfaces.get("tailscale0", {})
+    tailscale_ip = tailscale.get("ip", "").split("/", 1)[0] if tailscale else ""
+
+    # Pick the primary physical uplink: lowest-metric IPv4 default route wins.
+    primary = None
+    gateway = ""
+    for _metric, name, gw, _src in default_routes:
+        info = interfaces.get(name)
+        if info and is_physical_interface(name, info.get("type", "")):
+            primary = info
+            gateway = gw
+            break
+
+    # Fall back to any routable physical interface (e.g. static link without
+    # default route yet, or wired/wireless link before DHCP finishes).
+    if primary is None:
+        candidates = [
+            info
+            for name, info in interfaces.items()
+            if is_physical_interface(name, info.get("type", ""))
+            and info.get("operational") in ("routable", "degraded")
+        ]
+        # Prefer wired over wireless when both are routable without a default route.
+        candidates.sort(key=lambda info: (0 if info.get("type") == "ether" else 1, info["name"]))
+        if candidates:
+            primary = candidates[0]
+
+    if primary is not None:
+        name = primary["name"]
+        is_wifi = primary.get("type") == "wlan" or name in stations
+        if is_wifi:
+            station = stations.get(name, {})
+            diag = diagnostics.get(name, {})
+            rssi = diag.get("AverageRSSI", diag.get("RSSI"))
+            rssi_val = int(rssi) if rssi is not None else None
+            ssid = station.get("ssid", "")
+            prev_bars = (
+                previous.bars
+                if previous is not None
+                and previous.kind == "wifi"
+                and previous.interface == name
+                and previous.ssid == ssid
+                else None
+            )
+            return State(
+                kind="wifi",
+                interface=name,
+                ssid=ssid,
+                ip=primary.get("ip", ""),
+                gateway=gateway,
+                rssi=rssi_val,
+                frequency=int(diag.get("Frequency", 0) or 0),
+                security=diag.get("Security", ""),
+                tailscale_ip=tailscale_ip,
+                portal_url=portal_url,
+                station_state=station.get("state", ""),
+                bars=signal_bars(rssi_val, previous=prev_bars),
+            )
+        speed = link_speed_fn(name) if link_speed_fn else read_link_speed(name)
+        return State(
+            kind="wired",
+            interface=name,
+            ip=primary.get("ip", ""),
+            gateway=gateway,
+            speed_mbps=speed,
+            tailscale_ip=tailscale_ip,
+            portal_url=portal_url,
+        )
+
+    # No routable link yet: check if a Wi-Fi station is connecting or associated.
+    for name, station in stations.items():
+        if station.get("state") in ("connecting", "connecting (auto)", "roaming", "connected"):
+            return State(
+                kind="connecting",
+                interface=name,
+                ssid=station.get("ssid", ""),
+                tailscale_ip=tailscale_ip,
+                station_state=station.get("state", ""),
+            )
+
+    return State(kind="offline", tailscale_ip=tailscale_ip)
+
+
+class NetworkIndicator:
+    def __init__(self):
+        self.bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+        self.state = State()
+        self.icon = None
+        self.refresh_pending = False
+        self.last_iwd = ({}, {}, 0.0)
+        self.last_connected_at = 0.0
+        self.offline_retry_pending = False
+        self.portal_monitor = None
+        self.portal_dir_monitor = None
+        self.menu = None
+        self.tip = traytooltip.Tooltip()
+        # The icon is the Tail's to make, once the row has settled.
+        self.tail = trayorder.Tail(INSTANCE, self.dock, self.undock)
+        self.subscribe()
+        self.watch_portal_state()
+        GLib.timeout_add_seconds(POLL_SECONDS, self.tick)
+        self.refresh()
+
+    # Tray slots -----------------------------------------------------------
+
+    def dock(self):
+        self.icon = Gtk.StatusIcon.new_from_pixbuf(self.status_icon(self.state, ICON_SIZE))
+        self.icon.set_title("Network")
+        self.tip.attach([self.icon])
+        self.tip.set("\n".join(tooltip_lines(self.state)))
+        self.icon.connect("size-changed", self.on_icon_size_changed)
+        self.icon.connect("popup-menu", self.show_menu)
+        self.icon.connect("activate", self.activate)
+        self.icon.set_visible(True)
+
+    def undock(self):
+        self.icon = None
+
+    # D-Bus ----------------------------------------------------------------
+
+    def subscribe(self):
+        for sender in (NETWORKD, IWD):
+            self.bus.signal_subscribe(
+                sender,
+                None,
+                None,
+                None,
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self.on_bus_signal,
+            )
+            self.bus.signal_subscribe(
+                "org.freedesktop.DBus",
+                "org.freedesktop.DBus",
+                "NameOwnerChanged",
+                "/org/freedesktop/DBus",
+                sender,
+                Gio.DBusSignalFlags.NONE,
+                self.on_bus_signal,
+            )
+        self.bus.signal_subscribe(
+            LOGIND,
+            f"{LOGIND}.Manager",
+            "PrepareForSleep",
+            "/org/freedesktop/login1",
+            None,
+            Gio.DBusSignalFlags.NONE,
+            self.on_prepare_for_sleep,
+        )
+
+    def watch_portal_state(self):
+        """Watch the captive-portal state file (and its parent dir) via inotify."""
+        portal_dir = os.path.dirname(PORTAL_URL_STATE)
+        try:
+            self.portal_monitor = Gio.File.new_for_path(PORTAL_URL_STATE).monitor_file(
+                Gio.FileMonitorFlags.NONE, None
+            )
+            self.portal_monitor.connect("changed", self.on_portal_file_changed)
+        except GLib.Error:
+            self.portal_monitor = None
+        if portal_dir and os.path.isdir(portal_dir):
+            try:
+                self.portal_dir_monitor = Gio.File.new_for_path(portal_dir).monitor_directory(
+                    Gio.FileMonitorFlags.NONE, None
+                )
+                self.portal_dir_monitor.connect("changed", self.on_portal_file_changed)
+            except GLib.Error:
+                self.portal_dir_monitor = None
+
+    def on_portal_file_changed(self, _monitor, file, _other, _event):
+        if file is None or file.get_path() == PORTAL_URL_STATE:
+            self.request_refresh()
+
+    def on_bus_signal(self, *_args):
+        self.request_refresh()
+
+    def on_prepare_for_sleep(self, _bus, _sender, _path, _iface, _signal, parameters):
+        if not parameters.unpack()[0]:
+            self.request_refresh()
+
+    def request_refresh(self):
+        if self.refresh_pending:
+            return
+        self.refresh_pending = True
+        GLib.timeout_add(REFRESH_DELAY_MS, self.run_refresh)
+
+    def run_refresh(self):
+        self.refresh_pending = False
+        self.refresh()
+        return False
+
+    def load_networkd(self):
+        try:
+            result = self.bus.call_sync(
+                NETWORKD,
+                "/org/freedesktop/network1",
+                "org.freedesktop.network1.Manager",
+                "Describe",
+                None,
+                None,
+                Gio.DBusCallFlags.NO_AUTO_START,
+                2000,
+                None,
+            )
+            payload = json.loads(result.unpack()[0])
+            return parse_networkd_describe(payload)
+        except (GLib.Error, json.JSONDecodeError, ValueError):
+            return self.load_ip_fallback()
+
+    @staticmethod
+    def load_ip_fallback():
+        """Minimal fallback via `ip -j` if systemd-networkd D-Bus is unavailable."""
+        try:
+            addr_out = subprocess.check_output(
+                ["ip", "-j", "-4", "addr", "show", "scope", "global"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2,
+            )
+            route_out = subprocess.check_output(
+                ["ip", "-j", "-4", "route", "show", "table", "main", "default"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=2,
+            )
+            return parse_ip_fallback_output(addr_out, route_out)
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError, KeyError):
+            return {}, []
+
+    def load_iwd(self):
+        now = time.monotonic()
+        try:
+            result = self.bus.call_sync(
+                IWD,
+                "/",
+                "org.freedesktop.DBus.ObjectManager",
+                "GetManagedObjects",
+                None,
+                None,
+                Gio.DBusCallFlags.NO_AUTO_START,
+                2000,
+                None,
+            )
+            stations = parse_iwd_objects(result.unpack()[0])
+        except GLib.Error:
+            prev_stations, prev_diag, prev_at = self.last_iwd
+            if prev_stations and (now - prev_at) <= IWD_GRACE_SECONDS:
+                return prev_stations, prev_diag
+            return {}, {}
+
+        prev_diag = self.last_iwd[1]
+        diagnostics = {}
+        for name, station in stations.items():
+            if station.get("state") != "connected" or not station.get("has_diagnostic"):
+                continue
+            try:
+                diag = self.bus.call_sync(
+                    IWD,
+                    station["path"],
+                    "net.connman.iwd.StationDiagnostic",
+                    "GetDiagnostics",
+                    None,
+                    None,
+                    Gio.DBusCallFlags.NO_AUTO_START,
+                    2000,
+                    None,
+                )
+                diagnostics[name] = diag.unpack()[0]
+            except GLib.Error:
+                if name in prev_diag:
+                    diagnostics[name] = prev_diag[name]
+        self.last_iwd = (stations, diagnostics, now)
+        return stations, diagnostics
+
+    def load(self):
+        interfaces, default_routes = self.load_networkd()
+        stations, diagnostics = self.load_iwd()
+        state = build_state(
+            interfaces,
+            default_routes,
+            stations,
+            diagnostics,
+            portal_url=read_portal_url(),
+            previous=self.state,
+        )
+        now = time.monotonic()
+        if state.kind in ("wired", "wifi"):
+            self.last_connected_at = now
+            return state
+        # Hold the last connected state briefly if both networkd and ip report
+        # nothing at all (e.g. mid-restart or transient timeout), then recheck.
+        if (
+            state.kind == "offline"
+            and not interfaces
+            and self.state.kind in ("wired", "wifi")
+            and (now - self.last_connected_at) <= OFFLINE_GRACE_SECONDS
+        ):
+            self.schedule_offline_recheck()
+            return self.state
+        return state
+
+    def schedule_offline_recheck(self):
+        if self.offline_retry_pending:
+            return
+        self.offline_retry_pending = True
+        GLib.timeout_add(int(OFFLINE_GRACE_SECONDS * 1000) + 200, self.run_offline_recheck)
+
+    def run_offline_recheck(self):
+        self.offline_retry_pending = False
+        self.refresh()
+        return False
+
+    # Drawing --------------------------------------------------------------
+
+    @staticmethod
+    def rounded_rectangle(context, x, y, width, height, radius):
+        context.new_sub_path()
+        context.arc(x + width - radius, y + radius, radius, -1.5708, 0)
+        context.arc(x + width - radius, y + height - radius, radius, 0, 1.5708)
+        context.arc(x + radius, y + height - radius, radius, 1.5708, 3.1416)
+        context.arc(x + radius, y + radius, radius, 3.1416, 4.7124)
+        context.close_path()
+
+    @staticmethod
+    def draw_wifi_glyph(context, bars, compact=False):
+        if compact:
+            cx, cy = 48, 44
+            dot_r, line_w, radii = 3.8, 4.4, (12, 20, 28)
+        else:
+            cx, cy = 48, 52
+            dot_r, line_w, radii = 4.5, 5.2, (14, 24, 34)
+        lit = bars if bars is not None else 4
+        # Base dot
+        context.arc(cx, cy, dot_r, 0, 2 * math.pi)
+        context.set_source_rgba(1, 1, 1, 0.96 if lit >= 1 else 0.30)
+        context.fill()
+        # Three concentric signal arcs
+        context.set_line_width(line_w)
+        context.set_line_cap(cairo.LINE_CAP_ROUND)
+        for index, radius in enumerate(radii, start=2):
+            alpha = 0.96 if lit >= index else 0.28
+            context.set_source_rgba(1, 1, 1, alpha)
+            context.arc(cx, cy, radius, -3 * math.pi / 4, -math.pi / 4)
+            context.stroke()
+
+    @classmethod
+    def draw_wired_glyph(cls, context):
+        # Stylized RJ45 / Ethernet port icon
+        context.set_source_rgba(1, 1, 1, 0.95)
+        context.set_line_width(4.5)
+        cls.rounded_rectangle(context, 24, 15, 48, 34, 6)
+        context.stroke()
+        # Connector notch & pins
+        for x in (34, 42, 50, 58):
+            context.move_to(x, 15)
+            context.line_to(x, 26)
+        context.set_line_width(3.2)
+        context.stroke()
+        # Stem downwards
+        context.set_line_width(5)
+        context.move_to(48, 49)
+        context.line_to(48, 58)
+        context.stroke()
+
+    @classmethod
+    def draw_offline_glyph(cls, context):
+        cls.draw_wifi_glyph(context, 0)
+        context.set_source_rgba(1, 1, 1, 0.92)
+        context.set_line_width(5.5)
+        context.set_line_cap(cairo.LINE_CAP_ROUND)
+        context.move_to(24, 18)
+        context.line_to(72, 54)
+        context.stroke()
+
+    @staticmethod
+    def draw_portal_badge(context):
+        # Small exclamation badge at top-right when behind a captive portal.
+        cx, cy = 76, 20
+        context.arc(cx, cy, 12, 0, 2 * math.pi)
+        context.set_source_rgb(1, 1, 1)
+        context.fill()
+        context.set_source_rgb(*PORTAL_COLOR)
+        context.set_line_width(3.4)
+        context.set_line_cap(cairo.LINE_CAP_ROUND)
+        context.move_to(cx, cy - 6)
+        context.line_to(cx, cy + 1)
+        context.stroke()
+        context.arc(cx, cy + 6, 1.9, 0, 2 * math.pi)
+        context.fill()
+
+    @staticmethod
+    def fit_label_layout(context, text, max_width=DESIGN_SIZE - 2 * LABEL_PAD):
+        """Fit text on 1 line (LABEL_MAX_PX..LABEL_MIN_PX), or wrap to 2 lines at LABEL_MIN_PX."""
+        layout = PangoCairo.create_layout(context)
+        description = Pango.FontDescription()
+        description.set_family(FONT)
+        description.set_weight(Pango.Weight.BOLD)
+        layout.set_text(text, -1)
+
+        chosen_px = None
+        for px in range(LABEL_MAX_PX, LABEL_MIN_PX - 1, -1):
+            description.set_absolute_size(px * Pango.SCALE)
+            layout.set_font_description(description)
+            _, logical = layout.get_pixel_extents()
+            if logical.width <= max_width:
+                chosen_px = px
+                break
+
+        if chosen_px is not None:
+            description.set_absolute_size(chosen_px * Pango.SCALE)
+            layout.set_font_description(description)
+            layout.set_width(max_width * Pango.SCALE)
+            layout.set_alignment(Pango.Alignment.CENTER)
+            layout.set_ellipsize(Pango.EllipsizeMode.END)
+            return layout, chosen_px
+
+        chosen_px = LABEL_MIN_PX
+        description.set_absolute_size(chosen_px * Pango.SCALE)
+        layout.set_font_description(description)
+        layout.set_width(max_width * Pango.SCALE)
+        layout.set_wrap(Pango.WrapMode.WORD_CHAR)
+        layout.set_height(-2)
+        layout.set_spacing(LABEL_LINE_SPACING * Pango.SCALE)
+        layout.set_alignment(Pango.Alignment.CENTER)
+        layout.set_ellipsize(Pango.EllipsizeMode.END)
+        return layout, chosen_px
+
+    @classmethod
+    def draw_label_layout(cls, context, layout):
+        ink, logical = layout.get_pixel_extents()
+        context.set_source_rgba(1, 1, 1, 0.94)
+        if layout.get_line_count() >= 2:
+            # Place the 2-line ink block cleanly inside the bottom region (y≈53..89).
+            y = 71 - (ink.y + ink.height / 2)
+        else:
+            y = 76 - logical.height / 2 - logical.y
+        context.move_to(LABEL_PAD, y)
+        PangoCairo.show_layout(context, layout)
+
+    def status_icon(self, state, size):
+        color = appearance_color(state)
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+        context = cairo.Context(surface)
+        context.scale(size / DESIGN_SIZE, size / DESIGN_SIZE)
+        self.rounded_rectangle(context, 0, 0, DESIGN_SIZE, DESIGN_SIZE, 18)
+        context.set_source_rgb(*color)
+        context.fill()
+
+        label_layout, _ = self.fit_label_layout(context, short_label(state))
+        compact = label_layout.get_line_count() >= 2
+
+        if state.kind == "wired":
+            self.draw_wired_glyph(context)
+        elif state.kind == "wifi":
+            self.draw_wifi_glyph(context, state.bars, compact=compact)
+        elif state.kind == "connecting":
+            self.draw_wifi_glyph(context, 2, compact=compact)
+        else:
+            self.draw_offline_glyph(context)
+
+        if state.portal_url:
+            self.draw_portal_badge(context)
+
+        self.draw_label_layout(context, label_layout)
+        return Gdk.pixbuf_get_from_surface(surface, 0, 0, size, size)
+
+    def draw_icon(self):
+        if self.icon is None:
+            # Out of the row for a sort; dock() draws from self.state.
+            return
+        size = self.icon.get_size() or ICON_SIZE
+        self.icon.set_from_pixbuf(self.status_icon(self.state, size))
+
+    def on_icon_size_changed(self, _icon, size):
+        # GtkStatusIcon otherwise keeps its 48 px natural allocation centered
+        # when stalonetray expands the XEmbed socket to 96 px on HiDPI.
+        self.icon.set_from_pixbuf(self.status_icon(self.state, size))
+        return True
+
+    # Updates --------------------------------------------------------------
+
+    def refresh(self):
+        state = self.load()
+        changed = state.key() != self.state.key()
+        self.state = state
+        if changed:
+            self.draw_icon()
+        # Always refresh tooltip so RSSI dBm stays exact even within the same bar.
+        self.tip.set("\n".join(tooltip_lines(state)))
+        return False
+
+    def tick(self):
+        self.refresh()
+        return True
+
+    # Interaction ----------------------------------------------------------
+
+    def activate(self, icon):
+        if self.state.portal_url:
+            self.spawn([PORTAL_LOGIN])
+            return
+        self.show_menu(icon, 1, Gtk.get_current_event_time())
+
+    @staticmethod
+    def copy(text):
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(text, -1)
+        clipboard.store()
+
+    @staticmethod
+    def spawn(command):
+        try:
+            subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            pass
+
+    def build_menu(self):
+        menu = Gtk.Menu()
+        for line in tooltip_lines(self.state):
+            item = Gtk.MenuItem(label=line)
+            item.set_sensitive(False)
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+        if self.state.portal_url:
+            portal = Gtk.MenuItem(label="Open captive portal login")
+            portal.connect("activate", lambda *_: self.spawn([PORTAL_LOGIN]))
+            menu.append(portal)
+        if self.state.ip:
+            ip_only = self.state.ip.split("/", 1)[0]
+            copy_ip = Gtk.MenuItem(label=f"Copy IP ({ip_only})")
+            copy_ip.connect("activate", lambda *_, text=ip_only: self.copy(text))
+            menu.append(copy_ip)
+        if self.state.tailscale_ip:
+            copy_ts = Gtk.MenuItem(label=f"Copy Tailscale IP ({self.state.tailscale_ip})")
+            copy_ts.connect(
+                "activate", lambda *_, text=self.state.tailscale_ip: self.copy(text)
+            )
+            menu.append(copy_ts)
+        wifi = Gtk.MenuItem(label="Wi-Fi networks…")
+        wifi.connect("activate", lambda *_: self.spawn(["iwmenu", "--launcher", "rofi"]))
+        menu.append(wifi)
+        refresh = Gtk.MenuItem(label="Refresh")
+        refresh.connect("activate", lambda *_: self.refresh())
+        menu.append(refresh)
+        return menu
+
+    def show_menu(self, icon, button=0, activate_time=0):
+        self.refresh()
+        menu = self.build_menu()
+        menu.show_all()
+        menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, activate_time)
+
+
+def main():
+    print(f"network-indicator started (pid {os.getpid()})", flush=True)
+    NetworkIndicator()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()

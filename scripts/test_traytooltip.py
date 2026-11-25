@@ -9,7 +9,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import traytooltip
 
-INDICATORS = ("fcitx5-indicator", "bluetooth-indicator", "battery-indicator", "clock-indicator")
+INDICATORS = (
+    "fcitx5-indicator",
+    "network-indicator",
+    "bluetooth-indicator",
+    "battery-indicator",
+    "clock-indicator",
+)
 
 
 class Area:

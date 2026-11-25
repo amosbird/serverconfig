@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import trayorder
 
 OTHERS = ["iOALinux", "Telegram", "flameshot", "copyq"]
-TAIL = ["fcitx5-indicator", "bluetooth-indicator", "battery-indicator"]
+TAIL = ["fcitx5-indicator", "network-indicator", "bluetooth-indicator", "battery-indicator"]
 TAIL += ["clock-indicator", "clock-indicator"]
 
 
@@ -102,7 +102,13 @@ class TrayOrderTest(unittest.TestCase):
     def test_the_agreed_order_of_the_right_hand_icons(self):
         self.assertEqual(
             trayorder.ORDER,
-            ("fcitx5-indicator", "bluetooth-indicator", "battery-indicator", "clock-indicator"),
+            (
+                "fcitx5-indicator",
+                "network-indicator",
+                "bluetooth-indicator",
+                "battery-indicator",
+                "clock-indicator",
+            ),
         )
         # The clock is drawn as one card across two slots.
         self.assertEqual(trayorder.SLOTS["clock-indicator"], 2)
@@ -150,6 +156,7 @@ class TrayOrderTest(unittest.TestCase):
                 "copyq",
                 "clock-indicator",
                 "battery-indicator",
+                "network-indicator",
                 "clock-indicator",
                 "bluetooth-indicator",
                 "fcitx5-indicator",

@@ -30,6 +30,7 @@ from gi.repository import GLib
 # Our icons at the end of the row, left to right, and the slots each covers.
 SLOTS = {
     "fcitx5-indicator": 1,
+    "network-indicator": 1,
     "bluetooth-indicator": 1,
     "battery-indicator": 1,
     "clock-indicator": 2,
