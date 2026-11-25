@@ -5,6 +5,9 @@ const CONSENT_KEY = "abushBrowserConsentV9";
 const WAL_KEY = "abushBrowserEffectsV10";
 const RECEIPTS_KEY = "abushBrowserReceiptsV10";
 const INHERITANCE_KEY = "abushBrowserInheritanceV9";
+const MAX_STORED_ORDINARY = 64;
+const MAX_STORED_EFFECT_RECEIPTS = 64;
+const MAX_STORED_CREATIONS = 64;
 const API_TIMEOUT_MS = 2000;
 // tabs.create clamps this signed API index to the current end, even after concurrent inserts.
 const RIGHT_EDGE_TAB_INDEX = 0x7fffffff;
@@ -267,6 +270,12 @@ class WorkspaceExecutor {
             }
         }
         this.receipts = local[RECEIPTS_KEY]?.version === 10 ? local[RECEIPTS_KEY].receipts : {};
+        const hadBloatedReceipts = Object.values(this.receipts).some(receipt =>
+            receipt && typeof receipt === "object" && "result" in receipt);
+        if (hadBloatedReceipts) {
+            this.compactJournal();
+            await this.persistReceipts();
+        }
         const session = await this.api(() => this.chrome.storage.session.get(CONSENT_KEY),
             "read browser consent");
         if (boot !== this.browserBootId || generation !== this.restoreGeneration) return;
@@ -350,10 +359,74 @@ class WorkspaceExecutor {
         if (!this.controls.size) this.revokedTabs.clear();
         if (!this.manualControls) await Promise.all([...this.remotes.keys()].map(key => this.reconcile(key)));
     }
+    compactReceipt(receipt) {
+        if (!receipt || typeof receipt !== "object") return receipt;
+        const {result, ...summary} = receipt;
+        return summary;
+    }
+    compactJournal() {
+        const ackedEffects = Object.keys(this.effects).filter(key =>
+            this.receipts[key] && this.effects[key]?.completion && !this.operations.has(key));
+        for (const key of ackedEffects) {
+            this.receipts[key] = this.compactReceipt(this.receipts[key]);
+        }
+        const activeCancelKeys = new Set(Object.values(this.cancellations)
+            .filter(entry => !entry.receipt)
+            .map(entry => this.effectKey(entry.payload)));
+        const evictableEffects = ackedEffects.filter(key => !activeCancelKeys.has(key));
+        while (evictableEffects.length > MAX_STORED_EFFECT_RECEIPTS) {
+            const key = evictableEffects.shift();
+            delete this.effects[key];
+            delete this.receipts[key];
+        }
+        for (const key of Object.keys(this.cancellations)) {
+            if (this.cancellations[key]?.receipt && !this.effects[this.effectKey(this.cancellations[key].payload)]) {
+                delete this.cancellations[key];
+            }
+        }
+        const terminalOrdinary = Object.keys(this.ordinary).filter(id =>
+            this.ordinary[id]?.completion && !this.ordinaryOperations.has(id));
+        while (terminalOrdinary.length > MAX_STORED_ORDINARY) {
+            const id = terminalOrdinary.shift();
+            delete this.ordinary[id];
+            delete this.ordinaryCancellations[id];
+        }
+        const activeEnableIds = new Set([...this.records.values()].map(record => record.enable_id));
+        const evictableCreations = Object.keys(this.creations).filter(key => {
+            const entry = this.creations[key];
+            return entry && ["completed", "abandoned", "not_applied"].includes(entry.phase) &&
+                !activeEnableIds.has(entry.enable_id);
+        });
+        while (evictableCreations.length > MAX_STORED_CREATIONS) {
+            delete this.creations[evictableCreations.shift()];
+        }
+    }
+    serializedEffects() {
+        const effects = {};
+        for (const [key, entry] of Object.entries(this.effects)) {
+            if (this.receipts[key] && entry?.completion && entry.result !== null) {
+                const {result, ...rest} = entry;
+                const resultBytes = new TextEncoder().encode(JSON.stringify(result)).length;
+                effects[key] = resultBytes > 4096 ? {...rest, result: null} : entry;
+            } else {
+                effects[key] = entry;
+            }
+        }
+        return effects;
+    }
+    persistReceipts() {
+        const write = this.localTail.catch(() => {}).then(() =>
+            this.chrome.storage.local.set({[RECEIPTS_KEY]: {
+                version: 10, receipts: clone(this.receipts),
+            }}));
+        this.localTail = write;
+        return this.api(() => write, "persist completion receipt");
+    }
     persistWal() {
+        this.compactJournal();
         const write = this.localTail.catch(() => {}).then(() =>
             this.chrome.storage.local.set({[WAL_KEY]: clone({version: 10,
-                effects: this.effects, creations: this.creations, ordinary: this.ordinary,
+                effects: this.serializedEffects(), creations: this.creations, ordinary: this.ordinary,
                 cancellations: this.cancellations, ordinary_cancellations: this.ordinaryCancellations})}));
         this.localTail = write;
         return this.api(() => write, "persist effect journal");
@@ -2043,12 +2116,12 @@ class WorkspaceExecutor {
             effect_id: payload.effect_id, executor_fence: payload.executor_fence,
             completion: payload.completion, result: payload.result, error: payload.error};
         if (!sameRef(receipt, expected)) fail("stale_authority", "Invalid completion receipt; result remains pending");
-        this.receipts[key] = receipt;
+        this.receipts[key] = this.compactReceipt(receipt);
         try {
-            await this.api(() => this.chrome.storage.local.set({[RECEIPTS_KEY]: {
-                version: 10, receipts: clone(this.receipts),
-            }}), "persist completion receipt");
+            await this.persistReceipts();
         } catch (error) { delete this.receipts[key]; throw error; }
+        this.compactJournal();
+        this.persistWal().catch(error => this.reportAdvisoryError(error));
         return entry.completion;
     }
     async flushEffects(remoteKey) {
@@ -2481,7 +2554,11 @@ class WorkspaceExecutor {
             observation?.close();
         }
         entry.phase = "terminal";
-        await this.persistWal();
+        try {
+            await this.persistWal();
+        } catch (error) {
+            this.reportAdvisoryError(new Error(`Ordinary open ${payload.request_id} persist: ${error.message || error}`));
+        }
         return this.ordinaryCompletion(payload, entry.completion);
     }
 }

@@ -1,7 +1,7 @@
 {
     "name": "io.github.amosbird.rofi.chrome",
     "description": "Rofi Browser Controller",
-    "path": "/home/amos/.local/share/rofi-chrome/host/main.py",
+    "path": "/home/amos/.local/share/rofi-chrome/host/host.lua",
     "type": "stdio",
     "allowed_origins": [
         "chrome-extension://jpgfhlaplofoaempbhliigmjbpofeghk/",

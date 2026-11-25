@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -B -S
 
 import json
 import os
@@ -105,18 +105,24 @@ def wait_browser_open(process, cancelled):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("browser completion deadline expired; outcome is unknown")
-            for key, _ in selector.select(min(0.1, remaining)):
+            if pipe_open:
+                for key, _ in selector.select(min(0.1, remaining)):
+                    try:
+                        chunk = os.read(key.fd, 4096)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        pipe_open = False
+                    else:
+                        diagnostic.extend(chunk)
+                        del diagnostic[:-BOOKMARK_DIAGNOSTIC_LIMIT]
+                returncode = process.poll()
+            else:
                 try:
-                    chunk = os.read(key.fd, 4096)
-                except BlockingIOError:
-                    continue
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    pipe_open = False
-                else:
-                    diagnostic.extend(chunk)
-                    del diagnostic[:-BOOKMARK_DIAGNOSTIC_LIMIT]
-            returncode = process.poll()
+                    returncode = process.wait(timeout=min(0.05, remaining))
+                except subprocess.TimeoutExpired:
+                    returncode = None
             if returncode is not None:
                 if pipe_open:
                     for _ in range(16):

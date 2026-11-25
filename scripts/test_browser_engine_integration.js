@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const {assert, clone, deferred, fixture, execute, runCases, REMOTE} = require("./browser_tab_groups_fixture.js");
-const {WAL_KEY, AUTOMATION_KEY} = require("../chromium/external-links/extension/workspace.js");
+const {WAL_KEY, RECEIPTS_KEY, AUTOMATION_KEY} = require("../chromium/external-links/extension/workspace.js");
 const result = {text: "button [ref=e1]", data: {snapshot_id: "snapshot-1", refs: ["e1"]}, images: []};
 function setup(f) {
     f.hooks["debugger.sendCommand"] = async (source, method) => {
@@ -340,6 +340,42 @@ const cases = [
         f.local.abushBrowserEffectsV9 = clone(old); f.local[AUTOMATION_KEY] = false;
         await f.ready(); assert.deepEqual(f.local.abushBrowserEffectsV9, old);
         assert.deepEqual(f.executor.effects, {}); assert.equal(f.tabs.size, 2);
+    }],
+    ["acked large engine results are compacted out of receipts and WAL while preserving unacked replay", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); setup(f); await f.ready();
+        const hugeImage = "A".repeat(20000);
+        f.hooks["native.engine_execute"] = async () => ({
+            ok: true, result: {text: "screenshot", data: {}, images: [{mime_type: "image/png", data_base64: hugeImage}]}, error: null,
+        });
+        const shot = action(f, {type: "screenshot", full_page: false});
+        await f.executor.execute(shot);
+        await f.executor.localTail;
+        const key = f.executor.effectKey(shot);
+        assert.equal("result" in f.local[RECEIPTS_KEY].receipts[key], false);
+        assert.equal(f.local[WAL_KEY].effects[key].result, null);
+        // Unacked effect keeps its full result in WAL for replay.
+        const unacked = action(f, {type: "screenshot", full_page: true});
+        f.hooks["native.executor_completion"] = async () => { throw new Error("lost receipt"); };
+        await assert.rejects(f.executor.execute(unacked), /lost receipt/);
+        const unackedKey = f.executor.effectKey(unacked);
+        assert.equal(f.local[WAL_KEY].effects[unackedKey].result.images[0].data_base64, hugeImage);
+        // Legacy bloated receipts are compacted on restore.
+        f.local[RECEIPTS_KEY].receipts[key] = {...f.local[RECEIPTS_KEY].receipts[key], result: {text: "old", data: {}, images: [{mime_type: "image/png", data_base64: hugeImage}]}};
+        await f.restart();
+        assert.equal("result" in f.local[RECEIPTS_KEY].receipts[key], false);
+        assert.equal(f.local[WAL_KEY].effects[unackedKey].result.images[0].data_base64, hugeImage);
+        delete f.hooks["native.executor_completion"];
+        await f.executor.setAutomation(false);
+    }],
+    ["ordinary open reports completion even when WAL persistence fails", async () => {
+        const f = fixture({globalAutomation: true, officialEngine: true}); await f.ready();
+        f.hooks["local.set"] = async () => { throw new Error("Resource::kQuotaBytes quota exceeded"); };
+        const payload = {version: 1, operation: "ordinary_open", focus: true,
+            request_id: "quota-ordinary", url: "https://ordinary.test/quota", deadline_ms: Date.now() + 5000};
+        const completion = await f.executor.ordinaryOpen(payload);
+        assert.equal(completion, "not_applied");
+        assert.equal(f.calls.filter(call => call.name === "native.ordinary_open_completion" &&
+            call.args[0].request_id === "quota-ordinary" && call.args[0].completion === "not_applied").length, 1);
     }],
 ];
 runCases(cases).catch(error => { console.error(error); process.exitCode = 1; });

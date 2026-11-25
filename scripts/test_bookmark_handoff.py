@@ -186,5 +186,123 @@ class BookmarkHostBoundaryTest(unittest.TestCase):
         spawn.assert_called_once()
 
 
+class LuaJitBookmarkHandoffTest(BookmarkHandoffTest):
+    """Run the full bookmark handoff contract against the LuaJIT native host."""
+
+    LUA_HOST = ROOT / "rofi-chrome/host/host.lua"
+
+    def start(self, running=True, message=None):
+        environment = self.desktop.environment(running=running)
+        environment["ABUSH_CHROMIUM_LAUNCHER"] = str(ROOT / "scripts/chromium")
+        environment["ROFI_CHROME_HOST_PY"] = str(HOST_PATH)
+        if running:
+            profile = self.desktop.launcher.base / "profile"
+            profile.mkdir(exist_ok=True)
+            lock = profile / "SingletonLock"
+            if not lock.exists() and not lock.is_symlink():
+                lock.symlink_to("test-host-42")
+        process = subprocess.Popen(
+            [str(self.LUA_HOST)], env=environment,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+
+        def cleanup():
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1)
+                self.fail("owned LuaJIT bookmark native host did not stop")
+            for stream in (process.stdin, process.stdout, process.stderr):
+                stream.close()
+
+        self.addCleanup(cleanup)
+        message = request() if message is None else message
+        payload = json.dumps(message).encode()
+        process.stdin.write(struct.pack("<I", len(payload)) + payload)
+        process.stdin.flush()
+        return process
+
+    def test_fast_path_skips_chromium_wrapper_and_python_client(self):
+        # Remove the fake python client; if fast path were bypassed, scripts/chromium would fail.
+        self.desktop.launcher.fake_client.unlink()
+        process = self.start(running=True)
+        ordinary = self.desktop.outbound.get(timeout=2)["payload"]
+        self.desktop.complete(ordinary)
+        response = self.finish(process)
+        self.assertEqual(response["completion"], "completed")
+        self.assertEqual(self.desktop.qtile.requests.get(timeout=1), desktop_tests.FOCUS_COMMAND)
+
+    def test_non_open_command_delegates_to_python_host(self):
+        environment = self.desktop.environment(running=True)
+        environment["ROFI_CHROME_HOST_PY"] = str(HOST_PATH)
+        msg = {"info": "unknownCommandForTest", "param": {}}
+        payload = json.dumps(msg).encode()
+        result = subprocess.run(
+            [str(self.LUA_HOST)],
+            input=struct.pack("<I", len(payload)) + payload,
+            env=environment,
+            capture_output=True,
+            timeout=3,
+            check=True,
+        )
+        size = struct.unpack("<I", result.stdout[:4])[0]
+        reply = json.loads(result.stdout[4:4 + size])
+        self.assertEqual(reply["info"], "unknownCommandForTest")
+        self.assertIn("unknown command", reply["error"])
+
+    def _read_native_frame(self, stream):
+        hdr = stream.read(4)
+        self.assertEqual(len(hdr), 4, "expected 4-byte native frame length")
+        size = struct.unpack("<I", hdr)[0]
+        body = stream.read(size)
+        self.assertEqual(len(body), size, "expected complete native frame body")
+        return json.loads(body)
+
+    def _write_native_frame(self, stream, message):
+        payload = json.dumps(message).encode()
+        stream.write(struct.pack("<I", len(payload)) + payload)
+        stream.flush()
+
+    def test_persistent_bookmark_port_handles_multiple_requests_and_exits_on_eof(self):
+        process = self.start(running=True, message={"version": 1, "info": "bookmarkPortInit"})
+        init_reply = self._read_native_frame(process.stdout)
+        self.assertEqual(init_reply, {"version": 1, "info": "bookmarkPortInit", "ready": True})
+
+        for idx, url in enumerate(("https://example.test/one", "https://example.test/two"), 1):
+            req_id = f"{idx:032x}"
+            self._write_native_frame(process.stdin, request(url=url, request_id=req_id))
+            ordinary = self.desktop.outbound.get(timeout=2)["payload"]
+            self.assertEqual(ordinary["url"], url)
+            self.desktop.complete(ordinary)
+            self.assertEqual(self.desktop.qtile.requests.get(timeout=2), desktop_tests.FOCUS_COMMAND)
+            reply = self._read_native_frame(process.stdout)
+            self.assertEqual(reply["request_id"], req_id)
+            self.assertEqual(reply["completion"], "completed")
+
+        process.stdin.close()
+        process.wait(timeout=2)
+        self.assertEqual(process.returncode, 0, process.stderr.read().decode())
+
+    def test_persistent_bookmark_port_stdin_eof_cancels_inflight_open(self):
+        process = self.start(running=True, message={"version": 1, "info": "bookmarkPortInit"})
+        self.assertEqual(
+            self._read_native_frame(process.stdout),
+            {"version": 1, "info": "bookmarkPortInit", "ready": True},
+        )
+        self._write_native_frame(process.stdin, request())
+        ordinary = self.desktop.outbound.get(timeout=2)["payload"]
+        process.stdin.close()
+        cancel = self.desktop.outbound.get(timeout=2)["payload"]
+        self.assertEqual(cancel["operation"], "ordinary_open_cancel")
+        self.assertEqual(cancel["request_id"], ordinary["request_id"])
+        self.desktop.complete(ordinary)
+        process.wait(timeout=2)
+        self.assertEqual(process.returncode, 0, process.stderr.read().decode())
+        self.assertTrue(self.desktop.qtile.requests.empty())
+
+
 if __name__ == "__main__":
     unittest.main()

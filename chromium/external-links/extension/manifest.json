@@ -8,6 +8,7 @@
         "nativeMessaging",
         "notifications",
         "storage",
+        "unlimitedStorage",
         "tabs",
         "tabGroups",
         "debugger",

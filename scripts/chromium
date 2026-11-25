@@ -4,8 +4,10 @@ profile=${ABUSH_CHROME_PROFILE:-"$HOME/.config/google-chrome-main"}
 chrome=${ABUSH_CHROME_BIN:-/usr/bin/google-chrome-stable}
 root=${ABUSH_SERVERCONFIG_ROOT:-/home/amos/git/serverconfig}
 host="$profile/NativeMessagingHosts/io.github.amosbird.browser_router.json"
-mkdir -p "$(dirname "$host")"
-ln -sf "$root/chromium/external-links/native-host.json" "$host"
+if [[ ! -L $host || $(readlink "$host") != "$root/chromium/external-links/native-host.json" ]]; then
+    mkdir -p "$(dirname "$host")"
+    ln -sf "$root/chromium/external-links/native-host.json" "$host"
+fi
 
 focus_main_group() {
     python3 "$root/scripts/ordinary-open-client.py" --focus-desktop
@@ -35,9 +37,23 @@ update_external_links_profile() {
 }
 
 profile_is_running() {
+    local proc_root=${ABUSH_PROC_ROOT:-/proc}
+    if [[ -L $profile/SingletonLock ]]; then
+        local lock_target pid cmdline
+        if lock_target=$(readlink "$profile/SingletonLock" 2>/dev/null); then
+            pid=${lock_target##*-}
+            if [[ $pid =~ ^[0-9]+$ && -r $proc_root/$pid/cmdline ]]; then
+                cmdline=$(tr '\0' ' ' < "$proc_root/$pid/cmdline" 2>/dev/null)
+                if [[ " $cmdline " == *" --user-data-dir=$profile "* || \
+                      " $cmdline " == *" --user-data-dir $profile "* ]]; then
+                    return 0
+                fi
+            fi
+        fi
+    fi
     local status
-    if python3 "$root/scripts/chrome-profile-running.py" \
-        "${ABUSH_PROC_ROOT:-/proc}" "$profile"; then
+    if python3 -B -S "$root/scripts/chrome-profile-running.py" \
+        "$proc_root" "$profile"; then
         return 0
     else
         status=$?
@@ -69,13 +85,18 @@ if [[ $# -eq 1 && $1 != -* ]]; then
         printf 'chromium: XDG_RUNTIME_DIR is unavailable\n' >&2
         exit 1
     fi
-    request_id=$(python3 - <<'PY'
+    timeout=${ABUSH_ORDINARY_OPEN_TIMEOUT:-30}
+    request_id=
+    deadline_ms=
+    lease_path=
+    if ! $chrome_running; then
+        update_external_links_profile || exit
+        request_id=$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4().hex)
 PY
-    ) || exit
-    timeout=${ABUSH_ORDINARY_OPEN_TIMEOUT:-30}
-    deadline_ms=$(python3 - "$timeout" <<'PY'
+        ) || exit
+        deadline_ms=$(python3 - "$timeout" <<'PY'
 import sys
 import time
 
@@ -84,10 +105,7 @@ if timeout <= 0 or timeout > 60:
     raise SystemExit("ordinary-open timeout is outside its safe range")
 print(int(time.time() * 1000 + timeout * 1000))
 PY
-    ) || exit
-    lease_path=
-    if ! $chrome_running; then
-        update_external_links_profile || exit
+        ) || exit
         lease_output=${XDG_RUNTIME_DIR}/abush/ordinary-launch-metadata.$request_id
         mkdir -p "$(dirname "$lease_output")"
         chmod 700 "$(dirname "$lease_output")"

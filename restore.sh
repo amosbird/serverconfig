@@ -147,6 +147,9 @@ if [[ -n $GUI ]]; then
         /opt/google/chrome/extensions/ahonjbfnmpjgjgaabbppofphidfomgcj.json
     install -Dm755 "$DIR/rofi-chrome/host/main.py" \
         "$HOME/.local/share/rofi-chrome/host/main.py"
+    install -Dm755 "$DIR/rofi-chrome/host/host.lua" \
+        "$HOME/.local/share/rofi-chrome/host/host.lua"
+    rm -f "$HOME/.local/share/rofi-chrome/host/rofi-chrome-host"
     install -Dm644 "$DIR/rofi-chrome/io.github.amosbird.rofi.chrome.json" \
         "$HOME/.config/google-chrome-main/NativeMessagingHosts/io.github.amosbird.rofi.chrome.json"
     install -Dm644 "$DIR/portal-app-chooser/amos.portal" \
@@ -265,7 +268,7 @@ if [[ -n $GUI ]]; then
     sudo systemctl daemon-reload
     sudo systemctl enable gpu-switch.service
     sudo systemctl enable --now gpu-power.timer power-log.service
-    paru -S --needed --noconfirm bzmenu-bin pavucontrol
+    paru -S --needed --noconfirm bzmenu-bin pavucontrol luajit
     sudo systemctl disable --now libinput-gestures.service 2>/dev/null || true
     sudo install -Dm644 "$DIR/systemd/touchegg.service.d/override.conf" \
         /etc/systemd/system/touchegg.service.d/override.conf

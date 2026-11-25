@@ -1,9 +1,9 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -B -S
 
 import os
-import pathlib
-import re
 import sys
+
+_PACKED_RE = None
 
 
 def command_matches_profile(payload, profile):
@@ -17,12 +17,15 @@ def command_matches_profile(payload, profile):
             return True
 
     fields = [argument for argument in arguments if argument]
-    if len(fields) != 1 or b" " not in fields[0]:
+    if len(fields) != 1 or b" " not in fields[0] or option not in fields[0]:
         return False
-    pattern = re.compile(
-        rb"(?:^|\s)--user-data-dir(?:=([^\s]+)|\s+([^\s]+))(?=\s|$)"
-    )
-    matches = pattern.findall(fields[0])
+    global _PACKED_RE
+    if _PACKED_RE is None:
+        import re
+        _PACKED_RE = re.compile(
+            rb"(?:^|\s)--user-data-dir(?:=([^\s]+)|\s+([^\s]+))(?=\s|$)"
+        )
+    matches = _PACKED_RE.findall(fields[0])
     if len(matches) != 1:
         return False
     return (matches[0][0] or matches[0][1]) == profile
@@ -32,18 +35,19 @@ def main():
     if len(sys.argv) != 3:
         print("usage: chrome-profile-running.py PROC_ROOT PROFILE", file=sys.stderr)
         return 2
-    root = pathlib.Path(sys.argv[1])
+    root = sys.argv[1]
     profile = os.fsencode(sys.argv[2])
     try:
-        processes = list(root.iterdir())
+        entries = list(os.scandir(root))
     except OSError as error:
         print(f"chrome profile process scan failed: {error}", file=sys.stderr)
         return 2
-    for process in processes:
-        if not process.name.isdigit():
+    for entry in entries:
+        if not entry.name.isdigit():
             continue
         try:
-            payload = (process / "cmdline").read_bytes()
+            with open(os.path.join(entry.path, "cmdline"), "rb") as stream:
+                payload = stream.read()
         except OSError:
             continue
         if command_matches_profile(payload, profile):

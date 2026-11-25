@@ -1,15 +1,12 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -B -S
 
-import hashlib
 import json
 import os
-import pathlib
 import socket
 import stat
 import struct
 import sys
 import time
-import uuid
 from urllib.parse import urlsplit
 
 MAX_MESSAGE_SIZE = 64 * 1024
@@ -20,22 +17,29 @@ DESKTOP_FOCUS_TIMEOUT = 2.0
 QTILE_MAX_REPLY = 64 * 1024
 
 
-def desktop_socket_path():
+def _desktop_socket_str():
     injected = os.environ.get("ABUSH_QTILE_SOCKET")
     if injected:
-        path = pathlib.Path(injected)
-        if not path.is_absolute():
+        if not os.path.isabs(injected):
             raise RuntimeError("Qtile socket path is not absolute")
-        return path
-    cache = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache")) / "qtile"
+        return injected
+    cache = os.path.join(
+        os.environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache")),
+        "qtile",
+    )
     display = os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")
     if display:
-        return cache / f"qtilesocket.{display}"
+        return os.path.join(cache, f"qtilesocket.{display}")
     for display in ("wayland-0", ":0"):
-        path = cache / f"qtilesocket.{display}"
-        if path.exists():
+        path = os.path.join(cache, f"qtilesocket.{display}")
+        if os.path.exists(path):
             return path
     raise RuntimeError("Qtile socket is unavailable")
+
+
+def desktop_socket_path():
+    import pathlib
+    return pathlib.Path(_desktop_socket_str())
 
 
 def focus_browser_desktop(deadline=None):
@@ -49,23 +53,23 @@ def focus_browser_desktop(deadline=None):
         return budget
 
     remaining()
-    path = desktop_socket_path()
-    before = path.lstat()
-    if path.is_symlink() or not stat.S_ISSOCK(before.st_mode) or \
+    path = _desktop_socket_str()
+    before = os.lstat(path)
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISSOCK(before.st_mode) or \
             before.st_uid != os.getuid() or stat.S_IMODE(before.st_mode) != 0o600:
         raise RuntimeError("Qtile socket is unsafe")
     request = json.dumps([[["group", "f"]], "toscreen", [], {}, True],
                          separators=(",", ":")).encode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(remaining())
-        connection.connect(str(path))
+        connection.connect(path)
         remaining()
         if hasattr(socket, "SO_PEERCRED"):
             credentials = connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
                                                struct.calcsize("3i"))
             if struct.unpack("3i", credentials)[1] != os.getuid():
                 raise RuntimeError("Qtile socket peer is not owned by this user")
-        after = path.lstat()
+        after = os.lstat(path)
         if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
             raise RuntimeError("Qtile socket changed during connection")
         connection.settimeout(remaining())
@@ -95,30 +99,34 @@ def runtime_root():
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     if not runtime:
         raise RuntimeError("XDG_RUNTIME_DIR is unavailable")
-    return pathlib.Path(runtime) / "abush"
+    return os.path.join(runtime, "abush")
 
 
 def lease_root():
     injected = os.environ.get("ABUSH_ORDINARY_LAUNCH_LEASE_DIR")
-    return pathlib.Path(injected) if injected else runtime_root() / "ordinary-launch"
+    return injected if injected else os.path.join(runtime_root(), "ordinary-launch")
 
 
 def secure_directory(path):
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    info = path.lstat()
-    if path.is_symlink() or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    info = os.lstat(path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
         raise RuntimeError("ordinary launch lease directory is unsafe")
     if stat.S_IMODE(info.st_mode) != 0o700:
         os.chmod(path, 0o700)
 
 
 def profile_hash(profile):
-    return hashlib.sha256(os.fsencode(pathlib.Path(profile).expanduser().resolve())).hexdigest()
+    import hashlib
+    return hashlib.sha256(
+        os.fsencode(os.path.realpath(os.path.expanduser(profile)))
+    ).hexdigest()
 
 
 def write_launch_lease(url, request_id, deadline_ms, profile):
+    import hashlib
     root = lease_root()
-    secure_directory(root.parent)
+    secure_directory(os.path.dirname(root))
     secure_directory(root)
     lease = {
         "version": LEASE_VERSION,
@@ -132,8 +140,8 @@ def write_launch_lease(url, request_id, deadline_ms, profile):
     payload = json.dumps(lease, separators=(",", ":")).encode()
     if len(payload) > LEASE_MAX_SIZE:
         raise RuntimeError("ordinary launch lease is too large")
-    final = root / f"{request_id}.json"
-    temporary = root / f".{request_id}.{uuid.uuid4().hex}.tmp"
+    final = os.path.join(root, f"{request_id}.json")
+    temporary = os.path.join(root, f".{request_id}.{os.urandom(16).hex()}.tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -144,24 +152,30 @@ def write_launch_lease(url, request_id, deadline_ms, profile):
     finally:
         os.close(descriptor)
     try:
-        if final.exists() or final.is_symlink():
+        if os.path.lexists(final):
             raise RuntimeError("ordinary launch lease already exists")
         os.link(temporary, final, follow_symlinks=False)
-        temporary.unlink()
+        os.unlink(temporary)
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
         raise
     return final
 
 
 def remove_launch_lease(path):
-    if path is None or path.suffix != ".json":
+    if path is None:
+        return
+    path_str = os.fspath(path)
+    if not path_str.endswith(".json"):
         return
     try:
-        info = path.lstat()
-        if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+        info = os.lstat(path_str)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
             raise RuntimeError("ordinary launch lease changed identity")
-        path.unlink()
+        os.unlink(path_str)
     except FileNotFoundError:
         pass
 
@@ -169,8 +183,8 @@ def remove_launch_lease(path):
 def socket_path():
     injected = os.environ.get("ABUSH_ORDINARY_OPEN_SOCKET")
     if injected:
-        return pathlib.Path(injected)
-    return runtime_root() / "ordinary-open.sock"
+        return injected
+    return os.path.join(runtime_root(), "ordinary-open.sock")
 
 
 def encode(message):
@@ -208,11 +222,11 @@ def connect(path, timeout):
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(max(0.01, deadline - time.monotonic()))
         try:
-            info = path.lstat()
-            if path.is_symlink() or not stat.S_ISSOCK(info.st_mode) or \
+            info = os.lstat(path)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISSOCK(info.st_mode) or \
                     info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
                 raise RuntimeError("ordinary-open socket is unsafe")
-            client.connect(str(path))
+            client.connect(path)
             return client
         except (FileNotFoundError, ConnectionRefusedError) as error:
             last_error = error
@@ -246,7 +260,7 @@ def main():
     now_ms = int(time.time() * 1000)
     if deadline_ms <= now_ms or deadline_ms - now_ms > int(LEASE_MAX_LIFETIME * 1000):
         raise RuntimeError("ABUSH_ORDINARY_OPEN_DEADLINE_MS is outside its safe range")
-    request_id = os.environ.get("ABUSH_ORDINARY_OPEN_REQUEST_ID") or uuid.uuid4().hex
+    request_id = os.environ.get("ABUSH_ORDINARY_OPEN_REQUEST_ID") or os.urandom(16).hex()
     if not isinstance(request_id, str) or len(request_id) != 32 or \
             any(character not in "0123456789abcdef" for character in request_id):
         raise RuntimeError("ABUSH_ORDINARY_OPEN_REQUEST_ID is invalid")
@@ -262,11 +276,10 @@ def main():
     lease = None
     inherited_lease = os.environ.get("ABUSH_ORDINARY_OPEN_LEASE_PATH")
     if inherited_lease:
-        candidate = pathlib.Path(inherited_lease)
-        expected = lease_root() / f"{request_id}.json"
-        if candidate != expected:
+        expected = os.path.join(lease_root(), f"{request_id}.json")
+        if os.path.normpath(inherited_lease) != os.path.normpath(expected):
             raise RuntimeError("ABUSH_ORDINARY_OPEN_LEASE_PATH is invalid")
-        lease = candidate
+        lease = inherited_lease
     if os.environ.get("ABUSH_ORDINARY_OPEN_WRITE_LEASE") == "1":
         profile = os.environ.get("ABUSH_CHROME_PROFILE")
         if not profile:
@@ -276,12 +289,12 @@ def main():
             info = {
                 "request_id": request_id,
                 "deadline_ms": deadline_ms,
-                "lease_path": str(lease),
+                "lease_path": lease,
             }
             metadata_path = os.environ.get("ABUSH_ORDINARY_OPEN_LEASE_METADATA")
             if metadata_path:
-                pathlib.Path(metadata_path).write_text(
-                    json.dumps(info, separators=(",", ":")), encoding="utf-8")
+                with open(metadata_path, "w", encoding="utf-8") as stream:
+                    stream.write(json.dumps(info, separators=(",", ":")))
             else:
                 print(json.dumps(info, separators=(",", ":")))
             return
